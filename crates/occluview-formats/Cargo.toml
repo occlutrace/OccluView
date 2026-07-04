@@ -25,6 +25,10 @@ glam           = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 
+[[example]]
+name = "smoke_real_files"
+path = "examples/smoke_real_files.rs"
+
 # NOTE: glTF loader (cgltf) and 3MF loader (lib3mf FFI) are added in later PRs
 # per ADR-0004. The v1 reader set is being implemented incrementally; each loader
 # ships with property tests + fuzz targets (docs/TESTING.md).

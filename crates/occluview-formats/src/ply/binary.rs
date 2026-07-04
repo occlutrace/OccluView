@@ -256,30 +256,61 @@ fn read_faces(
     element: &Element,
     builder: &mut MeshBuilder,
 ) -> Result<(), FormatError> {
-    let Some(Property::List {
-        count_ty, elem_ty, ..
-    }) = element.properties.first().cloned()
+    // Locate the vertex_indices list (by name). Faces may carry multiple list
+    // properties (e.g. iTero: `vertex_indices` + `texcoord`); we must consume
+    // every declared list per row so the next row's bytes line up.
+    let Some(indices_prop_idx) = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "vertex_indices"))
     else {
-        return Ok(()); // No face list — nothing to read.
+        return Ok(()); // No vertex_indices list — nothing to triangulate.
     };
 
     for _ in 0..element.count {
-        let poly_n = match cursor.read_scalar(count_ty)? {
-            ScalarValue::Int(n) => n.max(0) as u32,
-            ScalarValue::Float(f) => f.max(0.0) as u32,
-        };
-        if poly_n < 3 {
-            for _ in 0..poly_n {
-                let _ = cursor.read_scalar(elem_ty)?;
+        // Walk every declared property in order, consuming bytes. For the
+        // vertex_indices list we fan-triangulate; for every other list we
+        // discard its `count` elements.
+        for (i, prop) in element.properties.iter().enumerate() {
+            let Property::List {
+                count_ty, elem_ty, ..
+            } = prop
+            else {
+                // Scalar property on a face row (rare but legal): read one value.
+                // We don't know its type without metadata we don't carry here,
+                // but PLY faces in practice only have lists, so this branch is
+                // defensive. Skip the property's byte size using the first
+                // declared scalar type, if any.
+                if let Some(Property::Scalar { ty, .. }) = element.properties.first() {
+                    let _ = cursor.read_scalar(*ty)?;
+                }
+                continue;
+            };
+            let poly_n = match cursor.read_scalar(*count_ty)? {
+                ScalarValue::Int(n) => n.max(0) as u32,
+                ScalarValue::Float(f) => f.max(0.0) as u32,
+            };
+            if i == indices_prop_idx {
+                // The geometry list — fan-triangulate.
+                if poly_n < 3 {
+                    for _ in 0..poly_n {
+                        let _ = read_index(cursor, *elem_ty)?;
+                    }
+                    continue;
+                }
+                let first = read_index(cursor, *elem_ty)?;
+                let mut prev = read_index(cursor, *elem_ty)?;
+                for _ in 2..poly_n {
+                    let cur = read_index(cursor, *elem_ty)?;
+                    builder.push_triangle(first, prev, cur);
+                    prev = cur;
+                }
+            } else {
+                // Non-geometry list (texcoord, etc.) — discard n values.
+                for _ in 0..poly_n {
+                    let _ = cursor.read_scalar(*elem_ty)?;
+                }
             }
-            continue;
-        }
-        let first = read_index(cursor, elem_ty)?;
-        let mut prev = read_index(cursor, elem_ty)?;
-        for _ in 2..poly_n {
-            let cur = read_index(cursor, elem_ty)?;
-            builder.push_triangle(first, prev, cur);
-            prev = cur;
         }
     }
     Ok(())

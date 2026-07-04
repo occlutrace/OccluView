@@ -159,54 +159,87 @@ fn read_faces<'a, I>(
 where
     I: Iterator<Item = &'a str>,
 {
-    let Some(Property::List { elem_ty, .. }) = element.properties.first().cloned() else {
-        // No list property on faces — skip.
+    // Find the vertex-indices list property (by name). Faces may carry multiple
+    // list properties (real-world case: iTero and other textured scanners emit
+    // `property list uchar int vertex_indices` PLUS `property list uchar float
+    // texcoord`). We must consume every declared list per row or the next row's
+    // tokens get misaligned.
+    let Some(indices_prop_idx) = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "vertex_indices"))
+    else {
+        // No vertex-indices list on this element — skip its tokens entirely.
         return skip_element(tokens, element, "face");
     };
+
     for _ in 0..element.count {
-        // First token: polygon vertex count. Then that many indices.
-        let count_tok = tokens.next().ok_or(FormatError::Truncated {
-            format: "PLY (ascii)",
-            expected: element.count,
-            got: 0,
-        })?;
-        let poly_n: u32 = parse_index(count_tok)?;
-        if poly_n < 3 {
-            // Degenerate; consume and ignore the indices.
-            for _ in 0..poly_n {
-                let _ = parse_index(tokens.next().ok_or(FormatError::Truncated {
-                    format: "PLY (ascii)",
-                    expected: element.count,
-                    got: 0,
-                })?)?;
-            }
-            continue;
-        }
-        // Fan-triangulate: (v0, vi, vi+1) for i in 1..poly_n-1.
-        let first = parse_index(tokens.next().ok_or(FormatError::Truncated {
-            format: "PLY (ascii)",
-            expected: element.count,
-            got: 0,
-        })?)?;
-        let mut prev = parse_index(tokens.next().ok_or(FormatError::Truncated {
-            format: "PLY (ascii)",
-            expected: element.count,
-            got: 0,
-        })?)?;
-        for _ in 2..poly_n {
-            let cur = parse_index(tokens.next().ok_or(FormatError::Truncated {
+        // Walk every declared property in order, consuming tokens. For the
+        // vertex_indices list we fan-triangulate; for every other list we
+        // discard its `count` elements.
+        for (i, prop) in element.properties.iter().enumerate() {
+            let Property::List { elem_ty, .. } = prop else {
+                // Scalar properties on faces are rare but legal; skip one token.
+                if tokens.next().is_none() {
+                    return Err(FormatError::Truncated {
+                        format: "PLY (ascii)",
+                        expected: element.count,
+                        got: 0,
+                    });
+                }
+                continue;
+            };
+            // Count prefix.
+            let count_tok = tokens.next().ok_or(FormatError::Truncated {
                 format: "PLY (ascii)",
                 expected: element.count,
                 got: 0,
-            })?)?;
-            builder.push_triangle(first, prev, cur);
-            prev = cur;
+            })?;
+            let n = parse_index(count_tok)?;
+            if i == indices_prop_idx {
+                // The geometry list — fan-triangulate.
+                if n < 3 {
+                    for _ in 0..n {
+                        let _ = read_face_index(tokens)?;
+                    }
+                    continue;
+                }
+                let f0 = read_face_index(tokens)?;
+                let mut prev_p = read_face_index(tokens)?;
+                for _ in 2..n {
+                    let cur = read_face_index(tokens)?;
+                    builder.push_triangle(f0, prev_p, cur);
+                    prev_p = cur;
+                }
+            } else {
+                // Non-geometry list (texcoord, etc.) — discard n values.
+                let _ = elem_ty;
+                for _ in 0..n {
+                    if tokens.next().is_none() {
+                        return Err(FormatError::Truncated {
+                            format: "PLY (ascii)",
+                            expected: element.count,
+                            got: 0,
+                        });
+                    }
+                }
+            }
         }
     }
-    // elem_ty is unused beyond validation: we read indices as unsigned values
-    // regardless of declared type (PLY indices are non-negative).
-    let _ = elem_ty;
     Ok(())
+}
+
+/// Read one vertex-index token.
+fn read_face_index<'a, I>(tokens: &mut I) -> Result<u32, FormatError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let tok = tokens.next().ok_or(FormatError::Truncated {
+        format: "PLY (ascii)",
+        expected: 0,
+        got: 0,
+    })?;
+    parse_index(tok)
 }
 
 fn skip_element<'a, I>(tokens: &mut I, element: &Element, name: &str) -> Result<(), FormatError>
@@ -406,6 +439,32 @@ end_header
         let mesh = read(&parsed).expect("valid");
         assert!(!mesh.has_vertex_colors());
         assert_eq!(mesh.vertices()[0].color, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn face_with_texcoord_list_parses() {
+        // Real iTero / textured-scan layout: each face has TWO list properties
+        // - vertex_indices (the geometry) and texcoord (UV pairs). We must
+        // consume the texcoord list so the next face row parses correctly,
+        // instead of reading UV floats as vertex indices.
+        let ply = "ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+element face 2
+property list uchar int vertex_indices
+property list uchar float texcoord
+end_header
+0 0 0
+1 0 0
+0 1 0
+3 0 1 2 6 0.0 0.0 1.0 0.0 0.0 1.0
+3 0 1 2 6 0.0 0.0 1.0 0.0 0.0 1.0\n";
+        let parsed = parse_full(ply);
+        let mesh = read(&parsed).expect("multi-list face must parse");
+        assert_eq!(mesh.triangle_count(), 2);
     }
 
     #[test]

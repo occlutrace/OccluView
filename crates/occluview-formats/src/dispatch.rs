@@ -32,10 +32,34 @@ pub fn dispatch_by_kind(kind: FormatKind, bytes: &[u8]) -> Result<Mesh, FormatEr
 ///
 /// # Errors
 /// See [`FormatError`] and [`dispatch_by_kind`].
+/// Convenience: read `bytes` using the reader selected by file extension.
+///
+/// **Magic wins over extension.** Real-world dental files are frequently
+/// mislabeled (a re-export renames `.stl` to `.ply`, or vice versa). We probe
+/// the leading bytes first; only if the magic is silent do we trust the
+/// extension. This is the same heuristic `stl`/`ply`/`solid`-byte check that
+/// the STL reader uses internally, centralized here so every caller benefits.
+///
+/// # Errors
+/// See [`FormatError`] and [`dispatch_by_kind`].
 pub fn dispatch_by_extension(extension: &str, bytes: &[u8]) -> Result<Mesh, FormatError> {
-    let kind = crate::probe::by_extension(extension).ok_or(FormatError::Unsupported {
-        extension: extension.to_string(),
-    })?;
+    // Magic-first: if the bytes declare a format, honor it over the extension.
+    // `probe` falls back to the extension when the magic is ambiguous (e.g.
+    // binary STL with a zero header), so this is safe.
+    let kind = match crate::probe::probe(Some(extension), bytes) {
+        Ok(kind) => kind,
+        // probe only fails when neither magic nor extension match; surface that.
+        Err(e) => match e {
+            FormatError::Unsupported { .. } => {
+                // probe rejected the extension too — preserve the original
+                // "unsupported extension" error.
+                return Err(FormatError::Unsupported {
+                    extension: extension.to_string(),
+                });
+            }
+            other => return Err(other),
+        },
+    };
     dispatch_by_kind(kind, bytes)
 }
 
@@ -69,9 +93,11 @@ mod tests {
 
     #[test]
     fn unimplemented_reader_returns_malformed() {
-        // PLY is now implemented; use OBJ (still a stub) as the not-yet-implemented
-        // sentinel.
-        let res = dispatch_by_extension("obj", &[0u8; 84]);
+        // OBJ is still a stub. Use content that does NOT match any implemented
+        // reader's magic (so dispatch routes by extension to OBJ), and is not
+        // a valid binary STL by the size formula (so the new probe heuristic
+        // doesn't redirect it). 16 arbitrary bytes is safely neither.
+        let res = dispatch_by_extension("obj", &[0xA5u8; 16]);
         let Err(FormatError::Malformed { reason, .. }) = res else {
             panic!("expected Malformed stub error, got {res:?}");
         };
@@ -85,6 +111,28 @@ mod tests {
         let mesh = dispatch_by_extension("ply", ply).expect("PLY should read");
         assert_eq!(mesh.vertices().len(), 1);
         assert!(mesh.has_vertex_colors());
+    }
+
+    #[test]
+    fn mislabeled_extension_falls_back_to_magic() {
+        // Real-world case from the OccluTrace corpus: a binary STL renamed to
+        // `.ply`. The 80-byte header carries an arbitrary ASCII label
+        // ("OccluTrace Native binary STL"); the file is binary STL underneath.
+        // Magic-first dispatch must route it to the STL reader, not the PLY
+        // reader (which would reject it as bad signature).
+        let mut bytes = vec![0u8; 84];
+        let label = b"OccluTrace Native binary STL";
+        bytes[..label.len()].copy_from_slice(label);
+        bytes[80..84].copy_from_slice(&1u32.to_le_bytes());
+        // One triangle: normal +Z, three vertices.
+        let tri: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        for f in tri {
+            bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0, 0]);
+
+        let mesh = dispatch_by_extension("ply", &bytes).expect("magic wins over extension");
+        assert_eq!(mesh.triangle_count(), 1, "STL content must parse as STL");
     }
 
     #[test]
