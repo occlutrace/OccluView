@@ -36,6 +36,7 @@
 
 pub mod dispatch;
 pub mod error;
+pub mod ply;
 pub mod probe;
 pub mod stl;
 

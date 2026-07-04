@@ -16,19 +16,15 @@ use occluview_core::Mesh;
 pub fn dispatch_by_kind(kind: FormatKind, bytes: &[u8]) -> Result<Mesh, FormatError> {
     match kind {
         FormatKind::Stl => crate::stl::read(bytes),
-        // TODO(formats/ply):  implement in `ply` module (vertex colors, BE/LE binary, ASCII).
+        FormatKind::Ply => crate::ply::read(bytes),
         // TODO(formats/obj):  implement in `obj` module (+ lenient MTL, fan triangulation).
         // TODO(formats/gltf): implement in `gltf` module via cgltf (zip-slip-safe).
         // TODO(formats/threemf): implement in `threemf` module via lib3mf FFI.
-        FormatKind::Ply | FormatKind::Obj | FormatKind::Gltf | FormatKind::Threemf => {
-            Err(FormatError::Malformed {
-                format: "occluview-formats",
-                offset: 0,
-                reason: format!(
-                    "reader for {kind:?} not yet implemented (see ROADMAP and ADR-0004)"
-                ),
-            })
-        }
+        FormatKind::Obj | FormatKind::Gltf | FormatKind::Threemf => Err(FormatError::Malformed {
+            format: "occluview-formats",
+            offset: 0,
+            reason: format!("reader for {kind:?} not yet implemented (see ROADMAP and ADR-0004)"),
+        }),
     }
 }
 
@@ -73,11 +69,22 @@ mod tests {
 
     #[test]
     fn unimplemented_reader_returns_malformed() {
-        let res = dispatch_by_extension("ply", &[0u8; 84]);
+        // PLY is now implemented; use OBJ (still a stub) as the not-yet-implemented
+        // sentinel.
+        let res = dispatch_by_extension("obj", &[0u8; 84]);
         let Err(FormatError::Malformed { reason, .. }) = res else {
             panic!("expected Malformed stub error, got {res:?}");
         };
         assert!(reason.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn ply_dispatches_and_reads() {
+        // A minimal ASCII PLY with one colored vertex.
+        let ply = b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 0\nproperty list uchar int vertex_indices\nend_header\n1.0 2.0 3.0 255 128 0\n";
+        let mesh = dispatch_by_extension("ply", ply).expect("PLY should read");
+        assert_eq!(mesh.vertices().len(), 1);
+        assert!(mesh.has_vertex_colors());
     }
 
     #[test]
