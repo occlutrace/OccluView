@@ -17,10 +17,10 @@ pub fn dispatch_by_kind(kind: FormatKind, bytes: &[u8]) -> Result<Mesh, FormatEr
     match kind {
         FormatKind::Stl => crate::stl::read(bytes),
         FormatKind::Ply => crate::ply::read(bytes),
-        // TODO(formats/obj):  implement in `obj` module (+ lenient MTL, fan triangulation).
+        FormatKind::Obj => crate::obj::read(bytes),
         // TODO(formats/gltf): implement in `gltf` module via cgltf (zip-slip-safe).
         // TODO(formats/threemf): implement in `threemf` module via lib3mf FFI.
-        FormatKind::Obj | FormatKind::Gltf | FormatKind::Threemf => Err(FormatError::Malformed {
+        FormatKind::Gltf | FormatKind::Threemf => Err(FormatError::Malformed {
             format: "occluview-formats",
             offset: 0,
             reason: format!("reader for {kind:?} not yet implemented (see ROADMAP and ADR-0004)"),
@@ -93,15 +93,23 @@ mod tests {
 
     #[test]
     fn unimplemented_reader_returns_malformed() {
-        // OBJ is still a stub. Use content that does NOT match any implemented
-        // reader's magic (so dispatch routes by extension to OBJ), and is not
-        // a valid binary STL by the size formula (so the new probe heuristic
-        // doesn't redirect it). 16 arbitrary bytes is safely neither.
-        let res = dispatch_by_extension("obj", &[0xA5u8; 16]);
+        // glTF is the remaining stub. Use content that does NOT match any
+        // implemented reader's magic (no "ply", "solid", "glTF", PK zip, "v ";
+        // not a binary STL by size formula).
+        let res = dispatch_by_extension("gltf", &[0xA5u8; 16]);
         let Err(FormatError::Malformed { reason, .. }) = res else {
             panic!("expected Malformed stub error, got {res:?}");
         };
         assert!(reason.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn obj_dispatches_and_reads() {
+        // A minimal OBJ with one triangle and vertex colors (exocad extension).
+        let obj = b"v 0 0 0 255 128 0\nv 1 0 0 0 255 0\nv 0 1 0 0 0 255\nf 1 2 3\n";
+        let mesh = dispatch_by_extension("obj", obj).expect("OBJ should read");
+        assert_eq!(mesh.triangle_count(), 1);
+        assert!(mesh.has_vertex_colors());
     }
 
     #[test]
