@@ -2066,11 +2066,13 @@ version = "0.0.1"
 dependencies = [
  "bytemuck",
  "glam",
+ "memmap2",
  "occluview-core",
  "proptest",
  "rayon",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tracing",
 ]

@@ -7,6 +7,7 @@
 use crate::error::FormatError;
 use crate::probe::FormatKind;
 use occluview_core::Mesh;
+use std::path::Path;
 
 /// Read `bytes` as the format indicated by `kind`, returning a [`Mesh`].
 ///
@@ -62,6 +63,40 @@ pub fn dispatch_by_extension(extension: &str, bytes: &[u8]) -> Result<Mesh, Form
         },
     };
     dispatch_by_kind(kind, bytes)
+}
+
+/// Read a file from disk via memory-mapping, then dispatch by extension.
+///
+/// Memory-mapping avoids a full-file `read_to_end` copy for large dental
+/// scans (the corpus has 50 MB+ STLs). The mmap is held for the duration of
+/// the parse; the returned `Mesh` owns its own vertex/index buffers
+/// (decoupled from the mapping), so the file can be closed afterwards.
+///
+/// Falls back to a regular `read` if mmap fails (e.g. on a pipe or a
+/// zero-length file).
+///
+/// # Errors
+/// - [`FormatError::Io`] if the file cannot be opened or mapped.
+/// - See [`dispatch_by_extension`] for parse errors.
+#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
+pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or(FormatError::Unsupported {
+            extension: String::new(),
+        })?;
+
+    let file = std::fs::File::open(path).map_err(FormatError::Io)?;
+    // mmap is best-effort: fall back to read if it fails.
+    // SAFETY: the file is opened read-only and we hold the File handle for the
+    // lifetime of the Mmap; the bytes are parsed synchronously before return.
+    if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
+        return dispatch_by_extension(&ext, &mmap);
+    }
+    let bytes = std::fs::read(path).map_err(FormatError::Io)?;
+    dispatch_by_extension(&ext, &bytes)
 }
 
 #[cfg(test)]
@@ -148,5 +183,27 @@ mod tests {
     fn unknown_extension_is_unsupported() {
         let res = dispatch_by_extension("xyz", &[0u8; 4]);
         assert!(matches!(res, Err(FormatError::Unsupported { .. })));
+    }
+
+    #[test]
+    fn read_file_mmaps_and_parses() {
+        // Write a minimal binary STL to a temp file and read it back via mmap.
+        let bytes = one_triangle_binary_stl();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tri.stl");
+        std::fs::write(&path, &bytes).expect("write");
+        let mesh = read_file(&path).expect("read_file should mmap + parse");
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn read_file_missing_extension_is_unsupported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("noext");
+        std::fs::write(&path, b"x").expect("write");
+        assert!(matches!(
+            read_file(&path),
+            Err(FormatError::Unsupported { .. })
+        ));
     }
 }

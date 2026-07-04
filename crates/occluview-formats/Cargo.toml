@@ -23,9 +23,11 @@ rayon          = { workspace = true }
 glam           = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
+memmap2        = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+tempfile = "3"
 
 [[example]]
 name = "smoke_real_files"

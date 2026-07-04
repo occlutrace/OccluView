@@ -18,7 +18,11 @@
 //! This is a stub. The P0 loaders (STL, PLY, OBJ, glTF) land in dedicated PRs
 //! per the roadmap, each with property tests and fuzz targets.
 
-#![forbid(unsafe_code)]
+// `deny(unsafe_code)` (not `forbid`): the mmap streaming path
+// (dispatch::read_file) needs one `unsafe` block for memmap2::Mmap::map,
+// which is the audited kernel-FFI for memory-mapping. All format PARSERS
+// remain safe; the lone unsafe lives behind the read_file helper.
+#![deny(unsafe_code)]
 // Test-only relaxation of the slop lints — see occluview-core/src/lib.rs.
 #![cfg_attr(
     test,
