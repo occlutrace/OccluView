@@ -14,6 +14,8 @@ pub struct GpuMesh {
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) index_count: u32,
+    /// Vertex count (for `PointCloud` draws that don't use the index buffer).
+    pub(crate) vertex_count: u32,
 }
 
 impl GpuMesh {
@@ -45,6 +47,7 @@ impl GpuMesh {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
+            vertex_count: vertices.len() as u32,
         }
     }
 
@@ -91,11 +94,19 @@ impl GpuMesh {
         size_of::<crate::GpuCamera>() as u64
     }
 
-    /// Issue the indexed draw for this mesh into `render_pass`.
-    pub(crate) fn draw(&self, rpass: &mut wgpu::RenderPass<'_>) {
+    /// Issue the draw for this mesh into `render_pass`. Triangle meshes use
+    /// `draw_indexed`; point clouds use `draw` over all vertices.
+    pub(crate) fn draw(&self, rpass: &mut wgpu::RenderPass<'_>, kind: occluview_core::MeshKind) {
         rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.draw_indexed(0..self.index_count, 0, 0..1);
+        match kind {
+            occluview_core::MeshKind::TriangleMesh => {
+                rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.draw_indexed(0..self.index_count, 0, 0..1);
+            }
+            occluview_core::MeshKind::PointCloud => {
+                rpass.draw(0..self.vertex_count, 0..1);
+            }
+        }
     }
 }
 

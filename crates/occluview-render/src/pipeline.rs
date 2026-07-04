@@ -17,6 +17,8 @@ pub struct Renderer {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) pipeline: wgpu::RenderPipeline,
+    /// Point-list pipeline for `MeshKind::PointCloud` rendering.
+    pub(crate) point_pipeline: wgpu::RenderPipeline,
     pub(crate) camera_layout: wgpu::BindGroupLayout,
     pub(crate) camera_buffer: wgpu::Buffer,
     pub(crate) depth_format: wgpu::TextureFormat,
@@ -120,6 +122,44 @@ impl Renderer {
             cache: None,
         });
 
+        // Point-list pipeline: same shader, PointList topology, no culling.
+        // Used for MeshKind::PointCloud (PLY vertex-only files).
+        let point_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("occluview point pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[GpuMesh::vertex_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::PointList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let camera_size = size_of::<GpuCamera>() as u64;
         if camera_size == 0 {
             return Err(RenderError::Surface("zero-sized camera".into()));
@@ -135,6 +175,7 @@ impl Renderer {
             device,
             queue,
             pipeline,
+            point_pipeline,
             camera_layout,
             camera_buffer,
             depth_format,
@@ -161,16 +202,21 @@ impl Renderer {
 
     /// Issue the draw for one mesh inside a render pass. Caller has already
     /// begun the pass against a color+depth view, set the camera, and will
-    /// submit the encoder.
+    /// submit the encoder. Picks the triangle or point pipeline by `kind`.
     pub fn draw<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
         bind_group: &'a wgpu::BindGroup,
         mesh: &'a GpuMesh,
+        kind: occluview_core::MeshKind,
     ) {
-        rpass.set_pipeline(&self.pipeline);
+        let pipe = match kind {
+            occluview_core::MeshKind::TriangleMesh => &self.pipeline,
+            occluview_core::MeshKind::PointCloud => &self.point_pipeline,
+        };
+        rpass.set_pipeline(pipe);
         rpass.set_bind_group(0, bind_group, &[]);
-        mesh.draw(rpass);
+        mesh.draw(rpass, kind);
     }
 
     /// Access the device (for buffer/texture creation by callers).

@@ -80,6 +80,7 @@ impl Offscreen {
             &targets,
             &bind_group,
             &gpu_mesh,
+            mesh.kind(),
             spec.background,
         );
 
@@ -123,6 +124,7 @@ impl Offscreen {
         targets: &RenderTargets<'_>,
         bind_group: &wgpu::BindGroup,
         mesh: &GpuMesh,
+        kind: occluview_core::MeshKind,
         background: [f64; 4],
     ) {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -151,7 +153,7 @@ impl Offscreen {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        self.renderer.draw(&mut rpass, bind_group, mesh);
+        self.renderer.draw(&mut rpass, bind_group, mesh, kind);
     }
 
     fn read_back(

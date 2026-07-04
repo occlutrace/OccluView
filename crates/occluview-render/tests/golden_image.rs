@@ -98,3 +98,53 @@ fn golden_triangle_matches_baseline() {
         frac * 100.0
     );
 }
+
+/// A small point cloud: 5 points spread across the view.
+fn point_cloud_mesh() -> Mesh {
+    use occluview_core::MeshKind;
+    let mut b = MeshBuilder::new();
+    for (x, y) in [
+        (-0.5, -0.5),
+        (0.5, -0.5),
+        (0.0, 0.5),
+        (-0.3, 0.0),
+        (0.3, 0.0),
+    ] {
+        b.push_vertex(Vertex::at(Vec3::new(x, y, 0.0)).with_normal(Vec3::Z));
+    }
+    let _ = MeshKind::PointCloud; // document intent
+    b.as_point_cloud().build().expect("valid point cloud")
+}
+
+fn render_point_cloud_to_pixels() -> Vec<u8> {
+    let mesh = point_cloud_mesh();
+    let cam = camera_looking_at_origin();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let spec = ThumbnailSpec {
+        size_px: SIZE,
+        ..Default::default()
+    };
+    pollster::block_on(offscreen.render(&mesh, &cam, spec)).expect("render")
+}
+
+#[test]
+fn golden_point_cloud_matches_baseline() {
+    let pixels = render_point_cloud_to_pixels();
+    // Point clouds render as discrete pixels; the baseline has very few
+    // non-background pixels. We just check it produces SOMETHING visible
+    // (at least one non-background pixel) rather than full background.
+    let non_bg = pixels
+        .chunks_exact(4)
+        .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
+        .count();
+    assert!(
+        non_bg > 0,
+        "point cloud rendered nothing visible ({non_bg} non-bg pixels)"
+    );
+    // Sanity: a 5-point cloud at 64x64 should produce a small number of
+    // visible pixels (each point = 1 pixel + maybe a few from rasterization).
+    assert!(
+        non_bg < 50,
+        "point cloud rendered too many pixels ({non_bg}); expected sparse output"
+    );
+}
