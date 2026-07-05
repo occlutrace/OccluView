@@ -28,7 +28,7 @@
     missing_docs
 )]
 
-use crate::{render_thumbnail, ShellError};
+use crate::{render_thumbnail_bytes, ShellError};
 use occluview_render::ThumbnailSpec;
 use windows::core::{implement, IUnknown, Interface, HRESULT};
 use windows::Win32::Foundation::BOOL;
@@ -164,13 +164,10 @@ impl ThumbnailProvider {
             size_px,
             ..Default::default()
         };
-        let ext = self
-            .extension
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| "stl".into());
+        let ext = self.extension.borrow().clone();
         let bytes = self.bytes.borrow().clone();
-        let pixels = render_thumbnail(&ext, &bytes, spec).map_err(shell_to_hresult)?;
+        let pixels =
+            render_thumbnail_bytes(ext.as_deref(), &bytes, spec).map_err(shell_to_hresult)?;
         Self::pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px))
     }
 }

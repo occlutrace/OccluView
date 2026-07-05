@@ -25,6 +25,7 @@
 
 pub mod error;
 pub mod render_thumb;
+pub mod thumbnail_format;
 
 #[cfg(windows)]
 pub mod com;
@@ -33,7 +34,7 @@ pub mod com;
 pub mod registration;
 
 pub use error::ShellError;
-pub use render_thumb::render_thumbnail;
+pub use render_thumb::{render_thumbnail, render_thumbnail_bytes};
 
 /// The CLSID string for the OccluView thumbnail provider.
 ///
@@ -45,4 +46,18 @@ pub use render_thumb::render_thumbnail;
 pub const THUMBNAIL_PROVIDER_CATEGORY: &str = "{E357FCCD-A995-4576-B01F-234630154E96}";
 
 /// File extensions OccluView registers a thumbnail provider for.
-pub const SUPPORTED_EXTENSIONS: &[&str] = &["stl", "ply", "obj", "gltf", "glb", "3mf"];
+///
+/// JSON `.gltf` and `.3mf` are deliberately absent until their stream-safe
+/// readers exist. Registering a shell handler for deferred formats makes
+/// Explorer thumbnails look broken.
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["stl", "ply", "obj", "glb"];
+
+#[cfg(test)]
+mod tests {
+    use super::SUPPORTED_EXTENSIONS;
+
+    #[test]
+    fn thumbnail_registration_only_includes_implemented_stream_formats() {
+        assert_eq!(SUPPORTED_EXTENSIONS, ["stl", "ply", "obj", "glb"]);
+    }
+}

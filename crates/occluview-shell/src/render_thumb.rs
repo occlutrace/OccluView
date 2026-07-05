@@ -15,10 +15,11 @@
 //! normal pointing at the camera. This makes the thumbnail correct regardless
 //! of the source file's orientation, with no per-vertex rewrite.
 
+use crate::thumbnail_format::infer_thumbnail_format;
 use crate::ShellError;
 use glam::{Mat4, Vec3};
 use occluview_core::{principal_axes, Camera, Mesh};
-use occluview_formats::dispatch_by_extension;
+use occluview_formats::dispatch::dispatch_by_kind;
 use occluview_render::{GpuCamera, Offscreen, ThumbnailSpec};
 
 /// Load `bytes` (a file with the given lowercase extension, no dot) and render
@@ -37,7 +38,28 @@ pub fn render_thumbnail(
     bytes: &[u8],
     spec: ThumbnailSpec,
 ) -> Result<Vec<u8>, ShellError> {
-    let mut mesh = dispatch_by_extension(extension, bytes)?;
+    render_thumbnail_bytes(Some(extension), bytes, spec)
+}
+
+/// Load `bytes` with an optional file extension hint and render a thumbnail.
+///
+/// This is the entry point for shell streams where Windows may not provide a
+/// file path. It never falls back to a fake default extension.
+///
+/// # Errors
+/// Returns [`ShellError::Format`] if inference or parsing fails, and
+/// [`ShellError::Render`] if offscreen rendering fails.
+pub fn render_thumbnail_bytes(
+    extension: Option<&str>,
+    bytes: &[u8],
+    spec: ThumbnailSpec,
+) -> Result<Vec<u8>, ShellError> {
+    let kind = infer_thumbnail_format(extension, bytes)?;
+    let mesh = dispatch_by_kind(kind, bytes)?;
+    render_mesh_thumbnail(mesh, spec)
+}
+
+fn render_mesh_thumbnail(mut mesh: Mesh, spec: ThumbnailSpec) -> Result<Vec<u8>, ShellError> {
     let bbox = mesh.bbox();
 
     // PCA auto-orientation: rotate the *camera frame* so the mesh's thinnest
@@ -115,6 +137,31 @@ mod tests {
         // into a placeholder) rather than panic or fake success.
         let res = render_thumbnail("xyz", &[0u8; 4], ThumbnailSpec::default());
         assert!(matches!(res, Err(ShellError::Format(_))));
+    }
+
+    #[test]
+    fn obj_stream_without_extension_reaches_obj_parser() {
+        let res = render_thumbnail_bytes(None, b"v not-a-number\n", ThumbnailSpec::default());
+        let Err(ShellError::Format(occluview_formats::FormatError::Malformed { format, .. })) = res
+        else {
+            panic!("expected OBJ parser error, got {res:?}");
+        };
+        assert_eq!(format, "OBJ");
+    }
+
+    #[test]
+    fn threemf_stream_is_rejected_before_rendering() {
+        let res = render_thumbnail_bytes(
+            Some("3mf"),
+            &[0x50, 0x4B, 0x03, 0x04],
+            ThumbnailSpec::default(),
+        );
+        assert!(matches!(
+            res,
+            Err(ShellError::Format(
+                occluview_formats::FormatError::Unsupported { .. }
+            ))
+        ));
     }
 
     #[test]
