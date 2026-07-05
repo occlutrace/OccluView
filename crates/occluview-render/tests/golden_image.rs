@@ -282,6 +282,34 @@ fn cut_triangle_discard_removes_pixels() {
     );
 }
 
+/// Validates the full 3-pass stencil capping (Approach B, "solid cut") on
+/// WARP. The render must not crash and must produce visible output — the
+/// stencil increment/decrement + cap draw sequence runs end-to-end.
+#[test]
+fn cut_triangle_capped_renders() {
+    let mesh = triangle_mesh();
+    let cam = camera_looking_at_origin();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+
+    let cut = occluview_render::CutViewSpec {
+        plane: ClipPlane::new([0.0, 1.0, 0.0], 0.0),
+        cap_color: [0.0, 1.0, 0.0, 1.0],
+        show_hollow: false,
+    };
+    let spec = ThumbnailSpec {
+        size_px: SIZE,
+        ..Default::default()
+    };
+    let pixels = pollster::block_on(offscreen.render_with_cut(&mesh, &cam, &cut, 10.0, spec))
+        .expect("cut render");
+
+    let non_bg = pixels
+        .chunks_exact(4)
+        .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
+        .count();
+    assert!(non_bg > 0, "capped cut rendered nothing visible");
+}
+
 fn render_point_cloud_to_pixels() -> Vec<u8> {
     let mesh = point_cloud_mesh();
     let cam = camera_looking_at_origin();

@@ -111,6 +111,91 @@ impl Default for CutViewSpec {
     }
 }
 
+/// Build a cap quad: 4 position vertices + 2 triangles forming a large
+/// square centered on the plane origin, lying in the plane's tangent space,
+/// oversized to `half_extent` on each side so the stencil test clips it to
+/// the cross-section.
+///
+/// The plane origin is `plane.normal * plane.distance`. Two orthonormal
+/// basis vectors `u`/`v` span the plane.
+///
+/// Returns `(vertices: Vec<[f32;3]>, indices: Vec<u32>)` — 4 verts, 6 indices
+/// (2 triangles).
+#[must_use]
+pub fn cap_quad(plane: &ClipPlane, half_extent: f32) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let origin = clipping_inner::plane_origin(plane);
+    let (u, v) = clipping_inner::orthonormal_basis(&plane.normal);
+    let h = half_extent;
+    // Four corners of a square in the plane.
+    let c0 = [
+        origin[0] + h * (u[0] + v[0]),
+        origin[1] + h * (u[1] + v[1]),
+        origin[2] + h * (u[2] + v[2]),
+    ];
+    let c1 = [
+        origin[0] + h * (u[0] - v[0]),
+        origin[1] + h * (u[1] - v[1]),
+        origin[2] + h * (u[2] - v[2]),
+    ];
+    let c2 = [
+        origin[0] + h * (-u[0] - v[0]),
+        origin[1] + h * (-u[1] - v[1]),
+        origin[2] + h * (-u[2] - v[2]),
+    ];
+    let c3 = [
+        origin[0] + h * (-u[0] + v[0]),
+        origin[1] + h * (-u[1] + v[1]),
+        origin[2] + h * (-u[2] + v[2]),
+    ];
+    (vec![c0, c1, c2, c3], vec![0, 1, 2, 0, 2, 3])
+}
+
+/// Internal math helpers, kept in a submodule so the public surface of
+/// `clipping` stays focused on the high-level types.
+mod clipping_inner {
+    /// Compute the plane origin: `normal * distance`.
+    pub(super) fn plane_origin(plane: &super::ClipPlane) -> [f32; 3] {
+        [
+            plane.normal[0] * plane.distance,
+            plane.normal[1] * plane.distance,
+            plane.normal[2] * plane.distance,
+        ]
+    }
+
+    /// Two orthonormal vectors spanning the plane perpendicular to `normal`.
+    /// Picks an arbitrary up vector that isn't parallel to `normal`, then
+    /// cross-products.
+    pub(super) fn orthonormal_basis(normal: &[f32; 3]) -> ([f32; 3], [f32; 3]) {
+        // Pick a helper not parallel to normal.
+        let helper = if normal[1].abs() < 0.9 {
+            [0.0, 1.0, 0.0]
+        } else {
+            [1.0, 0.0, 0.0]
+        };
+        // u = normalize(cross(normal, helper))
+        let u = normalize(&cross(normal, &helper));
+        // v = cross(normal, u) (already unit since normal and u are orthonormal)
+        let v = cross(normal, &u);
+        (u, v)
+    }
+
+    fn cross(a: &[f32; 3], b: &[f32; 3]) -> [f32; 3] {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    }
+
+    fn normalize(a: &[f32; 3]) -> [f32; 3] {
+        let len = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        if len < 1e-6 {
+            return [0.0, 0.0, 1.0];
+        }
+        [a[0] / len, a[1] / len, a[2] / len]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +236,48 @@ mod tests {
         // Pink-ish.
         assert!(s.cap_color[0] > s.cap_color[1]);
         assert!(s.cap_color[0] > s.cap_color[2]);
+    }
+
+    #[test]
+    fn orthonormal_basis_is_perpendicular() {
+        let n = [0.0, 0.0, 1.0];
+        let (u, v) = super::clipping_inner::orthonormal_basis(&n);
+        // u and v must be perpendicular to n (dot ~ 0).
+        assert!(dot3(&u, &n).abs() < 1e-5);
+        assert!(dot3(&v, &n).abs() < 1e-5);
+        // u and v must be perpendicular to each other.
+        assert!(dot3(&u, &v).abs() < 1e-5);
+        // u and v must be unit length.
+        assert!((len3(&u) - 1.0).abs() < 1e-5);
+        assert!((len3(&v) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn orthonormal_basis_handles_vertical_normal() {
+        // normal = +Y (the degenerate helper case) must still produce a valid basis.
+        let n = [0.0, 1.0, 0.0];
+        let (u, v) = super::clipping_inner::orthonormal_basis(&n);
+        assert!(dot3(&u, &n).abs() < 1e-5);
+        assert!(dot3(&v, &n).abs() < 1e-5);
+    }
+
+    #[test]
+    fn cap_quad_produces_4_verts_2_triangles() {
+        let plane = ClipPlane::new([0.0, 1.0, 0.0], 0.0);
+        let (verts, indices) = cap_quad(&plane, 10.0);
+        assert_eq!(verts.len(), 4);
+        assert_eq!(indices.len(), 6);
+        // All verts lie in the Y=0 plane (since normal=+Y, distance=0).
+        for v in &verts {
+            assert!(v[1].abs() < 1e-5, "vert not in plane: {v:?}");
+        }
+    }
+
+    fn dot3(a: &[f32; 3], b: &[f32; 3]) -> f32 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+
+    fn len3(a: &[f32; 3]) -> f32 {
+        dot3(a, a).sqrt()
     }
 }

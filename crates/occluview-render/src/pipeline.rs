@@ -13,6 +13,20 @@ use std::borrow::Cow;
 use std::mem::size_of;
 
 const SHADER_SRC: &str = include_str!("../shaders/mesh.wgsl");
+const CAP_SHADER_SRC: &str = include_str!("../shaders/cap.wgsl");
+
+/// Vertex layout for the cap quad: position only (vec3<f32>).
+fn cap_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        }],
+    }
+}
 
 /// Long-lived GPU state for the OccluView mesh pipeline.
 pub struct Renderer {
@@ -38,6 +52,15 @@ pub struct Renderer {
     pub(crate) clip_buffer_disabled: wgpu::Buffer,
     pub(crate) clip_bind_group_disabled: wgpu::BindGroup,
     pub(crate) depth_format: wgpu::TextureFormat,
+    // --- Stencil capping pipelines (ADR-0011) ---
+    /// Pass 1: back faces increment stencil (cull Front, `color_write` none).
+    pub(crate) stencil_back_pipeline: wgpu::RenderPipeline,
+    /// Pass 2: front faces decrement stencil (cull Back, `color_write` none).
+    pub(crate) stencil_front_pipeline: wgpu::RenderPipeline,
+    /// Pass 3: cap polygon, stencil test NotEqual(0), flat color.
+    pub(crate) cap_pipeline: wgpu::RenderPipeline,
+    /// Cap uniform layout (group 1 of cap shader): a single vec4 color.
+    pub(crate) cap_uniform_layout: wgpu::BindGroupLayout,
 }
 
 impl Renderer {
@@ -183,6 +206,182 @@ impl Renderer {
             cache: None,
         });
 
+        // --- Stencil capping pipelines (ADR-0011) ---
+        // A separate cap shader draws the cut-surface polygon. It uses the
+        // camera layout (group 0) + a small cap-color uniform (group 1).
+        let cap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("occluview cap shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CAP_SHADER_SRC)),
+        });
+        let cap_uniform_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("occluview cap color layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
+                    count: None,
+                }],
+            });
+        let cap_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("occluview cap pipeline layout"),
+            bind_group_layouts: &[&camera_layout, &cap_uniform_layout],
+            push_constant_ranges: &[],
+        });
+
+        // Pass 1: back faces, cull Front, increment stencil, no color write.
+        let stencil_back_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("occluview stencil-back pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[GpuMesh::vertex_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState::default(),
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::IncrementClamp,
+                        },
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Pass 2: front faces, cull Back, decrement stencil, no color write.
+        let stencil_front_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("occluview stencil-front pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[GpuMesh::vertex_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::DecrementClamp,
+                        },
+                        back: wgpu::StencilFaceState::default(),
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Pass 3: cap polygon, stencil test NotEqual(0), flat color, depth
+        // write off (the cap sits in the plane, not the mesh surface).
+        let cap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("occluview cap pipeline"),
+            layout: Some(&cap_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &cap_shader,
+                entry_point: "vs_main",
+                buffers: &[cap_vertex_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &cap_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::NotEqual,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Zero,
+                    },
+                    back: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::NotEqual,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Zero,
+                    },
+                    read_mask: 0xFF,
+                    write_mask: 0xFF,
+                },
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let camera_size = size_of::<GpuCamera>() as u64;
         if camera_size == 0 {
             return Err(RenderError::Surface("zero-sized camera".into()));
@@ -229,6 +428,10 @@ impl Renderer {
             clip_buffer_disabled,
             clip_bind_group_disabled,
             depth_format,
+            stencil_back_pipeline,
+            stencil_front_pipeline,
+            cap_pipeline,
+            cap_uniform_layout,
         })
     }
 
