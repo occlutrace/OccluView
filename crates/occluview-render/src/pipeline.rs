@@ -7,6 +7,7 @@
 use crate::camera::GpuCamera;
 use crate::error::RenderError;
 use crate::gpu::{camera_bind_layout, GpuMesh};
+use crate::mesh_uniform::GpuMeshUniform;
 use std::borrow::Cow;
 use std::mem::size_of;
 
@@ -21,6 +22,11 @@ pub struct Renderer {
     pub(crate) point_pipeline: wgpu::RenderPipeline,
     pub(crate) camera_layout: wgpu::BindGroupLayout,
     pub(crate) camera_buffer: wgpu::Buffer,
+    /// Layout for the per-mesh uniform (group 1): model matrix + tint +
+    /// opacity + `has_texture` flag.
+    pub(crate) mesh_layout: wgpu::BindGroupLayout,
+    /// Layout for the texture + sampler (group 2).
+    pub(crate) texture_layout: wgpu::BindGroupLayout,
     pub(crate) depth_format: wgpu::TextureFormat,
 }
 
@@ -67,6 +73,7 @@ impl Renderer {
     /// # Errors
     /// Returns [`RenderError::Surface`] only if the camera uniform size is
     /// zero (impossible in practice).
+    #[allow(clippy::too_many_lines)]
     pub fn with_device(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -80,9 +87,11 @@ impl Renderer {
         });
 
         let camera_layout = camera_bind_layout(&device);
+        let mesh_layout = mesh_uniform_bind_layout(&device);
+        let texture_layout = texture_bind_layout(&device);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("occluview pipeline layout"),
-            bind_group_layouts: &[&camera_layout],
+            bind_group_layouts: &[&camera_layout, &mesh_layout, &texture_layout],
             push_constant_ranges: &[],
         });
 
@@ -178,6 +187,8 @@ impl Renderer {
             point_pipeline,
             camera_layout,
             camera_buffer,
+            mesh_layout,
+            texture_layout,
             depth_format,
         })
     }
@@ -200,13 +211,52 @@ impl Renderer {
         })
     }
 
+    /// Create a uniform buffer + bind group for a per-mesh [`GpuMeshUniform`]
+    /// (group 1). Callers write the uniform into the returned buffer via
+    /// `queue.write_buffer` before each frame.
+    pub fn mesh_uniform_buffer(&self) -> wgpu::Buffer {
+        self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occluview mesh uniform"),
+            size: size_of::<GpuMeshUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Build the per-mesh bind group binding a uniform buffer at group 1.
+    pub fn mesh_bind_group(&self, uniform_buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("occluview mesh bind group"),
+            layout: &self.mesh_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        })
+    }
+
+    /// The texture bind group layout (group 2): a `texture_2d<f32>` at binding
+    /// 0 and a `sampler` at binding 1. Exposed so callers can build bind groups
+    /// against their own uploaded textures.
+    pub fn texture_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.texture_layout
+    }
+
     /// Issue the draw for one mesh inside a render pass. Caller has already
     /// begun the pass against a color+depth view, set the camera, and will
     /// submit the encoder. Picks the triangle or point pipeline by `kind`.
+    ///
+    /// `mesh_bg` is the per-mesh uniform bind group (group 1); `texture_bg`
+    /// is the texture+sampler bind group (group 2). For untextured meshes,
+    /// pass a 1×1 white fallback texture bind group — the shader's
+    /// `has_texture=0` branch won't sample it.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
-        bind_group: &'a wgpu::BindGroup,
+        camera_bg: &'a wgpu::BindGroup,
+        mesh_bg: &'a wgpu::BindGroup,
+        texture_bg: &'a wgpu::BindGroup,
         mesh: &'a GpuMesh,
         kind: occluview_core::MeshKind,
     ) {
@@ -215,7 +265,9 @@ impl Renderer {
             occluview_core::MeshKind::PointCloud => &self.point_pipeline,
         };
         rpass.set_pipeline(pipe);
-        rpass.set_bind_group(0, bind_group, &[]);
+        rpass.set_bind_group(0, camera_bg, &[]);
+        rpass.set_bind_group(1, mesh_bg, &[]);
+        rpass.set_bind_group(2, texture_bg, &[]);
         mesh.draw(rpass, kind);
     }
 
@@ -233,4 +285,49 @@ impl Renderer {
     pub fn depth_format(&self) -> wgpu::TextureFormat {
         self.depth_format
     }
+}
+
+/// Bind group layout for the per-mesh uniform (group 1): one uniform buffer
+/// visible to both vertex and fragment stages.
+fn mesh_uniform_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("occluview mesh uniform layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size_of::<GpuMeshUniform>() as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
+/// Bind group layout for the texture + sampler (group 2): a
+/// `texture_2d<f32>` at binding 0 (fragment), a filtering sampler at binding
+/// 1 (fragment).
+fn texture_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("occluview texture layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
 }

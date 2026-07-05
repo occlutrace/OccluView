@@ -30,11 +30,13 @@
 pub mod camera;
 pub mod error;
 pub mod gpu;
+pub mod mesh_uniform;
 pub mod offscreen;
 pub mod pipeline;
 
 pub use camera::GpuCamera;
 pub use error::RenderError;
 pub use gpu::GpuMesh;
+pub use mesh_uniform::GpuMeshUniform;
 pub use offscreen::{Offscreen, ThumbnailSpec};
 pub use pipeline::Renderer;

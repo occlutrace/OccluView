@@ -4,6 +4,7 @@
 use crate::camera::GpuCamera;
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
+use crate::mesh_uniform::GpuMeshUniform;
 use crate::pipeline::Renderer;
 use occluview_core::Mesh;
 
@@ -28,6 +29,14 @@ impl Default for ThumbnailSpec {
 /// Offscreen renderer. Wraps a headless [`Renderer`].
 pub struct Offscreen {
     renderer: Renderer,
+    /// Cached identity mesh uniform + bind group (group 1). The thumbnail path
+    /// renders one mesh at the origin, so the model matrix is identity.
+    mesh_uniform_buffer: wgpu::Buffer,
+    mesh_bind_group: wgpu::BindGroup,
+    /// Cached 1×1 white fallback texture + bind group (group 2). The thumbnail
+    /// path uses vertex colors (no texture), but the pipeline requires a bound
+    /// group-2 resource.
+    texture_bind_group: wgpu::BindGroup,
 }
 
 impl Offscreen {
@@ -39,7 +48,27 @@ impl Offscreen {
     #[allow(clippy::unused_async)]
     pub async fn new() -> Result<Self, RenderError> {
         let renderer = Renderer::new_headless(wgpu::TextureFormat::Rgba8Unorm).await?;
-        Ok(Self { renderer })
+        let device = renderer.device();
+        let queue = renderer.queue();
+
+        // Identity mesh uniform (group 1).
+        let mesh_uniform_buffer = renderer.mesh_uniform_buffer();
+        queue.write_buffer(
+            &mesh_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&GpuMeshUniform::identity()),
+        );
+        let mesh_bind_group = renderer.mesh_bind_group(&mesh_uniform_buffer);
+
+        // 1×1 white fallback texture + sampler (group 2).
+        let texture_bind_group = make_fallback_texture_bind_group(device, queue, &renderer);
+
+        Ok(Self {
+            renderer,
+            mesh_uniform_buffer,
+            mesh_bind_group,
+            texture_bind_group,
+        })
     }
 
     /// Render `mesh` with the given camera into an RGBA8 buffer.
@@ -66,7 +95,7 @@ impl Offscreen {
 
         let gpu_mesh = GpuMesh::upload(device, queue, mesh);
         self.renderer.set_camera(camera);
-        let bind_group = self.renderer.camera_bind_group();
+        let camera_bg = self.renderer.camera_bind_group();
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("occluview offscreen encoder"),
@@ -78,7 +107,9 @@ impl Offscreen {
         self.encode_pass(
             &mut encoder,
             &targets,
-            &bind_group,
+            &camera_bg,
+            &self.mesh_bind_group,
+            &self.texture_bind_group,
             &gpu_mesh,
             mesh.kind(),
             spec.background,
@@ -113,16 +144,32 @@ impl Offscreen {
         Ok(self.read_back(&output_buffer, padded, spec.size_px))
     }
 
+    /// Access the underlying renderer (for callers that need device/queue).
+    pub fn renderer(&self) -> &Renderer {
+        &self.renderer
+    }
+
+    /// Access the cached fallback texture bind group (group 2). Useful for
+    /// multi-mesh draws where some meshes are untextured.
+    pub fn fallback_texture_bind_group(&self) -> &wgpu::BindGroup {
+        &self.texture_bind_group
+    }
+
+    /// Access the cached identity mesh uniform buffer. Useful for building
+    /// additional bind groups.
+    pub fn identity_uniform_buffer(&self) -> &wgpu::Buffer {
+        &self.mesh_uniform_buffer
+    }
+
     /// Begin the offscreen render pass against `targets` and draw `mesh`.
-    /// The five arguments are distinct concepts (encoder, target views, bind
-    /// group, mesh, clear color) that don't share a natural grouping beyond
-    /// `RenderTargets`, hence the local allow.
     #[allow(clippy::too_many_arguments)]
     fn encode_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         targets: &RenderTargets<'_>,
-        bind_group: &wgpu::BindGroup,
+        camera_bg: &wgpu::BindGroup,
+        mesh_bg: &wgpu::BindGroup,
+        texture_bg: &wgpu::BindGroup,
         mesh: &GpuMesh,
         kind: occluview_core::MeshKind,
         background: [f64; 4],
@@ -153,7 +200,8 @@ impl Offscreen {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        self.renderer.draw(&mut rpass, bind_group, mesh, kind);
+        self.renderer
+            .draw(&mut rpass, camera_bg, mesh_bg, texture_bg, mesh, kind);
     }
 
     fn read_back(
@@ -192,6 +240,74 @@ impl Offscreen {
 struct RenderTargets<'a> {
     color: &'a wgpu::TextureView,
     depth: &'a wgpu::TextureView,
+}
+
+/// Build a 1×1 white `Rgba8Unorm` texture + linear sampler + bind group for
+/// group 2. Used as the bound-texture fallback for untextured meshes (the
+/// shader's `has_texture=0` branch never samples it, but the pipeline layout
+/// requires the binding).
+fn make_fallback_texture_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &Renderer,
+) -> wgpu::BindGroup {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("occluview fallback white texture"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[255, 255, 255, 255],
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("occluview fallback sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("occluview fallback texture bind group"),
+        layout: renderer.texture_layout(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&tex_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    })
 }
 
 fn make_color_target(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::TextureView) {

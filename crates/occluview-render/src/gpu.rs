@@ -75,6 +75,12 @@ impl GpuMesh {
                     offset: 24,
                     shader_location: 2,
                 },
+                // uv: vec2<f32> @ offset 28
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 28,
+                    shader_location: 3,
+                },
             ],
         }
     }
