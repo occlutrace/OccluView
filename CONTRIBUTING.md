@@ -17,7 +17,7 @@ Requirements:
 - Git ≥ 2.30 (for `--force-with-lease` and signed DCO commits).
 
 ```bash
-git clone https://github.com/zer0ltrnce/occluview
+git clone https://github.com/occlutrace/occluview
 cd occluview
 rustup show          # installs the pinned toolchain
 cargo build --workspace

@@ -43,4 +43,4 @@ Categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`,
 - Implementation begins after this foundational commit. No binary is released
   yet; the first shipped binary will be `v0.1.0`.
 
-[Unreleased]: https://github.com/zer0ltrnce/occluview/compare/HEAD
+[Unreleased]: https://github.com/occlutrace/occluview/compare/HEAD

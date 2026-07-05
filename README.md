@@ -71,7 +71,7 @@ Requirements: Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.to
 Windows 10/11 SDK.
 
 ```bash
-git clone https://github.com/zer0ltrnce/occluview
+git clone https://github.com/occlutrace/occluview
 cd occluview
 cargo build --workspace --release
 ```

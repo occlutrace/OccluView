@@ -2,28 +2,28 @@
 # Last matching pattern wins. Lines starting with # are comments.
 
 # Default owner for anything not matched below.
-* @zer0ltrnce
+* @occlutrace/maintainers
 
 # Architecture & governance — two approvals for changes here (AGENTS.md §7).
-/AGENTS.md @zer0ltrnce
-/docs/ARCHITECTURE.md @zer0ltrnce
-/docs/adr/ @zer0ltrnce
-/CONTRIBUTING.md @zer0ltrnce
-/SECURITY.md @zer0ltrnce
-/TRADEMARK.md @zer0ltrnce
-/LICENSE @zer0ltrnce
-/NOTICE @zer0ltrnce
+/AGENTS.md @occlutrace/maintainers
+/docs/ARCHITECTURE.md @occlutrace/maintainers
+/docs/adr/ @occlutrace/maintainers
+/CONTRIBUTING.md @occlutrace/maintainers
+/SECURITY.md @occlutrace/maintainers
+/TRADEMARK.md @occlutrace/maintainers
+/LICENSE @occlutrace/maintainers
+/NOTICE @occlutrace/maintainers
 
 # Per-crate owners.
-/crates/occluview-core/ @zer0ltrnce
-/crates/occluview-formats/ @zer0ltrnce
+/crates/occluview-core/ @occlutrace/maintainers
+/crates/occluview-formats/ @occlutrace/maintainers
 /crates/occluview-render/ @occluview/render
-/crates/occluview-shell/ @zer0ltrnce
+/crates/occluview-shell/ @occlutrace/maintainers
 /crates/occluview-app/ @occluview/app
 /crates/occluview-cli/ @occluview/app
 
 # Security-sensitive paths.
-/crates/occluview-formats/src/ @zer0ltrnce
-/Cargo.toml @zer0ltrnce
-/deny.toml @zer0ltrnce
-/.github/workflows/ @zer0ltrnce
+/crates/occluview-formats/src/ @occlutrace/maintainers
+/Cargo.toml @occlutrace/maintainers
+/deny.toml @occlutrace/maintainers
+/.github/workflows/ @occlutrace/maintainers
