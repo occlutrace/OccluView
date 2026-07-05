@@ -26,3 +26,4 @@ occluview-shell   = { workspace = true }
 anyhow            = { workspace = true }
 tracing           = { workspace = true }
 tracing-subscriber = { workspace = true }
+image             = { workspace = true }

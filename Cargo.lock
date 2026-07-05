@@ -2042,6 +2042,7 @@ name = "occluview-cli"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "image",
  "occluview-core",
  "occluview-formats",
  "occluview-render",
