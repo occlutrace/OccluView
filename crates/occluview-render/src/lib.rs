@@ -39,6 +39,6 @@ pub use camera::GpuCamera;
 pub use error::RenderError;
 pub use gpu::GpuMesh;
 pub use mesh_uniform::GpuMeshUniform;
-pub use offscreen::{Offscreen, ThumbnailSpec};
+pub use offscreen::{Offscreen, SceneDrawEntry, ThumbnailSpec};
 pub use pipeline::Renderer;
 pub use texture::GpuTexture;

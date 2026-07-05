@@ -9,8 +9,8 @@
 //! new PNG with an ADR-style justification in the PR (AGENTS.md §0.6).
 
 use glam::{Mat4, Vec3};
-use occluview_core::{Mesh, MeshBuilder, Vertex};
-use occluview_render::{GpuCamera, Offscreen, ThumbnailSpec};
+use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
+use occluview_render::{GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, ThumbnailSpec};
 
 const SIZE: u16 = 64;
 const TOLERANCE: u8 = 8; // per-channel diff allowed
@@ -114,6 +114,111 @@ fn point_cloud_mesh() -> Mesh {
     }
     let _ = MeshKind::PointCloud; // document intent
     b.as_point_cloud().build().expect("valid point cloud")
+}
+
+/// A textured-triangle golden test: validates the full texture pipeline
+/// (Vertex.uv -> WGSL sampler -> tint -> lighting) end-to-end on WARP. Uses
+/// a synthetic 2x2 checkerboard texture so the output is deterministic.
+fn textured_triangle_mesh() -> Mesh {
+    // UV-mapped triangle covering UV space [0,0]-[1,1].
+    let mut b = MeshBuilder::new();
+    let a = b.push_vertex(
+        Vertex::at(Vec3::new(-0.5, -0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_uv([0.0, 0.0]),
+    );
+    let c = b.push_vertex(
+        Vertex::at(Vec3::new(0.5, -0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_uv([1.0, 0.0]),
+    );
+    let d = b.push_vertex(
+        Vertex::at(Vec3::new(0.0, 0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_uv([0.5, 1.0]),
+    );
+    b.push_triangle(a, c, d);
+    b.build().expect("valid textured mesh")
+}
+
+/// A 2x2 checkerboard: top-left + bottom-right red, other two green.
+fn checkerboard_texture() -> MeshTexture {
+    MeshTexture::new(
+        2,
+        2,
+        vec![
+            255, 0, 0, 255, // (0,0) red
+            0, 255, 0, 255, // (1,0) green
+            0, 255, 0, 255, // (0,1) green
+            255, 0, 0, 255, // (1,1) red
+        ],
+    )
+}
+
+#[test]
+fn textured_triangle_renders_checkerboard() {
+    let mesh = textured_triangle_mesh();
+    let cam = camera_looking_at_origin();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let device = offscreen.renderer().device();
+    let queue = offscreen.renderer().queue();
+
+    // Upload the checkerboard texture.
+    let gpu_tex = GpuTexture::upload(offscreen.renderer(), device, queue, &checkerboard_texture());
+
+    // Per-mesh uniform: identity model, white tint, full opacity, has_texture=1.
+    let uniform = GpuMeshUniform {
+        model: [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ],
+        tint: [1.0, 1.0, 1.0, 1.0],
+        opacity: 1.0,
+        has_texture: 1,
+        pad: [0, 0],
+    };
+
+    let entries = [occluview_render::SceneDrawEntry {
+        mesh: &mesh,
+        uniform: &uniform,
+        texture: Some(&gpu_tex),
+    }];
+    let spec = ThumbnailSpec {
+        size_px: SIZE,
+        ..Default::default()
+    };
+    let pixels =
+        pollster::block_on(offscreen.render_scene(&entries, &cam, spec)).expect("render scene");
+
+    // The triangle covers the center of the frame. With a 2x2 checker and
+    // linear filtering, sampled colors range between red and green. Assert:
+    // (1) there are visible pixels (not all background),
+    // (2) both red-dominant and green-dominant pixels appear (the checkerboard
+    //     is actually being sampled, not a flat color).
+    let bg = [10, 10, 10, 255];
+    let mut non_bg = 0usize;
+    let mut red_dominant = 0usize;
+    let mut green_dominant = 0usize;
+    for px in pixels.chunks_exact(4) {
+        if px[0] == bg[0] && px[1] == bg[1] && px[2] == bg[2] {
+            continue;
+        }
+        non_bg += 1;
+        let (r, g) = (i32::from(px[0]), i32::from(px[1]));
+        if r > g + 20 {
+            red_dominant += 1;
+        } else if g > r + 20 {
+            green_dominant += 1;
+        }
+    }
+    assert!(non_bg > 50, "textured triangle rendered almost nothing");
+    assert!(
+        red_dominant > 5 && green_dominant > 5,
+        "checkerboard not visible: red={red_dominant} green={green_dominant} \
+         (expected both > 5 — texture sampling may be broken)"
+    );
 }
 
 fn render_point_cloud_to_pixels() -> Vec<u8> {
