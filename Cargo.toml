@@ -87,7 +87,7 @@ wgpu = "22.0"               # pinned; bumping is a PR + changelog entry (ADR-000
 
 # Windowing / GUI (ADR-0003).
 egui    = "0.29"
-eframe  = { version = "0.29", default-features = false, features = ["wgpu", "default_fonts"] }
+eframe  = { version = "0.32", default-features = false, features = ["wgpu", "default_fonts"] }
 rfd     = { version = "0.14", default-features = false, features = ["xdg-portal"] }
 
 # Windows bindings (shell + windowing interop) — windows-rs only.
