@@ -408,6 +408,7 @@ impl OccluViewApp {
         let Some(preview) = self.bridge_split.session().preview().cloned() else {
             return;
         };
+        let surface_result = !preview.result.report.parts_closed;
         let Some(entry) = live_bridge_entry(scene, Some(preview.guard.target)) else {
             self.cancel_bridge_split("Bridge split canceled: source mesh changed");
             return;
@@ -442,7 +443,9 @@ impl OccluViewApp {
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
-        self.status_message = Some(if undoable {
+        self.status_message = Some(if surface_result {
+            "Bridge split complete (surface result; natural borders preserved)".to_string()
+        } else if undoable {
             "Bridge split complete".to_string()
         } else {
             "Bridge split complete (not undoable: snapshot too large)".to_string()

@@ -623,6 +623,29 @@ fn bridge_split_normalization_refuses_structural_nonmanifold_surgery() {
 }
 
 #[test]
+fn bridge_split_attempts_surface_fallback_after_structural_preflight_refusal() {
+    let source = textured_cube();
+    let mut vertices = source.vertices().to_vec();
+    let apex = u32::try_from(vertices.len()).expect("small fixture");
+    vertices.push(Vertex::at([0.0, -2.0, 0.0].into()));
+    let mut indices = source.indices().to_vec();
+    indices.extend([0, 1, apex]);
+    let nonmanifold_source = Mesh::new(Some("Structural defect".to_string()), vertices, indices)
+        .expect("mesh accepts indexed import data");
+
+    let result = bridge_split_mesh_in_world(
+        &nonmanifold_source,
+        Affine3A::IDENTITY,
+        request(Vec3::ZERO, Vec3::X),
+    )
+    .expect("surface fallback must still attempt the split");
+
+    assert!(!result.report.parts_closed);
+    assert!(result.part_a.triangle_count() > 0);
+    assert!(result.part_b.triangle_count() > 0);
+}
+
+#[test]
 fn bridge_split_normalization_refuses_near_coincident_cracks() {
     let source = textured_cube();
     let mut vertices = source.vertices().to_vec();

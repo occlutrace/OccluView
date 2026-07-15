@@ -102,7 +102,10 @@ pub fn prepare_bridge_split_source(
             // An open surface is a valid renderable input for the explicit
             // surface-split fallback. Do not force it through the closed-solid
             // repair contract just to create a misleading preflight error.
-            Err(CoreBridgeSplitError::Kernel(_)) => source,
+            // Repair can also fail while inspecting importer residue. That is
+            // still a reason to try the non-destructive surface path, not a
+            // reason to make the whole tool unavailable.
+            Err(CoreBridgeSplitError::Kernel(_) | CoreBridgeSplitError::Core(_)) => source,
             Err(error) => return Err(error),
         };
         let robust = super::bridge_split_robust::prepare(&source)
@@ -111,7 +114,7 @@ pub fn prepare_bridge_split_source(
         if robust.is_none() {
             let source = match normalized_source(Arc::clone(&source)) {
                 Ok(normalized) => normalized,
-                Err(CoreBridgeSplitError::Kernel(_)) => source,
+                Err(CoreBridgeSplitError::Kernel(_) | CoreBridgeSplitError::Core(_)) => source,
                 Err(error) => return Err(error),
             };
             return Ok(PreparedBridgeSplitSource {
@@ -124,7 +127,7 @@ pub fn prepare_bridge_split_source(
 
     let source = match normalized_source(Arc::clone(&source)) {
         Ok(normalized) => normalized,
-        Err(CoreBridgeSplitError::Kernel(_)) => source,
+        Err(CoreBridgeSplitError::Kernel(_) | CoreBridgeSplitError::Core(_)) => source,
         Err(error) => return Err(error),
     };
     Ok(PreparedBridgeSplitSource {

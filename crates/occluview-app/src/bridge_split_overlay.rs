@@ -225,7 +225,7 @@ fn status_label(mode: BridgeSplitMode) -> &'static str {
         BridgeSplitMode::Following => "Place disc",
         BridgeSplitMode::PlantedPending => "Calculating",
         BridgeSplitMode::PlantedReady => "Ready",
-        BridgeSplitMode::Failed => "Cannot split here",
+        BridgeSplitMode::Failed => "Split attempt failed",
         BridgeSplitMode::Off => "",
     }
 }
@@ -255,25 +255,20 @@ fn error_label(error: &BridgeSplitToolError) -> String {
                 required_radius_mm * 2.0,
                 max_radius_mm * 2.0
             ),
-            occluview_core::BridgeSplitError::OpenOrNonManifold { .. } => {
-                "Bridge must be a closed, single-shell mesh before splitting.".to_string()
-            }
-            occluview_core::BridgeSplitError::DisconnectedInput { .. } => {
-                "Choose one connected bridge mesh to split.".to_string()
-            }
-            occluview_core::BridgeSplitError::DegenerateInput { .. } => {
-                "Bridge contains degenerate faces. Repair the mesh before splitting.".to_string()
+            occluview_core::BridgeSplitError::OpenOrNonManifold { .. }
+            | occluview_core::BridgeSplitError::DisconnectedInput { .. }
+            | occluview_core::BridgeSplitError::DegenerateInput { .. } => {
+                "The split was attempted with the source surface preserved, but no usable result was produced. The original mesh was kept.".to_string()
             }
             occluview_core::BridgeSplitError::DamagedCutRim { .. }
             | occluview_core::BridgeSplitError::CapFailed { .. } => {
-                "This placement cannot produce clean closed parts. Move or tilt the disc."
-                    .to_string()
+                "The split was attempted, but the resulting cut could not be validated. The original mesh was kept.".to_string()
             }
             occluview_core::BridgeSplitError::InvalidOutput { side, .. } => {
-                format!("This placement would leave {side} invalid. Move or tilt the disc.")
+                format!("The split was attempted, but {side} could not be validated. The original mesh was kept.")
             }
             occluview_core::BridgeSplitError::SeparationViolation { .. } => {
-                "The requested gap cannot be preserved at this scale. Reduce the kerf.".to_string()
+                "The split was attempted, but the requested gap could not be preserved. The original mesh was kept.".to_string()
             }
             occluview_core::BridgeSplitError::EmptyInput => {
                 "The selected layer has no triangle mesh to split.".to_string()
@@ -286,9 +281,9 @@ fn error_label(error: &BridgeSplitToolError) -> String {
         BridgeSplitToolError::InvalidTransform { .. }
         | BridgeSplitToolError::Conversion { .. }
         | BridgeSplitToolError::Core { .. }
-        | BridgeSplitToolError::WorkerStopped => "Preview could not be calculated.".to_string(),
-        BridgeSplitToolError::RobustCsg { .. } => {
-            "Disc must pass through one connector and leave two closed parts.".to_string()
+        | BridgeSplitToolError::RobustCsg { .. }
+        | BridgeSplitToolError::WorkerStopped => {
+            "The split could not produce a usable result. The original mesh was kept.".to_string()
         }
     }
 }
@@ -321,5 +316,15 @@ mod tests {
             )),
             "Disc misses the bridge. Move it into a connector."
         );
+    }
+
+    #[test]
+    fn topology_failures_do_not_expose_repair_instructions() {
+        let label = error_label(&BridgeSplitToolError::Kernel(
+            occluview_core::BridgeSplitError::DegenerateInput { faces: 4 },
+        ));
+        assert!(!label.to_ascii_lowercase().contains("repair"));
+        assert!(!label.to_ascii_lowercase().contains("degenerate"));
+        assert!(label.contains("original mesh was kept"));
     }
 }
