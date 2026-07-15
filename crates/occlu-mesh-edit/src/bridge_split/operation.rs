@@ -1,6 +1,6 @@
 use glam::DVec3;
 
-use super::cap::cap_open_part;
+use super::cap::{cap_open_part, cap_surface_part};
 use super::clip::{clip_bridge_open, clip_bridge_surface_open};
 use super::{BridgeSplitRequest, BridgeSplitResult, SurfaceSplitResult};
 use crate::{validate_bridge_split_part, BridgeSplitError, MeshEditBuffers};
@@ -79,12 +79,16 @@ fn cap_surface_cut(
     cut_edges: &[[u32; 2]],
     expected_normal: DVec3,
 ) -> (MeshEditBuffers, usize) {
-    match cap_open_part(mesh.clone(), cut_edges, expected_normal) {
+    match cap_surface_part(mesh.clone(), cut_edges, expected_normal) {
         Ok((capped, loops)) => (capped, loops),
-        // An open source can make the cut rim terminate at a natural border.
-        // Preserve the clipped surface rather than fabricating a cap across
-        // anatomy or refusing the otherwise useful split preview.
-        Err(_) => (mesh, 0),
+        Err(_) => match cap_open_part(mesh.clone(), cut_edges, expected_normal) {
+            Ok((capped, loops)) => (capped, loops),
+            // An open source can make some cut paths terminate at a natural
+            // border or contain a genuinely ambiguous branch. Preserve those
+            // paths rather than fabricating a cap across anatomy or refusing
+            // the useful split.
+            Err(_) => (mesh, 0),
+        },
     }
 }
 

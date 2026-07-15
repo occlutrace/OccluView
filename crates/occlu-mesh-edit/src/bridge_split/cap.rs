@@ -1,19 +1,47 @@
 use glam::{DVec3, Vec3};
+use std::collections::BTreeMap;
 
-use super::rims::build_cut_loops;
+use super::rims::{build_closed_cut_loops, build_cut_loops};
 use crate::cap_minweight::rim_is_simple_3d;
 use crate::holes_walk::ear_clip_cap;
+use crate::topology::canonical_position_key;
 use crate::{
     copy_surviving_vertices, recompute_all_normals, remap_triangle_indices, BridgeSplitError,
     MeshEditBuffers, MeshEditError,
 };
 
 pub(crate) fn cap_open_part(
-    mut mesh: MeshEditBuffers,
+    mesh: MeshEditBuffers,
     cut_edges: &[[u32; 2]],
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
     let loops = build_cut_loops(&mesh, cut_edges)?;
+    cap_open_part_from_loops(mesh, loops, expected_normal)
+}
+
+/// Cap every complete cut rim that can be recovered from a surface split.
+///
+/// Surface inputs may have a natural scan border intersecting the separator.
+/// Such a cut path is intentionally left open, but it must not prevent an
+/// independent closed cut loop on another connected surface from being capped.
+pub(crate) fn cap_surface_part(
+    mesh: MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    expected_normal: DVec3,
+) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
+    let loops = build_closed_cut_loops(&mesh, cut_edges)?;
+    cap_open_part_from_loops(mesh, loops, expected_normal)
+}
+
+fn cap_open_part_from_loops(
+    mut mesh: MeshEditBuffers,
+    loops: Vec<Vec<usize>>,
+    expected_normal: DVec3,
+) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
+    // STL and payload-seamed exports can carry several indices at one cut
+    // position. Join only the generated cut-rim aliases; source borders and
+    // unrelated attribute seams remain untouched.
+    weld_cut_rim_aliases(&mut mesh, &loops)?;
     let mut cap_indices = Vec::new();
     for ring in &loops {
         let points = ring_points(&mesh, ring)?;
@@ -40,6 +68,58 @@ pub(crate) fn cap_open_part(
     compact_unreferenced_vertices(&mut mesh)?;
     recompute_all_normals(&mut mesh.vertices, &mesh.indices)?;
     Ok((mesh, loops.len()))
+}
+
+fn weld_cut_rim_aliases(
+    mesh: &mut MeshEditBuffers,
+    loops: &[Vec<usize>],
+) -> Result<(), MeshEditError> {
+    let mut representative_by_position: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+    for &vertex_index in loops.iter().flatten() {
+        let vertex =
+            mesh.vertices
+                .get(vertex_index)
+                .ok_or_else(|| MeshEditError::MalformedMesh {
+                    reason: "cut rim vertex is out of range while welding aliases".to_string(),
+                })?;
+        let key = canonical_position_key(vertex.position);
+        representative_by_position
+            .entry(key)
+            .and_modify(|representative| *representative = (*representative).min(vertex_index))
+            .or_insert(vertex_index);
+    }
+    if representative_by_position.is_empty() {
+        return Ok(());
+    }
+
+    let mut remap: Vec<u32> = (0..mesh.vertices.len())
+        .map(|index| {
+            u32::try_from(index).map_err(|_| MeshEditError::MalformedMesh {
+                reason: "cut rim vertex count exceeds u32::MAX".to_string(),
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    for (index, vertex) in mesh.vertices.iter().enumerate() {
+        if let Some(&representative) =
+            representative_by_position.get(&canonical_position_key(vertex.position))
+        {
+            remap[index] =
+                u32::try_from(representative).map_err(|_| MeshEditError::MalformedMesh {
+                    reason: "cut rim representative exceeds u32::MAX".to_string(),
+                })?;
+        }
+    }
+    for index in &mut mesh.indices {
+        let remapped =
+            remap
+                .get(*index as usize)
+                .copied()
+                .ok_or_else(|| MeshEditError::MalformedMesh {
+                    reason: "cut rim alias references an out-of-range index".to_string(),
+                })?;
+        *index = remapped;
+    }
+    Ok(())
 }
 
 fn compact_unreferenced_vertices(mesh: &mut MeshEditBuffers) -> Result<(), MeshEditError> {

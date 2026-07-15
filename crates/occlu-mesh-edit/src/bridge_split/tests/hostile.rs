@@ -6,6 +6,7 @@ use crate::{
     MeshTopology,
 };
 use glam::DVec3;
+use std::collections::BTreeMap;
 
 #[test]
 fn branching_cut_graph_is_refused() {
@@ -104,6 +105,40 @@ fn full_supported_kerf_range_produces_closed_parts() {
         assert_eq!(result.report.part_a_cut_loops, 1);
         assert_eq!(result.report.part_b_cut_loops, 1);
     }
+}
+
+#[test]
+fn split_welds_payload_seams_on_the_new_cut_rim() {
+    let result = split_bridge(&super::exploded_cube_with_payload_seams(), request())
+        .expect("payload-seamed closed surface splits");
+
+    assert_eq!(cut_boundary_edge_count(&result.part_a, 0.025), 0);
+    assert_eq!(cut_boundary_edge_count(&result.part_b, -0.025), 0);
+    assert_eq!(validate_bridge_split_part(&result.part_a), Ok(1));
+    assert_eq!(validate_bridge_split_part(&result.part_b), Ok(1));
+}
+
+fn cut_boundary_edge_count(mesh: &MeshEditBuffers, plane_x: f32) -> usize {
+    let mut edges = BTreeMap::<(u32, u32), usize>::new();
+    for face in mesh.indices.chunks_exact(3) {
+        for [first, second] in [[face[0], face[1]], [face[1], face[2]], [face[2], face[0]]] {
+            let edge = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            *edges.entry(edge).or_default() += 1;
+        }
+    }
+    edges
+        .into_iter()
+        .filter(|((first, second), count)| {
+            *count == 1
+                && [*first, *second].into_iter().all(|index| {
+                    (mesh.vertices[index as usize].position[0] - plane_x).abs() <= 1.0e-5
+                })
+        })
+        .count()
 }
 
 #[test]
