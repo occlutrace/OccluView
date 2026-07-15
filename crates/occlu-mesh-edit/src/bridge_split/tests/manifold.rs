@@ -1,6 +1,6 @@
 use super::{
     closed_cube, closed_l_prism, closed_torus, exploded_cube_with_payload_seams,
-    exploded_cube_with_uniform_payload, request,
+    exploded_cube_with_uniform_payload, hollow_cube_with_payload, request,
 };
 use crate::topology::{canonical_topology, TopologyWeldPolicy};
 use crate::topology_analysis::{connected_components, edge_incidence, topology_defects};
@@ -102,6 +102,34 @@ fn payload_seam_soup_succeeds_end_to_end() {
     let result = split_bridge(&exploded_cube_with_payload_seams(), request())
         .expect("payload-seamed soup splits and caps");
     assert_result_manufacturable(&result);
+}
+
+#[test]
+fn surface_split_caps_nested_connector_surfaces_as_a_planar_ring() {
+    let result = split_bridge_surface(&hollow_cube_with_payload(), request())
+        .expect("nested surface shells split");
+
+    for part in [&result.part_a, &result.part_b] {
+        let canonical = canonical_topology(part, TopologyWeldPolicy::PositionOnly)
+            .expect("canonical output topology");
+        let incidence = edge_incidence(canonical.indices());
+        let defects = topology_defects(canonical.indices(), &incidence);
+        assert_eq!(defects.boundary_edges, 0, "surface cap left a boundary");
+        assert_eq!(defects.non_manifold_edges, 0);
+        assert_eq!(defects.inconsistent_winding_edges, 0);
+        assert_eq!(
+            connected_components(canonical.indices(), &incidence)
+                .members
+                .len(),
+            1
+        );
+        assert!(part
+            .vertices
+            .iter()
+            .all(|vertex| vertex.position[0].abs() >= 0.024_999));
+    }
+    assert_eq!(result.report.part_a_cut_loops, 2);
+    assert_eq!(result.report.part_b_cut_loops, 2);
 }
 
 #[test]

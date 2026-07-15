@@ -2,6 +2,7 @@ mod attributes;
 mod cap;
 pub(crate) mod clip;
 mod operation;
+mod planar_cap;
 mod rims;
 mod types;
 mod validate;

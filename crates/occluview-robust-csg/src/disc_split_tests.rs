@@ -185,6 +185,20 @@ fn cavity_may_span_the_union_of_overlapping_additive_shells() {
 }
 
 #[test]
+fn hollow_shell_split_keeps_both_inner_and_outer_cut_rims() {
+    let mut mesh = empty_mesh();
+    append_box(&mut mesh, [-2.0; 3], [2.0; 3]);
+    let cavity = append_box(&mut mesh, [-1.0; 3], [1.0; 3]);
+    reverse_faces(&mut mesh, cavity);
+
+    let split = split_with_separator_disc(&mesh, bridge_disc()).expect("hollow shell split");
+
+    assert_eq!(split.report.part_a_cut_loops, 2);
+    assert_eq!(split.report.part_b_cut_loops, 2);
+    assert!((split_gap(&split, bridge_disc().center, bridge_disc().normal) - 0.2).abs() < 1.0e-8);
+}
+
+#[test]
 fn globally_reversed_input_is_reoriented_as_one_model() {
     let mut mesh = empty_mesh();
     let faces = append_box(&mut mesh, [-1.0; 3], [1.0; 3]);

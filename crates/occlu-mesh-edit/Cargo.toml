@@ -14,5 +14,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+earcutr = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }

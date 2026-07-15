@@ -78,6 +78,33 @@ fn exploded_cube_with_uniform_payload() -> MeshEditBuffers {
     }
 }
 
+fn hollow_cube_with_payload() -> MeshEditBuffers {
+    let outer = closed_cube();
+    let mut vertices = outer.vertices.clone();
+    let inner_offset = u32::try_from(vertices.len()).expect("small fixture");
+    vertices.extend(outer.vertices.iter().map(|source| {
+        let mut vertex = *source;
+        vertex.position = vertex.position.map(|coordinate| coordinate * 0.5);
+        vertex.color = [180, 140, 100, 255];
+        vertex.uv = [0.25, 0.75];
+        vertex
+    }));
+
+    let mut indices = outer.indices.clone();
+    indices.extend(outer.indices.chunks_exact(3).flat_map(|triangle| {
+        [
+            inner_offset + triangle[0],
+            inner_offset + triangle[2],
+            inner_offset + triangle[1],
+        ]
+    }));
+    MeshEditBuffers {
+        vertices,
+        indices,
+        topology: MeshTopology::TriangleMesh,
+    }
+}
+
 fn translated_cube(offset: Vec3) -> MeshEditBuffers {
     let mut cube = closed_cube();
     for vertex in &mut cube.vertices {
