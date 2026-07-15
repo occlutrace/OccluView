@@ -19,18 +19,20 @@ pub(crate) fn cap_open_part(
     cap_open_part_from_loops(mesh, loops, expected_normal)
 }
 
-/// Cap every complete cut rim that can be recovered from a surface split.
+/// Cap every recoverable closed cut rim from a surface split.
 ///
 /// Surface inputs may have a natural scan border intersecting the separator.
 /// Such a cut path is intentionally left open, but it must not prevent an
 /// independent closed cut loop on another connected surface from being capped.
-pub(crate) fn cap_surface_part(
+/// A failed loop is isolated so one bad component cannot discard caps that were
+/// already valid on the same output part.
+pub(crate) fn cap_surface_part_best_effort(
     mesh: MeshEditBuffers,
     cut_edges: &[[u32; 2]],
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
     let loops = build_closed_cut_loops(&mesh, cut_edges)?;
-    cap_open_part_from_loops(mesh, loops, expected_normal)
+    cap_open_part_from_loops_best_effort(mesh, loops, expected_normal)
 }
 
 fn cap_open_part_from_loops(
@@ -44,30 +46,64 @@ fn cap_open_part_from_loops(
     weld_cut_rim_aliases(&mut mesh, &loops)?;
     let mut cap_indices = Vec::new();
     for ring in &loops {
-        let points = ring_points(&mesh, ring)?;
-        validate_planar_simple_loop(&points, expected_normal)?;
-        let local_triangles = triangulate_loop(&mesh, ring, &points, expected_normal)?;
-        if local_triangles.len() != ring.len() - 2 {
-            return Err(cap_failed("a cut loop did not produce a complete cap"));
-        }
-        validate_cap_winding(&mesh, ring, &local_triangles, expected_normal)?;
-        for local in local_triangles {
-            for corner in local {
-                let global = *ring.get(corner).ok_or_else(|| {
-                    cap_failed("cap triangulation referenced a missing rim vertex")
-                })?;
-                cap_indices.push(u32::try_from(global).map_err(|_| {
-                    MeshEditError::MalformedMesh {
-                        reason: "cap vertex index exceeds u32::MAX".to_string(),
-                    }
-                })?);
-            }
-        }
+        cap_indices.extend(cap_loop_indices(&mesh, ring, expected_normal)?);
     }
     mesh.indices.extend(cap_indices);
     compact_unreferenced_vertices(&mut mesh)?;
     recompute_all_normals(&mut mesh.vertices, &mesh.indices)?;
     Ok((mesh, loops.len()))
+}
+
+fn cap_open_part_from_loops_best_effort(
+    mut mesh: MeshEditBuffers,
+    loops: Vec<Vec<usize>>,
+    expected_normal: DVec3,
+) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
+    weld_cut_rim_aliases(&mut mesh, &loops)?;
+    let mut cap_indices = Vec::new();
+    let mut capped_loops = 0;
+    for ring in &loops {
+        if let Ok(indices) = cap_loop_indices(&mesh, ring, expected_normal) {
+            cap_indices.extend(indices);
+            capped_loops += 1;
+        }
+    }
+    if capped_loops == 0 {
+        return Err(cap_failed("no recoverable cut loop could be capped"));
+    }
+    mesh.indices.extend(cap_indices);
+    compact_unreferenced_vertices(&mut mesh)?;
+    recompute_all_normals(&mut mesh.vertices, &mesh.indices)?;
+    Ok((mesh, capped_loops))
+}
+
+fn cap_loop_indices(
+    mesh: &MeshEditBuffers,
+    ring: &[usize],
+    expected_normal: DVec3,
+) -> Result<Vec<u32>, BridgeSplitError> {
+    let points = ring_points(mesh, ring)?;
+    validate_planar_simple_loop(&points, expected_normal)?;
+    let local_triangles = triangulate_loop(mesh, ring, &points, expected_normal)?;
+    if local_triangles.len() != ring.len() - 2 {
+        return Err(cap_failed("a cut loop did not produce a complete cap"));
+    }
+    validate_cap_winding(mesh, ring, &local_triangles, expected_normal)?;
+
+    let mut indices = Vec::with_capacity(local_triangles.len() * 3);
+    for triangle in local_triangles {
+        for corner in triangle {
+            let global = *ring
+                .get(corner)
+                .ok_or_else(|| cap_failed("cap triangulation referenced a missing rim vertex"))?;
+            indices.push(
+                u32::try_from(global).map_err(|_| MeshEditError::MalformedMesh {
+                    reason: "cap vertex index exceeds u32::MAX".to_string(),
+                })?,
+            );
+        }
+    }
+    Ok(indices)
 }
 
 fn weld_cut_rim_aliases(
@@ -436,6 +472,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn surface_cap_keeps_valid_loops_when_another_loop_is_unusable() {
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(6.0, 0.0, 0.0),
+            Vec3::new(6.0, 2.0, 0.2),
+            Vec3::new(4.0, 2.0, 0.0),
+        ];
+        let mesh = MeshEditBuffers {
+            vertices: vertices
+                .into_iter()
+                .map(|position| crate::EditVertex::at(position.to_array()))
+                .collect(),
+            indices: Vec::new(),
+            topology: crate::MeshTopology::TriangleMesh,
+        };
+        let cut_edges = [
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 0],
+            [4, 5],
+            [5, 6],
+            [6, 7],
+            [7, 4],
+        ];
+
+        let (capped, loop_count) = cap_surface_part_best_effort(mesh, &cut_edges, DVec3::Z)
+            .expect("the valid loop must survive the unusable loop");
+
+        assert_eq!(loop_count, 1);
+        assert_eq!(capped.indices.len(), 6);
     }
 
     fn are_boundary_neighbors(first: usize, second: usize, len: usize) -> bool {

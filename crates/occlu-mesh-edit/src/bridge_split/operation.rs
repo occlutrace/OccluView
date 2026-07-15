@@ -1,6 +1,6 @@
 use glam::DVec3;
 
-use super::cap::{cap_open_part, cap_surface_part};
+use super::cap::{cap_open_part, cap_surface_part_best_effort};
 use super::clip::{clip_bridge_open, clip_bridge_surface_open};
 use super::validate::{validate_vertex_geometry_payloads, validate_vertex_payloads};
 use super::{BridgeSplitRequest, BridgeSplitResult, SurfaceSplitResult};
@@ -96,7 +96,7 @@ fn cap_surface_cut(
     cut_edges: &[[u32; 2]],
     expected_normal: DVec3,
 ) -> (MeshEditBuffers, usize) {
-    match cap_surface_part(mesh.clone(), cut_edges, expected_normal) {
+    match cap_surface_part_best_effort(mesh.clone(), cut_edges, expected_normal) {
         Ok((capped, loops)) => (capped, loops),
         Err(_) => match cap_open_part(mesh.clone(), cut_edges, expected_normal) {
             Ok((capped, loops)) => (capped, loops),

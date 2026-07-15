@@ -158,7 +158,7 @@ pub(super) fn rim_selection_qualifies(
             let b = boundary_loop[(index + 1) % loop_len];
             owner_by_edge
                 .get(&(a, b))
-                .is_some_and(|owner| selection.as_slice()[*owner])
+                .is_some_and(|owner| selection.as_slice().get(*owner).copied().unwrap_or(false))
         })
         .count();
     // `selected / loop_len >= 0.5`, done in integers to stay exact.
