@@ -1,0 +1,29 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+*.rs.bk
+/dist/
+
+# IDE / editor
+/.idea/
+/.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local config / secrets
+/.env
+/.env.local
+
+# Perf / profiling artifacts
+/perf-results/
+*.pftrace
+flamegraph.svg
+
+# Generated docs locally
+/target/doc
+
+# OS junk
+ehthumbs.db
+desktop.ini

@@ -1,0 +1,37 @@
+# clippy configuration.
+# Enforced in CI: `cargo clippy --workspace --all-targets -- -D warnings`.
+
+# Cognitive complexity per function.
+cognitive-complexity-threshold = 15
+
+# Max function arguments.
+too-many-arguments-threshold = 5
+
+# Max number of lines in a function body.
+# Clippy's `too_many_lines` default is 100; we tighten to 60.
+# NOTE: file-length (500) is enforced by a separate custom CI check, not clippy.
+
+# Enum variant size: warn on large variants (helps keep types cache-friendly).
+enum-variant-size-threshold = 256
+
+# Prefer MSRV-aware lints. Matches rust-toolchain.toml.
+msrv = "1.86"
+
+# Allow certain words in identifiers that clippy's `doc_markdown` flags
+# incorrectly for our domain.
+doc-valid-idents = [
+    "OccluView",
+    "OccluTrace",
+    "WebGPU",
+    "OpenXR",
+    "Win32",
+    "Direct3D",
+    "D3D11",
+    "D3D12",
+    "WARP",
+    "..",
+]
+
+# NOTE: lint enablement (e.g. `empty_loop`, `too_many_lines`) lives in
+# `[workspace.lints.clippy]` in Cargo.toml, NOT here. This file only holds the
+# numeric thresholds that clippy reads from clippy.toml.

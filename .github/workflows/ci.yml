@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  # Don't let a stray println slow the build or pull optional features.
+  CARGO_NET_RETRY: 3
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: rustfmt check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  cross-compile:
+    # Catch type bugs in the Windows-adjacent cross-platform crates from Linux.
+    name: cross-compile (windows-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: Install mingw
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      - name: cargo check (cross-platform crates)
+        run: |
+          cargo check -p occluview-core -p occluview-formats -p occluview-render \
+            --target x86_64-pc-windows-gnu
+
+  windows-only:
+    # Build the Windows COM shell path and app Windows integration on a real
+    # Windows host. Other jobs compile the cross-platform app path.
+    name: build (windows integration)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: cargo check (shell + app)
+        run: cargo check -p occluview-shell -p occluview-app
+
+  linux-renderer-tests:
+    # The real offscreen raster suite runs on a supported software Vulkan
+    # adapter here. GitHub's Windows WARP adapter is not a reliable pixel-test
+    # target: it can exhaust device allocations or stall map callbacks despite
+    # working production hardware paths.
+    name: test (linux renderer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: Install Lavapipe Vulkan adapter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers vulkan-tools
+          icd=$(find /usr/share/vulkan/icd.d -name '*lvp*.json' -print -quit)
+          test -n "$icd"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          echo "WGPU_BACKEND=vulkan" >> "$GITHUB_ENV"
+          vulkaninfo --summary
+      - name: cargo test --workspace
+        run: cargo test --workspace --all-targets --no-fail-fast
+
+  test:
+    # Keep Windows logic/COM coverage on the real target OS. Pixel assertions
+    # run in the Linux renderer job above; WARP is exercised separately by the
+    # MSI lifecycle smoke and is not stable enough for a large raster suite.
+    name: test (windows shell)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: cargo test --workspace (without WARP pixel suites)
+        run: >
+          cargo test --workspace --all-targets --no-fail-fast --
+          --skip render_thumb::tests
+          --skip preview_scene::
+
+  docs:
+    name: cargo doc
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: cargo doc (no warnings)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --all-features
+
+  deny:
+    name: cargo deny (licenses + advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: EmbarkStudios/cargo-deny-action@v2.0.20
+        with:
+          arguments: --workspace --all-features

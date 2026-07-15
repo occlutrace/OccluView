@@ -1,0 +1,28 @@
+# occluview-thumbnail — platform-neutral thumbnail loading and rendering.
+[package]
+name = "occluview-thumbnail"
+description = "Platform-neutral OccluView thumbnail loading, rendering, and fallback pipeline."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+occluview-core    = { workspace = true }
+occluview-formats = { workspace = true }
+occluview-render  = { workspace = true }
+tracing           = { workspace = true }
+thiserror         = { workspace = true }
+pollster          = { workspace = true }
+glam              = { workspace = true }
+sha2              = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+zip      = { workspace = true }

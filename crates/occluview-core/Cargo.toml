@@ -1,0 +1,32 @@
+# occluview-core — pure logic. NO I/O, NO GPU, NO Win32, NO panics.
+# Layering: this crate depends on the lower-level product-neutral
+# `occlu-mesh-edit` crate. The optional `robust-csg` feature adds an isolated
+# native CSG fallback without making the default core graph platform-bound.
+[package]
+name = "occluview-core"
+description = "Pure logic for OccluView: math, units, mesh data model, scene graph, camera."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+robust-csg = ["dep:occluview-robust-csg"]
+
+[lints]
+workspace = true
+
+[dependencies]
+glam      = { workspace = true }
+bytemuck  = { workspace = true }
+thiserror = { workspace = true }
+rayon     = { workspace = true }
+occlu-mesh-edit = { workspace = true }
+occluview-robust-csg = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

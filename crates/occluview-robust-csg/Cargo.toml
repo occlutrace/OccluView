@@ -1,0 +1,20 @@
+# Native robust CSG kernel boundary. It deliberately owns the C++ Manifold
+# dependency so higher-level mesh/scene code stays independent of its FFI.
+[package]
+name = "occluview-robust-csg"
+description = "Robust closed-mesh CSG operations for OccluView."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }
+thiserror = { workspace = true }
+manifold-csg = { workspace = true }

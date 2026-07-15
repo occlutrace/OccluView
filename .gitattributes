@@ -1,0 +1,29 @@
+# Normalize line endings to LF in the repo, CRLF on checkout for Windows.
+# This matters because we develop on Windows and CI runs on Windows; mixed
+# endings cause needless diffs and break shell-extension registration scripts.
+* text=auto eol=lf
+
+# Binary file types — never merge / diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.lib binary
+*.3mf binary
+*.glb binary
+
+# Markdown / source — force LF (these are edited on Windows too).
+*.md   text eol=lf
+*.rs   text eol=lf
+*.toml text eol=lf
+*.wgsl text eol=lf
+
+# Linguist hints for GitHub language stats (we want Rust to dominate).
+*.wgsl linguist-language=Rust

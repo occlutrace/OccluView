@@ -1,0 +1,9 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OccluView
+Source: https://github.com/occlutrace/OccluView
+
+Files: *
+Copyright: 2026 Dental Cloud Technologies and contributors
+License: Apache-2.0
+ On Debian systems, the full Apache License 2.0 text is available at
+ /usr/share/common-licenses/Apache-2.0.

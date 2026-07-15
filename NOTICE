@@ -1,0 +1,18 @@
+OccluView
+Copyright 2026 Dental Cloud Technologies and individual contributors.
+
+This product includes software developed as part of the OccluView project
+(https://github.com/occlutrace/occluview).
+
+This product includes software developed by the following third parties
+(see respective crates for full license texts):
+
+  - wgpu            (MIT OR Apache-2.0)  — WebGPU abstraction
+  - egui            (MIT)               — immediate-mode GUI
+  - cgltf           (MIT)               — glTF 2.0 loader dependency
+  - fastgltf        (MIT)               — glTF 2.0 loader (SIMD, considered, not used)
+  - serde           (MIT OR Apache-2.0) — serialization framework (glTF JSON)
+  - serde_json      (MIT OR Apache-2.0) — JSON parser
+  - rayon           (MIT OR Apache-2.0) — data parallelism
+  - windows-rs      (MIT OR Apache-2.0) — Windows COM / Win32 bindings
+  - bytemuck        (MIT OR Apache-2.0 OR Zlib) — zero-copy byte casts

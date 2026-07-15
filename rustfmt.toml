@@ -1,0 +1,10 @@
+# rustfmt configuration.
+# Keep this minimal and close to rustfmt defaults to reduce churn.
+
+edition = "2021"
+max_width = 100
+
+# Stable-only options; we avoid nightly-only rustfmt features so the pinned
+# toolchain reproduces CI formatting exactly.
+use_field_init_shorthand = true
+use_try_shorthand = true

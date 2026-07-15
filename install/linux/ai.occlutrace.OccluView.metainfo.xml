@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>ai.occlutrace.OccluView</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>OccluView</name>
+  <developer id="ai.occlutrace">
+    <name>Dental Cloud Technologies</name>
+  </developer>
+  <summary>Fast 3D mesh viewer for dental scans</summary>
+  <description>
+    <p>
+      OccluView opens common dental scan and mesh files in a native desktop
+      viewport with multi-file layers, camera controls, screenshots, and
+      thumbnail rendering.
+    </p>
+  </description>
+  <launchable type="desktop-id">ai.occlutrace.OccluView.desktop</launchable>
+  <provides>
+    <binary>occluview</binary>
+    <binary>occluview-cli</binary>
+  </provides>
+  <url type="homepage">https://occlutrace.ai</url>
+  <url type="vcs-browser">https://github.com/occlutrace/OccluView</url>
+  <content_rating type="oars-1.1" />
+</component>

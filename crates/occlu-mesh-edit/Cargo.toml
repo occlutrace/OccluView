@@ -1,0 +1,18 @@
+# occlu-mesh-edit — product-neutral mesh editing kernels.
+[package]
+name = "occlu-mesh-edit"
+description = "Pure mesh editing kernels shared by OccluView and OccluTrace adapters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }
+thiserror = { workspace = true }

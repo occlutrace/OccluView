@@ -1,0 +1,64 @@
+# occluview-app - the GUI binary (egui + wgpu).
+[package]
+name = "occluview-app"
+description = "OccluView desktop viewer - egui + wgpu."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "occluview"
+path = "src/main.rs"
+
+# Cross-platform deps usable on any host. Linux builds run the same egui/wgpu
+# viewer as Windows; Windows shell integration remains in the target block.
+[dependencies]
+occluview-core    = { workspace = true, features = ["robust-csg"] }
+occluview-formats = { workspace = true }
+occluview-render  = { workspace = true }
+occluview-update  = { workspace = true }
+anyhow            = { workspace = true }
+tracing           = { workspace = true }
+tracing-subscriber = { workspace = true }
+glam              = { workspace = true }
+pollster          = { workspace = true }
+bytemuck          = { workspace = true }
+egui              = { workspace = true }
+eframe            = { workspace = true, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+rfd               = { workspace = true }
+image             = { workspace = true }
+# Read the top-level window handle for the single-instance file handoff (used
+# to raise the running window). The X11-specific raise lives behind a Linux
+# target dep (x11rb); this crate only provides the handle type, so it stays
+# cross-platform. See `src/single_instance/activation.rs`.
+raw-window-handle = "0.6"
+
+# Linux-only: send `_NET_ACTIVE_WINDOW` ourselves to raise the window past WM
+# focus-stealing prevention on the file handoff. See activation.rs.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb             = "0.13"
+
+# Windows shell and windowing integration.
+[target.'cfg(windows)'.dependencies]
+occluview-shell = { workspace = true }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }

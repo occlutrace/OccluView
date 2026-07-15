@@ -1,0 +1,23 @@
+[package]
+name = "occluview-update"
+description = "Self-update checks for OccluView: signed latest.json manifest, artifact verification, installer handoff."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+minisign-verify = "0.2"
+semver = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+ureq = { version = "2.10", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+minisign = "0.7"
+
+[lints]
+workspace = true
