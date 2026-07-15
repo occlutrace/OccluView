@@ -17,6 +17,13 @@ $formatProgIds = @{
     dcm = "MeshFile.HPS"
     hps = "MeshFile.HPS"
 }
+$formatFriendlyNames = @{
+    "MeshFile.STL" = "STL File"
+    "MeshFile.PLY" = "PLY File"
+    "MeshFile.OBJ" = "OBJ File"
+    "MeshFile.GLB" = "GLB File"
+    "MeshFile.HPS" = "HPS File"
+}
 $legacyFormatProgIds = @{
     stl = "OccluView.Mesh.STL"
     ply = "OccluView.Mesh.PLY"
@@ -244,9 +251,9 @@ function Assert-InstalledRegistry {
         $progid = $formatProgIds[$ext]
         $formatIcon = $formatIconFiles[$ext]
         $defaultIcon = $formatDefaultIcons[$ext]
-        $upper = $ext.ToUpperInvariant()
+        $friendlyName = $formatFriendlyNames[$progid]
         Assert-PathExists $formatIcon
-        Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\$progid") "$upper File" "$progid friendly name"
+        Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\$progid") $friendlyName "$progid friendly name"
         Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\$progid" "ThumbnailCutoff") "1" "$progid thumbnail cutoff"
         Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\$progid" "TypeOverlay") "" "$progid thumbnail overlay"
         Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\$progid\DefaultIcon") $defaultIcon "$progid default icon"
