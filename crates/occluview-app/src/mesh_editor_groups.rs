@@ -228,7 +228,7 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
             cell_width,
             EditorIcon::CloseHoles,
             "Close holes",
-            "Repair safe interior holes. Marked faces scope the repair; without marks every visible layer is checked. Scan borders stay open.",
+            "Close holes only when the surrounding faces are selected. Scan borders stay open.",
             enabled,
             false,
         )
@@ -263,7 +263,9 @@ fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
             .speed(0.5)
             .suffix(" mm"),
     )
-    .on_hover_text("Off repairs every safe interior hole; the scan border always stays open");
+    .on_hover_text(
+        "Off closes every safe hole inside the selected area; the scan border stays open",
+    );
     super::set_close_holes_limit_enabled(ui.ctx(), armed);
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
 }

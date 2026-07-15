@@ -72,7 +72,7 @@ pub use component_pick::component_at_triangle;
 pub use components::selected_connected_components;
 pub use delete_crop::{crop_to_selected_faces, delete_selected_faces};
 pub use error::{BridgeSplitError, MeshEditError};
-pub use holes::fill_holes;
+pub use holes::{fill_holes, fill_selected_holes};
 pub use normals::recompute_all_normals;
 pub use orientation::invert_orientation;
 pub use repair::{repair_mesh, RepairOptions, RepairReport, RepairResult};

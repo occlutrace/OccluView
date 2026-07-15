@@ -126,6 +126,20 @@ pub fn fill_holes(
     fill_holes_with_outcome(mesh, selection, options).map(|(result, _)| result)
 }
 
+/// Close only holes whose surrounding faces are covered by an explicit face
+/// selection. This is the user-facing Mesh Editor contract; an empty
+/// selection is a valid no-op and never widens into a whole-mesh repair.
+///
+/// # Errors
+/// Returns the same typed validation or cap errors as [`fill_holes`].
+pub fn fill_selected_holes(
+    mesh: &MeshEditBuffers,
+    selection: &FaceSelection,
+    options: MeshEditOptions,
+) -> Result<MeshEditResult, MeshEditError> {
+    fill_holes(mesh, Some(selection), options)
+}
+
 /// [`fill_holes`] plus the per-loop skip breakdown the repair pipeline needs.
 ///
 /// The returned [`MeshEditResult`] is exactly what [`fill_holes`] returns

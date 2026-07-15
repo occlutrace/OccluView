@@ -3,7 +3,7 @@ use super::{
     exploded_cube_with_payload_seams, point_touching_cubes_with_separate_topology, request,
 };
 use crate::{
-    validate_bridge_split, validate_bridge_split_part, BridgeSplitError, EditVertex,
+    split_bridge, validate_bridge_split, validate_bridge_split_part, BridgeSplitError, EditVertex,
     MeshEditBuffers, MeshEditError, MeshTopology,
 };
 use glam::Vec3;
@@ -56,13 +56,20 @@ fn non_finite_vertex_payload_is_rejected() {
 }
 
 #[test]
-fn non_finite_normal_or_uv_is_rejected() {
+fn non_finite_uv_is_rejected_but_normals_are_repaired() {
     let mut bad_normal = closed_cube();
-    bad_normal.vertices[2].normal[0] = f32::INFINITY;
-    assert!(matches!(
-        validate_bridge_split(&bad_normal, request()),
-        Err(BridgeSplitError::Mesh(MeshEditError::MalformedMesh { .. }))
-    ));
+    for vertex in &mut bad_normal.vertices {
+        vertex.normal = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+    }
+    assert!(validate_bridge_split(&bad_normal, request()).is_ok());
+    let result = split_bridge(&bad_normal, request()).expect("corrupt normals are repairable");
+    for part in [&result.part_a, &result.part_b] {
+        assert!(part
+            .vertices
+            .iter()
+            .all(|vertex| vertex.normal.into_iter().all(f32::is_finite)));
+        assert!(validate_bridge_split_part(part).is_ok());
+    }
 
     let mut bad_uv = closed_cube();
     bad_uv.vertices[3].uv[1] = f32::NAN;

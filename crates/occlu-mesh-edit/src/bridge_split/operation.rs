@@ -2,8 +2,9 @@ use glam::DVec3;
 
 use super::cap::{cap_open_part, cap_surface_part};
 use super::clip::{clip_bridge_open, clip_bridge_surface_open};
+use super::validate::{validate_vertex_geometry_payloads, validate_vertex_payloads};
 use super::{BridgeSplitRequest, BridgeSplitResult, SurfaceSplitResult};
-use crate::{validate_bridge_split_part, BridgeSplitError, MeshEditBuffers};
+use crate::{recompute_all_normals, validate_bridge_split_part, BridgeSplitError, MeshEditBuffers};
 
 /// Split one closed bridge mesh with a finite separator disc and return two
 /// independently closed, manufacturable parts. The operation is all-or-nothing:
@@ -16,7 +17,8 @@ pub fn split_bridge(
     mesh: &MeshEditBuffers,
     request: BridgeSplitRequest,
 ) -> Result<BridgeSplitResult, BridgeSplitError> {
-    let open = clip_bridge_open(mesh, request)?;
+    let prepared = prepare_split_mesh(mesh)?;
+    let open = clip_bridge_open(&prepared, request)?;
     let normal = request.normal.as_dvec3().normalize();
     let (positive_mesh, positive_loop_count) =
         cap_open_part(open.part_a, &open.part_a_cut_edges, -normal)?;
@@ -55,10 +57,13 @@ pub fn split_bridge_surface(
     mesh: &MeshEditBuffers,
     request: BridgeSplitRequest,
 ) -> Result<SurfaceSplitResult, BridgeSplitError> {
-    let open = clip_bridge_surface_open(mesh, request)?;
+    let prepared = prepare_split_mesh(mesh)?;
+    let open = clip_bridge_surface_open(&prepared, request)?;
     let normal = request.normal.as_dvec3().normalize();
     let (part_a, a_cut_loops) = cap_surface_cut(open.part_a, &open.part_a_cut_edges, -normal);
     let (part_b, b_cut_loops) = cap_surface_cut(open.part_b, &open.part_b_cut_edges, normal);
+    validate_vertex_payloads(&part_a)?;
+    validate_vertex_payloads(&part_b)?;
     validate_separation(&part_a, &part_b, request)?;
 
     let mut report = open.report;
@@ -72,6 +77,18 @@ pub fn split_bridge_surface(
         part_b,
         report,
     })
+}
+
+/// Prepare a disposable split input without changing the caller's mesh.
+/// Positions, indices, and UVs remain strict geometry inputs; normals are
+/// derived display payload and are rebuilt from triangle winding so corrupt
+/// importer normals cannot poison clipping or intersection interpolation.
+fn prepare_split_mesh(mesh: &MeshEditBuffers) -> Result<MeshEditBuffers, BridgeSplitError> {
+    validate_vertex_geometry_payloads(mesh)?;
+    let mut prepared = mesh.clone();
+    recompute_all_normals(&mut prepared.vertices, &prepared.indices)?;
+    validate_vertex_payloads(&prepared)?;
+    Ok(prepared)
 }
 
 fn cap_surface_cut(

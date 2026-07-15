@@ -278,17 +278,15 @@ fn bridge_split_mesh_fast(
     let reflected = matrix.determinant() < 0.0;
     let center = request.center.as_dvec3();
     let mut centered = mesh_edit_buffers_from_mesh(source);
-    let normal_to_world = matrix.inverse().transpose();
 
     for vertex in &mut centered.vertices {
         let local_position = DVec3::from_array(vertex.position.map(f64::from));
         let relative_world = affine.transform_point3(local_position) - center;
         vertex.position = finite_vec3(relative_world, "world-relative position")?;
-        vertex.normal = transform_normal(
-            DVec3::from_array(vertex.normal.map(f64::from)),
-            normal_to_world,
-            "world normal",
-        )?;
+        // Normals are derived from the transformed geometry by the split
+        // kernel. Do not let stale/NaN importer normals poison the world-space
+        // adapter before the kernel gets a chance to repair them.
+        vertex.normal = [0.0; 3];
     }
     if reflected {
         reverse_triangle_winding(&mut centered.indices);
@@ -337,17 +335,14 @@ fn bridge_split_mesh_surface(
     let reflected = matrix.determinant() < 0.0;
     let center = request.center.as_dvec3();
     let mut centered = mesh_edit_buffers_from_mesh(source);
-    let normal_to_world = matrix.inverse().transpose();
 
     for vertex in &mut centered.vertices {
         let local_position = DVec3::from_array(vertex.position.map(f64::from));
         let relative_world = affine.transform_point3(local_position) - center;
         vertex.position = finite_vec3(relative_world, "world-relative surface position")?;
-        vertex.normal = transform_normal(
-            DVec3::from_array(vertex.normal.map(f64::from)),
-            normal_to_world,
-            "world surface normal",
-        )?;
+        // See the fast closed-solid path above: normals are reconstructed from
+        // the world-space triangle winding inside the split kernel.
+        vertex.normal = [0.0; 3];
     }
     if reflected {
         reverse_triangle_winding(&mut centered.indices);

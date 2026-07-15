@@ -128,17 +128,7 @@ impl OccluViewApp {
             .into_iter()
             .map(|selection| selection.layer_id)
             .collect::<Vec<_>>();
-        let target_layers =
-            if layer_action == LayerContextAction::CloseHoles && selected_layers.is_empty() {
-                scene
-                    .meshes()
-                    .iter()
-                    .filter(|entry| entry.visible)
-                    .map(occluview_core::SceneMesh::id)
-                    .collect::<Vec<_>>()
-            } else {
-                selected_layers
-            };
+        let target_layers = selected_layers;
         if target_layers.is_empty() {
             self.status_message = Some("Select mesh faces first".to_string());
             return;
