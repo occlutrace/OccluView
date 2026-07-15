@@ -64,8 +64,9 @@ mod holes_tests;
 
 pub use attributes::{copy_surviving_vertices, remap_triangle_indices};
 pub use bridge_split::{
-    split_bridge, validate_bridge_split, validate_bridge_split_part, validate_bridge_split_request,
-    BridgeSplitReport, BridgeSplitRequest, BridgeSplitResult,
+    split_bridge, split_bridge_surface, validate_bridge_split, validate_bridge_split_part,
+    validate_bridge_split_request, BridgeSplitReport, BridgeSplitRequest, BridgeSplitResult,
+    SurfaceSplitResult,
 };
 pub use component_pick::component_at_triangle;
 pub use components::selected_connected_components;

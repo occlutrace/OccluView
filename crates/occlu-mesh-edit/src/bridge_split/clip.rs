@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use glam::DVec3;
 
 use super::attributes::{interpolate_vertex, VertexAttributeKey};
-use super::validate::{prepare_bridge_split, NormalizedBridgeSplitRequest};
+use super::validate::{normalize_request, prepare_bridge_split, NormalizedBridgeSplitRequest};
+use crate::topology::{canonical_topology, CanonicalTopology, TopologyWeldPolicy};
 use crate::{
-    BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, EditVertex, MeshEditBuffers,
-    MeshEditError, MeshTopology,
+    validate_face_edit_buffers, BridgeSplitError, BridgeSplitReport, BridgeSplitRequest,
+    EditVertex, MeshEditBuffers, MeshEditError, MeshTopology,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -174,7 +175,24 @@ pub(crate) fn clip_bridge_open(
     request: BridgeSplitRequest,
 ) -> Result<OpenBridgeSplit, BridgeSplitError> {
     let prepared = prepare_bridge_split(mesh, request)?;
-    let normalized = prepared.request;
+    clip_bridge_open_with_topology(mesh, prepared.request, prepared.topology)
+}
+
+pub(crate) fn clip_bridge_surface_open(
+    mesh: &MeshEditBuffers,
+    request: BridgeSplitRequest,
+) -> Result<OpenBridgeSplit, BridgeSplitError> {
+    validate_face_edit_buffers(mesh.topology, &mesh.vertices, &mesh.indices)?;
+    let normalized = normalize_request(request)?;
+    let topology = canonical_topology(mesh, TopologyWeldPolicy::PositionOnly)?;
+    clip_bridge_open_with_topology(mesh, normalized, topology)
+}
+
+fn clip_bridge_open_with_topology(
+    mesh: &MeshEditBuffers,
+    normalized: NormalizedBridgeSplitRequest,
+    topology: CanonicalTopology,
+) -> Result<OpenBridgeSplit, BridgeSplitError> {
     let half_kerf = normalized.kerf_mm * 0.5;
     let epsilon = snap_epsilon(mesh, normalized.kerf_mm);
     let signed_distances: Vec<f64> = mesh
@@ -215,7 +233,7 @@ pub(crate) fn clip_bridge_open(
     let mut part_a = MeshBuilder::new(mesh.vertices.len(), area_epsilon);
     let mut part_b = MeshBuilder::new(mesh.vertices.len(), area_epsilon);
     for (triangle, source_face) in mesh.indices.chunks_exact(3).enumerate() {
-        let canonical_face = &prepared.topology.indices()[triangle * 3..triangle * 3 + 3];
+        let canonical_face = &topology.indices()[triangle * 3..triangle * 3 + 3];
         let positive = clip_triangle(
             mesh,
             source_face,
@@ -262,6 +280,7 @@ pub(crate) fn clip_bridge_open(
         required_disc_radius_mm: finite_f64_to_f32(required_radius),
         part_a_cut_loops: 0,
         part_b_cut_loops: 0,
+        parts_closed: false,
     };
     Ok(OpenBridgeSplit {
         part_a: positive_mesh,

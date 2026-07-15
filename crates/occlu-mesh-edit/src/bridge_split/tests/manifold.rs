@@ -4,7 +4,7 @@ use super::{
 };
 use crate::topology::{canonical_topology, TopologyWeldPolicy};
 use crate::topology_analysis::{connected_components, edge_incidence, topology_defects};
-use crate::{split_bridge, BridgeSplitResult, MeshEditBuffers};
+use crate::{split_bridge, split_bridge_surface, BridgeSplitResult, MeshEditBuffers};
 use glam::Vec3;
 
 fn assert_closed_manifold(mesh: &MeshEditBuffers) {
@@ -126,6 +126,26 @@ fn concave_planar_connector_loop_caps_completely() {
     assert_result_manufacturable(&result);
     assert_eq!(result.report.part_a_cut_loops, 1);
     assert_eq!(result.report.part_b_cut_loops, 1);
+}
+
+#[test]
+fn open_surface_split_preserves_natural_source_borders() {
+    let mut source = closed_cube();
+    source.indices.drain(0..3);
+
+    let result = split_bridge_surface(&source, request()).expect("open surface clips");
+
+    assert!(!result.part_a.indices.is_empty());
+    assert!(!result.part_b.indices.is_empty());
+    assert!(!result.report.parts_closed);
+    assert_eq!(
+        result.report.part_a_triangles,
+        result.part_a.triangle_count()
+    );
+    assert_eq!(
+        result.report.part_b_triangles,
+        result.part_b.triangle_count()
+    );
 }
 
 #[test]

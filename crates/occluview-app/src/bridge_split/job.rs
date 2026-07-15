@@ -241,14 +241,16 @@ mod tests {
 
     #[allow(clippy::expect_used)]
     #[test]
-    fn source_cache_does_not_remember_preparation_failures() {
-        let source = Arc::new(open_triangle("invalid"));
+    fn source_cache_remembers_open_surface_preparation() {
+        let source = Arc::new(open_triangle("surface"));
         let topology_id = source.topology_id();
         let mut cache = BridgeSplitSourceCache::default();
 
-        assert!(cache.prepared_source(&source).is_err());
-        assert!(!cache.entries.contains_key(&topology_id));
-        assert!(!cache.recency.contains(&topology_id));
+        cache
+            .prepared_source(&source)
+            .expect("open surface is eligible for the surface fallback");
+        assert!(cache.entries.contains_key(&topology_id));
+        assert!(cache.recency.contains(&topology_id));
     }
 
     #[allow(clippy::expect_used)]

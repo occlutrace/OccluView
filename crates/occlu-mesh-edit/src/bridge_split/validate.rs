@@ -173,7 +173,7 @@ fn validate_vertex_payloads(mesh: &MeshEditBuffers) -> Result<(), BridgeSplitErr
     Ok(())
 }
 
-fn normalize_request(
+pub(crate) fn normalize_request(
     request: BridgeSplitRequest,
 ) -> Result<NormalizedBridgeSplitRequest, BridgeSplitError> {
     if !request.center.is_finite() {

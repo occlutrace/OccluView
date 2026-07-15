@@ -1,8 +1,8 @@
 use glam::DVec3;
 
 use super::cap::cap_open_part;
-use super::clip::clip_bridge_open;
-use super::{BridgeSplitRequest, BridgeSplitResult};
+use super::clip::{clip_bridge_open, clip_bridge_surface_open};
+use super::{BridgeSplitRequest, BridgeSplitResult, SurfaceSplitResult};
 use crate::{validate_bridge_split_part, BridgeSplitError, MeshEditBuffers};
 
 /// Split one closed bridge mesh with a finite separator disc and return two
@@ -32,11 +32,60 @@ pub fn split_bridge(
     report.part_b_triangles = negative_mesh.triangle_count();
     report.part_a_cut_loops = positive_loop_count;
     report.part_b_cut_loops = negative_loop_count;
+    report.parts_closed = true;
     Ok(BridgeSplitResult {
         part_a: positive_mesh,
         part_b: negative_mesh,
         report,
     })
+}
+
+/// Clip an open or multi-component dental surface with the same finite-disc
+/// placement rules as [`split_bridge`]. Existing natural borders are preserved;
+/// only a simple, complete cut rim is capped when the geometry provides one.
+///
+/// This is intentionally separate from [`split_bridge`]. It is useful for scan
+/// surfaces and framework exports that are valid renderable geometry but are not
+/// closed manufacturing solids. The returned report keeps `parts_closed` false.
+///
+/// # Errors
+/// Returns a typed [`BridgeSplitError`] for malformed buffers, invalid disc
+/// settings, a miss, or a cut that cannot produce two non-empty surface pieces.
+pub fn split_bridge_surface(
+    mesh: &MeshEditBuffers,
+    request: BridgeSplitRequest,
+) -> Result<SurfaceSplitResult, BridgeSplitError> {
+    let open = clip_bridge_surface_open(mesh, request)?;
+    let normal = request.normal.as_dvec3().normalize();
+    let (part_a, a_cut_loops) = cap_surface_cut(open.part_a, &open.part_a_cut_edges, -normal);
+    let (part_b, b_cut_loops) = cap_surface_cut(open.part_b, &open.part_b_cut_edges, normal);
+    validate_separation(&part_a, &part_b, request)?;
+
+    let mut report = open.report;
+    report.part_a_triangles = part_a.triangle_count();
+    report.part_b_triangles = part_b.triangle_count();
+    report.part_a_cut_loops = a_cut_loops;
+    report.part_b_cut_loops = b_cut_loops;
+    report.parts_closed = false;
+    Ok(SurfaceSplitResult {
+        part_a,
+        part_b,
+        report,
+    })
+}
+
+fn cap_surface_cut(
+    mesh: MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    expected_normal: DVec3,
+) -> (MeshEditBuffers, usize) {
+    match cap_open_part(mesh.clone(), cut_edges, expected_normal) {
+        Ok((capped, loops)) => (capped, loops),
+        // An open source can make the cut rim terminate at a natural border.
+        // Preserve the clipped surface rather than fabricating a cap across
+        // anatomy or refusing the otherwise useful split preview.
+        Err(_) => (mesh, 0),
+    }
 }
 
 fn validate_output(side: &'static str, mesh: &MeshEditBuffers) -> Result<(), BridgeSplitError> {
