@@ -1,8 +1,8 @@
 use glam::{Affine3A, DAffine3, DMat3, DVec3, Vec3};
 use occlu_mesh_edit::{
-    fill_holes, repair_mesh, split_bridge, validate_bridge_split, validate_bridge_split_part,
-    validate_bridge_split_request, BridgeSplitError, BridgeSplitReport, BridgeSplitRequest,
-    MeshEditBuffers, MeshEditOptions, RepairOptions, RepairReport,
+    fill_holes, repair_mesh, split_bridge, split_bridge_surface, validate_bridge_split,
+    validate_bridge_split_part, validate_bridge_split_request, BridgeSplitError, BridgeSplitReport,
+    BridgeSplitRequest, MeshEditBuffers, MeshEditOptions, RepairOptions, RepairReport,
 };
 #[cfg(feature = "robust-csg")]
 use occluview_robust_csg::PreparedRobustSolid;
@@ -97,13 +97,23 @@ pub fn prepare_bridge_split_source(
             });
         }
 
-        let source =
-            normalize_bridge_split_input_with_policy(&source, true)?.map_or(source, Arc::new);
+        let source = match normalize_bridge_split_input_with_policy(&source, true) {
+            Ok(normalized) => normalized.map_or(source, Arc::new),
+            // An open surface is a valid renderable input for the explicit
+            // surface-split fallback. Do not force it through the closed-solid
+            // repair contract just to create a misleading preflight error.
+            Err(CoreBridgeSplitError::Kernel(_)) => source,
+            Err(error) => return Err(error),
+        };
         let robust = super::bridge_split_robust::prepare(&source)
             .ok()
             .map(Arc::new);
         if robust.is_none() {
-            let source = normalized_source(source)?;
+            let source = match normalized_source(Arc::clone(&source)) {
+                Ok(normalized) => normalized,
+                Err(CoreBridgeSplitError::Kernel(_)) => source,
+                Err(error) => return Err(error),
+            };
             return Ok(PreparedBridgeSplitSource {
                 source,
                 robust: None,
@@ -112,7 +122,11 @@ pub fn prepare_bridge_split_source(
         return Ok(PreparedBridgeSplitSource { source, robust });
     }
 
-    let source = normalized_source(source)?;
+    let source = match normalized_source(Arc::clone(&source)) {
+        Ok(normalized) => normalized,
+        Err(CoreBridgeSplitError::Kernel(_)) => source,
+        Err(error) => return Err(error),
+    };
     Ok(PreparedBridgeSplitSource {
         source,
         #[cfg(feature = "robust-csg")]
@@ -233,12 +247,22 @@ pub fn bridge_split_prepared_mesh_in_world(
                 // A successful direct result is finite-disc equivalent because
                 // the clipper proves its complete slab radius fits the selected
                 // disc before emitting geometry.
-                return bridge_split_mesh_fast(source, affine, request).map_err(|_| robust_error);
+                return match bridge_split_mesh_fast(source, affine, request) {
+                    Ok(result) => Ok(result),
+                    Err(_) => {
+                        bridge_split_mesh_surface(source, affine, request).map_err(|_| robust_error)
+                    }
+                };
             }
         }
     }
 
-    bridge_split_mesh_fast(source, affine, request)
+    match bridge_split_mesh_fast(source, affine, request) {
+        Ok(result) => Ok(result),
+        Err(fast_error) => {
+            bridge_split_mesh_surface(source, affine, request).map_err(|_| fast_error)
+        }
+    }
 }
 
 fn bridge_split_mesh_fast(
@@ -282,6 +306,76 @@ fn bridge_split_mesh_fast(
         reverse_triangle_winding(&mut part_b.indices);
     }
     validate_restored_result(&part_a, &part_b, affine, request)?;
+
+    let positive_name = part_name(source.name(), "Part A");
+    let negative_name = part_name(source.name(), "Part B");
+    Ok(CoreBridgeSplitResult {
+        part_a: mesh_from_edit_buffers_named_preserving_texture(
+            source,
+            part_a,
+            Some(positive_name),
+        )?,
+        part_b: mesh_from_edit_buffers_named_preserving_texture(
+            source,
+            part_b,
+            Some(negative_name),
+        )?,
+        report: split.report,
+    })
+}
+
+fn bridge_split_mesh_surface(
+    source: &Mesh,
+    affine: DAffine3,
+    request: BridgeSplitRequest,
+) -> Result<CoreBridgeSplitResult, CoreBridgeSplitError> {
+    let inverse = affine.inverse();
+    let matrix = affine.matrix3;
+    let reflected = matrix.determinant() < 0.0;
+    let center = request.center.as_dvec3();
+    let mut centered = mesh_edit_buffers_from_mesh(source);
+    let normal_to_world = matrix.inverse().transpose();
+
+    for vertex in &mut centered.vertices {
+        let local_position = DVec3::from_array(vertex.position.map(f64::from));
+        let relative_world = affine.transform_point3(local_position) - center;
+        vertex.position = finite_vec3(relative_world, "world-relative surface position")?;
+        vertex.normal = transform_normal(
+            DVec3::from_array(vertex.normal.map(f64::from)),
+            normal_to_world,
+            "world surface normal",
+        )?;
+    }
+    if reflected {
+        reverse_triangle_winding(&mut centered.indices);
+    }
+
+    let centered_request = BridgeSplitRequest {
+        center: Vec3::ZERO,
+        normal: request.normal,
+        kerf_mm: request.kerf_mm,
+        disc_radius_mm: request.disc_radius_mm,
+        max_disc_radius_mm: request.max_disc_radius_mm,
+    };
+    let split = split_bridge_surface(&centered, centered_request)?;
+    let mut part_a = restore_local_buffers(split.part_a, inverse, matrix, center)?;
+    let mut part_b = restore_local_buffers(split.part_b, inverse, matrix, center)?;
+    if reflected {
+        reverse_triangle_winding(&mut part_a.indices);
+        reverse_triangle_winding(&mut part_b.indices);
+    }
+
+    let center = request.center.as_dvec3();
+    let normal = request.normal.as_dvec3().normalize();
+    let positive_min = projected_world_min(&part_a, affine, center, normal);
+    let negative_max = projected_world_max(&part_b, affine, center, normal);
+    validate_restored_gap(
+        [&part_a, &part_b],
+        affine,
+        normal,
+        request,
+        (positive_min, negative_max),
+    )?;
 
     let positive_name = part_name(source.name(), "Part A");
     let negative_name = part_name(source.name(), "Part B");

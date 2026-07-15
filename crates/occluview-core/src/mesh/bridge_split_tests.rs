@@ -524,6 +524,30 @@ fn bridge_split_normalization_refuses_large_open_rims() {
 }
 
 #[test]
+fn bridge_split_uses_surface_fallback_for_large_open_rims() {
+    let source = textured_cube();
+    let mut indices = source.indices().to_vec();
+    indices.drain(..3);
+    let large_hole_source = Mesh::new(
+        Some("Open dental surface".to_string()),
+        source.vertices().to_vec(),
+        indices,
+    )
+    .expect("mesh accepts indexed surface data");
+
+    let result = bridge_split_mesh_in_world(
+        &large_hole_source,
+        Affine3A::IDENTITY,
+        request(Vec3::ZERO, Vec3::X),
+    )
+    .expect("open surface still gets a non-destructive split");
+
+    assert!(!result.report.parts_closed);
+    assert!(!result.part_a.indices().is_empty());
+    assert!(!result.part_b.indices().is_empty());
+}
+
+#[test]
 fn bridge_split_reorients_inconsistent_import_faces_before_cutting() {
     let source = textured_cube();
     let mut indices = source.indices().to_vec();

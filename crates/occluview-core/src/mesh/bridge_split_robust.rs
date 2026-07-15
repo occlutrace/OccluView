@@ -119,6 +119,7 @@ fn core_result_from_robust_parts(
             required_disc_radius_mm: request.disc_radius_mm,
             part_a_cut_loops: cut_loops[0],
             part_b_cut_loops: cut_loops[1],
+            parts_closed: true,
         },
         part_a,
         part_b,

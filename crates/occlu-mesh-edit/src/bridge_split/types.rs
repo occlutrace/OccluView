@@ -35,6 +35,8 @@ pub struct BridgeSplitReport {
     pub part_a_cut_loops: usize,
     /// Number of simple cut loops capped on Part B.
     pub part_b_cut_loops: usize,
+    /// Whether both outputs are closed manifold parts.
+    pub parts_closed: bool,
 }
 
 /// Two validated bridge parts produced atomically by the split kernel.
@@ -45,5 +47,19 @@ pub struct BridgeSplitResult {
     /// Geometry on the negative side of the kerf slab.
     pub part_b: MeshEditBuffers,
     /// Deterministic operation statistics.
+    pub report: BridgeSplitReport,
+}
+
+/// Two surface pieces produced when the source is an open dental surface.
+///
+/// This deliberately does not claim that the outputs are manufacturing solids:
+/// natural source borders are preserved instead of being capped speculatively.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceSplitResult {
+    /// Surface geometry on the positive side of the kerf slab.
+    pub part_a: MeshEditBuffers,
+    /// Surface geometry on the negative side of the kerf slab.
+    pub part_b: MeshEditBuffers,
+    /// Operation statistics. `parts_closed` is always false for this path.
     pub report: BridgeSplitReport,
 }
