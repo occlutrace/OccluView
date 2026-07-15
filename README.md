@@ -12,7 +12,7 @@
   <img src="assets/screenshot1.png" alt="OccluView showing a dental scan" width="820">
 </p>
 
-OccluView is an open-source desktop viewer from Dental Cloud Technologies for
+OccluView is an open-source desktop viewer from occlutrace.ai for
 dental scans and common mesh files.
 
 ## Features
@@ -20,8 +20,6 @@ dental scans and common mesh files.
 - Full-window orthographic 3D viewport with orbit, pan, retargeting, cut view,
   ruler, and wall-thickness measurement.
 - Multiple layers with visibility, opacity, tint, and wireframe controls.
-- Face selection by click, rectangle, or lasso, with surface and through-mesh
-  modes.
 - Mesh editing: delete, crop, cut, separate, close selected holes, keep the
   largest component, invert normals, repair, smooth, and undo/redo.
 - Windows Explorer thumbnails, live Preview Pane, file associations, and
@@ -40,12 +38,7 @@ dental scans and common mesh files.
 | `.ply` | Binary and ASCII mesh with vertex colors |
 | `.obj` | Mesh and vertex colors |
 | `.glb` | Meshes with embedded textures supported by the viewer |
-| `.hps`, `.dcm` | 3Shape dental HPS containers |
-
-In OccluView, `.dcm` means the proprietary 3Shape dental container. It is not
-medical DICOM. Encrypted HPS files read the key from
-`OCCLUVIEW_HPS_ENCRYPTION_KEY` (legacy environment aliases are also accepted);
-the key is never taken from command arguments or written to output.
+| `.hps` | 3Shape dental HPS containers |
 
 ## Windows
 
@@ -73,7 +66,7 @@ Results depend on storage, CPU, mesh topology, and texture data.
 
 ## Download
 
-The latest release is [v1.0.2](https://github.com/occlutrace/OccluView/releases/tag/v1.0.2).
+The latest release (https://github.com/occlutrace/OccluView/releases/tag/v1.0.2).
 
 - **Windows MSI**: normal installation with Explorer integration.
 - **Windows portable ZIP**: runs without installation or Explorer integration.
@@ -100,19 +93,12 @@ Generate a thumbnail with the CLI:
 cargo run -p occluview-cli --release -- thumbnail scan.stl -o thumb.png --size 256
 ```
 
-For HPS conversion, the CLI writes `surface.ply`, an optional textured
-`surface.glb`, and `manifest.json` to the selected output directory:
-
 ```bash
 cargo run -p occluview-cli --bin occluview-hps-export --release -- \
   --input scan.hps \
   --output-dir ./converted
 ```
 
-The converter always uses these fixed output names. `manifest.json` is schema
-version 2: it contains the parser version, a required geometry artifact, and an
-optional textured preview artifact. The same JSON object is printed on stdout;
-each artifact records its relative format, path, and lowercase SHA-256.
 
 ## License
 
