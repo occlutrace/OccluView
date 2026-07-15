@@ -44,10 +44,10 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action(
     apply_visible_selected_face_mesh_edit_action_with_limit(scene, edit_mode, action, None)
 }
 
-/// Apply a Mesh Editor operation across the scene. Close Holes intentionally
-/// differs from the face-structural tools: marks scope the repair when present,
-/// while an empty selection means every visible layer gets safe interior-hole
-/// repair. Hidden layers never enter either plan.
+/// Apply a Mesh Editor operation across the scene. Close Holes follows the
+/// same explicit-selection contract as exocad: only marked faces on visible
+/// layers enter the repair plan. An empty selection is a no-op; hidden layers
+/// never enter the plan.
 pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
     scene: &mut Scene,
     edit_mode: &mut EditModeController,
@@ -152,21 +152,10 @@ fn apply_visible_close_holes(
     close_holes_limit_mm: Option<f32>,
 ) -> Result<LayerContextApply, CoreError> {
     let selection_plan = edit_mode.visible_selection_plan(scene);
-    let targets = if selection_plan.is_empty() {
-        scene
-            .meshes()
-            .iter()
-            .filter(|entry| {
-                entry.visible && !entry.mesh.is_point_cloud() && entry.mesh.triangle_count() > 0
-            })
-            .map(|entry| (entry.id(), None))
-            .collect::<Vec<(SceneMeshId, Option<FaceSelection>)>>()
-    } else {
-        selection_plan
-            .into_iter()
-            .map(|selection| (selection.layer_id, Some(selection.selection)))
-            .collect()
-    };
+    let targets = selection_plan
+        .into_iter()
+        .map(|selection| (selection.layer_id, selection.selection))
+        .collect::<Vec<(SceneMeshId, FaceSelection)>>();
     let Some(focus_layer_id) = targets.first().map(|(layer_id, _)| *layer_id) else {
         return Ok(LayerContextApply::default());
     };
@@ -183,12 +172,10 @@ fn apply_visible_close_holes(
         if source.mesh.is_point_cloud() || source.mesh.triangle_count() == 0 {
             return Ok(LayerContextApply::default());
         }
-        if let Some(selection) = selection.as_ref() {
-            if selection.len() != source.mesh.triangle_count() {
-                return Ok(LayerContextApply::default());
-            }
+        if selection.len() != source.mesh.triangle_count() {
+            return Ok(LayerContextApply::default());
         }
-        let repaired = close_holes_in_mesh(&source.mesh, selection.as_ref(), close_holes_limit_mm)?;
+        let repaired = close_holes_in_mesh(&source.mesh, &selection, close_holes_limit_mm)?;
         if repaired.report.filled_holes > 0 {
             planned.push(PlannedEdit::Replace {
                 layer_id,

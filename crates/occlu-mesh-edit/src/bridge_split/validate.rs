@@ -74,7 +74,10 @@ pub(crate) fn prepare_bridge_split(
     if mesh.indices.is_empty() {
         return Err(BridgeSplitError::EmptyInput);
     }
-    validate_vertex_payloads(mesh)?;
+    // Normals are derived payload. The split operation repairs them on its
+    // private working copy before clipping, so a stale or corrupt source
+    // normal must not reject an otherwise usable dental surface.
+    validate_vertex_geometry_payloads(mesh)?;
     let request = normalize_request(request)?;
     let (topology, components) = validate_closed_topology(mesh)?;
 
@@ -149,17 +152,26 @@ fn degenerate_face_count(topology: &crate::topology::CanonicalTopology) -> usize
         .count()
 }
 
-fn validate_vertex_payloads(mesh: &MeshEditBuffers) -> Result<(), BridgeSplitError> {
+pub(crate) fn validate_vertex_payloads(mesh: &MeshEditBuffers) -> Result<(), BridgeSplitError> {
+    validate_vertex_geometry_payloads(mesh)?;
+    for (vertex_index, vertex) in mesh.vertices.iter().enumerate() {
+        if !vertex.normal.into_iter().all(f32::is_finite) {
+            return Err(MeshEditError::MalformedMesh {
+                reason: format!("vertex {vertex_index} has a non-finite normal"),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_vertex_geometry_payloads(
+    mesh: &MeshEditBuffers,
+) -> Result<(), BridgeSplitError> {
     for (vertex_index, vertex) in mesh.vertices.iter().enumerate() {
         if !vertex.position.into_iter().all(f32::is_finite) {
             return Err(MeshEditError::MalformedMesh {
                 reason: format!("vertex {vertex_index} has a non-finite position"),
-            }
-            .into());
-        }
-        if !vertex.normal.into_iter().all(f32::is_finite) {
-            return Err(MeshEditError::MalformedMesh {
-                reason: format!("vertex {vertex_index} has a non-finite normal"),
             }
             .into());
         }

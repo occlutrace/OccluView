@@ -56,10 +56,10 @@ pub use jump_list::JumpListItem;
 pub use mesh::{
     bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, component_at_triangle_in_mesh,
     crop_mesh_to_selected_faces, delete_selected_faces_in_mesh, fill_holes_in_mesh,
-    invert_mesh_orientation, normalize_bridge_split_input, prepare_bridge_split_source,
-    repair_mesh_in_mesh, selected_connected_components_in_mesh, CoreBridgeSplitError,
-    CoreBridgeSplitResult, CoreMeshEditResult, CoreMeshRepairResult, Mesh, MeshBuilder, MeshKind,
-    MeshTexture, PreparedBridgeSplitSource, Vertex,
+    fill_selected_holes_in_mesh, invert_mesh_orientation, normalize_bridge_split_input,
+    prepare_bridge_split_source, repair_mesh_in_mesh, selected_connected_components_in_mesh,
+    CoreBridgeSplitError, CoreBridgeSplitResult, CoreMeshEditResult, CoreMeshRepairResult, Mesh,
+    MeshBuilder, MeshKind, MeshTexture, PreparedBridgeSplitSource, Vertex,
 };
 pub use occlu_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, FaceSelection, MeshEditOptions,

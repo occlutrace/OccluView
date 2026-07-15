@@ -2,8 +2,8 @@ use super::{Mesh, MeshKind, MeshTexture, Vertex};
 use crate::error::CoreError;
 use occlu_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
-    invert_orientation, repair_mesh, selected_connected_components, EditVertex, FaceSelection,
-    MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
+    fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
+    EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
     MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
 };
 
@@ -172,6 +172,10 @@ pub fn crop_mesh_to_selected_faces(
 
 /// Fill conservative boundary holes in a core mesh.
 ///
+/// Passing `None` intentionally selects the whole mesh. Interactive callers
+/// that require an explicit operator selection must use
+/// [`fill_selected_holes_in_mesh`] instead.
+///
 /// # Errors
 /// Returns [`CoreError`] for unsupported topology, malformed edit buffers,
 /// invalid selection, or invalid rebuilt mesh data.
@@ -181,6 +185,23 @@ pub fn fill_holes_in_mesh(
     options: MeshEditOptions,
 ) -> Result<CoreMeshEditResult, CoreError> {
     run_mesh_edit(source, |buffers| fill_holes(buffers, selection, options))
+}
+
+/// Close only holes covered by an explicit face selection on a core mesh.
+/// Unlike [`fill_holes_in_mesh`], this API has no whole-mesh fallback and is
+/// the adapter used by the interactive Mesh Editor.
+///
+/// # Errors
+/// Returns [`CoreError`] for unsupported topology, malformed edit buffers,
+/// invalid selections, or invalid rebuilt mesh data.
+pub fn fill_selected_holes_in_mesh(
+    source: &Mesh,
+    selection: &FaceSelection,
+    options: MeshEditOptions,
+) -> Result<CoreMeshEditResult, CoreError> {
+    run_mesh_edit(source, |buffers| {
+        fill_selected_holes(buffers, selection, options)
+    })
 }
 
 /// Flip selected triangle winding, or the whole mesh when no selection is provided.

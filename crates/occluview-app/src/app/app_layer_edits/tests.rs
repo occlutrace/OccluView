@@ -10,7 +10,7 @@ use super::undo_redo::apply_layer_mesh_undo_action;
 use super::whole_mesh::apply_layer_mesh_edit_action;
 use crate::edit_mode::EditModeController;
 use glam::{Affine3A, Vec3};
-use occluview_core::{Mesh, SceneMesh, ScenePickHit, Vertex};
+use occluview_core::{FaceSelection, Mesh, SceneMesh, ScenePickHit, Vertex};
 
 fn v(x: f32, y: f32, z: f32) -> Vertex {
     Vertex::at(Vec3::new(x, y, z))

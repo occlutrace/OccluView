@@ -273,6 +273,32 @@ fn large_well_conditioned_uniform_scale_does_not_degenerate_normals() {
 }
 
 #[test]
+fn corrupt_source_normals_do_not_block_world_space_split() {
+    let clean = textured_cube();
+    let vertices = clean
+        .vertices()
+        .iter()
+        .copied()
+        .map(|mut vertex| {
+            vertex.normal = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+            vertex
+        })
+        .collect();
+    let source = Mesh::new(
+        clean.name().map(str::to_owned),
+        vertices,
+        clean.indices().to_vec(),
+    )
+    .expect("corrupt normals are still mesh payload");
+
+    let result =
+        bridge_split_mesh_in_world(&source, Affine3A::IDENTITY, request(Vec3::ZERO, Vec3::X))
+            .expect("split should rebuild corrupt source normals");
+    assert_winding_matches_normals(&result.part_a);
+    assert_winding_matches_normals(&result.part_b);
+}
+
+#[test]
 fn small_well_conditioned_uniform_scale_is_not_misclassified_as_singular() {
     let source = textured_cube();
     let transform = Affine3A::from_scale(Vec3::splat(1.0e-5));

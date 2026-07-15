@@ -3,7 +3,8 @@
 //! their own module because `tests.rs` is over the file-size budget.
 
 use crate::{
-    fill_holes, EditVertex, FaceSelection, MeshEditBuffers, MeshEditOptions, MeshTopology,
+    fill_holes, fill_selected_holes, EditVertex, FaceSelection, MeshEditBuffers, MeshEditOptions,
+    MeshTopology,
 };
 
 fn tri_mesh(vertices: Vec<EditVertex>, indices: Vec<u32>) -> MeshEditBuffers {
@@ -133,14 +134,14 @@ fn selection_qualifies_on_majority_rim_coverage() {
 
     // 9/16 owning faces marked -> at least half -> the circled hole stitches.
     let majority = first_n_selected(16, 9);
-    let closed =
-        fill_holes(&mesh, Some(&majority), MeshEditOptions::default()).expect("majority selection");
+    let closed = fill_selected_holes(&mesh, &majority, MeshEditOptions::default())
+        .expect("majority selection");
     assert_eq!(closed.report.filled_holes, 1);
 
     // 7/16 marked -> below half -> left open, and NOT flagged as degeneracy.
     let minority = first_n_selected(16, 7);
-    let open =
-        fill_holes(&mesh, Some(&minority), MeshEditOptions::default()).expect("minority selection");
+    let open = fill_selected_holes(&mesh, &minority, MeshEditOptions::default())
+        .expect("minority selection");
     assert_eq!(open.report.filled_holes, 0);
     assert!(open.report.warnings.is_empty());
 }

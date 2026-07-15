@@ -22,77 +22,92 @@ fn scene_with_a_tube() -> Option<Scene> {
     Some(scene)
 }
 
+fn tube_bottom_selection() -> FaceSelection {
+    FaceSelection::new((0..16).map(|face| face % 2 == 0).collect())
+}
+
+fn boundary_edge_count(indices: &[u32]) -> usize {
+    let mut edges = std::collections::BTreeMap::<(u32, u32), usize>::new();
+    for triangle in indices.chunks_exact(3) {
+        for [first, second] in [
+            [triangle[0], triangle[1]],
+            [triangle[1], triangle[2]],
+            [triangle[2], triangle[0]],
+        ] {
+            let edge = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            *edges.entry(edge).or_default() += 1;
+        }
+    }
+    edges.values().filter(|count| **count == 1).count()
+}
+
 #[test]
-fn close_holes_button_respects_the_mm_perimeter_budget() {
+fn close_holes_button_requires_selection_and_scopes_to_selected_rim() {
     let Some(mut scene) = scene_with_a_tube() else {
         return;
     };
     let request = request(&scene, 0, LayerContextAction::CloseHoles);
     let before = scene.meshes()[0].mesh.triangle_count();
 
-    // ~3.1 mm interior rim: a 2 mm restraint refuses it (border kept too).
-    let tight = super::super::whole_mesh::apply_layer_mesh_edit_action_with_limit(
-        &mut scene,
-        request,
-        None,
-        Some(2.0),
+    let no_selection = super::super::whole_mesh::apply_layer_mesh_edit_action_with_limit(
+        &mut scene, request, None, None,
     );
-    assert!(tight.is_ok());
-    let Ok((tight_apply, tight_report)) = tight else {
+    assert!(no_selection.is_ok());
+    let Ok((no_selection_apply, no_selection_report)) = no_selection else {
         return;
     };
     assert!(
-        !tight_apply.scene_changed,
-        "2 mm restraint must not fill a 3.1 mm rim"
+        !no_selection_apply.scene_changed,
+        "Close Holes must not widen an empty selection to the whole mesh"
     );
-    let Some(report) = tight_report else { return };
-    assert_eq!(report.filled_holes, 0);
-    assert_eq!(report.skipped_oversize_rims, 1);
-    assert_eq!(report.skipped_border_rims, 1);
+    assert!(no_selection_report.is_none());
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), before);
 
-    // A 10 mm restraint fills the interior hole; the border stays open.
-    let generous = super::super::whole_mesh::apply_layer_mesh_edit_action_with_limit(
+    // Mark only the lower rim's owning faces. The opposite rim is left open,
+    // exactly like an exocad selection that does not fully cover it.
+    let selection = tube_bottom_selection();
+    let selected = super::super::whole_mesh::apply_layer_mesh_edit_action_with_limit(
         &mut scene,
         request,
+        Some(&selection),
         None,
-        Some(10.0),
     );
-    assert!(generous.is_ok());
-    let Ok((generous_apply, generous_report)) = generous else {
+    assert!(selected.is_ok());
+    let Ok((selected_apply, selected_report)) = selected else {
         return;
     };
-    assert!(generous_apply.scene_changed);
-    let Some(report) = generous_report else {
+    assert!(selected_apply.scene_changed);
+    let Some(report) = selected_report else {
         return;
     };
     assert_eq!(report.filled_holes, 1);
-    assert_eq!(report.skipped_border_rims, 1);
+    assert_eq!(boundary_edge_count(scene.meshes()[0].mesh.indices()), 8);
     assert!(scene.meshes()[0].mesh.triangle_count() > before);
 }
 
 #[test]
-fn close_holes_without_a_limit_closes_interior_holes_and_keeps_the_border() {
-    // The default (no mm restraint): every interior hole closes regardless of
-    // size — the exocad behavior — while the scan border stays open.
+fn close_holes_without_selection_is_a_noop() {
     let Some(mut scene) = scene_with_a_tube() else {
         return;
     };
     let request = request(&scene, 0, LayerContextAction::CloseHoles);
+    let before = scene.meshes()[0].mesh.indices().to_vec();
     let result = apply_layer_mesh_edit_action(&mut scene, request, None);
     assert!(result.is_ok());
     let Ok((apply, report)) = result else {
         return;
     };
-    assert!(apply.scene_changed);
-    let Some(report) = report else { return };
-    assert_eq!(report.filled_holes, 1);
-    assert_eq!(report.skipped_border_rims, 1);
-    assert_eq!(report.skipped_damaged_rims, 0);
+    assert!(!apply.scene_changed);
+    assert!(report.is_none());
+    assert_eq!(scene.meshes()[0].mesh.indices(), before.as_slice());
 }
 
 #[test]
-fn mesh_editor_close_holes_repairs_every_visible_layer_without_a_selection() {
+fn mesh_editor_close_holes_requires_face_selection() {
     let Some(mut scene) = scene_with_a_tube() else {
         return;
     };
@@ -109,43 +124,22 @@ fn mesh_editor_close_holes_repairs_every_visible_layer_without_a_selection() {
     let Ok(apply) = result else { return };
 
     assert!(
-        apply.scene_changed,
-        "both visible tube rims should be closed"
+        !apply.scene_changed,
+        "empty selection must be an honest no-op"
     );
-    assert!(
-        scene
-            .meshes()
-            .iter()
-            .all(|entry| entry.mesh.triangle_count() > before.meshes()[0].mesh.triangle_count()),
-        "every visible layer should receive the whole-mesh repair"
-    );
-    let restored = edit_mode.undo_last_scene_edit(&scene, before.meshes()[0].id());
-    assert!(
-        matches!(
-            restored,
-            crate::edit_mode::StructuralHistoryStep::Restored(_)
-        ),
-        "close holes should create one scene-wide undo step"
-    );
-    let crate::edit_mode::StructuralHistoryStep::Restored(restored) = restored else {
-        return;
-    };
     assert_eq!(
-        restored
-            .meshes()
-            .iter()
-            .map(|entry| entry.mesh.triangle_count())
-            .collect::<Vec<_>>(),
-        before
-            .meshes()
-            .iter()
-            .map(|entry| entry.mesh.triangle_count())
-            .collect::<Vec<_>>()
+        scene.meshes()[0].mesh.indices(),
+        before.meshes()[0].mesh.indices()
     );
+    assert_eq!(
+        scene.meshes()[1].mesh.indices(),
+        before.meshes()[1].mesh.indices()
+    );
+    assert_eq!(edit_mode.undo_layer_id(), None);
 }
 
 #[test]
-fn mesh_editor_close_holes_leaves_hidden_layers_byte_for_byte_untouched() {
+fn mesh_editor_close_holes_scopes_to_selected_visible_layers() {
     let Some(mut scene) = scene_with_a_tube() else {
         return;
     };
@@ -155,6 +149,20 @@ fn mesh_editor_close_holes_leaves_hidden_layers_byte_for_byte_untouched() {
     let hidden_before = format!("{:?}", scene.meshes()[1]);
     let visible_before = scene.meshes()[0].mesh.triangle_count();
     let mut edit_mode = EditModeController::new(4, 1_000_000);
+    let visible = scene.meshes()[0].clone();
+    assert!(edit_mode.begin_face_selection(&visible, &scene));
+    for triangle_index in [0, 2, 4, 6] {
+        assert!(edit_mode.select_face_hit(
+            &scene,
+            ScenePickHit {
+                layer_index: 0,
+                layer_id: visible.id(),
+                triangle_index,
+                point: Vec3::ZERO,
+                distance: 1.0,
+            },
+        ));
+    }
 
     let result = apply_visible_selected_face_mesh_edit_action(
         &mut scene,
@@ -166,6 +174,7 @@ fn mesh_editor_close_holes_leaves_hidden_layers_byte_for_byte_untouched() {
 
     assert!(apply.scene_changed);
     assert!(scene.meshes()[0].mesh.triangle_count() > visible_before);
+    assert_eq!(boundary_edge_count(scene.meshes()[0].mesh.indices()), 8);
     assert_eq!(format!("{:?}", scene.meshes()[1]), hidden_before);
 }
 

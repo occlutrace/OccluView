@@ -1,4 +1,4 @@
-//! Whole-mesh ops (Close Holes / Keep Largest / Invert Normals): dispatch with
+//! Layer mesh ops (Close Holes / Keep Largest / Invert Normals): dispatch with
 //! honest content no-ops, plus the operator status lines.
 
 use super::super::{
@@ -8,11 +8,11 @@ use super::super::{
 use super::structural::structural_scene_apply;
 use super::{resolve_layer, with_undoable_note};
 use occluview_core::{
-    fill_holes_in_mesh, invert_mesh_orientation, CoreError, CoreMeshEditResult, FaceSelection,
-    Mesh, MeshEditOptions, MeshEditReport,
+    fill_selected_holes_in_mesh, invert_mesh_orientation, CoreError, CoreMeshEditResult,
+    FaceSelection, Mesh, MeshEditOptions, MeshEditReport,
 };
 
-/// Generous edge ceiling for the whole-mesh Close Holes button. With the mm
+/// Generous edge ceiling for the interactive Close Holes action. With the mm
 /// perimeter slider doing the real limiting, the edge count is only a safety
 /// valve, so it must not spuriously refuse a legitimate hole on a densely
 /// triangulated scan. Bounded under the kernel ear-clip's u16 rim limit.
@@ -30,26 +30,30 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     let Some(command) = edit_command_for_layer_action(request.action) else {
         return LayerContextApply::default();
     };
-    let Some(token) = app.edit_mode.begin_layer_edit(entry, command) else {
-        app.status_message = Some("Layer edit already in progress".to_string());
-        return LayerContextApply::default();
-    };
 
-    // An EMPTY selection means "no marks" and must scope to the WHOLE mesh
-    // (private parity), not to nothing — a live session always carries a mask.
-    let selection = if matches!(
-        request.action,
-        LayerContextAction::CloseHoles | LayerContextAction::InvertNormals
-    ) {
+    let selection = if request.action == LayerContextAction::CloseHoles {
+        app.edit_mode
+            .selected_faces_for_layer(request.layer_id)
+            .filter(|selection| selection.selected_count() > 0)
+    } else if request.action == LayerContextAction::InvertNormals {
         app.edit_mode
             .selected_faces_for_layer(request.layer_id)
             .filter(|selection| selection.selected_count() > 0)
     } else {
         None
     };
+    if request.action == LayerContextAction::CloseHoles && selection.is_none() {
+        app.status_message = Some("Select mesh faces first".to_string());
+        return LayerContextApply::default();
+    }
 
-    // Whole-mesh repair remains available from the layer context menu. The
-    // selection editor itself only exposes selection-scoped operations.
+    let Some(token) = app.edit_mode.begin_layer_edit(entry, command) else {
+        app.status_message = Some("Layer edit already in progress".to_string());
+        return LayerContextApply::default();
+    };
+
+    // Close Holes is always explicitly selection-scoped in the interactive
+    // app. Whole-mesh repair remains an internal/CLI operation instead.
     let close_holes_limit_mm = None;
 
     match apply_layer_mesh_edit_action_with_limit(
@@ -124,7 +128,7 @@ pub(super) fn apply_layer_mesh_edit_action(
     apply_layer_mesh_edit_action_with_limit(scene, request, selection, None)
 }
 
-/// The whole-mesh action executor plus the Close Holes mm budget.
+/// The layer action executor plus the Close Holes mm budget.
 /// `close_holes_limit_mm` is `None` for every other action (and for callers
 /// that never opt in), leaving their behaviour unchanged.
 pub(super) fn apply_layer_mesh_edit_action_with_limit(
@@ -147,6 +151,9 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
 
     let edited = match action {
         LayerContextAction::CloseHoles => {
+            let Some(selection) = selection else {
+                return Ok((LayerContextApply::default(), None));
+            };
             close_holes_in_mesh(&entry.mesh, selection, close_holes_limit_mm)?
         }
         LayerContextAction::InvertNormals => invert_mesh_orientation(&entry.mesh, selection)?,
@@ -173,13 +180,13 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
 /// entry points from quietly drifting into different repair behaviour.
 pub(super) fn close_holes_in_mesh(
     mesh: &Mesh,
-    selection: Option<&FaceSelection>,
+    selection: &FaceSelection,
     close_holes_limit_mm: Option<f32>,
 ) -> Result<CoreMeshEditResult, CoreError> {
-    fill_holes_in_mesh(mesh, selection, close_holes_options(close_holes_limit_mm))
+    fill_selected_holes_in_mesh(mesh, selection, close_holes_options(close_holes_limit_mm))
 }
 
-/// Whole-mesh Close Holes options. With the mm slider set (`Some`), the mm
+/// Interactive Close Holes options. With the mm slider set (`Some`), the mm
 /// perimeter is the real gate and the edge count is only a safety ceiling;
 /// without it (kernel/tests default) fall back to the plain edge cap so
 /// behaviour is unchanged for callers that never opt in.
@@ -205,7 +212,7 @@ fn close_holes_options(close_holes_limit_mm: Option<f32>) -> MeshEditOptions {
 }
 
 /// Route the status line: Close Holes gets the mm-aware phrasing, every other
-/// whole-mesh action keeps the shared status helpers untouched.
+/// layer action keeps the shared status helpers untouched.
 fn close_holes_aware_status(
     layer_label: &str,
     action: LayerContextAction,
@@ -223,7 +230,7 @@ fn close_holes_aware_status(
     }
 }
 
-/// Honest whole-mesh Close Holes status. Partial success is reported as it
+/// Honest selection-scoped Close Holes status. Partial success is reported as it
 /// happens (some rims close while others are skipped), skips name the mm budget
 /// so the operator knows why a rim stayed open, and it must NOT claim "no holes"
 /// when loops were found but refused.
