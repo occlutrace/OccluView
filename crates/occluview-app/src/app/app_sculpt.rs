@@ -23,11 +23,15 @@ use crate::sculpt_tool::{
     HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN,
     SCULPT_SIZE_MAX, SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
 };
-use glam::Vec3;
+use crate::viewer::project_world_to_viewport;
+use glam::{Affine3A, Vec3};
 use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, ScenePickHit,
+    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Camera, Mesh, ScenePickHit,
 };
 use occluview_render::PreparedSceneTopology;
+
+/// Segments in the surface-projected brush-cursor ring.
+const SCULPT_CURSOR_SEGMENTS: usize = 48;
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
 /// does not re-read input.
@@ -475,13 +479,22 @@ impl OccluViewApp {
         if !over_viewport || self.sculpt.armed.is_none() || !self.edit_mode.has_active_session() {
             return false;
         }
-        let (scroll, shift, ctrl) = ctx.input(|input| {
+        let (scroll_x, scroll_y, shift, ctrl) = ctx.input(|input| {
             (
+                input.raw_scroll_delta.x,
                 input.raw_scroll_delta.y,
                 input.modifiers.shift,
                 input.modifiers.ctrl || input.modifiers.command,
             )
         });
+        // Holding Shift makes many window managers deliver the wheel as
+        // HORIZONTAL scroll, so read whichever axis actually moved — otherwise
+        // Shift+wheel silently did nothing (only `.y` was read).
+        let scroll = if scroll_y.abs() >= scroll_x.abs() {
+            scroll_y
+        } else {
+            scroll_x
+        };
         if scroll.abs() < f32::EPSILON || !(shift || ctrl) {
             return false;
         }
@@ -510,10 +523,13 @@ impl OccluViewApp {
         pick_scene_hit(&camera, viewport_rect, pointer, scene)
     }
 
-    /// The screen-space brush cursor following the pointer while a tool is
-    /// armed: an outer ring at the brush radius, a translucent core whose
-    /// opacity reads the intensity, and a color that says what the click will
-    /// do (green build / red carve / blue smooth, brighter when Shift forces).
+    /// The brush cursor following the pointer while a tool is armed. It hugs the
+    /// SURFACE: a ring in the tangent plane of the point under the cursor,
+    /// projected to screen, so the operator sees the actual area the dab will
+    /// affect draped on the geometry — not a flat 2D disc floating over it. The
+    /// fill opacity reads the intensity and the color says what the click does
+    /// (green build / red carve / blue smooth, brighter when Shift forces). Off
+    /// the mesh it falls back to a faint flat ring so the cursor is still shown.
     pub(super) fn paint_sculpt_cursor_impl(&self, ui: &egui::Ui, viewport_rect: egui::Rect) {
         let Some(kind) = self.sculpt.armed else {
             return;
@@ -530,24 +546,91 @@ impl OccluViewApp {
         if !viewport_rect.contains(pointer) {
             return;
         }
-        let ortho_height = camera.orthographic_height.max(f32::EPSILON);
-        let px_per_mm = viewport_rect.height() / ortho_height;
-        let radius_px = mesh_editor_overlay::sculpt_radius_mm(ui.ctx()) * px_per_mm;
-        if !radius_px.is_finite() || radius_px < 2.0 {
-            return;
-        }
+        let radius_world = mesh_editor_overlay::sculpt_radius_mm(ui.ctx());
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
         let shift = ui.ctx().input(|input| input.modifiers.shift);
         let color = sculpt_cursor_color(kind, shift);
-        let brush = ui.painter();
-        brush.circle_filled(
-            pointer,
-            radius_px,
-            color.gamma_multiply(0.08 + 0.22 * intensity01.clamp(0.0, 1.0)),
-        );
-        brush.circle_stroke(pointer, radius_px, egui::Stroke::new(1.5, color));
-        brush.circle_filled(pointer, 2.0, color);
+
+        if let Some(ring) = self.sculpt_surface_ring(camera, viewport_rect, pointer, radius_world) {
+            let fill = color.gamma_multiply(0.06 + 0.18 * intensity01.clamp(0.0, 1.0));
+            ui.painter().add(egui::Shape::convex_polygon(
+                ring.clone(),
+                fill,
+                egui::Stroke::NONE,
+            ));
+            ui.painter().add(egui::Shape::closed_line(
+                ring,
+                egui::Stroke::new(1.5, color),
+            ));
+            return;
+        }
+
+        // Off the mesh: a faint flat ring at the on-screen brush size.
+        let ortho_height = camera.orthographic_height.max(f32::EPSILON);
+        let radius_px = radius_world * viewport_rect.height() / ortho_height;
+        if radius_px.is_finite() && radius_px >= 2.0 {
+            ui.painter().circle_stroke(
+                pointer,
+                radius_px,
+                egui::Stroke::new(1.0, color.gamma_multiply(0.5)),
+            );
+        }
     }
+
+    /// The brush ring draped on the surface under `pointer`: a circle of
+    /// `radius_world` in the tangent plane of the hit point, projected to
+    /// screen. `None` when the cursor is off the mesh (or a point fails to
+    /// project), so the caller draws the flat fallback.
+    fn sculpt_surface_ring(
+        &self,
+        camera: &Camera,
+        viewport_rect: egui::Rect,
+        pointer: egui::Pos2,
+        radius_world: f32,
+    ) -> Option<Vec<egui::Pos2>> {
+        let scene = self.scene.as_ref()?;
+        let hit = pick_scene_hit(camera, viewport_rect, pointer, scene)?;
+        let entry = scene.meshes().get(hit.layer_index)?;
+        let normal = face_world_normal(&entry.mesh, hit.triangle_index, &entry.transform)?;
+        let reference = if normal.z.abs() < 0.9 {
+            Vec3::Z
+        } else {
+            Vec3::X
+        };
+        let u = normal.cross(reference).normalize_or_zero();
+        if u.length_squared() < f32::EPSILON {
+            return None;
+        }
+        let v = normal.cross(u).normalize_or_zero();
+
+        let mut points = Vec::with_capacity(SCULPT_CURSOR_SEGMENTS);
+        for segment in 0..SCULPT_CURSOR_SEGMENTS {
+            #[allow(clippy::cast_precision_loss)]
+            let angle = std::f32::consts::TAU * segment as f32 / SCULPT_CURSOR_SEGMENTS as f32;
+            let world = hit.point + (u * angle.cos() + v * angle.sin()) * radius_world;
+            let (screen, _depth) = project_world_to_viewport(camera, viewport_rect, world)?;
+            points.push(screen);
+        }
+        Some(points)
+    }
+}
+
+/// World-space normal of `mesh`'s triangle `triangle_index`, via its per-instance
+/// `transform`. `None` for an out-of-range index or a degenerate triangle.
+fn face_world_normal(mesh: &Mesh, triangle_index: usize, transform: &Affine3A) -> Option<Vec3> {
+    let base = triangle_index.checked_mul(3)?;
+    let indices = mesh.indices();
+    let a = *indices.get(base)? as usize;
+    let b = *indices.get(base + 1)? as usize;
+    let c = *indices.get(base + 2)? as usize;
+    let vertices = mesh.vertices();
+    let pa = Vec3::from_array(vertices.get(a)?.position);
+    let pb = Vec3::from_array(vertices.get(b)?.position);
+    let pc = Vec3::from_array(vertices.get(c)?.position);
+    let world_normal = transform
+        .transform_vector3((pb - pa).cross(pc - pa))
+        .normalize_or_zero();
+    (world_normal.length_squared() > f32::EPSILON).then_some(world_normal)
 }
 
 /// Brush cursor color by tool and modifier: green builds, red carves, blue

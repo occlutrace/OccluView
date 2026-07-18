@@ -22,13 +22,15 @@
 //! does it — bucket the sampled normals by whether they face the camera and
 //! average only the front bucket, falling back to the pure camera direction
 //! when the surface can't be trusted — so a scan's inverted-normal patches never
-//! flip the push direction. Each dab is followed by a TANGENTIAL relaxation
-//! pass that slides vertices sideways to even out the triangulation WITHOUT
-//! undoing the sculpted height. Smooth is a strong uniform-Laplacian relaxer run
-//! as several whole passes (fractional Taubin per frame is imperceptible — the
-//! reason the old smooth did nothing). Both pin open scan boundaries so the
-//! scan's outer edge never erodes, and never reach across the gap between two
-//! disconnected surfaces (adjacency is per welded component).
+//! flip the push direction. Each dab is followed by an auto-smooth
+//! (uniform-Laplacian) pass so material builds and carves CLEAN — ironing out
+//! the scan's own surface noise and evening the triangulation — instead of just
+//! lifting the raw noisy surface (the "ripple" a pure push leaves). Smooth is
+//! the same relaxer run harder, as several whole passes (fractional Taubin per
+//! frame is imperceptible — the reason the old smooth did nothing). Both pin
+//! open scan boundaries so the scan's outer edge never erodes, and a dab only
+//! ever affects the connected component under the cursor, never dragging a
+//! spatially-close but disconnected surface along with it.
 //!
 //! # Soup correctness
 //!
@@ -44,6 +46,7 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
 use super::brush_index::VertexGrid;
+use super::brush_math::{boundary_mask, compute_step_budget, falloff, smooth_pass_count};
 use super::cap_support::build_vertex_adjacency;
 use super::topology::{canonical_position_key, weld_soup_topology};
 use super::{
@@ -57,17 +60,17 @@ use super::{
 /// (see [`smooth_pass_count`]), never as a smaller factor — a fractional single
 /// pass is what made the old smooth imperceptible.
 const SMOOTH_LAMBDA: f32 = 0.6;
-/// Most Laplacian passes a single forced (Shift) dab runs.
-const MAX_SMOOTH_PASSES: usize = 8;
 /// Add/Remove displacement per fully-weighted dab, as a fraction of the brush
 /// radius. Scaling by radius (not a fixed mm) keeps the brush feeling the same
 /// on a coarse or a fine scan and at any zoom; buildup accumulates over the many
 /// arc-length-spaced dabs of a drag, so this stays small per dab.
 const ADD_REMOVE_GAIN: f32 = 0.08;
-/// Strength of the tangential auto-relax that follows every Add/Remove dab: how
-/// far each vertex slides toward its ring's tangential centroid to keep the
-/// triangulation even. Applied only in-plane, so it never erases height.
-const AUTOSMOOTH_FACTOR: f32 = 0.5;
+/// Strength of the auto-smooth Laplacian pass that follows every Add/Remove
+/// dab: how far each brushed vertex moves toward its ring centroid, ironing out
+/// the scan's surface noise so material builds and carves clean instead of
+/// rippled. High enough to visibly de-noise, below the level that would erase
+/// the coherent sculpted dome.
+const AUTOSMOOTH_FACTOR: f32 = 0.6;
 /// Largest displacement step as a fraction of a vertex's shortest incident
 /// (welded) edge — the anti-inversion guard. Coherent brush motion keeps
 /// neighbours moving together, so this binds mainly at the brush rim.
@@ -84,6 +87,11 @@ const MIN_RING_FOR_RELAX: usize = 3;
 /// position may have crossed into a cell `query_radius` no longer searches, so
 /// the index is rebuilt before it could silently drop a moved vertex.
 const GRID_REBUILD_DRIFT_FRACTION_OF_CELL: f32 = 0.5;
+/// Grid cells spanned by one brush radius. The grid's cell size is kept at
+/// `radius / this` so a radius query only ever scans a small, bounded cube of
+/// cells regardless of how the brush size compares to the mesh scale — the fix
+/// for a big brush stuttering as it scanned millions of empty cells.
+const GRID_CELLS_ACROSS_RADIUS: f32 = 4.0;
 
 /// One brush dab: a soft-falloff disc centered on the surface.
 #[derive(Copy, Clone, Debug)]
@@ -157,16 +165,32 @@ pub struct BrushSession {
     /// Shortest welded-neighbor edge length per vertex, captured at prepare
     /// time — the anti-inversion guard's per-vertex step budget.
     max_step: Vec<f32>,
-    /// Spatial index over vertex positions, rebuilt from live positions
-    /// whenever drift since the last build could otherwise make a query miss a
-    /// moved vertex — see [`Self::rebuild_grid_if_stale`].
+    /// Spatial index over vertex positions. Its cell size is matched to the
+    /// current brush radius (see [`Self::sync_grid`]) so a query's cell-scan
+    /// stays cheap for any brush size, and it is rebuilt from live positions
+    /// whenever drift could otherwise make a query miss a moved vertex.
     grid: VertexGrid,
+    /// The brush radius the grid's cell size is currently tuned for; a big
+    /// change (a size-slider adjustment) triggers a rebuild.
+    grid_radius: f32,
     /// Vertex positions as of `grid`'s last build/rebuild — the reference
-    /// [`Self::rebuild_grid_if_stale`] measures live-position drift against.
+    /// [`Self::sync_grid`] measures live-position drift against.
     grid_reference_positions: Vec<Vec3>,
     /// Farthest any vertex has drifted from `grid_reference_positions` since
     /// the last grid build.
     max_drift_since_grid_build: f32,
+    /// Reusable visited-stamp buffer for the per-dab component flood fill AND
+    /// the per-dab normal accumulation, so neither allocates a fresh
+    /// `HashSet`/`HashMap` per dab (the cost that made a big brush stutter on a
+    /// million-triangle scan). A slot is "touched this pass" when its stamp
+    /// equals `stamp_generation`; clearing is a generation bump.
+    component_stamp: Vec<u32>,
+    /// Reusable per-vertex face-normal accumulator, paired with `component_stamp`
+    /// so a normal recompute reads a slot as zero the first time it is stamped
+    /// this pass instead of clearing the whole buffer.
+    normal_accum: Vec<Vec3>,
+    /// Current generation for `component_stamp` / `normal_accum`.
+    stamp_generation: u32,
     /// Every vertex id touched by any dab so far this session — reported
     /// honestly as `report.moved_vertices` by `finish`.
     touched_total: HashSet<usize>,
@@ -238,8 +262,13 @@ impl BrushSession {
             is_boundary,
             max_step,
             grid,
+            // 0 forces the first dab to size the grid to its actual radius.
+            grid_radius: 0.0,
             grid_reference_positions: positions,
             max_drift_since_grid_build: 0.0,
+            component_stamp: vec![0; vertex_count],
+            normal_accum: vec![Vec3::ZERO; vertex_count],
+            stamp_generation: 0,
             touched_total: HashSet::new(),
         })
     }
@@ -280,7 +309,7 @@ impl BrushSession {
         if strength <= 0.0 || !stroke.radius_mm.is_finite() || stroke.radius_mm <= 0.0 {
             return None;
         }
-        self.rebuild_grid_if_stale();
+        self.sync_grid(stroke.radius_mm);
         let center = Vec3::from_array(stroke.center);
         let candidates = self.grid.query_radius(center, stroke.radius_mm);
         if candidates.is_empty() {
@@ -307,14 +336,13 @@ impl BrushSession {
     /// robustness a messy multi-surface scan needs, and what makes the "never
     /// reaches across a gap" contract true for the clay push, not only Smooth.
     fn restrict_to_component(
-        &self,
+        &mut self,
         weighted: Vec<(usize, f32)>,
         center: Vec3,
     ) -> Vec<(usize, f32)> {
         if weighted.len() <= 1 {
             return weighted;
         }
-        let in_disc: HashSet<usize> = weighted.iter().map(|&(id, _)| id).collect();
         let Some(seed) = weighted
             .iter()
             .min_by(|a, b| {
@@ -326,33 +354,65 @@ impl BrushSession {
         else {
             return weighted;
         };
-        let mut reached: HashSet<usize> = HashSet::with_capacity(in_disc.len());
+        // Two generations off one reusable stamp buffer, no per-dab allocation:
+        // `in_disc` marks the candidate set, `reached` marks the flood fill.
+        let in_disc = self.next_stamp();
+        for &(id, _) in &weighted {
+            self.component_stamp[id] = in_disc;
+        }
+        let reached = self.next_stamp();
         let mut stack = vec![seed];
-        reached.insert(seed);
+        self.component_stamp[seed] = reached;
+        // Index loops (not iterators) so reading a neighbor id and stamping it
+        // don't hold overlapping borrows of `self`.
         while let Some(vertex_id) = stack.pop() {
-            let neighbors = self.adjacency[vertex_id]
-                .iter()
-                .chain(self.position_siblings[vertex_id].iter());
-            for &neighbor in neighbors {
-                if in_disc.contains(&neighbor) && reached.insert(neighbor) {
+            for i in 0..self.adjacency[vertex_id].len() {
+                let neighbor = self.adjacency[vertex_id][i];
+                if self.component_stamp[neighbor] == in_disc {
+                    self.component_stamp[neighbor] = reached;
+                    stack.push(neighbor);
+                }
+            }
+            for i in 0..self.position_siblings[vertex_id].len() {
+                let neighbor = self.position_siblings[vertex_id][i];
+                if self.component_stamp[neighbor] == in_disc {
+                    self.component_stamp[neighbor] = reached;
                     stack.push(neighbor);
                 }
             }
         }
         weighted
             .into_iter()
-            .filter(|(id, _)| reached.contains(id))
+            .filter(|&(id, _)| self.component_stamp[id] == reached)
             .collect()
     }
 
-    /// Rebuild the spatial grid from current (live) positions if any indexed
-    /// vertex has drifted far enough since the last build that a query could
-    /// silently miss it (see [`GRID_REBUILD_DRIFT_FRACTION_OF_CELL`]).
-    fn rebuild_grid_if_stale(&mut self) {
-        let threshold = self.grid.cell_size() * GRID_REBUILD_DRIFT_FRACTION_OF_CELL;
-        if self.max_drift_since_grid_build <= threshold {
+    /// Hand out the next stamp generation, resetting the buffer on the rare
+    /// `u32` wrap so a stale stamp can never masquerade as the current one.
+    fn next_stamp(&mut self) -> u32 {
+        self.stamp_generation = self.stamp_generation.wrapping_add(1);
+        if self.stamp_generation == 0 {
+            self.component_stamp.iter_mut().for_each(|s| *s = 0);
+            self.stamp_generation = 1;
+        }
+        self.stamp_generation
+    }
+
+    /// Keep the spatial grid usable for a dab of the given radius: rebuild it
+    /// (from live positions, with a cell size matched to the radius) when the
+    /// brush radius has changed enough that the old cell size would make the
+    /// query's cell scan too coarse or too fine, OR when vertices have drifted
+    /// far enough that a query could miss a moved one. Sizing the cell to the
+    /// radius is what keeps a big brush from scanning millions of empty cells.
+    fn sync_grid(&mut self, radius: f32) {
+        let radius_stale =
+            self.grid_radius <= 0.0 || !(0.6..=1.7).contains(&(radius / self.grid_radius));
+        let drift_stale = self.max_drift_since_grid_build
+            > self.grid.cell_size() * GRID_REBUILD_DRIFT_FRACTION_OF_CELL;
+        if !radius_stale && !drift_stale {
             return;
         }
+        let desired_cell = (radius / GRID_CELLS_ACROSS_RADIUS).max(f32::MIN_POSITIVE);
         let positions: Vec<Vec3> = self
             .vertices
             .iter()
@@ -362,15 +422,16 @@ impl BrushSession {
         // (edges stretch when building, shrink when carving), so the clamp stays
         // honest across a long stroke instead of trusting the prepare-time edges.
         self.max_step = compute_step_budget(&positions, &self.adjacency, &self.position_siblings);
-        self.grid = VertexGrid::build(&positions);
+        self.grid = VertexGrid::build_with_cell_size(&positions, desired_cell);
+        self.grid_radius = radius;
         self.grid_reference_positions = positions;
         self.max_drift_since_grid_build = 0.0;
     }
 
     /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the whole brushed
-    /// region coherently along one camera-oriented brush normal, then relax
-    /// tangentially so the triangulation stays even without losing the sculpted
-    /// height.
+    /// region coherently along one camera-oriented brush normal, then run an
+    /// auto-smooth pass so material is built or carved CLEAN instead of just
+    /// lifting the scan's own surface noise (the "ripple" left by a pure push).
     fn apply_clay(
         &mut self,
         weighted: &[(usize, f32)],
@@ -396,18 +457,22 @@ impl BrushSession {
             .collect();
         self.commit_moves(displacement.into_iter(), touched);
 
-        // Tangential auto-relax: slide each brushed vertex toward its ring's
-        // centroid, but only within the plane perpendicular to the brush normal,
-        // so the added height survives while the triangulation evens out (kills
-        // the potholes/spikes the old per-vertex-normal push left).
+        // Auto-smooth: a uniform-Laplacian relax over the brushed region, so the
+        // built/carved surface is smooth rather than the scan's raw noise pushed
+        // up (or down) wholesale. The coherent push already made a smooth dome,
+        // so this mostly irons out the high-frequency scan grain and evens the
+        // triangulation without collapsing the sculpted volume; boundary and
+        // needle-tip vertices are left alone so scan edges hold.
         let relaxed: Vec<(usize, Vec3)> = weighted
             .iter()
             .filter(|&&(vertex_id, _)| self.is_relaxable(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
                 let here = self.position(vertex_id);
-                let laplacian = self.ring_centroid(vertex_id)? - here;
-                let tangential = laplacian - normal * laplacian.dot(normal);
-                Some((vertex_id, here + tangential * (AUTOSMOOTH_FACTOR * weight)))
+                let centroid = self.ring_centroid(vertex_id)?;
+                Some((
+                    vertex_id,
+                    here.lerp(centroid, (AUTOSMOOTH_FACTOR * weight).clamp(0.0, 1.0)),
+                ))
             })
             .collect();
         self.commit_moves(relaxed.into_iter(), touched);
@@ -586,7 +651,10 @@ impl BrushSession {
         triangles.sort_unstable();
         triangles.dedup();
 
-        let mut accumulated: HashMap<usize, Vec3> = HashMap::with_capacity(scope.len());
+        // Accumulate face normals into the reusable `normal_accum` buffer keyed
+        // by a fresh stamp — no per-dab HashMap. A slot first stamped this pass
+        // reads as zero; later triangles add into it.
+        let generation = self.next_stamp();
         for &triangle_index in &triangles {
             let base = triangle_index * 3;
             let Some(corners) = self.indices.get(base..base + 3) else {
@@ -606,11 +674,16 @@ impl BrushSession {
                 continue;
             }
             for corner in [a, b, c] {
-                *accumulated.entry(corner).or_insert(Vec3::ZERO) += face_normal;
+                if self.component_stamp[corner] != generation {
+                    self.component_stamp[corner] = generation;
+                    self.normal_accum[corner] = Vec3::ZERO;
+                }
+                self.normal_accum[corner] += face_normal;
             }
         }
         for &vertex_id in &scope {
-            if let Some(&sum) = accumulated.get(&vertex_id) {
+            if self.component_stamp[vertex_id] == generation {
+                let sum = self.normal_accum[vertex_id];
                 if sum.length_squared() > f32::EPSILON {
                     self.vertices[vertex_id].normal = sum.normalize().to_array();
                 }
@@ -642,125 +715,4 @@ impl BrushSession {
             },
         }
     }
-}
-
-/// Number of whole Laplacian passes one Smooth dab runs, from its clamped
-/// strength: at least one, up to [`MAX_SMOOTH_PASSES`] at full strength (the
-/// forced Shift mode passes ~1.0). Expressing strength as pass count — not a
-/// smaller per-pass factor — is what makes Smooth visibly strong.
-fn smooth_pass_count(strength: f32) -> usize {
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    let extra = (strength.clamp(0.0, 1.0) * (MAX_SMOOTH_PASSES - 1) as f32).round() as usize;
-    1 + extra
-}
-
-/// Mark every vertex that sits on an open boundary — an undirected edge used by
-/// exactly one triangle — from the welded indices, then propagate the mark to
-/// each boundary vertex's soup duplicates so a pinned corner stays pinned in
-/// every slot. Scan borders and hole rims are boundaries; pinning them stops
-/// Smooth and the auto-relax from eroding the scan's edge.
-fn boundary_mask(
-    indices: &[u32],
-    position_siblings: &[Vec<usize>],
-    vertex_count: usize,
-) -> Vec<bool> {
-    let mut edge_uses: HashMap<(u32, u32), u32> = HashMap::with_capacity(indices.len());
-    for triangle in indices.chunks_exact(3) {
-        for (a, b) in [
-            (triangle[0], triangle[1]),
-            (triangle[1], triangle[2]),
-            (triangle[2], triangle[0]),
-        ] {
-            let key = if a <= b { (a, b) } else { (b, a) };
-            *edge_uses.entry(key).or_insert(0) += 1;
-        }
-    }
-    let mut is_boundary = vec![false; vertex_count];
-    for ((a, b), uses) in edge_uses {
-        // Open boundary (1) OR non-manifold flap (>=3): both lack a well-defined
-        // pair of sides, so pin them rather than average across an undefined gap.
-        if uses != 2 {
-            for raw in [a, b] {
-                if let Some(id) = usize::try_from(raw).ok().filter(|&i| i < vertex_count) {
-                    is_boundary[id] = true;
-                }
-            }
-        }
-    }
-    for vertex_id in 0..vertex_count {
-        if is_boundary[vertex_id] {
-            for &sibling in &position_siblings[vertex_id] {
-                if sibling < vertex_count {
-                    is_boundary[sibling] = true;
-                }
-            }
-        }
-    }
-    is_boundary
-}
-
-/// Per-vertex anti-inversion step budget: the shortest incident welded edge,
-/// then reduced to the minimum across each soup cluster. A non-representative
-/// soup duplicate has an EMPTY welded ring (only the cluster representative
-/// carries the real adjacency), so `shortest_incident_edge` would hand it the
-/// generous isolated-vertex fallback; propagating the cluster minimum gives
-/// every duplicate the representative's tight, correct budget. Without this a
-/// higher-id duplicate — captured by the same spatial query, since all copies
-/// share a position — re-applies a clay dab at the loose fallback budget and
-/// overwrites the representative's correctly clamped move, silently defeating
-/// the anti-inversion guard on ordinary STL soup.
-fn compute_step_budget(
-    positions: &[Vec3],
-    adjacency: &[Vec<usize>],
-    position_siblings: &[Vec<usize>],
-) -> Vec<f32> {
-    let raw: Vec<f32> = (0..positions.len())
-        .map(|index| shortest_incident_edge(positions, &adjacency[index], positions[index]))
-        .collect();
-    (0..positions.len())
-        .map(|index| {
-            let mut budget = raw[index];
-            for &sibling in &position_siblings[index] {
-                if let Some(&value) = raw.get(sibling) {
-                    budget = budget.min(value);
-                }
-            }
-            budget
-        })
-        .collect()
-}
-
-/// Shortest edge from `here` to any of `neighbors`' positions, capped (not
-/// floored) at 1mm so a single dab cannot take an oversized jump on a
-/// sparse/low-poly mesh. A genuinely SMALL edge is returned unfloored: a fine
-/// occlusal groove or margin line can have real neighbor spacing well under a
-/// coarse floor, and flooring it would inflate `clamp_step`'s budget past what
-/// that local topology can tolerate, defeating the anti-inversion guard. An
-/// isolated vertex (no finite neighbor distance) falls back to a generous
-/// budget so its step is never zero-clamped by a topology fluke.
-pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[usize], here: Vec3) -> f32 {
-    let shortest = neighbors
-        .iter()
-        .filter_map(|&neighbor| positions.get(neighbor))
-        .map(|&position| position.distance(here))
-        .filter(|length| length.is_finite() && *length > 0.0)
-        .fold(f32::MAX, f32::min);
-    if shortest == f32::MAX {
-        return 1.0;
-    }
-    shortest.min(1.0)
-}
-
-/// Smooth radial falloff: 1 at the center, 0 at/beyond `radius`, `C1`-smooth at
-/// the boundary (squared sculpting falloff).
-fn falloff(distance: f32, radius: f32) -> f32 {
-    if !(distance.is_finite() && radius.is_finite()) || radius <= 0.0 || distance >= radius {
-        return 0.0;
-    }
-    let t = (1.0 - distance / radius).clamp(0.0, 1.0);
-    t * t
 }

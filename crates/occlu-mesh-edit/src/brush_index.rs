@@ -42,13 +42,29 @@ pub(crate) struct VertexGrid {
 }
 
 impl VertexGrid {
-    /// Build the index over `positions` (vertex id = array index, truncated to
-    /// `u32` — mesh-edit vertex counts never approach `u32::MAX`).
+    /// Build the index over `positions` with a cell size derived from the
+    /// mesh's own scale (`vertex id = array index`, truncated to `u32` —
+    /// mesh-edit vertex counts never approach `u32::MAX`).
     pub(crate) fn build(positions: &[Vec3]) -> Self {
         let (lo, hi) = bounds(positions);
         let diagonal = (hi - lo).length();
         let cell_size = if diagonal.is_finite() && diagonal > f32::EPSILON {
             diagonal / CELLS_ACROSS_DIAGONAL
+        } else {
+            1.0
+        };
+        Self::build_with_cell_size(positions, cell_size)
+    }
+
+    /// Build the index with an EXPLICIT cell size, so a session can match the
+    /// grid to the current brush radius (keeping `reach` — hence the query's
+    /// cell-scan cost — bounded no matter how the brush size compares to the
+    /// mesh scale). A tiny brush on a huge scan and a huge brush on a small
+    /// crop both stay cheap.
+    pub(crate) fn build_with_cell_size(positions: &[Vec3], cell_size: f32) -> Self {
+        let (lo, _hi) = bounds(positions);
+        let cell_size = if cell_size.is_finite() && cell_size > f32::EPSILON {
+            cell_size
         } else {
             1.0
         };
