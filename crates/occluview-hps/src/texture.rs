@@ -83,7 +83,79 @@ fn parse_texture_image(text: &str) -> Result<Option<DecodedTexture>, HpsError> {
     } else {
         decode_embedded_raster(&bytes)?
     };
-    Ok(Some(texture))
+    Ok(Some(correct_channel_order_for_dental(texture)?))
+}
+
+/// A dental scan surface is always physically WARM: enamel and stone are
+/// cream/white, gingiva is pink-to-red, so over any real texture `R >= B` on
+/// average. This holds regardless of how the texture was decoded — the
+/// embedded-raster path (`decode_embedded_raster`) trusts the container's own
+/// declared color space with no channel-order ambiguity to resolve, yet a
+/// real exporter-authored 3Shape/HPS JPEG atlas can still have its own
+/// chroma channels swapped at the SOURCE (Cb/Cr transposed before
+/// compression) — a standards-compliant decode of a mis-authored file still
+/// comes out blue. Detecting the physical prior and undoing a channel swap
+/// catches that case independent of its root cause, on top of the raw-path's
+/// own DirectX-format-aware layout guess.
+///
+/// Faint natural blue casts (a cool composite light, a bluish stone shade)
+/// stay well under the threshold and are never touched; only an
+/// implausible, whole-texture blue bias trips it.
+fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTexture, HpsError> {
+    let (width, height, mut rgba) = texture.into_parts();
+    if texture_is_implausibly_blue(&rgba) {
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+    }
+    // Dimensions and byte length are unchanged (only individual channel BYTES
+    // moved within each already-present pixel), so this can never fail — the
+    // original texture's own construction already proved them sound. Routed
+    // through the fallible constructor anyway (propagated with `?` by the
+    // caller) rather than unwrapped, matching the crate-wide ban on panics.
+    DecodedTexture::new(width, height, rgba)
+}
+
+/// Strided, deterministic sample of up to ~4096 pixels (skipping fully
+/// transparent and near-gray pixels, which carry no reliable hue signal),
+/// comparing mean blue against mean red. Matches the calibration measured
+/// against a real 3Shape/HPS dental scan JPEG atlas with swapped chroma
+/// (mean R 107 / mean B 150 on the swapped file; mean R 150 / mean B 107 once
+/// corrected) — the margin (`red_mean / 4`, floored at 24) sits well clear of
+/// both a genuinely warm scan and a mildly cool-lit one.
+fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
+    const SAMPLE_BUDGET: usize = 4096;
+    const MIN_ALPHA: u8 = 8;
+    const NEAR_GRAY_DELTA: i32 = 16;
+
+    let pixel_count = rgba.len() / 4;
+    if pixel_count == 0 {
+        return false;
+    }
+    let stride = (pixel_count / SAMPLE_BUDGET).max(1);
+
+    let mut red_sum: u64 = 0;
+    let mut blue_sum: u64 = 0;
+    let mut sampled: u64 = 0;
+    for pixel in rgba.chunks_exact(4).step_by(stride) {
+        let [r, _g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+        if a < MIN_ALPHA {
+            continue;
+        }
+        if (i32::from(r) - i32::from(b)).abs() < NEAR_GRAY_DELTA {
+            continue;
+        }
+        red_sum += u64::from(r);
+        blue_sum += u64::from(b);
+        sampled += 1;
+    }
+    if sampled == 0 {
+        return false;
+    }
+    let red_mean = red_sum / sampled;
+    let blue_mean = blue_sum / sampled;
+    let margin = (red_mean / 4).max(24);
+    blue_mean > red_mean + margin
 }
 
 fn decode_embedded_raster(bytes: &[u8]) -> Result<DecodedTexture, HpsError> {

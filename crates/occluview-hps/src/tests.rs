@@ -657,3 +657,89 @@ fn raw_a8r8g8b8_directx_name_decodes_as_bgra() {
         );
     }
 }
+
+fn solid_rgba_png_bytes(
+    width: u32,
+    height: u32,
+    pixel: [u8; 4],
+    transparent_corner: bool,
+) -> Vec<u8> {
+    let mut data = pixel.repeat((width * height) as usize);
+    if transparent_corner {
+        data[3] = 0; // First pixel fully transparent: must not skew the sample.
+    }
+    let img = image::RgbaImage::from_raw(width, height, data).expect("image dims");
+    let mut buf = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .expect("encode png");
+    buf.into_inner()
+}
+
+// Regression for a real owner-reported bug: a 3Shape/HPS dental scan whose
+// embedded JPEG texture atlas has its chroma channels swapped AT THE SOURCE
+// (standards-compliant decode still comes out blue — there is no container
+// pixel-format ambiguity to resolve here, unlike the raw-D3DFMT tests above).
+// Calibrated against the real file's measured statistics: swapped mean
+// R≈107/B≈150, corrected mean R≈150/B≈107.
+#[test]
+fn embedded_png_with_swapped_dental_chroma_is_corrected_to_warm() {
+    let png_bytes = solid_rgba_png_bytes(4, 4, [107, 117, 150, 255], true);
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="4" Height="4" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        png_bytes.len(),
+        encode_base64(&png_bytes)
+    );
+
+    let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
+    let texture = mesh.texture().expect("HPS texture should be attached");
+
+    let opaque_pixels: Vec<&[u8]> = texture.rgba().chunks_exact(4).skip(1).collect();
+    for pixel in opaque_pixels {
+        assert_eq!(
+            pixel,
+            [150, 117, 107, 255],
+            "swapped dental chroma must be corrected back to warm (R>B)"
+        );
+    }
+    // The transparent corner pixel must not itself be mangled by the swap
+    // guard sampling it should have skipped in the first place.
+    assert_eq!(texture.rgba()[3], 0);
+}
+
+// A mildly cool tint (a bluish stone shade, or a cool composite light) stays
+// well under the implausible-blue margin and must NOT be flipped — the
+// physical prior only fires on a whole-texture bias far beyond normal
+// material/lighting variation. The 20-value gap clears the near-gray filter
+// (so this genuinely exercises the margin comparison, not the gray skip) but
+// stays under `red_mean / 4` (150 / 4 = 37).
+#[test]
+fn embedded_png_with_a_mild_cool_tint_is_left_untouched() {
+    let pixel = [150, 160, 170, 255]; // R=150, B=170: a 20-value cool tint.
+    let png_bytes = solid_rgba_png_bytes(4, 4, pixel, false);
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="4" Height="4" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        png_bytes.len(),
+        encode_base64(&png_bytes)
+    );
+
+    let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
+    let texture = mesh.texture().expect("HPS texture should be attached");
+
+    for decoded in texture.rgba().chunks_exact(4) {
+        assert_eq!(
+            decoded, pixel,
+            "a mild cool tint must not be treated as a channel-order bug"
+        );
+    }
+}
