@@ -7,10 +7,15 @@
   this covers (#9).
 - Added a per-layer toggle to hide scan colors/texture and show a flat
   neutral material instead (#10).
-- Added interactive sculpt brushes to the Mesh Editor (#11): Smooth, Add,
-  and Remove (wax knife) dragged directly on the surface with live feedback,
-  adjustable radius and strength, one undo step per stroke. Replaces the
-  earlier one-click Smooth-selection button.
+- Added interactive sculpting to the Mesh Editor (#11): two tools dragged
+  directly on the scan — an Add/Remove clay knife (hold Shift to carve) and a
+  Smooth relaxer (hold Shift to force it) — with Size and Force sliders,
+  Shift/Ctrl + mouse wheel to resize/re-intensify, a live brush cursor, and
+  one undo step per stroke. Add/Remove moves the brushed region coherently
+  toward the camera (robust to a scan's inverted-normal patches) and evens the
+  triangulation as it goes, so it builds and carves cleanly instead of leaving
+  potholes or spikes; Smooth flattens strongly while pinning the scan's open
+  edges. Replaces the earlier one-click Smooth-selection button.
 - Fixed DCM/HPS scans whose embedded JPEG texture atlas had its chroma
   swapped at the source, decoding blue where gingiva/enamel should read warm
   — and tightened the correction so it only fires on a whole-texture bias,
