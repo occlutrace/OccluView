@@ -18,31 +18,34 @@ use glam::{Quat, Vec3};
 const FOLLOW_BLEND_START: f32 = 0.015;
 const FOLLOW_BLEND_END: f32 = 0.12;
 
-/// Follow orientation. Prefers the LOCAL arch direction derived from
-/// `arch_frame` — a mesh's own PCA centroid and its two greatest-variance
-/// axes (see [`occluview_core::Mesh::principal_frame_cached`]): the vector
-/// from `centroid` to `point`, projected onto the `axis0`/`axis1` plane and
-/// normalized (see [`local_arch_normal`]) — oriented to face the camera side
-/// so orbiting never visibly flips the disc. A disc whose plane normal runs
-/// parallel to this LOCAL direction cuts TRANSVERSE to the arch/span at that
-/// point: the anatomically useful orientation for viewing occlusal contacts,
-/// and the one a Bridge Split separator needs to divide a span into
-/// segments. Unlike a single constant axis for the whole mesh, this rotates
-/// smoothly as `point` moves around a curved dental arch — reducing to
-/// (roughly) `axis0` at the arch's left/right extremes, where a constant
-/// axis happens to already be correct, and adapting continuously in between.
-/// Because it is derived from a per-mesh-constant frame rather than the hit
-/// triangle, it is still immune to the per-triangle jitter the old purely
-/// local `surface_normal x view_dir` construction had.
+/// Follow orientation: the disc plane contains BOTH a surface-direction `n`
+/// and the current view direction, so its normal is `n x view_dir` — this is
+/// what keeps the disc edge-on and legible from the camera's current angle,
+/// rotating naturally as the operator orbits to aim it (exactly like a
+/// physical blade held up to the view), the way it always did before this
+/// session's fixes.
 ///
-/// Falls back to that local construction — the disc plane contains the
-/// surface normal and the view direction, so its normal is
-/// `surface_normal x view_dir`, falling back further to the camera-right axis
-/// on a degenerate (view staring straight down the surface normal) cross
-/// product — only when no arch frame is available (a point cloud, or too few
-/// vertices for a well-defined frame), or `point` projects too close to the
-/// centroid to define a direction (never happens for a point ON a real arch's
-/// surface; only a defensive guard).
+/// `n` prefers the LOCAL arch direction derived from `arch_frame` — a mesh's
+/// own PCA centroid and its two greatest-variance axes (see
+/// [`occluview_core::Mesh::principal_frame_cached`]): the vector from
+/// `centroid` to `point`, projected onto the `axis0`/`axis1` plane and
+/// normalized (see [`local_arch_normal`]). A disc plane containing this LOCAL
+/// direction cuts TRANSVERSE to the arch/span at that point: the anatomically
+/// useful orientation for viewing occlusal contacts, and the one a Bridge
+/// Split separator needs to divide a span into segments. Unlike a single
+/// constant axis for the whole mesh, this rotates smoothly as `point` moves
+/// around a curved dental arch — reducing to (roughly) `axis0` at the arch's
+/// left/right extremes, where a constant axis happens to already be correct,
+/// and adapting continuously in between. Because it is derived from a
+/// per-mesh-constant frame rather than the hit triangle, it is still immune
+/// to the per-triangle jitter the raw triangle normal had.
+///
+/// Falls back to that raw (noisy) triangle normal only when no arch frame is
+/// available (a point cloud, or too few vertices for a well-defined frame),
+/// or `point` projects too close to the centroid to define a direction
+/// (never happens for a point on a real arch's surface; only a defensive
+/// guard) — falling back further to the camera-right axis on a degenerate
+/// (view staring straight down `n`) cross product.
 pub(crate) fn follow_plane_normal(
     arch_frame: Option<ArchFrame>,
     point: Vec3,
@@ -51,14 +54,9 @@ pub(crate) fn follow_plane_normal(
     camera_right: Vec3,
 ) -> Vec3 {
     let fallback = camera_right.normalize_or(Vec3::X);
-    if let Some(axis) = arch_frame.and_then(|frame| local_arch_normal(frame, point)) {
-        return if axis.dot(fallback) < 0.0 {
-            -axis
-        } else {
-            axis
-        };
-    }
-    let n = surface_normal.normalize_or_zero();
+    let n = arch_frame
+        .and_then(|frame| local_arch_normal(frame, point))
+        .unwrap_or_else(|| surface_normal.normalize_or_zero());
     let v = view_dir.normalize_or_zero();
     let cross = n.cross(v);
     let length = cross.length();
@@ -413,26 +411,32 @@ mod tests {
     }
 
     #[test]
-    fn follow_normal_prefers_the_local_arch_direction_over_the_local_surface_normal() {
+    fn follow_normal_crosses_the_local_arch_direction_with_the_view_direction() {
+        // The disc's plane must still CONTAIN the view direction (so it
+        // stays edge-on and legible from the camera's current angle,
+        // rotating as the operator orbits to aim it) -- exactly like the raw
+        // local-normal fallback below, just fed the STABLE local arch
+        // direction instead of a noisy triangle normal.
         let frame = ArchFrame {
             centroid: Vec3::ZERO,
             axis0: Vec3::X,
             axis1: Vec3::Y,
         };
-        let point = Vec3::new(5.0, 0.0, 0.0); // purely along axis0 from the centroid
-                                              // Wildly different local surface normal and view direction: the
-                                              // local arch direction must still win outright.
+        let point = Vec3::new(5.0, 0.0, 0.0); // local arch direction here is +X
+        let view_dir = Vec3::NEG_Z;
+        let camera_right = Vec3::X;
+        // The (wildly different) surface-normal argument must be irrelevant.
         let n = follow_plane_normal(
             Some(frame),
             point,
             Vec3::new(0.1, 0.9, 0.3),
-            Vec3::NEG_Y,
-            Vec3::Z,
+            view_dir,
+            camera_right,
         );
-        assert!((n.length() - 1.0).abs() < 1e-6);
+        let expected = Vec3::X.cross(view_dir).normalize();
         assert!(
-            n.distance(Vec3::X) < 1e-6,
-            "expected the local arch direction: {n}"
+            n.distance(expected) < 1e-5,
+            "expected the local arch direction crossed with the view direction: {n} vs {expected}"
         );
     }
 
@@ -466,20 +470,27 @@ mod tests {
     }
 
     #[test]
-    fn follow_normal_orients_the_local_arch_direction_to_face_the_camera_side() {
+    fn follow_normal_rotates_as_the_camera_orbits_around_a_fixed_point() {
+        // Orbiting the camera must still re-aim the disc -- exactly like it
+        // always did before this session's fixes -- so it stays edge-on and
+        // legible as the operator turns to look at the cut from a better
+        // angle, instead of freezing to one orientation regardless of view.
         let frame = ArchFrame {
             centroid: Vec3::ZERO,
             axis0: Vec3::X,
             axis1: Vec3::Y,
         };
-        let point = Vec3::new(-5.0, 0.0, 0.0); // local direction here is -X
+        let point = Vec3::new(5.0, 0.0, 0.0); // local arch direction here is +X, fixed
         let camera_right = Vec3::X;
-        let n = follow_plane_normal(Some(frame), point, Vec3::Y, Vec3::NEG_Z, camera_right);
+        let looking_along_neg_z =
+            follow_plane_normal(Some(frame), point, Vec3::Y, Vec3::NEG_Z, camera_right);
+        let looking_along_neg_y =
+            follow_plane_normal(Some(frame), point, Vec3::Y, Vec3::NEG_Y, camera_right);
         assert!(
-            n.dot(camera_right) > 0.0,
-            "local direction should flip to face the camera side: {n}"
+            looking_along_neg_z.dot(looking_along_neg_y).abs() < 0.05,
+            "orbiting the camera to a very different view direction should visibly \
+             re-aim the disc, not leave it frozen: {looking_along_neg_z} / {looking_along_neg_y}"
         );
-        assert!((n.length() - 1.0).abs() < 1e-6);
     }
 
     #[test]
