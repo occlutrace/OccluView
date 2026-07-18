@@ -128,6 +128,13 @@ impl PreparedScene {
         vertices: &[Vertex],
         touched: &[usize],
     ) -> bool {
+        // The run-coalescing below needs `touched` strictly ascending — a
+        // reversed slice `vertices[start..=prev]` would panic. The sole caller
+        // sorts+dedups, so this only guards a future misuse.
+        debug_assert!(
+            touched.windows(2).all(|pair| pair[0] < pair[1]),
+            "write_entry_vertices_sparse requires strictly ascending touched ids"
+        );
         let Some(entry) = self
             .entries
             .iter()
