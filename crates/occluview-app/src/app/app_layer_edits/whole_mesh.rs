@@ -8,8 +8,8 @@ use super::super::{
 use super::structural::structural_scene_apply;
 use super::{resolve_layer, with_undoable_note};
 use occluview_core::{
-    fill_selected_holes_in_mesh, invert_mesh_orientation, CoreError, CoreMeshEditResult,
-    FaceSelection, Mesh, MeshEditOptions, MeshEditReport,
+    fill_selected_holes_in_mesh, invert_mesh_orientation, smooth_selected_faces_in_mesh, CoreError,
+    CoreMeshEditResult, FaceSelection, Mesh, MeshEditOptions, MeshEditReport,
 };
 
 /// Generous edge ceiling for the interactive Close Holes action. With the mm
@@ -39,10 +39,18 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         app.edit_mode
             .selected_faces_for_layer(request.layer_id)
             .filter(|selection| selection.selected_count() > 0)
+    } else if request.action == LayerContextAction::SmoothSelection {
+        app.edit_mode
+            .selected_faces_for_layer(request.layer_id)
+            .filter(|selection| selection.selected_count() > 0)
     } else {
         None
     };
-    if request.action == LayerContextAction::CloseHoles && selection.is_none() {
+    if matches!(
+        request.action,
+        LayerContextAction::CloseHoles | LayerContextAction::SmoothSelection
+    ) && selection.is_none()
+    {
         app.status_message = Some("Select mesh faces first".to_string());
         return LayerContextApply::default();
     }
@@ -105,6 +113,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
 pub(super) fn edit_command_for_layer_action(action: LayerContextAction) -> Option<EditModeCommand> {
     match action {
         LayerContextAction::CloseHoles => Some(EditModeCommand::CloseHoles),
+        LayerContextAction::SmoothSelection => Some(EditModeCommand::SmoothSelection),
         LayerContextAction::InvertNormals => Some(EditModeCommand::InvertNormals),
         LayerContextAction::DeleteSelectedFaces => Some(EditModeCommand::DeleteSelectedFaces),
         LayerContextAction::CropToSelectedFaces => Some(EditModeCommand::CropToSelectedFaces),
@@ -157,14 +166,21 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
             close_holes_in_mesh(&entry.mesh, selection, close_holes_limit_mm)?
         }
         LayerContextAction::InvertNormals => invert_mesh_orientation(&entry.mesh, selection)?,
+        LayerContextAction::SmoothSelection => {
+            let Some(selection) = selection else {
+                return Ok((LayerContextApply::default(), None));
+            };
+            smooth_selected_faces_in_mesh(&entry.mesh, selection)?
+        }
         _ => return Ok((LayerContextApply::default(), None)),
     };
 
-    // Content no-op (nothing filled / nothing dropped): leave the mesh alone
-    // so the caller reports an honest status instead of a phantom edit. The
-    // report still rides along so a no-op with skipped loops can say so.
+    // Content no-op (nothing filled / nothing dropped / nothing moved): leave
+    // the mesh alone so the caller reports an honest status instead of a
+    // phantom edit. The report still rides along so a no-op can say so.
     let content_changed = match action {
         LayerContextAction::CloseHoles => edited.report.filled_holes > 0,
+        LayerContextAction::SmoothSelection => edited.report.moved_vertices > 0,
         _ => true,
     };
     if !content_changed {
@@ -311,6 +327,7 @@ pub(super) fn layer_edit_status(
         LayerContextAction::CropToSelectedFaces => "Cropped to selection",
         LayerContextAction::CutSelectionToNewLayer => "Cut selection to new layer",
         LayerContextAction::SeparateSelectedComponents => "Separated selected components",
+        LayerContextAction::SmoothSelection => "Smoothed selection",
         _ => "Edited layer",
     };
     format!("{action_label}: {layer_label}")

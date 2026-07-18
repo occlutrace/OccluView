@@ -15,6 +15,11 @@
 
 const POINT_SPLAT_RADIUS_PX: f32 = 3.5;
 const BACKFACE_INSPECTION_TINT: vec3<f32> = vec3<f32>(0.52, 0.60, 0.66);
+// Flat neutral material shown when `show_vertex_colors` is off — a scan
+// colored or textured but displayed as plain material. Must match
+// `occluview_core::scene::material::DEFAULT_UNTEXTURED_MESH_TINT` (pinned by
+// `neutral_material_matches_the_core_untextured_tint` in mesh_uniform.rs).
+const NEUTRAL_MATERIAL_RGB: vec3<f32> = vec3<f32>(0.82, 0.68, 0.42);
 
 struct Camera {
     view: mat4x4<f32>,
@@ -32,7 +37,8 @@ struct MeshUniform {
     has_texture: u32,
     // exocad "Show triangle orientation": paint back-facing fragments red.
     show_orientation: u32,
-    _pad0: u32,
+    // 0 = ignore scan color/texture, shade with NEUTRAL_MATERIAL_RGB instead.
+    show_vertex_colors: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -206,10 +212,13 @@ fn fs_main(
         1.05,
     );
 
-    // Base color: textured or vertex color.
+    // Base color: neutral material, textured, or vertex color.
     var base_rgb: vec3<f32>;
     var base_a: f32;
-    if (mesh_uniform.has_texture != 0u) {
+    if (mesh_uniform.show_vertex_colors == 0u) {
+        base_rgb = NEUTRAL_MATERIAL_RGB;
+        base_a = 1.0;
+    } else if (mesh_uniform.has_texture != 0u) {
         let tex = textureSample(mesh_texture, mesh_sampler, in.uv);
         base_rgb = tex.rgb;
         base_a = tex.a;
@@ -221,7 +230,9 @@ fn fs_main(
     // Apply tint + opacity, then lighting.
     let tinted = vec4<f32>(base_rgb, base_a) * mesh_uniform.tint;
     let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel;
-    let texture_glaze = select(0.0, 1.0, mesh_uniform.has_texture != 0u);
+    // Neutral material reads as matte stone, never the textured glaze.
+    let textured = mesh_uniform.has_texture != 0u && mesh_uniform.show_vertex_colors != 0u;
+    let texture_glaze = select(0.0, 1.0, textured);
     let clay_highlight = (1.0 - texture_glaze) * (0.018 * tight_specular + 0.008 * fresnel);
     let glaze_highlight =
         texture_glaze * (0.040 * tight_specular + 0.024 * broad_specular + 0.007 * fresnel);
@@ -305,7 +316,9 @@ fn fs_ghost(in: VertexOut) -> @location(0) vec4<f32> {
     // reads as raw normal shading; sampling the texture keeps the ghost a faded
     // version of the REAL surface so it still reads as the removed half.
     var base_rgb: vec3<f32>;
-    if (mesh_uniform.has_texture != 0u) {
+    if (mesh_uniform.show_vertex_colors == 0u) {
+        base_rgb = NEUTRAL_MATERIAL_RGB;
+    } else if (mesh_uniform.has_texture != 0u) {
         base_rgb = textureSample(mesh_texture, mesh_sampler, in.uv).rgb;
     } else {
         base_rgb = in.color;

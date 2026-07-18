@@ -36,6 +36,10 @@ pub(crate) enum MeshEditorAction {
     Cut,
     Separate,
     CloseHoles,
+    /// Volume-preserving Taubin smoothing over the marked faces, blended into
+    /// the surrounding untouched surface (issue #11 / the forum's "smooth the
+    /// transition area after filling holes" request).
+    SmoothSelection,
     Undo,
     Redo,
 }
@@ -151,6 +155,7 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
     action = action.or(groups::selection(ui, &state, ops_enabled));
     action = action.or(groups::edit_selection(ui, &state, ops_enabled));
     action = action.or(groups::close_holes(ui, ops_enabled));
+    action = action.or(groups::smooth_selection(ui, ops_enabled));
     groups::status(ui, &state);
     action = action.or(groups::session(ui, &state, ops_enabled));
     action
@@ -171,6 +176,7 @@ mod tests {
             "groups::selection(",
             "groups::edit_selection(",
             "groups::close_holes(",
+            "groups::smooth_selection(",
             "groups::session(",
         ];
         let mut last = 0;

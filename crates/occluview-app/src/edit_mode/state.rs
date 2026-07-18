@@ -69,6 +69,7 @@ pub(crate) enum EditModeCommand {
     CutSelectionToNewLayer,
     SeparateSelectedComponents,
     CloseHoles,
+    SmoothSelection,
     RepairMesh,
 }
 

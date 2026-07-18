@@ -266,7 +266,8 @@ pub(super) fn clone_layer_with_mesh(source: &SceneMesh, mesh: Mesh) -> SceneMesh
         .with_transform(source.transform)
         .with_tint(source.tint)
         .with_opacity(source.opacity)
-        .with_wireframe(source.wireframe);
+        .with_wireframe(source.wireframe)
+        .with_show_vertex_colors(source.show_vertex_colors);
     cloned.visible = source.visible;
     cloned.show_orientation = source.show_orientation;
     cloned

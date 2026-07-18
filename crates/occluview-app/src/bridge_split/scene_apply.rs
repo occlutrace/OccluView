@@ -64,7 +64,8 @@ fn layer_like(source: &SceneMesh, mesh: occluview_core::Mesh) -> SceneMesh {
         .with_transform(source.transform)
         .with_tint(source.tint)
         .with_opacity(source.opacity)
-        .with_wireframe(source.wireframe);
+        .with_wireframe(source.wireframe)
+        .with_show_vertex_colors(source.show_vertex_colors);
     layer.visible = source.visible;
     layer.show_orientation = source.show_orientation;
     layer

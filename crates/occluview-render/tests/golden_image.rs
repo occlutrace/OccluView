@@ -80,7 +80,7 @@ fn identity_uniform(tint: [f32; 4], opacity: f32) -> GpuMeshUniform {
         opacity,
         has_texture: 0,
         show_orientation: 0,
-        pad: 0,
+        show_vertex_colors: 1,
     }
 }
 
@@ -304,7 +304,7 @@ fn render_uniform_textured(texture: &MeshTexture) -> Vec<u8> {
         opacity: 1.0,
         has_texture: 1,
         show_orientation: 0,
-        pad: 0,
+        show_vertex_colors: 1,
     };
     let entries = [occluview_render::SceneDrawEntry {
         mesh: &mesh,
@@ -387,7 +387,7 @@ fn textured_triangle_renders_checkerboard() {
         opacity: 1.0,
         has_texture: 1,
         show_orientation: 0,
-        pad: 0,
+        show_vertex_colors: 1,
     };
 
     let entries = [occluview_render::SceneDrawEntry {

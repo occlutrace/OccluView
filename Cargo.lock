@@ -2361,6 +2361,7 @@ version = "1.0.3"
 dependencies = [
  "earcutr",
  "glam",
+ "rayon",
  "thiserror 1.0.69",
 ]
 

@@ -1,17 +1,17 @@
-//! Per-mesh GPU uniform: model matrix, tint, opacity, `has_texture`, and
-//! `show_orientation` flags.
+//! Per-mesh GPU uniform: model matrix, tint, opacity, `has_texture`,
+//! `show_orientation`, and `show_vertex_colors` flags.
 //!
 //! Bound at group 1, binding 0. One uniform per mesh lets the renderer place
 //! multiple meshes (multi-mesh scene) and branch the fragment shader between
 //! vertex-color and texture-sampled shading.
 //!
 //! Layout (96 bytes, std140-compatible):
-//! - `model`            `[f32;16]`  64 bytes
-//! - `tint`              `[f32;4]`  16 bytes
-//! - `opacity`           `f32`       4 bytes
-//! - `has_texture`       `u32`       4 bytes
-//! - `show_orientation`  `u32`       4 bytes
-//! - `pad`               `u32`       4 bytes
+//! - `model`               `[f32;16]`  64 bytes
+//! - `tint`                 `[f32;4]`  16 bytes
+//! - `opacity`               `f32`       4 bytes
+//! - `has_texture`           `u32`       4 bytes
+//! - `show_orientation`      `u32`       4 bytes
+//! - `show_vertex_colors`    `u32`       4 bytes
 
 use bytemuck::{Pod, Zeroable};
 
@@ -31,14 +31,18 @@ pub struct GpuMeshUniform {
     /// 1 = orientation diagnostic: paint back-facing fragments solid red
     /// (exocad "Show triangle orientation").
     pub show_orientation: u32,
-    /// Padding to round the struct to a 16-byte multiple (matches the WGSL
-    /// `_pad0` field).
-    pub pad: u32,
+    /// 0 = ignore scan color/texture and shade with a flat neutral material
+    /// (the shader's `NEUTRAL_MATERIAL_RGB`, matching
+    /// `occluview_core::scene::material::DEFAULT_UNTEXTURED_MESH_TINT`); 1 =
+    /// normal vertex-color/texture shading. Display-only: mesh data is
+    /// untouched, so edits and exports keep the real colors.
+    pub show_vertex_colors: u32,
 }
 
 impl GpuMeshUniform {
     /// The identity uniform: identity model matrix, white tint, full opacity,
-    /// no texture. Used by the legacy single-mesh draw path and as a default.
+    /// no texture, vertex colors shown. Used by the legacy single-mesh draw
+    /// path and as a default.
     #[must_use]
     pub const fn identity() -> Self {
         // Column-major identity mat4.
@@ -54,7 +58,7 @@ impl GpuMeshUniform {
             opacity: 1.0,
             has_texture: 0,
             show_orientation: 0,
-            pad: 0,
+            show_vertex_colors: 1,
         }
     }
 }

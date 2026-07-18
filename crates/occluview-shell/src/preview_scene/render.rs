@@ -145,7 +145,7 @@ fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         opacity: entry.opacity,
         has_texture: u32::from(entry.mesh.texture().is_some()),
         show_orientation: 0,
-        pad: 0,
+        show_vertex_colors: u32::from(entry.show_vertex_colors),
     }
 }
 

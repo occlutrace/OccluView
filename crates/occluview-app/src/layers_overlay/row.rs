@@ -19,6 +19,8 @@ pub(super) struct LayerRowView<'a> {
     pub(super) active: bool,
 }
 
+// Four independent display/state flags, not a state machine — see SceneMesh.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy)]
 pub(super) struct LayerRowState {
     pub(super) visible: bool,
@@ -26,6 +28,8 @@ pub(super) struct LayerRowState {
     pub(super) tint: [f32; 4],
     pub(super) wireframe: bool,
     pub(super) face_editable: bool,
+    pub(super) show_vertex_colors: bool,
+    pub(super) has_color_data: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -71,6 +75,8 @@ pub(super) fn show_layer_row(
         visible,
         wireframe: state.wireframe,
         face_editable: state.face_editable,
+        show_vertex_colors: state.show_vertex_colors,
+        has_color_data: state.has_color_data,
     };
 
     let row_response = ui

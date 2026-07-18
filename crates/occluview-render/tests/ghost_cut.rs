@@ -60,7 +60,7 @@ fn identity_uniform() -> GpuMeshUniform {
         opacity: 1.0,
         has_texture: 0,
         show_orientation: 0,
-        pad: 0,
+        show_vertex_colors: 1,
     }
 }
 

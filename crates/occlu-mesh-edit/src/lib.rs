@@ -23,6 +23,8 @@
 mod adjacency;
 mod attributes;
 mod bridge_split;
+mod brush;
+mod brush_index;
 mod cap_delaunay;
 mod cap_fair;
 mod cap_fit;
@@ -53,6 +55,9 @@ mod validate;
 mod tests;
 
 #[cfg(test)]
+mod brush_tests;
+
+#[cfg(test)]
 mod holes_matrix_tests;
 
 #[cfg(test)]
@@ -70,6 +75,7 @@ pub use bridge_split::{
     validate_bridge_split_request, BridgeSplitReport, BridgeSplitRequest, BridgeSplitResult,
     SurfaceSplitResult,
 };
+pub use brush::{smooth_selected_faces, BrushMode, BrushSession, BrushStroke, BrushStrokeOutcome};
 pub use component_pick::component_at_triangle;
 pub use components::selected_connected_components;
 pub use delete_crop::{crop_to_selected_faces, delete_selected_faces};

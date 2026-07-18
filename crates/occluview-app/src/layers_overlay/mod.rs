@@ -61,6 +61,9 @@ pub(crate) fn show(
                                 tint: entry.tint,
                                 wireframe: entry.wireframe,
                                 face_editable: !entry.mesh.is_point_cloud(),
+                                show_vertex_colors: entry.show_vertex_colors,
+                                has_color_data: entry.mesh.texture().is_some()
+                                    || entry.mesh.has_vertex_colors(),
                             },
                             LayerRowView {
                                 index,

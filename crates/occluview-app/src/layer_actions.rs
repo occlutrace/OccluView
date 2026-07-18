@@ -16,6 +16,7 @@ pub(crate) enum LayerContextAction {
     ResetOpacity,
     NextTint,
     ToggleWireframe,
+    ToggleShowVertexColors,
     EditMesh,
     BridgeSplit,
     DeleteSelectedFaces,
@@ -23,6 +24,7 @@ pub(crate) enum LayerContextAction {
     CutSelectionToNewLayer,
     SeparateSelectedComponents,
     CloseHoles,
+    SmoothSelection,
     InvertNormals,
     RepairMesh,
     UndoLastMeshEdit,
@@ -67,6 +69,7 @@ pub(crate) fn apply_layer_context_action(
         LayerContextAction::ResetOpacity => reset_layer_opacity(scene, index),
         LayerContextAction::NextTint => advance_layer_tint(scene, index),
         LayerContextAction::ToggleWireframe => toggle_wireframe(scene, index),
+        LayerContextAction::ToggleShowVertexColors => toggle_show_vertex_colors(scene, index),
         LayerContextAction::InvertNormals
         | LayerContextAction::EditMesh
         | LayerContextAction::BridgeSplit
@@ -75,6 +78,7 @@ pub(crate) fn apply_layer_context_action(
         | LayerContextAction::CutSelectionToNewLayer
         | LayerContextAction::SeparateSelectedComponents
         | LayerContextAction::CloseHoles
+        | LayerContextAction::SmoothSelection
         | LayerContextAction::RepairMesh
         | LayerContextAction::UndoLastMeshEdit
         | LayerContextAction::ExportLayer => LayerContextApply::default(),
@@ -166,6 +170,20 @@ fn toggle_wireframe(scene: &mut Scene, index: usize) -> LayerContextApply {
     }
 }
 
+/// Display-only, like [`toggle_layer_visibility`]: it only changes the
+/// per-mesh GPU uniform, never mesh topology, so no structural rebuild is
+/// needed.
+fn toggle_show_vertex_colors(scene: &mut Scene, index: usize) -> LayerContextApply {
+    let Some(entry) = scene.meshes_mut().get_mut(index) else {
+        return LayerContextApply::default();
+    };
+    entry.show_vertex_colors = !entry.show_vertex_colors;
+    LayerContextApply {
+        scene_changed: true,
+        ..LayerContextApply::default()
+    }
+}
+
 pub(crate) fn next_layer_tint(current: [f32; 4]) -> [f32; 4] {
     let current_index = LAYER_TINT_PRESETS
         .iter()
@@ -246,6 +264,21 @@ mod tests {
         assert!(wire_off.scene_changed);
         assert!(wire_off.structural_scene_change);
         assert!(!scene.meshes()[0].wireframe);
+
+        assert!(scene.meshes()[0].show_vertex_colors);
+        let action = request(&scene, 0, LayerContextAction::ToggleShowVertexColors);
+        let colors_off = apply_layer_context_action(&mut scene, action);
+        assert!(colors_off.scene_changed);
+        assert!(
+            !colors_off.structural_scene_change,
+            "a display-only toggle must not force a mesh rebuild"
+        );
+        assert!(!scene.meshes()[0].show_vertex_colors);
+
+        let action = request(&scene, 0, LayerContextAction::ToggleShowVertexColors);
+        let colors_on = apply_layer_context_action(&mut scene, action);
+        assert!(colors_on.scene_changed);
+        assert!(scene.meshes()[0].show_vertex_colors);
 
         let action = request(&scene, 1, LayerContextAction::Remove);
         let remove = apply_layer_context_action(&mut scene, action);
