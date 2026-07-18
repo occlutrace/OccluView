@@ -48,6 +48,7 @@ pub use edit_adapter::{
     selected_connected_components_in_mesh, smooth_selected_faces_in_mesh, CoreMeshEditResult,
     CoreMeshRepairResult,
 };
+pub use principal_axis::PrincipalFrame;
 pub use texture::MeshTexture;
 pub use vertex::Vertex;
 
@@ -86,9 +87,9 @@ pub struct Mesh {
     texture: Option<MeshTexture>,
     /// Cached bounding box, lazily computed.
     cached_bbox: Option<Aabb>,
-    /// Cached long (greatest-variance) principal axis, computed once at
-    /// construction time — see [`Mesh::long_axis_cached`].
-    cached_long_axis: Option<Vec3>,
+    /// Cached principal-axis frame (centroid + orthonormal axes), computed
+    /// once at construction time — see [`Mesh::principal_frame_cached`].
+    cached_principal_frame: Option<PrincipalFrame>,
     /// Stable identity for GPU-uploaded geometry/texture payload.
     topology_id: u64,
 }
@@ -109,7 +110,7 @@ impl Mesh {
             kind: MeshKind::default(),
             texture: None,
             cached_bbox: Some(Aabb::EMPTY),
-            cached_long_axis: None,
+            cached_principal_frame: None,
             topology_id: next_mesh_topology_id(),
         }
     }
@@ -123,9 +124,8 @@ impl Mesh {
         let cached_bbox = Some(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
         ));
-        let cached_long_axis =
-            principal_axis::principal_axes(vertices.iter().map(|v| Vec3::from_array(v.position)))
-                .map(|axes| axes[0]);
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
         Self {
             name,
             vertices,
@@ -135,7 +135,7 @@ impl Mesh {
             kind: MeshKind::PointCloud,
             texture: None,
             cached_bbox,
-            cached_long_axis,
+            cached_principal_frame,
             topology_id: next_mesh_topology_id(),
         }
     }
@@ -171,9 +171,8 @@ impl Mesh {
         let cached_bbox = Some(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
         ));
-        let cached_long_axis =
-            principal_axis::principal_axes(vertices.iter().map(|v| Vec3::from_array(v.position)))
-                .map(|axes| axes[0]);
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
         Ok(Self {
             name,
             vertices,
@@ -183,7 +182,7 @@ impl Mesh {
             kind: MeshKind::TriangleMesh,
             texture: None,
             cached_bbox,
-            cached_long_axis,
+            cached_principal_frame,
             topology_id: next_mesh_topology_id(),
         })
     }
@@ -310,19 +309,22 @@ impl Mesh {
         self.texture.is_some() || self.has_vertex_colors
     }
 
-    /// The mesh's own long (greatest-variance) principal axis, from the
-    /// constructor-time cache — a STABLE, per-mesh-constant "global shape"
-    /// signal: a dental arch or bridge span's own mesiodistal direction,
-    /// unaffected by cursor position or local surface bumps. `None` when the
-    /// mesh has fewer than 3 distinct vertex positions (no well-defined axis
-    /// — e.g. an empty mesh, or one degenerate point).
+    /// The mesh's own principal-axis frame (PCA centroid + orthonormal
+    /// axes), from the constructor-time cache — a STABLE, per-mesh-constant
+    /// "global shape" signal: `axes[0]` is a dental arch or bridge span's own
+    /// mesiodistal direction, unaffected by cursor position or local surface
+    /// bumps, and the LOCAL direction from `centroid` to any surface point,
+    /// projected onto the `axes[0]`/`axes[1]` plane, rotates smoothly around
+    /// the arch. `None` when the mesh has fewer than 3 distinct vertex
+    /// positions (no well-defined frame — e.g. an empty mesh, or one
+    /// degenerate point).
     ///
     /// Mesh geometry is immutable after construction (mirrors
-    /// [`Mesh::bbox_cached`]), so the cached axis remains valid.
+    /// [`Mesh::bbox_cached`]), so the cached frame remains valid.
     #[inline]
     #[must_use]
-    pub fn long_axis_cached(&self) -> Option<Vec3> {
-        self.cached_long_axis
+    pub fn principal_frame_cached(&self) -> Option<PrincipalFrame> {
+        self.cached_principal_frame
     }
 }
 

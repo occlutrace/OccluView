@@ -5,8 +5,8 @@
 //! is a pure function of its inputs and unit-tested below.
 
 use crate::cut_manipulator::{
-    CutCursor, CutFrameInput, DiscDrag, DiscPose, CENTER_GRAB_RADIUS_PX, MAX_DISC_RADIUS_MM,
-    MIN_DISC_RADIUS_MM, RADIUS_WHEEL_STEP, RIM_GRAB_RADIUS_PX,
+    ArchFrame, CutCursor, CutFrameInput, DiscDrag, DiscPose, CENTER_GRAB_RADIUS_PX,
+    MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM, RADIUS_WHEEL_STEP, RIM_GRAB_RADIUS_PX,
 };
 use eframe::egui::Pos2;
 use glam::{Quat, Vec3};
@@ -18,39 +18,45 @@ use glam::{Quat, Vec3};
 const FOLLOW_BLEND_START: f32 = 0.015;
 const FOLLOW_BLEND_END: f32 = 0.12;
 
-/// Follow orientation. Prefers `global_long_axis` — a mesh's own long
-/// (greatest-variance) principal axis, constant for that mesh regardless of
-/// where the cursor lands on it (see [`occluview_core::Mesh::long_axis_cached`])
-/// — oriented to face the camera side so orbiting never visibly flips the
-/// disc. A disc whose plane normal runs parallel to a dental arch's or a
-/// bridge span's own long axis cuts TRANSVERSE to it: the anatomically useful
-/// orientation for viewing occlusal contacts, and the one a Bridge Split
-/// separator needs to divide a span into segments. Because the axis is a
-/// per-mesh constant, this is immune to the per-triangle jitter the old
-/// purely local `surface_normal x view_dir` construction had.
+/// Follow orientation. Prefers the LOCAL arch direction derived from
+/// `arch_frame` — a mesh's own PCA centroid and its two greatest-variance
+/// axes (see [`occluview_core::Mesh::principal_frame_cached`]): the vector
+/// from `centroid` to `point`, projected onto the `axis0`/`axis1` plane and
+/// normalized (see [`local_arch_normal`]) — oriented to face the camera side
+/// so orbiting never visibly flips the disc. A disc whose plane normal runs
+/// parallel to this LOCAL direction cuts TRANSVERSE to the arch/span at that
+/// point: the anatomically useful orientation for viewing occlusal contacts,
+/// and the one a Bridge Split separator needs to divide a span into
+/// segments. Unlike a single constant axis for the whole mesh, this rotates
+/// smoothly as `point` moves around a curved dental arch — reducing to
+/// (roughly) `axis0` at the arch's left/right extremes, where a constant
+/// axis happens to already be correct, and adapting continuously in between.
+/// Because it is derived from a per-mesh-constant frame rather than the hit
+/// triangle, it is still immune to the per-triangle jitter the old purely
+/// local `surface_normal x view_dir` construction had.
 ///
 /// Falls back to that local construction — the disc plane contains the
 /// surface normal and the view direction, so its normal is
 /// `surface_normal x view_dir`, falling back further to the camera-right axis
 /// on a degenerate (view staring straight down the surface normal) cross
-/// product — only when no global axis is available (a point cloud, or too
-/// few vertices for a well-defined axis).
+/// product — only when no arch frame is available (a point cloud, or too few
+/// vertices for a well-defined frame), or `point` projects too close to the
+/// centroid to define a direction (never happens for a point ON a real arch's
+/// surface; only a defensive guard).
 pub(crate) fn follow_plane_normal(
-    global_long_axis: Option<Vec3>,
+    arch_frame: Option<ArchFrame>,
+    point: Vec3,
     surface_normal: Vec3,
     view_dir: Vec3,
     camera_right: Vec3,
 ) -> Vec3 {
     let fallback = camera_right.normalize_or(Vec3::X);
-    if let Some(axis) = global_long_axis {
-        let axis = axis.normalize_or_zero();
-        if axis.length_squared() > f32::EPSILON {
-            return if axis.dot(fallback) < 0.0 {
-                -axis
-            } else {
-                axis
-            };
-        }
+    if let Some(axis) = arch_frame.and_then(|frame| local_arch_normal(frame, point)) {
+        return if axis.dot(fallback) < 0.0 {
+            -axis
+        } else {
+            axis
+        };
     }
     let n = surface_normal.normalize_or_zero();
     let v = view_dir.normalize_or_zero();
@@ -71,6 +77,25 @@ pub(crate) fn follow_plane_normal(
     oriented_fallback
         .lerp(surface_driven, blend)
         .normalize_or(oriented_fallback)
+}
+
+/// The LOCAL cross-arch direction at `point`: the vector from `frame`'s own
+/// PCA centroid to `point`, projected onto `frame`'s `axis0`/`axis1` plane
+/// and normalized — the "spoke" direction pointing radially outward from the
+/// arch's own center through this point. For a horseshoe/U-shaped dental
+/// arch this smoothly ROTATES as `point` moves around the curve: it reduces
+/// to (roughly) `axis0` at the arch's left/right extremes and to `axis1`
+/// near its front-center, tracking the true local cross-arch direction
+/// everywhere between — unlike a single constant axis, which is only correct
+/// at those extremes. `None` when the projection collapses to (near) zero,
+/// i.e. `point` sits (almost) exactly at the centroid — never the case for a
+/// point on a real mesh's surface, since the centroid lies inside the solid;
+/// only a defensive guard against a degenerate frame/point pairing.
+fn local_arch_normal(frame: ArchFrame, point: Vec3) -> Option<Vec3> {
+    let offset = point - frame.centroid;
+    let in_plane = frame.axis0 * offset.dot(frame.axis0) + frame.axis1 * offset.dot(frame.axis1);
+    let normalized = in_plane.normalize_or_zero();
+    (normalized.length_squared() > f32::EPSILON).then_some(normalized)
 }
 
 /// Exponential temporal smoothing toward the fresh normal, killing scanner
@@ -344,8 +369,8 @@ mod tests {
     }
 
     #[test]
-    fn follow_normal_contains_surface_normal_and_view_dir_without_a_global_axis() {
-        let n = follow_plane_normal(None, Vec3::Y, Vec3::NEG_Z, Vec3::X);
+    fn follow_normal_contains_surface_normal_and_view_dir_without_an_arch_frame() {
+        let n = follow_plane_normal(None, Vec3::ZERO, Vec3::Y, Vec3::NEG_Z, Vec3::X);
         assert!((n.length() - 1.0).abs() < 1e-6);
         assert!(n.dot(Vec3::Y).abs() < 1e-6, "off surface normal: {n}");
         assert!(n.dot(Vec3::NEG_Z).abs() < 1e-6, "perp to view: {n}");
@@ -356,18 +381,31 @@ mod tests {
     fn follow_normal_degenerate_view_down_normal_falls_back_to_camera_right() {
         let right = Vec3::new(1.0, 0.0, 0.0);
         assert_eq!(
-            follow_plane_normal(None, Vec3::Y, Vec3::NEG_Y, right),
+            follow_plane_normal(None, Vec3::ZERO, Vec3::Y, Vec3::NEG_Y, right),
             right
         );
-        assert_eq!(follow_plane_normal(None, Vec3::Y, Vec3::Y, right), right);
+        assert_eq!(
+            follow_plane_normal(None, Vec3::ZERO, Vec3::Y, Vec3::Y, right),
+            right
+        );
     }
 
     #[test]
-    fn follow_normal_changes_continuously_near_the_occlusal_view_without_a_global_axis() {
-        let almost_axial =
-            follow_plane_normal(None, Vec3::new(0.03, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
-        let just_past_old_threshold =
-            follow_plane_normal(None, Vec3::new(0.04, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
+    fn follow_normal_changes_continuously_near_the_occlusal_view_without_an_arch_frame() {
+        let almost_axial = follow_plane_normal(
+            None,
+            Vec3::ZERO,
+            Vec3::new(0.03, 0.0, 1.0),
+            Vec3::NEG_Z,
+            Vec3::X,
+        );
+        let just_past_old_threshold = follow_plane_normal(
+            None,
+            Vec3::ZERO,
+            Vec3::new(0.04, 0.0, 1.0),
+            Vec3::NEG_Z,
+            Vec3::X,
+        );
         assert!(
             almost_axial.dot(just_past_old_threshold) > 0.95,
             "nearby surface samples must not snap the disc: {almost_axial} / {just_past_old_threshold}"
@@ -375,24 +413,43 @@ mod tests {
     }
 
     #[test]
-    fn follow_normal_prefers_the_global_axis_over_the_local_surface_normal() {
-        let axis = Vec3::new(1.0, 0.0, 0.0);
-        // Wildly different local surface normal and view direction: the
-        // global axis must still win outright.
-        let n = follow_plane_normal(Some(axis), Vec3::new(0.1, 0.9, 0.3), Vec3::NEG_Y, Vec3::Z);
+    fn follow_normal_prefers_the_local_arch_direction_over_the_local_surface_normal() {
+        let frame = ArchFrame {
+            centroid: Vec3::ZERO,
+            axis0: Vec3::X,
+            axis1: Vec3::Y,
+        };
+        let point = Vec3::new(5.0, 0.0, 0.0); // purely along axis0 from the centroid
+                                              // Wildly different local surface normal and view direction: the
+                                              // local arch direction must still win outright.
+        let n = follow_plane_normal(
+            Some(frame),
+            point,
+            Vec3::new(0.1, 0.9, 0.3),
+            Vec3::NEG_Y,
+            Vec3::Z,
+        );
         assert!((n.length() - 1.0).abs() < 1e-6);
-        assert!(n.distance(axis) < 1e-6, "expected the global axis: {n}");
+        assert!(
+            n.distance(Vec3::X) < 1e-6,
+            "expected the local arch direction: {n}"
+        );
     }
 
     #[test]
-    fn follow_normal_with_a_global_axis_is_immune_to_per_triangle_surface_noise() {
+    fn follow_normal_with_an_arch_frame_is_immune_to_per_triangle_surface_noise() {
         // The reported bug: as the cursor crosses triangles, the LOCAL
-        // surface normal jumps around; with a global axis available the
-        // result must not move at all.
-        let axis = Vec3::new(0.0, 0.0, 1.0);
+        // surface normal jumps around; with an arch frame available and the
+        // hit POINT fixed, the result must not move at all.
+        let frame = ArchFrame {
+            centroid: Vec3::ZERO,
+            axis0: Vec3::Z,
+            axis1: Vec3::X,
+        };
+        let point = Vec3::new(0.0, 0.0, 5.0);
         let view_dir = Vec3::NEG_Y;
         let camera_right = Vec3::X;
-        let baseline = follow_plane_normal(Some(axis), Vec3::Y, view_dir, camera_right);
+        let baseline = follow_plane_normal(Some(frame), point, Vec3::Y, view_dir, camera_right);
         for noisy_normal in [
             Vec3::new(0.9, 0.3, 0.1),
             Vec3::new(-0.4, 0.8, -0.2),
@@ -400,38 +457,121 @@ mod tests {
             Vec3::Z,
             -Vec3::X,
         ] {
-            let out = follow_plane_normal(Some(axis), noisy_normal, view_dir, camera_right);
+            let out = follow_plane_normal(Some(frame), point, noisy_normal, view_dir, camera_right);
             assert_eq!(
                 out, baseline,
-                "global axis must make the result independent of local surface noise: {out}"
+                "an arch frame must make the result independent of local surface noise: {out}"
             );
         }
     }
 
     #[test]
-    fn follow_normal_orients_the_global_axis_to_face_the_camera_side() {
-        let axis = Vec3::new(-1.0, 0.0, 0.0); // stored pointing away from camera_right
+    fn follow_normal_orients_the_local_arch_direction_to_face_the_camera_side() {
+        let frame = ArchFrame {
+            centroid: Vec3::ZERO,
+            axis0: Vec3::X,
+            axis1: Vec3::Y,
+        };
+        let point = Vec3::new(-5.0, 0.0, 0.0); // local direction here is -X
         let camera_right = Vec3::X;
-        let n = follow_plane_normal(Some(axis), Vec3::Y, Vec3::NEG_Z, camera_right);
+        let n = follow_plane_normal(Some(frame), point, Vec3::Y, Vec3::NEG_Z, camera_right);
         assert!(
             n.dot(camera_right) > 0.0,
-            "axis should flip to face the camera side: {n}"
+            "local direction should flip to face the camera side: {n}"
         );
         assert!((n.length() - 1.0).abs() < 1e-6);
     }
 
     #[test]
-    fn follow_normal_falls_back_to_local_surface_when_no_global_axis_is_available() {
-        let with_axis = follow_plane_normal(Some(Vec3::X), Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        let without_axis = follow_plane_normal(None, Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        // Same inputs, but a degenerate (zero) axis must behave exactly like
-        // "no axis at all" rather than silently returning a zero vector.
-        let zero_axis = follow_plane_normal(Some(Vec3::ZERO), Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        assert_eq!(zero_axis, without_axis);
+    fn follow_normal_falls_back_to_local_surface_when_no_arch_frame_is_available() {
+        let frame = ArchFrame {
+            centroid: Vec3::ZERO,
+            axis0: Vec3::X,
+            axis1: Vec3::Y,
+        };
+        let real_point = Vec3::new(5.0, 0.0, 0.0); // off the centroid: a real direction exists
+        let with_frame =
+            follow_plane_normal(Some(frame), real_point, Vec3::Y, Vec3::NEG_Z, Vec3::X);
+        let without_frame = follow_plane_normal(None, real_point, Vec3::Y, Vec3::NEG_Z, Vec3::X);
+        // Same inputs, but a point sitting EXACTLY at the centroid has no
+        // well-defined local direction, and must behave exactly like "no
+        // frame at all" rather than silently returning a zero vector.
+        let at_centroid =
+            follow_plane_normal(Some(frame), frame.centroid, Vec3::Y, Vec3::NEG_Z, Vec3::X);
+        assert_eq!(at_centroid, without_frame);
         assert_ne!(
-            with_axis, without_axis,
-            "a real global axis must take precedence over the local fallback"
+            with_frame, without_frame,
+            "a real local arch direction must take precedence over the local fallback"
         );
+    }
+
+    #[test]
+    fn follow_normal_rotates_as_the_point_moves_around_a_curved_arch() {
+        // A circle in the axis0/axis1 plane stands in for a horseshoe arch's
+        // own curve; the local direction from the centroid through a point on
+        // it should track that point's own angle around the curve, not stay
+        // fixed for the whole mesh like the old constant axis did -- the
+        // reported "disc gets stuck facing one direction as you drag along
+        // the arch" bug.
+        let frame = ArchFrame {
+            centroid: Vec3::ZERO,
+            axis0: Vec3::X,
+            axis1: Vec3::Y,
+        };
+        let camera_right = Vec3::Z; // orthogonal to the arch plane: never flips sign here.
+        let at_angle = |degrees: f32| -> Vec3 {
+            let radians = degrees.to_radians();
+            let point = (Vec3::X * radians.cos() + Vec3::Y * radians.sin()) * 30.0;
+            follow_plane_normal(Some(frame), point, Vec3::Z, Vec3::NEG_Z, camera_right)
+        };
+
+        let start_of_arc = at_angle(0.0);
+        let quarter_turn = at_angle(90.0);
+        let opposite_quarter_turn = at_angle(-90.0);
+        assert!(
+            start_of_arc.dot(quarter_turn).abs() < 0.05,
+            "a quarter turn around the arch should rotate the direction ~90 degrees, not repeat it: {start_of_arc} / {quarter_turn}"
+        );
+        assert!(
+            (quarter_turn + opposite_quarter_turn).length() < 0.05,
+            "opposite sides of the arch should read opposite directions: {quarter_turn} / {opposite_quarter_turn}"
+        );
+
+        // Continuity: a small step in angle must not snap/jitter the direction.
+        let just_before = at_angle(40.0);
+        let just_after = at_angle(45.0);
+        assert!(
+            just_before.dot(just_after) > 0.99,
+            "a small move along the arch must not jitter/snap the direction: {just_before} / {just_after}"
+        );
+    }
+
+    #[test]
+    fn local_arch_normal_ignores_the_out_of_plane_component() {
+        let frame = ArchFrame {
+            centroid: Vec3::ZERO,
+            axis0: Vec3::X,
+            axis1: Vec3::Y,
+        };
+        // Offset mostly along Z (perpendicular to the arch plane -- e.g. the
+        // occlusal-gingival height) plus a bit along X: the result must still
+        // be pure X, ignoring the out-of-plane component entirely.
+        let point = Vec3::new(5.0, 0.0, 100.0);
+        let n = local_arch_normal(frame, point).expect("well-defined direction");
+        assert!(
+            n.distance(Vec3::X) < 1e-6,
+            "expected pure X, out-of-plane height ignored: {n}"
+        );
+    }
+
+    #[test]
+    fn local_arch_normal_is_none_exactly_at_the_centroid() {
+        let frame = ArchFrame {
+            centroid: Vec3::new(1.0, 2.0, 3.0),
+            axis0: Vec3::X,
+            axis1: Vec3::Y,
+        };
+        assert!(local_arch_normal(frame, frame.centroid).is_none());
     }
 
     #[test]
