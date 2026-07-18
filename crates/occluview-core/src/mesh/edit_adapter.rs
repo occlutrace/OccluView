@@ -3,8 +3,9 @@ use crate::error::CoreError;
 use occlu_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
     fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
-    EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
-    MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
+    smooth_selected_faces, EditVertex, FaceSelection, MeshEditBuffers, MeshEditError,
+    MeshEditOptions, MeshEditReport, MeshEditResult as RawMeshEditResult, MeshTopology,
+    RepairOptions, RepairReport,
 };
 
 /// Result of applying a mesh edit to a core [`Mesh`].
@@ -202,6 +203,21 @@ pub fn fill_selected_holes_in_mesh(
     run_mesh_edit(source, |buffers| {
         fill_selected_holes(buffers, selection, options)
     })
+}
+
+/// One-click Smooth (issue #11) over an explicit face selection on a core
+/// mesh: volume-preserving Taubin relaxation blended into the surrounding
+/// untouched surface, the adapter used by the interactive Mesh Editor's
+/// Smooth button.
+///
+/// # Errors
+/// Returns [`CoreError`] for unsupported topology, malformed edit buffers, or
+/// invalid selections.
+pub fn smooth_selected_faces_in_mesh(
+    source: &Mesh,
+    selection: &FaceSelection,
+) -> Result<CoreMeshEditResult, CoreError> {
+    run_mesh_edit(source, |buffers| smooth_selected_faces(buffers, selection))
 }
 
 /// Flip selected triangle winding, or the whole mesh when no selection is provided.

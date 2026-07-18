@@ -111,7 +111,7 @@ fn selection_overlay_for_layer(
             opacity: SELECTION_OVERLAY_OPACITY,
             has_texture: 0,
             show_orientation: 0,
-            pad: 0,
+            show_vertex_colors: 1,
         },
     })
 }
