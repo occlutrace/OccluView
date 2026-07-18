@@ -20,6 +20,16 @@ type CellKey = (i32, i32, i32);
 /// that a session never needs an unbounded query on a huge or tiny mesh.
 const CELLS_ACROSS_DIAGONAL: f32 = 96.0;
 
+/// Largest per-axis cell reach a radius query will scan as a neighborhood
+/// before falling back to a single linear pass over every occupied cell. Cell
+/// size is fixed to the mesh's own scale, so a brush radius far larger than the
+/// mesh (a big brush on a small cropped object) would otherwise make the
+/// `(2·reach+1)³` triple loop explode into millions of lookups and freeze the
+/// UI for minutes. Past this reach the query already covers most of the grid,
+/// so returning every vertex (a valid conservative superset the caller filters
+/// by exact distance) is both correct and bounded by the vertex count.
+const MAX_NEIGHBORHOOD_REACH: i32 = 16;
+
 /// A uniform-grid spatial index over a fixed set of vertex positions.
 /// Positions are captured at build time; a session that moves vertices during
 /// strokes MUST rebuild the grid before the moved region can drift far enough
@@ -86,6 +96,19 @@ impl VertexGrid {
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let reach = (radius / self.cell_size).ceil() as i32 + 1;
+        if reach > MAX_NEIGHBORHOOD_REACH {
+            // The radius dwarfs the grid: one linear pass over every occupied
+            // cell (O(vertices)) beats an O(reach³) neighborhood scan and can
+            // never freeze. The caller filters by exact distance anyway.
+            let mut found: Vec<usize> = self
+                .cells
+                .values()
+                .flat_map(|bucket| bucket.iter().map(|&id| id as usize))
+                .collect();
+            found.sort_unstable();
+            found.dedup();
+            return found;
+        }
         let center_key = cell_key(center, self.origin, self.cell_size);
         let mut found = Vec::new();
         for dx in -reach..=reach {
@@ -223,5 +246,28 @@ mod tests {
         let grid = VertexGrid::build(&positions);
         assert!(grid.query_radius(Vec3::ZERO, 0.0).is_empty());
         assert!(grid.query_radius(Vec3::ZERO, -1.0).is_empty());
+    }
+
+    #[test]
+    fn a_radius_dwarfing_a_small_object_falls_back_instead_of_exploding() {
+        // A tiny object (bbox ~0.06mm across) queried with a huge relative
+        // radius: cell size is fixed to the mesh scale, so a neighborhood scan
+        // would be O(reach^3) with reach in the hundreds and freeze. The cap
+        // must make it return every point as a conservative superset instead.
+        let positions: Vec<Vec3> = (0..20)
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let f = i as f32;
+                Vec3::new(f * 0.003, (f * 0.7).sin() * 0.02, 0.0)
+            })
+            .collect();
+        let grid = VertexGrid::build(&positions);
+        // radius ~8x the bbox diagonal — the pathological "big brush, small
+        // object" case. Must complete instantly and include every point.
+        let found = grid.query_radius(Vec3::ZERO, 0.5);
+        assert_eq!(found.len(), positions.len());
+        for id in 0..positions.len() {
+            assert!(found.contains(&id));
+        }
     }
 }

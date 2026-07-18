@@ -226,9 +226,7 @@ impl BrushSession {
             .iter()
             .map(|v| Vec3::from_array(v.position))
             .collect();
-        let max_step: Vec<f32> = (0..vertex_count)
-            .map(|index| shortest_incident_edge(&positions, &adjacency[index], positions[index]))
-            .collect();
+        let max_step = compute_step_budget(&positions, &adjacency, &position_siblings);
         let grid = VertexGrid::build(&positions);
 
         Ok(Self {
@@ -296,7 +294,55 @@ impl BrushSession {
                 (weight > 0.0).then_some((vertex_id, weight))
             })
             .collect();
+        let weighted = self.restrict_to_component(weighted, center);
         (!weighted.is_empty()).then_some((weighted, strength))
+    }
+
+    /// Keep only the candidates in the same connected component as the vertex
+    /// nearest the dab center, by flooding the welded rings (and soup siblings)
+    /// through the in-disc set. A purely Euclidean radius query can pull in a
+    /// spatially-close but topologically SEPARATE surface (a dropout island, the
+    /// opposing arch sitting just behind the cursor); restricting to one
+    /// component stops a dab from dragging two disjoint sheets together — the
+    /// robustness a messy multi-surface scan needs, and what makes the "never
+    /// reaches across a gap" contract true for the clay push, not only Smooth.
+    fn restrict_to_component(
+        &self,
+        weighted: Vec<(usize, f32)>,
+        center: Vec3,
+    ) -> Vec<(usize, f32)> {
+        if weighted.len() <= 1 {
+            return weighted;
+        }
+        let in_disc: HashSet<usize> = weighted.iter().map(|&(id, _)| id).collect();
+        let Some(seed) = weighted
+            .iter()
+            .min_by(|a, b| {
+                let da = self.position(a.0).distance(center);
+                let db = self.position(b.0).distance(center);
+                da.total_cmp(&db)
+            })
+            .map(|&(id, _)| id)
+        else {
+            return weighted;
+        };
+        let mut reached: HashSet<usize> = HashSet::with_capacity(in_disc.len());
+        let mut stack = vec![seed];
+        reached.insert(seed);
+        while let Some(vertex_id) = stack.pop() {
+            let neighbors = self.adjacency[vertex_id]
+                .iter()
+                .chain(self.position_siblings[vertex_id].iter());
+            for &neighbor in neighbors {
+                if in_disc.contains(&neighbor) && reached.insert(neighbor) {
+                    stack.push(neighbor);
+                }
+            }
+        }
+        weighted
+            .into_iter()
+            .filter(|(id, _)| reached.contains(id))
+            .collect()
     }
 
     /// Rebuild the spatial grid from current (live) positions if any indexed
@@ -312,6 +358,10 @@ impl BrushSession {
             .iter()
             .map(|v| Vec3::from_array(v.position))
             .collect();
+        // Refresh the anti-inversion budget against the now-deformed geometry
+        // (edges stretch when building, shrink when carving), so the clamp stays
+        // honest across a long stroke instead of trusting the prepare-time edges.
+        self.max_step = compute_step_budget(&positions, &self.adjacency, &self.position_siblings);
         self.grid = VertexGrid::build(&positions);
         self.grid_reference_positions = positions;
         self.max_drift_since_grid_build = 0.0;
@@ -331,8 +381,14 @@ impl BrushSession {
         let strength = stroke.strength.clamp(0.0, 1.0);
         let normal = self.brush_normal(weighted, Vec3::from_array(stroke.view_dir));
         let amplitude = (stroke.radius_mm * ADD_REMOVE_GAIN * strength).max(0.0);
+        // Only weld representatives (a real ring) are displaced independently;
+        // their soup duplicates follow via sibling propagation in `commit_moves`.
+        // Letting a duplicate also displace on its own would let it re-apply the
+        // dab from the already-moved position against its own (fallback) budget
+        // and overrun the representative's correct clamp.
         let displacement: Vec<(usize, Vec3)> = weighted
             .iter()
+            .filter(|&&(vertex_id, _)| !self.adjacency[vertex_id].is_empty())
             .map(|&(vertex_id, weight)| {
                 let target = self.position(vertex_id) + normal * (sign * weight * amplitude);
                 (vertex_id, target)
@@ -645,6 +701,37 @@ fn boundary_mask(
         }
     }
     is_boundary
+}
+
+/// Per-vertex anti-inversion step budget: the shortest incident welded edge,
+/// then reduced to the minimum across each soup cluster. A non-representative
+/// soup duplicate has an EMPTY welded ring (only the cluster representative
+/// carries the real adjacency), so `shortest_incident_edge` would hand it the
+/// generous isolated-vertex fallback; propagating the cluster minimum gives
+/// every duplicate the representative's tight, correct budget. Without this a
+/// higher-id duplicate — captured by the same spatial query, since all copies
+/// share a position — re-applies a clay dab at the loose fallback budget and
+/// overwrites the representative's correctly clamped move, silently defeating
+/// the anti-inversion guard on ordinary STL soup.
+fn compute_step_budget(
+    positions: &[Vec3],
+    adjacency: &[Vec<usize>],
+    position_siblings: &[Vec<usize>],
+) -> Vec<f32> {
+    let raw: Vec<f32> = (0..positions.len())
+        .map(|index| shortest_incident_edge(positions, &adjacency[index], positions[index]))
+        .collect();
+    (0..positions.len())
+        .map(|index| {
+            let mut budget = raw[index];
+            for &sibling in &position_siblings[index] {
+                if let Some(&value) = raw.get(sibling) {
+                    budget = budget.min(value);
+                }
+            }
+            budget
+        })
+        .collect()
 }
 
 /// Shortest edge from `here` to any of `neighbors`' positions, capped (not

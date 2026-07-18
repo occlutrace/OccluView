@@ -197,8 +197,9 @@ impl OccluViewApp {
 
         // Shift/Ctrl + wheel resizes / re-intensifies an armed sculpt brush
         // instead of zooming the camera; consume the wheel so the zoom below
-        // skips it this frame.
-        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx);
+        // skips it this frame. Gated to the viewport (like the zoom) so a
+        // modified scroll over a panel keeps its own meaning.
+        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response.hovered());
 
         let Some(camera) = self.camera.as_mut() else {
             return;

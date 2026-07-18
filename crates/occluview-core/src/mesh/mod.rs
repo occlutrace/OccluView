@@ -52,6 +52,7 @@ pub use texture::MeshTexture;
 pub use vertex::Vertex;
 
 static NEXT_MESH_TOPOLOGY_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_MESH_GEOMETRY_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Whether a [`Mesh`] carries triangle connectivity or is just a point cloud.
 ///
@@ -89,8 +90,16 @@ pub struct Mesh {
     /// Cached principal-axis frame (centroid + orthonormal axes), computed
     /// once at construction time — see [`Mesh::principal_frame_cached`].
     cached_principal_frame: Option<PrincipalFrame>,
-    /// Stable identity for GPU-uploaded geometry/texture payload.
+    /// Stable identity for the GPU-uploaded geometry/texture payload. Preserved
+    /// by [`Mesh::with_sculpted_vertices`] so a renderer that streamed new
+    /// positions out-of-band does not re-upload.
     topology_id: u64,
+    /// Identity of the geometric CONTENT (positions/indices). Unlike
+    /// `topology_id`, this DOES change on [`Mesh::with_sculpted_vertices`], so
+    /// caches that precompute from geometry (e.g. the bridge-split prepared
+    /// solid) can tell a sculpted mesh from its pre-sculpt self even though the
+    /// GPU-buffer token was deliberately held frozen.
+    geometry_id: u64,
 }
 
 impl Mesh {
@@ -111,6 +120,7 @@ impl Mesh {
             cached_bbox: Some(Aabb::EMPTY),
             cached_principal_frame: None,
             topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
         }
     }
 
@@ -136,6 +146,7 @@ impl Mesh {
             cached_bbox,
             cached_principal_frame,
             topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
         }
     }
 
@@ -183,6 +194,7 @@ impl Mesh {
             cached_bbox,
             cached_principal_frame,
             topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
         })
     }
 
@@ -253,6 +265,17 @@ impl Mesh {
     #[must_use]
     pub fn topology_id(&self) -> u64 {
         self.topology_id
+    }
+
+    /// Stable identity for the geometric CONTENT (positions/indices), fresh on
+    /// every construction AND on [`Mesh::with_sculpted_vertices`] — unlike
+    /// [`Mesh::topology_id`], which a sculpt commit holds frozen. Content-derived
+    /// caches (the bridge-split prepared solid) key on this so a sculpted mesh is
+    /// never mistaken for its pre-sculpt self.
+    #[inline]
+    #[must_use]
+    pub fn geometry_id(&self) -> u64 {
+        self.geometry_id
     }
 
     /// Whether this is a triangle mesh or a point cloud.
@@ -341,6 +364,7 @@ impl Mesh {
             cached_bbox,
             cached_principal_frame,
             topology_id: self.topology_id,
+            geometry_id: next_mesh_geometry_id(),
         })
     }
 
@@ -365,4 +389,8 @@ impl Mesh {
 
 pub(super) fn next_mesh_topology_id() -> u64 {
     NEXT_MESH_TOPOLOGY_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn next_mesh_geometry_id() -> u64 {
+    NEXT_MESH_GEOMETRY_ID.fetch_add(1, Ordering::Relaxed)
 }

@@ -161,6 +161,79 @@ fn add_builds_toward_the_camera_and_remove_carves_away() {
 }
 
 #[test]
+fn add_builds_toward_the_camera_with_a_partially_inverted_patch() {
+    // A realistic messy patch: a MINORITY (~1 in 3) of the normals are flipped,
+    // the rest correct. The front (camera-facing) bucket still dominates, so the
+    // brush normal comes from AVERAGING the trusted majority — not the pure
+    // camera fallback that a fully-inverted patch would take — and Add still
+    // builds toward the camera (+Z).
+    let mut mesh = bumpy_patch(0.0);
+    for (index, vertex) in mesh.vertices.iter_mut().enumerate() {
+        if index % 3 == 0 {
+            vertex.normal = [-vertex.normal[0], -vertex.normal[1], -vertex.normal[2]];
+        }
+    }
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    let center_index = 5 * 11 + 5;
+    session.apply_stroke(center_stroke(4.0, 1.0), BrushMode::Add);
+    assert!(
+        session.position(center_index).z > 0.01,
+        "Add must build toward the camera when the trusted-facing normals are the majority"
+    );
+}
+
+#[test]
+fn the_clamp_holds_on_soup_duplicates_of_a_tiny_edged_corner() {
+    // Two triangles sharing an edge as SOUP, scaled so the real edges are 0.1mm.
+    // The shared corner has duplicate array slots whose own welded ring is empty
+    // — pre-fix they'd inherit the generous isolated-vertex budget and overrun
+    // the representative's tight clamp. The step must stay bounded by the REAL
+    // 0.1mm edge (budget 0.1 * 0.5 = 0.05mm), not the loose 0.5mm fallback, even
+    // under a dab whose raw amplitude (radius 1.0 * gain 0.08 = 0.08mm) exceeds
+    // the correct budget.
+    let s = 0.1_f32;
+    let vertices = vec![
+        v([0.0, 0.0, 0.0]),
+        v([s, 0.0, 0.0]),
+        v([0.0, s, 0.0]),
+        v([s, 0.0, 0.0]),
+        v([s, s, 0.0]),
+        v([0.0, s, 0.0]),
+    ];
+    let mut mesh = MeshEditBuffers {
+        vertices,
+        indices: vec![0, 1, 2, 3, 4, 5],
+        topology: MeshTopology::TriangleMesh,
+    };
+    crate::recompute_all_normals(&mut mesh.vertices, &mesh.indices).expect("seed normals");
+
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    session.apply_stroke(
+        BrushStroke {
+            center: [s * 0.5, s * 0.5, 0.0],
+            radius_mm: 1.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        },
+        BrushMode::Add,
+    );
+    // Both soup copies of the shared corner (1 and 3) must move together AND by
+    // no more than the real-edge budget.
+    let moved_1 = session.position(1);
+    let moved_3 = session.position(3);
+    assert_eq!(
+        moved_1.to_array(),
+        moved_3.to_array(),
+        "soup copies must not crack"
+    );
+    assert!(
+        moved_1.z <= s * 0.5 + 1e-4,
+        "the clamp must bound the soup corner to its real 0.05mm budget, got {}",
+        moved_1.z
+    );
+}
+
+#[test]
 fn add_builds_toward_the_camera_even_with_inverted_normals() {
     // A flat patch whose normals have been flipped to -Z (an inverted-normal
     // scan patch). The camera is still above (+Z), so Add must STILL build
