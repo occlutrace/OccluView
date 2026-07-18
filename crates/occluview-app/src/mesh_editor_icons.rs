@@ -51,10 +51,8 @@ pub(crate) enum EditorIcon {
     CloseHoles,
     /// A wave settling flat — the smoothing sculpt brush.
     Smooth,
-    /// Brush falloff disc with a plus — additive wax-knife sculpt brush.
+    /// Brush falloff disc with a plus/minus — the Add/Remove clay sculpt tool.
     SculptAdd,
-    /// Brush falloff disc with a minus — subtractive wax-knife sculpt brush.
-    SculptRemove,
     /// Scissors on a dashed line — move the marked faces to a new mesh.
     Cut,
     /// Split the marked region into one mesh per connected part.
@@ -218,38 +216,45 @@ pub(crate) fn paint(
             painter.line_segment([p(0.14, 0.82), p(0.86, 0.82)], stroke);
             arrowhead(painter, p(0.50, 0.82), Vec2::new(0.0, 1.0), r(0.10), stroke);
         }
-        EditorIcon::SculptAdd | EditorIcon::SculptRemove => {
-            // A surface line bulging under a soft brush disc, with a +/- sign
-            // marking the wax-knife direction (add vs. remove material).
+        EditorIcon::SculptAdd => {
+            // A surface line bulging under a soft brush disc that carries both a
+            // plus and a minus: the one Add/Remove clay tool (Shift carves).
             let bulge: Vec<Pos2> = (0..=16)
                 .map(|i| {
                     let t = i as f32 / 16.0;
                     let x = 0.10 + t * 0.80;
-                    // Smooth central bump: raised for Add, carved for Remove.
                     let s = (std::f32::consts::PI * t).sin().powi(2);
-                    let y = if icon == EditorIcon::SculptAdd {
-                        0.78 - 0.22 * s
-                    } else {
-                        0.62 + 0.22 * s
-                    };
-                    p(x, y)
+                    p(x, 0.78 - 0.20 * s)
                 })
                 .collect();
             painter.add(Shape::line(bulge, stroke));
-            // The brush falloff disc hovering above the surface.
             let c = p(0.50, 0.30);
             painter.circle_stroke(c, r(0.20), stroke);
             painter.circle_filled(c, r(0.20), soft);
+            // Plus on the left of the disc, minus on the right.
+            let plus = Pos2::new(c.x - r(0.10), c.y);
             painter.line_segment(
-                [Pos2::new(c.x - r(0.10), c.y), Pos2::new(c.x + r(0.10), c.y)],
+                [
+                    Pos2::new(plus.x - r(0.06), plus.y),
+                    Pos2::new(plus.x + r(0.06), plus.y),
+                ],
                 stroke,
             );
-            if icon == EditorIcon::SculptAdd {
-                painter.line_segment(
-                    [Pos2::new(c.x, c.y - r(0.10)), Pos2::new(c.x, c.y + r(0.10))],
-                    stroke,
-                );
-            }
+            painter.line_segment(
+                [
+                    Pos2::new(plus.x, plus.y - r(0.06)),
+                    Pos2::new(plus.x, plus.y + r(0.06)),
+                ],
+                stroke,
+            );
+            let minus = Pos2::new(c.x + r(0.10), c.y);
+            painter.line_segment(
+                [
+                    Pos2::new(minus.x - r(0.06), minus.y),
+                    Pos2::new(minus.x + r(0.06), minus.y),
+                ],
+                stroke,
+            );
         }
         EditorIcon::Cut => {
             // Scissors opening onto a dashed cut line.
@@ -528,7 +533,7 @@ fn closed(pts: &[Pos2]) -> Vec<Pos2> {
 mod tests {
     use super::*;
 
-    const ALL_ICONS: [EditorIcon; 17] = [
+    const ALL_ICONS: [EditorIcon; 16] = [
         EditorIcon::Lasso,
         EditorIcon::Object,
         EditorIcon::SelectAll,
@@ -539,7 +544,6 @@ mod tests {
         EditorIcon::CloseHoles,
         EditorIcon::Smooth,
         EditorIcon::SculptAdd,
-        EditorIcon::SculptRemove,
         EditorIcon::Cut,
         EditorIcon::Separate,
         EditorIcon::Undo,

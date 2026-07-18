@@ -113,6 +113,65 @@ impl PreparedScene {
         true
     }
 
+    /// Overwrite only the vertices at `touched` indices (ascending, in range)
+    /// of the matching entry's vertex buffer — the hot path for an interactive
+    /// sculpt drag, where a brush touches a few hundred vertices of a
+    /// multi-hundred-thousand-vertex scan. Writing the whole buffer every
+    /// frame (see [`Self::write_entry_vertices`]) would move megabytes per dab
+    /// and stutter; this writes only the affected vertices, coalesced into
+    /// contiguous runs so scattered soup duplicates still cost few GPU writes.
+    /// Returns `false` when no entry matches or the vertex count differs.
+    pub fn write_entry_vertices_sparse(
+        &self,
+        renderer: &Renderer,
+        topology: &PreparedSceneTopology,
+        vertices: &[Vertex],
+        touched: &[usize],
+    ) -> bool {
+        let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.topology == *topology)
+        else {
+            return false;
+        };
+        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
+            return false;
+        }
+        let stride = size_of::<Vertex>() as u64;
+        let queue = renderer.queue();
+        let mut run_start: Option<usize> = None;
+        let mut prev = usize::MAX;
+        // `touched` is ascending; flush a run whenever the ids stop being
+        // consecutive so each `write_buffer` covers one contiguous span.
+        for &id in touched {
+            if id >= vertices.len() {
+                continue;
+            }
+            match run_start {
+                Some(_) if id == prev + 1 => {}
+                Some(start) => {
+                    queue.write_buffer(
+                        &entry.mesh.vertex_buffer,
+                        start as u64 * stride,
+                        bytemuck::cast_slice(&vertices[start..=prev]),
+                    );
+                    run_start = Some(id);
+                }
+                None => run_start = Some(id),
+            }
+            prev = id;
+        }
+        if let Some(start) = run_start {
+            queue.write_buffer(
+                &entry.mesh.vertex_buffer,
+                start as u64 * stride,
+                bytemuck::cast_slice(&vertices[start..=prev]),
+            );
+        }
+        true
+    }
+
     /// Number of GPU-resident layer entries.
     #[must_use]
     pub fn len(&self) -> usize {

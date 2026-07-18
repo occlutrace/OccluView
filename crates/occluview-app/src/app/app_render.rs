@@ -381,6 +381,11 @@ impl OccluViewApp {
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
         self.edit_mode.sync_to_scene(&scene);
+        // A structural scene swap (load, delete, another mesh edit, undo/redo)
+        // reverts the geometry the persistent sculpt session was prepared over,
+        // WITHOUT necessarily changing topology_id (a sculpt commit preserves
+        // it), so drop the session here and re-prepare on the next stroke.
+        self.sculpt.invalidate_session();
         let stats = scene_stats(&scene);
         self.scene = Some(Arc::new(scene));
         self.scene_stats = Some(stats);

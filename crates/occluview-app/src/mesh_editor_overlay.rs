@@ -12,7 +12,9 @@
 
 use eframe::egui;
 
-use crate::sculpt_tool::SculptBrushKind;
+use crate::sculpt_tool::{
+    size_to_radius_mm, SculptToolKind, SCULPT_INTENSITY_DEFAULT, SCULPT_SIZE_DEFAULT,
+};
 
 #[path = "mesh_editor_groups.rs"]
 mod groups;
@@ -29,9 +31,9 @@ pub(crate) enum MeshEditorAction {
     ToggleObject,
     /// Switch between surface (front-facing) and through-mesh selection.
     ToggleThroughMesh,
-    /// Arm/disarm one interactive sculpt brush (exocad Freeforming: Smooth,
-    /// Add, Remove), dragged directly on the surface.
-    ToggleSculpt(SculptBrushKind),
+    /// Arm/disarm one interactive sculpt tool (exocad Freeforming: the
+    /// Add/Remove clay knife or the Smooth relaxer), dragged on the surface.
+    ToggleSculpt(SculptToolKind),
     /// Confirm the edit session: keep edits, close the window.
     Done,
     /// Revert the whole edit session to the captured baseline.
@@ -64,8 +66,8 @@ pub(crate) struct MeshEditorPanelState {
     pub(crate) object_mode: bool,
     /// Lasso mode: false = surface/front-facing, true = through-mesh.
     pub(crate) through_mesh: bool,
-    /// The armed sculpt brush, if any (owns the primary drag when set).
-    pub(crate) sculpt_armed: Option<SculptBrushKind>,
+    /// The armed sculpt tool, if any (owns the primary drag when set).
+    pub(crate) sculpt_armed: Option<SculptToolKind>,
     /// Whether the session carries uncommitted edits (Done is meaningful).
     pub(crate) dirty: bool,
     /// Whether a mesh operation is running (all mutating buttons disabled).
@@ -113,33 +115,44 @@ pub(super) fn close_holes_limit_enabled(ctx: &egui::Context) -> bool {
         .unwrap_or(false)
 }
 
-fn sculpt_radius_id() -> egui::Id {
-    egui::Id::new("occluview_sculpt_radius_mm")
+fn sculpt_size_id() -> egui::Id {
+    egui::Id::new("occluview_sculpt_size")
 }
 
-fn sculpt_strength_id() -> egui::Id {
-    egui::Id::new("occluview_sculpt_strength_pct")
+fn sculpt_intensity_id() -> egui::Id {
+    egui::Id::new("occluview_sculpt_intensity")
 }
 
-/// Brush radius in mm. Lives in egui memory (like the Close Holes limit) so
-/// it survives while the editor is open without becoming a preference.
+/// Brush size slider, 0..100 feel units (not mm — the operator asked for a
+/// slider). Lives in egui memory (like the Close Holes limit) so it survives
+/// while the editor is open without becoming a global preference.
+pub(crate) fn sculpt_size(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp::<f32>(sculpt_size_id()))
+        .unwrap_or(SCULPT_SIZE_DEFAULT)
+}
+
+pub(crate) fn set_sculpt_size(ctx: &egui::Context, size: f32) {
+    ctx.data_mut(|data| data.insert_temp(sculpt_size_id(), size));
+}
+
+/// Brush intensity slider, 0..100 feel units.
+pub(crate) fn sculpt_intensity(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp::<f32>(sculpt_intensity_id()))
+        .unwrap_or(SCULPT_INTENSITY_DEFAULT)
+}
+
+pub(crate) fn set_sculpt_intensity(ctx: &egui::Context, intensity: f32) {
+    ctx.data_mut(|data| data.insert_temp(sculpt_intensity_id(), intensity));
+}
+
+/// The brush radius in mm the current size slider maps to.
 pub(crate) fn sculpt_radius_mm(ctx: &egui::Context) -> f32 {
-    ctx.data(|data| data.get_temp::<f32>(sculpt_radius_id()))
-        .unwrap_or(crate::sculpt_tool::SCULPT_RADIUS_DEFAULT_MM)
+    size_to_radius_mm(sculpt_size(ctx))
 }
 
-pub(super) fn set_sculpt_radius_mm(ctx: &egui::Context, radius_mm: f32) {
-    ctx.data_mut(|data| data.insert_temp(sculpt_radius_id(), radius_mm));
-}
-
-/// Brush strength slider in percent (5..100).
-pub(crate) fn sculpt_strength_pct(ctx: &egui::Context) -> f32 {
-    ctx.data(|data| data.get_temp::<f32>(sculpt_strength_id()))
-        .unwrap_or(crate::sculpt_tool::SCULPT_STRENGTH_DEFAULT_PCT)
-}
-
-pub(super) fn set_sculpt_strength_pct(ctx: &egui::Context, strength_pct: f32) {
-    ctx.data_mut(|data| data.insert_temp(sculpt_strength_id(), strength_pct));
+/// The 0..1 kernel strength the current intensity slider maps to.
+pub(crate) fn sculpt_intensity01(ctx: &egui::Context) -> f32 {
+    (sculpt_intensity(ctx) / 100.0).clamp(0.0, 1.0)
 }
 
 /// Show the movable mesh editor window; returns the requested action, if any.
