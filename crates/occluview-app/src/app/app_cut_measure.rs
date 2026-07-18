@@ -13,8 +13,9 @@ use std::sync::Arc;
 /// Wheel travel (screen px) mapped to one disc-radius scale notch in cut mode.
 pub(super) const CUT_WHEEL_PX_PER_NOTCH: f32 = 50.0;
 
-/// Sample the surface under the cursor for the follow disc: the world hit point
-/// plus the averaged world normal of the hit triangle.
+/// Sample the surface under the cursor for the follow disc: the world hit
+/// point, the averaged world normal of the hit triangle, and the hit mesh's
+/// own long axis (the stable global signal the disc orientation prefers).
 fn surface_sample(
     camera: &occluview_core::Camera,
     viewport_rect: egui::Rect,
@@ -30,6 +31,7 @@ fn surface_sample(
     Some(SurfaceSample {
         point: hit.point,
         normal,
+        long_axis: world_long_axis(entry),
     })
 }
 
@@ -62,6 +64,19 @@ pub(super) fn triangle_world_normal(
     let normal_matrix = entry.transform.matrix3.inverse().transpose();
     let world = normal_matrix * Vec3A::from(sum);
     Some(Vec3::from(world).normalize_or(Vec3::Y))
+}
+
+/// The hit mesh's own long (greatest-variance) principal axis, transformed
+/// into world space — a direction, so this uses the transform's linear part
+/// directly (unlike a normal, which needs the inverse-transpose to stay
+/// perpendicular under non-uniform scale). Shared by Cut View and Bridge
+/// Split, both of which drive the same [`crate::cut_manipulator`] follow
+/// orientation from it. `None` propagates through to the disc's local-normal
+/// fallback (see [`crate::cut_geometry::follow_plane_normal`]).
+pub(super) fn world_long_axis(entry: &occluview_core::SceneMesh) -> Option<Vec3> {
+    let local = entry.mesh.long_axis_cached()?;
+    let world = entry.transform.transform_vector3(local).normalize_or_zero();
+    (world.length_squared() > f32::EPSILON).then_some(world)
 }
 
 impl OccluViewApp {

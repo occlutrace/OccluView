@@ -55,6 +55,14 @@ pub(crate) struct SurfaceSample {
     pub(crate) point: Vec3,
     /// Raw (unsmoothed) averaged world surface normal at the hit triangle.
     pub(crate) normal: Vec3,
+    /// The hit mesh's own long (greatest-variance) principal axis, in world
+    /// space (see [`occluview_core::Mesh::long_axis_cached`]) — a STABLE
+    /// signal, constant for a given mesh regardless of cursor position, that
+    /// the follow disc anchors its orientation to instead of the hit
+    /// triangle's local normal. `None` for a point cloud or a mesh too small
+    /// to have a well-defined axis, in which case the disc falls back to the
+    /// local surface-normal-driven orientation.
+    pub(crate) long_axis: Option<Vec3>,
 }
 
 /// A cursor affordance the overlay should show this frame.
@@ -312,7 +320,12 @@ impl CutManipulator {
                 smoothed_normal,
             };
         };
-        let raw = follow_plane_normal(sample.normal, input.view_dir, input.camera_right);
+        let raw = follow_plane_normal(
+            sample.long_axis,
+            sample.normal,
+            input.view_dir,
+            input.camera_right,
+        );
         let smoothed = smooth_normal(smoothed_normal, raw, NORMAL_SMOOTH_BLEND);
         let new_pose = DiscPose {
             center: sample.point,
@@ -449,7 +462,11 @@ mod tests {
     }
 
     fn sample(point: Vec3, normal: Vec3) -> Option<SurfaceSample> {
-        Some(SurfaceSample { point, normal })
+        Some(SurfaceSample {
+            point,
+            normal,
+            long_axis: None,
+        })
     }
 
     fn plant(m: &mut CutManipulator) {
