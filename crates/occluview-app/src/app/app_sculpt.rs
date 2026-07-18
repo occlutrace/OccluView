@@ -49,8 +49,8 @@ struct DabParams {
 }
 
 /// Lay this frame's dabs on `session`, updating `stroke`'s scheduler state, and
-/// return the touched vertex ids. Dabs are spaced by arc length along the drag
-/// (even, framerate-independent buildup) with a time cadence while stationary.
+/// return the touched vertex ids. The spacing decision is the pure
+/// [`plan_dab_centers`]; this only converts to local space and applies.
 fn schedule_dabs(
     session: &mut SculptSession,
     stroke: &mut StrokeState,
@@ -63,48 +63,72 @@ fn schedule_dabs(
         .transform_vector3(params.view_world)
         .normalize_or_zero();
     let spacing = (radius_local * DAB_SPACING_FRACTION).max(1e-4);
-    let dab = |at: Vec3| BrushStroke {
-        center: at.to_array(),
-        radius_mm: radius_local,
-        strength: params.strength,
-        view_dir: view_local.to_array(),
-    };
+
+    let (centers, last_dab, hold_seconds) = plan_dab_centers(
+        stroke.last_dab_local,
+        center,
+        spacing,
+        stroke.hold_seconds,
+        params.dt,
+    );
+    stroke.last_dab_local = last_dab;
+    stroke.hold_seconds = hold_seconds;
 
     let mut touched: Vec<usize> = Vec::new();
-    match stroke.last_dab_local {
-        None => {
-            touched.extend(session.apply_dab(dab(center), params.mode));
-            stroke.last_dab_local = Some(center);
-            stroke.hold_seconds = 0.0;
-        }
-        Some(last) => {
-            let segment = center - last;
-            let distance = segment.length();
-            if distance >= spacing {
-                let direction = segment / distance;
-                let mut cursor = last;
-                let mut walked = 0.0;
-                let mut count = 0;
-                while walked + spacing <= distance && count < MAX_DABS_PER_FRAME {
-                    cursor += direction * spacing;
-                    walked += spacing;
-                    count += 1;
-                    touched.extend(session.apply_dab(dab(cursor), params.mode));
-                }
-                stroke.last_dab_local = Some(cursor);
-                stroke.hold_seconds = 0.0;
-            } else {
-                stroke.hold_seconds += params.dt.clamp(0.0, HOLD_DAB_INTERVAL_SEC * 4.0);
-                let mut count = 0;
-                while stroke.hold_seconds >= HOLD_DAB_INTERVAL_SEC && count < MAX_DABS_PER_FRAME {
-                    stroke.hold_seconds -= HOLD_DAB_INTERVAL_SEC;
-                    count += 1;
-                    touched.extend(session.apply_dab(dab(center), params.mode));
-                }
-            }
-        }
+    for at in centers {
+        touched.extend(session.apply_dab(
+            BrushStroke {
+                center: at.to_array(),
+                radius_mm: radius_local,
+                strength: params.strength,
+                view_dir: view_local.to_array(),
+            },
+            params.mode,
+        ));
     }
     touched
+}
+
+/// Pure dab scheduler: from the previous dab position, the new cursor `center`,
+/// the dab `spacing`, and the stationary-hold accumulator, decide the dab
+/// centers to lay this frame and the updated `(last_dab, hold_seconds)`. Dabs
+/// are spaced by arc length while the cursor moves (even, framerate-independent
+/// buildup) and by a fixed time cadence while it is (near) stationary. A single
+/// frame lays at most [`MAX_DABS_PER_FRAME`] dabs; a longer jump is not dropped,
+/// it resumes from `last_dab` next frame. `dt` is clamped so one stalled frame
+/// cannot dump a large backlog of hold dabs.
+fn plan_dab_centers(
+    last_dab: Option<Vec3>,
+    center: Vec3,
+    spacing: f32,
+    hold_seconds: f32,
+    dt: f32,
+) -> (Vec<Vec3>, Option<Vec3>, f32) {
+    let Some(last) = last_dab else {
+        return (vec![center], Some(center), 0.0);
+    };
+    let segment = center - last;
+    let distance = segment.length();
+    if distance >= spacing {
+        let direction = segment / distance;
+        let mut cursor = last;
+        let mut walked = 0.0;
+        let mut centers = Vec::new();
+        while walked + spacing <= distance && centers.len() < MAX_DABS_PER_FRAME {
+            cursor += direction * spacing;
+            walked += spacing;
+            centers.push(cursor);
+        }
+        (centers, Some(cursor), 0.0)
+    } else {
+        let mut hold = hold_seconds + dt.clamp(0.0, HOLD_DAB_INTERVAL_SEC * 4.0);
+        let mut centers = Vec::new();
+        while hold >= HOLD_DAB_INTERVAL_SEC && centers.len() < MAX_DABS_PER_FRAME {
+            hold -= HOLD_DAB_INTERVAL_SEC;
+            centers.push(center);
+        }
+        (centers, Some(last), hold)
+    }
 }
 
 impl OccluViewApp {
@@ -318,9 +342,9 @@ impl OccluViewApp {
     /// hold the sculpted result and `topology_id` is preserved). The persistent
     /// session is kept for the next stroke.
     pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) {
-        let Some(_stroke) = self.sculpt.stroke.take() else {
+        if self.sculpt.stroke.take().is_none() {
             return;
-        };
+        }
         let (layer_id, dirty, shadow) = match self.sculpt.session.as_mut() {
             Some(session) => {
                 let dirty = session.dirty_stroke;
@@ -352,7 +376,11 @@ impl OccluViewApp {
             .edit_mode
             .begin_layer_edit(entry, EditModeCommand::Sculpt)
         else {
+            // The GPU already shows this stroke's dabs but the scene never took
+            // them; drop the session so the preview reverts on the next sync
+            // rather than diverging from the committed mesh.
             self.status_message = Some("Layer edit already in progress".to_string());
+            self.invalidate_sculpt_session(ctx);
             return;
         };
         drop(scene);
@@ -437,8 +465,14 @@ impl OccluViewApp {
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
     /// Returns `true` when it consumed the wheel so the caller skips the zoom.
-    pub(super) fn adjust_sculpt_brush_from_wheel(&mut self, ctx: &egui::Context) -> bool {
-        if self.sculpt.armed.is_none() || !self.edit_mode.has_active_session() {
+    /// `over_viewport` gates it to the 3D view so a modified scroll over a panel
+    /// (Layers, the mesh-editor window) keeps its normal meaning.
+    pub(super) fn adjust_sculpt_brush_from_wheel(
+        &mut self,
+        ctx: &egui::Context,
+        over_viewport: bool,
+    ) -> bool {
+        if !over_viewport || self.sculpt.armed.is_none() || !self.edit_mode.has_active_session() {
             return false;
         }
         let (scroll, shift, ctrl) = ctx.input(|input| {
@@ -524,5 +558,85 @@ fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
         (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(206, 84, 72),
         (SculptToolKind::Smooth, false) => egui::Color32::from_rgb(70, 132, 204),
         (SculptToolKind::Smooth, true) => egui::Color32::from_rgb(120, 176, 244),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
+    use super::plan_dab_centers;
+    use crate::sculpt_tool::{HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME};
+    use glam::Vec3;
+
+    #[test]
+    fn first_dab_lands_at_the_cursor_and_arms_the_path() {
+        let (centers, last, hold) =
+            plan_dab_centers(None, Vec3::new(2.0, 0.0, 0.0), 1.0, 0.0, 0.016);
+        assert_eq!(centers, vec![Vec3::new(2.0, 0.0, 0.0)]);
+        assert_eq!(last, Some(Vec3::new(2.0, 0.0, 0.0)));
+        assert_eq!(hold, 0.0);
+    }
+
+    #[test]
+    fn a_straight_move_spaces_dabs_evenly_by_arc_length() {
+        // Move exactly 3 spacings along +X: three dabs at 1,2,3, last at 3.
+        let (centers, last, hold) =
+            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(3.0, 0.0, 0.0), 1.0, 0.0, 0.016);
+        assert_eq!(
+            centers,
+            vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0),
+            ]
+        );
+        assert_eq!(last, Some(Vec3::new(3.0, 0.0, 0.0)));
+        assert_eq!(hold, 0.0);
+    }
+
+    #[test]
+    fn a_huge_single_frame_jump_is_capped_and_resumes_next_frame() {
+        // A jump far beyond MAX_DABS_PER_FRAME spacings must not lay them all at
+        // once, and must NOT drop the remainder — `last` advances only by what
+        // was laid, so the next frame keeps walking from there.
+        let far = (MAX_DABS_PER_FRAME + 50) as f32;
+        let (centers, last, _) =
+            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(far, 0.0, 0.0), 1.0, 0.0, 0.016);
+        assert_eq!(centers.len(), MAX_DABS_PER_FRAME);
+        assert_eq!(last, Some(Vec3::new(MAX_DABS_PER_FRAME as f32, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_stationary_hold_fires_dabs_on_the_time_cadence() {
+        // Cursor barely moves (< spacing): the hold accumulator fires a dab
+        // every HOLD_DAB_INTERVAL_SEC, at the cursor, leaving `last` put.
+        let last_dab = Some(Vec3::ZERO);
+        let dt = HOLD_DAB_INTERVAL_SEC * 2.5;
+        let (centers, last, hold) =
+            plan_dab_centers(last_dab, Vec3::new(0.001, 0.0, 0.0), 1.0, 0.0, dt);
+        assert_eq!(centers.len(), 2, "2.5 intervals of hold => 2 dabs");
+        assert!(centers.iter().all(|c| *c == Vec3::new(0.001, 0.0, 0.0)));
+        assert_eq!(
+            last, last_dab,
+            "a hold does not advance the arc-length anchor"
+        );
+        assert!(hold > 0.0 && hold < HOLD_DAB_INTERVAL_SEC);
+    }
+
+    #[test]
+    fn a_stalled_frame_cannot_dump_a_huge_hold_backlog() {
+        // A multi-second stall (dt) must be clamped so it doesn't fire dozens of
+        // hold dabs at once when input resumes.
+        let (centers, _, _) =
+            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(0.001, 0.0, 0.0), 1.0, 0.0, 5.0);
+        assert!(
+            centers.len() <= MAX_DABS_PER_FRAME,
+            "hold backlog must stay bounded, got {}",
+            centers.len()
+        );
+        assert!(
+            centers.len() <= 5,
+            "clamped dt should keep the backlog small"
+        );
     }
 }

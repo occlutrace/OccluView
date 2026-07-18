@@ -379,6 +379,10 @@ impl OccluViewApp {
     /// commit the resulting draft scene. Shared by the panel Undo button and
     /// the Ctrl+Z / Ctrl+Y viewport shortcuts.
     fn apply_history_navigation(&mut self, redo: bool, ctx: &egui::Context) {
+        // Finalize any in-flight sculpt drag first (as Done/Cancel do), so the
+        // undo acts on a settled scene and the stroke's dabs are not silently
+        // dropped when the coming scene swap invalidates the sculpt session.
+        self.commit_sculpt_stroke(ctx);
         let Some(scene) = self.scene.clone() else {
             return;
         };

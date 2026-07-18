@@ -31,7 +31,7 @@ pub(crate) const SCULPT_WHEEL_STEP: f32 = 6.0;
 /// framerate-independent (Blender's arc-length stroke spacing).
 pub(crate) const DAB_SPACING_FRACTION: f32 = 0.15;
 /// While the cursor is (near) stationary and the button held, lay a fresh dab
-/// this often so a held brush keeps cooking the same spot at a steady,
+/// this often so a held brush keeps depositing on the same spot at a steady,
 /// framerate-independent rate.
 pub(crate) const HOLD_DAB_INTERVAL_SEC: f32 = 0.03;
 /// Never emit more than this many dabs in one frame (a lag spike that jumps the

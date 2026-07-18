@@ -35,18 +35,22 @@ impl BridgeSplitSourceCache {
         &mut self,
         source: &Arc<Mesh>,
     ) -> Result<Arc<PreparedBridgeSplitSource>, BridgeSplitToolError> {
-        let topology_id = source.topology_id();
-        if let Some(prepared) = self.entries.get(&topology_id) {
+        // Keyed by geometry_id, NOT topology_id: an interactive sculpt commit
+        // preserves topology_id (to spare the renderer a re-upload) while its
+        // positions change, so keying on topology_id would hand back a stale
+        // pre-sculpt prepared solid. geometry_id changes on every geometry edit.
+        let geometry_id = source.geometry_id();
+        if let Some(prepared) = self.entries.get(&geometry_id) {
             let prepared = Arc::clone(prepared);
-            self.touch(topology_id);
+            self.touch(geometry_id);
             return Ok(prepared);
         }
 
         let prepared = Arc::new(
             prepare_bridge_split_source(Arc::clone(source)).map_err(BridgeSplitToolError::from)?,
         );
-        self.entries.insert(topology_id, Arc::clone(&prepared));
-        self.touch(topology_id);
+        self.entries.insert(geometry_id, Arc::clone(&prepared));
+        self.touch(geometry_id);
         while self.recency.len() > SOURCE_CACHE_CAPACITY {
             if let Some(evicted) = self.recency.pop_front() {
                 self.entries.remove(&evicted);
@@ -55,11 +59,11 @@ impl BridgeSplitSourceCache {
         Ok(prepared)
     }
 
-    fn touch(&mut self, topology_id: u64) {
-        if let Some(position) = self.recency.iter().position(|&id| id == topology_id) {
+    fn touch(&mut self, geometry_id: u64) {
+        if let Some(position) = self.recency.iter().position(|&id| id == geometry_id) {
             self.recency.remove(position);
         }
-        self.recency.push_back(topology_id);
+        self.recency.push_back(geometry_id);
     }
 }
 
@@ -243,14 +247,14 @@ mod tests {
     #[test]
     fn source_cache_remembers_open_surface_preparation() {
         let source = Arc::new(open_triangle("surface"));
-        let topology_id = source.topology_id();
+        let geometry_id = source.geometry_id();
         let mut cache = BridgeSplitSourceCache::default();
 
         cache
             .prepared_source(&source)
             .expect("open surface is eligible for the surface fallback");
-        assert!(cache.entries.contains_key(&topology_id));
-        assert!(cache.recency.contains(&topology_id));
+        assert!(cache.entries.contains_key(&geometry_id));
+        assert!(cache.recency.contains(&geometry_id));
     }
 
     #[allow(clippy::expect_used)]
