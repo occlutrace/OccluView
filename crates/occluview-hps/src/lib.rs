@@ -12,6 +12,8 @@ mod surface;
 #[cfg(test)]
 mod tests;
 mod texture;
+#[cfg(test)]
+mod texture_tests;
 mod xml;
 
 pub use error::{HpsError, ReadError};

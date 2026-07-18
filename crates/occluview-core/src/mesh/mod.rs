@@ -300,6 +300,16 @@ impl Mesh {
         b
     }
 
+    /// True if this mesh carries scan color or texture data (a decoded
+    /// texture image, or non-default per-vertex colors) — the single source
+    /// of truth for whether display logic should defer to that color data
+    /// instead of a neutral/default tint.
+    #[inline]
+    #[must_use]
+    pub fn carries_color_data(&self) -> bool {
+        self.texture.is_some() || self.has_vertex_colors
+    }
+
     /// The mesh's own long (greatest-variance) principal axis, from the
     /// constructor-time cache — a STABLE, per-mesh-constant "global shape"
     /// signal: a dental arch or bridge span's own mesiodistal direction,

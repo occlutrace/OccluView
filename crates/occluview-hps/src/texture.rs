@@ -117,16 +117,28 @@ fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTe
 }
 
 /// Strided, deterministic sample of up to ~4096 pixels (skipping fully
-/// transparent and near-gray pixels, which carry no reliable hue signal),
-/// comparing mean blue against mean red. Matches the calibration measured
+/// transparent and near-gray pixels, which carry no reliable hue signal).
+/// Requires the blue bias to be near-UNIFORM across the sampled pixels, not
+/// just present in the aggregate mean: a genuine chroma swap at the source
+/// flips R/B for every pixel alike, so virtually every non-gray sample reads
+/// blue-biased once swapped. A real blue dental material (anti-glare spray,
+/// bite-registration silicone) instead covers only PART of the scan, so most
+/// of the sampled surface stays warm even where the material itself reads
+/// strongly blue — the aggregate mean alone cannot tell these two cases
+/// apart (a strong localized patch can drag the mean past the margin on its
+/// own), but the per-pixel PROPORTION can, since only a real whole-texture
+/// swap makes nearly every sample agree. Matches the calibration measured
 /// against a real 3Shape/HPS dental scan JPEG atlas with swapped chroma
-/// (mean R 107 / mean B 150 on the swapped file; mean R 150 / mean B 107 once
-/// corrected) — the margin (`red_mean / 4`, floored at 24) sits well clear of
-/// both a genuinely warm scan and a mildly cool-lit one.
+/// (mean R 107 / mean B 150 on the swapped file, uniformly across the
+/// texture; mean R 150 / mean B 107 once corrected).
 fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
     const SAMPLE_BUDGET: usize = 4096;
     const MIN_ALPHA: u8 = 8;
     const NEAR_GRAY_DELTA: i32 = 16;
+    /// Fraction of sampled (non-transparent, non-near-gray) pixels that must
+    /// INDIVIDUALLY read blue-biased before this is treated as a uniform
+    /// source-level channel swap rather than a localized blue material.
+    const BLUE_BIASED_PIXEL_FRACTION: f64 = 0.9;
 
     let pixel_count = rgba.len() / 4;
     if pixel_count == 0 {
@@ -136,17 +148,22 @@ fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
 
     let mut red_sum: u64 = 0;
     let mut blue_sum: u64 = 0;
+    let mut blue_biased: u64 = 0;
     let mut sampled: u64 = 0;
     for pixel in rgba.chunks_exact(4).step_by(stride) {
         let [r, _g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
         if a < MIN_ALPHA {
             continue;
         }
-        if (i32::from(r) - i32::from(b)).abs() < NEAR_GRAY_DELTA {
+        let delta = i32::from(b) - i32::from(r);
+        if delta.abs() < NEAR_GRAY_DELTA {
             continue;
         }
         red_sum += u64::from(r);
         blue_sum += u64::from(b);
+        if delta > 0 {
+            blue_biased += 1;
+        }
         sampled += 1;
     }
     if sampled == 0 {
@@ -155,7 +172,10 @@ fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
     let red_mean = red_sum / sampled;
     let blue_mean = blue_sum / sampled;
     let margin = (red_mean / 4).max(24);
-    blue_mean > red_mean + margin
+    let mean_is_blue_biased = blue_mean > red_mean + margin;
+    #[allow(clippy::cast_precision_loss)]
+    let blue_biased_fraction = blue_biased as f64 / sampled as f64;
+    mean_is_blue_biased && blue_biased_fraction >= BLUE_BIASED_PIXEL_FRACTION
 }
 
 fn decode_embedded_raster(bytes: &[u8]) -> Result<DecodedTexture, HpsError> {

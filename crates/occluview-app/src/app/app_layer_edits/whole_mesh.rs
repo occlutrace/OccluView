@@ -31,15 +31,12 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         return LayerContextApply::default();
     };
 
-    let selection = if request.action == LayerContextAction::CloseHoles {
-        app.edit_mode
-            .selected_faces_for_layer(request.layer_id)
-            .filter(|selection| selection.selected_count() > 0)
-    } else if request.action == LayerContextAction::InvertNormals {
-        app.edit_mode
-            .selected_faces_for_layer(request.layer_id)
-            .filter(|selection| selection.selected_count() > 0)
-    } else if request.action == LayerContextAction::SmoothSelection {
+    let selection = if matches!(
+        request.action,
+        LayerContextAction::CloseHoles
+            | LayerContextAction::InvertNormals
+            | LayerContextAction::SmoothSelection
+    ) {
         app.edit_mode
             .selected_faces_for_layer(request.layer_id)
             .filter(|selection| selection.selected_count() > 0)
