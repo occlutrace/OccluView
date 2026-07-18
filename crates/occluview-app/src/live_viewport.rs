@@ -96,17 +96,18 @@ impl LiveViewport {
         }
     }
 
-    /// Push freshly sculpted vertex content into the prepared scene entry
-    /// matching `topology` (see [`PreparedScene::write_entry_vertices`]).
-    /// Returns `false` when there is no prepared scene or no matching entry.
-    pub(super) fn write_scene_vertices(
+    /// Push only the `touched` sculpted vertices into the matching prepared
+    /// entry — the hot per-dab path (see
+    /// [`PreparedScene::write_entry_vertices_sparse`]).
+    pub(super) fn write_scene_vertices_sparse(
         &self,
         topology: &occluview_render::PreparedSceneTopology,
         vertices: &[occluview_core::Vertex],
+        touched: &[usize],
     ) -> bool {
-        self.prepared_scene
-            .as_ref()
-            .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
+        self.prepared_scene.as_ref().is_some_and(|scene| {
+            scene.write_entry_vertices_sparse(&self.renderer, topology, vertices, touched)
+        })
     }
 
     pub(super) fn sync_selection_overlay(&mut self, sources: &[PreparedSceneSource<'_>]) {

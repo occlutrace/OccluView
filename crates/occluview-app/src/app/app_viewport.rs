@@ -195,6 +195,11 @@ impl OccluViewApp {
             return;
         }
 
+        // Shift/Ctrl + wheel resizes / re-intensifies an armed sculpt brush
+        // instead of zooming the camera; consume the wheel so the zoom below
+        // skips it this frame.
+        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx);
+
         let Some(camera) = self.camera.as_mut() else {
             return;
         };
@@ -234,7 +239,7 @@ impl OccluViewApp {
             }
         }
 
-        if response.hovered() {
+        if response.hovered() && !sculpt_wheel_used {
             let zoom = zoom_factor_from_scroll(ctx.input(|i| i.raw_scroll_delta.y));
             if (zoom - 1.0).abs() > f32::EPSILON {
                 camera.zoom_by(zoom);
