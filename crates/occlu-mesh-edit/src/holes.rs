@@ -23,12 +23,14 @@ use std::collections::HashSet;
 const MIN_INTERPOLATED_LOOP: usize = 8;
 
 /// Rims LONGER than this skip the interpolated cap and go straight to the
-/// minimum-area membrane. Rim-density refinement + 128-iteration harmonic
-/// relaxation costs seconds on a several-hundred-edge rim, and a deep tooth
-/// socket that big folds the projection-based parameterization anyway — the
-/// membrane is both the correct closure there and orders of magnitude faster,
-/// keeping a 300–2000-edge socket well under the interactive budget.
-const MAX_INTERPOLATED_LOOP: usize = 160;
+/// minimum-area membrane. Real lasso cuts routinely produce 200–1000-edge
+/// rims, and the raw membrane on such a rim is full of near-folded creases —
+/// the "sharp spike-like artifacts" of issue #9 — so the interpolated cap must
+/// cover them. Cost is held by `cap_refine`'s interior-vertex budget (the
+/// target edge scale coarsens for big rims), so the ceiling is only a safety
+/// valve against pathological mega-rims; a deep socket whose projection folds
+/// is refused by the fold/pierce guards and still falls back to the membrane.
+const MAX_INTERPOLATED_LOOP: usize = 4096;
 
 /// Generous edge ceiling applied when a face selection is present: an explicit
 /// selection is the operator's intent, so large marked rims still close. Bounded
@@ -678,6 +680,7 @@ fn emit_interpolated_cap(
     let mut cap = refine_and_relax(
         &rim,
         &support.positions,
+        &support.distances,
         cap_triangles,
         options.attribute_policy.generated_vertex_policy,
     );

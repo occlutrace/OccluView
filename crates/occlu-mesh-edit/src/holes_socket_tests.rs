@@ -365,3 +365,118 @@ fn rim_simplicity_passes_honest_wiggles_and_catches_crossings() {
         "a real self-crossing must still be refused"
     );
 }
+
+/// Issue #9 regression: a rim well past the OLD 160-edge interpolation ceiling
+/// must still get the refined interpolated cap — not the raw min-area
+/// membrane, whose near-folded creases were the "sharp spike-like artifacts"
+/// a technician reported at the cap↔mesh transition after a lasso cut.
+/// Quality is asserted the way the artifact shows: via dihedral angles across
+/// the cap and its seam.
+#[test]
+fn large_rim_gets_interpolated_cap_without_spikes() {
+    // A dense curved sheet with a big round hole: the rim lands well past the
+    // retired 160-edge ceiling and stays far from the sheet's outer border, so
+    // the whole-mesh path closes it while the border guard keeps the sheet
+    // edge open.
+    let (nu, nv) = (160, 110);
+    let mesh = dome_with_tooth(nu, nv);
+    let (hole_x, hole_y, hole_r) = (0.15_f32 * 20.0, 0.0_f32, 3.4_f32);
+    let mask: Vec<bool> = mesh
+        .indices
+        .chunks_exact(3)
+        .map(|t| {
+            let c = (Vec3::from_array(mesh.vertices[t[0] as usize].position)
+                + Vec3::from_array(mesh.vertices[t[1] as usize].position)
+                + Vec3::from_array(mesh.vertices[t[2] as usize].position))
+                / 3.0;
+            let (dx, dy) = (c.x - hole_x, c.y - hole_y);
+            (dx * dx + dy * dy).sqrt() < hole_r
+        })
+        .collect();
+    let selection = FaceSelection::new(mask);
+    let cut = delete_selected_faces(&mesh, &selection, MeshEditOptions::default())
+        .expect("cut a round hole")
+        .mesh;
+
+    // Sanity: the rim really is past the old ceiling (the regression trigger).
+    let mut edge_use: HashMap<(u32, u32), i32> = HashMap::new();
+    for t in cut.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edge_use.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let hole_rim_edges = edge_use
+        .iter()
+        .filter(|(&(a, b), &count)| {
+            let mid = (Vec3::from_array(cut.vertices[a as usize].position)
+                + Vec3::from_array(cut.vertices[b as usize].position))
+                * 0.5;
+            let (dx, dy) = (mid.x - hole_x, mid.y - hole_y);
+            count == 1 && (dx * dx + dy * dy).sqrt() < hole_r * 1.5
+        })
+        .count();
+    assert!(
+        hole_rim_edges > 200,
+        "fixture must produce a >200-edge rim, got {hole_rim_edges}"
+    );
+
+    let input_vertices = cut.vertices.len();
+    let input_triangles = cut.triangle_count();
+    let result = fill_holes(&cut, None, MeshEditOptions::default()).expect("large-rim fill");
+    assert_eq!(result.report.filled_holes, 1, "the hole must close");
+    assert_eq!(
+        result.report.skipped_border_rims, 1,
+        "the sheet border must stay open"
+    );
+    assert!(
+        result.mesh.vertices.len() > input_vertices,
+        "an interpolated cap generates interior vertices; a membrane (the old \
+         >160-edge behavior) generates none"
+    );
+
+    // Spike metric, exactly how the artifact shows in a slicer: dihedral
+    // angles on every edge owned by at least one NEW (cap) triangle.
+    let positions: Vec<Vec3> = result
+        .mesh
+        .vertices
+        .iter()
+        .map(|v| Vec3::from_array(v.position))
+        .collect();
+    let normal = |t: &[u32]| -> Vec3 {
+        let [a, b, c] = [
+            positions[t[0] as usize],
+            positions[t[1] as usize],
+            positions[t[2] as usize],
+        ];
+        (b - a).cross(c - a).normalize_or_zero()
+    };
+    let mut owners: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (index, t) in result.mesh.indices.chunks_exact(3).enumerate() {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            owners.entry((a.min(b), a.max(b))).or_default().push(index);
+        }
+    }
+    let mut worst = 0.0_f32;
+    for slots in owners.values() {
+        let [t1, t2] = match slots.as_slice() {
+            [t1, t2] => [*t1, *t2],
+            _ => continue,
+        };
+        if t1 < input_triangles && t2 < input_triangles {
+            continue; // Original surface anatomy is not the cap's doing.
+        }
+        let (n1, n2) = (
+            normal(&result.mesh.indices[t1 * 3..t1 * 3 + 3]),
+            normal(&result.mesh.indices[t2 * 3..t2 * 3 + 3]),
+        );
+        if n1 == Vec3::ZERO || n2 == Vec3::ZERO {
+            continue;
+        }
+        let angle = n1.dot(n2).clamp(-1.0, 1.0).acos().to_degrees();
+        worst = worst.max(angle);
+    }
+    assert!(
+        worst < 45.0,
+        "cap/seam dihedral must stay spike-free, worst was {worst:.1} degrees"
+    );
+}

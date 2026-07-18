@@ -39,11 +39,18 @@ pub(super) fn build_vertex_adjacency(mesh: &MeshEditBuffers) -> Vec<Vec<usize>> 
 
 /// The rim plus everything within [`SUPPORT_RING_DEPTH`] rings outside it.
 /// `positions` carries only the OUTSIDE samples (curvature support for the
-/// quadric fit); `vertex_set` additionally contains the rim itself and backs
-/// the self-intersection guard's neighborhood query.
+/// quadric fit) with their geodesic-ish distance to the rim; `vertex_set`
+/// additionally contains the rim itself and backs the self-intersection
+/// guard's neighborhood query.
 pub(super) struct SupportBand {
     /// Positions of surface vertices outside the rim, ring by ring.
     pub(super) positions: Vec<[f32; 3]>,
+    /// Per-sample distance to the rim, accumulated along the adjacency walk
+    /// that discovered the sample (a cheap geodesic proxy). The quadric fit
+    /// downweights far samples: a topological neighbor that is METRICALLY far
+    /// (a deep socket wall, a cone apex) is distant geometry, not the local
+    /// curvature the band exists to capture.
+    pub(super) distances: Vec<f32>,
     /// Rim vertices plus every vertex the band visited.
     pub(super) vertex_set: HashSet<usize>,
 }
@@ -58,29 +65,39 @@ pub(super) fn gather_support_band(
     adjacency: &[Vec<usize>],
 ) -> SupportBand {
     let rim: HashSet<usize> = boundary_loop.iter().copied().collect();
-    let mut frontier: Vec<usize> = boundary_loop.to_vec();
+    let mut frontier: Vec<(usize, f32)> = boundary_loop.iter().map(|&v| (v, 0.0_f32)).collect();
     let mut seen: HashSet<usize> = rim.clone();
     let mut support: Vec<[f32; 3]> = Vec::new();
+    let mut distances: Vec<f32> = Vec::new();
     for _ in 0..SUPPORT_RING_DEPTH {
-        let mut next: Vec<usize> = Vec::new();
-        for &vertex in &frontier {
+        let mut next: Vec<(usize, f32)> = Vec::new();
+        for &(vertex, walked) in &frontier {
             let Some(neighbors) = adjacency.get(vertex) else {
+                continue;
+            };
+            let Some(from) = mesh.vertices.get(vertex) else {
                 continue;
             };
             for &neighbor in neighbors {
                 if !seen.insert(neighbor) {
                     continue;
                 }
-                if let Some(position) = mesh.vertices.get(neighbor) {
-                    support.push(position.position);
-                }
-                next.push(neighbor);
+                let Some(position) = mesh.vertices.get(neighbor) else {
+                    next.push((neighbor, walked));
+                    continue;
+                };
+                let step =
+                    Vec3::from_array(position.position).distance(Vec3::from_array(from.position));
+                support.push(position.position);
+                distances.push(walked + step);
+                next.push((neighbor, walked + step));
             }
         }
         frontier = next;
     }
     SupportBand {
         positions: support,
+        distances,
         vertex_set: seen,
     }
 }
