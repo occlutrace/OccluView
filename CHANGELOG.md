@@ -15,10 +15,12 @@
   silicone) sitting next to normal tissue color (#12).
 - Fixed the Bridge Split / Cut View cutting disc jittering as the cursor
   moved and defaulting to a longitudinal orientation along the scan: it now
-  derives its orientation from the scan's own stable shape instead of a
-  single triangle's local normal, landing transverse across the arch, and
-  rotates smoothly to track the local curve as the cursor moves around the
-  arch instead of staying fixed in one direction.
+  reads its cross-arch direction from the scan's own stable shape instead of
+  a single noisy triangle normal, so it lands transverse across the arch and
+  keeps tracking the local curve as the cursor moves around it — while still
+  containing the current view direction, so it stays edge-on and legible and
+  keeps re-aiming itself as the operator orbits the camera, exactly like it
+  did before this fix.
 
 ## 1.0.3 - 2026-07-15
 
