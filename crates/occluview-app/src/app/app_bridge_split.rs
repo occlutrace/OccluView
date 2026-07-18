@@ -491,6 +491,7 @@ fn bridge_surface_sample(
     Some(SurfaceSample {
         point: hit.point,
         normal,
+        long_axis: super::app_cut_measure::world_long_axis(entry),
     })
 }
 

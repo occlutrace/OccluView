@@ -12,23 +12,48 @@ use eframe::egui::Pos2;
 use glam::{Quat, Vec3};
 
 /// Blend range from the camera-aligned axial fallback into the surface-driven
-/// orientation. A range, rather than one hard threshold, prevents a tiny cursor
-/// move across adjacent facets from snapping the disc by 90 degrees.
+/// orientation (the local-normal fallback path only). A range, rather than one
+/// hard threshold, prevents a tiny cursor move across adjacent facets from
+/// snapping the disc by 90 degrees.
 const FOLLOW_BLEND_START: f32 = 0.015;
 const FOLLOW_BLEND_END: f32 = 0.12;
 
-/// Follow orientation: the disc plane contains the surface normal and the view
-/// direction, so its normal is `surface_normal × view_dir`. When the camera
-/// looks straight down the surface normal (degenerate cross product) the disc
-/// falls back to standing along the camera-right axis.
+/// Follow orientation. Prefers `global_long_axis` — a mesh's own long
+/// (greatest-variance) principal axis, constant for that mesh regardless of
+/// where the cursor lands on it (see [`occluview_core::Mesh::long_axis_cached`])
+/// — oriented to face the camera side so orbiting never visibly flips the
+/// disc. A disc whose plane normal runs parallel to a dental arch's or a
+/// bridge span's own long axis cuts TRANSVERSE to it: the anatomically useful
+/// orientation for viewing occlusal contacts, and the one a Bridge Split
+/// separator needs to divide a span into segments. Because the axis is a
+/// per-mesh constant, this is immune to the per-triangle jitter the old
+/// purely local `surface_normal x view_dir` construction had.
+///
+/// Falls back to that local construction — the disc plane contains the
+/// surface normal and the view direction, so its normal is
+/// `surface_normal x view_dir`, falling back further to the camera-right axis
+/// on a degenerate (view staring straight down the surface normal) cross
+/// product — only when no global axis is available (a point cloud, or too
+/// few vertices for a well-defined axis).
 pub(crate) fn follow_plane_normal(
+    global_long_axis: Option<Vec3>,
     surface_normal: Vec3,
     view_dir: Vec3,
     camera_right: Vec3,
 ) -> Vec3 {
+    let fallback = camera_right.normalize_or(Vec3::X);
+    if let Some(axis) = global_long_axis {
+        let axis = axis.normalize_or_zero();
+        if axis.length_squared() > f32::EPSILON {
+            return if axis.dot(fallback) < 0.0 {
+                -axis
+            } else {
+                axis
+            };
+        }
+    }
     let n = surface_normal.normalize_or_zero();
     let v = view_dir.normalize_or_zero();
-    let fallback = camera_right.normalize_or(Vec3::X);
     let cross = n.cross(v);
     let length = cross.length();
     if length <= f32::EPSILON {
@@ -319,8 +344,8 @@ mod tests {
     }
 
     #[test]
-    fn follow_normal_contains_surface_normal_and_view_dir() {
-        let n = follow_plane_normal(Vec3::Y, Vec3::NEG_Z, Vec3::X);
+    fn follow_normal_contains_surface_normal_and_view_dir_without_a_global_axis() {
+        let n = follow_plane_normal(None, Vec3::Y, Vec3::NEG_Z, Vec3::X);
         assert!((n.length() - 1.0).abs() < 1e-6);
         assert!(n.dot(Vec3::Y).abs() < 1e-6, "off surface normal: {n}");
         assert!(n.dot(Vec3::NEG_Z).abs() < 1e-6, "perp to view: {n}");
@@ -330,18 +355,82 @@ mod tests {
     #[test]
     fn follow_normal_degenerate_view_down_normal_falls_back_to_camera_right() {
         let right = Vec3::new(1.0, 0.0, 0.0);
-        assert_eq!(follow_plane_normal(Vec3::Y, Vec3::NEG_Y, right), right);
-        assert_eq!(follow_plane_normal(Vec3::Y, Vec3::Y, right), right);
+        assert_eq!(
+            follow_plane_normal(None, Vec3::Y, Vec3::NEG_Y, right),
+            right
+        );
+        assert_eq!(follow_plane_normal(None, Vec3::Y, Vec3::Y, right), right);
     }
 
     #[test]
-    fn follow_normal_changes_continuously_near_the_occlusal_view() {
-        let almost_axial = follow_plane_normal(Vec3::new(0.03, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
+    fn follow_normal_changes_continuously_near_the_occlusal_view_without_a_global_axis() {
+        let almost_axial =
+            follow_plane_normal(None, Vec3::new(0.03, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
         let just_past_old_threshold =
-            follow_plane_normal(Vec3::new(0.04, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
+            follow_plane_normal(None, Vec3::new(0.04, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
         assert!(
             almost_axial.dot(just_past_old_threshold) > 0.95,
             "nearby surface samples must not snap the disc: {almost_axial} / {just_past_old_threshold}"
+        );
+    }
+
+    #[test]
+    fn follow_normal_prefers_the_global_axis_over_the_local_surface_normal() {
+        let axis = Vec3::new(1.0, 0.0, 0.0);
+        // Wildly different local surface normal and view direction: the
+        // global axis must still win outright.
+        let n = follow_plane_normal(Some(axis), Vec3::new(0.1, 0.9, 0.3), Vec3::NEG_Y, Vec3::Z);
+        assert!((n.length() - 1.0).abs() < 1e-6);
+        assert!(n.distance(axis) < 1e-6, "expected the global axis: {n}");
+    }
+
+    #[test]
+    fn follow_normal_with_a_global_axis_is_immune_to_per_triangle_surface_noise() {
+        // The reported bug: as the cursor crosses triangles, the LOCAL
+        // surface normal jumps around; with a global axis available the
+        // result must not move at all.
+        let axis = Vec3::new(0.0, 0.0, 1.0);
+        let view_dir = Vec3::NEG_Y;
+        let camera_right = Vec3::X;
+        let baseline = follow_plane_normal(Some(axis), Vec3::Y, view_dir, camera_right);
+        for noisy_normal in [
+            Vec3::new(0.9, 0.3, 0.1),
+            Vec3::new(-0.4, 0.8, -0.2),
+            Vec3::new(0.05, 0.99, 0.6),
+            Vec3::Z,
+            -Vec3::X,
+        ] {
+            let out = follow_plane_normal(Some(axis), noisy_normal, view_dir, camera_right);
+            assert_eq!(
+                out, baseline,
+                "global axis must make the result independent of local surface noise: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn follow_normal_orients_the_global_axis_to_face_the_camera_side() {
+        let axis = Vec3::new(-1.0, 0.0, 0.0); // stored pointing away from camera_right
+        let camera_right = Vec3::X;
+        let n = follow_plane_normal(Some(axis), Vec3::Y, Vec3::NEG_Z, camera_right);
+        assert!(
+            n.dot(camera_right) > 0.0,
+            "axis should flip to face the camera side: {n}"
+        );
+        assert!((n.length() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn follow_normal_falls_back_to_local_surface_when_no_global_axis_is_available() {
+        let with_axis = follow_plane_normal(Some(Vec3::X), Vec3::Y, Vec3::NEG_Z, Vec3::X);
+        let without_axis = follow_plane_normal(None, Vec3::Y, Vec3::NEG_Z, Vec3::X);
+        // Same inputs, but a degenerate (zero) axis must behave exactly like
+        // "no axis at all" rather than silently returning a zero vector.
+        let zero_axis = follow_plane_normal(Some(Vec3::ZERO), Vec3::Y, Vec3::NEG_Z, Vec3::X);
+        assert_eq!(zero_axis, without_axis);
+        assert_ne!(
+            with_axis, without_axis,
+            "a real global axis must take precedence over the local fallback"
         );
     }
 
