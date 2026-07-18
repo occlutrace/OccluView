@@ -6,6 +6,11 @@ use crate::gpu::GpuMesh;
 use crate::texture::GpuTexture;
 use occluview_core::{MeshKind, Vertex};
 
+/// Above this many touched vertices, a sparse (per-run) vertex update switches
+/// to a single whole-buffer write — the scattered soup runs would otherwise
+/// cost more in per-call overhead than one big copy.
+const SPARSE_WRITE_MAX_TOUCHED: usize = 8192;
+
 impl PreparedScene {
     pub(super) fn upload(renderer: &Renderer, sources: &[PreparedSceneSource<'_>]) -> Self {
         let device = renderer.device();
@@ -145,8 +150,16 @@ impl PreparedScene {
         if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
             return false;
         }
-        let stride = size_of::<Vertex>() as u64;
         let queue = renderer.queue();
+        // A big brush touches array-SCATTERED soup vertices, which coalesce into
+        // many short runs — thousands of tiny `write_buffer` calls whose per-call
+        // overhead would stutter. Past a threshold, one whole-buffer write is
+        // cheaper than the pile of small ones.
+        if touched.len() > SPARSE_WRITE_MAX_TOUCHED {
+            queue.write_buffer(&entry.mesh.vertex_buffer, 0, bytemuck::cast_slice(vertices));
+            return true;
+        }
+        let stride = size_of::<Vertex>() as u64;
         let mut run_start: Option<usize> = None;
         let mut prev = usize::MAX;
         // `touched` is ascending; flush a run whenever the ids stop being
