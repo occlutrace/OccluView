@@ -48,6 +48,25 @@ pub(crate) struct DiscPose {
     pub(crate) radius_mm: f32,
 }
 
+/// A hit mesh's principal-axis frame, in WORLD space (see
+/// [`occluview_core::Mesh::principal_frame_cached`]) — a STABLE signal,
+/// constant for a given mesh regardless of cursor position, that the follow
+/// disc derives its orientation from instead of the hit triangle's local
+/// normal: the LOCAL direction from `centroid` to the hit point, projected
+/// onto the `axis0`/`axis1` plane, rotates smoothly as the cursor moves
+/// around a dental arch or bridge span — reducing to (roughly) `axis0` at
+/// the arch's left/right extremes and adapting continuously in between,
+/// instead of staying fixed for the whole mesh.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ArchFrame {
+    /// PCA centroid, world space.
+    pub(crate) centroid: Vec3,
+    /// Greatest-variance axis, world space, unit length.
+    pub(crate) axis0: Vec3,
+    /// Second-greatest-variance axis, world space, unit length.
+    pub(crate) axis1: Vec3,
+}
+
 /// A freshly sampled hover point on the mesh, feeding the follow disc.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SurfaceSample {
@@ -55,14 +74,11 @@ pub(crate) struct SurfaceSample {
     pub(crate) point: Vec3,
     /// Raw (unsmoothed) averaged world surface normal at the hit triangle.
     pub(crate) normal: Vec3,
-    /// The hit mesh's own long (greatest-variance) principal axis, in world
-    /// space (see [`occluview_core::Mesh::long_axis_cached`]) — a STABLE
-    /// signal, constant for a given mesh regardless of cursor position, that
-    /// the follow disc anchors its orientation to instead of the hit
-    /// triangle's local normal. `None` for a point cloud or a mesh too small
-    /// to have a well-defined axis, in which case the disc falls back to the
-    /// local surface-normal-driven orientation.
-    pub(crate) long_axis: Option<Vec3>,
+    /// The hit mesh's own principal-axis frame, in world space. `None` for a
+    /// point cloud or a mesh too small to have a well-defined frame, in which
+    /// case the disc falls back to the local surface-normal-driven
+    /// orientation.
+    pub(crate) arch_frame: Option<ArchFrame>,
 }
 
 /// A cursor affordance the overlay should show this frame.
@@ -321,7 +337,8 @@ impl CutManipulator {
             };
         };
         let raw = follow_plane_normal(
-            sample.long_axis,
+            sample.arch_frame,
+            sample.point,
             sample.normal,
             input.view_dir,
             input.camera_right,
@@ -465,7 +482,7 @@ mod tests {
         Some(SurfaceSample {
             point,
             normal,
-            long_axis: None,
+            arch_frame: None,
         })
     }
 

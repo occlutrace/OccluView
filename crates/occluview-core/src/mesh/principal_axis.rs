@@ -1,25 +1,37 @@
 //! Principal axes (PCA) of a point cloud: the eigenvectors of the covariance
-//! matrix of vertex positions, sorted by descending variance.
+//! matrix of vertex positions, sorted by descending variance, plus the
+//! centroid they were computed about.
 //!
 //! This is the STABLE, per-mesh-constant "global shape" signal the cut disc
 //! (Bridge Split and Cut View both drive [`crate::cut_manipulator`] logic
-//! through it) anchors its default orientation to, instead of the hit
-//! triangle's local normal: a dental arch or bridge span's own long axis
-//! (`axes[0]`) never jitters as the cursor crosses triangles, and a disc
-//! whose plane normal runs parallel to it cuts TRANSVERSE to the arch/span —
-//! the anatomically useful orientation for viewing occlusal contacts, and the
-//! one a Bridge Split separator needs to divide a span into segments.
+//! through it) anchors its orientation to, instead of the hit triangle's
+//! local normal: a dental arch or bridge span's own axes and centroid never
+//! jitter as the cursor crosses triangles, and the LOCAL direction from the
+//! centroid to a point on the surface, projected onto the `axes[0]`/`axes[1]`
+//! plane, rotates smoothly around the arch — reducing to (roughly) `axes[0]`
+//! at the arch's left/right extremes, the anatomically useful orientation for
+//! viewing occlusal contacts there, and adapting continuously in between
+//! instead of staying fixed for the whole mesh.
 
 use glam::Vec3;
 
-/// Principal axes of `points`, sorted by DESCENDING variance: `axes[0]` is
-/// the direction of greatest spread, `axes[2]` the least. Orthonormal and
-/// right-handed (`axes[2] == axes[0].cross(axes[1])`).
+/// A point cloud's PCA centroid and its three orthonormal axes, sorted by
+/// DESCENDING variance: `axes[0]` is the direction of greatest spread,
+/// `axes[2]` the least. Right-handed (`axes[2] == axes[0].cross(axes[1])`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PrincipalFrame {
+    /// Mean position of the points the frame was computed from.
+    pub centroid: Vec3,
+    /// `[greatest, middle, least]`-variance orthonormal axes.
+    pub axes: [Vec3; 3],
+}
+
+/// The [`PrincipalFrame`] of `points`.
 ///
 /// `None` when fewer than 3 finite points are present, or the point cloud has
 /// no well-defined axis (every point coincident).
 #[must_use]
-pub fn principal_axes(points: impl Iterator<Item = Vec3> + Clone) -> Option<[Vec3; 3]> {
+pub fn principal_frame(points: impl Iterator<Item = Vec3> + Clone) -> Option<PrincipalFrame> {
     let mut count: u64 = 0;
     let mut centroid = Vec3::ZERO;
     for p in points.clone() {
@@ -105,7 +117,10 @@ pub fn principal_axes(points: impl Iterator<Item = Vec3> + Clone) -> Option<[Vec
     if a2.length_squared() <= f32::EPSILON {
         return None;
     }
-    Some([a0, a1, a2])
+    Some(PrincipalFrame {
+        centroid,
+        axes: [a0, a1, a2],
+    })
 }
 
 /// Hard sweep bound for [`jacobi_eigen_symmetric_3x3`] (a safety valve; the
@@ -223,7 +238,9 @@ mod tests {
                 )
             })
             .collect();
-        let axes = principal_axes(points.into_iter()).expect("well-defined axes");
+        let axes = principal_frame(points.into_iter())
+            .expect("well-defined axes")
+            .axes;
         assert_unit_and_orthogonal(axes);
         assert!(
             axes[0].x.abs() > 0.99,
@@ -250,7 +267,9 @@ mod tests {
                 )
             })
             .collect();
-        let axes = principal_axes(points.into_iter()).expect("well-defined axes");
+        let axes = principal_frame(points.into_iter())
+            .expect("well-defined axes")
+            .axes;
         assert_unit_and_orthogonal(axes);
         assert!(
             axes[0].y.abs() < 0.2,
@@ -261,13 +280,13 @@ mod tests {
 
     #[test]
     fn two_points_return_none() {
-        assert!(principal_axes([Vec3::ZERO, Vec3::X].into_iter()).is_none());
+        assert!(principal_frame([Vec3::ZERO, Vec3::X].into_iter()).is_none());
     }
 
     #[test]
     fn every_point_coincident_returns_none() {
         let points = vec![Vec3::new(5.0, 5.0, 5.0); 10];
-        assert!(principal_axes(points.into_iter()).is_none());
+        assert!(principal_frame(points.into_iter()).is_none());
     }
 
     #[test]
@@ -279,7 +298,9 @@ mod tests {
             })
             .collect();
         points.push(Vec3::new(f32::NAN, f32::INFINITY, 0.0));
-        let axes = principal_axes(points.into_iter()).expect("finite points still resolve axes");
+        let axes = principal_frame(points.into_iter())
+            .expect("finite points still resolve axes")
+            .axes;
         assert_unit_and_orthogonal(axes);
         assert!(axes[0].x.abs() > 0.99);
     }
@@ -299,7 +320,9 @@ mod tests {
             Vec3::new(-1.0, 1.0, 1.0),
             Vec3::new(1.0, 1.0, 1.0),
         ];
-        let axes = principal_axes(points.into_iter()).expect("cube corners are non-degenerate");
+        let axes = principal_frame(points.into_iter())
+            .expect("cube corners are non-degenerate")
+            .axes;
         assert_unit_and_orthogonal(axes);
     }
 
@@ -312,8 +335,8 @@ mod tests {
                 Vec3::new(t * 1.7, (t * 0.9).sin(), (t * 0.4).cos() * 2.0)
             })
             .collect();
-        let a = principal_axes(points.iter().copied()).expect("axes");
-        let b = principal_axes(points.iter().copied()).expect("axes");
+        let a = principal_frame(points.iter().copied()).expect("frame");
+        let b = principal_frame(points.iter().copied()).expect("frame");
         assert_eq!(a, b);
     }
 
@@ -330,10 +353,46 @@ mod tests {
                 }
             }
         }
-        let axes = principal_axes(points.into_iter()).expect("axis-aligned axes");
+        let axes = principal_frame(points.into_iter())
+            .expect("axis-aligned axes")
+            .axes;
         assert_unit_and_orthogonal(axes);
         assert!(axes[0].x.abs() > 0.99, "expected X first: {}", axes[0]);
         assert!(axes[1].y.abs() > 0.99, "expected Y second: {}", axes[1]);
         assert!(axes[2].z.abs() > 0.99, "expected Z third: {}", axes[2]);
+    }
+
+    #[test]
+    fn centroid_is_the_true_mean_of_the_points() {
+        let points = [
+            Vec3::new(2.0, 4.0, 6.0),
+            Vec3::new(4.0, 8.0, 10.0),
+            Vec3::new(6.0, 0.0, 2.0),
+        ];
+        let frame = principal_frame(points.into_iter()).expect("well-defined frame");
+        assert!(
+            frame.centroid.distance(Vec3::new(4.0, 4.0, 6.0)) < 1e-4,
+            "expected the mean of the three points: {}",
+            frame.centroid
+        );
+    }
+
+    #[test]
+    fn centroid_skips_non_finite_points_like_the_axes_do() {
+        let mut points: Vec<Vec3> = (0..20)
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                Vec3::new(i as f32, 0.0, 0.0)
+            })
+            .collect();
+        points.push(Vec3::new(f32::NAN, f32::INFINITY, 0.0));
+        let frame = principal_frame(points.into_iter()).expect("finite points still resolve");
+        // Mean of 0..=19 is 9.5; the non-finite point must not have polluted it.
+        assert!(
+            (frame.centroid.x - 9.5).abs() < 1e-4,
+            "non-finite point should not skew the centroid: {}",
+            frame.centroid
+        );
+        assert_eq!(frame.centroid.y, 0.0);
     }
 }
