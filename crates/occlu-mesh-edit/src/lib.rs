@@ -75,7 +75,7 @@ pub use bridge_split::{
     validate_bridge_split_request, BridgeSplitReport, BridgeSplitRequest, BridgeSplitResult,
     SurfaceSplitResult,
 };
-pub use brush::{smooth_selected_faces, BrushMode, BrushSession, BrushStroke, BrushStrokeOutcome};
+pub use brush::{BrushMode, BrushSession, BrushStroke, BrushStrokeOutcome};
 pub use component_pick::component_at_triangle;
 pub use components::selected_connected_components;
 pub use delete_crop::{crop_to_selected_faces, delete_selected_faces};

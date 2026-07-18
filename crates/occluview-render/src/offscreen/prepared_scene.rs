@@ -4,7 +4,7 @@ use super::{
 };
 use crate::gpu::GpuMesh;
 use crate::texture::GpuTexture;
-use occluview_core::MeshKind;
+use occluview_core::{MeshKind, Vertex};
 
 impl PreparedScene {
     pub(super) fn upload(renderer: &Renderer, sources: &[PreparedSceneSource<'_>]) -> Self {
@@ -80,6 +80,36 @@ impl PreparedScene {
             entry.visible = update.visible;
             entry.wireframe = update.wireframe;
         }
+        true
+    }
+
+    /// Overwrite the vertex-buffer CONTENT of the entry whose uploaded
+    /// topology matches `topology` with fresh CPU vertices — the live path an
+    /// interactive sculpt stroke uses to show each brush frame without
+    /// re-preparing the whole scene. The uploaded topology identity is
+    /// untouched (indices, counts, and texture stay as-is), so subsequent
+    /// uniform-only [`Self::update`] reconciles keep succeeding mid-drag.
+    /// Returns `false` when no entry matches or the vertex count differs; the
+    /// caller then falls back to a full re-prepare.
+    pub fn write_entry_vertices(
+        &self,
+        renderer: &Renderer,
+        topology: &PreparedSceneTopology,
+        vertices: &[Vertex],
+    ) -> bool {
+        let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.topology == *topology)
+        else {
+            return false;
+        };
+        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
+            return false;
+        }
+        renderer
+            .queue()
+            .write_buffer(&entry.mesh.vertex_buffer, 0, bytemuck::cast_slice(vertices));
         true
     }
 

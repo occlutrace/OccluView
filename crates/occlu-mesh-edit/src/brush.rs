@@ -39,19 +39,9 @@ use super::brush_index::VertexGrid;
 use super::cap_support::build_vertex_adjacency;
 use super::topology::{canonical_position_key, weld_soup_topology};
 use super::{
-    validate_face_edit_buffers, validate_selection_against_triangle_count, EditVertex,
-    FaceSelection, MeshEditBuffers, MeshEditError, MeshEditReport, MeshEditResult, MeshTopology,
+    validate_face_edit_buffers, EditVertex, MeshEditBuffers, MeshEditError, MeshEditReport,
+    MeshEditResult, MeshTopology,
 };
-
-/// [`smooth_selected_faces`] iteration count: enough Taubin passes to visibly
-/// flatten a marked seam/patch from one button click (unlike an interactive
-/// brush stroke, which is deliberately gentle per frame).
-const SELECTION_SMOOTH_ITERATIONS: usize = 12;
-/// Extra radius beyond the selection's own bounding sphere, as a fraction of
-/// it, so the falloff decays to zero PAST the marked boundary instead of at
-/// it — the soft blend into untouched surrounding surface the forum request
-/// ("smooth the transition area") actually asked for.
-const SELECTION_SMOOTH_MARGIN: f32 = 0.35;
 
 /// Taubin's shrink pass factor (positive: pulls each vertex toward its
 /// umbrella mean).
@@ -287,10 +277,9 @@ impl BrushSession {
     }
 
     /// Apply already-computed falloff-weighted candidates for `mode`,
-    /// mutating touched vertex positions/normals in place. Shared by
-    /// [`Self::apply_stroke`] (fresh candidates every call, moving-cursor
-    /// path) and [`smooth_selected_faces`] (one fixed candidate set reused
-    /// across repeated passes, no moving cursor to re-query for).
+    /// mutating touched vertex positions/normals in place. Split from
+    /// [`Self::apply_stroke`] so a caller holding one fixed stroke can reuse
+    /// the candidate set across repeated passes without re-querying the grid.
     fn apply_to_candidates(
         &mut self,
         weighted: &[(usize, f32)],
@@ -428,6 +417,16 @@ impl BrushSession {
         }
     }
 
+    /// Current (live) vertex attributes mid-session — same length and order
+    /// as the mesh the session was prepared from, with positions and normals
+    /// updated by every stroke so far. Interactive callers read the touched
+    /// ids from a stroke's outcome and copy these into their own display
+    /// buffer for a partial GPU update, without ending the session.
+    #[must_use]
+    pub fn vertices(&self) -> &[EditVertex] {
+        &self.vertices
+    }
+
     /// Current (live) position of a vertex mid-session, before `finish`
     /// consumes `self` — used internally and by tests that need to inspect
     /// drift without ending the session.
@@ -520,104 +519,6 @@ impl BrushSession {
             },
         }
     }
-}
-
-/// One-click Smooth over an explicit face selection (the Mesh Editor's
-/// button, as opposed to an interactive brush drag): runs
-/// [`SELECTION_SMOOTH_ITERATIONS`] Taubin passes over the marked region using
-/// one enclosing stroke (selection centroid, radius = bounding sphere +
-/// [`SELECTION_SMOOTH_MARGIN`]), so the result blends into the untouched
-/// surrounding surface rather than stopping abruptly at the marked boundary —
-/// directly what the "spike" seams of issue #9 need after a jagged Close
-/// Holes cap, and what the forum's original smoothing request asked for.
-///
-/// An empty selection is a valid no-op (mirrors [`super::holes::fill_selected_holes`]):
-/// it never widens into a whole-mesh smooth.
-///
-/// # Errors
-/// Returns [`MeshEditError::UnsupportedPointCloud`], malformed-mesh, or
-/// selection-length errors from the shared buffer/selection validation.
-pub fn smooth_selected_faces(
-    mesh: &MeshEditBuffers,
-    selection: &FaceSelection,
-) -> Result<MeshEditResult, MeshEditError> {
-    validate_face_edit_buffers(mesh.topology, &mesh.vertices, &mesh.indices)?;
-    validate_selection_against_triangle_count(mesh.triangle_count(), selection)?;
-
-    let Some((center, radius_mm)) = selection_enclosing_sphere(mesh, selection) else {
-        return Ok(MeshEditResult {
-            mesh: mesh.clone(),
-            report: MeshEditReport {
-                input_vertices: mesh.vertices.len(),
-                input_triangles: mesh.triangle_count(),
-                output_vertices: mesh.vertices.len(),
-                output_triangles: mesh.triangle_count(),
-                ..MeshEditReport::default()
-            },
-        });
-    };
-
-    let mut session = BrushSession::prepare(mesh)?;
-    let stroke = BrushStroke {
-        center: center.to_array(),
-        radius_mm,
-        strength: 1.0,
-    };
-    // The stroke is fixed across every pass (one enclosing disc, not a
-    // moving cursor), so its falloff-weighted candidate set is computed
-    // ONCE and reused -- re-querying the spatial grid on every one of the
-    // fixed iteration count below would rescan the same box for a result
-    // that cannot change.
-    if let Some(weighted) = session.weighted_candidates(stroke) {
-        for _ in 0..SELECTION_SMOOTH_ITERATIONS {
-            session.apply_to_candidates(&weighted, BrushMode::Smooth);
-        }
-    }
-    Ok(session.finish())
-}
-
-/// Centroid and margin-padded bounding radius of every vertex referenced by a
-/// selected triangle. `None` for an empty selection. Callers have already run
-/// [`validate_selection_against_triangle_count`]/[`validate_face_edit_buffers`],
-/// so an out-of-range lookup here cannot happen for a well-formed input; a
-/// corner is simply skipped rather than aborting the whole computation if one
-/// somehow did.
-fn selection_enclosing_sphere(
-    mesh: &MeshEditBuffers,
-    selection: &FaceSelection,
-) -> Option<(Vec3, f32)> {
-    let mut seen = HashSet::new();
-    let mut positions = Vec::new();
-    for (triangle_index, selected) in selection.as_slice().iter().enumerate() {
-        if !*selected {
-            continue;
-        }
-        let base = triangle_index * 3;
-        let Some(corners) = mesh.indices.get(base..base + 3) else {
-            continue;
-        };
-        for &raw in corners {
-            let Some(vertex_id) = usize::try_from(raw).ok() else {
-                continue;
-            };
-            if seen.insert(vertex_id) {
-                if let Some(vertex) = mesh.vertices.get(vertex_id) {
-                    positions.push(Vec3::from_array(vertex.position));
-                }
-            }
-        }
-    }
-    if positions.is_empty() {
-        return None;
-    }
-    #[allow(clippy::cast_precision_loss)]
-    let centroid = positions.iter().copied().sum::<Vec3>() / positions.len() as f32;
-    let max_radius = positions
-        .iter()
-        .map(|&p| p.distance(centroid))
-        .fold(0.0_f32, f32::max);
-    let radius = (max_radius * (1.0 + SELECTION_SMOOTH_MARGIN)).max(max_radius + 0.5);
-    Some((centroid, radius))
 }
 
 /// Shortest edge from `here` to any of `neighbors`' positions, capped (not
