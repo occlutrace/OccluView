@@ -40,7 +40,7 @@ fn hit(point: Vec3, normal: Vec3) -> Option<SurfaceSample> {
     Some(SurfaceSample {
         point,
         normal,
-        long_axis: None,
+        arch_frame: None,
     })
 }
 
@@ -393,12 +393,12 @@ fn follow_normal_blends_continuously_across_the_old_degenerate_boundary() {
         let a = (0.9e-3_f32).sqrt().asin(); // sin^2 = 0.9e-3 < 1e-3
         Vec3::new(0.0, -a.cos(), a.sin()).normalize()
     };
-    let n_deg = follow_plane_normal(None, surface, nearly_down, right);
+    let n_deg = follow_plane_normal(None, Vec3::ZERO, surface, nearly_down, right);
     let clearly_off = {
         let a = (1.1e-3_f32).sqrt().asin(); // sin^2 = 1.1e-3 > 1e-3
         Vec3::new(0.0, -a.cos(), a.sin()).normalize()
     };
-    let n_ok = follow_plane_normal(None, surface, clearly_off, right);
+    let n_ok = follow_plane_normal(None, Vec3::ZERO, surface, clearly_off, right);
     assert!((n_deg.length() - 1.0).abs() < 1e-5);
     assert!((n_ok.length() - 1.0).abs() < 1e-5);
     assert!(

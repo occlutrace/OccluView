@@ -50,7 +50,7 @@ fn hovering_the_mesh_derives_a_clip_and_a_spec() {
     let hit = Some(SurfaceSample {
         point: Vec3::new(30.0, 50.0, 60.0),
         normal: Vec3::Y,
-        long_axis: None,
+        arch_frame: None,
     });
     let out = tool.update(&frame(hit, false), Vec3::new(0.0, 0.0, 100.0));
     assert!(out.pose_changed);
@@ -67,7 +67,7 @@ fn planting_freezes_the_pose_and_focus_frames_the_disc() {
     let hit = Some(SurfaceSample {
         point: Vec3::new(30.0, 50.0, 60.0),
         normal: Vec3::Y,
-        long_axis: None,
+        arch_frame: None,
     });
     let out = tool.update(&frame(hit, true), Vec3::new(0.0, 0.0, 100.0));
     assert!(out.planted);
@@ -86,7 +86,7 @@ fn disable_clears_everything() {
             Some(SurfaceSample {
                 point: Vec3::ZERO,
                 normal: Vec3::Y,
-                long_axis: None,
+                arch_frame: None,
             }),
             false,
         ),
@@ -102,7 +102,7 @@ fn hover(point: Vec3) -> CutFrameInput {
         Some(SurfaceSample {
             point,
             normal: Vec3::Y,
-            long_axis: None,
+            arch_frame: None,
         }),
         false,
     )

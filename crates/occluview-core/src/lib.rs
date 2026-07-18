@@ -60,7 +60,7 @@ pub use mesh::{
     prepare_bridge_split_source, repair_mesh_in_mesh, selected_connected_components_in_mesh,
     smooth_selected_faces_in_mesh, CoreBridgeSplitError, CoreBridgeSplitResult, CoreMeshEditResult,
     CoreMeshRepairResult, Mesh, MeshBuilder, MeshKind, MeshTexture, PreparedBridgeSplitSource,
-    Vertex,
+    PrincipalFrame, Vertex,
 };
 pub use occlu_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, FaceSelection, MeshEditOptions,

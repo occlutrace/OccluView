@@ -1,5 +1,5 @@
 use super::{egui, layers_overlay, pick_scene_hit, CutTool, OccluViewApp, Scene};
-use crate::cut_manipulator::{CutCursor, CutFrameInput, SurfaceSample};
+use crate::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
 use crate::cut_overlay;
 use crate::measure_overlay;
 use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
@@ -15,7 +15,7 @@ pub(super) const CUT_WHEEL_PX_PER_NOTCH: f32 = 50.0;
 
 /// Sample the surface under the cursor for the follow disc: the world hit
 /// point, the averaged world normal of the hit triangle, and the hit mesh's
-/// own long axis (the stable global signal the disc orientation prefers).
+/// own principal-axis frame (the stable signal the disc orientation prefers).
 fn surface_sample(
     camera: &occluview_core::Camera,
     viewport_rect: egui::Rect,
@@ -31,7 +31,7 @@ fn surface_sample(
     Some(SurfaceSample {
         point: hit.point,
         normal,
-        long_axis: world_long_axis(entry),
+        arch_frame: world_arch_frame(entry),
     })
 }
 
@@ -66,17 +66,31 @@ pub(super) fn triangle_world_normal(
     Some(Vec3::from(world).normalize_or(Vec3::Y))
 }
 
-/// The hit mesh's own long (greatest-variance) principal axis, transformed
-/// into world space — a direction, so this uses the transform's linear part
-/// directly (unlike a normal, which needs the inverse-transpose to stay
-/// perpendicular under non-uniform scale). Shared by Cut View and Bridge
-/// Split, both of which drive the same [`crate::cut_manipulator`] follow
-/// orientation from it. `None` propagates through to the disc's local-normal
-/// fallback (see [`crate::cut_geometry::follow_plane_normal`]).
-pub(super) fn world_long_axis(entry: &occluview_core::SceneMesh) -> Option<Vec3> {
-    let local = entry.mesh.long_axis_cached()?;
-    let world = entry.transform.transform_vector3(local).normalize_or_zero();
-    (world.length_squared() > f32::EPSILON).then_some(world)
+/// The hit mesh's own principal-axis frame, transformed into world space.
+/// `centroid` is a POINT (needs the transform's translation), `axis0`/`axis1`
+/// are directions (only the linear part, no translation). Shared by Cut View
+/// and Bridge Split, both of which drive the same [`crate::cut_manipulator`]
+/// follow orientation from it. `None` propagates through to the disc's
+/// local-normal fallback (see [`crate::cut_geometry::follow_plane_normal`]).
+pub(super) fn world_arch_frame(entry: &occluview_core::SceneMesh) -> Option<ArchFrame> {
+    let local = entry.mesh.principal_frame_cached()?;
+    let centroid = entry.transform.transform_point3(local.centroid);
+    let axis0 = entry
+        .transform
+        .transform_vector3(local.axes[0])
+        .normalize_or_zero();
+    let axis1 = entry
+        .transform
+        .transform_vector3(local.axes[1])
+        .normalize_or_zero();
+    if axis0.length_squared() <= f32::EPSILON || axis1.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    Some(ArchFrame {
+        centroid,
+        axis0,
+        axis1,
+    })
 }
 
 impl OccluViewApp {
