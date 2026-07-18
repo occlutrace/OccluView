@@ -7,7 +7,7 @@ pub const DEFAULT_UNTEXTURED_MESH_TINT: [f32; 4] = [0.82, 0.68, 0.42, 1.0];
 pub const DEFAULT_COLORED_MESH_TINT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 pub(super) fn default_mesh_tint(mesh: &Mesh) -> [f32; 4] {
-    if mesh.texture().is_some() || mesh.has_vertex_colors() {
+    if mesh.carries_color_data() {
         DEFAULT_COLORED_MESH_TINT
     } else {
         DEFAULT_UNTEXTURED_MESH_TINT

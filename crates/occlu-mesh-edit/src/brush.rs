@@ -66,6 +66,13 @@ const ADD_REMOVE_STEP_MM: f32 = 0.6;
 /// Largest displacement step as a fraction of a vertex's shortest incident
 /// (welded) edge — the anti-inversion guard.
 const MAX_STEP_FRACTION_OF_EDGE: f32 = 0.4;
+/// Grid-drift rebuild threshold, as a fraction of the grid's own cell size.
+/// `VertexGrid` indexes positions as of its last build; once a vertex has
+/// drifted more than this fraction of a cell width, its true position may
+/// have crossed into a cell `query_radius` no longer searches near a given
+/// center, silently dropping it as a candidate. Half a cell keeps every
+/// indexed vertex well inside that margin.
+const GRID_REBUILD_DRIFT_FRACTION_OF_CELL: f32 = 0.5;
 
 /// One brush stroke: a soft-falloff disc centered on the surface.
 #[derive(Copy, Clone, Debug)]
@@ -134,8 +141,16 @@ pub struct BrushSession {
     /// Shortest welded-neighbor edge length per vertex, captured at prepare
     /// time — the anti-inversion guard's per-vertex step budget.
     max_step: Vec<f32>,
-    /// Spatial index over the (fixed at prepare time) original positions.
+    /// Spatial index over vertex positions, rebuilt from live positions
+    /// whenever drift since the last build could otherwise make a query miss
+    /// a moved vertex — see [`Self::rebuild_grid_if_stale`].
     grid: VertexGrid,
+    /// Vertex positions as of `grid`'s last build/rebuild — the reference
+    /// [`Self::rebuild_grid_if_stale`] measures live-position drift against.
+    grid_reference_positions: Vec<Vec3>,
+    /// Farthest any vertex has drifted from `grid_reference_positions` since
+    /// the last grid build.
+    max_drift_since_grid_build: f32,
     /// Every vertex id touched by any stroke so far this session — reported
     /// honestly as `report.moved_vertices` by `finish`.
     touched_total: HashSet<usize>,
@@ -205,6 +220,8 @@ impl BrushSession {
             position_siblings,
             max_step,
             grid,
+            grid_reference_positions: positions,
+            max_drift_since_grid_build: 0.0,
             touched_total: HashSet::new(),
         })
     }
@@ -214,18 +231,28 @@ impl BrushSession {
     /// update; empty when the stroke has no effect (zero strength/radius, or
     /// no vertex within reach).
     pub fn apply_stroke(&mut self, stroke: BrushStroke, mode: BrushMode) -> BrushStrokeOutcome {
+        let Some(weighted) = self.weighted_candidates(stroke) else {
+            return BrushStrokeOutcome::default();
+        };
+        self.apply_to_candidates(&weighted, mode)
+    }
+
+    /// Falloff-weighted vertices within `stroke`'s disc (the grid query is a
+    /// conservative superset, filtered here to the vertices actually inside
+    /// the radius). `None` for a no-effect stroke (zero strength/radius, or
+    /// no vertex within reach). Rebuilds the spatial index first if drift
+    /// since its last build could otherwise miss a moved vertex.
+    fn weighted_candidates(&mut self, stroke: BrushStroke) -> Option<Vec<(usize, f32)>> {
         let strength = stroke.strength.clamp(0.0, 1.0);
         if strength <= 0.0 || !stroke.radius_mm.is_finite() || stroke.radius_mm <= 0.0 {
-            return BrushStrokeOutcome::default();
+            return None;
         }
+        self.rebuild_grid_if_stale();
         let center = Vec3::from_array(stroke.center);
         let candidates = self.grid.query_radius(center, stroke.radius_mm);
         if candidates.is_empty() {
-            return BrushStrokeOutcome::default();
+            return None;
         }
-
-        // Falloff-weighted candidates actually inside the disc (the grid
-        // query is a conservative superset).
         let weighted: Vec<(usize, f32)> = candidates
             .into_iter()
             .filter_map(|vertex_id| {
@@ -234,15 +261,46 @@ impl BrushSession {
                 (weight > 0.0).then_some((vertex_id, weight * strength))
             })
             .collect();
-        if weighted.is_empty() {
-            return BrushStrokeOutcome::default();
-        }
+        (!weighted.is_empty()).then_some(weighted)
+    }
 
+    /// Rebuild the spatial grid from current (live) positions if any indexed
+    /// vertex has drifted far enough since the last build that a query could
+    /// silently miss it (see [`GRID_REBUILD_DRIFT_FRACTION_OF_CELL`]).
+    /// Amortized: a typical per-stroke step is a small fraction of a welded
+    /// edge, itself far smaller than a grid cell spanning the mesh's own
+    /// scale, so this only fires every several-to-many strokes of sustained
+    /// interactive dragging, not every frame.
+    fn rebuild_grid_if_stale(&mut self) {
+        let threshold = self.grid.cell_size() * GRID_REBUILD_DRIFT_FRACTION_OF_CELL;
+        if self.max_drift_since_grid_build <= threshold {
+            return;
+        }
+        let positions: Vec<Vec3> = self
+            .vertices
+            .iter()
+            .map(|v| Vec3::from_array(v.position))
+            .collect();
+        self.grid = VertexGrid::build(&positions);
+        self.grid_reference_positions = positions;
+        self.max_drift_since_grid_build = 0.0;
+    }
+
+    /// Apply already-computed falloff-weighted candidates for `mode`,
+    /// mutating touched vertex positions/normals in place. Shared by
+    /// [`Self::apply_stroke`] (fresh candidates every call, moving-cursor
+    /// path) and [`smooth_selected_faces`] (one fixed candidate set reused
+    /// across repeated passes, no moving cursor to re-query for).
+    fn apply_to_candidates(
+        &mut self,
+        weighted: &[(usize, f32)],
+        mode: BrushMode,
+    ) -> BrushStrokeOutcome {
         let proposals = match mode {
-            BrushMode::Smooth => self.smooth_proposals(&weighted),
-            BrushMode::Add => self.wax_knife_proposals(&weighted, 1.0),
-            BrushMode::Remove => self.wax_knife_proposals(&weighted, -1.0),
-            BrushMode::Drag { delta } => self.drag_proposals(&weighted, Vec3::from_array(delta)),
+            BrushMode::Smooth => self.smooth_proposals(weighted),
+            BrushMode::Add => self.wax_knife_proposals(weighted, 1.0),
+            BrushMode::Remove => self.wax_knife_proposals(weighted, -1.0),
+            BrushMode::Drag { delta } => self.drag_proposals(weighted, Vec3::from_array(delta)),
         };
 
         let mut touched: Vec<usize> = Vec::with_capacity(proposals.len() * 2);
@@ -253,8 +311,9 @@ impl BrushSession {
             }
             self.set_position(vertex_id, clamped);
             touched.push(vertex_id);
-            let siblings = self.position_siblings[vertex_id].clone();
-            for sibling in siblings {
+            let sibling_count = self.position_siblings[vertex_id].len();
+            for sibling_index in 0..sibling_count {
+                let sibling = self.position_siblings[vertex_id][sibling_index];
                 self.set_position(sibling, clamped);
                 touched.push(sibling);
             }
@@ -369,12 +428,19 @@ impl BrushSession {
         }
     }
 
-    fn position(&self, vertex_id: usize) -> Vec3 {
+    /// Current (live) position of a vertex mid-session, before `finish`
+    /// consumes `self` — used internally and by tests that need to inspect
+    /// drift without ending the session.
+    pub(crate) fn position(&self, vertex_id: usize) -> Vec3 {
         Vec3::from_array(self.vertices[vertex_id].position)
     }
 
     fn set_position(&mut self, vertex_id: usize, position: Vec3) {
         self.vertices[vertex_id].position = position.to_array();
+        let drift = position.distance(self.grid_reference_positions[vertex_id]);
+        if drift > self.max_drift_since_grid_build {
+            self.max_drift_since_grid_build = drift;
+        }
     }
 
     /// Recompute normals for exactly the touched vertices and their one-ring
@@ -497,8 +563,15 @@ pub fn smooth_selected_faces(
         radius_mm,
         strength: 1.0,
     };
-    for _ in 0..SELECTION_SMOOTH_ITERATIONS {
-        session.apply_stroke(stroke, BrushMode::Smooth);
+    // The stroke is fixed across every pass (one enclosing disc, not a
+    // moving cursor), so its falloff-weighted candidate set is computed
+    // ONCE and reused -- re-querying the spatial grid on every one of the
+    // fixed iteration count below would rescan the same box for a result
+    // that cannot change.
+    if let Some(weighted) = session.weighted_candidates(stroke) {
+        for _ in 0..SELECTION_SMOOTH_ITERATIONS {
+            session.apply_to_candidates(&weighted, BrushMode::Smooth);
+        }
     }
     Ok(session.finish())
 }
@@ -547,17 +620,27 @@ fn selection_enclosing_sphere(
     Some((centroid, radius))
 }
 
-/// Shortest edge from `here` to any of `neighbors`' positions; a generous
-/// fallback for an isolated vertex (no neighbors) so its step budget is never
-/// zero-clamped by a topology fluke.
-fn shortest_incident_edge(positions: &[Vec3], neighbors: &[usize], here: Vec3) -> f32 {
-    neighbors
+/// Shortest edge from `here` to any of `neighbors`' positions, capped (not
+/// floored) at 1mm so a single stroke cannot take an oversized jump on a
+/// sparse/low-poly mesh. A genuinely SMALL edge is returned unfloored: a fine
+/// occlusal groove or margin line can have real neighbor spacing well under
+/// the old 0.05mm floor, and flooring it inflated `clamp_step`'s budget past
+/// what that local topology can actually tolerate, defeating the
+/// anti-inversion guard it feeds (issue review 2026-07-18). An isolated
+/// vertex (no finite neighbor distance) falls back to a generous budget so
+/// its step is never zero-clamped by a topology fluke — there is no real
+/// edge length to violate in that case.
+pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[usize], here: Vec3) -> f32 {
+    let shortest = neighbors
         .iter()
         .filter_map(|&neighbor| positions.get(neighbor))
         .map(|&position| position.distance(here))
         .filter(|length| length.is_finite() && *length > 0.0)
-        .fold(f32::MAX, f32::min)
-        .clamp(0.05, 1.0)
+        .fold(f32::MAX, f32::min);
+    if shortest == f32::MAX {
+        return 1.0;
+    }
+    shortest.min(1.0)
 }
 
 /// Smooth radial falloff: 1 at the center, 0 at/beyond `radius`, `C1`-smooth
