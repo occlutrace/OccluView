@@ -12,6 +12,8 @@
 
 use eframe::egui;
 
+use crate::sculpt_tool::SculptBrushKind;
+
 #[path = "mesh_editor_groups.rs"]
 mod groups;
 
@@ -27,6 +29,9 @@ pub(crate) enum MeshEditorAction {
     ToggleObject,
     /// Switch between surface (front-facing) and through-mesh selection.
     ToggleThroughMesh,
+    /// Arm/disarm one interactive sculpt brush (exocad Freeforming: Smooth,
+    /// Add, Remove), dragged directly on the surface.
+    ToggleSculpt(SculptBrushKind),
     /// Confirm the edit session: keep edits, close the window.
     Done,
     /// Revert the whole edit session to the captured baseline.
@@ -36,10 +41,6 @@ pub(crate) enum MeshEditorAction {
     Cut,
     Separate,
     CloseHoles,
-    /// Volume-preserving Taubin smoothing over the marked faces, blended into
-    /// the surrounding untouched surface (issue #11 / the forum's "smooth the
-    /// transition area after filling holes" request).
-    SmoothSelection,
     Undo,
     Redo,
 }
@@ -63,6 +64,8 @@ pub(crate) struct MeshEditorPanelState {
     pub(crate) object_mode: bool,
     /// Lasso mode: false = surface/front-facing, true = through-mesh.
     pub(crate) through_mesh: bool,
+    /// The armed sculpt brush, if any (owns the primary drag when set).
+    pub(crate) sculpt_armed: Option<SculptBrushKind>,
     /// Whether the session carries uncommitted edits (Done is meaningful).
     pub(crate) dirty: bool,
     /// Whether a mesh operation is running (all mutating buttons disabled).
@@ -110,6 +113,35 @@ pub(super) fn close_holes_limit_enabled(ctx: &egui::Context) -> bool {
         .unwrap_or(false)
 }
 
+fn sculpt_radius_id() -> egui::Id {
+    egui::Id::new("occluview_sculpt_radius_mm")
+}
+
+fn sculpt_strength_id() -> egui::Id {
+    egui::Id::new("occluview_sculpt_strength_pct")
+}
+
+/// Brush radius in mm. Lives in egui memory (like the Close Holes limit) so
+/// it survives while the editor is open without becoming a preference.
+pub(crate) fn sculpt_radius_mm(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp::<f32>(sculpt_radius_id()))
+        .unwrap_or(crate::sculpt_tool::SCULPT_RADIUS_DEFAULT_MM)
+}
+
+pub(super) fn set_sculpt_radius_mm(ctx: &egui::Context, radius_mm: f32) {
+    ctx.data_mut(|data| data.insert_temp(sculpt_radius_id(), radius_mm));
+}
+
+/// Brush strength slider in percent (5..100).
+pub(crate) fn sculpt_strength_pct(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp::<f32>(sculpt_strength_id()))
+        .unwrap_or(crate::sculpt_tool::SCULPT_STRENGTH_DEFAULT_PCT)
+}
+
+pub(super) fn set_sculpt_strength_pct(ctx: &egui::Context, strength_pct: f32) {
+    ctx.data_mut(|data| data.insert_temp(sculpt_strength_id(), strength_pct));
+}
+
 /// Show the movable mesh editor window; returns the requested action, if any.
 pub(crate) fn show(
     ctx: &egui::Context,
@@ -155,7 +187,7 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
     action = action.or(groups::selection(ui, &state, ops_enabled));
     action = action.or(groups::edit_selection(ui, &state, ops_enabled));
     action = action.or(groups::close_holes(ui, ops_enabled));
-    action = action.or(groups::smooth_selection(ui, ops_enabled));
+    action = action.or(groups::sculpt(ui, &state, ops_enabled));
     groups::status(ui, &state);
     action = action.or(groups::session(ui, &state, ops_enabled));
     action
@@ -176,7 +208,7 @@ mod tests {
             "groups::selection(",
             "groups::edit_selection(",
             "groups::close_holes(",
-            "groups::smooth_selection(",
+            "groups::sculpt(",
             "groups::session(",
         ];
         let mut last = 0;

@@ -2,7 +2,7 @@
 //! `brush.rs` to hold the workspace's 800-line file budget).
 
 use crate::brush::*;
-use crate::{EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshTopology};
+use crate::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
 use glam::Vec3;
 
 fn v(position: [f32; 3]) -> EditVertex {
@@ -412,64 +412,4 @@ fn bbox_diagonal(mesh: &MeshEditBuffers) -> f32 {
         hi = hi.max(p);
     }
     (hi - lo).length()
-}
-
-fn select_interior(mesh: &MeshEditBuffers, n: usize) -> FaceSelection {
-    let mask: Vec<bool> = mesh
-        .indices
-        .chunks_exact(3)
-        .map(|triangle| {
-            triangle.iter().all(|&raw| {
-                let idx = raw as usize;
-                let (i, j) = (idx % n, idx / n);
-                i > 1 && i < n - 2 && j > 1 && j < n - 2
-            })
-        })
-        .collect();
-    FaceSelection::new(mask)
-}
-
-#[test]
-fn smooth_selected_faces_flattens_the_marked_region_and_blends_the_border() {
-    let n = 11;
-    let mesh = bumpy_patch(0.6);
-    let selection = select_interior(&mesh, n);
-    assert!(selection.selected_count() > 0);
-    let before_variance = height_variance(&mesh, n);
-
-    let result = smooth_selected_faces(&mesh, &selection).expect("smooth selection");
-
-    let after_variance = height_variance(&result.mesh, n);
-    assert!(
-        after_variance < before_variance * 0.7,
-        "one-click Smooth should substantially flatten the marked bumps: \
-             {before_variance} -> {after_variance}"
-    );
-    assert!(result.report.moved_vertices > 0);
-    // The margin means the falloff reaches slightly past the strict
-    // interior selection too, so a boundary ring vertex may move a touch —
-    // that softness IS the "blend the transition" contract. The far
-    // corner of the patch, well outside the enclosing sphere, must not.
-    assert_eq!(
-        result.mesh.vertices[0].position, mesh.vertices[0].position,
-        "the far corner, outside the padded enclosing sphere, must stay put"
-    );
-}
-
-#[test]
-fn smooth_selected_faces_is_a_no_op_on_an_empty_selection() {
-    let mesh = bumpy_patch(0.6);
-    let empty = FaceSelection::new(vec![false; mesh.triangle_count()]);
-    let result = smooth_selected_faces(&mesh, &empty).expect("empty selection smooth");
-    assert_eq!(result.report.moved_vertices, 0);
-    for (before, after) in mesh.vertices.iter().zip(&result.mesh.vertices) {
-        assert_eq!(before.position, after.position);
-    }
-}
-
-#[test]
-fn smooth_selected_faces_rejects_a_mismatched_selection_length() {
-    let mesh = bumpy_patch(0.0);
-    let wrong_length = FaceSelection::new(vec![true; mesh.triangle_count() + 1]);
-    assert!(smooth_selected_faces(&mesh, &wrong_length).is_err());
 }

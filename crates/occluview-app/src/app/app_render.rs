@@ -481,6 +481,7 @@ impl OccluViewApp {
                 self.show_layers_overlay(ui, response.rect, ctx);
                 self.show_mesh_editor_overlay(response.rect, ctx);
                 self.paint_mesh_selection_drag_overlay_impl(ui);
+                self.paint_sculpt_cursor_impl(ui, response.rect);
                 self.show_status_overlay(ui, response.rect);
                 let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
                 let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
@@ -522,6 +523,7 @@ impl OccluViewApp {
                 self.show_layers_overlay(ui, response.rect, ctx);
                 self.show_mesh_editor_overlay(response.rect, ctx);
                 self.paint_mesh_selection_drag_overlay_impl(ui);
+                self.paint_sculpt_cursor_impl(ui, response.rect);
                 self.show_status_overlay(ui, response.rect);
                 let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
                 let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);

@@ -174,6 +174,12 @@ impl OccluViewApp {
         let orbit_drag_active =
             self.update_viewport_orbit_gesture(ctx, response, pan_drag_active, secondary_pointer);
 
+        // An armed sculpt brush owns the primary drag ahead of every selection
+        // gesture; RMB orbit / MMB retarget / wheel zoom fall through below.
+        if self.handle_sculpt_drag(ctx, response, pan_drag_active) {
+            return;
+        }
+
         if self.track_mesh_selection_drag(ctx, response, viewport_rect, pan_drag_active) {
             return;
         }

@@ -95,6 +95,10 @@ pub(crate) struct OccluViewApp {
     /// moved the camera, including motion below egui's click/drag threshold.
     pub(super) viewport_secondary_gesture_moved_since_press: bool,
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
+    /// Interactive sculpt-brush tool (exocad Freeforming): the armed brush
+    /// plus the live per-drag stroke session. Only meaningful while a mesh
+    /// edit session is active.
+    pub(super) sculpt: crate::sculpt_tool::SculptTool,
     pub(super) edit_mode: EditModeController,
     pub(super) update_notice: crate::update_notice::UpdateNotice,
     /// Set by every applied mesh-edit (and its undo/redo): the in-scene meshes
@@ -233,6 +237,7 @@ impl OccluViewApp {
             viewport_orbit_cursor_grabbed: false,
             viewport_secondary_gesture_moved_since_press: false,
             mesh_selection_drag: None,
+            sculpt: crate::sculpt_tool::SculptTool::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),
             has_unsaved_mesh_edits: false,
