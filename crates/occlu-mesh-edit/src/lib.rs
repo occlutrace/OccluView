@@ -25,6 +25,7 @@ mod attributes;
 mod bridge_split;
 mod brush;
 mod brush_index;
+mod brush_math;
 mod cap_delaunay;
 mod cap_fair;
 mod cap_fit;
