@@ -24,7 +24,6 @@ pub(crate) enum LayerContextAction {
     CutSelectionToNewLayer,
     SeparateSelectedComponents,
     CloseHoles,
-    SmoothSelection,
     InvertNormals,
     RepairMesh,
     UndoLastMeshEdit,
@@ -78,7 +77,6 @@ pub(crate) fn apply_layer_context_action(
         | LayerContextAction::CutSelectionToNewLayer
         | LayerContextAction::SeparateSelectedComponents
         | LayerContextAction::CloseHoles
-        | LayerContextAction::SmoothSelection
         | LayerContextAction::RepairMesh
         | LayerContextAction::UndoLastMeshEdit
         | LayerContextAction::ExportLayer => LayerContextApply::default(),

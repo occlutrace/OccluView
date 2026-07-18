@@ -11,6 +11,10 @@ use eframe::egui;
 
 use super::{MeshEditorAction, MeshEditorPanelState};
 use crate::mesh_editor_icons::{self, EditorIcon, CELL_ROUNDING};
+use crate::sculpt_tool::{
+    SculptBrushKind, SCULPT_RADIUS_MAX_MM, SCULPT_RADIUS_MIN_MM, SCULPT_STRENGTH_MAX_PCT,
+    SCULPT_STRENGTH_MIN_PCT,
+};
 use crate::ui_theme::ACCENT;
 
 /// Height of one tool cell: a glyph over a small caption (exocad-style toolbar
@@ -246,30 +250,88 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
     action
 }
 
-/// Volume-preserving Smooth over the marked faces (issue #11): one Taubin
-/// lambda/mu pass set, blended into the surrounding untouched surface so the
-/// result has no hard edge at the selection boundary — the direct fix for the
-/// "spike" seams a jagged Close Holes cap can leave (issue #9) and the forum's
-/// original "smooth the transition area" request.
-pub(super) fn smooth_selection(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> {
+/// Interactive freeform sculpting (exocad Freeforming applied to scans):
+/// Smooth / Add / Remove brushes dragged directly on the surface with the
+/// primary button, plus the shared radius and strength settings. Arming a
+/// brush takes the primary drag away from the selection gestures until it is
+/// toggled off again.
+pub(super) fn sculpt(
+    ui: &mut egui::Ui,
+    state: &MeshEditorPanelState,
+    enabled: bool,
+) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, "Smooth");
-    row(ui, 1, |ui, width| {
-        if icon(
-            ui,
-            width,
-            EditorIcon::Smooth,
-            "Smooth",
-            "Smooth the marked faces, blending into the surrounding surface",
-            enabled,
-            false,
-        )
-        .clicked()
-        {
-            action = Some(MeshEditorAction::SmoothSelection);
+    section(ui, "Sculpt");
+    row(ui, 3, |ui, width| {
+        let brushes = [
+            (
+                SculptBrushKind::Smooth,
+                EditorIcon::Smooth,
+                "Smooth",
+                "Relax the surface under the brush - drag over the scan to iron noise and seams",
+            ),
+            (
+                SculptBrushKind::Add,
+                EditorIcon::SculptAdd,
+                "Add",
+                "Build material up along the surface (wax knife) - drag over the scan",
+            ),
+            (
+                SculptBrushKind::Remove,
+                EditorIcon::SculptRemove,
+                "Remove",
+                "Carve material away along the surface (wax knife) - drag over the scan",
+            ),
+        ];
+        for (kind, glyph, label, tooltip) in brushes {
+            if icon(
+                ui,
+                width,
+                glyph,
+                label,
+                tooltip,
+                enabled,
+                state.sculpt_armed == Some(kind),
+            )
+            .clicked()
+            {
+                action = Some(MeshEditorAction::ToggleSculpt(kind));
+            }
         }
     });
+    sculpt_settings_row(ui, enabled);
     action
+}
+
+/// Radius/strength controls for the sculpt brushes. Both live in egui memory
+/// (like the Close Holes limit) so they hold while the editor is open.
+fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
+    let ctx = ui.ctx().clone();
+    let mut radius = super::sculpt_radius_mm(&ctx);
+    let mut strength = super::sculpt_strength_pct(&ctx);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("radius").size(11.0).weak());
+        ui.add_enabled(
+            enabled,
+            egui::DragValue::new(&mut radius)
+                .range(SCULPT_RADIUS_MIN_MM..=SCULPT_RADIUS_MAX_MM)
+                .speed(0.25)
+                .suffix(" mm"),
+        )
+        .on_hover_text("Brush falloff radius on the model");
+        ui.label(egui::RichText::new("strength").size(11.0).weak());
+        ui.add_enabled(
+            enabled,
+            egui::DragValue::new(&mut strength)
+                .range(SCULPT_STRENGTH_MIN_PCT..=SCULPT_STRENGTH_MAX_PCT)
+                .speed(1.0)
+                .suffix(" %"),
+        )
+        .on_hover_text("How fast the brush works while dragging");
+    });
+    super::set_sculpt_radius_mm(&ctx, radius);
+    super::set_sculpt_strength_pct(&ctx, strength);
+    ui.add_space(2.0);
 }
 
 fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
@@ -312,7 +374,9 @@ pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
         )
         .on_hover_text("Uncommitted edits: Done to apply, Cancel to revert");
     }
-    let hint = if state.object_mode {
+    let hint = if state.sculpt_armed.is_some() {
+        "Drag on the surface to sculpt · RMB orbits"
+    } else if state.object_mode {
         "Click an object to select it whole · Shift unmarks"
     } else if state.lasso_armed {
         "Click to outline · double-click closes · Shift unmarks"
@@ -495,7 +559,12 @@ mod tests {
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
-        let order = ["\"Selection\"", "\"Edit selection\"", "\"Close holes\""];
+        let order = [
+            "\"Selection\"",
+            "\"Edit selection\"",
+            "\"Close holes\"",
+            "\"Sculpt\"",
+        ];
         let mut last = 0;
         for title in order {
             let at = production.find(title).unwrap_or(usize::MAX);
@@ -516,11 +585,16 @@ mod tests {
                 lasso_armed: true,
                 object_mode: false,
                 through_mesh: true,
+                sculpt_armed: None,
                 dirty: true,
                 busy: false,
             },
             MeshEditorPanelState {
                 object_mode: true,
+                ..Default::default()
+            },
+            MeshEditorPanelState {
+                sculpt_armed: Some(SculptBrushKind::Smooth),
                 ..Default::default()
             },
             MeshEditorPanelState {
@@ -535,6 +609,7 @@ mod tests {
                 let _ = selection(ui, &state, enabled);
                 let _ = edit_selection(ui, &state, enabled);
                 let _ = close_holes(ui, enabled);
+                let _ = sculpt(ui, &state, enabled);
                 status(ui, &state);
                 let _ = session(ui, &state, enabled);
             });

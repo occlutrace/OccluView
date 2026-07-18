@@ -74,9 +74,7 @@ pub(super) fn apply_layer_context_action_with_status(
 
     if matches!(
         request.action,
-        LayerContextAction::CloseHoles
-            | LayerContextAction::InvertNormals
-            | LayerContextAction::SmoothSelection
+        LayerContextAction::CloseHoles | LayerContextAction::InvertNormals
     ) {
         return apply_layer_mesh_edit_action_with_status(app, scene, paths, request);
     }
