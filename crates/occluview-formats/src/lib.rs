@@ -101,7 +101,7 @@ mod tests {
         );
 
         let readme = include_str!("../../../README.md");
-        let public_promise = "| `.hps` | native HPS mesh support in release packages |";
+        let public_promise = "`.hps` and `.dcm` - HPS mesh containers";
         assert!(readme.contains(public_promise));
     }
 }
