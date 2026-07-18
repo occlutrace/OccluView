@@ -12,8 +12,7 @@ use eframe::egui;
 use super::{MeshEditorAction, MeshEditorPanelState};
 use crate::mesh_editor_icons::{self, EditorIcon, CELL_ROUNDING};
 use crate::sculpt_tool::{
-    SculptBrushKind, SCULPT_RADIUS_MAX_MM, SCULPT_RADIUS_MIN_MM, SCULPT_STRENGTH_MAX_PCT,
-    SCULPT_STRENGTH_MIN_PCT,
+    SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
 };
 use crate::ui_theme::ACCENT;
 
@@ -250,11 +249,10 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
     action
 }
 
-/// Interactive freeform sculpting (exocad Freeforming applied to scans):
-/// Smooth / Add / Remove brushes dragged directly on the surface with the
-/// primary button, plus the shared radius and strength settings. Arming a
-/// brush takes the primary drag away from the selection gestures until it is
-/// toggled off again.
+/// Interactive freeform sculpting (exocad Freeforming applied to scans): two
+/// tools only — an Add/Remove clay knife (Shift carves) and a Smooth relaxer
+/// (Shift forces it) — plus the shared Size and Strength sliders. Arming a tool
+/// takes the primary drag away from the selection gestures until toggled off.
 pub(super) fn sculpt(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
@@ -262,75 +260,66 @@ pub(super) fn sculpt(
 ) -> Option<MeshEditorAction> {
     let mut action = None;
     section(ui, "Sculpt");
-    row(ui, 3, |ui, width| {
-        let brushes = [
-            (
-                SculptBrushKind::Smooth,
-                EditorIcon::Smooth,
-                "Smooth",
-                "Relax the surface under the brush - drag over the scan to iron noise and seams",
-            ),
-            (
-                SculptBrushKind::Add,
-                EditorIcon::SculptAdd,
-                "Add",
-                "Build material up along the surface (wax knife) - drag over the scan",
-            ),
-            (
-                SculptBrushKind::Remove,
-                EditorIcon::SculptRemove,
-                "Remove",
-                "Carve material away along the surface (wax knife) - drag over the scan",
-            ),
-        ];
-        for (kind, glyph, label, tooltip) in brushes {
-            if icon(
-                ui,
-                width,
-                glyph,
-                label,
-                tooltip,
-                enabled,
-                state.sculpt_armed == Some(kind),
-            )
-            .clicked()
-            {
-                action = Some(MeshEditorAction::ToggleSculpt(kind));
-            }
+    row(ui, 2, |ui, width| {
+        if icon(
+            ui,
+            width,
+            EditorIcon::SculptAdd,
+            "Add / Remove",
+            "Build material up by dragging on the scan; hold Shift to carve it away. \
+             Shift+wheel resizes, Ctrl+wheel changes intensity.",
+            enabled,
+            state.sculpt_armed == Some(SculptToolKind::AddRemove),
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::AddRemove));
+        }
+        if icon(
+            ui,
+            width,
+            EditorIcon::Smooth,
+            "Smooth",
+            "Relax the surface by dragging on the scan; hold Shift to force maximum smoothing. \
+             Shift+wheel resizes, Ctrl+wheel changes intensity.",
+            enabled,
+            state.sculpt_armed == Some(SculptToolKind::Smooth),
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::Smooth));
         }
     });
     sculpt_settings_row(ui, enabled);
     action
 }
 
-/// Radius/strength controls for the sculpt brushes. Both live in egui memory
-/// (like the Close Holes limit) so they hold while the editor is open.
+/// Size/intensity sliders for the sculpt tools. Both live in egui memory (like
+/// the Close Holes limit) so they hold while the editor is open, and both are
+/// abstract 0..100 feel sliders — not millimeters — per the operator's request.
 fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
     let ctx = ui.ctx().clone();
-    let mut radius = super::sculpt_radius_mm(&ctx);
-    let mut strength = super::sculpt_strength_pct(&ctx);
+    let mut size = super::sculpt_size(&ctx);
+    let mut intensity = super::sculpt_intensity(&ctx);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("radius").size(11.0).weak());
+        ui.label(egui::RichText::new("size").size(11.0).weak());
         ui.add_enabled(
             enabled,
-            egui::DragValue::new(&mut radius)
-                .range(SCULPT_RADIUS_MIN_MM..=SCULPT_RADIUS_MAX_MM)
-                .speed(0.25)
-                .suffix(" mm"),
+            egui::Slider::new(&mut size, SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX).show_value(false),
         )
-        .on_hover_text("Brush falloff radius on the model");
-        ui.label(egui::RichText::new("strength").size(11.0).weak());
-        ui.add_enabled(
-            enabled,
-            egui::DragValue::new(&mut strength)
-                .range(SCULPT_STRENGTH_MIN_PCT..=SCULPT_STRENGTH_MAX_PCT)
-                .speed(1.0)
-                .suffix(" %"),
-        )
-        .on_hover_text("How fast the brush works while dragging");
+        .on_hover_text("Brush size (Shift + mouse wheel)");
     });
-    super::set_sculpt_radius_mm(&ctx, radius);
-    super::set_sculpt_strength_pct(&ctx, strength);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("force").size(11.0).weak());
+        ui.add_enabled(
+            enabled,
+            egui::Slider::new(&mut intensity, SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX)
+                .show_value(false),
+        )
+        .on_hover_text("Brush intensity (Ctrl + mouse wheel)");
+    });
+    super::set_sculpt_size(&ctx, size);
+    super::set_sculpt_intensity(&ctx, intensity);
     ui.add_space(2.0);
 }
 
@@ -594,7 +583,7 @@ mod tests {
                 ..Default::default()
             },
             MeshEditorPanelState {
-                sculpt_armed: Some(SculptBrushKind::Smooth),
+                sculpt_armed: Some(SculptToolKind::Smooth),
                 ..Default::default()
             },
             MeshEditorPanelState {

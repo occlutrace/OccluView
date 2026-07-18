@@ -286,7 +286,7 @@ impl OccluViewApp {
                 true
             }
             MeshEditorAction::ToggleSculpt(kind) => {
-                self.toggle_sculpt_brush(kind, ctx);
+                self.toggle_sculpt_tool(kind, ctx);
                 true
             }
             MeshEditorAction::ToggleThroughMesh => {

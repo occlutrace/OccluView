@@ -308,6 +308,42 @@ impl Mesh {
         self.texture.is_some() || self.has_vertex_colors
     }
 
+    /// Return a copy of this mesh with vertex positions and normals replaced
+    /// by `vertices`, KEEPING the same [`Mesh::topology_id`] so a renderer that
+    /// already streamed the new positions into its GPU buffers out-of-band
+    /// (an interactive sculpt stroke) does NOT trigger a full re-upload.
+    ///
+    /// `vertices` must have the same length and order as this mesh's own
+    /// vertex array (it is a sculpted copy of it); a length mismatch would make
+    /// the preserved `topology_id` lie about the GPU buffer size, so it is
+    /// rejected and the caller must rebuild the mesh normally instead. Indices,
+    /// texture, name, and the color/UV flags are unchanged; the bounding box
+    /// and principal frame are recomputed from the new positions so picking,
+    /// cut-view, and the cut disc stay correct.
+    #[must_use]
+    pub fn with_sculpted_vertices(&self, vertices: Vec<Vertex>) -> Option<Self> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        let cached_bbox = Some(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        ));
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
+        Some(Self {
+            name: self.name.clone(),
+            vertices,
+            indices: self.indices.clone(),
+            has_vertex_colors: self.has_vertex_colors,
+            has_uvs: self.has_uvs,
+            kind: self.kind,
+            texture: self.texture.clone(),
+            cached_bbox,
+            cached_principal_frame,
+            topology_id: self.topology_id,
+        })
+    }
+
     /// The mesh's own principal-axis frame (PCA centroid + orthonormal
     /// axes), from the constructor-time cache — a STABLE, per-mesh-constant
     /// "global shape" signal: `axes[0]` is a dental arch or bridge span's own
