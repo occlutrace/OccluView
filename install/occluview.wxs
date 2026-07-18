@@ -8,7 +8,7 @@
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.0.3" ?>
+<?define ProductVersion = "1.0.4" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>

@@ -46,7 +46,7 @@ default-members = [
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 rust-version = "1.86"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
@@ -59,15 +59,15 @@ publish = false              # we are not on crates.io yet
 # `dep = { workspace = true }` in each crate's [dependencies].
 [workspace.dependencies]
 # Internal crates.
-occlu-mesh-edit  = { path = "crates/occlu-mesh-edit", version = "1.0.3" }
-occluview-robust-csg = { path = "crates/occluview-robust-csg", version = "1.0.3" }
-occluview-core    = { path = "crates/occluview-core", version = "1.0.3" }
-occluview-hps = { path = "crates/occluview-hps", version = "1.0.3" }
-occluview-formats = { path = "crates/occluview-formats", version = "1.0.3" }
-occluview-render  = { path = "crates/occluview-render", version = "1.0.3" }
-occluview-thumbnail = { path = "crates/occluview-thumbnail", version = "1.0.3" }
-occluview-shell   = { path = "crates/occluview-shell", version = "1.0.3" }
-occluview-update  = { path = "crates/occluview-update", version = "1.0.3" }
+occlu-mesh-edit  = { path = "crates/occlu-mesh-edit", version = "1.0.4" }
+occluview-robust-csg = { path = "crates/occluview-robust-csg", version = "1.0.4" }
+occluview-core    = { path = "crates/occluview-core", version = "1.0.4" }
+occluview-hps = { path = "crates/occluview-hps", version = "1.0.4" }
+occluview-formats = { path = "crates/occluview-formats", version = "1.0.4" }
+occluview-render  = { path = "crates/occluview-render", version = "1.0.4" }
+occluview-thumbnail = { path = "crates/occluview-thumbnail", version = "1.0.4" }
+occluview-shell   = { path = "crates/occluview-shell", version = "1.0.4" }
+occluview-update  = { path = "crates/occluview-update", version = "1.0.4" }
 
 # Math / numerics.
 glam    = "0.29"            # permissive (MIT OR Apache-2.0)

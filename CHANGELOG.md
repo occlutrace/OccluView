@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.4 - 2026-07-18
+
+- Fixed Close Holes leaving sharp spike artifacts where a large interpolated
+  cap met the surrounding surface after a lasso cut, and raised the cap size
+  this covers (#9).
+- Added a per-layer toggle to hide scan colors/texture and show a flat
+  neutral material instead, and a one-click Smooth action for a marked face
+  selection (#10, #11).
+- Fixed DCM/HPS scans whose embedded JPEG texture atlas had its chroma
+  swapped at the source, decoding blue where gingiva/enamel should read warm
+  — and tightened the correction so it only fires on a whole-texture bias,
+  not a real localized blue material (anti-glare spray, bite-registration
+  silicone) sitting next to normal tissue color (#12).
+- Fixed the Bridge Split / Cut View cutting disc jittering as the cursor
+  moved and defaulting to a longitudinal orientation along the scan: it now
+  follows a stable, mesh-wide orientation instead of a single triangle's
+  local normal, landing transverse across the arch.
+
 ## 1.0.3 - 2026-07-15
 
 - Made Export Layer open in the source file's folder and preselect its
