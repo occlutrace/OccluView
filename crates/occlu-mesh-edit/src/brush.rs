@@ -46,9 +46,11 @@ use glam::Vec3;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+use super::brush_csr::Csr;
 use super::brush_index::VertexGrid;
 use super::brush_math::{
-    boundary_mask, compute_step_budget, falloff, is_single_component, smooth_pass_count,
+    boundary_mask, compute_step_budget, falloff, is_single_component, scope_area_normals,
+    smooth_pass_count,
 };
 use super::cap_support::build_vertex_adjacency;
 use super::topology::{canonical_position_key, weld_soup_topology};
@@ -157,16 +159,18 @@ pub struct BrushSession {
     /// since brush dabs only move vertices, never retopologize.
     indices: Vec<u32>,
     /// Vertex-vertex adjacency over the WELDED topology (shared corners see
-    /// their true neighbors even across soup duplicates). A soup duplicate that
-    /// is not the weld representative has an empty ring; it is moved by sibling
-    /// propagation from the representative, never in its own right.
-    adjacency: Vec<Vec<usize>>,
-    /// Per-ORIGINAL-vertex incident triangle indices (into `indices`), used to
-    /// recompute normals scoped to the touched region.
-    incident_triangles: Vec<Vec<usize>>,
+    /// their true neighbors even across soup duplicates), as CSR so a one-ring
+    /// gather in the hot passes is a contiguous slice, not a per-vertex heap
+    /// chase. A soup duplicate that is not the weld representative has an empty
+    /// ring; it is moved by sibling propagation from the representative.
+    adjacency: Csr,
+    /// Per-ORIGINAL-vertex incident triangle indices (into `indices`), as CSR;
+    /// used to recompute normals scoped to the touched region.
+    incident_triangles: Csr,
     /// Every other original vertex id that started at the exact same position
-    /// as this one (soup duplicates of one physical corner); empty otherwise.
-    position_siblings: Vec<Vec<usize>>,
+    /// as this one (soup duplicates of one physical corner), as CSR; empty row
+    /// for a vertex with no duplicate.
+    position_siblings: Csr,
     /// Whether a vertex sits on an open scan boundary (an edge used by only one
     /// triangle). Boundary vertices are pinned by Smooth and by the auto-relax
     /// so the scan's outer edge and any hole rims never erode.
@@ -187,20 +191,19 @@ pub struct BrushSession {
     /// The brush radius the grid's cell size is currently tuned for; a big
     /// change (a size-slider adjustment) triggers a rebuild.
     grid_radius: f32,
-    /// Reusable visited-stamp buffer for the per-dab component flood fill AND
-    /// the per-dab normal accumulation, so neither allocates a fresh
-    /// `HashSet`/`HashMap` per dab (the cost that made a big brush stutter on a
-    /// million-triangle scan). A slot is "touched this pass" when its stamp
-    /// equals `stamp_generation`; clearing is a generation bump.
+    /// Reusable `(vertex id, pre-dab position)` list for one-shot grid
+    /// maintenance. The spatial grid is only READ at the start of the next dab,
+    /// never during this dab's sub-passes, so instead of relocating every vertex
+    /// in the grid on every one of a Smooth dab's many passes, the movable region
+    /// is snapshotted once at dab start and relocated once at dab end.
+    grid_dirty: Vec<(usize, Vec3)>,
+    /// Reusable visited-stamp buffer for the per-dab component flood fill, the
+    /// touched-set dedup, and the normal-recompute scope build, so none of them
+    /// allocates a fresh `HashSet` per dab (the cost that made a big brush
+    /// stutter on a million-triangle scan). A slot is "touched this pass" when
+    /// its stamp equals `stamp_generation`; clearing is a generation bump.
     component_stamp: Vec<u32>,
-    /// Reusable per-vertex face-normal accumulator, paired with `component_stamp`
-    /// so a normal recompute reads a slot as zero the first time it is stamped
-    /// this pass instead of clearing the whole buffer.
-    normal_accum: Vec<Vec3>,
-    /// Reusable per-TRIANGLE visited stamp, so a normal recompute dedups the
-    /// touched triangles without an O(n log n) sort per dab.
-    triangle_stamp: Vec<u32>,
-    /// Current generation for the stamp buffers.
+    /// Current generation for the stamp buffer.
     stamp_generation: u32,
     /// Every vertex id touched by any dab so far this session — reported
     /// honestly as `report.moved_vertices` by `finish`.
@@ -220,18 +223,28 @@ impl BrushSession {
 
         let welded = weld_soup_topology(mesh)?;
         let adjacency_source = welded.as_ref().unwrap_or(mesh);
-        let adjacency = build_vertex_adjacency(adjacency_source);
+        let adjacency = Csr::from_rows(&build_vertex_adjacency(adjacency_source));
 
         let vertex_count = mesh.vertices.len();
-        let mut incident_triangles: Vec<Vec<usize>> = vec![Vec::new(); vertex_count];
-        for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
-            for &raw in triangle {
-                if let Some(vertex_id) = usize::try_from(raw).ok().filter(|&i| i < vertex_count) {
-                    incident_triangles[vertex_id].push(triangle_index);
-                }
-            }
-        }
+        // Incident triangles, built straight into CSR via a counting sort over
+        // the triangle corners — no per-vertex `Vec` allocation.
+        let incident_triangles = Csr::from_pairs(
+            vertex_count,
+            mesh.indices
+                .chunks_exact(3)
+                .enumerate()
+                .flat_map(move |(triangle_index, triangle)| {
+                    triangle.iter().filter_map(move |&raw| {
+                        usize::try_from(raw)
+                            .ok()
+                            .filter(|&i| i < vertex_count)
+                            .map(|i| (i, triangle_index))
+                    })
+                }),
+        );
 
+        // Soup position clusters → sibling rows → CSR. Bare (unwelded) duplicates
+        // of one physical corner share a position; each lists the others.
         let mut clusters: HashMap<[u32; 3], Vec<usize>> = HashMap::with_capacity(vertex_count);
         for (index, vertex) in mesh.vertices.iter().enumerate() {
             clusters
@@ -239,19 +252,20 @@ impl BrushSession {
                 .or_default()
                 .push(index);
         }
-        let mut position_siblings: Vec<Vec<usize>> = vec![Vec::new(); vertex_count];
+        let mut sibling_rows: Vec<Vec<usize>> = vec![Vec::new(); vertex_count];
         for group in clusters.values() {
             if group.len() < 2 {
                 continue;
             }
             for &vertex_id in group {
-                position_siblings[vertex_id] = group
+                sibling_rows[vertex_id] = group
                     .iter()
                     .copied()
                     .filter(|&id| id != vertex_id)
                     .collect();
             }
         }
+        let position_siblings = Csr::from_rows(&sibling_rows);
 
         let is_boundary =
             boundary_mask(&adjacency_source.indices, &position_siblings, vertex_count);
@@ -278,9 +292,8 @@ impl BrushSession {
             grid,
             // 0 forces the first dab to size the grid to its actual radius.
             grid_radius: 0.0,
+            grid_dirty: Vec::new(),
             component_stamp: vec![0; vertex_count],
-            normal_accum: vec![Vec3::ZERO; vertex_count],
-            triangle_stamp: vec![0; mesh.indices.len() / 3],
             stamp_generation: 0,
             touched_total: HashSet::new(),
         })
@@ -293,12 +306,20 @@ impl BrushSession {
         let Some((weighted, strength)) = self.weighted_candidates(stroke) else {
             return BrushStrokeOutcome::default();
         };
+        // Snapshot the movable region's pre-dab positions so the spatial grid can
+        // be brought up to date in a SINGLE pass at the end of the dab, rather
+        // than per-vertex on every one of a Smooth dab's many relax passes.
+        self.snapshot_grid_region(&weighted);
         let mut touched: Vec<usize> = Vec::new();
         match mode {
             BrushMode::Smooth => self.apply_smooth(&weighted, strength, &mut touched),
             BrushMode::Add => self.apply_clay(&weighted, stroke, 1.0, &mut touched),
             BrushMode::Remove => self.apply_clay(&weighted, stroke, -1.0, &mut touched),
         }
+        // Fold every vertex's net motion back into the grid once (no-op for the
+        // coherent centre that never left its cell), keeping the next dab's
+        // radius query exact.
+        self.apply_grid_maintenance();
         if touched.is_empty() {
             return BrushStrokeOutcome::default();
         }
@@ -314,6 +335,13 @@ impl BrushSession {
                 self.component_stamp[vertex_id] = unique_generation;
                 unique.push(vertex_id);
             }
+        }
+        // Sync the interleaved vertex positions from the SoA mirror once, for
+        // exactly the touched slots — the hot passes only wrote the mirror. The
+        // caller reads `vertices()` for these ids to patch its GPU shadow, and
+        // `finish` bakes them, so both see the final positions.
+        for &vertex_id in &unique {
+            self.vertices[vertex_id].position = self.positions[vertex_id].to_array();
         }
         self.touched_total.extend(unique.iter().copied());
         self.recompute_normals_near(&unique);
@@ -397,18 +425,18 @@ impl BrushSession {
         let reached = self.next_stamp();
         let mut stack = vec![seed];
         self.component_stamp[seed] = reached;
-        // Index loops (not iterators) so reading a neighbor id and stamping it
-        // don't hold overlapping borrows of `self`.
+        // The CSR rows borrow `self.adjacency`/`self.position_siblings`, disjoint
+        // from the `self.component_stamp` we stamp, so a plain iterator is fine.
         while let Some(vertex_id) = stack.pop() {
-            for i in 0..self.adjacency[vertex_id].len() {
-                let neighbor = self.adjacency[vertex_id][i];
+            for &neighbor in self.adjacency.row(vertex_id) {
+                let neighbor = neighbor as usize;
                 if self.component_stamp[neighbor] == in_disc {
                     self.component_stamp[neighbor] = reached;
                     stack.push(neighbor);
                 }
             }
-            for i in 0..self.position_siblings[vertex_id].len() {
-                let neighbor = self.position_siblings[vertex_id][i];
+            for &neighbor in self.position_siblings.row(vertex_id) {
+                let neighbor = neighbor as usize;
                 if self.component_stamp[neighbor] == in_disc {
                     self.component_stamp[neighbor] = reached;
                     stack.push(neighbor);
@@ -421,13 +449,12 @@ impl BrushSession {
             .collect()
     }
 
-    /// Hand out the next stamp generation, resetting both stamp buffers on the
+    /// Hand out the next stamp generation, resetting the stamp buffer on the
     /// rare `u32` wrap so a stale stamp can never masquerade as the current one.
     fn next_stamp(&mut self) -> u32 {
         self.stamp_generation = self.stamp_generation.wrapping_add(1);
         if self.stamp_generation == 0 {
             self.component_stamp.iter_mut().for_each(|s| *s = 0);
-            self.triangle_stamp.iter_mut().for_each(|s| *s = 0);
             self.stamp_generation = 1;
         }
         self.stamp_generation
@@ -478,10 +505,12 @@ impl BrushSession {
         // and overrun the representative's correct clamp.
         let displacement: Vec<(usize, Vec3)> = weighted
             .par_iter()
-            .filter(|&&(vertex_id, _)| !self.adjacency[vertex_id].is_empty())
-            .map(|&(vertex_id, weight)| {
-                let target = self.position(vertex_id) + normal * (sign * weight * amplitude);
-                (vertex_id, target)
+            .filter(|&&(vertex_id, _)| !self.adjacency.is_empty_row(vertex_id))
+            .filter_map(|&(vertex_id, weight)| {
+                let here = self.position(vertex_id);
+                let clamped =
+                    self.clamp_step(vertex_id, here + normal * (sign * weight * amplitude));
+                (clamped != here).then_some((vertex_id, clamped))
             })
             .collect();
         self.commit_moves(displacement.into_iter(), touched);
@@ -518,10 +547,9 @@ impl BrushSession {
             .filter_map(|&(vertex_id, weight)| {
                 let here = self.position(vertex_id);
                 let centroid = self.ring_centroid(vertex_id)?;
-                Some((
-                    vertex_id,
-                    here.lerp(centroid, (factor * weight).clamp(0.0, 1.0)),
-                ))
+                let target = here.lerp(centroid, (factor * weight).clamp(0.0, 1.0));
+                let clamped = self.clamp_step(vertex_id, target);
+                (clamped != here).then_some((vertex_id, clamped))
             })
             .collect();
         self.commit_moves(proposals.into_iter(), touched);
@@ -530,7 +558,7 @@ impl BrushSession {
     /// Whether a vertex may be relaxed/smoothed: interior (not an open-boundary
     /// vertex) and with a real one-ring (a needle tip is left frozen).
     fn is_relaxable(&self, vertex_id: usize) -> bool {
-        !self.is_boundary[vertex_id] && self.adjacency[vertex_id].len() >= MIN_RING_FOR_RELAX
+        !self.is_boundary[vertex_id] && self.adjacency.row_len(vertex_id) >= MIN_RING_FOR_RELAX
     }
 
     /// The camera-oriented brush normal: bucket the region's vertex normals by
@@ -541,19 +569,26 @@ impl BrushSession {
     fn brush_normal(&self, weighted: &[(usize, f32)], view_dir: Vec3) -> Vec3 {
         let view = view_dir.normalize_or_zero();
         let has_view = view.length_squared() > f32::EPSILON;
-        let (mut toward, mut toward_weight) = (Vec3::ZERO, 0.0_f32);
-        let mut total_weight = 0.0_f32;
-        for &(vertex_id, weight) in weighted {
-            let normal = Vec3::from_array(self.vertices[vertex_id].normal).normalize_or_zero();
-            if normal.length_squared() <= f32::EPSILON {
-                continue;
-            }
-            total_weight += weight;
-            if !has_view || normal.dot(view) <= 0.0 {
-                toward += normal * weight;
-                toward_weight += weight;
-            }
-        }
+        // Parallel reduction: a big brush buckets tens of thousands of normals,
+        // so fold the toward-camera sum, its weight, and the total weight across
+        // threads rather than a serial gather over the interleaved vertices.
+        let (toward, toward_weight, total_weight) = weighted
+            .par_iter()
+            .map(|&(vertex_id, weight)| {
+                let normal = Vec3::from_array(self.vertices[vertex_id].normal).normalize_or_zero();
+                if normal.length_squared() <= f32::EPSILON {
+                    return (Vec3::ZERO, 0.0_f32, 0.0_f32);
+                }
+                if !has_view || normal.dot(view) <= 0.0 {
+                    (normal * weight, weight, weight)
+                } else {
+                    (Vec3::ZERO, 0.0, weight)
+                }
+            })
+            .reduce(
+                || (Vec3::ZERO, 0.0_f32, 0.0_f32),
+                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+            );
         if has_view {
             if total_weight > 0.0 && toward_weight >= FRONT_BUCKET_TRUST_FRACTION * total_weight {
                 let normal = toward.normalize_or_zero();
@@ -574,37 +609,34 @@ impl BrushSession {
     /// Mean position of `vertex_id`'s welded one-ring, or `None` for a vertex
     /// with no ring (a bare soup duplicate; it is moved by propagation).
     fn ring_centroid(&self, vertex_id: usize) -> Option<Vec3> {
-        let ring = &self.adjacency[vertex_id];
+        let ring = self.adjacency.row(vertex_id);
         if ring.is_empty() {
             return None;
         }
         let mut mean = Vec3::ZERO;
         for &neighbor in ring {
-            mean += self.position(neighbor);
+            mean += self.position(neighbor as usize);
         }
         #[allow(clippy::cast_precision_loss)]
         Some(mean / ring.len() as f32)
     }
 
-    /// Apply a set of proposed target positions: clamp each against the
-    /// anti-inversion budget, move the vertex and its soup siblings, and record
-    /// every slot touched. Skips no-op moves so a content no-op never dirties.
+    /// Write a set of already-clamped, already-non-no-op target positions:
+    /// move each vertex and its soup siblings, recording every slot touched.
+    /// The anti-inversion clamp and the no-op filter are done in the parallel
+    /// proposal maps that feed this, so the serial commit is a minimal scatter.
     fn commit_moves(
         &mut self,
         moves: impl Iterator<Item = (usize, Vec3)>,
         touched: &mut Vec<usize>,
     ) {
         for (vertex_id, target) in moves {
-            let clamped = self.clamp_step(vertex_id, target);
-            if clamped == self.position(vertex_id) {
-                continue;
-            }
-            self.set_position(vertex_id, clamped);
+            self.set_position(vertex_id, target);
             touched.push(vertex_id);
-            let sibling_count = self.position_siblings[vertex_id].len();
+            let sibling_count = self.position_siblings.row_len(vertex_id);
             for sibling_index in 0..sibling_count {
-                let sibling = self.position_siblings[vertex_id][sibling_index];
-                self.set_position(sibling, clamped);
+                let sibling = self.position_siblings.row(vertex_id)[sibling_index] as usize;
+                self.set_position(sibling, target);
                 touched.push(sibling);
             }
         }
@@ -643,18 +675,59 @@ impl BrushSession {
         self.positions[vertex_id]
     }
 
+    /// Write a vertex's live position into the dense `positions` mirror only —
+    /// the sole source of truth every hot pass reads back. The interleaved
+    /// `vertices[].position` (40-byte stride) and the spatial grid are both
+    /// synced ONCE per dab afterwards, not on every one of a many-pass Smooth's
+    /// scattered writes, so the hot commit touches only the compact 12-byte
+    /// array.
     fn set_position(&mut self, vertex_id: usize, position: Vec3) {
-        let previous = self.positions[vertex_id];
         self.positions[vertex_id] = position;
-        self.vertices[vertex_id].position = position.to_array();
-        // Keep the spatial index exact incrementally — no O(n) rebuild.
-        self.grid.relocate(vertex_id, previous, position);
+    }
+
+    /// Record the pre-dab position of every vertex the dab could move — the
+    /// weighted candidates and their soup siblings — into `grid_dirty`, deduped
+    /// via a stamp so each id appears once with its TRUE pre-dab position.
+    fn snapshot_grid_region(&mut self, weighted: &[(usize, f32)]) {
+        self.grid_dirty.clear();
+        let generation = self.next_stamp();
+        for &(vertex_id, _) in weighted {
+            if self.component_stamp[vertex_id] != generation {
+                self.component_stamp[vertex_id] = generation;
+                self.grid_dirty.push((vertex_id, self.positions[vertex_id]));
+            }
+            for i in 0..self.position_siblings.row_len(vertex_id) {
+                let sibling = self.position_siblings.row(vertex_id)[i] as usize;
+                if self.component_stamp[sibling] != generation {
+                    self.component_stamp[sibling] = generation;
+                    self.grid_dirty.push((sibling, self.positions[sibling]));
+                }
+            }
+        }
+    }
+
+    /// Relocate every snapshotted vertex from its pre-dab cell to its final one
+    /// in a single pass (a within-cell move is a cheap no-op), so the grid is
+    /// exact for the next dab's query without a per-pass or O(n) rebuild.
+    fn apply_grid_maintenance(&mut self) {
+        let dirty = std::mem::take(&mut self.grid_dirty);
+        for &(vertex_id, previous) in &dirty {
+            self.grid
+                .relocate(vertex_id, previous, self.positions[vertex_id]);
+        }
+        self.grid_dirty = dirty;
     }
 
     /// Recompute normals for exactly the touched vertices and their one-ring (a
     /// moved vertex changes its neighbors' face-weighted normals too), using
     /// the ORIGINAL (unwelded) incident-triangle map so every soup duplicate's
     /// own triangle is included.
+    ///
+    /// This is the Blender-sculpt strategy (PR #116209): recompute every
+    /// affected vertex's normal DIRECTLY from its incident faces in parallel,
+    /// each vertex writing only its own slot — deliberately recomputing a shared
+    /// face normal once per corner rather than paying for the single-threaded
+    /// `VectorSet` dedup of faces that was the real bottleneck on a big dab.
     fn recompute_normals_near(&mut self, touched: &[usize]) {
         // Build the scope (touched + welded rings + soup siblings) deduped via a
         // stamp — index loops, no sort, no allocation churn on a big brush.
@@ -665,15 +738,15 @@ impl BrushSession {
                 self.component_stamp[vertex_id] = scope_generation;
                 scope.push(vertex_id);
             }
-            for i in 0..self.adjacency[vertex_id].len() {
-                let neighbor = self.adjacency[vertex_id][i];
+            for &neighbor in self.adjacency.row(vertex_id) {
+                let neighbor = neighbor as usize;
                 if self.component_stamp[neighbor] != scope_generation {
                     self.component_stamp[neighbor] = scope_generation;
                     scope.push(neighbor);
                 }
             }
-            for i in 0..self.position_siblings[vertex_id].len() {
-                let sibling = self.position_siblings[vertex_id][i];
+            for &sibling in self.position_siblings.row(vertex_id) {
+                let sibling = sibling as usize;
                 if self.component_stamp[sibling] != scope_generation {
                     self.component_stamp[sibling] = scope_generation;
                     scope.push(sibling);
@@ -681,75 +754,14 @@ impl BrushSession {
             }
         }
 
-        // Incident triangles of the scope, deduped via the triangle stamp.
-        let triangle_generation = self.next_stamp();
-        let mut triangles: Vec<usize> = Vec::with_capacity(scope.len() * 2);
-        for &vertex_id in &scope {
-            for i in 0..self.incident_triangles[vertex_id].len() {
-                let triangle_index = self.incident_triangles[vertex_id][i];
-                if self.triangle_stamp[triangle_index] != triangle_generation {
-                    self.triangle_stamp[triangle_index] = triangle_generation;
-                    triangles.push(triangle_index);
-                }
-            }
-        }
-
-        // Face normal of every touched triangle, computed in PARALLEL (the
-        // cross-products + position gathers over tens of thousands of triangles
-        // are the dab's real cost on a big brush). No per-triangle allocation —
-        // the old code built a throwaway `Vec` per triangle.
-        let vertex_count = self.vertices.len();
-        let face_normals: Vec<Vec3> = triangles
-            .par_iter()
-            .map(|&triangle_index| {
-                let base = triangle_index * 3;
-                let Some(slice) = self.indices.get(base..base + 3) else {
-                    return Vec3::ZERO;
-                };
-                let (a, b, c) = (slice[0] as usize, slice[1] as usize, slice[2] as usize);
-                if a >= vertex_count || b >= vertex_count || c >= vertex_count {
-                    return Vec3::ZERO;
-                }
-                let normal = (self.position(b) - self.position(a))
-                    .cross(self.position(c) - self.position(a));
-                if normal.is_finite() {
-                    normal
-                } else {
-                    Vec3::ZERO
-                }
-            })
-            .collect();
-
-        // Scatter the face normals into the reusable `normal_accum` buffer keyed
-        // by a fresh stamp (serial — the scatter's add order must be stable).
-        let generation = self.next_stamp();
-        for (offset, &triangle_index) in triangles.iter().enumerate() {
-            let face_normal = face_normals[offset];
-            if face_normal.length_squared() <= f32::EPSILON {
-                continue;
-            }
-            let base = triangle_index * 3;
-            let Some(corners) = self.indices.get(base..base + 3) else {
-                continue;
-            };
-            for &raw in corners {
-                let corner = raw as usize;
-                if corner >= vertex_count {
-                    continue;
-                }
-                if self.component_stamp[corner] != generation {
-                    self.component_stamp[corner] = generation;
-                    self.normal_accum[corner] = Vec3::ZERO;
-                }
-                self.normal_accum[corner] += face_normal;
-            }
-        }
-        for &vertex_id in &scope {
-            if self.component_stamp[vertex_id] == generation {
-                let sum = self.normal_accum[vertex_id];
-                if sum.length_squared() > f32::EPSILON {
-                    self.vertices[vertex_id].normal = sum.normalize().to_array();
-                }
+        // Conflict-free parallel recompute (see `scope_area_normals`), then the
+        // trivial serial normalize + write-back.
+        let new_normals =
+            scope_area_normals(&scope, &self.incident_triangles, &self.indices, &self.positions);
+        for (offset, &vertex_id) in scope.iter().enumerate() {
+            let sum = new_normals[offset];
+            if sum.length_squared() > f32::EPSILON {
+                self.vertices[vertex_id].normal = sum.normalize().to_array();
             }
         }
     }
