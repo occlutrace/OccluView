@@ -17,6 +17,7 @@ mod bridge_split_robust;
 mod builder;
 mod edit_adapter;
 mod normals;
+mod principal_axis;
 mod texture;
 mod vertex;
 
@@ -85,6 +86,9 @@ pub struct Mesh {
     texture: Option<MeshTexture>,
     /// Cached bounding box, lazily computed.
     cached_bbox: Option<Aabb>,
+    /// Cached long (greatest-variance) principal axis, computed once at
+    /// construction time — see [`Mesh::long_axis_cached`].
+    cached_long_axis: Option<Vec3>,
     /// Stable identity for GPU-uploaded geometry/texture payload.
     topology_id: u64,
 }
@@ -105,6 +109,7 @@ impl Mesh {
             kind: MeshKind::default(),
             texture: None,
             cached_bbox: Some(Aabb::EMPTY),
+            cached_long_axis: None,
             topology_id: next_mesh_topology_id(),
         }
     }
@@ -118,6 +123,9 @@ impl Mesh {
         let cached_bbox = Some(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
         ));
+        let cached_long_axis =
+            principal_axis::principal_axes(vertices.iter().map(|v| Vec3::from_array(v.position)))
+                .map(|axes| axes[0]);
         Self {
             name,
             vertices,
@@ -127,6 +135,7 @@ impl Mesh {
             kind: MeshKind::PointCloud,
             texture: None,
             cached_bbox,
+            cached_long_axis,
             topology_id: next_mesh_topology_id(),
         }
     }
@@ -162,6 +171,9 @@ impl Mesh {
         let cached_bbox = Some(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
         ));
+        let cached_long_axis =
+            principal_axis::principal_axes(vertices.iter().map(|v| Vec3::from_array(v.position)))
+                .map(|axes| axes[0]);
         Ok(Self {
             name,
             vertices,
@@ -171,6 +183,7 @@ impl Mesh {
             kind: MeshKind::TriangleMesh,
             texture: None,
             cached_bbox,
+            cached_long_axis,
             topology_id: next_mesh_topology_id(),
         })
     }
@@ -285,6 +298,21 @@ impl Mesh {
         let b = self.bbox_uncached();
         self.cached_bbox = Some(b);
         b
+    }
+
+    /// The mesh's own long (greatest-variance) principal axis, from the
+    /// constructor-time cache — a STABLE, per-mesh-constant "global shape"
+    /// signal: a dental arch or bridge span's own mesiodistal direction,
+    /// unaffected by cursor position or local surface bumps. `None` when the
+    /// mesh has fewer than 3 distinct vertex positions (no well-defined axis
+    /// — e.g. an empty mesh, or one degenerate point).
+    ///
+    /// Mesh geometry is immutable after construction (mirrors
+    /// [`Mesh::bbox_cached`]), so the cached axis remains valid.
+    #[inline]
+    #[must_use]
+    pub fn long_axis_cached(&self) -> Option<Vec3> {
+        self.cached_long_axis
     }
 }
 
