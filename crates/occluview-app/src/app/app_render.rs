@@ -476,7 +476,6 @@ impl OccluViewApp {
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
                 let mut axis_snap = None;
                 paint_scale_bar(ui, response.rect, stats);
-                super::paint_version_stamp(ui, response.rect);
                 if let Some(camera) = self.camera.as_ref() {
                     // Lift the gizmo above the docked Section panel while cutting
                     // so it never sits under the bottom-right panel.
@@ -518,7 +517,6 @@ impl OccluViewApp {
                 );
                 let mut axis_snap = None;
                 paint_scale_bar(ui, response.rect, stats);
-                super::paint_version_stamp(ui, response.rect);
                 if let Some(camera) = self.camera.as_ref() {
                     // Lift the gizmo above the docked Section panel while cutting
                     // so it never sits under the bottom-right panel.
@@ -551,7 +549,6 @@ impl OccluViewApp {
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let _response = ui.allocate_rect(viewport_rect, egui::Sense::hover());
                 self.show_status_overlay(ui, viewport_rect);
-                super::paint_version_stamp(ui, viewport_rect);
             } else {
                 ui.spinner();
             }

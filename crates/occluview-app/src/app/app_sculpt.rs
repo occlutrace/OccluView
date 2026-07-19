@@ -124,8 +124,7 @@ fn plan_dab_centers(
 }
 
 impl OccluViewApp {
-    /// Arm/disarm a sculpt tool; toggling the armed one disarms. Keeps the
-    /// prepared session across tool switches so the next stroke stays instant.
+    /// Arm/disarm a sculpt tool (toggling the armed one disarms).
     pub(super) fn toggle_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
         self.abort_sculpt_stroke();
         self.sculpt.toggle(kind);
@@ -151,8 +150,7 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// Switch the editor tab. Sculpt arms a brush (so a left click sculpts, not
-    /// selects); Edit Mesh drops the brush and returns to selection/repair.
+    /// Switch the editor tab: Sculpt arms a brush, Edit Mesh drops it.
     pub(super) fn switch_editor_tab(
         &mut self,
         tab: mesh_editor_overlay::EditorTab,
@@ -177,30 +175,33 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// Edit-Mesh-only sculpt hotkeys: `1` arms the Add/Remove clay knife, `2`
-    /// arms Smooth (pressing the armed one again disarms, same as the button).
-    /// Consumed only while a mesh-edit session is open and no text field has
-    /// keyboard focus, so the keys keep their normal meaning everywhere else.
-    /// Returns `true` when a key was handled.
+    /// Edit-Mesh-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
+    /// Consumed only while a session is open and no text field has focus.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
         if !self.edit_mode.has_active_session() || ctx.wants_keyboard_input() {
             return false;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)) {
-            self.toggle_sculpt_tool(SculptToolKind::AddRemove, ctx);
+            self.arm_sculpt_tool(SculptToolKind::AddRemove, ctx);
             return true;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num2)) {
-            self.toggle_sculpt_tool(SculptToolKind::Smooth, ctx);
+            self.arm_sculpt_tool(SculptToolKind::Smooth, ctx);
             return true;
         }
         false
     }
 
-    /// One frame of the sculpt gesture. Returns `true` only when the PRIMARY
-    /// button is actively driving a sculpt this frame, so RMB orbit / MMB
-    /// retarget / wheel zoom (none of which set the primary) keep working while
-    /// a brush is armed.
+    /// Arm a sculpt tool idempotently — the hotkey only turns a tool ON.
+    fn arm_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
+        if self.sculpt.armed != Some(kind) {
+            self.toggle_sculpt_tool(kind, ctx);
+        }
+    }
+
+    /// One frame of the sculpt gesture. Returns `true` only while the PRIMARY
+    /// button drives a sculpt this frame, so RMB orbit / MMB / wheel keep
+    /// working with a brush armed.
     pub(super) fn handle_sculpt_drag(
         &mut self,
         ctx: &egui::Context,

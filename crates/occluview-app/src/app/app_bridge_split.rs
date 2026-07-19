@@ -45,11 +45,29 @@ impl OccluViewApp {
             return;
         }
 
+        // Size the starting disc to the object: a fraction of its world bounding
+        // diagonal, floored at the historical default, so a big arch gets a disc
+        // that usually already covers the connector instead of the tiny minimum.
+        let object_radius = {
+            let world_diagonal = entry.mesh.bbox_cached().size().length()
+                * crate::sculpt_tool::mean_uniform_scale(&entry.transform);
+            (0.22 * world_diagonal).max(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM)
+        };
+
         self.cut_view.disable();
         self.measure.disarm();
         self.mesh_selection_drag = None;
         self.bridge_split.start(entry);
-        self.bridge_split_disc.arm();
+        self.bridge_split_disc.arm_with_radius(object_radius);
+        // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
+        // first hover/plant doesn't freeze the UI building it on a big scan.
+        if let Some(scene_arc) = self.scene.clone() {
+            std::thread::spawn(move || {
+                if let Some(entry) = scene_arc.meshes().iter().find(|e| e.id() == layer_id) {
+                    entry.mesh.warm_bvh();
+                }
+            });
+        }
         self.bridge_split_section.reset();
         self.needs_render = true;
         self.status_message = Some("Bridge split: place separator disc".to_string());

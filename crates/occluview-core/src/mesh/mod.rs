@@ -314,6 +314,17 @@ impl Mesh {
             .map(|hit| (hit.triangle_index, hit.point))
     }
 
+    /// Force the picking BVH to build now (e.g. on a background thread when a
+    /// tool arms), so the first interactive pick doesn't pay the build on the UI
+    /// thread. The BVH is shared via `Arc<OnceLock>`, so warming it here makes
+    /// the first pick on every clone of this mesh instant.
+    pub fn warm_bvh(&self) {
+        if self.kind == MeshKind::TriangleMesh && !self.indices.is_empty() {
+            self.bvh
+                .get_or_init(|| TriangleBvh::build(&self.vertices, &self.indices));
+        }
+    }
+
     /// Whether this is a triangle mesh or a point cloud.
     #[inline]
     #[must_use]

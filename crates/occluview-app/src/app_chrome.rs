@@ -12,18 +12,6 @@ pub(crate) fn load_app_logo_color_image() -> Option<egui::ColorImage> {
     ))
 }
 
-/// Barely-there version stamp in the viewport: bottom-center, tiny and faint,
-/// out of the way of the scale bar (bottom-left) and axis gizmo (bottom-right).
-pub(crate) fn paint_version_stamp(ui: &egui::Ui, viewport_rect: egui::Rect) {
-    ui.painter().text(
-        egui::pos2(viewport_rect.center().x, viewport_rect.bottom() - 8.0),
-        egui::Align2::CENTER_BOTTOM,
-        concat!("OccluView ", env!("CARGO_PKG_VERSION")),
-        egui::FontId::proportional(10.0),
-        egui::Color32::from_rgba_unmultiplied(15, 23, 42, 72),
-    );
-}
-
 /// Vertical band (px, measured up from the viewport's bottom edge) reserved for
 /// the bottom-left scale bar and its mm label. The scale bar line sits 16 px up
 /// and its label another 22 px above that (`app_scale_bar::paint_scale_bar`), so
@@ -37,8 +25,8 @@ const STATUS_HEIGHT_PX: f32 = 34.0;
 /// Bottom-left status pill rectangle, lifted to sit *above* the scale bar band
 /// so the two no longer overlap. The scale bar keeps the very bottom-left corner
 /// (line + ticks + mm label); the transient status message stacks just above it.
-/// The axis gizmo and (moved) Section panel own the bottom-right corner, and the
-/// version stamp stays bottom-center, so this column is the status pill's alone.
+/// The axis gizmo and (moved) Section panel own the bottom-right corner, so this
+/// column is the status pill's alone.
 pub(crate) fn status_overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
     let width = viewport_rect.width().clamp(240.0, 430.0);
     let pill_bottom = viewport_rect.bottom() - SCALE_BAR_RESERVE_PX - STATUS_SCALE_BAR_GAP_PX;
