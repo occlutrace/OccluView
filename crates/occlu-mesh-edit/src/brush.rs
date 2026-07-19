@@ -43,6 +43,7 @@
 //! touched corner.
 
 use glam::Vec3;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::brush_index::VertexGrid;
@@ -128,12 +129,12 @@ pub enum BrushMode {
 
 /// Outcome of one [`BrushSession::apply_stroke`] call: exactly the vertex ids
 /// whose position and/or normal changed, so the caller can push a partial GPU
-/// update instead of re-uploading the whole mesh. Sorted, deduplicated,
-/// indices into the ORIGINAL vertex array `BrushSession::prepare` was built
-/// from.
+/// update instead of re-uploading the whole mesh. Deduplicated but NOT sorted
+/// (an interactive caller sorts the whole frame's union once); indices into the
+/// ORIGINAL vertex array `BrushSession::prepare` was built from.
 #[derive(Clone, Debug, Default)]
 pub struct BrushStrokeOutcome {
-    /// Touched vertex ids, ascending.
+    /// Touched vertex ids, unique, in first-touched order.
     pub touched_vertices: Vec<usize>,
 }
 
@@ -189,7 +190,10 @@ pub struct BrushSession {
     /// so a normal recompute reads a slot as zero the first time it is stamped
     /// this pass instead of clearing the whole buffer.
     normal_accum: Vec<Vec3>,
-    /// Current generation for `component_stamp` / `normal_accum`.
+    /// Reusable per-TRIANGLE visited stamp, so a normal recompute dedups the
+    /// touched triangles without an O(n log n) sort per dab.
+    triangle_stamp: Vec<u32>,
+    /// Current generation for the stamp buffers.
     stamp_generation: u32,
     /// Every vertex id touched by any dab so far this session — reported
     /// honestly as `report.moved_vertices` by `finish`.
@@ -268,6 +272,7 @@ impl BrushSession {
             max_drift_since_grid_build: 0.0,
             component_stamp: vec![0; vertex_count],
             normal_accum: vec![Vec3::ZERO; vertex_count],
+            triangle_stamp: vec![0; mesh.indices.len() / 3],
             stamp_generation: 0,
             touched_total: HashSet::new(),
         })
@@ -289,12 +294,23 @@ impl BrushSession {
         if touched.is_empty() {
             return BrushStrokeOutcome::default();
         }
-        touched.sort_unstable();
-        touched.dedup();
-        self.touched_total.extend(touched.iter().copied());
-        self.recompute_normals_near(&touched);
+        // Dedup via a stamp (no sort): `touched` carries duplicates (a vertex
+        // moved by both the displacement and the auto-smooth pass, plus soup
+        // siblings), and a per-dab sort of tens of thousands of ids was a real
+        // cost on a big brush. The interactive caller sorts the whole frame's
+        // union once before the GPU write; order here is irrelevant.
+        let unique_generation = self.next_stamp();
+        let mut unique = Vec::with_capacity(touched.len());
+        for &vertex_id in &touched {
+            if self.component_stamp[vertex_id] != unique_generation {
+                self.component_stamp[vertex_id] = unique_generation;
+                unique.push(vertex_id);
+            }
+        }
+        self.touched_total.extend(unique.iter().copied());
+        self.recompute_normals_near(&unique);
         BrushStrokeOutcome {
-            touched_vertices: touched,
+            touched_vertices: unique,
         }
     }
 
@@ -315,8 +331,12 @@ impl BrushSession {
         if candidates.is_empty() {
             return None;
         }
+        // Parallel across the candidate set — a big brush has tens of thousands
+        // of candidates and this (plus the displacement/relax maps below) is the
+        // per-vertex work that dominates a dab. `par_iter().collect()` preserves
+        // order, so the result stays deterministic.
         let weighted: Vec<(usize, f32)> = candidates
-            .into_iter()
+            .into_par_iter()
             .filter_map(|vertex_id| {
                 let distance = self.position(vertex_id).distance(center);
                 let weight = falloff(distance, stroke.radius_mm);
@@ -387,12 +407,13 @@ impl BrushSession {
             .collect()
     }
 
-    /// Hand out the next stamp generation, resetting the buffer on the rare
-    /// `u32` wrap so a stale stamp can never masquerade as the current one.
+    /// Hand out the next stamp generation, resetting both stamp buffers on the
+    /// rare `u32` wrap so a stale stamp can never masquerade as the current one.
     fn next_stamp(&mut self) -> u32 {
         self.stamp_generation = self.stamp_generation.wrapping_add(1);
         if self.stamp_generation == 0 {
             self.component_stamp.iter_mut().for_each(|s| *s = 0);
+            self.triangle_stamp.iter_mut().for_each(|s| *s = 0);
             self.stamp_generation = 1;
         }
         self.stamp_generation
@@ -448,7 +469,7 @@ impl BrushSession {
         // dab from the already-moved position against its own (fallback) budget
         // and overrun the representative's correct clamp.
         let displacement: Vec<(usize, Vec3)> = weighted
-            .iter()
+            .par_iter()
             .filter(|&&(vertex_id, _)| !self.adjacency[vertex_id].is_empty())
             .map(|&(vertex_id, weight)| {
                 let target = self.position(vertex_id) + normal * (sign * weight * amplitude);
@@ -464,7 +485,7 @@ impl BrushSession {
         // triangulation without collapsing the sculpted volume; boundary and
         // needle-tip vertices are left alone so scan edges hold.
         let relaxed: Vec<(usize, Vec3)> = weighted
-            .iter()
+            .par_iter()
             .filter(|&&(vertex_id, _)| self.is_relaxable(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
                 let here = self.position(vertex_id);
@@ -495,7 +516,7 @@ impl BrushSession {
     /// boundary and low-valence vertices.
     fn laplacian_proposals(&self, weighted: &[(usize, f32)]) -> Vec<(usize, Vec3)> {
         weighted
-            .iter()
+            .par_iter()
             .filter(|&&(vertex_id, _)| self.is_relaxable(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
                 let here = self.position(vertex_id);
@@ -636,44 +657,87 @@ impl BrushSession {
     /// the ORIGINAL (unwelded) incident-triangle map so every soup duplicate's
     /// own triangle is included.
     fn recompute_normals_near(&mut self, touched: &[usize]) {
-        let mut scope: Vec<usize> = touched.to_vec();
+        // Build the scope (touched + welded rings + soup siblings) deduped via a
+        // stamp — index loops, no sort, no allocation churn on a big brush.
+        let scope_generation = self.next_stamp();
+        let mut scope: Vec<usize> = Vec::with_capacity(touched.len() * 4);
         for &vertex_id in touched {
-            scope.extend(self.adjacency[vertex_id].iter().copied());
-            scope.extend(self.position_siblings[vertex_id].iter().copied());
+            if self.component_stamp[vertex_id] != scope_generation {
+                self.component_stamp[vertex_id] = scope_generation;
+                scope.push(vertex_id);
+            }
+            for i in 0..self.adjacency[vertex_id].len() {
+                let neighbor = self.adjacency[vertex_id][i];
+                if self.component_stamp[neighbor] != scope_generation {
+                    self.component_stamp[neighbor] = scope_generation;
+                    scope.push(neighbor);
+                }
+            }
+            for i in 0..self.position_siblings[vertex_id].len() {
+                let sibling = self.position_siblings[vertex_id][i];
+                if self.component_stamp[sibling] != scope_generation {
+                    self.component_stamp[sibling] = scope_generation;
+                    scope.push(sibling);
+                }
+            }
         }
-        scope.sort_unstable();
-        scope.dedup();
 
-        let mut triangles: Vec<usize> = scope
-            .iter()
-            .flat_map(|&vertex_id| self.incident_triangles[vertex_id].iter().copied())
+        // Incident triangles of the scope, deduped via the triangle stamp.
+        let triangle_generation = self.next_stamp();
+        let mut triangles: Vec<usize> = Vec::with_capacity(scope.len() * 2);
+        for &vertex_id in &scope {
+            for i in 0..self.incident_triangles[vertex_id].len() {
+                let triangle_index = self.incident_triangles[vertex_id][i];
+                if self.triangle_stamp[triangle_index] != triangle_generation {
+                    self.triangle_stamp[triangle_index] = triangle_generation;
+                    triangles.push(triangle_index);
+                }
+            }
+        }
+
+        // Face normal of every touched triangle, computed in PARALLEL (the
+        // cross-products + position gathers over tens of thousands of triangles
+        // are the dab's real cost on a big brush). No per-triangle allocation —
+        // the old code built a throwaway `Vec` per triangle.
+        let vertex_count = self.vertices.len();
+        let face_normals: Vec<Vec3> = triangles
+            .par_iter()
+            .map(|&triangle_index| {
+                let base = triangle_index * 3;
+                let Some(slice) = self.indices.get(base..base + 3) else {
+                    return Vec3::ZERO;
+                };
+                let (a, b, c) = (slice[0] as usize, slice[1] as usize, slice[2] as usize);
+                if a >= vertex_count || b >= vertex_count || c >= vertex_count {
+                    return Vec3::ZERO;
+                }
+                let normal = (self.position(b) - self.position(a))
+                    .cross(self.position(c) - self.position(a));
+                if normal.is_finite() {
+                    normal
+                } else {
+                    Vec3::ZERO
+                }
+            })
             .collect();
-        triangles.sort_unstable();
-        triangles.dedup();
 
-        // Accumulate face normals into the reusable `normal_accum` buffer keyed
-        // by a fresh stamp — no per-dab HashMap. A slot first stamped this pass
-        // reads as zero; later triangles add into it.
+        // Scatter the face normals into the reusable `normal_accum` buffer keyed
+        // by a fresh stamp (serial — the scatter's add order must be stable).
         let generation = self.next_stamp();
-        for &triangle_index in &triangles {
+        for (offset, &triangle_index) in triangles.iter().enumerate() {
+            let face_normal = face_normals[offset];
+            if face_normal.length_squared() <= f32::EPSILON {
+                continue;
+            }
             let base = triangle_index * 3;
             let Some(corners) = self.indices.get(base..base + 3) else {
                 continue;
             };
-            let ids: Vec<usize> = corners
-                .iter()
-                .filter_map(|&raw| usize::try_from(raw).ok())
-                .collect();
-            let [a, b, c] = match ids.as_slice() {
-                [a, b, c] => [*a, *b, *c],
-                _ => continue,
-            };
-            let (pa, pb, pc) = (self.position(a), self.position(b), self.position(c));
-            let face_normal = (pb - pa).cross(pc - pa);
-            if !face_normal.is_finite() || face_normal.length_squared() <= f32::EPSILON {
-                continue;
-            }
-            for corner in [a, b, c] {
+            for &raw in corners {
+                let corner = raw as usize;
+                if corner >= vertex_count {
+                    continue;
+                }
                 if self.component_stamp[corner] != generation {
                     self.component_stamp[corner] = generation;
                     self.normal_accum[corner] = Vec3::ZERO;

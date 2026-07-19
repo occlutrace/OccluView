@@ -105,7 +105,11 @@ impl VertexGrid {
 
     /// Every vertex id within `radius` of `center` (by cell coverage — a
     /// conservative superset; callers filter by exact distance). Deterministic
-    /// ascending order.
+    /// order: each vertex lives in exactly one cell, and the neighborhood scan
+    /// visits cells in a fixed `(dx, dy, dz)` order, so the result is unique and
+    /// reproducible WITHOUT sorting (the per-dab sort was a real cost on a big
+    /// brush). The rare radius-dwarfs-the-grid fallback still sorts, since it
+    /// walks the hash map in unspecified order.
     pub(crate) fn query_radius(&self, center: Vec3, radius: f32) -> Vec<usize> {
         if !(radius.is_finite() && radius > 0.0) {
             return Vec::new();
@@ -137,8 +141,6 @@ impl VertexGrid {
                 }
             }
         }
-        found.sort_unstable();
-        found.dedup();
         found
     }
 }
@@ -195,7 +197,8 @@ mod tests {
         let center = positions[10];
         let radius = 3.0;
 
-        let found = grid.query_radius(center, radius);
+        let mut found = grid.query_radius(center, radius);
+        found.sort_unstable();
         let mut expected: Vec<usize> = positions
             .iter()
             .enumerate()
