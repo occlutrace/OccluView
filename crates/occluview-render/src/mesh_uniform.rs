@@ -95,4 +95,15 @@ mod tests {
         assert_eq!(u.model[15], 1.0);
         assert_eq!(u.model[1], 0.0);
     }
+
+    /// Pins the shader's hand-copied `NEUTRAL_MATERIAL_RGB` (`mesh.wgsl`)
+    /// against the core crate's own untextured-mesh tint, so the two can
+    /// never silently drift apart — this is the test `mesh.wgsl`'s doc
+    /// comment for that constant promises exists.
+    #[test]
+    fn neutral_material_matches_the_core_untextured_tint() {
+        const NEUTRAL_MATERIAL_RGB: [f32; 3] = [0.82, 0.68, 0.42];
+        let [r, g, b, _a] = occluview_core::DEFAULT_UNTEXTURED_MESH_TINT;
+        assert_eq!(NEUTRAL_MATERIAL_RGB, [r, g, b]);
+    }
 }
