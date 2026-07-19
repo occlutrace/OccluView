@@ -25,9 +25,12 @@
 //! Rim vertices are never moved and rim edges are never split, so the cap stays
 //! a drop-in watertight patch with no T-junctions.
 
-use super::cap_delaunay::{flip_to_delaunay, relax_uv};
+use super::cap_delaunay::relax_uv;
+use super::cap_fit::fit_cap_surface;
+use super::cap_lawson::CapMesh;
 use super::{EditVertex, GeneratedVertexPolicy};
 use glam::{Vec2, Vec3};
+use std::collections::BTreeSet;
 
 /// Liepa's density factor (√2): an interior edge is bisected while it is
 /// longer than this factor times the local target edge scale.
@@ -49,8 +52,6 @@ const MAX_GENERATED_PER_RIM: usize = 32;
 /// this budget, the target edge scale is raised so refinement terminates at a
 /// uniformly coarser (still even) sampling instead of stalling mid-pass.
 const CAP_INTERIOR_BUDGET: usize = 12_000;
-/// Tikhonov ridge added to the (scale-normalized) quadric normal equations.
-const QUADRIC_RIDGE: f32 = 1e-4;
 
 /// A refined cap: generated interior vertices plus the full cap triangulation
 /// in LOCAL indices (`0..rim_len` = rim order, `rim_len..` = generated).
@@ -59,53 +60,15 @@ pub(super) struct RefinedCap {
     pub(super) triangles: Vec<[usize; 3]>,
 }
 
-/// A local orthonormal frame plus a quadric height field over it. Interior cap
-/// vertices are lifted onto `centroid + a*u + b*v + height(a,b)*normal`.
-struct CapSurface {
-    centroid: Vec3,
-    u: Vec3,
-    v: Vec3,
-    normal: Vec3,
-    /// Coefficients of `h = c0 + c1 a + c2 b + c3 a^2 + c4 a b + c5 b^2`.
-    coeffs: [f32; 6],
-}
-
-impl CapSurface {
-    /// Local `(a, b)` planar coordinates of a 3D point in this frame.
-    fn local_ab(&self, position: Vec3) -> Vec2 {
-        let relative = position - self.centroid;
-        Vec2::new(relative.dot(self.u), relative.dot(self.v))
-    }
-
-    /// Fitted height above the plane at planar coordinates `(a, b)`.
-    fn height(&self, ab: Vec2) -> f32 {
-        let c = &self.coeffs;
-        let (a, b) = (ab.x, ab.y);
-        c[0] + c[1] * a + c[2] * b + c[3] * a * a + c[4] * a * b + c[5] * b * b
-    }
-
-    /// Lift planar coordinates onto the fitted surface in 3D.
-    fn lift(&self, ab: Vec2) -> Vec3 {
-        self.centroid + ab.x * self.u + ab.y * self.v + self.height(ab) * self.normal
-    }
-
-    /// Lift with an extra height offset above the fitted surface (used to blend
-    /// in the harmonically interpolated rim residual).
-    fn lift_with(&self, ab: Vec2, extra_height: f32) -> Vec3 {
-        self.centroid
-            + ab.x * self.u
-            + ab.y * self.v
-            + (self.height(ab) + extra_height) * self.normal
-    }
-}
-
 /// Refine and relax an ear-clip cap over `rim` (ring order, 3D positions).
-/// `support` holds surface samples just outside the rim (curvature pinning).
+/// `support` / `support_distances` hold surface samples just outside the rim
+/// (curvature pinning) with their walked distance back to the rim.
 /// `initial` holds ear-clip triangles in local rim indices with the final
 /// winding already applied by the caller.
 pub(super) fn refine_and_relax(
     rim: &[EditVertex],
     support: &[[f32; 3]],
+    support_distances: &[f32],
     initial: Vec<[usize; 3]>,
     policy: GeneratedVertexPolicy,
 ) -> RefinedCap {
@@ -114,7 +77,7 @@ pub(super) fn refine_and_relax(
         .iter()
         .map(|vertex| Vec3::from_array(vertex.position))
         .collect();
-    let surface = fit_cap_surface(&rim_positions, support);
+    let surface = fit_cap_surface(&rim_positions, support, support_distances);
 
     // Work in the cap's tangent plane. Rim vertices keep their exact projected
     // coordinates; generated vertices are created and relaxed here.
@@ -129,41 +92,45 @@ pub(super) fn refine_and_relax(
             (here.distance(prev) + here.distance(next)) * 0.5
         })
         .collect();
-    let mut triangles = initial;
     rescale_for_budget(&uv, rim_len, &mut scale);
 
-    // A first flip sweep turns the ear-clip fan into the Delaunay triangulation
-    // of the rim before any splitting, so we densify a clean base.
-    flip_to_delaunay(&uv, &mut triangles);
+    // A first Lawson repair turns the ear-clip fan into the Delaunay
+    // triangulation of the rim before any splitting, so we densify a clean
+    // base. The edge→owner map built here stays LIVE through every bisection
+    // and flip below (`CapMesh`), replacing the retired whole-cap flip sweeps
+    // that made a ~1000-edge rim cost seconds (issue #9).
+    let mut cap_mesh = CapMesh::new(initial);
+    let all_edges: BTreeSet<(usize, usize)> = cap_mesh.edges_sorted().into_iter().collect();
+    cap_mesh.lawson(&uv, all_edges);
 
     // Density refinement by LONGEST-INTERIOR-EDGE bisection (Rivara-style),
-    // with Lawson flips between passes. Bisection is the sliver-proof choice:
-    // the ear-clip base of a many-thousand-edge rim is a fan of long slivers
-    // that a bounded number of flip sweeps cannot fully regularize, and
+    // with incremental Lawson repair between passes. Bisection is the
+    // sliver-proof choice: the ear-clip base of a many-thousand-edge rim is a
+    // fan of long slivers that flips alone cannot fully regularize, and
     // centroid (1:3) splits of slivers cascade — a 8000-edge rim used to blow
     // straight to the runaway valve (256k vertices, minutes of work).
     // Halving the longest edge attacks exactly the sliver axis, provably
     // terminates (each split halves one edge, lengths are bounded below by
-    // the target scale), and the interleaved flips restore Delaunay quality
-    // pass by pass.
-    let mut patch = CapPatch {
-        uv,
-        scale,
-        attrs,
-        triangles,
-    };
+    // the target scale), and the per-pass repairs restore Delaunay quality —
+    // seeded ONLY by the edges the pass's splits actually rewrote.
+    let mut patch = CapPatch { uv, scale, attrs };
     for _ in 0..MAX_REFINE_PASSES {
-        let split_any = bisect_pass(&mut patch, rim_len, |ab| surface.lift(ab), policy);
-        flip_to_delaunay(&patch.uv, &mut patch.triangles);
+        let split_any = bisect_pass(
+            &mut patch,
+            &mut cap_mesh,
+            rim_len,
+            |ab| surface.lift(ab),
+            policy,
+        );
         if !split_any {
             break;
         }
     }
+    let triangles = cap_mesh.into_triangles();
     let CapPatch {
         mut uv,
         scale: _,
         attrs,
-        triangles,
     } = patch;
 
     relax_uv(&mut uv, rim_len, &triangles);
@@ -198,57 +165,41 @@ pub(super) fn refine_and_relax(
 }
 
 /// The growable cap state shared by the refinement passes: planar positions,
-/// per-vertex target scales, vertex attributes, and the triangulation.
+/// per-vertex target scales, and vertex attributes. The triangulation itself
+/// lives in [`CapMesh`], which keeps its edge→owner map live across passes.
 struct CapPatch {
     uv: Vec<Vec2>,
     scale: Vec<f32>,
     attrs: Vec<EditVertex>,
-    triangles: Vec<[usize; 3]>,
 }
 
 /// One bisection pass: every interior edge longer than `ALPHA` times its
 /// local target scale is split at its midpoint with a conforming 2:4 rewrite
-/// of both owner triangles. Returns whether anything split. Rim edges (one
-/// owner) are never touched. Deterministic: edge keys are processed in sorted
-/// order, and owners rewritten earlier in the pass fail the carries recheck.
+/// of both owner triangles (edge→owner map updated in place), then ONE
+/// incremental Lawson repair seeded by the rewritten edges. Returns whether
+/// anything split. Rim edges (one owner) are never touched. Deterministic:
+/// the edge snapshot is processed in sorted order, and edges a split removed
+/// disappear from the live map, so stale snapshot entries skip themselves.
 fn bisect_pass(
     patch: &mut CapPatch,
+    cap_mesh: &mut CapMesh,
     rim_len: usize,
     lift: impl Fn(Vec2) -> Vec3,
     policy: GeneratedVertexPolicy,
 ) -> bool {
-    let CapPatch {
-        uv,
-        scale,
-        attrs,
-        triangles,
-    } = patch;
+    let CapPatch { uv, scale, attrs } = patch;
     let mut split_any = false;
-    let mut owners: std::collections::HashMap<(usize, usize), Vec<usize>> =
-        std::collections::HashMap::new();
-    for (triangle_index, &[a, b, c]) in triangles.iter().enumerate() {
-        for (u, v) in [(a, b), (b, c), (c, a)] {
-            owners
-                .entry((u.min(v), u.max(v)))
-                .or_default()
-                .push(triangle_index);
-        }
-    }
-    let mut keys: Vec<(usize, usize)> = owners.keys().copied().collect();
-    keys.sort_unstable();
-    for key in keys {
+    let mut suspects: BTreeSet<(usize, usize)> = BTreeSet::new();
+    for key in cap_mesh.edges_sorted() {
         if uv.len() - rim_len >= rim_len * MAX_GENERATED_PER_RIM {
             break;
         }
-        let (u, v) = key;
-        let Some(&[t1, t2]) = owners.get(&key).map(Vec::as_slice) else {
-            continue; // Rim edge (one owner) or non-manifold noise.
-        };
-        // An earlier bisection this pass may have rewritten either owner.
-        let carries = |triangle: [usize; 3]| triangle.contains(&u) && triangle.contains(&v);
-        if !carries(triangles[t1]) || !carries(triangles[t2]) {
+        // Rim edges (one owner), non-manifold noise, and snapshot entries a
+        // split already removed all fail the live owner-pair lookup.
+        let Some(owners) = cap_mesh.owner_pair(key) else {
             continue;
-        }
+        };
+        let (u, v) = key;
         let target = (scale[u] + scale[v]) * 0.5;
         if uv[u].distance(uv[v]) <= ALPHA * target {
             continue;
@@ -259,26 +210,10 @@ fn bisect_pass(
         attrs.push(vertex);
         uv.push(midpoint);
         scale.push(target);
-        // Conforming 2:4 split, winding preserved on all four children.
-        for triangle_slot in [t1, t2] {
-            let parent = triangles[triangle_slot];
-            let mut keeps_u = parent;
-            for slot in &mut keeps_u {
-                if *slot == v {
-                    *slot = midpoint_index;
-                }
-            }
-            let mut keeps_v = parent;
-            for slot in &mut keeps_v {
-                if *slot == u {
-                    *slot = midpoint_index;
-                }
-            }
-            triangles[triangle_slot] = keeps_u;
-            triangles.push(keeps_v);
-        }
+        cap_mesh.bisect(key, owners, midpoint_index, &mut suspects);
         split_any = true;
     }
+    cap_mesh.lawson(uv, suspects);
     split_any
 }
 
@@ -377,180 +312,10 @@ fn harmonic_interior(values: &mut [f32], rim_len: usize, triangles: &[[usize; 3]
     }
 }
 
-/// Fit a local frame (Newell normal over the rim) plus a quadric height field
-/// least-squares fitted to the rim AND a band of surface samples just outside
-/// it. A clean circular rim is nearly planar and carries no curvature on its
-/// own, so the outside band is what lets the fit recover the local shape (a
-/// sphere/saddle exactly, a gentle blend otherwise).
-fn fit_cap_surface(rim: &[Vec3], support: &[[f32; 3]]) -> CapSurface {
-    let rim_len = rim.len();
-    let mut centroid = Vec3::ZERO;
-    for &p in rim {
-        centroid += p;
-    }
-    centroid /= count_as_f32(rim_len.max(1));
-
-    // Newell's method: robust polygon normal for a non-planar rim. Vertices
-    // are taken RELATIVE to the centroid: Newell is translation-invariant in
-    // exact arithmetic, and centering avoids the catastrophic f32 cancellation
-    // a small far-from-origin rim would otherwise hit.
-    let mut normal = Vec3::ZERO;
-    for index in 0..rim_len {
-        let current = rim[index] - centroid;
-        let next = rim[(index + 1) % rim_len] - centroid;
-        normal.x += (current.y - next.y) * (current.z + next.z);
-        normal.y += (current.z - next.z) * (current.x + next.x);
-        normal.z += (current.x - next.x) * (current.y + next.y);
-    }
-    let normal = if normal.is_finite() && normal.length_squared() > f32::EPSILON {
-        normal.normalize()
-    } else {
-        Vec3::Z
-    };
-    let (tangent_u, tangent_v) = basis_from_normal(normal);
-
-    // Least-squares quadric h = c0 + c1 a + c2 b + c3 a^2 + c4 a b + c5 b^2,
-    // solving the 6x6 normal equations (A^T A + ridge) c = A^T h. The rim pins
-    // the fit at the seam; the outside support band supplies the curvature.
-    //
-    // The fit runs in SCALE-NORMALIZED coordinates (divided by the RMS planar
-    // radius): the fixed ridge is then meaningful for every hole size, where
-    // in raw mm a sub-millimeter hole was flattened (ridge dominated its tiny
-    // quadratic terms) and a very large one was effectively unregularized.
-    let planar: Vec<(f32, f32, f32)> = rim
-        .iter()
-        .copied()
-        .chain(support.iter().map(|point| Vec3::from_array(*point)))
-        .map(|sample| {
-            let relative = sample - centroid;
-            (
-                relative.dot(tangent_u),
-                relative.dot(tangent_v),
-                relative.dot(normal),
-            )
-        })
-        .collect();
-    let mut radius_sq_sum = 0.0_f64;
-    for &(coord_u, coord_v, _) in &planar {
-        radius_sq_sum +=
-            f64::from(coord_u) * f64::from(coord_u) + f64::from(coord_v) * f64::from(coord_v);
-    }
-    let sample_count = count_as_f32(planar.len().max(1));
-    // f64 -> f32: an RMS of finite f32 radii; well within f32 range.
-    #[allow(clippy::cast_possible_truncation)]
-    let rms_radius = ((radius_sq_sum / f64::from(sample_count)).sqrt()) as f32;
-    if !(rms_radius.is_finite() && rms_radius > f32::EPSILON) {
-        return CapSurface {
-            centroid,
-            u: tangent_u,
-            v: tangent_v,
-            normal,
-            coeffs: [0.0; 6],
-        };
-    }
-    let inv_radius = 1.0 / rms_radius;
-
-    let mut normal_matrix = [[0.0f32; 6]; 6];
-    let mut normal_rhs = [0.0f32; 6];
-    for &(coord_u, coord_v, height) in &planar {
-        let (coord_u, coord_v, height) = (
-            coord_u * inv_radius,
-            coord_v * inv_radius,
-            height * inv_radius,
-        );
-        let basis = [
-            1.0,
-            coord_u,
-            coord_v,
-            coord_u * coord_u,
-            coord_u * coord_v,
-            coord_v * coord_v,
-        ];
-        for (i, &bi) in basis.iter().enumerate() {
-            for (j, &bj) in basis.iter().enumerate() {
-                normal_matrix[i][j] += bi * bj;
-            }
-            normal_rhs[i] += bi * height;
-        }
-    }
-    for (i, row) in normal_matrix.iter_mut().enumerate() {
-        row[i] += QUADRIC_RIDGE;
-    }
-    let scaled = solve6(normal_matrix, normal_rhs).unwrap_or([0.0; 6]);
-    // Undo the normalization: h = s*c0' + c1'*a + c2'*b + (c3'/s)*a^2 + ...
-    let coeffs = [
-        scaled[0] * rms_radius,
-        scaled[1],
-        scaled[2],
-        scaled[3] * inv_radius,
-        scaled[4] * inv_radius,
-        scaled[5] * inv_radius,
-    ];
-
-    CapSurface {
-        centroid,
-        u: tangent_u,
-        v: tangent_v,
-        normal,
-        coeffs,
-    }
-}
-
 /// Lossless-enough count-to-float for averaging small vertex fans. Cap sizes
 /// never approach `u16::MAX`, so the saturation only guards a pathological rim.
 fn count_as_f32(count: usize) -> f32 {
     f32::from(u16::try_from(count).unwrap_or(u16::MAX))
-}
-
-/// Right-handed orthonormal tangent basis for a unit `normal`.
-fn basis_from_normal(normal: Vec3) -> (Vec3, Vec3) {
-    let axis = if normal.x.abs() > 0.9 {
-        Vec3::Y
-    } else {
-        Vec3::X
-    };
-    let u = axis.cross(normal).normalize();
-    let v = normal.cross(u);
-    (u, v)
-}
-
-/// Solve a 6x6 linear system by Gaussian elimination with partial pivoting.
-/// Returns `None` if the matrix is singular (caller falls back to a plane).
-fn solve6(mut m: [[f32; 6]; 6], mut b: [f32; 6]) -> Option<[f32; 6]> {
-    for col in 0..6 {
-        // Partial pivot.
-        let mut pivot = col;
-        for row in (col + 1)..6 {
-            if m[row][col].abs() > m[pivot][col].abs() {
-                pivot = row;
-            }
-        }
-        if m[pivot][col].abs() < 1e-12 {
-            return None;
-        }
-        m.swap(col, pivot);
-        b.swap(col, pivot);
-        let inv = 1.0 / m[col][col];
-        for row in (col + 1)..6 {
-            let factor = m[row][col] * inv;
-            if factor == 0.0 {
-                continue;
-            }
-            for k in col..6 {
-                m[row][k] -= factor * m[col][k];
-            }
-            b[row] -= factor * b[col];
-        }
-    }
-    let mut x = [0.0f32; 6];
-    for row in (0..6).rev() {
-        let mut sum = b[row];
-        for (col, &solved) in x.iter().enumerate().skip(row + 1) {
-            sum -= m[row][col] * solved;
-        }
-        x[row] = sum / m[row][row];
-    }
-    Some(x)
 }
 
 /// Attributes for a bisection midpoint: the average of its edge endpoints
