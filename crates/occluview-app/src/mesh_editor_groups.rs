@@ -246,6 +246,32 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
     action
 }
 
+/// Volume-preserving Smooth over the marked faces (issue #11): one Taubin
+/// lambda/mu pass set, blended into the surrounding untouched surface so the
+/// result has no hard edge at the selection boundary — the direct fix for the
+/// "spike" seams a jagged Close Holes cap can leave (issue #9) and the forum's
+/// original "smooth the transition area" request.
+pub(super) fn smooth_selection(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> {
+    let mut action = None;
+    section(ui, "Smooth");
+    row(ui, 1, |ui, width| {
+        if icon(
+            ui,
+            width,
+            EditorIcon::Smooth,
+            "Smooth",
+            "Smooth the marked faces, blending into the surrounding surface",
+            enabled,
+            false,
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::SmoothSelection);
+        }
+    });
+    action
+}
+
 fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
     let id = super::close_holes_limit_id();
     let mut armed = super::close_holes_limit_enabled(ui.ctx());

@@ -12,6 +12,8 @@ const MENU_WIDTH: f32 = 216.0;
 /// Everything the layer context menu needs about one layer. Shared verbatim by
 /// the layers-overlay rows and the viewport right-click menu so both surface the
 /// identical action set through the same plumbing.
+// Four independent display/state flags, not a state machine — see SceneMesh.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 pub(crate) struct LayerContextMenuTarget {
     /// Display label (file/mesh name) shown as the menu title so the operator
@@ -22,6 +24,12 @@ pub(crate) struct LayerContextMenuTarget {
     pub(crate) visible: bool,
     pub(crate) wireframe: bool,
     pub(crate) face_editable: bool,
+    /// Whether this layer's scan colors/texture are currently shown (vs the
+    /// flat neutral material).
+    pub(crate) show_vertex_colors: bool,
+    /// Whether the layer actually carries vertex colors or a texture — the
+    /// toggle is a no-op (and stays disabled) on a plain uncolored scan.
+    pub(crate) has_color_data: bool,
 }
 
 /// Attach the layer context menu to a widget response (row controls / row body).
@@ -133,6 +141,22 @@ fn show_material_actions(
             "Next tint",
             true,
             LayerContextAction::NextTint,
+        ),
+        context_request,
+    );
+    let (colors_label, colors_icon) = if target.show_vertex_colors {
+        ("Hide scan colors", LayerMenuIcon::ColorsOn)
+    } else {
+        ("Show scan colors", LayerMenuIcon::ColorsOff)
+    };
+    layer_menu_button(
+        ui,
+        target,
+        LayerMenuButton::new(
+            colors_icon,
+            colors_label,
+            target.has_color_data,
+            LayerContextAction::ToggleShowVertexColors,
         ),
         context_request,
     );
@@ -414,10 +438,10 @@ mod tests {
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
 
-        // Eleven operator actions, each built through `LayerMenuButton::new`.
+        // Twelve operator actions, each built through `LayerMenuButton::new`.
         let buttons = production.matches("LayerMenuButton::new(").count();
         assert!(
-            buttons >= 11,
+            buttons >= 12,
             "expected the full operator action set; found {buttons} menu buttons"
         );
         // Every button names a glyph (the eye picks open/slashed by state, so a
@@ -531,6 +555,8 @@ mod tests {
             "Export layer...",
             "Wireframe overlay",
             "Hide wireframe",
+            "Hide scan colors",
+            "Show scan colors",
             "Remove layer",
         ] {
             assert!(

@@ -100,6 +100,7 @@ impl OccluViewApp {
             MeshEditorAction::Cut => LayerContextAction::CutSelectionToNewLayer,
             MeshEditorAction::Separate => LayerContextAction::SeparateSelectedComponents,
             MeshEditorAction::CloseHoles => LayerContextAction::CloseHoles,
+            MeshEditorAction::SmoothSelection => LayerContextAction::SmoothSelection,
             MeshEditorAction::SelectAll
             | MeshEditorAction::InvertSelection
             | MeshEditorAction::ClearSelection
@@ -307,7 +308,8 @@ impl OccluViewApp {
             | MeshEditorAction::Crop
             | MeshEditorAction::Cut
             | MeshEditorAction::Separate
-            | MeshEditorAction::CloseHoles => false,
+            | MeshEditorAction::CloseHoles
+            | MeshEditorAction::SmoothSelection => false,
         }
     }
 
