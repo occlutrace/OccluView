@@ -2,11 +2,11 @@
 //! radius scaling, the handle hit-test, and the translate / push-pull / arcball
 //! transforms. Split out of [`crate::cut_manipulator`] so both the pure math and
 //! the state machine stay well under the file-size budget; every function here
-//! is a pure function of its inputs and unit-tested below.
+//! is a pure function of its inputs, unit-tested in `cut_geometry_tests.rs`.
 
 use crate::cut_manipulator::{
-    CutCursor, CutFrameInput, DiscDrag, DiscPose, CENTER_GRAB_RADIUS_PX, MAX_DISC_RADIUS_MM,
-    MIN_DISC_RADIUS_MM, RADIUS_WHEEL_STEP, RIM_GRAB_RADIUS_PX,
+    ArchFrame, CutCursor, CutFrameInput, DiscDrag, DiscPose, CENTER_GRAB_RADIUS_PX,
+    MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM, RADIUS_WHEEL_STEP, RIM_GRAB_RADIUS_PX,
 };
 use eframe::egui::Pos2;
 use glam::{Quat, Vec3};
@@ -18,40 +18,40 @@ use glam::{Quat, Vec3};
 const FOLLOW_BLEND_START: f32 = 0.015;
 const FOLLOW_BLEND_END: f32 = 0.12;
 
-/// Follow orientation. Prefers `global_long_axis` — a mesh's own long
-/// (greatest-variance) principal axis, constant for that mesh regardless of
-/// where the cursor lands on it (see [`occluview_core::Mesh::long_axis_cached`])
-/// — oriented to face the camera side so orbiting never visibly flips the
-/// disc. A disc whose plane normal runs parallel to a dental arch's or a
-/// bridge span's own long axis cuts TRANSVERSE to it: the anatomically useful
-/// orientation for viewing occlusal contacts, and the one a Bridge Split
-/// separator needs to divide a span into segments. Because the axis is a
-/// per-mesh constant, this is immune to the per-triangle jitter the old
-/// purely local `surface_normal x view_dir` construction had.
+/// Follow orientation: the disc's plane normal is the LOCAL ARCH TANGENT at
+/// `point` — the mesiodistal "along the arch" direction — so the disc plane
+/// itself spans the occlusal (vertical) axis and the radial spoke through the
+/// cursor: a saw blade standing upright, cutting TRANSVERSE to the arch at
+/// exactly that spot. This is the anatomically correct separator orientation
+/// everywhere around a horseshoe arch, and it is a WORLD-space property of
+/// the surface point alone: orbiting the camera never re-tilts it. (The
+/// previous `n x view_dir` construction only matched this from a straight
+/// occlusal view; from a tilted or facial view its cross product drifted
+/// toward the vertical axis and laid the disc flat — the reported
+/// "top-to-bottom at the sides of the arch" bug.)
 ///
-/// Falls back to that local construction — the disc plane contains the
-/// surface normal and the view direction, so its normal is
-/// `surface_normal x view_dir`, falling back further to the camera-right axis
-/// on a degenerate (view staring straight down the surface normal) cross
-/// product — only when no global axis is available (a point cloud, or too
-/// few vertices for a well-defined axis).
+/// The tangent comes from [`local_arch_tangent`], built on `arch_frame` — the
+/// mesh's own PCA centroid and greatest-variance axes (see
+/// [`occluview_core::Mesh::principal_frame_cached`]). Because it derives from
+/// a per-mesh-constant frame plus the hit POINT, it rotates smoothly as the
+/// cursor sweeps along the arch and is immune to per-triangle normal jitter.
+///
+/// Only when no arch frame is available (a point cloud, or too few vertices
+/// for a well-defined frame), or `point` projects onto the centroid exactly
+/// (a defensive guard; never a real surface point), does it fall back to the
+/// legacy view-coupled construction: `surface_normal x view_dir`, blended to
+/// the camera-right axis when that cross product degenerates.
 pub(crate) fn follow_plane_normal(
-    global_long_axis: Option<Vec3>,
+    arch_frame: Option<ArchFrame>,
+    point: Vec3,
     surface_normal: Vec3,
     view_dir: Vec3,
     camera_right: Vec3,
 ) -> Vec3 {
-    let fallback = camera_right.normalize_or(Vec3::X);
-    if let Some(axis) = global_long_axis {
-        let axis = axis.normalize_or_zero();
-        if axis.length_squared() > f32::EPSILON {
-            return if axis.dot(fallback) < 0.0 {
-                -axis
-            } else {
-                axis
-            };
-        }
+    if let Some(tangent) = arch_frame.and_then(|frame| local_arch_tangent(frame, point)) {
+        return tangent;
     }
+    let fallback = camera_right.normalize_or(Vec3::X);
     let n = surface_normal.normalize_or_zero();
     let v = view_dir.normalize_or_zero();
     let cross = n.cross(v);
@@ -71,6 +71,40 @@ pub(crate) fn follow_plane_normal(
     oriented_fallback
         .lerp(surface_driven, blend)
         .normalize_or(oriented_fallback)
+}
+
+/// The LOCAL along-the-arch tangent at `point`: the occlusal axis
+/// (`axis0 x axis1`, the frame's least-variance direction — perpendicular to
+/// the arch plane) crossed with the radial spoke from [`local_arch_normal`].
+/// A disc whose plane NORMAL is this tangent contains both the occlusal axis
+/// and the spoke: it stands upright and cuts radially across the arch,
+/// turning continuously as `point` sweeps around the curve. `None` only when
+/// the spoke itself is undefined (point at the centroid) or the frame's axes
+/// are degenerate.
+fn local_arch_tangent(frame: ArchFrame, point: Vec3) -> Option<Vec3> {
+    let spoke = local_arch_normal(frame, point)?;
+    let occlusal_up = frame.axis0.cross(frame.axis1);
+    let tangent = occlusal_up.cross(spoke).normalize_or_zero();
+    (tangent.length_squared() > f32::EPSILON).then_some(tangent)
+}
+
+/// The LOCAL cross-arch direction at `point`: the vector from `frame`'s own
+/// PCA centroid to `point`, projected onto `frame`'s `axis0`/`axis1` plane
+/// and normalized — the "spoke" direction pointing radially outward from the
+/// arch's own center through this point. For a horseshoe/U-shaped dental
+/// arch this smoothly ROTATES as `point` moves around the curve: it reduces
+/// to (roughly) `axis0` at the arch's left/right extremes and to `axis1`
+/// near its front-center, tracking the true local cross-arch direction
+/// everywhere between — unlike a single constant axis, which is only correct
+/// at those extremes. `None` when the projection collapses to (near) zero,
+/// i.e. `point` sits (almost) exactly at the centroid — never the case for a
+/// point on a real mesh's surface, since the centroid lies inside the solid;
+/// only a defensive guard against a degenerate frame/point pairing.
+fn local_arch_normal(frame: ArchFrame, point: Vec3) -> Option<Vec3> {
+    let offset = point - frame.centroid;
+    let in_plane = frame.axis0 * offset.dot(frame.axis0) + frame.axis1 * offset.dot(frame.axis1);
+    let normalized = in_plane.normalize_or_zero();
+    (normalized.length_squared() > f32::EPSILON).then_some(normalized)
 }
 
 /// Exponential temporal smoothing toward the fresh normal, killing scanner
@@ -309,333 +343,5 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::float_cmp, clippy::expect_used)]
-    use super::*;
-    use eframe::egui::pos2;
-
-    fn probe_input(center: Pos2, pointer: Pos2, radius_px: f32, ctrl: bool) -> CutFrameInput {
-        CutFrameInput {
-            pointer: Some(pointer),
-            over_viewport: true,
-            primary_pressed: true,
-            primary_down: true,
-            ctrl,
-            escape: false,
-            flip: false,
-            wheel_notches: 0.0,
-            eye: Vec3::new(0.0, 0.0, 100.0),
-            view_dir: Vec3::NEG_Z,
-            camera_right: Vec3::X,
-            camera_up: Vec3::Y,
-            ray_origin: Vec3::new(0.0, 0.0, 100.0),
-            surface_hit: None,
-            disc_center_screen: Some(center),
-            disc_radius_screen: radius_px,
-        }
-    }
-
-    fn pose() -> DiscPose {
-        DiscPose {
-            center: Vec3::ZERO,
-            plane_normal: Vec3::X,
-            radius_mm: 8.0,
-        }
-    }
-
-    #[test]
-    fn follow_normal_contains_surface_normal_and_view_dir_without_a_global_axis() {
-        let n = follow_plane_normal(None, Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        assert!((n.length() - 1.0).abs() < 1e-6);
-        assert!(n.dot(Vec3::Y).abs() < 1e-6, "off surface normal: {n}");
-        assert!(n.dot(Vec3::NEG_Z).abs() < 1e-6, "perp to view: {n}");
-        assert!(n.x.abs() > 0.99, "expected an X-aligned normal: {n}");
-    }
-
-    #[test]
-    fn follow_normal_degenerate_view_down_normal_falls_back_to_camera_right() {
-        let right = Vec3::new(1.0, 0.0, 0.0);
-        assert_eq!(
-            follow_plane_normal(None, Vec3::Y, Vec3::NEG_Y, right),
-            right
-        );
-        assert_eq!(follow_plane_normal(None, Vec3::Y, Vec3::Y, right), right);
-    }
-
-    #[test]
-    fn follow_normal_changes_continuously_near_the_occlusal_view_without_a_global_axis() {
-        let almost_axial =
-            follow_plane_normal(None, Vec3::new(0.03, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
-        let just_past_old_threshold =
-            follow_plane_normal(None, Vec3::new(0.04, 0.0, 1.0), Vec3::NEG_Z, Vec3::X);
-        assert!(
-            almost_axial.dot(just_past_old_threshold) > 0.95,
-            "nearby surface samples must not snap the disc: {almost_axial} / {just_past_old_threshold}"
-        );
-    }
-
-    #[test]
-    fn follow_normal_prefers_the_global_axis_over_the_local_surface_normal() {
-        let axis = Vec3::new(1.0, 0.0, 0.0);
-        // Wildly different local surface normal and view direction: the
-        // global axis must still win outright.
-        let n = follow_plane_normal(Some(axis), Vec3::new(0.1, 0.9, 0.3), Vec3::NEG_Y, Vec3::Z);
-        assert!((n.length() - 1.0).abs() < 1e-6);
-        assert!(n.distance(axis) < 1e-6, "expected the global axis: {n}");
-    }
-
-    #[test]
-    fn follow_normal_with_a_global_axis_is_immune_to_per_triangle_surface_noise() {
-        // The reported bug: as the cursor crosses triangles, the LOCAL
-        // surface normal jumps around; with a global axis available the
-        // result must not move at all.
-        let axis = Vec3::new(0.0, 0.0, 1.0);
-        let view_dir = Vec3::NEG_Y;
-        let camera_right = Vec3::X;
-        let baseline = follow_plane_normal(Some(axis), Vec3::Y, view_dir, camera_right);
-        for noisy_normal in [
-            Vec3::new(0.9, 0.3, 0.1),
-            Vec3::new(-0.4, 0.8, -0.2),
-            Vec3::new(0.05, 0.99, 0.6),
-            Vec3::Z,
-            -Vec3::X,
-        ] {
-            let out = follow_plane_normal(Some(axis), noisy_normal, view_dir, camera_right);
-            assert_eq!(
-                out, baseline,
-                "global axis must make the result independent of local surface noise: {out}"
-            );
-        }
-    }
-
-    #[test]
-    fn follow_normal_orients_the_global_axis_to_face_the_camera_side() {
-        let axis = Vec3::new(-1.0, 0.0, 0.0); // stored pointing away from camera_right
-        let camera_right = Vec3::X;
-        let n = follow_plane_normal(Some(axis), Vec3::Y, Vec3::NEG_Z, camera_right);
-        assert!(
-            n.dot(camera_right) > 0.0,
-            "axis should flip to face the camera side: {n}"
-        );
-        assert!((n.length() - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn follow_normal_falls_back_to_local_surface_when_no_global_axis_is_available() {
-        let with_axis = follow_plane_normal(Some(Vec3::X), Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        let without_axis = follow_plane_normal(None, Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        // Same inputs, but a degenerate (zero) axis must behave exactly like
-        // "no axis at all" rather than silently returning a zero vector.
-        let zero_axis = follow_plane_normal(Some(Vec3::ZERO), Vec3::Y, Vec3::NEG_Z, Vec3::X);
-        assert_eq!(zero_axis, without_axis);
-        assert_ne!(
-            with_axis, without_axis,
-            "a real global axis must take precedence over the local fallback"
-        );
-    }
-
-    #[test]
-    fn smoothing_blends_toward_the_new_sample() {
-        let out = smooth_normal(Some(Vec3::X), Vec3::Y, 0.3);
-        assert!((out.length() - 1.0).abs() < 1e-6);
-        assert!(out.x > out.y, "should stay closer to the previous: {out}");
-        assert!(out.y > 0.0, "should tilt toward the new: {out}");
-    }
-
-    #[test]
-    fn smoothing_without_prior_returns_the_raw_normal() {
-        assert_eq!(smooth_normal(None, Vec3::Y, 0.3), Vec3::Y);
-    }
-
-    #[test]
-    fn smoothing_treats_opposite_plane_normals_as_the_same_orientation() {
-        assert_eq!(smooth_normal(Some(Vec3::X), Vec3::NEG_X, 0.7), Vec3::X);
-    }
-
-    #[test]
-    fn wheel_scales_radius_and_clamps() {
-        assert!((scale_radius(8.0, 1.0) - 8.8).abs() < 1e-4);
-        assert_eq!(scale_radius(3.0, -100.0), MIN_DISC_RADIUS_MM);
-        assert_eq!(scale_radius(50.0, 100.0), MAX_DISC_RADIUS_MM);
-    }
-
-    #[test]
-    fn center_press_begins_translate_and_wins_priority_over_the_rim() {
-        let center = pos2(200.0, 200.0);
-        let translate = begin_drag(&pose(), &probe_input(center, center, 40.0, false));
-        assert!(matches!(translate, Some(DiscDrag::Translate { .. })));
-    }
-
-    #[test]
-    fn primary_press_anywhere_inside_disc_begins_translate() {
-        let center = pos2(200.0, 200.0);
-        let translate = begin_drag(
-            &pose(),
-            &probe_input(center, pos2(224.0, 208.0), 40.0, false),
-        );
-        assert!(matches!(translate, Some(DiscDrag::Translate { .. })));
-    }
-
-    #[test]
-    fn rim_press_begins_push_pull() {
-        let center = pos2(200.0, 200.0);
-        let rim = begin_drag(
-            &pose(),
-            &probe_input(center, pos2(246.0, 200.0), 40.0, false),
-        );
-        assert!(matches!(rim, Some(DiscDrag::PushPull { .. })));
-    }
-
-    #[test]
-    fn ctrl_press_begins_tilt_and_misses_outside_the_disc() {
-        let center = pos2(200.0, 200.0);
-        let tilt = begin_drag(
-            &pose(),
-            &probe_input(center, pos2(210.0, 205.0), 40.0, true),
-        );
-        assert!(matches!(tilt, Some(DiscDrag::Tilt { .. })));
-        let miss = begin_drag(
-            &pose(),
-            &probe_input(center, pos2(400.0, 200.0), 40.0, true),
-        );
-        assert!(miss.is_none());
-    }
-
-    #[test]
-    fn hover_cursor_grabs_over_a_handle_only() {
-        let center = pos2(200.0, 200.0);
-        assert_eq!(
-            hover_cursor(&pose(), &probe_input(center, center, 40.0, false)),
-            CutCursor::Grab
-        );
-        assert_eq!(
-            hover_cursor(
-                &pose(),
-                &probe_input(center, pos2(260.0, 200.0), 40.0, false)
-            ),
-            CutCursor::Default
-        );
-    }
-
-    #[test]
-    fn translate_in_plane_tracks_the_pointer_and_ignores_depth() {
-        let out = translate_in_plane(
-            Vec3::ZERO,
-            Vec3::new(0.0, 0.0, 100.0),
-            Vec3::new(3.0, -2.0, 5.0),
-            Vec3::NEG_Z,
-        );
-        assert_eq!(out, Vec3::new(3.0, -2.0, 0.0));
-    }
-
-    #[test]
-    fn push_pull_moves_only_along_the_normal() {
-        let out = push_pull(
-            Vec3::ZERO,
-            Vec3::X,
-            Vec3::new(0.0, 0.0, 100.0),
-            Vec3::new(4.0, 9.0, 100.0),
-        );
-        assert_eq!(out, Vec3::new(4.0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn arcball_no_motion_is_identity() {
-        let rot = arcball_rotation(
-            pos2(200.0, 200.0),
-            pos2(210.0, 200.0),
-            pos2(210.0, 200.0),
-            40.0,
-            Vec3::X,
-            Vec3::Y,
-            Vec3::NEG_Z,
-        );
-        assert!(rot.is_near_identity());
-    }
-
-    #[test]
-    fn arcball_rotation_tilts_the_normal() {
-        let rot = arcball_rotation(
-            pos2(200.0, 200.0),
-            pos2(230.0, 200.0),
-            pos2(200.0, 170.0),
-            40.0,
-            Vec3::X,
-            Vec3::Y,
-            Vec3::NEG_Z,
-        );
-        let tilted = (rot * Vec3::X).normalize();
-        assert!((tilted.length() - 1.0).abs() < 1e-6);
-        assert!(
-            tilted.distance(Vec3::X) > 0.1,
-            "normal should tilt: {tilted}"
-        );
-    }
-
-    /// An L-shaped contour in the z = 0 plane, projected to panel pixels by an
-    /// identity XY map; the two legs share the corner (10, 0).
-    fn l_segments() -> [(Vec3, Vec3); 2] {
-        [
-            (Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0)),
-            (Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 10.0, 0.0)),
-        ]
-    }
-
-    fn xy(w: Vec3) -> Pos2 {
-        pos2(w.x, w.y)
-    }
-
-    #[test]
-    fn snap_picks_the_true_nearest_segment_point_not_a_vertex() {
-        // Click hovers over the interior of the horizontal leg: the exact snap is
-        // the foot of the perpendicular (5, 0), NOT the nearer polyline vertex.
-        let snapped = snap_to_contour(pos2(5.0, 1.0), l_segments(), xy, 8.0);
-        let snapped = snapped.expect("within radius");
-        assert!(
-            (snapped - Vec3::new(5.0, 0.0, 0.0)).length() < 1e-4,
-            "expected the exact perpendicular foot, got {snapped}"
-        );
-        // The nearest vertex would be (0,0) or (10,0); prove we did better.
-        assert!(snapped.distance(Vec3::new(0.0, 0.0, 0.0)) > 4.0);
-    }
-
-    #[test]
-    fn snap_returns_none_when_no_segment_is_within_radius() {
-        // (5, 4) sits 4 px from the horizontal leg and 5 px from the vertical
-        // leg; a 3 px radius reaches neither, so placement stays free.
-        assert!(snap_to_contour(pos2(5.0, 4.0), l_segments(), xy, 3.0).is_none());
-    }
-
-    #[test]
-    fn snap_radius_is_panel_pixels_so_zoom_tightens_it() {
-        // Contour is the x = 0 line; the click is 5 world units off it. A uniform
-        // scale `s` (zoom) makes that a 5·s px gap. The 8 px radius catches it at
-        // s = 1 but not at s = 2 — the radius stays a true on-screen distance.
-        let line = [(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0))];
-        let world_click = Vec3::new(5.0, 3.0, 0.0);
-        for (scale, expect_snap) in [(1.0_f32, true), (2.0_f32, false)] {
-            let project = move |w: Vec3| pos2(w.x * scale, w.y * scale);
-            let click = project(world_click);
-            let snapped = snap_to_contour(click, line, project, 8.0);
-            assert_eq!(
-                snapped.is_some(),
-                expect_snap,
-                "scale {scale}: gap is {} px",
-                5.0 * scale
-            );
-            if let Some(snapped) = snapped {
-                assert!((snapped - Vec3::new(0.0, 3.0, 0.0)).length() < 1e-4);
-            }
-        }
-    }
-
-    #[test]
-    fn closest_param_clamps_to_the_segment_ends() {
-        // Beyond `b`: clamps to t = 1. Before `a`: clamps to t = 0.
-        let (t_far, _) = closest_param_on_segment(pos2(20.0, 0.0), pos2(0.0, 0.0), pos2(10.0, 0.0));
-        assert!((t_far - 1.0).abs() < 1e-6);
-        let (t_near, _) =
-            closest_param_on_segment(pos2(-5.0, 0.0), pos2(0.0, 0.0), pos2(10.0, 0.0));
-        assert!(t_near.abs() < 1e-6);
-    }
-}
+#[path = "cut_geometry_tests.rs"]
+mod tests;
