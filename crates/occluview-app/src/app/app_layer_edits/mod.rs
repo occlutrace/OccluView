@@ -113,6 +113,8 @@ fn begin_face_selection_with_status(
     };
     let switching_target = app.edit_mode.selected_layer_id() != Some(entry.id());
     if app.edit_mode.begin_face_selection(entry, scene) {
+        // Open on the Edit Mesh tab so the session starts in selection/repair.
+        app.editor_tab = crate::mesh_editor_overlay::EditorTab::EditMesh;
         if switching_target {
             // A lasso's screen points belong to its previous mesh. Do not let
             // a layer-row context action carry that outline into a new target.

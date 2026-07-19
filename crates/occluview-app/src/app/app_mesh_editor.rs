@@ -93,6 +93,7 @@ impl OccluViewApp {
             sculpt_armed: self.sculpt.armed,
             dirty: self.edit_mode.is_dirty(),
             busy: self.edit_mode.is_busy(),
+            active_tab: self.editor_tab,
         };
         let Some(action) = mesh_editor_overlay::show(ctx, viewport_rect, state) else {
             return;
@@ -108,7 +109,8 @@ impl OccluViewApp {
             MeshEditorAction::Cut => LayerContextAction::CutSelectionToNewLayer,
             MeshEditorAction::Separate => LayerContextAction::SeparateSelectedComponents,
             MeshEditorAction::CloseHoles => LayerContextAction::CloseHoles,
-            MeshEditorAction::SelectAll
+            MeshEditorAction::SwitchTab(_)
+            | MeshEditorAction::SelectAll
             | MeshEditorAction::InvertSelection
             | MeshEditorAction::ClearSelection
             | MeshEditorAction::Undo
@@ -245,6 +247,10 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) -> bool {
         match action {
+            MeshEditorAction::SwitchTab(tab) => {
+                self.switch_editor_tab(tab, ctx);
+                true
+            }
             MeshEditorAction::SelectAll => {
                 if self
                     .scene
@@ -707,6 +713,7 @@ impl OccluViewApp {
         pan_drag_active: bool,
     ) {
         let drag_allowed = self.edit_mode.has_active_session()
+            && self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !pan_drag_active
             && !ctx.input(|input| {
                 input.pointer.button_down(egui::PointerButton::Secondary)
@@ -729,7 +736,9 @@ impl OccluViewApp {
         ctx: &egui::Context,
         response: &egui::Response,
     ) -> bool {
-        if !self.edit_mode.has_active_session() {
+        if !self.edit_mode.has_active_session()
+            || self.editor_tab != mesh_editor_overlay::EditorTab::EditMesh
+        {
             return false;
         }
         let camera = self.camera;

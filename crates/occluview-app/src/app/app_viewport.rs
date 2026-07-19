@@ -184,10 +184,11 @@ impl OccluViewApp {
             return;
         }
 
-        // The single-click face pick belongs to the un-armed tool only; while the
-        // lasso is armed, every primary gesture is the outline's (the armed
-        // branch of `track_mesh_selection_drag` already handled/owned it).
-        if !self.edit_mode.lasso_armed()
+        // The single-click face pick belongs to the Edit Mesh tab's un-armed
+        // tool only: never on the Sculpt tab (the click is a dab) nor while the
+        // lasso is armed (the outline owns the gesture).
+        if self.editor_tab == crate::mesh_editor_overlay::EditorTab::EditMesh
+            && !self.edit_mode.lasso_armed()
             && response.clicked_by(egui::PointerButton::Primary)
             && !response.dragged()
             && self.handle_primary_face_selection_click(ctx, response)

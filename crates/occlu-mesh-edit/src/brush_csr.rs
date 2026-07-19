@@ -1,14 +1,11 @@
 //! Compressed-sparse-row neighbour storage for the brush kernel.
 //!
-//! The hot dab passes iterate a vertex's one-ring, incident triangles, and soup
-//! siblings tens of thousands of times per dab. Holding each of those as a
-//! `Vec<Vec<usize>>` means every neighbour lookup chases a per-vertex heap
-//! pointer (a cache miss) before it can read a single `usize`. A CSR — one flat
-//! `data` array sliced by per-vertex `offsets` — stores all neighbours
-//! contiguously and as `u32`, so a lookup is one bounds pair plus a dense slice:
-//! far fewer cache misses on a big brush, and building it allocates two arrays
-//! instead of one `Vec` per vertex (a real `prepare` win on a million-vertex
-//! scan).
+//! Hot dab passes iterate a vertex's one-ring, incident triangles, and soup
+//! siblings tens of thousands of times per dab. A `Vec<Vec<usize>>` makes every
+//! lookup chase a per-vertex heap pointer (a cache miss). CSR — one flat `data`
+//! array sliced by per-vertex `offsets`, stored as `u32` — makes a lookup one
+//! bounds pair plus a dense slice, and builds from two arrays instead of one
+//! `Vec` per vertex (a real win on a million-vertex `prepare`).
 
 /// A read-only compressed-sparse-row adjacency: `data[offsets[i]..offsets[i+1]]`
 /// are the neighbours of row `i`, as `u32` vertex/triangle ids.

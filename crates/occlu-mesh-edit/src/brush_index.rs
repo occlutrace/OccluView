@@ -1,11 +1,10 @@
 //! Uniform-grid spatial index over vertex positions, for the brush-radius
 //! queries a freeform stroke needs every frame of an interactive drag.
 //!
-//! Built ONCE per [`super::brush::BrushSession`] (bucket assignment is
-//! rayon-parallel: the one-time O(n) cost this pays off against is scanning
-//! every vertex of a multi-hundred-thousand-triangle scan on every stroke).
-//! Cell size is derived from the mesh's own scale, not the brush radius, so a
-//! session survives the operator resizing the brush without a rebuild.
+//! Built once when a [`super::brush::BrushSession`] is prepared (rayon-
+//! parallel bucket assignment), then rebuilt with cell size matched to the
+//! current brush radius on a deliberate size change — keeping a radius
+//! query's cell scan bounded regardless of brush size vs. mesh scale.
 
 use glam::Vec3;
 use rayon::prelude::*;
@@ -14,27 +13,24 @@ use std::collections::HashMap;
 /// Integer bucket coordinates for one grid cell.
 type CellKey = (i32, i32, i32);
 
-/// Grid resolution as a fraction of the mesh's bounding-box diagonal. Small
-/// enough that a typical few-millimeter brush on a dental arch (bbox diagonal
-/// tens of mm) still only visits a handful of cells per query; large enough
-/// that a session never needs an unbounded query on a huge or tiny mesh.
+/// Grid resolution as a fraction of the mesh's bounding-box diagonal: small
+/// enough that a few-millimeter brush on a dental arch (bbox tens of mm) still
+/// visits only a handful of cells per query; large enough to avoid an
+/// unbounded query on a huge or tiny mesh.
 const CELLS_ACROSS_DIAGONAL: f32 = 96.0;
 
-/// Largest per-axis cell reach a radius query will scan as a neighborhood
-/// before falling back to a single linear pass over every occupied cell. Cell
-/// size is fixed to the mesh's own scale, so a brush radius far larger than the
-/// mesh (a big brush on a small cropped object) would otherwise make the
+/// Largest per-axis cell reach a radius query will scan before falling back
+/// to a linear pass over every occupied cell. Cell size is fixed to mesh
+/// scale, so a brush far larger than the mesh would otherwise make the
 /// `(2·reach+1)³` triple loop explode into millions of lookups and freeze the
-/// UI for minutes. Past this reach the query already covers most of the grid,
-/// so returning every vertex (a valid conservative superset the caller filters
-/// by exact distance) is both correct and bounded by the vertex count.
+/// UI. Past this reach, returning every vertex (a valid conservative
+/// superset) is correct and bounded by vertex count.
 const MAX_NEIGHBORHOOD_REACH: i32 = 16;
 
-/// A uniform-grid spatial index over a fixed set of vertex positions.
-/// Positions are captured at build time; a session that moves vertices during
-/// strokes MUST rebuild the grid before the moved region can drift far enough
-/// to change cell membership relative to the brush radii in use (see
-/// [`super::brush::BrushSession`] for the rebuild cadence it actually uses).
+/// A uniform-grid spatial index over a fixed set of vertex positions,
+/// captured at build time. A session moving vertices during strokes must
+/// rebuild before drift changes cell membership relative to the radii in use
+/// (see [`super::brush::BrushSession`] for the rebuild cadence it uses).
 pub(crate) struct VertexGrid {
     cell_size: f32,
     origin: Vec3,
@@ -57,10 +53,9 @@ impl VertexGrid {
     }
 
     /// Build the index with an EXPLICIT cell size, so a session can match the
-    /// grid to the current brush radius (keeping `reach` — hence the query's
-    /// cell-scan cost — bounded no matter how the brush size compares to the
-    /// mesh scale). A tiny brush on a huge scan and a huge brush on a small
-    /// crop both stay cheap.
+    /// grid to the current brush radius (bounding `reach`, hence the query's
+    /// cell-scan cost, regardless of brush size vs. mesh scale). A tiny brush
+    /// on a huge scan and a huge brush on a small crop both stay cheap.
     pub(crate) fn build_with_cell_size(positions: &[Vec3], cell_size: f32) -> Self {
         let (lo, _hi) = bounds(positions);
         let cell_size = if cell_size.is_finite() && cell_size > f32::EPSILON {
@@ -97,10 +92,9 @@ impl VertexGrid {
     }
 
     /// Move `vertex_id` from the cell of `from` to the cell of `to`, if they
-    /// differ. This keeps the index exact as a sculpt stroke moves vertices —
-    /// O(touched) per dab — instead of periodically rebuilding the whole grid
-    /// (O(n), the stall a big scan showed). A move within one cell is a no-op
-    /// beyond the two key computes, so a coherent brush pays almost nothing.
+    /// differ. Keeps the index exact as a stroke moves vertices — O(touched)
+    /// per dab — instead of periodically rebuilding the whole grid (O(n), the
+    /// stall a big scan showed). A within-cell move is a near-free no-op.
     pub(crate) fn relocate(&mut self, vertex_id: usize, from: Vec3, to: Vec3) {
         let from_key = cell_key(from, self.origin, self.cell_size);
         let to_key = cell_key(to, self.origin, self.cell_size);
@@ -118,12 +112,11 @@ impl VertexGrid {
     }
 
     /// Every vertex id within `radius` of `center` (by cell coverage — a
-    /// conservative superset; callers filter by exact distance). Deterministic
-    /// order: each vertex lives in exactly one cell, and the neighborhood scan
-    /// visits cells in a fixed `(dx, dy, dz)` order, so the result is unique and
-    /// reproducible WITHOUT sorting (the per-dab sort was a real cost on a big
-    /// brush). The rare radius-dwarfs-the-grid fallback still sorts, since it
-    /// walks the hash map in unspecified order.
+    /// conservative superset; callers filter by exact distance).
+    /// Deterministic without sorting: each vertex lives in one cell, and the
+    /// scan visits cells in a fixed `(dx, dy, dz)` order (sorting per dab was
+    /// a real cost on a big brush). The rare radius-dwarfs-the-grid fallback
+    /// still sorts, since it walks the hash map in unspecified order.
     pub(crate) fn query_radius(&self, center: Vec3, radius: f32) -> Vec<usize> {
         if !(radius.is_finite() && radius > 0.0) {
             return Vec::new();
@@ -283,10 +276,9 @@ mod tests {
 
     #[test]
     fn a_radius_dwarfing_a_small_object_falls_back_instead_of_exploding() {
-        // A tiny object (bbox ~0.06mm across) queried with a huge relative
-        // radius: cell size is fixed to the mesh scale, so a neighborhood scan
-        // would be O(reach^3) with reach in the hundreds and freeze. The cap
-        // must make it return every point as a conservative superset instead.
+        // A tiny object (bbox ~0.06mm) queried with a huge relative radius:
+        // cell size is fixed to mesh scale, so a neighborhood scan would be
+        // O(reach^3) with reach in the hundreds and freeze without the cap.
         let positions: Vec<Vec3> = (0..20)
             .map(|i| {
                 #[allow(clippy::cast_precision_loss)]

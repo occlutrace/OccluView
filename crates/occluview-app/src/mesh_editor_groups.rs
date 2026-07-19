@@ -9,12 +9,15 @@
 
 use eframe::egui;
 
-use super::{MeshEditorAction, MeshEditorPanelState};
+use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
 use crate::mesh_editor_icons::{self, EditorIcon, CELL_ROUNDING};
 use crate::sculpt_tool::{
     SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
 };
-use crate::ui_theme::ACCENT;
+use crate::ui_theme::{ACCENT, TEXT, TEXT_WEAK};
+
+/// Height of the tab strip / its pills.
+const TAB_H: f32 = 28.0;
 
 /// Height of one tool cell: a glyph over a small caption (exocad-style toolbar
 /// button). The text commit buttons share the height so the bottom row aligns.
@@ -24,6 +27,89 @@ const ROW_H: f32 = 46.0;
 /// Text color for the primary `Done` button: high contrast on the accent fill
 /// in both the light and dark exocad themes.
 const PRIMARY_TEXT: egui::Color32 = egui::Color32::WHITE;
+
+/// The Sculpt / Edit Mesh tab strip plus the window close button. Doubles as
+/// the window's top bar (the native title bar is off).
+pub(super) fn tab_strip(
+    ui: &mut egui::Ui,
+    state: &MeshEditorPanelState,
+) -> Option<MeshEditorAction> {
+    let mut action = None;
+    let gap = 4.0;
+    let close_w = 24.0;
+    let tab_w = ((ui.available_width() - close_w - gap * 2.0) / 2.0).max(0.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        if tab_pill(
+            ui,
+            "Edit Mesh",
+            tab_w,
+            state.active_tab == EditorTab::EditMesh,
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::SwitchTab(EditorTab::EditMesh));
+        }
+        if tab_pill(ui, "Sculpt", tab_w, state.active_tab == EditorTab::Sculpt).clicked() {
+            action = Some(MeshEditorAction::SwitchTab(EditorTab::Sculpt));
+        }
+        if close_cross(ui, close_w).clicked() {
+            action = Some(MeshEditorAction::Done);
+        }
+    });
+    action
+}
+
+/// One rounded tab pill: accent-filled when active, a faint accent wash on hover.
+fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TAB_H), egui::Sense::click());
+    let fill = if active {
+        ACCENT
+    } else if response.hovered() {
+        ACCENT.gamma_multiply(0.16)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::Rounding::same(TAB_H * 0.5), fill);
+    let text = if active {
+        egui::Color32::WHITE
+    } else {
+        TEXT_WEAK
+    };
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        text,
+    );
+    response
+}
+
+/// The window close cross (commits the session, like the old native ×).
+fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, TAB_H), egui::Sense::click());
+    let color = if response.hovered() { TEXT } else { TEXT_WEAK };
+    let arm = 4.0;
+    let center = rect.center();
+    let stroke = egui::Stroke::new(1.4, color);
+    ui.painter().line_segment(
+        [
+            center + egui::vec2(-arm, -arm),
+            center + egui::vec2(arm, arm),
+        ],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [
+            center + egui::vec2(arm, -arm),
+            center + egui::vec2(-arm, arm),
+        ],
+        stroke,
+    );
+    response
+}
 
 /// Selection mode (lasso + surface/through radio pair) and the exocad
 /// All / None / Invert commands.
@@ -548,11 +634,13 @@ mod tests {
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
+        // The `section(ui, ...)` calls, not the bare titles: the tab strip also
+        // spells "Sculpt"/"Edit Mesh" and would collide with a bare search.
         let order = [
-            "\"Selection\"",
-            "\"Edit selection\"",
-            "\"Close holes\"",
-            "\"Sculpt\"",
+            "section(ui, \"Selection\")",
+            "section(ui, \"Edit selection\")",
+            "section(ui, \"Close holes\")",
+            "section(ui, \"Sculpt\")",
         ];
         let mut last = 0;
         for title in order {
@@ -577,6 +665,7 @@ mod tests {
                 sculpt_armed: None,
                 dirty: true,
                 busy: false,
+                active_tab: EditorTab::Sculpt,
             },
             MeshEditorPanelState {
                 object_mode: true,
@@ -595,6 +684,7 @@ mod tests {
             let enabled = !state.busy;
             egui::__run_test_ui(|ui| {
                 ui.set_width(212.0);
+                let _ = tab_strip(ui, &state);
                 let _ = selection(ui, &state, enabled);
                 let _ = edit_selection(ui, &state, enabled);
                 let _ = close_holes(ui, enabled);
