@@ -211,6 +211,14 @@ impl CutManipulator {
         };
     }
 
+    /// Arm follow mode with an explicit starting radius (Bridge Split sizes the
+    /// disc to the object so the first disc isn't the tiny fixed minimum that
+    /// always has to be enlarged).
+    pub(crate) fn arm_with_radius(&mut self, radius_mm: f32) {
+        self.radius_mm = radius_mm.clamp(MIN_DISC_RADIUS_MM, MAX_DISC_RADIUS_MM);
+        self.arm();
+    }
+
     /// Disarm the tool.
     pub(crate) fn disarm(&mut self) {
         self.mode = CutMode::Off;

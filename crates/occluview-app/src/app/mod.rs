@@ -1,6 +1,4 @@
-use super::app_chrome::{
-    load_app_logo_color_image, paint_version_stamp, status_overlay_rect, viewer_visuals,
-};
+use super::app_chrome::{load_app_logo_color_image, status_overlay_rect, viewer_visuals};
 use super::app_files::{
     load_recent_files, recent_scene_hover, recent_scene_label, save_recent_files,
 };

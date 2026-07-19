@@ -423,61 +423,79 @@ impl OccluViewApp {
     }
 
     pub(super) fn show_about_window(&mut self, ctx: &egui::Context) {
-        let mut open = self.about_window == AboutWindowState::Open;
-        if !open {
+        if self.about_window != AboutWindowState::Open {
             return;
         }
         let logo = self.app_logo_texture(ctx).cloned();
+        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+
+        // Dimmed backdrop makes it a centered modal; clicking it dismisses.
+        let screen = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("about_backdrop"))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let response = ui.allocate_rect(screen, egui::Sense::click());
+                ui.painter()
+                    .rect_filled(screen, 0.0, egui::Color32::from_black_alpha(88));
+                if response.clicked() {
+                    close = true;
+                }
+            });
+
         egui::Window::new("About OccluView")
-            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .movable(false)
             .resizable(false)
             .collapsible(false)
+            .title_bar(false)
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.set_min_width(380.0);
-                ui.horizontal(|ui| {
+                ui.set_width(300.0);
+                ui.add_space(22.0);
+                ui.vertical_centered(|ui| {
                     if let Some(logo) = &logo {
-                        ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
+                        ui.add(egui::Image::new((logo.id(), egui::vec2(64.0, 64.0))));
                     }
-                    ui.vertical(|ui| {
-                        ui.heading("OccluView");
-                        ui.label(
-                            egui::RichText::new("3D Viewer for dental scans")
-                                .strong()
-                                .color(egui::Color32::from_rgb(78, 84, 92)),
-                        );
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new("OccluView")
+                            .size(21.0)
+                            .strong()
+                            .color(ui_theme::TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new("3D viewer for dental scans")
+                            .color(ui_theme::TEXT_WEAK),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(concat!(
+                            "Version ",
+                            env!("CARGO_PKG_VERSION"),
+                            " · Apache-2.0"
+                        ))
+                        .size(11.0)
+                        .color(ui_theme::TEXT_MUTED),
+                    );
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.hyperlink_to("occlutrace.ai", "https://occlutrace.ai");
+                        ui.label(egui::RichText::new("·").color(ui_theme::TEXT_MUTED));
+                        ui.hyperlink_to("GitHub", "https://github.com/occlutrace/OccluView");
                     });
+                    ui.add_space(16.0);
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                    ui.add_space(6.0);
                 });
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-                egui::Grid::new("about_product_grid")
-                    .num_columns(2)
-                    .spacing([18.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Version").weak());
-                        ui.label(env!("CARGO_PKG_VERSION"));
-                        ui.end_row();
-
-                        ui.label(egui::RichText::new("Formats").weak());
-                        ui.label("STL · PLY · OBJ · GLB · HPS");
-                        ui.end_row();
-
-                        ui.label(egui::RichText::new("License").weak());
-                        ui.label("Apache-2.0, open source");
-                        ui.end_row();
-                    });
-                ui.add_space(10.0);
-                ui.hyperlink_to("occlutrace.ai", "https://occlutrace.ai");
-                ui.hyperlink_to(
-                    "github.com/occlutrace/OccluView",
-                    "https://github.com/occlutrace/OccluView",
-                );
             });
-        self.about_window = if open {
-            AboutWindowState::Open
-        } else {
-            AboutWindowState::Closed
-        };
+
+        if close {
+            self.about_window = AboutWindowState::Closed;
+        }
     }
 
     pub(super) fn show_error_dialog(&mut self, ctx: &egui::Context) {

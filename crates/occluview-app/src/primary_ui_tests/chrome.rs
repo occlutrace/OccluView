@@ -90,23 +90,20 @@ fn toolbar_and_about_are_operator_focused() {
     );
     assert!(
         !toolbar.contains("CARGO_PKG_VERSION") && !toolbar.contains("app_logo_texture(ctx)"),
-        "toolbar stays brand-light: no logo, no generic version stamp (the tiny \
-         stamp lives in the viewport)"
+        "toolbar stays brand-light: no logo, no version stamp"
     );
     assert!(
-        app_chrome_source().contains("fn paint_version_stamp(")
-            && app_render_source().matches("paint_version_stamp(").count() >= 3,
-        "the version stamp is painted faintly inside the viewport on every branch"
+        !app_chrome_source().contains("fn paint_version_stamp(")
+            && !app_render_source().contains("paint_version_stamp("),
+        "the viewport carries no version watermark"
     );
     assert!(
         dialogs.contains("About OccluView")
             && function_source(dialogs, "pub(super) fn show_about_window")
                 .contains("self.app_logo_texture(ctx)")
-            && dialogs.contains("STL · PLY · OBJ · GLB · HPS")
             && dialogs.contains("https://occlutrace.ai")
             && dialogs.contains("https://github.com/occlutrace/OccluView"),
-        "About shows product, formats, license, the occlutrace.ai link, and the \
-         GitHub link"
+        "About shows the product, logo, the occlutrace.ai link, and the GitHub link"
     );
     assert!(
         !dialogs.contains("Dental Cloud"),

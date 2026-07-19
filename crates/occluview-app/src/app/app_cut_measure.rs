@@ -420,6 +420,20 @@ impl OccluViewApp {
             }
         }
         if response.secondary_clicked() {
+            // RMB is also the orbit button. Only a near-static right-click
+            // clears; a small orbit gesture (which the platform may report as a
+            // click) must NOT drop the probe — the "Thickness exits on rotation"
+            // bug. Movement above the tolerance means it was an orbit, not a clear.
+            const RMB_CLEAR_MAX_MOVE_PX: f32 = 3.0;
+            let static_click = ctx
+                .input(|input| input.pointer.press_origin())
+                .zip(response.interact_pointer_pos())
+                .is_some_and(|(origin, release)| {
+                    (origin - release).length() <= RMB_CLEAR_MAX_MOVE_PX
+                });
+            if !static_click {
+                return false;
+            }
             if self.measure.clear_measurements() {
                 self.status_message = Some("Measurements cleared".to_string());
             }

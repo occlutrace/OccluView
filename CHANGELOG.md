@@ -1,7 +1,21 @@
 # Changelog
 
-## 1.0.4 - 2026-07-18
+## 1.0.4 - 2026-07-19
 
+- Sculpt brushes are now robust to abuse: Smooth still flattens hard, while the
+  clay Add/Remove auto-smooth is volume-preserving (Taubin), so building no
+  longer leaves grain and no longer collapses the dome. A post-dab guard
+  guarantees no triangle is ever left inverted, and the anti-inversion budget
+  tracks the moved geometry instead of the original mesh.
+- Bridge Split now sizes the starting cutting disc to the object instead of a
+  fixed small default that always had to be enlarged, and warms the picking
+  index off-thread so the first disc placement no longer freezes on a large
+  scan.
+- Fixed Thickness mode turning its visualization off on small orbit gestures
+  while its button stayed lit; a right-click only clears when it is not an orbit.
+- Redesigned the About window as a centered, minimal card with a GitHub link,
+  and removed the version watermark from the 3D viewport.
+- The 1/2 sculpt hotkeys only arm their tool now (pressing again keeps it on).
 - Fixed Close Holes leaving sharp spike artifacts where a large interpolated
   cap met the surrounding surface after a lasso cut, and raised the cap size
   this covers (#9).
