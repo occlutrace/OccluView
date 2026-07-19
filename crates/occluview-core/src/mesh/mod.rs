@@ -15,6 +15,7 @@ mod bridge_split_adapter;
 #[cfg(feature = "robust-csg")]
 mod bridge_split_robust;
 mod builder;
+mod bvh;
 mod edit_adapter;
 mod normals;
 mod principal_axis;
@@ -32,8 +33,10 @@ mod bridge_split_robust_tests;
 
 use crate::bbox::Aabb;
 use crate::error::CoreError;
+use bvh::TriangleBvh;
 use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 pub use bridge_split_adapter::{
     bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, normalize_bridge_split_input,
@@ -100,6 +103,11 @@ pub struct Mesh {
     /// solid) can tell a sculpted mesh from its pre-sculpt self even though the
     /// GPU-buffer token was deliberately held frozen.
     geometry_id: u64,
+    /// Lazily-built ray-pick acceleration structure (see
+    /// [`Mesh::pick_ray_local`]). Shared across clones (same geometry → same
+    /// tree); geometry-changing constructors mint a fresh empty cell. `Arc` so
+    /// a material-only clone reuses the built tree instead of dropping it.
+    bvh: Arc<OnceLock<TriangleBvh>>,
 }
 
 impl Mesh {
@@ -121,6 +129,7 @@ impl Mesh {
             cached_principal_frame: None,
             topology_id: next_mesh_topology_id(),
             geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         }
     }
 
@@ -147,6 +156,7 @@ impl Mesh {
             cached_principal_frame,
             topology_id: next_mesh_topology_id(),
             geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         }
     }
 
@@ -195,6 +205,7 @@ impl Mesh {
             cached_principal_frame,
             topology_id: next_mesh_topology_id(),
             geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         })
     }
 
@@ -276,6 +287,31 @@ impl Mesh {
     #[must_use]
     pub fn geometry_id(&self) -> u64 {
         self.geometry_id
+    }
+
+    /// Nearest triangle hit of a MESH-LOCAL ray, using a lazily-built (and then
+    /// cached) BVH so a pick is O(log n) instead of O(triangles) — the
+    /// difference between an instant sculpt cursor and a per-frame stall on a
+    /// million-triangle scan. `keep` filters candidate hit points (mesh-local);
+    /// returns the surviving nearest as `(triangle_index, local_point)`. `None`
+    /// for a point cloud, an empty mesh, or a miss.
+    pub(crate) fn pick_ray_local<K>(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        keep: K,
+    ) -> Option<(usize, Vec3)>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        if self.kind != MeshKind::TriangleMesh || self.indices.is_empty() {
+            return None;
+        }
+        let bvh = self
+            .bvh
+            .get_or_init(|| TriangleBvh::build(&self.vertices, &self.indices));
+        bvh.pick(&self.vertices, &self.indices, origin, direction, keep)
+            .map(|hit| (hit.triangle_index, hit.point))
     }
 
     /// Whether this is a triangle mesh or a point cloud.
@@ -365,6 +401,7 @@ impl Mesh {
             cached_principal_frame,
             topology_id: self.topology_id,
             geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         })
     }
 

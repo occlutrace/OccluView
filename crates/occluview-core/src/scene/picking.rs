@@ -21,9 +21,9 @@ impl Scene {
     /// Pick the nearest visible triangle hit by a world-space ray.
     ///
     /// Returns `None` for point clouds, hidden meshes, degenerate triangles,
-    /// invalid rays, or misses. This intentionally stays brute-force for now:
-    /// it runs only on explicit focus clicks, and the API leaves room for a BVH
-    /// implementation later without changing callers.
+    /// invalid rays, or misses. Each mesh is picked through its own lazily-built
+    /// BVH ([`crate::mesh::Mesh::pick_ray_local`]), so this is O(log n) per mesh
+    /// — cheap enough to run every frame under an interactive sculpt cursor.
     #[must_use]
     pub fn pick_ray(&self, origin: Vec3, direction: Vec3) -> Option<Vec3> {
         self.pick_ray_hit(origin, direction).map(|hit| hit.point)
@@ -33,9 +33,7 @@ impl Scene {
     /// the scene/layer identity needed by mesh-edit selection tools.
     ///
     /// Returns `None` for point clouds, hidden meshes, degenerate triangles,
-    /// invalid rays, or misses. This intentionally stays brute-force for now:
-    /// edit selection happens on explicit pointer actions, and the public hit
-    /// shape can survive a later BVH implementation.
+    /// invalid rays, or misses. O(log n) per mesh via each mesh's cached BVH.
     #[must_use]
     pub fn pick_ray_hit(&self, origin: Vec3, direction: Vec3) -> Option<ScenePickHit> {
         self.pick_ray_hit_with(origin, direction, |_| true)
@@ -123,72 +121,30 @@ fn pick_mesh_ray<K>(
 where
     K: Fn(Vec3) -> bool,
 {
-    let vertices = entry.mesh.vertices();
-    entry
-        .mesh
-        .indices()
-        .chunks_exact(3)
-        .enumerate()
-        .filter_map(|(triangle_index, triangle)| {
-            let ia = triangle[0] as usize;
-            let ib = triangle[1] as usize;
-            let ic = triangle[2] as usize;
-            let a = entry
-                .transform
-                .transform_point3(Vec3::from_array(vertices[ia].position));
-            let b = entry
-                .transform
-                .transform_point3(Vec3::from_array(vertices[ib].position));
-            let c = entry
-                .transform
-                .transform_point3(Vec3::from_array(vertices[ic].position));
-            ray_triangle(origin, direction, a, b, c)
-                .filter(|(_, point)| keep(*point))
-                .map(|(distance, point)| ScenePickHit {
-                    layer_index,
-                    layer_id: entry.id(),
-                    triangle_index,
-                    point,
-                    distance,
-                })
-        })
-        .min_by(|left, right| left.distance.total_cmp(&right.distance))
-}
-
-fn ray_triangle(
-    origin: Vec3,
-    direction: Vec3,
-    point_a: Vec3,
-    point_b: Vec3,
-    point_c: Vec3,
-) -> Option<(f32, Vec3)> {
-    const EPSILON: f32 = 1e-6;
-    let triangle_edge0 = point_b - point_a;
-    let triangle_edge1 = point_c - point_a;
-    let determinant_cross = direction.cross(triangle_edge1);
-    let determinant = triangle_edge0.dot(determinant_cross);
-    if determinant.abs() <= EPSILON {
-        return None;
-    }
-
-    let inv_determinant = 1.0 / determinant;
-    let origin_to_a = origin - point_a;
-    let barycentric_u = origin_to_a.dot(determinant_cross) * inv_determinant;
-    if !(0.0..=1.0).contains(&barycentric_u) {
-        return None;
-    }
-
-    let barycentric_cross = origin_to_a.cross(triangle_edge0);
-    let barycentric_v = direction.dot(barycentric_cross) * inv_determinant;
-    if barycentric_v < 0.0 || barycentric_u + barycentric_v > 1.0 {
-        return None;
-    }
-
-    let distance = triangle_edge1.dot(barycentric_cross) * inv_determinant;
-    if distance <= EPSILON || !distance.is_finite() {
-        return None;
-    }
-    Some((distance, origin + direction * distance))
+    // Ray-pick in the mesh's own local space via its cached BVH (O(log n)),
+    // then lift the hit back to world. The `keep` predicate is world-space, so
+    // wrap it to transform each local candidate point before testing.
+    let inverse = entry.transform.inverse();
+    let local_origin = inverse.transform_point3(origin);
+    let local_direction = inverse.transform_vector3(direction);
+    let transform = entry.transform;
+    let (triangle_index, local_point) =
+        entry
+            .mesh
+            .pick_ray_local(local_origin, local_direction, |local| {
+                keep(transform.transform_point3(local))
+            })?;
+    let point = transform.transform_point3(local_point);
+    // World distance along the (unit) world ray direction — robust to any scale
+    // baked into the transform, and the value `min_by` compares across layers.
+    let distance = (point - origin).dot(direction);
+    Some(ScenePickHit {
+        layer_index,
+        layer_id: entry.id(),
+        triangle_index,
+        point,
+        distance,
+    })
 }
 
 #[cfg(test)]

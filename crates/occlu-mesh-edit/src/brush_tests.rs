@@ -527,9 +527,9 @@ fn apply_stroke_still_finds_a_vertex_after_sustained_building_far_from_its_start
     let center_index = 5 * 11 + 5;
 
     // Build the center up repeatedly (one dab per input frame) -- far enough in
-    // +Z to cross many grid cells (cell size is the mesh's own bbox diagonal /
-    // 96, a small fraction of a millimeter here).
-    for _ in 0..12 {
+    // +Z to cross the grid's drift-rebuild threshold (cell size = radius/4 = 0.5,
+    // threshold = half a cell = 0.25) so a rebuild is genuinely exercised.
+    for _ in 0..30 {
         session.apply_stroke(center_stroke(2.0, 1.0), BrushMode::Add);
     }
     let moved_position = session.position(center_index);

@@ -26,7 +26,8 @@ use crate::sculpt_tool::{
 use crate::viewer::project_world_to_viewport;
 use glam::{Affine3A, Vec3};
 use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Camera, Mesh, ScenePickHit,
+    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Camera, Mesh, Scene,
+    ScenePickHit,
 };
 use occluview_render::PreparedSceneTopology;
 
@@ -147,6 +148,9 @@ impl OccluViewApp {
             let _ = self.edit_mode.set_lasso_armed(false);
             let _ = self.edit_mode.set_object_mode(false);
             self.mesh_selection_drag = None;
+            // Warm the kernel session now (behind this click) so the first
+            // press does not stall while it welds/indexes a big scan.
+            self.prepare_armed_sculpt_session();
         }
         self.status_message = Some(match self.sculpt.armed {
             Some(SculptToolKind::AddRemove) => {
@@ -285,11 +289,43 @@ impl OccluViewApp {
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
             return false;
         };
-        if entry.id() != hit.layer_id || !entry.visible || entry.mesh.is_point_cloud() {
+        if entry.id() != hit.layer_id {
+            return false;
+        }
+        self.install_sculpt_session(&scene, hit.layer_index)
+    }
+
+    /// When exactly one layer is sculptable, prepare its session as soon as the
+    /// tool is armed — so the one-time O(n) prepare happens behind the toolbar
+    /// click, not as a stall on the operator's first press.
+    fn prepare_armed_sculpt_session(&mut self) {
+        let Some(scene) = self.scene.clone() else {
+            return;
+        };
+        let sculptable: Vec<usize> = scene
+            .meshes()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                entry.visible && !entry.mesh.is_point_cloud() && entry.mesh.triangle_count() > 0
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if let [index] = sculptable[..] {
+            let _ = self.install_sculpt_session(&scene, index);
+        }
+    }
+
+    /// Prepare (or reuse) the kernel session for `scene.meshes()[index]`.
+    fn install_sculpt_session(&mut self, scene: &Scene, index: usize) -> bool {
+        let Some(entry) = scene.meshes().get(index) else {
+            return false;
+        };
+        if !entry.visible || entry.mesh.is_point_cloud() {
             return false;
         }
         let topology_id = entry.mesh.topology_id();
-        if self.sculpt.session_matches(hit.layer_id, topology_id) {
+        if self.sculpt.session_matches(entry.id(), topology_id) {
             return true;
         }
         let buffers = mesh_edit_buffers_from_mesh(&entry.mesh);
