@@ -381,6 +381,11 @@ impl OccluViewApp {
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
         self.edit_mode.sync_to_scene(&scene);
+        // A structural scene swap (load, delete, another mesh edit, undo/redo)
+        // reverts the geometry the persistent sculpt session was prepared over,
+        // WITHOUT necessarily changing topology_id (a sculpt commit preserves
+        // it), so drop the session here and re-prepare on the next stroke.
+        self.sculpt.invalidate_session();
         let stats = scene_stats(&scene);
         self.scene = Some(Arc::new(scene));
         self.scene_stats = Some(stats);
@@ -481,6 +486,7 @@ impl OccluViewApp {
                 self.show_layers_overlay(ui, response.rect, ctx);
                 self.show_mesh_editor_overlay(response.rect, ctx);
                 self.paint_mesh_selection_drag_overlay_impl(ui);
+                self.paint_sculpt_cursor_impl(ui, response.rect);
                 self.show_status_overlay(ui, response.rect);
                 let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
                 let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
@@ -522,6 +528,7 @@ impl OccluViewApp {
                 self.show_layers_overlay(ui, response.rect, ctx);
                 self.show_mesh_editor_overlay(response.rect, ctx);
                 self.paint_mesh_selection_drag_overlay_impl(ui);
+                self.paint_sculpt_cursor_impl(ui, response.rect);
                 self.show_status_overlay(ui, response.rect);
                 let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
                 let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);

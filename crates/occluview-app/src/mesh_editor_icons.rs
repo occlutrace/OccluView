@@ -49,8 +49,10 @@ pub(crate) enum EditorIcon {
     Keep,
     /// Fill open holes with interpolated caps (exocad "Close Holes").
     CloseHoles,
-    /// A wave settling flat — volume-preserving Smooth over marked faces.
+    /// A wave settling flat — the smoothing sculpt brush.
     Smooth,
+    /// Brush falloff disc with a plus/minus — the Add/Remove clay sculpt tool.
+    SculptAdd,
     /// Scissors on a dashed line — move the marked faces to a new mesh.
     Cut,
     /// Split the marked region into one mesh per connected part.
@@ -213,6 +215,46 @@ pub(crate) fn paint(
             painter.add(Shape::line(wave, stroke));
             painter.line_segment([p(0.14, 0.82), p(0.86, 0.82)], stroke);
             arrowhead(painter, p(0.50, 0.82), Vec2::new(0.0, 1.0), r(0.10), stroke);
+        }
+        EditorIcon::SculptAdd => {
+            // A surface line bulging under a soft brush disc that carries both a
+            // plus and a minus: the one Add/Remove clay tool (Shift carves).
+            let bulge: Vec<Pos2> = (0..=16)
+                .map(|i| {
+                    let t = i as f32 / 16.0;
+                    let x = 0.10 + t * 0.80;
+                    let s = (std::f32::consts::PI * t).sin().powi(2);
+                    p(x, 0.78 - 0.20 * s)
+                })
+                .collect();
+            painter.add(Shape::line(bulge, stroke));
+            let c = p(0.50, 0.30);
+            painter.circle_stroke(c, r(0.20), stroke);
+            painter.circle_filled(c, r(0.20), soft);
+            // Plus on the left of the disc, minus on the right.
+            let plus = Pos2::new(c.x - r(0.10), c.y);
+            painter.line_segment(
+                [
+                    Pos2::new(plus.x - r(0.06), plus.y),
+                    Pos2::new(plus.x + r(0.06), plus.y),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(plus.x, plus.y - r(0.06)),
+                    Pos2::new(plus.x, plus.y + r(0.06)),
+                ],
+                stroke,
+            );
+            let minus = Pos2::new(c.x + r(0.10), c.y);
+            painter.line_segment(
+                [
+                    Pos2::new(minus.x - r(0.06), minus.y),
+                    Pos2::new(minus.x + r(0.06), minus.y),
+                ],
+                stroke,
+            );
         }
         EditorIcon::Cut => {
             // Scissors opening onto a dashed cut line.
@@ -491,7 +533,7 @@ fn closed(pts: &[Pos2]) -> Vec<Pos2> {
 mod tests {
     use super::*;
 
-    const ALL_ICONS: [EditorIcon; 15] = [
+    const ALL_ICONS: [EditorIcon; 16] = [
         EditorIcon::Lasso,
         EditorIcon::Object,
         EditorIcon::SelectAll,
@@ -501,6 +543,7 @@ mod tests {
         EditorIcon::Keep,
         EditorIcon::CloseHoles,
         EditorIcon::Smooth,
+        EditorIcon::SculptAdd,
         EditorIcon::Cut,
         EditorIcon::Separate,
         EditorIcon::Undo,

@@ -1,11 +1,10 @@
 //! Uniform-grid spatial index over vertex positions, for the brush-radius
 //! queries a freeform stroke needs every frame of an interactive drag.
 //!
-//! Built ONCE per [`super::brush::BrushSession`] (bucket assignment is
-//! rayon-parallel: the one-time O(n) cost this pays off against is scanning
-//! every vertex of a multi-hundred-thousand-triangle scan on every stroke).
-//! Cell size is derived from the mesh's own scale, not the brush radius, so a
-//! session survives the operator resizing the brush without a rebuild.
+//! Built once when a [`super::brush::BrushSession`] is prepared (rayon-
+//! parallel bucket assignment), then rebuilt with cell size matched to the
+//! current brush radius on a deliberate size change — keeping a radius
+//! query's cell scan bounded regardless of brush size vs. mesh scale.
 
 use glam::Vec3;
 use rayon::prelude::*;
@@ -14,17 +13,24 @@ use std::collections::HashMap;
 /// Integer bucket coordinates for one grid cell.
 type CellKey = (i32, i32, i32);
 
-/// Grid resolution as a fraction of the mesh's bounding-box diagonal. Small
-/// enough that a typical few-millimeter brush on a dental arch (bbox diagonal
-/// tens of mm) still only visits a handful of cells per query; large enough
-/// that a session never needs an unbounded query on a huge or tiny mesh.
+/// Grid resolution as a fraction of the mesh's bounding-box diagonal: small
+/// enough that a few-millimeter brush on a dental arch (bbox tens of mm) still
+/// visits only a handful of cells per query; large enough to avoid an
+/// unbounded query on a huge or tiny mesh.
 const CELLS_ACROSS_DIAGONAL: f32 = 96.0;
 
-/// A uniform-grid spatial index over a fixed set of vertex positions.
-/// Positions are captured at build time; a session that moves vertices during
-/// strokes MUST rebuild the grid before the moved region can drift far enough
-/// to change cell membership relative to the brush radii in use (see
-/// [`super::brush::BrushSession`] for the rebuild cadence it actually uses).
+/// Largest per-axis cell reach a radius query will scan before falling back
+/// to a linear pass over every occupied cell. Cell size is fixed to mesh
+/// scale, so a brush far larger than the mesh would otherwise make the
+/// `(2·reach+1)³` triple loop explode into millions of lookups and freeze the
+/// UI. Past this reach, returning every vertex (a valid conservative
+/// superset) is correct and bounded by vertex count.
+const MAX_NEIGHBORHOOD_REACH: i32 = 16;
+
+/// A uniform-grid spatial index over a fixed set of vertex positions,
+/// captured at build time. A session moving vertices during strokes must
+/// rebuild before drift changes cell membership relative to the radii in use
+/// (see [`super::brush::BrushSession`] for the rebuild cadence it uses).
 pub(crate) struct VertexGrid {
     cell_size: f32,
     origin: Vec3,
@@ -32,13 +38,28 @@ pub(crate) struct VertexGrid {
 }
 
 impl VertexGrid {
-    /// Build the index over `positions` (vertex id = array index, truncated to
-    /// `u32` — mesh-edit vertex counts never approach `u32::MAX`).
+    /// Build the index over `positions` with a cell size derived from the
+    /// mesh's own scale (`vertex id = array index`, truncated to `u32` —
+    /// mesh-edit vertex counts never approach `u32::MAX`).
     pub(crate) fn build(positions: &[Vec3]) -> Self {
         let (lo, hi) = bounds(positions);
         let diagonal = (hi - lo).length();
         let cell_size = if diagonal.is_finite() && diagonal > f32::EPSILON {
             diagonal / CELLS_ACROSS_DIAGONAL
+        } else {
+            1.0
+        };
+        Self::build_with_cell_size(positions, cell_size)
+    }
+
+    /// Build the index with an EXPLICIT cell size, so a session can match the
+    /// grid to the current brush radius (bounding `reach`, hence the query's
+    /// cell-scan cost, regardless of brush size vs. mesh scale). A tiny brush
+    /// on a huge scan and a huge brush on a small crop both stay cheap.
+    pub(crate) fn build_with_cell_size(positions: &[Vec3], cell_size: f32) -> Self {
+        let (lo, _hi) = bounds(positions);
+        let cell_size = if cell_size.is_finite() && cell_size > f32::EPSILON {
+            cell_size
         } else {
             1.0
         };
@@ -70,22 +91,51 @@ impl VertexGrid {
         }
     }
 
-    /// The grid's cell size, in mm — the unit a session measures vertex
-    /// drift against to know when a rebuild is due (see the struct doc's
-    /// rebuild-cadence contract).
-    pub(crate) fn cell_size(&self) -> f32 {
-        self.cell_size
+    /// Move `vertex_id` from the cell of `from` to the cell of `to`, if they
+    /// differ. Keeps the index exact as a stroke moves vertices — O(touched)
+    /// per dab — instead of periodically rebuilding the whole grid (O(n), the
+    /// stall a big scan showed). A within-cell move is a near-free no-op.
+    pub(crate) fn relocate(&mut self, vertex_id: usize, from: Vec3, to: Vec3) {
+        let from_key = cell_key(from, self.origin, self.cell_size);
+        let to_key = cell_key(to, self.origin, self.cell_size);
+        if from_key == to_key {
+            return;
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let id = vertex_id as u32;
+        if let Some(bucket) = self.cells.get_mut(&from_key) {
+            if let Some(index) = bucket.iter().position(|&existing| existing == id) {
+                bucket.swap_remove(index);
+            }
+        }
+        self.cells.entry(to_key).or_default().push(id);
     }
 
     /// Every vertex id within `radius` of `center` (by cell coverage — a
-    /// conservative superset; callers filter by exact distance). Deterministic
-    /// ascending order.
+    /// conservative superset; callers filter by exact distance).
+    /// Deterministic without sorting: each vertex lives in one cell, and the
+    /// scan visits cells in a fixed `(dx, dy, dz)` order (sorting per dab was
+    /// a real cost on a big brush). The rare radius-dwarfs-the-grid fallback
+    /// still sorts, since it walks the hash map in unspecified order.
     pub(crate) fn query_radius(&self, center: Vec3, radius: f32) -> Vec<usize> {
         if !(radius.is_finite() && radius > 0.0) {
             return Vec::new();
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let reach = (radius / self.cell_size).ceil() as i32 + 1;
+        if reach > MAX_NEIGHBORHOOD_REACH {
+            // The radius dwarfs the grid: one linear pass over every occupied
+            // cell (O(vertices)) beats an O(reach³) neighborhood scan and can
+            // never freeze. The caller filters by exact distance anyway.
+            let mut found: Vec<usize> = self
+                .cells
+                .values()
+                .flat_map(|bucket| bucket.iter().map(|&id| id as usize))
+                .collect();
+            found.sort_unstable();
+            found.dedup();
+            return found;
+        }
         let center_key = cell_key(center, self.origin, self.cell_size);
         let mut found = Vec::new();
         for dx in -reach..=reach {
@@ -98,8 +148,6 @@ impl VertexGrid {
                 }
             }
         }
-        found.sort_unstable();
-        found.dedup();
         found
     }
 }
@@ -156,7 +204,8 @@ mod tests {
         let center = positions[10];
         let radius = 3.0;
 
-        let found = grid.query_radius(center, radius);
+        let mut found = grid.query_radius(center, radius);
+        found.sort_unstable();
         let mut expected: Vec<usize> = positions
             .iter()
             .enumerate()
@@ -223,5 +272,27 @@ mod tests {
         let grid = VertexGrid::build(&positions);
         assert!(grid.query_radius(Vec3::ZERO, 0.0).is_empty());
         assert!(grid.query_radius(Vec3::ZERO, -1.0).is_empty());
+    }
+
+    #[test]
+    fn a_radius_dwarfing_a_small_object_falls_back_instead_of_exploding() {
+        // A tiny object (bbox ~0.06mm) queried with a huge relative radius:
+        // cell size is fixed to mesh scale, so a neighborhood scan would be
+        // O(reach^3) with reach in the hundreds and freeze without the cap.
+        let positions: Vec<Vec3> = (0..20)
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let f = i as f32;
+                Vec3::new(f * 0.003, (f * 0.7).sin() * 0.02, 0.0)
+            })
+            .collect();
+        let grid = VertexGrid::build(&positions);
+        // radius ~8x the bbox diagonal — the pathological "big brush, small
+        // object" case. Must complete instantly and include every point.
+        let found = grid.query_radius(Vec3::ZERO, 0.5);
+        assert_eq!(found.len(), positions.len());
+        for id in 0..positions.len() {
+            assert!(found.contains(&id));
+        }
     }
 }

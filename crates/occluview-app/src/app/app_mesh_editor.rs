@@ -8,6 +8,13 @@ use crate::viewer::lasso_capture::{self, LassoEvent};
 
 impl OccluViewApp {
     pub(super) fn handle_edit_shortcuts_impl(&mut self, ctx: &egui::Context) {
+        // Sculpt tool hotkeys (1 = Add/Remove, 2 = Smooth) — Edit-Mesh only,
+        // handled before the other shortcuts so they claim the digit keys first.
+        if self.handle_sculpt_hotkeys(ctx) {
+            ctx.request_repaint();
+            return;
+        }
+
         // Consume a shortcut only when the editor can actually act on it, so
         // other contexts keep their Cmd+A/Z/Y when nothing is editable.
         let select_all_pressed = self.edit_mode.has_active_session()
@@ -83,8 +90,10 @@ impl OccluViewApp {
             lasso_armed: self.edit_mode.lasso_armed(),
             object_mode: self.edit_mode.object_mode(),
             through_mesh: self.edit_mode.through_mesh(),
+            sculpt_armed: self.sculpt.armed,
             dirty: self.edit_mode.is_dirty(),
             busy: self.edit_mode.is_busy(),
+            active_tab: self.editor_tab,
         };
         let Some(action) = mesh_editor_overlay::show(ctx, viewport_rect, state) else {
             return;
@@ -100,8 +109,8 @@ impl OccluViewApp {
             MeshEditorAction::Cut => LayerContextAction::CutSelectionToNewLayer,
             MeshEditorAction::Separate => LayerContextAction::SeparateSelectedComponents,
             MeshEditorAction::CloseHoles => LayerContextAction::CloseHoles,
-            MeshEditorAction::SmoothSelection => LayerContextAction::SmoothSelection,
-            MeshEditorAction::SelectAll
+            MeshEditorAction::SwitchTab(_)
+            | MeshEditorAction::SelectAll
             | MeshEditorAction::InvertSelection
             | MeshEditorAction::ClearSelection
             | MeshEditorAction::Undo
@@ -109,6 +118,7 @@ impl OccluViewApp {
             | MeshEditorAction::ToggleLasso
             | MeshEditorAction::ToggleObject
             | MeshEditorAction::ToggleThroughMesh
+            | MeshEditorAction::ToggleSculpt(_)
             | MeshEditorAction::Done
             | MeshEditorAction::Cancel => return,
         };
@@ -186,6 +196,29 @@ impl OccluViewApp {
         }
     }
 
+    /// Toggle the lasso on/off. Arming it takes over from the sculpt brush
+    /// and drops any half-drawn outline/marquee.
+    fn toggle_lasso_mode(&mut self, ctx: &egui::Context) {
+        if !self
+            .edit_mode
+            .set_lasso_armed(!self.edit_mode.lasso_armed())
+        {
+            return;
+        }
+        self.abort_sculpt_stroke();
+        self.sculpt.disarm();
+        self.mesh_selection_drag = None;
+        self.needs_render = true;
+        self.status_message = Some(if self.edit_mode.lasso_armed() {
+            "Lasso armed: click or drag to outline; Enter, double-click, \
+             or click the start closes"
+                .to_string()
+        } else {
+            "Lasso disarmed".to_string()
+        });
+        ctx.request_repaint();
+    }
+
     /// Toggle Object pick on/off. Arming it disarms the lasso (mutually
     /// exclusive gestures) and drops any half-drawn lasso/marquee so nothing
     /// stale lingers under the new gesture.
@@ -196,6 +229,8 @@ impl OccluViewApp {
         {
             return;
         }
+        self.abort_sculpt_stroke();
+        self.sculpt.disarm();
         self.mesh_selection_drag = None;
         self.needs_render = true;
         self.status_message = Some(if self.edit_mode.object_mode() {
@@ -212,6 +247,10 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) -> bool {
         match action {
+            MeshEditorAction::SwitchTab(tab) => {
+                self.switch_editor_tab(tab, ctx);
+                true
+            }
             MeshEditorAction::SelectAll => {
                 if self
                     .scene
@@ -252,25 +291,15 @@ impl OccluViewApp {
                 true
             }
             MeshEditorAction::ToggleLasso => {
-                if self
-                    .edit_mode
-                    .set_lasso_armed(!self.edit_mode.lasso_armed())
-                {
-                    self.mesh_selection_drag = None;
-                    self.needs_render = true;
-                    self.status_message = Some(if self.edit_mode.lasso_armed() {
-                        "Lasso armed: click or drag to outline; Enter, double-click, \
-                         or click the start closes"
-                            .to_string()
-                    } else {
-                        "Lasso disarmed".to_string()
-                    });
-                    ctx.request_repaint();
-                }
+                self.toggle_lasso_mode(ctx);
                 true
             }
             MeshEditorAction::ToggleObject => {
                 self.toggle_object_select_mode(ctx);
+                true
+            }
+            MeshEditorAction::ToggleSculpt(kind) => {
+                self.toggle_sculpt_tool(kind, ctx);
                 true
             }
             MeshEditorAction::ToggleThroughMesh => {
@@ -308,8 +337,7 @@ impl OccluViewApp {
             | MeshEditorAction::Crop
             | MeshEditorAction::Cut
             | MeshEditorAction::Separate
-            | MeshEditorAction::CloseHoles
-            | MeshEditorAction::SmoothSelection => false,
+            | MeshEditorAction::CloseHoles => false,
         }
     }
 
@@ -329,6 +357,8 @@ impl OccluViewApp {
     /// selection overlay are dismissed, and the undo stack is kept so Ctrl-Z
     /// still reverts individual mesh ops afterwards.
     fn finish_mesh_edit_session(&mut self, ctx: &egui::Context) {
+        self.commit_sculpt_stroke(ctx);
+        self.sculpt.disarm();
         self.edit_mode.finish_edit_session();
         self.mesh_selection_drag = None;
         self.selection_overlay_dirty = true;
@@ -339,6 +369,8 @@ impl OccluViewApp {
 
     /// Revert the whole edit session to the captured baseline scene.
     fn cancel_mesh_edit_session(&mut self, ctx: &egui::Context) {
+        self.abort_sculpt_stroke();
+        self.sculpt.disarm();
         let current_scene = self.scene.clone();
         let baseline = self.edit_mode.cancel_edit_session();
         self.mesh_selection_drag = None;
@@ -360,6 +392,10 @@ impl OccluViewApp {
     /// commit the resulting draft scene. Shared by the panel Undo button and
     /// the Ctrl+Z / Ctrl+Y viewport shortcuts.
     fn apply_history_navigation(&mut self, redo: bool, ctx: &egui::Context) {
+        // Finalize any in-flight sculpt drag first (as Done/Cancel do), so the
+        // undo acts on a settled scene and the stroke's dabs are not silently
+        // dropped when the coming scene swap invalidates the sculpt session.
+        self.commit_sculpt_stroke(ctx);
         let Some(scene) = self.scene.clone() else {
             return;
         };
@@ -677,6 +713,7 @@ impl OccluViewApp {
         pan_drag_active: bool,
     ) {
         let drag_allowed = self.edit_mode.has_active_session()
+            && self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !pan_drag_active
             && !ctx.input(|input| {
                 input.pointer.button_down(egui::PointerButton::Secondary)
@@ -699,7 +736,9 @@ impl OccluViewApp {
         ctx: &egui::Context,
         response: &egui::Response,
     ) -> bool {
-        if !self.edit_mode.has_active_session() {
+        if !self.edit_mode.has_active_session()
+            || self.editor_tab != mesh_editor_overlay::EditorTab::EditMesh
+        {
             return false;
         }
         let camera = self.camera;

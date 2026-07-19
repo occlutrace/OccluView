@@ -96,6 +96,20 @@ impl LiveViewport {
         }
     }
 
+    /// Push only the `touched` sculpted vertices into the matching prepared
+    /// entry — the hot per-dab path (see
+    /// [`PreparedScene::write_entry_vertices_sparse`]).
+    pub(super) fn write_scene_vertices_sparse(
+        &self,
+        topology: &occluview_render::PreparedSceneTopology,
+        vertices: &[occluview_core::Vertex],
+        touched: &[usize],
+    ) -> bool {
+        self.prepared_scene.as_ref().is_some_and(|scene| {
+            scene.write_entry_vertices_sparse(&self.renderer, topology, vertices, touched)
+        })
+    }
+
     pub(super) fn sync_selection_overlay(&mut self, sources: &[PreparedSceneSource<'_>]) {
         self.selection_overlay =
             (!sources.is_empty()).then(|| PreparedScene::prepare(&self.renderer, sources));

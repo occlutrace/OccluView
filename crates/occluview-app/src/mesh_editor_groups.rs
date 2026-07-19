@@ -9,9 +9,15 @@
 
 use eframe::egui;
 
-use super::{MeshEditorAction, MeshEditorPanelState};
+use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
 use crate::mesh_editor_icons::{self, EditorIcon, CELL_ROUNDING};
-use crate::ui_theme::ACCENT;
+use crate::sculpt_tool::{
+    SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
+};
+use crate::ui_theme::{ACCENT, TEXT, TEXT_WEAK};
+
+/// Height of the tab strip / its pills.
+const TAB_H: f32 = 28.0;
 
 /// Height of one tool cell: a glyph over a small caption (exocad-style toolbar
 /// button). The text commit buttons share the height so the bottom row aligns.
@@ -21,6 +27,89 @@ const ROW_H: f32 = 46.0;
 /// Text color for the primary `Done` button: high contrast on the accent fill
 /// in both the light and dark exocad themes.
 const PRIMARY_TEXT: egui::Color32 = egui::Color32::WHITE;
+
+/// The Sculpt / Edit Mesh tab strip plus the window close button. Doubles as
+/// the window's top bar (the native title bar is off).
+pub(super) fn tab_strip(
+    ui: &mut egui::Ui,
+    state: &MeshEditorPanelState,
+) -> Option<MeshEditorAction> {
+    let mut action = None;
+    let gap = 4.0;
+    let close_w = 24.0;
+    let tab_w = ((ui.available_width() - close_w - gap * 2.0) / 2.0).max(0.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        if tab_pill(
+            ui,
+            "Edit Mesh",
+            tab_w,
+            state.active_tab == EditorTab::EditMesh,
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::SwitchTab(EditorTab::EditMesh));
+        }
+        if tab_pill(ui, "Sculpt", tab_w, state.active_tab == EditorTab::Sculpt).clicked() {
+            action = Some(MeshEditorAction::SwitchTab(EditorTab::Sculpt));
+        }
+        if close_cross(ui, close_w).clicked() {
+            action = Some(MeshEditorAction::Done);
+        }
+    });
+    action
+}
+
+/// One rounded tab pill: accent-filled when active, a faint accent wash on hover.
+fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TAB_H), egui::Sense::click());
+    let fill = if active {
+        ACCENT
+    } else if response.hovered() {
+        ACCENT.gamma_multiply(0.16)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::Rounding::same(TAB_H * 0.5), fill);
+    let text = if active {
+        egui::Color32::WHITE
+    } else {
+        TEXT_WEAK
+    };
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        text,
+    );
+    response
+}
+
+/// The window close cross (commits the session, like the old native ×).
+fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, TAB_H), egui::Sense::click());
+    let color = if response.hovered() { TEXT } else { TEXT_WEAK };
+    let arm = 4.0;
+    let center = rect.center();
+    let stroke = egui::Stroke::new(1.4, color);
+    ui.painter().line_segment(
+        [
+            center + egui::vec2(-arm, -arm),
+            center + egui::vec2(arm, arm),
+        ],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [
+            center + egui::vec2(arm, -arm),
+            center + egui::vec2(-arm, arm),
+        ],
+        stroke,
+    );
+    response
+}
 
 /// Selection mode (lasso + surface/through radio pair) and the exocad
 /// All / None / Invert commands.
@@ -246,30 +335,78 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
     action
 }
 
-/// Volume-preserving Smooth over the marked faces (issue #11): one Taubin
-/// lambda/mu pass set, blended into the surrounding untouched surface so the
-/// result has no hard edge at the selection boundary — the direct fix for the
-/// "spike" seams a jagged Close Holes cap can leave (issue #9) and the forum's
-/// original "smooth the transition area" request.
-pub(super) fn smooth_selection(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> {
+/// Interactive freeform sculpting (exocad Freeforming applied to scans): two
+/// tools only — an Add/Remove clay knife (Shift carves) and a Smooth relaxer
+/// (Shift forces it) — plus the shared Size and Strength sliders. Arming a tool
+/// takes the primary drag away from the selection gestures until toggled off.
+pub(super) fn sculpt(
+    ui: &mut egui::Ui,
+    state: &MeshEditorPanelState,
+    enabled: bool,
+) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, "Smooth");
-    row(ui, 1, |ui, width| {
+    section(ui, "Sculpt");
+    row(ui, 2, |ui, width| {
+        if icon(
+            ui,
+            width,
+            EditorIcon::SculptAdd,
+            "Add / Remove  [1]",
+            "Build material up by dragging on the scan; hold Shift to carve it away. \
+             Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 1.",
+            enabled,
+            state.sculpt_armed == Some(SculptToolKind::AddRemove),
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::AddRemove));
+        }
         if icon(
             ui,
             width,
             EditorIcon::Smooth,
-            "Smooth",
-            "Smooth the marked faces, blending into the surrounding surface",
+            "Smooth  [2]",
+            "Relax the surface by dragging on the scan; hold Shift to force maximum smoothing. \
+             Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 2.",
             enabled,
-            false,
+            state.sculpt_armed == Some(SculptToolKind::Smooth),
         )
         .clicked()
         {
-            action = Some(MeshEditorAction::SmoothSelection);
+            action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::Smooth));
         }
     });
+    sculpt_settings_row(ui, enabled);
     action
+}
+
+/// Size/intensity sliders for the sculpt tools. Both live in egui memory (like
+/// the Close Holes limit) so they hold while the editor is open, and both are
+/// abstract 0..100 feel sliders — not millimeters — per the operator's request.
+fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
+    let ctx = ui.ctx().clone();
+    let mut size = super::sculpt_size(&ctx);
+    let mut intensity = super::sculpt_intensity(&ctx);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("size").size(11.0).weak());
+        ui.add_enabled(
+            enabled,
+            egui::Slider::new(&mut size, SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX).show_value(false),
+        )
+        .on_hover_text("Brush size (Shift + mouse wheel)");
+    });
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("force").size(11.0).weak());
+        ui.add_enabled(
+            enabled,
+            egui::Slider::new(&mut intensity, SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX)
+                .show_value(false),
+        )
+        .on_hover_text("Brush intensity (Ctrl + mouse wheel)");
+    });
+    super::set_sculpt_size(&ctx, size);
+    super::set_sculpt_intensity(&ctx, intensity);
+    ui.add_space(2.0);
 }
 
 fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
@@ -312,7 +449,9 @@ pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
         )
         .on_hover_text("Uncommitted edits: Done to apply, Cancel to revert");
     }
-    let hint = if state.object_mode {
+    let hint = if state.sculpt_armed.is_some() {
+        "Drag on the surface to sculpt · RMB orbits"
+    } else if state.object_mode {
         "Click an object to select it whole · Shift unmarks"
     } else if state.lasso_armed {
         "Click to outline · double-click closes · Shift unmarks"
@@ -495,7 +634,14 @@ mod tests {
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
-        let order = ["\"Selection\"", "\"Edit selection\"", "\"Close holes\""];
+        // The `section(ui, ...)` calls, not the bare titles: the tab strip also
+        // spells "Sculpt"/"Edit Mesh" and would collide with a bare search.
+        let order = [
+            "section(ui, \"Selection\")",
+            "section(ui, \"Edit selection\")",
+            "section(ui, \"Close holes\")",
+            "section(ui, \"Sculpt\")",
+        ];
         let mut last = 0;
         for title in order {
             let at = production.find(title).unwrap_or(usize::MAX);
@@ -516,11 +662,17 @@ mod tests {
                 lasso_armed: true,
                 object_mode: false,
                 through_mesh: true,
+                sculpt_armed: None,
                 dirty: true,
                 busy: false,
+                active_tab: EditorTab::Sculpt,
             },
             MeshEditorPanelState {
                 object_mode: true,
+                ..Default::default()
+            },
+            MeshEditorPanelState {
+                sculpt_armed: Some(SculptToolKind::Smooth),
                 ..Default::default()
             },
             MeshEditorPanelState {
@@ -532,9 +684,11 @@ mod tests {
             let enabled = !state.busy;
             egui::__run_test_ui(|ui| {
                 ui.set_width(212.0);
+                let _ = tab_strip(ui, &state);
                 let _ = selection(ui, &state, enabled);
                 let _ = edit_selection(ui, &state, enabled);
                 let _ = close_holes(ui, enabled);
+                let _ = sculpt(ui, &state, enabled);
                 status(ui, &state);
                 let _ = session(ui, &state, enabled);
             });

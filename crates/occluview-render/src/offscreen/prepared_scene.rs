@@ -4,7 +4,12 @@ use super::{
 };
 use crate::gpu::GpuMesh;
 use crate::texture::GpuTexture;
-use occluview_core::MeshKind;
+use occluview_core::{MeshKind, Vertex};
+
+/// Above this many touched vertices, a sparse (per-run) vertex update switches
+/// to a single whole-buffer write — the scattered soup runs would otherwise
+/// cost more in per-call overhead than one big copy.
+const SPARSE_WRITE_MAX_TOUCHED: usize = 8192;
 
 impl PreparedScene {
     pub(super) fn upload(renderer: &Renderer, sources: &[PreparedSceneSource<'_>]) -> Self {
@@ -79,6 +84,110 @@ impl PreparedScene {
             entry.opacity = update.uniform.opacity;
             entry.visible = update.visible;
             entry.wireframe = update.wireframe;
+        }
+        true
+    }
+
+    /// Overwrite the vertex-buffer CONTENT of the entry whose uploaded
+    /// topology matches `topology` with fresh CPU vertices — the live path an
+    /// interactive sculpt stroke uses to show each brush frame without
+    /// re-preparing the whole scene. The uploaded topology identity is
+    /// untouched (indices, counts, and texture stay as-is), so subsequent
+    /// uniform-only [`Self::update`] reconciles keep succeeding mid-drag.
+    /// Returns `false` when no entry matches or the vertex count differs; the
+    /// caller then falls back to a full re-prepare.
+    pub fn write_entry_vertices(
+        &self,
+        renderer: &Renderer,
+        topology: &PreparedSceneTopology,
+        vertices: &[Vertex],
+    ) -> bool {
+        let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.topology == *topology)
+        else {
+            return false;
+        };
+        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
+            return false;
+        }
+        renderer
+            .queue()
+            .write_buffer(&entry.mesh.vertex_buffer, 0, bytemuck::cast_slice(vertices));
+        true
+    }
+
+    /// Overwrite only the vertices at `touched` indices (ascending, in range)
+    /// of the matching entry's vertex buffer — the hot path for an interactive
+    /// sculpt drag, where a brush touches a few hundred vertices of a
+    /// multi-hundred-thousand-vertex scan. Writing the whole buffer every
+    /// frame (see [`Self::write_entry_vertices`]) would move megabytes per dab
+    /// and stutter; this writes only the affected vertices, coalesced into
+    /// contiguous runs so scattered soup duplicates still cost few GPU writes.
+    /// Returns `false` when no entry matches or the vertex count differs.
+    pub fn write_entry_vertices_sparse(
+        &self,
+        renderer: &Renderer,
+        topology: &PreparedSceneTopology,
+        vertices: &[Vertex],
+        touched: &[usize],
+    ) -> bool {
+        // The run-coalescing below needs `touched` strictly ascending — a
+        // reversed slice `vertices[start..=prev]` would panic. The sole caller
+        // sorts+dedups, so this only guards a future misuse.
+        debug_assert!(
+            touched.windows(2).all(|pair| pair[0] < pair[1]),
+            "write_entry_vertices_sparse requires strictly ascending touched ids"
+        );
+        let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.topology == *topology)
+        else {
+            return false;
+        };
+        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
+            return false;
+        }
+        let queue = renderer.queue();
+        // A big brush touches array-SCATTERED soup vertices, which coalesce into
+        // many short runs — thousands of tiny `write_buffer` calls whose per-call
+        // overhead would stutter. Past a threshold, one whole-buffer write is
+        // cheaper than the pile of small ones.
+        if touched.len() > SPARSE_WRITE_MAX_TOUCHED {
+            queue.write_buffer(&entry.mesh.vertex_buffer, 0, bytemuck::cast_slice(vertices));
+            return true;
+        }
+        let stride = size_of::<Vertex>() as u64;
+        let mut run_start: Option<usize> = None;
+        let mut prev = usize::MAX;
+        // `touched` is ascending; flush a run whenever the ids stop being
+        // consecutive so each `write_buffer` covers one contiguous span.
+        for &id in touched {
+            if id >= vertices.len() {
+                continue;
+            }
+            match run_start {
+                Some(_) if id == prev + 1 => {}
+                Some(start) => {
+                    queue.write_buffer(
+                        &entry.mesh.vertex_buffer,
+                        start as u64 * stride,
+                        bytemuck::cast_slice(&vertices[start..=prev]),
+                    );
+                    run_start = Some(id);
+                }
+                None => run_start = Some(id),
+            }
+            prev = id;
+        }
+        if let Some(start) = run_start {
+            queue.write_buffer(
+                &entry.mesh.vertex_buffer,
+                start as u64 * stride,
+                bytemuck::cast_slice(&vertices[start..=prev]),
+            );
         }
         true
     }

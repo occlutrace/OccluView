@@ -174,20 +174,33 @@ impl OccluViewApp {
         let orbit_drag_active =
             self.update_viewport_orbit_gesture(ctx, response, pan_drag_active, secondary_pointer);
 
+        // An armed sculpt brush owns the primary drag ahead of every selection
+        // gesture; RMB orbit / MMB retarget / wheel zoom fall through below.
+        if self.handle_sculpt_drag(ctx, response, pan_drag_active) {
+            return;
+        }
+
         if self.track_mesh_selection_drag(ctx, response, viewport_rect, pan_drag_active) {
             return;
         }
 
-        // The single-click face pick belongs to the un-armed tool only; while the
-        // lasso is armed, every primary gesture is the outline's (the armed
-        // branch of `track_mesh_selection_drag` already handled/owned it).
-        if !self.edit_mode.lasso_armed()
+        // The single-click face pick belongs to the Edit Mesh tab's un-armed
+        // tool only: never on the Sculpt tab (the click is a dab) nor while the
+        // lasso is armed (the outline owns the gesture).
+        if self.editor_tab == crate::mesh_editor_overlay::EditorTab::EditMesh
+            && !self.edit_mode.lasso_armed()
             && response.clicked_by(egui::PointerButton::Primary)
             && !response.dragged()
             && self.handle_primary_face_selection_click(ctx, response)
         {
             return;
         }
+
+        // Shift/Ctrl + wheel resizes / re-intensifies an armed sculpt brush
+        // instead of zooming the camera; consume the wheel so the zoom below
+        // skips it this frame. Gated to the viewport (like the zoom) so a
+        // modified scroll over a panel keeps its own meaning.
+        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response.hovered());
 
         let Some(camera) = self.camera.as_mut() else {
             return;
@@ -228,7 +241,7 @@ impl OccluViewApp {
             }
         }
 
-        if response.hovered() {
+        if response.hovered() && !sculpt_wheel_used {
             let zoom = zoom_factor_from_scroll(ctx.input(|i| i.raw_scroll_delta.y));
             if (zoom - 1.0).abs() > f32::EPSILON {
                 camera.zoom_by(zoom);

@@ -15,6 +15,7 @@ mod bridge_split_adapter;
 #[cfg(feature = "robust-csg")]
 mod bridge_split_robust;
 mod builder;
+mod bvh;
 mod edit_adapter;
 mod normals;
 mod principal_axis;
@@ -32,8 +33,10 @@ mod bridge_split_robust_tests;
 
 use crate::bbox::Aabb;
 use crate::error::CoreError;
+use bvh::TriangleBvh;
 use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 pub use bridge_split_adapter::{
     bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, normalize_bridge_split_input,
@@ -45,14 +48,14 @@ pub use edit_adapter::{
     component_at_triangle_in_mesh, crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
     fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
     mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, repair_mesh_in_mesh,
-    selected_connected_components_in_mesh, smooth_selected_faces_in_mesh, CoreMeshEditResult,
-    CoreMeshRepairResult,
+    selected_connected_components_in_mesh, CoreMeshEditResult, CoreMeshRepairResult,
 };
 pub use principal_axis::PrincipalFrame;
 pub use texture::MeshTexture;
 pub use vertex::Vertex;
 
 static NEXT_MESH_TOPOLOGY_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_MESH_GEOMETRY_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Whether a [`Mesh`] carries triangle connectivity or is just a point cloud.
 ///
@@ -90,8 +93,21 @@ pub struct Mesh {
     /// Cached principal-axis frame (centroid + orthonormal axes), computed
     /// once at construction time — see [`Mesh::principal_frame_cached`].
     cached_principal_frame: Option<PrincipalFrame>,
-    /// Stable identity for GPU-uploaded geometry/texture payload.
+    /// Stable identity for the GPU-uploaded geometry/texture payload. Preserved
+    /// by [`Mesh::with_sculpted_vertices`] so a renderer that streamed new
+    /// positions out-of-band does not re-upload.
     topology_id: u64,
+    /// Identity of the geometric CONTENT (positions/indices). Unlike
+    /// `topology_id`, this DOES change on [`Mesh::with_sculpted_vertices`], so
+    /// caches that precompute from geometry (e.g. the bridge-split prepared
+    /// solid) can tell a sculpted mesh from its pre-sculpt self even though the
+    /// GPU-buffer token was deliberately held frozen.
+    geometry_id: u64,
+    /// Lazily-built ray-pick acceleration structure (see
+    /// [`Mesh::pick_ray_local`]). Shared across clones (same geometry → same
+    /// tree); geometry-changing constructors mint a fresh empty cell. `Arc` so
+    /// a material-only clone reuses the built tree instead of dropping it.
+    bvh: Arc<OnceLock<TriangleBvh>>,
 }
 
 impl Mesh {
@@ -112,6 +128,8 @@ impl Mesh {
             cached_bbox: Some(Aabb::EMPTY),
             cached_principal_frame: None,
             topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         }
     }
 
@@ -137,6 +155,8 @@ impl Mesh {
             cached_bbox,
             cached_principal_frame,
             topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         }
     }
 
@@ -184,6 +204,8 @@ impl Mesh {
             cached_bbox,
             cached_principal_frame,
             topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
         })
     }
 
@@ -256,6 +278,42 @@ impl Mesh {
         self.topology_id
     }
 
+    /// Stable identity for the geometric CONTENT (positions/indices), fresh on
+    /// every construction AND on [`Mesh::with_sculpted_vertices`] — unlike
+    /// [`Mesh::topology_id`], which a sculpt commit holds frozen. Content-derived
+    /// caches (the bridge-split prepared solid) key on this so a sculpted mesh is
+    /// never mistaken for its pre-sculpt self.
+    #[inline]
+    #[must_use]
+    pub fn geometry_id(&self) -> u64 {
+        self.geometry_id
+    }
+
+    /// Nearest triangle hit of a MESH-LOCAL ray, using a lazily-built (and then
+    /// cached) BVH so a pick is O(log n) instead of O(triangles) — the
+    /// difference between an instant sculpt cursor and a per-frame stall on a
+    /// million-triangle scan. `keep` filters candidate hit points (mesh-local);
+    /// returns the surviving nearest as `(triangle_index, local_point)`. `None`
+    /// for a point cloud, an empty mesh, or a miss.
+    pub(crate) fn pick_ray_local<K>(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        keep: K,
+    ) -> Option<(usize, Vec3)>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        if self.kind != MeshKind::TriangleMesh || self.indices.is_empty() {
+            return None;
+        }
+        let bvh = self
+            .bvh
+            .get_or_init(|| TriangleBvh::build(&self.vertices, &self.indices));
+        bvh.pick(&self.vertices, &self.indices, origin, direction, keep)
+            .map(|hit| (hit.triangle_index, hit.point))
+    }
+
     /// Whether this is a triangle mesh or a point cloud.
     #[inline]
     #[must_use]
@@ -309,6 +367,44 @@ impl Mesh {
         self.texture.is_some() || self.has_vertex_colors
     }
 
+    /// Return a copy of this mesh with vertex positions and normals replaced
+    /// by `vertices`, KEEPING the same [`Mesh::topology_id`] so a renderer that
+    /// already streamed the new positions into its GPU buffers out-of-band
+    /// (an interactive sculpt stroke) does NOT trigger a full re-upload.
+    ///
+    /// `vertices` must have the same length and order as this mesh's own
+    /// vertex array (it is a sculpted copy of it); a length mismatch would make
+    /// the preserved `topology_id` lie about the GPU buffer size, so it is
+    /// rejected and the caller must rebuild the mesh normally instead. Indices,
+    /// texture, name, and the color/UV flags are unchanged; the bounding box
+    /// and principal frame are recomputed from the new positions so picking,
+    /// cut-view, and the cut disc stay correct.
+    #[must_use]
+    pub fn with_sculpted_vertices(&self, vertices: Vec<Vertex>) -> Option<Self> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        let cached_bbox = Some(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        ));
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
+        Some(Self {
+            name: self.name.clone(),
+            vertices,
+            indices: self.indices.clone(),
+            has_vertex_colors: self.has_vertex_colors,
+            has_uvs: self.has_uvs,
+            kind: self.kind,
+            texture: self.texture.clone(),
+            cached_bbox,
+            cached_principal_frame,
+            topology_id: self.topology_id,
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        })
+    }
+
     /// The mesh's own principal-axis frame (PCA centroid + orthonormal
     /// axes), from the constructor-time cache — a STABLE, per-mesh-constant
     /// "global shape" signal: `axes[0]` is a dental arch or bridge span's own
@@ -330,4 +426,8 @@ impl Mesh {
 
 pub(super) fn next_mesh_topology_id() -> u64 {
     NEXT_MESH_TOPOLOGY_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn next_mesh_geometry_id() -> u64 {
+    NEXT_MESH_GEOMETRY_ID.fetch_add(1, Ordering::Relaxed)
 }
