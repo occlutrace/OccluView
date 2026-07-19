@@ -72,6 +72,11 @@ const ADD_REMOVE_GAIN: f32 = 0.08;
 /// rippled. High enough to visibly de-noise, below the level that would erase
 /// the coherent sculpted dome.
 const AUTOSMOOTH_FACTOR: f32 = 0.6;
+/// Auto-smooth passes per Add/Remove dab. Two passes leave the built/carved
+/// area genuinely CLEAN (no residual scan ripple) rather than merely softened,
+/// while still letting material build; the coherent push runs first, so this
+/// de-noises without flattening the dome.
+const CLAY_AUTOSMOOTH_PASSES: usize = 2;
 /// Largest displacement step as a fraction of a vertex's shortest incident
 /// (welded) edge — the anti-inversion guard. Coherent brush motion keeps
 /// neighbours moving together, so this binds mainly at the brush rim.
@@ -478,25 +483,15 @@ impl BrushSession {
             .collect();
         self.commit_moves(displacement.into_iter(), touched);
 
-        // Auto-smooth: a uniform-Laplacian relax over the brushed region, so the
-        // built/carved surface is smooth rather than the scan's raw noise pushed
-        // up (or down) wholesale. The coherent push already made a smooth dome,
-        // so this mostly irons out the high-frequency scan grain and evens the
-        // triangulation without collapsing the sculpted volume; boundary and
-        // needle-tip vertices are left alone so scan edges hold.
-        let relaxed: Vec<(usize, Vec3)> = weighted
-            .par_iter()
-            .filter(|&&(vertex_id, _)| self.is_relaxable(vertex_id))
-            .filter_map(|&(vertex_id, weight)| {
-                let here = self.position(vertex_id);
-                let centroid = self.ring_centroid(vertex_id)?;
-                Some((
-                    vertex_id,
-                    here.lerp(centroid, (AUTOSMOOTH_FACTOR * weight).clamp(0.0, 1.0)),
-                ))
-            })
-            .collect();
-        self.commit_moves(relaxed.into_iter(), touched);
+        // Auto-smooth: several uniform-Laplacian relax passes over the brushed
+        // region, so the built/carved surface comes out genuinely clean rather
+        // than the scan's raw noise pushed up (or down) wholesale. The coherent
+        // push already made a smooth dome, so these irons out the high-frequency
+        // scan grain and even the triangulation without collapsing the sculpted
+        // volume; boundary and needle-tip vertices are left alone.
+        for _ in 0..CLAY_AUTOSMOOTH_PASSES {
+            self.relax_pass(weighted, AUTOSMOOTH_FACTOR, touched);
+        }
     }
 
     /// Smooth: several whole uniform-Laplacian passes (count from `strength`, so
@@ -505,17 +500,16 @@ impl BrushSession {
     /// alone so scan edges hold.
     fn apply_smooth(&mut self, weighted: &[(usize, f32)], strength: f32, touched: &mut Vec<usize>) {
         for _ in 0..smooth_pass_count(strength) {
-            let proposals = self.laplacian_proposals(weighted);
-            self.commit_moves(proposals.into_iter(), touched);
+            self.relax_pass(weighted, SMOOTH_LAMBDA, touched);
         }
     }
 
-    /// One uniform-Laplacian step per candidate: move each vertex a
-    /// [`SMOOTH_LAMBDA`]-and-falloff fraction toward its ring centroid. Reads
-    /// pre-pass positions so the pass is iteration-order-independent. Skips
-    /// boundary and low-valence vertices.
-    fn laplacian_proposals(&self, weighted: &[(usize, f32)]) -> Vec<(usize, Vec3)> {
-        weighted
+    /// One uniform-Laplacian pass: move each relaxable candidate a
+    /// `factor`-and-falloff fraction toward its ring centroid, then commit.
+    /// Reads pre-pass positions (computed in parallel) so the pass is
+    /// iteration-order-independent. Skips boundary and low-valence vertices.
+    fn relax_pass(&mut self, weighted: &[(usize, f32)], factor: f32, touched: &mut Vec<usize>) {
+        let proposals: Vec<(usize, Vec3)> = weighted
             .par_iter()
             .filter(|&&(vertex_id, _)| self.is_relaxable(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
@@ -523,10 +517,11 @@ impl BrushSession {
                 let centroid = self.ring_centroid(vertex_id)?;
                 Some((
                     vertex_id,
-                    here.lerp(centroid, (SMOOTH_LAMBDA * weight).clamp(0.0, 1.0)),
+                    here.lerp(centroid, (factor * weight).clamp(0.0, 1.0)),
                 ))
             })
-            .collect()
+            .collect();
+        self.commit_moves(proposals.into_iter(), touched);
     }
 
     /// Whether a vertex may be relaxed/smoothed: interior (not an open-boundary
