@@ -99,6 +99,8 @@ pub(crate) struct OccluViewApp {
     /// plus the live per-drag stroke session. Only meaningful while a mesh
     /// edit session is active.
     pub(super) sculpt: crate::sculpt_tool::SculptTool,
+    /// Which mesh-editor tab is showing (selection/repair vs sculpt).
+    pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
     pub(super) update_notice: crate::update_notice::UpdateNotice,
     /// Set by every applied mesh-edit (and its undo/redo): the in-scene meshes
@@ -238,6 +240,7 @@ impl OccluViewApp {
             viewport_secondary_gesture_moved_since_press: false,
             mesh_selection_drag: None,
             sculpt: crate::sculpt_tool::SculptTool::default(),
+            editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),
             has_unsaved_mesh_edits: false,

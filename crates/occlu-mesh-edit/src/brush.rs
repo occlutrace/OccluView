@@ -4,43 +4,35 @@
 //!
 //! # Session shape
 //!
-//! A [`BrushSession`] is prepared ONCE per layer when the operator first
-//! touches it (welds STL soup, builds adjacency/incidence/boundary/spatial-grid
-//! — the one-time O(n) cost an interactive drag amortizes over many dabs) and
-//! is reused across every stroke on that layer. Each dab is one [`BrushStroke`]
-//! via [`BrushSession::apply_stroke`], returning only the touched vertex ids so
-//! the caller can push a PARTIAL GPU buffer update instead of re-uploading the
-//! whole scan. [`BrushSession::finish`] can bake the accumulated edits into a
-//! [`MeshEditResult`] for callers that prefer the batch commit path.
+//! A [`BrushSession`] is prepared ONCE per layer (welds STL soup, builds
+//! adjacency/incidence/boundary/spatial-grid — amortized over many dabs) and
+//! reused across every stroke. Each dab is one [`BrushStroke`] via
+//! [`BrushSession::apply_stroke`], returning only the touched vertex ids for a
+//! PARTIAL GPU update. [`BrushSession::finish`] bakes the session into a
+//! [`MeshEditResult`] for the batch commit path.
 //!
 //! # Why it stays clean (no potholes / no spikes)
 //!
-//! The naive "move every vertex along its OWN normal" carves potholes (adjacent
-//! per-vertex normals diverge) and spikes (a lone vertex outruns its ring).
-//! Instead Add/Remove moves the whole brushed region COHERENTLY along a single
-//! averaged brush normal. That normal is computed the way Blender's sculpt mode
-//! does it — bucket the sampled normals by whether they face the camera and
-//! average only the front bucket, falling back to the pure camera direction
-//! when the surface can't be trusted — so a scan's inverted-normal patches never
-//! flip the push direction. Each dab is followed by an auto-smooth
-//! (uniform-Laplacian) pass so material builds and carves CLEAN — ironing out
-//! the scan's own surface noise and evening the triangulation — instead of just
-//! lifting the raw noisy surface (the "ripple" a pure push leaves). Smooth is
-//! the same relaxer run harder, as several whole passes (fractional Taubin per
-//! frame is imperceptible — the reason the old smooth did nothing). Both pin
-//! open scan boundaries so the scan's outer edge never erodes, and a dab only
-//! ever affects the connected component under the cursor, never dragging a
-//! spatially-close but disconnected surface along with it.
+//! Moving each vertex along its OWN normal carves potholes (per-vertex normals
+//! diverge) and spikes (a lone vertex outruns its ring). Add/Remove instead
+//! moves the whole region COHERENTLY along one averaged brush normal, computed
+//! Blender-sculpt style: bucket sampled normals by camera-facing, average only
+//! the front bucket, fall back to the camera direction when untrustworthy — so
+//! inverted-normal scan patches never flip the push direction. Each dab runs an
+//! auto-smooth (uniform-Laplacian) pass so material builds/carves clean instead
+//! of leaving the raw push's ripple. Smooth is the same relaxer run as several
+//! whole passes (a fractional pass per frame was imperceptible). Both pin open
+//! scan boundaries and restrict a dab to the connected component under the
+//! cursor, never dragging in a disconnected surface.
 //!
 //! # Soup correctness
 //!
-//! STL stores each triangle's corners as independent vertices, so the vertex
-//! ARRAY still has orphaned duplicates at a moved corner even after the session
-//! welds INDEX topology for adjacency (`weld_soup_topology` rewrites triangle
-//! indices, never the vertex array). Every touched vertex's new position and
-//! normal are propagated to every other vertex slot that started at the exact
-//! same position (`position_siblings`), or a soup scan would crack at every
-//! touched corner.
+//! STL gives each triangle corner its own vertex, so the vertex ARRAY keeps
+//! orphaned duplicates at a moved corner even after welding INDEX topology for
+//! adjacency (`weld_soup_topology` rewrites indices, not the vertex array).
+//! Every touched vertex's new position/normal propagates to every other slot
+//! that started at the same position (`position_siblings`), or a soup scan
+//! would crack at each touched corner.
 
 use glam::Vec3;
 use rayon::prelude::*;
@@ -50,7 +42,7 @@ use super::brush_csr::Csr;
 use super::brush_index::VertexGrid;
 use super::brush_math::{
     boundary_mask, compute_step_budget, falloff, is_single_component, scope_area_normals,
-    smooth_pass_count,
+    smooth_pass_count, smoothstep,
 };
 use super::cap_support::build_vertex_adjacency;
 use super::topology::{canonical_position_key, weld_soup_topology};
@@ -59,27 +51,23 @@ use super::{
     MeshEditResult, MeshTopology,
 };
 
-/// Uniform-Laplacian blend factor per Smooth pass. Strong enough to visibly
-/// relax in a few passes, below the ~0.8 where irregular valence starts to
-/// oscillate. Smoothing STRENGTH is expressed as the number of whole passes
-/// (see [`smooth_pass_count`]), never as a smaller factor — a fractional single
-/// pass is what made the old smooth imperceptible.
+/// Uniform-Laplacian blend factor per Smooth pass: strong enough to relax
+/// visibly in a few passes, below ~0.8 where irregular valence oscillates.
+/// Strength is pass count (see [`smooth_pass_count`]), not a smaller factor —
+/// a fractional pass per frame was imperceptible.
 const SMOOTH_LAMBDA: f32 = 0.6;
-/// Add/Remove displacement per fully-weighted dab, as a fraction of the brush
-/// radius. Scaling by radius (not a fixed mm) keeps the brush feeling the same
-/// on a coarse or a fine scan and at any zoom; buildup accumulates over the many
-/// arc-length-spaced dabs of a drag, so this stays small per dab.
+/// Add/Remove displacement per fully-weighted dab, as a fraction of brush
+/// radius. Radius-relative (not fixed mm) keeps feel consistent across scan
+/// scale and zoom; per-dab stays small since a drag accumulates many dabs.
 const ADD_REMOVE_GAIN: f32 = 0.08;
-/// Strength of the auto-smooth Laplacian pass that follows every Add/Remove
-/// dab: how far each brushed vertex moves toward its ring centroid, ironing out
-/// the scan's surface noise so material builds and carves clean instead of
-/// rippled. High enough to visibly de-noise, below the level that would erase
-/// the coherent sculpted dome.
-const AUTOSMOOTH_FACTOR: f32 = 0.6;
-/// Auto-smooth passes per Add/Remove dab. Two passes leave the built/carved
-/// area genuinely CLEAN (no residual scan ripple) rather than merely softened,
-/// while still letting material build; the coherent push runs first, so this
-/// de-noises without flattening the dome.
+/// Auto-smooth rim-taper width as a fraction of the radius: the grain-cleaning
+/// relax is near-uniform across the interior and ramps to zero over this outer
+/// band, so the built area blends in with no hard edge.
+const AUTOSMOOTH_RIM_TAPER: f32 = 0.35;
+/// Auto-smooth relax strength. Gentle and uniform: cleans the scan's grain
+/// across the whole dab without collapsing the built dome.
+const AUTOSMOOTH_FACTOR: f32 = 0.3;
+/// Auto-smooth passes per Add/Remove dab.
 const CLAY_AUTOSMOOTH_PASSES: usize = 2;
 /// Largest displacement step as a fraction of a vertex's shortest incident
 /// (welded) edge — the anti-inversion guard. Coherent brush motion keeps
@@ -92,10 +80,9 @@ const FRONT_BUCKET_TRUST_FRACTION: f32 = 0.6;
 /// A vertex with fewer than this many welded neighbors is a needle/spike tip,
 /// not a real interior vertex; Smooth and the auto-relax leave it alone.
 const MIN_RING_FOR_RELAX: usize = 3;
-/// Grid cells spanned by one brush radius. The grid's cell size is kept at
-/// `radius / this` so a radius query only ever scans a small, bounded cube of
-/// cells regardless of how the brush size compares to the mesh scale — the fix
-/// for a big brush stuttering as it scanned millions of empty cells.
+/// Grid cells spanned by one brush radius: cell size is `radius / this`, so a
+/// radius query scans a small bounded cube of cells regardless of brush size
+/// vs. mesh scale — fixes a big brush stuttering over millions of empty cells.
 const GRID_CELLS_ACROSS_RADIUS: f32 = 4.0;
 
 /// One brush dab: a soft-falloff disc centered on the surface.
@@ -106,16 +93,15 @@ pub struct BrushStroke {
     pub center: [f32; 3],
     /// Falloff radius in mesh-local mm; zero effect at/beyond this distance.
     pub radius_mm: f32,
-    /// Dab strength, 0..1 (0 is a no-op). Add/Remove scale their per-dab
-    /// displacement by it; Smooth turns it into a pass count. Cadence (how many
-    /// dabs a drag lands) is the caller's job — magnitude here is per-dab so the
-    /// brush is framerate-independent when the caller spaces dabs by arc length.
+    /// Dab strength, 0..1 (0 is a no-op). Add/Remove scale displacement by it;
+    /// Smooth turns it into a pass count. Cadence is the caller's job — this is
+    /// per-dab magnitude, framerate-independent when dabs are arc-length-spaced.
     pub strength: f32,
-    /// Unit view direction, pointing FROM the camera INTO the scene. Add/Remove
-    /// orient their coherent brush normal toward the camera using this, so
-    /// "Add" always builds toward the viewer and "Remove" carves away even
-    /// across a scan's inverted-normal patches. Ignored by Smooth; a zero
-    /// vector falls back to the averaged surface normal's own sign.
+    /// Unit view direction, FROM the camera INTO the scene. Add/Remove orient
+    /// the coherent brush normal toward the camera, so Add always builds
+    /// toward the viewer and Remove carves away, even across a scan's
+    /// inverted-normal patches. Ignored by Smooth; a zero vector falls back to
+    /// the averaged surface normal's own sign.
     pub view_dir: [f32; 3],
 }
 
@@ -131,10 +117,9 @@ pub enum BrushMode {
     Remove,
 }
 
-/// Outcome of one [`BrushSession::apply_stroke`] call: exactly the vertex ids
-/// whose position and/or normal changed, so the caller can push a partial GPU
-/// update instead of re-uploading the whole mesh. Deduplicated but NOT sorted
-/// (an interactive caller sorts the whole frame's union once); indices into the
+/// Outcome of one [`BrushSession::apply_stroke`] call: vertex ids whose
+/// position and/or normal changed, for a partial GPU update. Deduplicated but
+/// NOT sorted (the caller sorts the frame's union once); indices into the
 /// ORIGINAL vertex array `BrushSession::prepare` was built from.
 #[derive(Clone, Debug, Default)]
 pub struct BrushStrokeOutcome {
@@ -150,19 +135,17 @@ pub struct BrushSession {
     /// `BrushSession::prepare` was built from.
     vertices: Vec<EditVertex>,
     /// Dense struct-of-arrays mirror of `vertices`' positions, kept in sync by
-    /// [`Self::set_position`]. Every hot pass gathers positions by scattered
-    /// vertex id; reading them from this 12-byte-per-vertex array instead of the
-    /// ~40-byte interleaved `EditVertex` cuts the cache traffic that dominates a
-    /// big-brush dab roughly threefold.
+    /// [`Self::set_position`]. Hot passes gather by scattered vertex id; reading
+    /// this 12-byte array instead of the ~40-byte interleaved `EditVertex` cuts
+    /// a big-brush dab's cache traffic roughly threefold.
     positions: Vec<Vec3>,
     /// The ORIGINAL (unwelded) triangle indices — returned verbatim by `finish`,
     /// since brush dabs only move vertices, never retopologize.
     indices: Vec<u32>,
-    /// Vertex-vertex adjacency over the WELDED topology (shared corners see
-    /// their true neighbors even across soup duplicates), as CSR so a one-ring
-    /// gather in the hot passes is a contiguous slice, not a per-vertex heap
-    /// chase. A soup duplicate that is not the weld representative has an empty
-    /// ring; it is moved by sibling propagation from the representative.
+    /// Vertex-vertex adjacency over the WELDED topology, as CSR so a one-ring
+    /// gather is a contiguous slice, not a per-vertex heap chase. A soup
+    /// duplicate that is not the weld representative has an empty row; it
+    /// moves via sibling propagation from the representative.
     adjacency: Csr,
     /// Per-ORIGINAL-vertex incident triangle indices (into `indices`), as CSR;
     /// used to recompute normals scoped to the touched region.
@@ -182,31 +165,29 @@ pub struct BrushSession {
     /// Shortest welded-neighbor edge length per vertex, captured at prepare
     /// time — the anti-inversion guard's per-vertex step budget.
     max_step: Vec<f32>,
-    /// Spatial index over vertex positions. Its cell size is matched to the
-    /// current brush radius (see [`Self::sync_grid`]) so a query's cell-scan
-    /// stays cheap for any brush size; moved vertices are relocated in it
-    /// incrementally by [`Self::set_position`], so it never needs an O(n)
-    /// drift rebuild mid-stroke.
+    /// Spatial index over vertex positions, cell size matched to the current
+    /// brush radius (see [`Self::sync_grid`]) so cell-scan stays cheap at any
+    /// brush size; relocated incrementally by [`Self::set_position`], never
+    /// needing an O(n) drift rebuild mid-stroke.
     grid: VertexGrid,
     /// The brush radius the grid's cell size is currently tuned for; a big
     /// change (a size-slider adjustment) triggers a rebuild.
     grid_radius: f32,
     /// Reusable `(vertex id, pre-dab position)` list for one-shot grid
-    /// maintenance. The spatial grid is only READ at the start of the next dab,
-    /// never during this dab's sub-passes, so instead of relocating every vertex
-    /// in the grid on every one of a Smooth dab's many passes, the movable region
-    /// is snapshotted once at dab start and relocated once at dab end.
+    /// maintenance. The grid is only READ at the next dab's start, so the
+    /// movable region is snapshotted once at dab start and relocated once at
+    /// dab end, instead of relocating on every one of a Smooth dab's passes.
     grid_dirty: Vec<(usize, Vec3)>,
-    /// Reusable visited-stamp buffer for the per-dab component flood fill, the
-    /// touched-set dedup, and the normal-recompute scope build, so none of them
-    /// allocates a fresh `HashSet` per dab (the cost that made a big brush
-    /// stutter on a million-triangle scan). A slot is "touched this pass" when
-    /// its stamp equals `stamp_generation`; clearing is a generation bump.
+    /// Reusable visited-stamp buffer for the per-dab flood fill, touched-set
+    /// dedup, and normal-recompute scope build — avoids a fresh `HashSet` per
+    /// dab (what stuttered a big brush on a million-triangle scan). A slot is
+    /// touched when its stamp equals `stamp_generation`; clearing is a
+    /// generation bump.
     component_stamp: Vec<u32>,
     /// Current generation for the stamp buffer.
     stamp_generation: u32,
-    /// Every vertex id touched by any dab so far this session — reported
-    /// honestly as `report.moved_vertices` by `finish`.
+    /// Every vertex id touched by any dab so far this session — reported as
+    /// `report.moved_vertices` by `finish`.
     touched_total: HashSet<usize>,
 }
 
@@ -306,9 +287,8 @@ impl BrushSession {
         let Some((weighted, strength)) = self.weighted_candidates(stroke) else {
             return BrushStrokeOutcome::default();
         };
-        // Snapshot the movable region's pre-dab positions so the spatial grid can
-        // be brought up to date in a SINGLE pass at the end of the dab, rather
-        // than per-vertex on every one of a Smooth dab's many relax passes.
+        // Snapshot the movable region's pre-dab positions so the grid updates in
+        // a SINGLE pass at dab end, not per-vertex on every relax pass.
         self.snapshot_grid_region(&weighted);
         let mut touched: Vec<usize> = Vec::new();
         match mode {
@@ -316,18 +296,15 @@ impl BrushSession {
             BrushMode::Add => self.apply_clay(&weighted, stroke, 1.0, &mut touched),
             BrushMode::Remove => self.apply_clay(&weighted, stroke, -1.0, &mut touched),
         }
-        // Fold every vertex's net motion back into the grid once (no-op for the
-        // coherent centre that never left its cell), keeping the next dab's
-        // radius query exact.
+        // Fold every vertex's net motion back into the grid once (a no-op for a
+        // vertex that never left its cell), keeping the next query exact.
         self.apply_grid_maintenance();
         if touched.is_empty() {
             return BrushStrokeOutcome::default();
         }
-        // Dedup via a stamp (no sort): `touched` carries duplicates (a vertex
-        // moved by both the displacement and the auto-smooth pass, plus soup
-        // siblings), and a per-dab sort of tens of thousands of ids was a real
-        // cost on a big brush. The interactive caller sorts the whole frame's
-        // union once before the GPU write; order here is irrelevant.
+        // Dedup via a stamp (no sort): `touched` has duplicates (displacement +
+        // auto-smooth + soup siblings), and sorting tens of thousands of ids per
+        // dab was a real cost. The caller sorts the frame's union once instead.
         let unique_generation = self.next_stamp();
         let mut unique = Vec::with_capacity(touched.len());
         for &vertex_id in &touched {
@@ -336,10 +313,9 @@ impl BrushSession {
                 unique.push(vertex_id);
             }
         }
-        // Sync the interleaved vertex positions from the SoA mirror once, for
-        // exactly the touched slots — the hot passes only wrote the mirror. The
-        // caller reads `vertices()` for these ids to patch its GPU shadow, and
-        // `finish` bakes them, so both see the final positions.
+        // Sync interleaved vertex positions from the SoA mirror once, for
+        // exactly the touched slots — the hot passes only wrote the mirror.
+        // Both `vertices()` and `finish` read from here afterward.
         for &vertex_id in &unique {
             self.vertices[vertex_id].position = self.positions[vertex_id].to_array();
         }
@@ -351,11 +327,10 @@ impl BrushSession {
     }
 
     /// Falloff-weighted vertices within the dab's disc (the grid query is a
-    /// conservative superset, filtered here to the vertices actually inside the
-    /// radius). Weights are the raw spatial falloff (0..1); the clamped dab
-    /// strength is returned separately so Smooth can turn it into a pass count
-    /// rather than a magnitude. `None` for a no-effect dab. Rebuilds the spatial
-    /// index first if drift since its last build could otherwise miss a vertex.
+    /// conservative superset, filtered here to those actually inside radius).
+    /// Weights are raw spatial falloff (0..1); clamped strength is returned
+    /// separately so Smooth turns it into a pass count, not a magnitude.
+    /// `None` for a no-effect dab.
     fn weighted_candidates(&mut self, stroke: BrushStroke) -> Option<(Vec<(usize, f32)>, f32)> {
         let strength = stroke.strength.clamp(0.0, 1.0);
         if strength <= 0.0 || !stroke.radius_mm.is_finite() || stroke.radius_mm <= 0.0 {
@@ -367,9 +342,8 @@ impl BrushSession {
         if candidates.is_empty() {
             return None;
         }
-        // Parallel across the candidate set — a big brush has tens of thousands
-        // of candidates and this (plus the displacement/relax maps below) is the
-        // per-vertex work that dominates a dab. `par_iter().collect()` preserves
+        // Parallel across candidates — a big brush has tens of thousands, and
+        // this dominates a dab's per-vertex work. `par_iter().collect()` keeps
         // order, so the result stays deterministic.
         let weighted: Vec<(usize, f32)> = candidates
             .into_par_iter()
@@ -389,14 +363,12 @@ impl BrushSession {
         (!weighted.is_empty()).then_some((weighted, strength))
     }
 
-    /// Keep only the candidates in the same connected component as the vertex
-    /// nearest the dab center, by flooding the welded rings (and soup siblings)
-    /// through the in-disc set. A purely Euclidean radius query can pull in a
-    /// spatially-close but topologically SEPARATE surface (a dropout island, the
-    /// opposing arch sitting just behind the cursor); restricting to one
-    /// component stops a dab from dragging two disjoint sheets together — the
-    /// robustness a messy multi-surface scan needs, and what makes the "never
-    /// reaches across a gap" contract true for the clay push, not only Smooth.
+    /// Keep only candidates in the same connected component as the vertex
+    /// nearest the dab center, by flooding welded rings (and soup siblings)
+    /// through the in-disc set. A Euclidean radius query can pull in a
+    /// spatially-close but topologically SEPARATE surface (a dropout island,
+    /// the opposing arch behind the cursor); this stops a dab from dragging
+    /// two disjoint sheets together, for Add/Remove as well as Smooth.
     fn restrict_to_component(
         &mut self,
         weighted: Vec<(usize, f32)>,
@@ -460,17 +432,15 @@ impl BrushSession {
         self.stamp_generation
     }
 
-    /// Keep the spatial grid usable for a dab of the given radius: rebuild it
-    /// (from live positions, with a cell size matched to the radius) when the
-    /// brush radius has changed enough that the old cell size would make the
-    /// query's cell scan too coarse or too fine, OR when vertices have drifted
-    /// far enough that a query could miss a moved one. Sizing the cell to the
-    /// radius is what keeps a big brush from scanning millions of empty cells.
+    /// Keep the spatial grid usable for a dab of `radius`: rebuild it (from
+    /// live positions, cell size matched to radius) only when the brush radius
+    /// changed enough to make the old cell size too coarse or fine — sized to
+    /// radius so a big brush never scans millions of empty cells.
     fn sync_grid(&mut self, radius: f32) {
-        // ONLY a brush-radius change (which changes the cell size) forces a full
-        // rebuild — a rare, deliberate size-slider move. Vertex motion during a
-        // stroke is tracked incrementally in `set_position`, so there is no
-        // per-dab O(n) drift rebuild (the stall a big scan showed).
+        // ONLY a brush-radius change (which changes cell size) forces a
+        // rebuild — a rare, deliberate size-slider move. Motion during a
+        // stroke is tracked incrementally, not by a per-dab O(n) rebuild
+        // (the stall a big scan showed).
         if self.grid_radius > 0.0 && (0.6..=1.7).contains(&(radius / self.grid_radius)) {
             return;
         }
@@ -484,10 +454,10 @@ impl BrushSession {
         self.grid_radius = radius;
     }
 
-    /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the whole brushed
-    /// region coherently along one camera-oriented brush normal, then run an
-    /// auto-smooth pass so material is built or carved CLEAN instead of just
-    /// lifting the scan's own surface noise (the "ripple" left by a pure push).
+    /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the brushed
+    /// region coherently along one camera-oriented brush normal, then
+    /// auto-smooth so material builds/carves CLEAN instead of lifting the
+    /// scan's own surface noise (the "ripple" left by a pure push).
     fn apply_clay(
         &mut self,
         weighted: &[(usize, f32)],
@@ -498,11 +468,10 @@ impl BrushSession {
         let strength = stroke.strength.clamp(0.0, 1.0);
         let normal = self.brush_normal(weighted, Vec3::from_array(stroke.view_dir));
         let amplitude = (stroke.radius_mm * ADD_REMOVE_GAIN * strength).max(0.0);
-        // Only weld representatives (a real ring) are displaced independently;
-        // their soup duplicates follow via sibling propagation in `commit_moves`.
-        // Letting a duplicate also displace on its own would let it re-apply the
-        // dab from the already-moved position against its own (fallback) budget
-        // and overrun the representative's correct clamp.
+        // Only weld representatives (a real ring) displace independently; their
+        // soup duplicates follow via sibling propagation in `commit_moves`. A
+        // duplicate displacing on its own would re-apply the dab against its
+        // own fallback budget and overrun the representative's clamp.
         let displacement: Vec<(usize, Vec3)> = weighted
             .par_iter()
             .filter(|&&(vertex_id, _)| !self.adjacency.is_empty_row(vertex_id))
@@ -515,21 +484,25 @@ impl BrushSession {
             .collect();
         self.commit_moves(displacement.into_iter(), touched);
 
-        // Auto-smooth: several uniform-Laplacian relax passes over the brushed
-        // region, so the built/carved surface comes out genuinely clean rather
-        // than the scan's raw noise pushed up (or down) wholesale. The coherent
-        // push already made a smooth dome, so these irons out the high-frequency
-        // scan grain and even the triangulation without collapsing the sculpted
-        // volume; boundary and needle-tip vertices are left alone.
+        // De-noise the whole dab, not just its peak: the displacement's t²
+        // falloff is too concentrated to clean the mid-radius (where the uneven
+        // anti-inversion clamp leaves grain), so auto-smooth uses a plateau
+        // weight — near-uniform across the interior, tapered to zero at the rim.
+        let smooth_weights: Vec<(usize, f32)> = weighted
+            .iter()
+            .map(|&(vertex_id, weight)| {
+                let t = weight.sqrt(); // t = 1 - distance/radius
+                (vertex_id, smoothstep(AUTOSMOOTH_RIM_TAPER, t))
+            })
+            .collect();
         for _ in 0..CLAY_AUTOSMOOTH_PASSES {
-            self.relax_pass(weighted, AUTOSMOOTH_FACTOR, touched);
+            self.relax_pass(&smooth_weights, AUTOSMOOTH_FACTOR, touched);
         }
     }
 
-    /// Smooth: several whole uniform-Laplacian passes (count from `strength`, so
-    /// a firmer press or the forced Shift mode simply runs more passes), each
-    /// blended by the per-vertex falloff, boundary and needle-tip vertices left
-    /// alone so scan edges hold.
+    /// Smooth: several whole uniform-Laplacian passes (count from `strength`,
+    /// so a firmer press or forced Shift mode runs more), each blended by
+    /// per-vertex falloff; boundary and needle-tip vertices are left alone.
     fn apply_smooth(&mut self, weighted: &[(usize, f32)], strength: f32, touched: &mut Vec<usize>) {
         for _ in 0..smooth_pass_count(strength) {
             self.relax_pass(weighted, SMOOTH_LAMBDA, touched);
@@ -561,17 +534,15 @@ impl BrushSession {
         !self.is_boundary[vertex_id] && self.adjacency.row_len(vertex_id) >= MIN_RING_FOR_RELAX
     }
 
-    /// The camera-oriented brush normal: bucket the region's vertex normals by
-    /// whether they face the camera (Blender's `calc_area_normal`), average only
-    /// the toward-viewer bucket, and fall back to the pure camera direction when
-    /// that bucket is too weak to trust. Robust to inverted-normal scan patches,
-    /// where a naive signed average would cancel to garbage.
+    /// Camera-oriented brush normal: bucket region vertex normals by camera-
+    /// facing (Blender's `calc_area_normal`), average only the toward-viewer
+    /// bucket, falling back to the camera direction when too weak to trust —
+    /// robust to inverted-normal patches where a naive signed average cancels.
     fn brush_normal(&self, weighted: &[(usize, f32)], view_dir: Vec3) -> Vec3 {
         let view = view_dir.normalize_or_zero();
         let has_view = view.length_squared() > f32::EPSILON;
         // Parallel reduction: a big brush buckets tens of thousands of normals,
-        // so fold the toward-camera sum, its weight, and the total weight across
-        // threads rather than a serial gather over the interleaved vertices.
+        // folding the toward-camera sum/weight/total across threads.
         let (toward, toward_weight, total_weight) = weighted
             .par_iter()
             .map(|&(vertex_id, weight)| {
@@ -621,10 +592,10 @@ impl BrushSession {
         Some(mean / ring.len() as f32)
     }
 
-    /// Write a set of already-clamped, already-non-no-op target positions:
-    /// move each vertex and its soup siblings, recording every slot touched.
-    /// The anti-inversion clamp and the no-op filter are done in the parallel
-    /// proposal maps that feed this, so the serial commit is a minimal scatter.
+    /// Write already-clamped, already-non-no-op target positions: move each
+    /// vertex and its soup siblings, recording every touched slot. Clamping
+    /// and the no-op filter happen upstream in the parallel proposal maps, so
+    /// this serial commit is a minimal scatter.
     fn commit_moves(
         &mut self,
         moves: impl Iterator<Item = (usize, Vec3)>,
@@ -661,9 +632,9 @@ impl BrushSession {
     }
 
     /// Current (live) vertex attributes mid-session — same length and order as
-    /// the mesh the session was prepared from. Interactive callers read the
-    /// touched ids from a dab's outcome and copy these into their own display
-    /// buffer for a partial GPU update, without ending the session.
+    /// the mesh the session was prepared from. Callers read the touched ids
+    /// from a dab's outcome and copy these into their own display buffer for a
+    /// partial GPU update, without ending the session.
     #[must_use]
     pub fn vertices(&self) -> &[EditVertex] {
         &self.vertices
@@ -677,10 +648,8 @@ impl BrushSession {
 
     /// Write a vertex's live position into the dense `positions` mirror only —
     /// the sole source of truth every hot pass reads back. The interleaved
-    /// `vertices[].position` (40-byte stride) and the spatial grid are both
-    /// synced ONCE per dab afterwards, not on every one of a many-pass Smooth's
-    /// scattered writes, so the hot commit touches only the compact 12-byte
-    /// array.
+    /// `vertices[].position` and the spatial grid are synced ONCE per dab
+    /// afterward, not on every one of a many-pass Smooth's scattered writes.
     fn set_position(&mut self, vertex_id: usize, position: Vec3) {
         self.positions[vertex_id] = position;
     }
@@ -718,16 +687,15 @@ impl BrushSession {
         self.grid_dirty = dirty;
     }
 
-    /// Recompute normals for exactly the touched vertices and their one-ring (a
-    /// moved vertex changes its neighbors' face-weighted normals too), using
-    /// the ORIGINAL (unwelded) incident-triangle map so every soup duplicate's
-    /// own triangle is included.
+    /// Recompute normals for the touched vertices and their one-ring (a moved
+    /// vertex changes neighbors' face-weighted normals too), using the
+    /// ORIGINAL (unwelded) incident-triangle map so every soup duplicate's own
+    /// triangle is included.
     ///
-    /// This is the Blender-sculpt strategy (PR #116209): recompute every
-    /// affected vertex's normal DIRECTLY from its incident faces in parallel,
-    /// each vertex writing only its own slot — deliberately recomputing a shared
-    /// face normal once per corner rather than paying for the single-threaded
-    /// `VectorSet` dedup of faces that was the real bottleneck on a big dab.
+    /// Blender-sculpt strategy (PR #116209): recompute each affected vertex's
+    /// normal DIRECTLY from its incident faces in parallel, each vertex writing
+    /// only its own slot — recomputing a shared face normal per corner instead
+    /// of the single-threaded `VectorSet` face dedup that bottlenecked a big dab.
     fn recompute_normals_near(&mut self, touched: &[usize]) {
         // Build the scope (touched + welded rings + soup siblings) deduped via a
         // stamp — index loops, no sort, no allocation churn on a big brush.
@@ -756,8 +724,12 @@ impl BrushSession {
 
         // Conflict-free parallel recompute (see `scope_area_normals`), then the
         // trivial serial normalize + write-back.
-        let new_normals =
-            scope_area_normals(&scope, &self.incident_triangles, &self.indices, &self.positions);
+        let new_normals = scope_area_normals(
+            &scope,
+            &self.incident_triangles,
+            &self.indices,
+            &self.positions,
+        );
         for (offset, &vertex_id) in scope.iter().enumerate() {
             let sum = new_normals[offset];
             if sum.length_squared() > f32::EPSILON {

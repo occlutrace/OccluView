@@ -1,10 +1,9 @@
 //! The mesh editor tool window (exocad "3D Data Editor" workflow).
 //!
-//! A freely movable `egui::Window` whose tools read top-to-bottom the way a
-//! dental operator works: pick a selection mode → adjust the selection →
-//! edit that selection (delete / crop / cut / separate) → history → commit.
-//! Presentation only: every button maps to one
-//! [`MeshEditorAction`] the viewport already knows how to apply.
+//! A movable `egui::Window` with a custom top bar of two tabs — Edit Mesh
+//! (selection / repair) and Sculpt (the brushes) — over a shared status +
+//! commit bar. Presentation only: every button maps to one [`MeshEditorAction`]
+//! the viewport applies.
 //!
 //! The per-section rendering lives in the sibling [`groups`] module (declared
 //! below with an explicit path) so this file stays small and only owns the
@@ -19,9 +18,20 @@ use crate::sculpt_tool::{
 #[path = "mesh_editor_groups.rs"]
 mod groups;
 
+/// The two tabs of the editor window: selection/repair tools, or the sculpt
+/// brushes. Exactly one is shown at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum EditorTab {
+    #[default]
+    EditMesh,
+    Sculpt,
+}
+
 /// Actions the mesh editor window can request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MeshEditorAction {
+    /// Switch the active tab.
+    SwitchTab(EditorTab),
     SelectAll,
     InvertSelection,
     ClearSelection,
@@ -72,6 +82,8 @@ pub(crate) struct MeshEditorPanelState {
     pub(crate) dirty: bool,
     /// Whether a mesh operation is running (all mutating buttons disabled).
     pub(crate) busy: bool,
+    /// Which tab is showing.
+    pub(crate) active_tab: EditorTab,
 }
 
 /// Overall window width. Trimmed to keep the exocad-style tool compact; the
@@ -163,44 +175,43 @@ pub(crate) fn show(
 ) -> Option<MeshEditorAction> {
     let default_pos = viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 16.0, 16.0);
     let mut action = None;
-    let mut open = true;
     egui::Window::new("Mesh editor")
         .id(egui::Id::new("occluview_mesh_editor_window"))
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
         .resizable(false)
-        .collapsible(true)
-        .open(&mut open)
+        .collapsible(false)
+        .title_bar(false)
         .show(ctx, |ui| {
             ui.set_width(WINDOW_WIDTH - 24.0);
             action = window_action(ui, state);
         });
-    if !open {
-        action = Some(MeshEditorAction::Done);
-    }
     action
 }
 
-/// Assemble the window body in exocad workflow order. Every section renders in
-/// [`groups`]; this function only fixes the shared spacing and chains the
-/// optional actions each section may return.
+/// Assemble the window body: the tab strip, then the active tab's tools, then
+/// the shared status + commit bar. Every section renders in [`groups`]; this
+/// function fixes the shared spacing and chains the optional actions.
 fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshEditorAction> {
-    // A single tight item spacing gives the icon grid even gutters and keeps
-    // the whole tool calm; the sections manage their own vertical rhythm.
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
-    // Snappier hover/press for this window only (the default fade reads as lag on
-    // a dense tool palette); the global chrome keeps its calmer timing.
+    // Snappier hover/press for this dense tool palette than the global chrome.
     ui.style_mut().animation_time = 0.05;
-    // While a mesh operation runs, every mutating button is disabled;
-    // selection-mode toggles stay available so the operator is never locked
-    // out of the viewport chrome.
+    // While a mesh operation runs every mutating button is disabled; tab and
+    // selection-mode toggles stay live so the operator is never locked out.
     let ops_enabled = !state.busy;
 
-    let mut action = None;
-    action = action.or(groups::selection(ui, &state, ops_enabled));
-    action = action.or(groups::edit_selection(ui, &state, ops_enabled));
-    action = action.or(groups::close_holes(ui, ops_enabled));
-    action = action.or(groups::sculpt(ui, &state, ops_enabled));
+    let mut action = groups::tab_strip(ui, &state);
+    ui.add_space(4.0);
+    match state.active_tab {
+        EditorTab::EditMesh => {
+            action = action.or(groups::selection(ui, &state, ops_enabled));
+            action = action.or(groups::edit_selection(ui, &state, ops_enabled));
+            action = action.or(groups::close_holes(ui, ops_enabled));
+        }
+        EditorTab::Sculpt => {
+            action = action.or(groups::sculpt(ui, &state, ops_enabled));
+        }
+    }
     groups::status(ui, &state);
     action = action.or(groups::session(ui, &state, ops_enabled));
     action

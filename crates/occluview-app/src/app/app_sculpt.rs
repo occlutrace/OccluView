@@ -1,19 +1,7 @@
-//! Viewport glue for the interactive sculpt brushes (exocad Freeforming on
-//! scans): an Add/Remove clay knife and a Smooth relaxer dragged directly on
-//! the surface. This file owns the input side of it:
-//!
-//! - a persistent per-layer kernel session, prepared once and reused across
-//!   strokes (no per-press O(n) prepare stall);
-//! - an arc-length dab scheduler so buildup is even and framerate-independent
-//!   (Blender's stroke spacing), with a time cadence for a held stationary
-//!   brush;
-//! - live feedback streamed as SPARSE vertex writes (only the touched vertices,
-//!   not the whole buffer) so a drag never stutters;
-//! - a commit that swaps the sculpted mesh in WITHOUT a full GPU re-upload (the
-//!   buffers already hold the result and `topology_id` is preserved), landing
-//!   each stroke as one undoable layer edit;
-//! - Shift/Ctrl + wheel to resize / re-intensify the brush, and a brush cursor
-//!   that shows the radius, intensity, and what the click will do.
+//! Viewport input for the sculpt brushes: the persistent per-layer kernel
+//! session, the arc-length dab scheduler, sparse live vertex writes, the
+//! re-upload-free stroke commit, wheel resize/re-intensify, and the brush
+//! cursor. The geometry kernel lives in `occlu-mesh-edit`.
 
 use std::sync::Arc;
 
@@ -33,6 +21,8 @@ use occluview_render::PreparedSceneTopology;
 
 /// Segments in the surface-projected brush-cursor ring.
 const SCULPT_CURSOR_SEGMENTS: usize = 48;
+/// Concentric layers stacked into the brush-cursor glow.
+const GLOW_LAYERS: usize = 6;
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
 /// does not re-read input.
@@ -94,14 +84,11 @@ fn schedule_dabs(
     touched
 }
 
-/// Pure dab scheduler: from the previous dab position, the new cursor `center`,
-/// the dab `spacing`, and the stationary-hold accumulator, decide the dab
-/// centers to lay this frame and the updated `(last_dab, hold_seconds)`. Dabs
-/// are spaced by arc length while the cursor moves (even, framerate-independent
-/// buildup) and by a fixed time cadence while it is (near) stationary. A single
-/// frame lays at most [`MAX_DABS_PER_FRAME`] dabs; a longer jump is not dropped,
-/// it resumes from `last_dab` next frame. `dt` is clamped so one stalled frame
-/// cannot dump a large backlog of hold dabs.
+/// Pure dab scheduler: given the previous dab, the cursor `center`, the
+/// `spacing`, and the hold accumulator, returns this frame's dab centers and the
+/// updated `(last_dab, hold_seconds)`. Dabs are spaced by arc length while
+/// moving and by a time cadence while (near) stationary, at most
+/// [`MAX_DABS_PER_FRAME`] per frame (the rest resume next frame).
 fn plan_dab_centers(
     last_dab: Option<Vec3>,
     center: Vec3,
@@ -137,19 +124,18 @@ fn plan_dab_centers(
 }
 
 impl OccluViewApp {
-    /// Arm/disarm one sculpt tool from the Mesh Editor. Arming takes the primary
-    /// gesture away from the selection tools; toggling the armed tool again
-    /// disarms. Switching tools keeps the prepared session (same layer, so the
-    /// next stroke stays instant).
+    /// Arm/disarm a sculpt tool; toggling the armed one disarms. Keeps the
+    /// prepared session across tool switches so the next stroke stays instant.
     pub(super) fn toggle_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
         self.abort_sculpt_stroke();
         self.sculpt.toggle(kind);
         if self.sculpt.armed.is_some() {
+            // Arming a brush means the Sculpt tab: show it and drop selection.
+            self.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
             let _ = self.edit_mode.set_lasso_armed(false);
             let _ = self.edit_mode.set_object_mode(false);
             self.mesh_selection_drag = None;
-            // Warm the kernel session now (behind this click) so the first
-            // press does not stall while it welds/indexes a big scan.
+            // Warm the session now so the first press doesn't stall.
             self.prepare_armed_sculpt_session();
         }
         self.status_message = Some(match self.sculpt.armed {
@@ -161,6 +147,32 @@ impl OccluViewApp {
             }
             None => "Sculpt off".to_string(),
         });
+        self.needs_render = true;
+        ctx.request_repaint();
+    }
+
+    /// Switch the editor tab. Sculpt arms a brush (so a left click sculpts, not
+    /// selects); Edit Mesh drops the brush and returns to selection/repair.
+    pub(super) fn switch_editor_tab(
+        &mut self,
+        tab: mesh_editor_overlay::EditorTab,
+        ctx: &egui::Context,
+    ) {
+        use mesh_editor_overlay::EditorTab;
+        if self.editor_tab == tab {
+            return;
+        }
+        self.editor_tab = tab;
+        match tab {
+            EditorTab::EditMesh => {
+                self.abort_sculpt_stroke();
+                self.sculpt.disarm();
+            }
+            EditorTab::Sculpt if self.sculpt.armed.is_none() => {
+                self.toggle_sculpt_tool(SculptToolKind::AddRemove, ctx);
+            }
+            EditorTab::Sculpt => {}
+        }
         self.needs_render = true;
         ctx.request_repaint();
     }
@@ -579,13 +591,10 @@ impl OccluViewApp {
         pick_scene_hit(&camera, viewport_rect, pointer, scene)
     }
 
-    /// The brush cursor following the pointer while a tool is armed. It hugs the
-    /// SURFACE: a ring in the tangent plane of the point under the cursor,
-    /// projected to screen, so the operator sees the actual area the dab will
-    /// affect draped on the geometry — not a flat 2D disc floating over it. The
-    /// fill opacity reads the intensity and the color says what the click does
-    /// (green build / red carve / blue smooth, brighter when Shift forces). Off
-    /// the mesh it falls back to a faint flat ring so the cursor is still shown.
+    /// The brush cursor: a soft glow draped on the surface under the pointer
+    /// while a tool is armed, sized by the brush radius and brightened by the
+    /// intensity. The colour says what the click does (green build / red carve /
+    /// blue smooth, brighter when Shift forces).
     pub(super) fn paint_sculpt_cursor_impl(&self, ui: &egui::Ui, viewport_rect: egui::Rect) {
         let Some(kind) = self.sculpt.armed else {
             return;
@@ -607,42 +616,37 @@ impl OccluViewApp {
         let shift = ui.ctx().input(|input| input.modifiers.shift);
         let color = sculpt_cursor_color(kind, shift);
 
+        let glow = color.gamma_multiply(0.05 + 0.13 * intensity01.clamp(0.0, 1.0));
         if let Some((center, ring)) =
             self.sculpt_surface_ring(camera, viewport_rect, pointer, radius_world)
         {
+            // A soft radial glow draped on the surface: concentric translucent
+            // layers stack toward the centre into a bright core that fades to the
+            // rim — brighter with intensity, wider with size. No hard outline.
             let canvas = ui.painter();
-            // A soft filled disc for the affected area (opacity reads the
-            // intensity), a THIN outer boundary, a fainter inner reticle ring at
-            // the strong core, and a crisp centre dot — a calm, precise cursor
-            // draped on the surface rather than an aggressive solid circle.
-            let fill = color.gamma_multiply(0.04 + 0.10 * intensity01.clamp(0.0, 1.0));
-            canvas.add(egui::Shape::convex_polygon(
-                ring.clone(),
-                fill,
-                egui::Stroke::NONE,
-            ));
-            canvas.add(egui::Shape::closed_line(
-                ring.clone(),
-                egui::Stroke::new(1.1, color.gamma_multiply(0.9)),
-            ));
-            let core: Vec<egui::Pos2> = ring.iter().map(|p| center + (*p - center) * 0.5).collect();
-            canvas.add(egui::Shape::closed_line(
-                core,
-                egui::Stroke::new(0.8, color.gamma_multiply(0.35)),
-            ));
-            canvas.circle_filled(center, 1.6, color);
+            for layer in 0..GLOW_LAYERS {
+                #[allow(clippy::cast_precision_loss)]
+                let scale = 1.0 - layer as f32 / GLOW_LAYERS as f32;
+                let poly: Vec<egui::Pos2> = ring
+                    .iter()
+                    .map(|p| center + (*p - center) * scale)
+                    .collect();
+                canvas.add(egui::Shape::convex_polygon(poly, glow, egui::Stroke::NONE));
+            }
+            canvas.circle_filled(center, 1.5, color.gamma_multiply(0.4 + 0.5 * intensity01));
             return;
         }
 
-        // Off the mesh: a faint flat ring at the on-screen brush size.
+        // Off the mesh: the same glow as flat concentric discs at the pointer.
         let ortho_height = camera.orthographic_height.max(f32::EPSILON);
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
         if radius_px.is_finite() && radius_px >= 2.0 {
-            ui.painter().circle_stroke(
-                pointer,
-                radius_px,
-                egui::Stroke::new(1.0, color.gamma_multiply(0.4)),
-            );
+            let canvas = ui.painter();
+            for layer in 0..GLOW_LAYERS {
+                #[allow(clippy::cast_precision_loss)]
+                let scale = 1.0 - layer as f32 / GLOW_LAYERS as f32;
+                canvas.circle_filled(pointer, radius_px * scale, glow);
+            }
         }
     }
 

@@ -9,13 +9,12 @@ use std::collections::HashMap;
 
 use super::brush_csr::Csr;
 
-/// The area-weighted vertex normal of every id in `scope`, computed in PARALLEL
-/// and conflict-free — each entry reads only its own incident faces, so no two
-/// threads write the same slot and there is no per-face dedup. Returns one
-/// (un-normalized) normal per `scope` entry, aligned with it; the caller
-/// normalizes and writes back. This is the Blender-sculpt normal strategy
-/// (PR #116209): recompute affected normals straight from geometry rather than
-/// scatter face normals through a single-threaded `VectorSet`.
+/// Area-weighted vertex normal for every id in `scope`, computed in PARALLEL
+/// and conflict-free — each entry reads only its own incident faces, so no
+/// per-face dedup is needed. Returns one un-normalized normal per `scope`
+/// entry; the caller normalizes and writes back. Blender-sculpt strategy
+/// (PR #116209): recompute from geometry directly instead of scattering face
+/// normals through a single-threaded `VectorSet`.
 pub(crate) fn scope_area_normals(
     scope: &[usize],
     incident_triangles: &Csr,
@@ -65,11 +64,11 @@ pub(crate) fn smooth_pass_count(strength: f32) -> usize {
     1 + extra
 }
 
-/// Mark every vertex that sits on an open boundary — an undirected edge used by
-/// exactly one triangle — from the welded indices, then propagate the mark to
-/// each boundary vertex's soup duplicates so a pinned corner stays pinned in
-/// every slot. Scan borders and hole rims are boundaries; pinning them stops
-/// Smooth and the auto-smooth from eroding the scan's edge.
+/// Mark every vertex on an open boundary — an undirected edge used by exactly
+/// one triangle — from the welded indices, then propagate to each boundary
+/// vertex's soup duplicates so a pinned corner stays pinned everywhere. Scan
+/// borders and hole rims are boundaries; pinning stops Smooth/auto-smooth from
+/// eroding the scan's edge.
 pub(crate) fn boundary_mask(
     indices: &[u32],
     position_siblings: &Csr,
@@ -111,16 +110,14 @@ pub(crate) fn boundary_mask(
     is_boundary
 }
 
-/// Per-vertex anti-inversion step budget: the shortest incident welded edge,
-/// then reduced to the minimum across each soup cluster. A non-representative
-/// soup duplicate has an EMPTY welded ring (only the cluster representative
-/// carries the real adjacency), so [`shortest_incident_edge`] would hand it the
-/// generous isolated-vertex fallback; propagating the cluster minimum gives
-/// every duplicate the representative's tight, correct budget. Without this a
-/// higher-id duplicate — captured by the same spatial query, since all copies
-/// share a position — re-applies a clay dab at the loose fallback budget and
-/// overwrites the representative's correctly clamped move, silently defeating
-/// the anti-inversion guard on ordinary STL soup.
+/// Per-vertex anti-inversion step budget: shortest incident welded edge,
+/// reduced to the minimum across each soup cluster. A non-representative
+/// duplicate has an EMPTY welded ring, so [`shortest_incident_edge`] would
+/// give it the generous isolated-vertex fallback instead of the
+/// representative's tight budget. Without this propagation, a duplicate —
+/// captured by the same spatial query since all copies share a position —
+/// re-applies a dab at the loose fallback and overwrites the representative's
+/// clamped move, silently defeating the anti-inversion guard on STL soup.
 pub(crate) fn compute_step_budget(
     positions: &[Vec3],
     adjacency: &Csr,
@@ -143,13 +140,12 @@ pub(crate) fn compute_step_budget(
 }
 
 /// Shortest edge from `here` to any of `neighbors`' positions, capped (not
-/// floored) at 1mm so a single dab cannot take an oversized jump on a
-/// sparse/low-poly mesh. A genuinely SMALL edge is returned unfloored: a fine
-/// occlusal groove or margin line can have real neighbor spacing well under a
-/// coarse floor, and flooring it would inflate `clamp_step`'s budget past what
-/// that local topology can tolerate, defeating the anti-inversion guard. An
-/// isolated vertex (no finite neighbor distance) falls back to a generous
-/// budget so its step is never zero-clamped by a topology fluke.
+/// floored) at 1mm so a single dab cannot jump too far on a sparse/low-poly
+/// mesh. A genuinely SMALL edge is returned unfloored: a fine occlusal groove
+/// or margin line can have real spacing well under a coarse floor, and
+/// flooring would inflate `clamp_step`'s budget past what the local topology
+/// tolerates. An isolated vertex (no finite neighbor distance) falls back to
+/// a generous budget so its step is never zero-clamped by a topology fluke.
 pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[u32], here: Vec3) -> f32 {
     let shortest = neighbors
         .iter()
@@ -163,10 +159,10 @@ pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[u32], here
     shortest.min(1.0)
 }
 
-/// Whether the mesh is a SINGLE connected surface (over welded rings + soup
-/// sibling links). A dab on a single-component scan — the overwhelmingly common
-/// case — can skip the per-dab component flood fill entirely, since there is no
-/// other surface to accidentally drag along. Computed once at prepare.
+/// Whether the mesh is a SINGLE connected surface (welded rings + soup sibling
+/// links). A dab on a single-component scan — the common case — can skip the
+/// per-dab flood fill entirely, since there is nothing else to drag along.
+/// Computed once at prepare.
 pub(crate) fn is_single_component(
     adjacency: &Csr,
     position_siblings: &Csr,
@@ -194,6 +190,15 @@ pub(crate) fn is_single_component(
         }
     }
     reached == vertex_count
+}
+
+/// Hermite smoothstep ramping 0→1 as `t` goes 0→`edge`, then held at 1.
+pub(crate) fn smoothstep(edge: f32, t: f32) -> f32 {
+    if edge <= 0.0 {
+        return if t > 0.0 { 1.0 } else { 0.0 };
+    }
+    let s = (t / edge).clamp(0.0, 1.0);
+    s * s * (3.0 - 2.0 * s)
 }
 
 /// Smooth radial falloff: 1 at the center, 0 at/beyond `radius`, `C1`-smooth at
