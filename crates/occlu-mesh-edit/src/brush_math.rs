@@ -4,7 +4,47 @@
 //! shortest-incident-edge probe, and the radial falloff.
 
 use glam::Vec3;
+use rayon::prelude::*;
 use std::collections::HashMap;
+
+use super::brush_csr::Csr;
+
+/// The area-weighted vertex normal of every id in `scope`, computed in PARALLEL
+/// and conflict-free — each entry reads only its own incident faces, so no two
+/// threads write the same slot and there is no per-face dedup. Returns one
+/// (un-normalized) normal per `scope` entry, aligned with it; the caller
+/// normalizes and writes back. This is the Blender-sculpt normal strategy
+/// (PR #116209): recompute affected normals straight from geometry rather than
+/// scatter face normals through a single-threaded `VectorSet`.
+pub(crate) fn scope_area_normals(
+    scope: &[usize],
+    incident_triangles: &Csr,
+    indices: &[u32],
+    positions: &[Vec3],
+) -> Vec<Vec3> {
+    let vertex_count = positions.len();
+    scope
+        .par_iter()
+        .map(|&vertex_id| {
+            let mut sum = Vec3::ZERO;
+            for &triangle_index in incident_triangles.row(vertex_id) {
+                let base = triangle_index as usize * 3;
+                let Some(slice) = indices.get(base..base + 3) else {
+                    continue;
+                };
+                let (a, b, c) = (slice[0] as usize, slice[1] as usize, slice[2] as usize);
+                if a >= vertex_count || b >= vertex_count || c >= vertex_count {
+                    continue;
+                }
+                let face = (positions[b] - positions[a]).cross(positions[c] - positions[a]);
+                if face.is_finite() {
+                    sum += face;
+                }
+            }
+            sum
+        })
+        .collect()
+}
 
 /// Most Laplacian passes a single forced (Shift) dab runs. High so Shift
 /// smooths CARDINALLY — enough to iron a rough scan patch nearly flat in one
@@ -32,7 +72,7 @@ pub(crate) fn smooth_pass_count(strength: f32) -> usize {
 /// Smooth and the auto-smooth from eroding the scan's edge.
 pub(crate) fn boundary_mask(
     indices: &[u32],
-    position_siblings: &[Vec<usize>],
+    position_siblings: &Csr,
     vertex_count: usize,
 ) -> Vec<bool> {
     let mut edge_uses: HashMap<(u32, u32), u32> = HashMap::with_capacity(indices.len());
@@ -60,7 +100,8 @@ pub(crate) fn boundary_mask(
     }
     for vertex_id in 0..vertex_count {
         if is_boundary[vertex_id] {
-            for &sibling in &position_siblings[vertex_id] {
+            for &sibling in position_siblings.row(vertex_id) {
+                let sibling = sibling as usize;
                 if sibling < vertex_count {
                     is_boundary[sibling] = true;
                 }
@@ -82,17 +123,17 @@ pub(crate) fn boundary_mask(
 /// the anti-inversion guard on ordinary STL soup.
 pub(crate) fn compute_step_budget(
     positions: &[Vec3],
-    adjacency: &[Vec<usize>],
-    position_siblings: &[Vec<usize>],
+    adjacency: &Csr,
+    position_siblings: &Csr,
 ) -> Vec<f32> {
     let raw: Vec<f32> = (0..positions.len())
-        .map(|index| shortest_incident_edge(positions, &adjacency[index], positions[index]))
+        .map(|index| shortest_incident_edge(positions, adjacency.row(index), positions[index]))
         .collect();
     (0..positions.len())
         .map(|index| {
             let mut budget = raw[index];
-            for &sibling in &position_siblings[index] {
-                if let Some(&value) = raw.get(sibling) {
+            for &sibling in position_siblings.row(index) {
+                if let Some(&value) = raw.get(sibling as usize) {
                     budget = budget.min(value);
                 }
             }
@@ -109,10 +150,10 @@ pub(crate) fn compute_step_budget(
 /// that local topology can tolerate, defeating the anti-inversion guard. An
 /// isolated vertex (no finite neighbor distance) falls back to a generous
 /// budget so its step is never zero-clamped by a topology fluke.
-pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[usize], here: Vec3) -> f32 {
+pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[u32], here: Vec3) -> f32 {
     let shortest = neighbors
         .iter()
-        .filter_map(|&neighbor| positions.get(neighbor))
+        .filter_map(|&neighbor| positions.get(neighbor as usize))
         .map(|&position| position.distance(here))
         .filter(|length| length.is_finite() && *length > 0.0)
         .fold(f32::MAX, f32::min);
@@ -127,8 +168,8 @@ pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[usize], he
 /// case — can skip the per-dab component flood fill entirely, since there is no
 /// other surface to accidentally drag along. Computed once at prepare.
 pub(crate) fn is_single_component(
-    adjacency: &[Vec<usize>],
-    position_siblings: &[Vec<usize>],
+    adjacency: &Csr,
+    position_siblings: &Csr,
     vertex_count: usize,
 ) -> bool {
     if vertex_count == 0 {
@@ -139,10 +180,12 @@ pub(crate) fn is_single_component(
     visited[0] = true;
     let mut reached = 1usize;
     while let Some(vertex_id) = stack.pop() {
-        for &neighbor in adjacency[vertex_id]
+        for &neighbor in adjacency
+            .row(vertex_id)
             .iter()
-            .chain(position_siblings[vertex_id].iter())
+            .chain(position_siblings.row(vertex_id).iter())
         {
+            let neighbor = neighbor as usize;
             if neighbor < vertex_count && !visited[neighbor] {
                 visited[neighbor] = true;
                 reached += 1;

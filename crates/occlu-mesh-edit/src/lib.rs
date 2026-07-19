@@ -24,6 +24,7 @@ mod adjacency;
 mod attributes;
 mod bridge_split;
 mod brush;
+mod brush_csr;
 mod brush_index;
 mod brush_math;
 mod cap_delaunay;
