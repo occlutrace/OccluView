@@ -192,6 +192,68 @@ pub(crate) fn is_single_component(
     reached == vertex_count
 }
 
+/// Whether any triangle incident to `vertex_id` flipped orientation vs its
+/// pre-dab geometry: pre positions for the moved region (stamped `generation`),
+/// current positions elsewhere. The post-dab inversion guard's per-vertex test.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn on_flipped_triangle(
+    vertex_id: usize,
+    generation: u32,
+    incident: &Csr,
+    indices: &[u32],
+    positions: &[Vec3],
+    pre_position: &[Vec3],
+    stamp: &[u32],
+) -> bool {
+    let vertex_count = positions.len();
+    let pre = |v: usize| {
+        if stamp[v] == generation {
+            pre_position[v]
+        } else {
+            positions[v]
+        }
+    };
+    for &triangle in incident.row(vertex_id) {
+        let base = triangle as usize * 3;
+        let Some(slice) = indices.get(base..base + 3) else {
+            continue;
+        };
+        let (a, b, c) = (slice[0] as usize, slice[1] as usize, slice[2] as usize);
+        if a >= vertex_count || b >= vertex_count || c >= vertex_count {
+            continue;
+        }
+        let normal_pre = (pre(b) - pre(a)).cross(pre(c) - pre(a));
+        let normal_now = (positions[b] - positions[a]).cross(positions[c] - positions[a]);
+        if normal_pre.length_squared() > f32::EPSILON && normal_now.dot(normal_pre) < 0.0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Recompute `max_step` for `touched` from current positions (shortest incident
+/// edge, then the soup-cluster minimum), keeping the anti-inversion budget in
+/// step with the moved geometry instead of stale prepare-time edges.
+pub(crate) fn refresh_step_budget(
+    touched: &[usize],
+    positions: &[Vec3],
+    adjacency: &Csr,
+    siblings: &Csr,
+    max_step: &mut [f32],
+) {
+    for &vertex_id in touched {
+        max_step[vertex_id] =
+            shortest_incident_edge(positions, adjacency.row(vertex_id), positions[vertex_id]);
+    }
+    for &vertex_id in touched {
+        let mut budget = max_step[vertex_id];
+        for &sibling in siblings.row(vertex_id) {
+            budget = budget.min(max_step[sibling as usize]);
+        }
+        max_step[vertex_id] = budget;
+    }
+}
+
 /// Hermite smoothstep ramping 0→1 as `t` goes 0→`edge`, then held at 1.
 pub(crate) fn smoothstep(edge: f32, t: f32) -> f32 {
     if edge <= 0.0 {
