@@ -268,6 +268,141 @@ fn stroke_application_is_deterministic() {
     }
 }
 
+// Regression for the anti-inversion guard's budget floor (issue review
+// 2026-07-18): a genuinely small welded edge must NOT be floored to 0.05mm,
+// or `clamp_step` permits a larger step than the local topology can
+// tolerate.
+#[test]
+fn shortest_incident_edge_does_not_floor_a_genuinely_small_edge() {
+    let positions = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.01, 0.0, 0.0)];
+    let result = shortest_incident_edge(&positions, &[1], positions[0]);
+    assert!(
+        (result - 0.01).abs() < 1e-6,
+        "a real 0.01mm neighbor edge must not be floored to 0.05mm: got {result}"
+    );
+}
+
+#[test]
+fn shortest_incident_edge_caps_a_large_edge_at_one_millimeter() {
+    let positions = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(50.0, 0.0, 0.0)];
+    let result = shortest_incident_edge(&positions, &[1], positions[0]);
+    assert!(
+        (result - 1.0).abs() < 1e-6,
+        "a huge edge should still be capped at 1mm so one stroke can't take an oversized jump: got {result}"
+    );
+}
+
+#[test]
+fn shortest_incident_edge_falls_back_generously_when_isolated() {
+    let positions = vec![Vec3::new(0.0, 0.0, 0.0)];
+    let result = shortest_incident_edge(&positions, &[], positions[0]);
+    assert!(
+        (result - 1.0).abs() < 1e-6,
+        "an isolated vertex (no neighbors to violate) should fall back to a generous budget: got {result}"
+    );
+}
+
+/// A dense, fine-scale patch -- realistic for a fine occlusal groove or
+/// margin line, where the OLD 0.05mm floor on `shortest_incident_edge`
+/// inflated the anti-inversion budget past what this topology can tolerate.
+fn dense_patch(spacing: f32) -> MeshEditBuffers {
+    let n = 7usize;
+    let mut vertices = Vec::with_capacity(n * n);
+    for j in 0..n {
+        for i in 0..n {
+            let x = (i as f32 - (n as f32 - 1.0) / 2.0) * spacing;
+            let y = (j as f32 - (n as f32 - 1.0) / 2.0) * spacing;
+            vertices.push(v([x, y, 0.0]));
+        }
+    }
+    let mut indices = Vec::with_capacity((n - 1) * (n - 1) * 6);
+    let idx = |i: usize, j: usize| (j * n + i) as u32;
+    for j in 0..n - 1 {
+        for i in 0..n - 1 {
+            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
+            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
+        }
+    }
+    let mut mesh = MeshEditBuffers {
+        vertices,
+        indices,
+        topology: MeshTopology::TriangleMesh,
+    };
+    crate::recompute_all_normals(&mut mesh.vertices, &mesh.indices).expect("seed normals");
+    mesh
+}
+
+#[test]
+fn guard_scales_the_step_budget_with_a_genuinely_tiny_edge_not_the_old_floor() {
+    let spacing = 0.02_f32;
+    let mesh = dense_patch(spacing);
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    let center_index = 3 * 7 + 3;
+    let before_z = mesh.vertices[center_index].position[2];
+
+    let outcome = session.apply_stroke(center_stroke(0.1, 1.0), BrushMode::Add);
+    assert!(!outcome.touched_vertices.is_empty());
+    let after_z = session.position(center_index).z;
+    let step = (after_z - before_z).abs();
+
+    // Correct budget: spacing * MAX_STEP_FRACTION_OF_EDGE (0.4) = 0.008mm.
+    // Pre-fix, the 0.05mm floor would have permitted up to 0.02mm
+    // (0.05 * 0.4) -- 2.5x too large for this topology.
+    let expected_budget = spacing * 0.4;
+    assert!(
+        (step - expected_budget).abs() < 1e-4,
+        "expected the clamped step ({step}mm) to equal the edge-proportional \
+         budget ({expected_budget}mm), not the old floored budget (0.02mm)"
+    );
+}
+
+// Regression for the spatial-grid staleness bug (issue review 2026-07-18):
+// `VertexGrid` indexes positions as of its last build, so a session that
+// drags a vertex far without rebuilding would keep searching near its STALE
+// original bucket and silently miss it once the cursor follows it there.
+#[test]
+fn apply_stroke_still_finds_a_vertex_after_sustained_dragging_far_from_its_start() {
+    let mesh = bumpy_patch(0.0); // flat patch, easy to reason about
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    let center_index = 5 * 11 + 5;
+
+    // Drag the center vertex repeatedly, the way a sustained interactive
+    // drag would (one BrushStroke per input frame, per the module doc) --
+    // far enough to cross many grid cells (cell size is the mesh's own bbox
+    // diagonal / 96, a small fraction of a millimeter here).
+    for _ in 0..8 {
+        session.apply_stroke(
+            center_stroke(2.0, 1.0),
+            BrushMode::Drag {
+                delta: [1.0, 0.0, 0.0],
+            },
+        );
+    }
+    let moved_position = session.position(center_index);
+    assert!(
+        moved_position.x > 1.0,
+        "the vertex should have dragged well past one grid cell: {moved_position}"
+    );
+
+    // The real test: a stroke on the SAME session, centered on the vertex's
+    // NEW location. This only succeeds if the spatial grid tracked the
+    // drift -- a grid indexed only by the pre-drag positions would keep the
+    // vertex bucketed near its stale original spot, many cells away from
+    // this query's search window, and silently miss it.
+    let outcome = session.apply_stroke(
+        BrushStroke {
+            center: moved_position.to_array(),
+            radius_mm: 0.5,
+            strength: 1.0,
+        },
+        BrushMode::Smooth,
+    );
+    assert!(
+        outcome.touched_vertices.contains(&center_index),
+        "a stroke centered on the vertex's current (dragged) position must still find it"
+    );
+}
+
 fn bbox_diagonal(mesh: &MeshEditBuffers) -> f32 {
     let mut lo = Vec3::splat(f32::MAX);
     let mut hi = Vec3::splat(f32::MIN);

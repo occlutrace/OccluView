@@ -70,6 +70,13 @@ impl VertexGrid {
         }
     }
 
+    /// The grid's cell size, in mm — the unit a session measures vertex
+    /// drift against to know when a rebuild is due (see the struct doc's
+    /// rebuild-cadence contract).
+    pub(crate) fn cell_size(&self) -> f32 {
+        self.cell_size
+    }
+
     /// Every vertex id within `radius` of `center` (by cell coverage — a
     /// conservative superset; callers filter by exact distance). Deterministic
     /// ascending order.
