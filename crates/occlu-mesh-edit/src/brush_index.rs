@@ -96,11 +96,25 @@ impl VertexGrid {
         }
     }
 
-    /// The grid's cell size, in mm — the unit a session measures vertex
-    /// drift against to know when a rebuild is due (see the struct doc's
-    /// rebuild-cadence contract).
-    pub(crate) fn cell_size(&self) -> f32 {
-        self.cell_size
+    /// Move `vertex_id` from the cell of `from` to the cell of `to`, if they
+    /// differ. This keeps the index exact as a sculpt stroke moves vertices —
+    /// O(touched) per dab — instead of periodically rebuilding the whole grid
+    /// (O(n), the stall a big scan showed). A move within one cell is a no-op
+    /// beyond the two key computes, so a coherent brush pays almost nothing.
+    pub(crate) fn relocate(&mut self, vertex_id: usize, from: Vec3, to: Vec3) {
+        let from_key = cell_key(from, self.origin, self.cell_size);
+        let to_key = cell_key(to, self.origin, self.cell_size);
+        if from_key == to_key {
+            return;
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let id = vertex_id as u32;
+        if let Some(bucket) = self.cells.get_mut(&from_key) {
+            if let Some(index) = bucket.iter().position(|&existing| existing == id) {
+                bucket.swap_remove(index);
+            }
+        }
+        self.cells.entry(to_key).or_default().push(id);
     }
 
     /// Every vertex id within `radius` of `center` (by cell coverage — a

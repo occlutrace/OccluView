@@ -47,7 +47,9 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::brush_index::VertexGrid;
-use super::brush_math::{boundary_mask, compute_step_budget, falloff, smooth_pass_count};
+use super::brush_math::{
+    boundary_mask, compute_step_budget, falloff, is_single_component, smooth_pass_count,
+};
 use super::cap_support::build_vertex_adjacency;
 use super::topology::{canonical_position_key, weld_soup_topology};
 use super::{
@@ -88,11 +90,6 @@ const FRONT_BUCKET_TRUST_FRACTION: f32 = 0.6;
 /// A vertex with fewer than this many welded neighbors is a needle/spike tip,
 /// not a real interior vertex; Smooth and the auto-relax leave it alone.
 const MIN_RING_FOR_RELAX: usize = 3;
-/// Grid-drift rebuild threshold, as a fraction of the grid's own cell size.
-/// Once a vertex has drifted more than this fraction of a cell width, its true
-/// position may have crossed into a cell `query_radius` no longer searches, so
-/// the index is rebuilt before it could silently drop a moved vertex.
-const GRID_REBUILD_DRIFT_FRACTION_OF_CELL: f32 = 0.5;
 /// Grid cells spanned by one brush radius. The grid's cell size is kept at
 /// `radius / this` so a radius query only ever scans a small, bounded cube of
 /// cells regardless of how the brush size compares to the mesh scale — the fix
@@ -150,6 +147,12 @@ pub struct BrushSession {
     /// updated in place as dabs apply). Same length and order as the mesh
     /// `BrushSession::prepare` was built from.
     vertices: Vec<EditVertex>,
+    /// Dense struct-of-arrays mirror of `vertices`' positions, kept in sync by
+    /// [`Self::set_position`]. Every hot pass gathers positions by scattered
+    /// vertex id; reading them from this 12-byte-per-vertex array instead of the
+    /// ~40-byte interleaved `EditVertex` cuts the cache traffic that dominates a
+    /// big-brush dab roughly threefold.
+    positions: Vec<Vec3>,
     /// The ORIGINAL (unwelded) triangle indices — returned verbatim by `finish`,
     /// since brush dabs only move vertices, never retopologize.
     indices: Vec<u32>,
@@ -168,23 +171,22 @@ pub struct BrushSession {
     /// triangle). Boundary vertices are pinned by Smooth and by the auto-relax
     /// so the scan's outer edge and any hole rims never erode.
     is_boundary: Vec<bool>,
+    /// Whether the whole mesh is one connected surface. When true, a dab can
+    /// skip the per-dab connected-component flood fill (there is nothing else
+    /// to avoid dragging along) — the common single-scan case.
+    single_component: bool,
     /// Shortest welded-neighbor edge length per vertex, captured at prepare
     /// time — the anti-inversion guard's per-vertex step budget.
     max_step: Vec<f32>,
     /// Spatial index over vertex positions. Its cell size is matched to the
     /// current brush radius (see [`Self::sync_grid`]) so a query's cell-scan
-    /// stays cheap for any brush size, and it is rebuilt from live positions
-    /// whenever drift could otherwise make a query miss a moved vertex.
+    /// stays cheap for any brush size; moved vertices are relocated in it
+    /// incrementally by [`Self::set_position`], so it never needs an O(n)
+    /// drift rebuild mid-stroke.
     grid: VertexGrid,
     /// The brush radius the grid's cell size is currently tuned for; a big
     /// change (a size-slider adjustment) triggers a rebuild.
     grid_radius: f32,
-    /// Vertex positions as of `grid`'s last build/rebuild — the reference
-    /// [`Self::sync_grid`] measures live-position drift against.
-    grid_reference_positions: Vec<Vec3>,
-    /// Farthest any vertex has drifted from `grid_reference_positions` since
-    /// the last grid build.
-    max_drift_since_grid_build: f32,
     /// Reusable visited-stamp buffer for the per-dab component flood fill AND
     /// the per-dab normal accumulation, so neither allocates a fresh
     /// `HashSet`/`HashMap` per dab (the cost that made a big brush stutter on a
@@ -253,6 +255,7 @@ impl BrushSession {
 
         let is_boundary =
             boundary_mask(&adjacency_source.indices, &position_siblings, vertex_count);
+        let single_component = is_single_component(&adjacency, &position_siblings, vertex_count);
 
         let positions: Vec<Vec3> = mesh
             .vertices
@@ -264,17 +267,17 @@ impl BrushSession {
 
         Ok(Self {
             vertices: mesh.vertices.clone(),
+            positions,
             indices: mesh.indices.clone(),
             adjacency,
             incident_triangles,
             position_siblings,
             is_boundary,
+            single_component,
             max_step,
             grid,
             // 0 forces the first dab to size the grid to its actual radius.
             grid_radius: 0.0,
-            grid_reference_positions: positions,
-            max_drift_since_grid_build: 0.0,
             component_stamp: vec![0; vertex_count],
             normal_accum: vec![Vec3::ZERO; vertex_count],
             triangle_stamp: vec![0; mesh.indices.len() / 3],
@@ -348,7 +351,13 @@ impl BrushSession {
                 (weight > 0.0).then_some((vertex_id, weight))
             })
             .collect();
-        let weighted = self.restrict_to_component(weighted, center);
+        // A single-surface scan (the common case) has no other component to
+        // drag along, so skip the per-dab flood fill entirely.
+        let weighted = if self.single_component {
+            weighted
+        } else {
+            self.restrict_to_component(weighted, center)
+        };
         (!weighted.is_empty()).then_some((weighted, strength))
     }
 
@@ -431,11 +440,11 @@ impl BrushSession {
     /// far enough that a query could miss a moved one. Sizing the cell to the
     /// radius is what keeps a big brush from scanning millions of empty cells.
     fn sync_grid(&mut self, radius: f32) {
-        let radius_stale =
-            self.grid_radius <= 0.0 || !(0.6..=1.7).contains(&(radius / self.grid_radius));
-        let drift_stale = self.max_drift_since_grid_build
-            > self.grid.cell_size() * GRID_REBUILD_DRIFT_FRACTION_OF_CELL;
-        if !radius_stale && !drift_stale {
+        // ONLY a brush-radius change (which changes the cell size) forces a full
+        // rebuild — a rare, deliberate size-slider move. Vertex motion during a
+        // stroke is tracked incrementally in `set_position`, so there is no
+        // per-dab O(n) drift rebuild (the stall a big scan showed).
+        if self.grid_radius > 0.0 && (0.6..=1.7).contains(&(radius / self.grid_radius)) {
             return;
         }
         let desired_cell = (radius / GRID_CELLS_ACROSS_RADIUS).max(f32::MIN_POSITIVE);
@@ -444,14 +453,8 @@ impl BrushSession {
             .iter()
             .map(|v| Vec3::from_array(v.position))
             .collect();
-        // Refresh the anti-inversion budget against the now-deformed geometry
-        // (edges stretch when building, shrink when carving), so the clamp stays
-        // honest across a long stroke instead of trusting the prepare-time edges.
-        self.max_step = compute_step_budget(&positions, &self.adjacency, &self.position_siblings);
         self.grid = VertexGrid::build_with_cell_size(&positions, desired_cell);
         self.grid_radius = radius;
-        self.grid_reference_positions = positions;
-        self.max_drift_since_grid_build = 0.0;
     }
 
     /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the whole brushed
@@ -634,17 +637,18 @@ impl BrushSession {
         &self.vertices
     }
 
-    /// Current (live) position of a vertex mid-session.
+    /// Current (live) position of a vertex mid-session — read from the dense
+    /// `positions` mirror.
     pub(crate) fn position(&self, vertex_id: usize) -> Vec3 {
-        Vec3::from_array(self.vertices[vertex_id].position)
+        self.positions[vertex_id]
     }
 
     fn set_position(&mut self, vertex_id: usize, position: Vec3) {
+        let previous = self.positions[vertex_id];
+        self.positions[vertex_id] = position;
         self.vertices[vertex_id].position = position.to_array();
-        let drift = position.distance(self.grid_reference_positions[vertex_id]);
-        if drift > self.max_drift_since_grid_build {
-            self.max_drift_since_grid_build = drift;
-        }
+        // Keep the spatial index exact incrementally — no O(n) rebuild.
+        self.grid.relocate(vertex_id, previous, position);
     }
 
     /// Recompute normals for exactly the touched vertices and their one-ring (a

@@ -15,7 +15,8 @@
   toward the camera (robust to a scan's inverted-normal patches) and evens the
   triangulation as it goes, so it builds and carves cleanly instead of leaving
   potholes or spikes; Smooth flattens strongly while pinning the scan's open
-  edges. Replaces the earlier one-click Smooth-selection button.
+  edges. Press 1 (Add/Remove) or 2 (Smooth) in the Mesh Editor to switch tools.
+  Replaces the earlier one-click Smooth-selection button.
 - Fixed DCM/HPS scans whose embedded JPEG texture atlas had its chroma
   swapped at the source, decoding blue where gingiva/enamel should read warm
   — and tightened the correction so it only fires on a whole-texture bias,

@@ -165,6 +165,26 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
+    /// Edit-Mesh-only sculpt hotkeys: `1` arms the Add/Remove clay knife, `2`
+    /// arms Smooth (pressing the armed one again disarms, same as the button).
+    /// Consumed only while a mesh-edit session is open and no text field has
+    /// keyboard focus, so the keys keep their normal meaning everywhere else.
+    /// Returns `true` when a key was handled.
+    pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
+        if !self.edit_mode.has_active_session() || ctx.wants_keyboard_input() {
+            return false;
+        }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)) {
+            self.toggle_sculpt_tool(SculptToolKind::AddRemove, ctx);
+            return true;
+        }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num2)) {
+            self.toggle_sculpt_tool(SculptToolKind::Smooth, ctx);
+            return true;
+        }
+        false
+    }
+
     /// One frame of the sculpt gesture. Returns `true` only when the PRIMARY
     /// button is actively driving a sculpt this frame, so RMB orbit / MMB
     /// retarget / wheel zoom (none of which set the primary) keep working while
@@ -587,17 +607,30 @@ impl OccluViewApp {
         let shift = ui.ctx().input(|input| input.modifiers.shift);
         let color = sculpt_cursor_color(kind, shift);
 
-        if let Some(ring) = self.sculpt_surface_ring(camera, viewport_rect, pointer, radius_world) {
-            let fill = color.gamma_multiply(0.06 + 0.18 * intensity01.clamp(0.0, 1.0));
-            ui.painter().add(egui::Shape::convex_polygon(
+        if let Some((center, ring)) =
+            self.sculpt_surface_ring(camera, viewport_rect, pointer, radius_world)
+        {
+            let canvas = ui.painter();
+            // A soft filled disc for the affected area (opacity reads the
+            // intensity), a THIN outer boundary, a fainter inner reticle ring at
+            // the strong core, and a crisp centre dot — a calm, precise cursor
+            // draped on the surface rather than an aggressive solid circle.
+            let fill = color.gamma_multiply(0.04 + 0.10 * intensity01.clamp(0.0, 1.0));
+            canvas.add(egui::Shape::convex_polygon(
                 ring.clone(),
                 fill,
                 egui::Stroke::NONE,
             ));
-            ui.painter().add(egui::Shape::closed_line(
-                ring,
-                egui::Stroke::new(1.5, color),
+            canvas.add(egui::Shape::closed_line(
+                ring.clone(),
+                egui::Stroke::new(1.1, color.gamma_multiply(0.9)),
             ));
+            let core: Vec<egui::Pos2> = ring.iter().map(|p| center + (*p - center) * 0.5).collect();
+            canvas.add(egui::Shape::closed_line(
+                core,
+                egui::Stroke::new(0.8, color.gamma_multiply(0.35)),
+            ));
+            canvas.circle_filled(center, 1.6, color);
             return;
         }
 
@@ -608,22 +641,22 @@ impl OccluViewApp {
             ui.painter().circle_stroke(
                 pointer,
                 radius_px,
-                egui::Stroke::new(1.0, color.gamma_multiply(0.5)),
+                egui::Stroke::new(1.0, color.gamma_multiply(0.4)),
             );
         }
     }
 
-    /// The brush ring draped on the surface under `pointer`: a circle of
-    /// `radius_world` in the tangent plane of the hit point, projected to
-    /// screen. `None` when the cursor is off the mesh (or a point fails to
-    /// project), so the caller draws the flat fallback.
+    /// The brush ring draped on the surface under `pointer`: the projected
+    /// screen centre plus a circle of `radius_world` in the tangent plane of the
+    /// hit point, projected to screen. `None` when the cursor is off the mesh
+    /// (or a point fails to project), so the caller draws the flat fallback.
     fn sculpt_surface_ring(
         &self,
         camera: &Camera,
         viewport_rect: egui::Rect,
         pointer: egui::Pos2,
         radius_world: f32,
-    ) -> Option<Vec<egui::Pos2>> {
+    ) -> Option<(egui::Pos2, Vec<egui::Pos2>)> {
         let scene = self.scene.as_ref()?;
         let hit = pick_scene_hit(camera, viewport_rect, pointer, scene)?;
         let entry = scene.meshes().get(hit.layer_index)?;
@@ -639,6 +672,7 @@ impl OccluViewApp {
         }
         let v = normal.cross(u).normalize_or_zero();
 
+        let (center, _) = project_world_to_viewport(camera, viewport_rect, hit.point)?;
         let mut points = Vec::with_capacity(SCULPT_CURSOR_SEGMENTS);
         for segment in 0..SCULPT_CURSOR_SEGMENTS {
             #[allow(clippy::cast_precision_loss)]
@@ -647,7 +681,7 @@ impl OccluViewApp {
             let (screen, _depth) = project_world_to_viewport(camera, viewport_rect, world)?;
             points.push(screen);
         }
-        Some(points)
+        Some((center, points))
     }
 }
 

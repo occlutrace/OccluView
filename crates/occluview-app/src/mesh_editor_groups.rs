@@ -265,9 +265,9 @@ pub(super) fn sculpt(
             ui,
             width,
             EditorIcon::SculptAdd,
-            "Add / Remove",
+            "Add / Remove  [1]",
             "Build material up by dragging on the scan; hold Shift to carve it away. \
-             Shift+wheel resizes, Ctrl+wheel changes intensity.",
+             Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 1.",
             enabled,
             state.sculpt_armed == Some(SculptToolKind::AddRemove),
         )
@@ -279,9 +279,9 @@ pub(super) fn sculpt(
             ui,
             width,
             EditorIcon::Smooth,
-            "Smooth",
+            "Smooth  [2]",
             "Relax the surface by dragging on the scan; hold Shift to force maximum smoothing. \
-             Shift+wheel resizes, Ctrl+wheel changes intensity.",
+             Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 2.",
             enabled,
             state.sculpt_armed == Some(SculptToolKind::Smooth),
         )
