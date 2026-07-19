@@ -6,8 +6,10 @@
 use glam::Vec3;
 use std::collections::HashMap;
 
-/// Most Laplacian passes a single forced (Shift) dab runs.
-pub(crate) const MAX_SMOOTH_PASSES: usize = 8;
+/// Most Laplacian passes a single forced (Shift) dab runs. High so Shift
+/// smooths CARDINALLY — enough to iron a rough scan patch nearly flat in one
+/// held stroke.
+pub(crate) const MAX_SMOOTH_PASSES: usize = 16;
 
 /// Number of whole Laplacian passes one Smooth dab runs, from its clamped
 /// strength: at least one, up to [`MAX_SMOOTH_PASSES`] at full strength (the
@@ -118,6 +120,37 @@ pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[usize], he
         return 1.0;
     }
     shortest.min(1.0)
+}
+
+/// Whether the mesh is a SINGLE connected surface (over welded rings + soup
+/// sibling links). A dab on a single-component scan — the overwhelmingly common
+/// case — can skip the per-dab component flood fill entirely, since there is no
+/// other surface to accidentally drag along. Computed once at prepare.
+pub(crate) fn is_single_component(
+    adjacency: &[Vec<usize>],
+    position_siblings: &[Vec<usize>],
+    vertex_count: usize,
+) -> bool {
+    if vertex_count == 0 {
+        return true;
+    }
+    let mut visited = vec![false; vertex_count];
+    let mut stack = vec![0usize];
+    visited[0] = true;
+    let mut reached = 1usize;
+    while let Some(vertex_id) = stack.pop() {
+        for &neighbor in adjacency[vertex_id]
+            .iter()
+            .chain(position_siblings[vertex_id].iter())
+        {
+            if neighbor < vertex_count && !visited[neighbor] {
+                visited[neighbor] = true;
+                reached += 1;
+                stack.push(neighbor);
+            }
+        }
+    }
+    reached == vertex_count
 }
 
 /// Smooth radial falloff: 1 at the center, 0 at/beyond `radius`, `C1`-smooth at

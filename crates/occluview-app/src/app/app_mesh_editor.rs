@@ -8,6 +8,13 @@ use crate::viewer::lasso_capture::{self, LassoEvent};
 
 impl OccluViewApp {
     pub(super) fn handle_edit_shortcuts_impl(&mut self, ctx: &egui::Context) {
+        // Sculpt tool hotkeys (1 = Add/Remove, 2 = Smooth) — Edit-Mesh only,
+        // handled before the other shortcuts so they claim the digit keys first.
+        if self.handle_sculpt_hotkeys(ctx) {
+            ctx.request_repaint();
+            return;
+        }
+
         // Consume a shortcut only when the editor can actually act on it, so
         // other contexts keep their Cmd+A/Z/Y when nothing is editable.
         let select_all_pressed = self.edit_mode.has_active_session()
