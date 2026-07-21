@@ -12,7 +12,7 @@ use crate::probe_section::SliceProbe;
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::scene::{SceneSection, SectionPlane};
-use occluview_core::{Aabb, SceneMeshId};
+use occluview_core::{Aabb, Camera, SceneMeshId};
 
 const SLICE_ZOOM_STEP: f32 = 1.15;
 const SLICE_ZOOM_MIN: f32 = 0.4;
@@ -56,6 +56,25 @@ impl Default for SectionPrefs {
 pub(super) struct SectionViewFrame {
     pose: DiscPose,
     normal: Vec3,
+}
+
+/// The current primary viewport orientation, reduced to the three stable axes
+/// needed by the section-panel cue. The section image itself stays orthographic
+/// and plane-aligned; this is only a live spatial reference for the operator.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SectionMainView {
+    right: Vec3,
+    up: Vec3,
+    forward: Vec3,
+}
+
+impl SectionMainView {
+    pub(super) fn from_camera(camera: Camera) -> Self {
+        let forward = camera.view_direction().normalize_or_zero();
+        let up = camera.view_up().normalize_or_zero();
+        let right = forward.cross(up).normalize_or_zero();
+        Self { right, up, forward }
+    }
 }
 
 impl SectionViewFrame {
@@ -236,12 +255,14 @@ impl SectionView {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn show<F>(
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
         section: Option<&SceneSection>,
         color_for: F,
+        main_view: Option<SectionMainView>,
     ) -> SectionViewUiOutcome
     where
         F: Fn(SceneMeshId) -> egui::Color32,
@@ -266,6 +287,9 @@ impl SectionView {
         };
         let out =
             crate::cut_ruler::show_section_panel(ui, viewport_rect, cam, &mut self.ruler, render);
+        if let Some(panel_rect) = crate::cut_ruler::section_panel_rect(viewport_rect) {
+            paint_orientation_cue(ui.painter(), panel_rect, cam.normal, main_view);
+        }
         if out.mode != self.prefs.mode {
             self.prefs.mode = out.mode;
             if matches!(out.mode, SectionDisplay::Mesh) {
@@ -391,6 +415,77 @@ impl SectionView {
             pose.center + self.slice_view.pan,
             (half / self.slice_view.zoom).max(0.05),
         ))
+    }
+}
+
+/// Draw the live primary-camera orientation in the section header. Keeping it
+/// in the header avoids covering contours or measurement marks, while the
+/// projected R/U axes make a rotated main viewport immediately legible.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn paint_orientation_cue(
+    painter: &egui::Painter,
+    panel_rect: egui::Rect,
+    section_normal: Vec3,
+    main_view: Option<SectionMainView>,
+) {
+    let size = 42.0;
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(panel_rect.right() - size - 10.0, panel_rect.top() + 3.0),
+        egui::vec2(size, size),
+    );
+    let center = rect.center();
+    painter.rect_filled(
+        rect,
+        egui::Rounding::same(5.0),
+        egui::Color32::from_black_alpha(100),
+    );
+    painter.rect_stroke(
+        rect,
+        egui::Rounding::same(5.0),
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(35)),
+    );
+
+    let (section_right, section_up) = occluview_render::slice_view_basis(section_normal);
+    let draw_axis = |axis: Vec3, color: egui::Color32, label: &str| {
+        let projected = axis - section_normal * section_normal.dot(axis);
+        let length = projected.length();
+        if length <= 1.0e-4 {
+            return;
+        }
+        let projected = projected / length;
+        let x = section_right.dot(projected);
+        let y = section_up.dot(projected);
+        let endpoint = center + egui::vec2(x, -y) * 14.0;
+        painter.line_segment([center, endpoint], egui::Stroke::new(1.5, color));
+        painter.circle_filled(endpoint, 2.2, color);
+        painter.text(
+            endpoint
+                + egui::vec2(
+                    if x >= 0.0 { 3.0 } else { -11.0 },
+                    if y <= 0.0 { -2.0 } else { -13.0 },
+                ),
+            egui::Align2::LEFT_TOP,
+            label,
+            egui::FontId::proportional(9.0),
+            color,
+        );
+    };
+
+    if let Some(main_view) = main_view {
+        draw_axis(main_view.right, egui::Color32::from_rgb(188, 196, 205), "R");
+        draw_axis(main_view.up, egui::Color32::from_rgb(218, 211, 192), "U");
+        let facing = main_view.forward.dot(section_normal).abs();
+        painter.circle_stroke(
+            center,
+            3.0,
+            egui::Stroke::new(
+                1.0,
+                egui::Color32::from_white_alpha((45.0 + facing * 100.0) as u8),
+            ),
+        );
+    } else {
+        draw_axis(section_right, egui::Color32::from_rgb(188, 196, 205), "R");
+        draw_axis(section_up, egui::Color32::from_rgb(218, 211, 192), "U");
     }
 }
 

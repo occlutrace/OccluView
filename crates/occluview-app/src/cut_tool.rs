@@ -5,7 +5,7 @@
 
 use crate::cut_manipulator::{CutFrameInput, CutManipulator, CutUpdate, DiscPose};
 use crate::probe_section::SliceProbe;
-use crate::section_view::{SectionView, SectionViewFrame, SectionViewUiOutcome};
+use crate::section_view::{SectionMainView, SectionView, SectionViewFrame, SectionViewUiOutcome};
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::scene::{SceneSection, SectionPlane};
@@ -162,17 +162,20 @@ impl CutTool {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn show_section_panel<F>(
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
         section: Option<&SceneSection>,
         color_for: F,
+        main_view: Option<SectionMainView>,
     ) -> CutToolUiOutcome
     where
         F: Fn(SceneMeshId) -> egui::Color32,
     {
-        self.section.show(ui, viewport_rect, section, color_for)
+        self.section
+            .show(ui, viewport_rect, section, color_for, main_view)
     }
 
     fn section_frame(&self) -> Option<SectionViewFrame> {

@@ -7,7 +7,7 @@ use crate::bridge_split_overlay::{
 };
 use crate::cut_manipulator::{CutCursor, CutFrameInput, SurfaceSample};
 use crate::edit_mode::state::{BusyFinish, EditModeCommand};
-use crate::section_view::SectionViewFrame;
+use crate::section_view::{SectionMainView, SectionViewFrame};
 use crate::viewer::{project_world_to_viewport, viewport_ray};
 use occluview_core::{Camera, SceneMesh, SceneMeshId};
 
@@ -221,6 +221,7 @@ impl OccluViewApp {
             frame_context.viewport_rect,
             section.as_deref(),
             &color_for,
+            Some(SectionMainView::from_camera(*frame_context.camera)),
         );
         if panel.viewport_needs_render {
             self.needs_render = true;

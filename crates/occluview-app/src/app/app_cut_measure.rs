@@ -4,6 +4,7 @@ use crate::cut_overlay;
 use crate::measure_overlay;
 use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
 use crate::probe_section;
+use crate::section_view::SectionMainView;
 use crate::viewer::{project_world_to_viewport, viewport_ray};
 use glam::{Vec3, Vec3A};
 use occluview_core::scene::{SceneSection, VisibilityFilter};
@@ -190,9 +191,13 @@ impl OccluViewApp {
         // so this stays one slice render per frame — the top-of-loop pass then
         // no-ops during an active cut. In Lines mode it no-ops (no GPU slice).
         self.maybe_render_cut_view(ctx);
-        let panel =
-            self.cut_view
-                .show_section_panel(ui, viewport_rect, section.as_deref(), &color_for);
+        let panel = self.cut_view.show_section_panel(
+            ui,
+            viewport_rect,
+            section.as_deref(),
+            &color_for,
+            Some(SectionMainView::from_camera(camera)),
+        );
         let panel_consumed = panel.consumed_pointer;
         self.apply_cut_section_outcome(panel, ctx);
         update.consumed_pointer || panel_consumed
