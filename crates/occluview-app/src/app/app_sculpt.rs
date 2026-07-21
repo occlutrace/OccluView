@@ -7,22 +7,12 @@ use std::sync::Arc;
 
 use super::{egui, mesh_editor_overlay, pick_scene_hit, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::{
-    mean_uniform_scale, SculptSession, SculptToolKind, StrokeState, DAB_SPACING_FRACTION,
-    HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN,
-    SCULPT_SIZE_MAX, SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
+    SculptSession, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
+    MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
+    SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
 };
-use crate::viewer::project_world_to_viewport;
-use glam::{Affine3A, Vec3};
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Camera, Mesh, Scene,
-    ScenePickHit,
-};
-use occluview_render::PreparedSceneTopology;
-
-/// Segments in the surface-projected brush-cursor ring.
-const SCULPT_CURSOR_SEGMENTS: usize = 48;
-/// Concentric layers stacked into the brush-cursor glow.
-const GLOW_LAYERS: usize = 6;
+use glam::Vec3;
+use occluview_core::{BrushMode, BrushStroke, Mesh, ScenePickHit};
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
 /// does not re-read input.
@@ -131,11 +121,13 @@ impl OccluViewApp {
         if self.sculpt.armed.is_some() {
             // Arming a brush means the Sculpt tab: show it and drop selection.
             self.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
-            let _ = self.edit_mode.set_lasso_armed(false);
-            let _ = self.edit_mode.set_object_mode(false);
             self.mesh_selection_drag = None;
-            // Warm the session now so the first press doesn't stall.
+            // Warm picking and brush preparation off the UI thread. Selection
+            // gesture state is intentionally preserved; sculpt owns LMB while
+            // armed and must not silently turn Lasso into Marquee.
             self.prepare_armed_sculpt_session();
+        } else {
+            self.sculpt.disarm();
         }
         self.status_message = Some(match self.sculpt.armed {
             Some(SculptToolKind::AddRemove) => {
@@ -208,6 +200,7 @@ impl OccluViewApp {
         response: &egui::Response,
         pan_drag_active: bool,
     ) -> bool {
+        self.poll_sculpt_preparation(ctx);
         if !self.edit_mode.has_active_session() {
             if self.sculpt.armed.is_some() || self.sculpt.stroke.is_some() {
                 self.abort_sculpt_stroke();
@@ -325,7 +318,14 @@ impl OccluViewApp {
         if entry.id() != hit.layer_id {
             return false;
         }
-        self.install_sculpt_session(&scene, hit.layer_index)
+        if self
+            .sculpt
+            .session_matches(hit.layer_id, entry.mesh.topology_id())
+        {
+            return true;
+        }
+        let _ = self.sculpt.queue_preparation(scene, hit.layer_index);
+        false
     }
 
     /// When exactly one layer is sculptable, prepare its session as soon as the
@@ -335,52 +335,52 @@ impl OccluViewApp {
         let Some(scene) = self.scene.clone() else {
             return;
         };
-        let sculptable: Vec<usize> = scene
-            .meshes()
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| {
-                entry.visible && !entry.mesh.is_point_cloud() && entry.mesh.triangle_count() > 0
+        self.sculpt.warm_scene_bvhs(scene.clone());
+        let target = self
+            .edit_mode
+            .session_layer_id()
+            .and_then(|layer_id| {
+                scene
+                    .meshes()
+                    .iter()
+                    .position(|entry| entry.id() == layer_id)
             })
-            .map(|(index, _)| index)
-            .collect();
-        if let [index] = sculptable[..] {
-            let _ = self.install_sculpt_session(&scene, index);
+            .or_else(|| {
+                let mut sculptable = scene.meshes().iter().enumerate().filter(|(_, entry)| {
+                    entry.visible && !entry.mesh.is_point_cloud() && entry.mesh.triangle_count() > 0
+                });
+                let first = sculptable.next().map(|(index, _)| index);
+                first.filter(|_| sculptable.next().is_none())
+            });
+        if let Some(index) = target {
+            let _ = self.sculpt.queue_preparation(scene, index);
         }
     }
 
-    /// Prepare (or reuse) the kernel session for `scene.meshes()[index]`.
-    fn install_sculpt_session(&mut self, scene: &Scene, index: usize) -> bool {
-        let Some(entry) = scene.meshes().get(index) else {
-            return false;
+    pub(super) fn poll_sculpt_preparation(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.sculpt.poll_preparation() else {
+            return;
         };
-        if !entry.visible || entry.mesh.is_point_cloud() {
-            return false;
-        }
-        let topology_id = entry.mesh.topology_id();
-        if self.sculpt.session_matches(entry.id(), topology_id) {
-            return true;
-        }
-        let buffers = mesh_edit_buffers_from_mesh(&entry.mesh);
-        let session = match BrushSession::prepare(&buffers) {
-            Ok(session) => session,
+        match result {
+            Ok(session) => {
+                let valid = self.scene.as_ref().is_some_and(|scene| {
+                    scene.meshes().iter().any(|entry| {
+                        entry.id() == session.layer_id
+                            && entry.mesh.topology_id() == session.topology_id
+                    })
+                });
+                if valid && self.sculpt.armed.is_some() {
+                    self.sculpt.session = Some(session);
+                    self.status_message = None;
+                    self.needs_render = true;
+                    ctx.request_repaint();
+                }
+            }
             Err(error) => {
                 self.status_message = Some(format!("Cannot sculpt this layer: {error}"));
-                return false;
+                ctx.request_repaint();
             }
-        };
-        let scale = mean_uniform_scale(&entry.transform);
-        self.sculpt.session = Some(SculptSession {
-            layer_id: entry.id(),
-            topology_id,
-            session,
-            shadow: entry.mesh.vertices().to_vec(),
-            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
-            world_to_local: entry.transform.inverse(),
-            local_per_world: 1.0 / scale,
-            dirty_stroke: false,
-        });
-        true
+        }
     }
 
     /// Stream the `touched` sculpted vertices into whichever prepared scene is
@@ -529,8 +529,10 @@ impl OccluViewApp {
     }
 
     fn invalidate_sculpt_session_silent(&mut self) {
-        self.sculpt.session = None;
-        self.sculpt.stroke = None;
+        // Cancel any worker prepared from the pre-edit scene as well as the
+        // live GPU shadow. Otherwise a stale background result could become
+        // active after an undo, layer removal, or structural mesh edit.
+        self.sculpt.invalidate_session();
         self.live_viewport_scene_dirty = true;
         self.offscreen_scene_dirty = true;
         self.needs_render = true;
@@ -589,13 +591,24 @@ impl OccluViewApp {
     ) -> Option<ScenePickHit> {
         let camera = self.camera?;
         let scene = self.scene.as_ref()?;
+        // `Mesh::pick_ray_local` lazily builds a BVH. Never allow that first
+        // build on the egui thread; the arm path warms all visible layers in a
+        // worker and the pointer simply waits one frame while it completes.
+        if scene.meshes().iter().any(|entry| {
+            entry.visible
+                && !entry.mesh.is_point_cloud()
+                && entry.mesh.triangle_count() > 0
+                && !entry.mesh.bvh_is_ready()
+        }) {
+            return None;
+        }
         pick_scene_hit(&camera, viewport_rect, pointer, scene)
     }
 
-    /// The brush cursor: a soft glow draped on the surface under the pointer
-    /// while a tool is armed, sized by the brush radius and brightened by the
-    /// intensity. The colour says what the click does (green build / red carve /
-    /// blue smooth, brighter when Shift forces).
+    /// The brush cursor is deliberately screen-space: a surface-projected ring
+    /// required a second BVH pick plus 48 projected points and six filled glow
+    /// polygons on every repaint. A quiet ring communicates brush size without
+    /// competing with the model or introducing hover latency.
     pub(super) fn paint_sculpt_cursor_impl(&self, ui: &egui::Ui, viewport_rect: egui::Rect) {
         let Some(kind) = self.sculpt.armed else {
             return;
@@ -617,105 +630,39 @@ impl OccluViewApp {
         let shift = ui.ctx().input(|input| input.modifiers.shift);
         let color = sculpt_cursor_color(kind, shift);
 
-        let glow = color.gamma_multiply(0.05 + 0.13 * intensity01.clamp(0.0, 1.0));
-        if let Some((center, ring)) =
-            self.sculpt_surface_ring(camera, viewport_rect, pointer, radius_world)
-        {
-            // A soft radial glow draped on the surface: concentric translucent
-            // layers stack toward the centre into a bright core that fades to the
-            // rim — brighter with intensity, wider with size. No hard outline.
-            let canvas = ui.painter();
-            for layer in 0..GLOW_LAYERS {
-                #[allow(clippy::cast_precision_loss)]
-                let scale = 1.0 - layer as f32 / GLOW_LAYERS as f32;
-                let poly: Vec<egui::Pos2> = ring
-                    .iter()
-                    .map(|p| center + (*p - center) * scale)
-                    .collect();
-                canvas.add(egui::Shape::convex_polygon(poly, glow, egui::Stroke::NONE));
-            }
-            canvas.circle_filled(center, 1.5, color.gamma_multiply(0.4 + 0.5 * intensity01));
-            return;
-        }
-
-        // Off the mesh: the same glow as flat concentric discs at the pointer.
         let ortho_height = camera.orthographic_height.max(f32::EPSILON);
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
         if radius_px.is_finite() && radius_px >= 2.0 {
             let canvas = ui.painter();
-            for layer in 0..GLOW_LAYERS {
-                #[allow(clippy::cast_precision_loss)]
-                let scale = 1.0 - layer as f32 / GLOW_LAYERS as f32;
-                canvas.circle_filled(pointer, radius_px * scale, glow);
-            }
+            let intensity = intensity01.clamp(0.0, 1.0);
+            canvas.circle_filled(
+                pointer,
+                radius_px,
+                color.gamma_multiply(0.025 + intensity * 0.035),
+            );
+            canvas.circle_stroke(
+                pointer,
+                radius_px,
+                egui::Stroke::new(1.0, color.gamma_multiply(0.58 + intensity * 0.18)),
+            );
+            canvas.circle_stroke(
+                pointer,
+                (radius_px - 2.0).max(1.0),
+                egui::Stroke::new(1.0, color.gamma_multiply(0.16)),
+            );
+            canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
         }
-    }
-
-    /// The brush ring draped on the surface under `pointer`: the projected
-    /// screen centre plus a circle of `radius_world` in the tangent plane of the
-    /// hit point, projected to screen. `None` when the cursor is off the mesh
-    /// (or a point fails to project), so the caller draws the flat fallback.
-    fn sculpt_surface_ring(
-        &self,
-        camera: &Camera,
-        viewport_rect: egui::Rect,
-        pointer: egui::Pos2,
-        radius_world: f32,
-    ) -> Option<(egui::Pos2, Vec<egui::Pos2>)> {
-        let scene = self.scene.as_ref()?;
-        let hit = pick_scene_hit(camera, viewport_rect, pointer, scene)?;
-        let entry = scene.meshes().get(hit.layer_index)?;
-        let normal = face_world_normal(&entry.mesh, hit.triangle_index, &entry.transform)?;
-        let reference = if normal.z.abs() < 0.9 {
-            Vec3::Z
-        } else {
-            Vec3::X
-        };
-        let u = normal.cross(reference).normalize_or_zero();
-        if u.length_squared() < f32::EPSILON {
-            return None;
-        }
-        let v = normal.cross(u).normalize_or_zero();
-
-        let (center, _) = project_world_to_viewport(camera, viewport_rect, hit.point)?;
-        let mut points = Vec::with_capacity(SCULPT_CURSOR_SEGMENTS);
-        for segment in 0..SCULPT_CURSOR_SEGMENTS {
-            #[allow(clippy::cast_precision_loss)]
-            let angle = std::f32::consts::TAU * segment as f32 / SCULPT_CURSOR_SEGMENTS as f32;
-            let world = hit.point + (u * angle.cos() + v * angle.sin()) * radius_world;
-            let (screen, _depth) = project_world_to_viewport(camera, viewport_rect, world)?;
-            points.push(screen);
-        }
-        Some((center, points))
     }
 }
 
-/// World-space normal of `mesh`'s triangle `triangle_index`, via its per-instance
-/// `transform`. `None` for an out-of-range index or a degenerate triangle.
-fn face_world_normal(mesh: &Mesh, triangle_index: usize, transform: &Affine3A) -> Option<Vec3> {
-    let base = triangle_index.checked_mul(3)?;
-    let indices = mesh.indices();
-    let a = *indices.get(base)? as usize;
-    let b = *indices.get(base + 1)? as usize;
-    let c = *indices.get(base + 2)? as usize;
-    let vertices = mesh.vertices();
-    let pa = Vec3::from_array(vertices.get(a)?.position);
-    let pb = Vec3::from_array(vertices.get(b)?.position);
-    let pc = Vec3::from_array(vertices.get(c)?.position);
-    let world_normal = transform
-        .transform_vector3((pb - pa).cross(pc - pa))
-        .normalize_or_zero();
-    (world_normal.length_squared() > f32::EPSILON).then_some(world_normal)
-}
-
-/// Brush cursor color by tool and modifier: green builds, red carves, blue
-/// smooths (a brighter blue when Shift forces maximum smoothing).
+/// Quiet semantic colors: build, carve, and smooth remain distinguishable but
+/// do not introduce the saturated blue accent used by the old editor chrome.
 fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
     match (kind, shift) {
-        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(72, 174, 122),
-        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(206, 84, 72),
-        (SculptToolKind::Smooth, false) => egui::Color32::from_rgb(70, 132, 204),
-        (SculptToolKind::Smooth, true) => egui::Color32::from_rgb(120, 176, 244),
+        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(118, 151, 132),
+        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(164, 116, 108),
+        (SculptToolKind::Smooth, false) => egui::Color32::from_rgb(142, 146, 154),
+        (SculptToolKind::Smooth, true) => egui::Color32::from_rgb(172, 166, 151),
     }
 }
 

@@ -490,6 +490,7 @@ impl eframe::App for OccluViewApp {
         ctx.set_visuals(super::viewer_visuals());
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
+        self.poll_sculpt_preparation(ctx);
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);
         self.handle_dropped_files(ctx);

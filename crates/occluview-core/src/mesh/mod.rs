@@ -325,6 +325,15 @@ impl Mesh {
         }
     }
 
+    /// Non-blocking readiness check for interactive callers. A cold pick may
+    /// build a scan-sized BVH synchronously, so UI code checks this before
+    /// entering the picking path and lets a worker warm it first.
+    #[inline]
+    #[must_use]
+    pub fn bvh_is_ready(&self) -> bool {
+        self.bvh.get().is_some()
+    }
+
     /// Whether this is a triangle mesh or a point cloud.
     #[inline]
     #[must_use]

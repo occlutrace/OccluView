@@ -7,8 +7,13 @@
 //! [`occluview_core::BrushSession`].
 
 use glam::{Affine3A, Vec3};
-use occluview_core::{BrushMode, BrushSession, BrushStroke, SceneMeshId, Vertex};
+use occluview_core::{
+    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Scene, SceneMeshId, Vertex,
+};
 use occluview_render::PreparedSceneTopology;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread;
 
 /// Brush-size slider bounds/default, in abstract 0..100 units (not mm — the
 /// operator asked for a feel slider, not a measurement). Mapped to a mm radius
@@ -89,6 +94,15 @@ pub(crate) struct SculptTool {
     pub(crate) session: Option<SculptSession>,
     /// Bookkeeping for the drag currently in flight (button held).
     pub(crate) stroke: Option<StrokeState>,
+    pending: Option<PendingSculptPreparation>,
+    bvh_warm_started: bool,
+}
+
+struct PendingSculptPreparation {
+    layer_id: SceneMeshId,
+    topology_id: u64,
+    cancel: Arc<AtomicBool>,
+    receiver: mpsc::Receiver<Result<SculptSession, String>>,
 }
 
 impl SculptTool {
@@ -109,6 +123,8 @@ impl SculptTool {
         self.armed = None;
         self.stroke = None;
         self.session = None;
+        self.cancel_pending_preparation();
+        self.bvh_warm_started = false;
     }
 
     /// Drop the prepared session and any live stroke while KEEPING the armed
@@ -120,6 +136,8 @@ impl SculptTool {
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
         self.session = None;
+        self.cancel_pending_preparation();
+        self.bvh_warm_started = false;
     }
 
     /// Whether a valid prepared session already covers `layer_id` at
@@ -128,6 +146,118 @@ impl SculptTool {
         self.session
             .as_ref()
             .is_some_and(|s| s.layer_id == layer_id && s.topology_id == topology_id)
+    }
+
+    pub(crate) fn pending_matches(&self, layer_id: SceneMeshId, topology_id: u64) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            pending.layer_id == layer_id && pending.topology_id == topology_id
+        })
+    }
+
+    /// Warm every visible mesh's picking BVH outside the egui thread. Picking
+    /// is lazy in the core mesh type; without this prewarm the first sculpt
+    /// hover can synchronously build a full triangle BVH and freeze the UI.
+    pub(crate) fn warm_scene_bvhs(&mut self, scene: Arc<Scene>) {
+        if self.bvh_warm_started {
+            return;
+        }
+        self.bvh_warm_started = true;
+        let _ = thread::Builder::new()
+            .name("occluview-sculpt-bvh".to_string())
+            .spawn(move || {
+                for entry in scene.meshes() {
+                    if entry.visible
+                        && !entry.mesh.is_point_cloud()
+                        && entry.mesh.triangle_count() > 0
+                    {
+                        entry.mesh.warm_bvh();
+                    }
+                }
+            });
+    }
+
+    /// Queue the O(n) brush preparation. The worker owns the scene snapshot;
+    /// the UI only stores a receiver and remains responsive while welding,
+    /// adjacency construction, and grid setup run.
+    pub(crate) fn queue_preparation(&mut self, scene: Arc<Scene>, index: usize) -> bool {
+        let Some(entry) = scene.meshes().get(index) else {
+            return false;
+        };
+        if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
+            return false;
+        }
+        let layer_id = entry.id();
+        let topology_id = entry.mesh.topology_id();
+        if self.session_matches(layer_id, topology_id)
+            || self.pending_matches(layer_id, topology_id)
+        {
+            return self.session_matches(layer_id, topology_id);
+        }
+
+        self.cancel_pending_preparation();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
+        let spawned = thread::Builder::new()
+            .name("occluview-sculpt-prepare".to_string())
+            .spawn(move || {
+                let Some(entry) = scene.meshes().get(index) else {
+                    return;
+                };
+                if worker_cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                entry.mesh.warm_bvh();
+                let buffers = mesh_edit_buffers_from_mesh(&entry.mesh);
+                let result = BrushSession::prepare(&buffers)
+                    .map_err(|error| error.to_string())
+                    .map(|session| {
+                        let scale = mean_uniform_scale(&entry.transform);
+                        SculptSession {
+                            layer_id: entry.id(),
+                            topology_id: entry.mesh.topology_id(),
+                            session,
+                            shadow: entry.mesh.vertices().to_vec(),
+                            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
+                            world_to_local: entry.transform.inverse(),
+                            local_per_world: 1.0 / scale,
+                            dirty_stroke: false,
+                        }
+                    });
+                if !worker_cancel.load(Ordering::Relaxed) {
+                    let _ = sender.send(result);
+                }
+            });
+        if spawned.is_err() {
+            return false;
+        }
+        self.pending = Some(PendingSculptPreparation {
+            layer_id,
+            topology_id,
+            cancel,
+            receiver,
+        });
+        false
+    }
+
+    pub(crate) fn poll_preparation(&mut self) -> Option<Result<SculptSession, String>> {
+        let pending = self.pending.take()?;
+        match pending.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => {
+                self.pending = Some(pending);
+                None
+            }
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                "sculpt preparation worker stopped unexpectedly".to_string(),
+            )),
+        }
+    }
+
+    fn cancel_pending_preparation(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            pending.cancel.store(true, Ordering::Relaxed);
+        }
     }
 }
 
