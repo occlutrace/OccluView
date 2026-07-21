@@ -54,7 +54,7 @@ pub(super) fn tab_strip(
             action = Some(MeshEditorAction::SwitchTab(EditorTab::Sculpt));
         }
         if close_cross(ui, close_w).clicked() {
-            action = Some(MeshEditorAction::Done);
+            action = Some(MeshEditorAction::Cancel);
         }
     });
     action
@@ -87,7 +87,8 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
     response
 }
 
-/// The window close cross (commits the session, like the old native ×).
+/// The window close cross cancels the session. Applying edits is explicit via
+/// `Done`; closing a native-looking editor must never silently commit changes.
 fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, TAB_H), egui::Sense::click());
     let color = if response.hovered() { TEXT } else { TEXT_WEAK };
