@@ -37,7 +37,7 @@ pub(crate) fn status_overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
 }
 
 /// Quiet, precise light theme for the whole app: neutral surfaces, hairline
-/// borders, a single blue accent for hover/active/selection, and softly rounded
+/// borders, a single neutral accent for hover/active/selection, and softly rounded
 /// controls. Tuned to read as a professional CAD viewer rather than a demo.
 pub(crate) fn viewer_visuals() -> egui::Visuals {
     use crate::ui_theme::{hairline, ACCENT, TEXT};

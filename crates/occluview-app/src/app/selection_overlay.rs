@@ -112,6 +112,8 @@ fn selection_overlay_for_layer(
             has_texture: 0,
             show_orientation: 0,
             show_vertex_colors: 1,
+            show_texture: 1,
+            padding: [0; 3],
         },
     })
 }

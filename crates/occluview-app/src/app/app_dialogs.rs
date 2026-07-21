@@ -19,7 +19,6 @@ impl OccluViewApp {
         let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
         let mut do_open = ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
         let mut do_add = false;
-        let mut do_save_edited = false;
         let mut recent_to_open: Option<Vec<PathBuf>> = None;
         let mut clear_recent = false;
         let mut toggle_cut_view = false;
@@ -76,16 +75,6 @@ impl OccluViewApp {
                         do_add = true;
                     }
 
-                    toolbar_divider(ui);
-
-                    if toolbar_action(
-                        ui,
-                        "💾 Save edits",
-                        self.has_unsaved_mesh_edits,
-                        "Export each layer with unsaved mesh edits (PLY, STL, or OBJ)",
-                    ) {
-                        do_save_edited = true;
-                    }
                     toolbar_divider(ui);
 
                     let can_cut = self.can_render_cut_view();
@@ -200,12 +189,6 @@ impl OccluViewApp {
             {
                 self.append_paths(&paths, "add");
             }
-        }
-        if do_save_edited
-            && self.save_edited_layers_flow()
-                == super::app_mesh_export::SaveEditedLayersOutcome::AllSaved
-        {
-            self.status_message = Some("All edited layers saved".to_string());
         }
         if clear_recent {
             self.recent_files.clear();

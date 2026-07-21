@@ -17,9 +17,9 @@ fn mesh_shader_uses_camera_relative_inspection_lighting() {
         "form-giving studio light should keep a lit floor (no cast shadow) yet a full key/fill/rim swing so side walls read with depth"
     );
     assert!(
-        shader.contains(
-            "let textured = mesh_uniform.has_texture != 0u && mesh_uniform.show_vertex_colors != 0u"
-        ) && shader.contains("let texture_glaze = select(0.0, 1.0, textured)")
+        shader.contains("let textured = mesh_uniform.has_texture != 0u")
+            && shader.contains("mesh_uniform.show_texture != 0u")
+            && shader.contains("let texture_glaze = select(0.0, 1.0, textured)")
             && shader.contains("let glaze_highlight ="),
         "textured scans should get a restrained glaze highlight without making untextured STL glossy, and the neutral-material toggle should suppress it too"
     );

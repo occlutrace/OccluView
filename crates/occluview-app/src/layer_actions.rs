@@ -9,6 +9,7 @@ pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 5] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum LayerContextAction {
     ToggleVisibility,
     Solo,
@@ -17,6 +18,7 @@ pub(crate) enum LayerContextAction {
     NextTint,
     ToggleWireframe,
     ToggleShowVertexColors,
+    ToggleShowTexture,
     EditMesh,
     BridgeSplit,
     DeleteSelectedFaces,
@@ -69,6 +71,7 @@ pub(crate) fn apply_layer_context_action(
         LayerContextAction::NextTint => advance_layer_tint(scene, index),
         LayerContextAction::ToggleWireframe => toggle_wireframe(scene, index),
         LayerContextAction::ToggleShowVertexColors => toggle_show_vertex_colors(scene, index),
+        LayerContextAction::ToggleShowTexture => toggle_show_texture(scene, index),
         LayerContextAction::InvertNormals
         | LayerContextAction::EditMesh
         | LayerContextAction::BridgeSplit
@@ -150,6 +153,10 @@ fn advance_layer_tint(scene: &mut Scene, index: usize) -> LayerContextApply {
         return LayerContextApply::default();
     };
     entry.tint = next_layer_tint(entry.tint);
+    if entry.mesh.texture().is_some() {
+        entry.show_texture = false;
+        entry.show_vertex_colors = false;
+    }
     LayerContextApply {
         scene_changed: true,
         ..LayerContextApply::default()
@@ -176,6 +183,21 @@ fn toggle_show_vertex_colors(scene: &mut Scene, index: usize) -> LayerContextApp
         return LayerContextApply::default();
     };
     entry.show_vertex_colors = !entry.show_vertex_colors;
+    LayerContextApply {
+        scene_changed: true,
+        ..LayerContextApply::default()
+    }
+}
+
+fn toggle_show_texture(scene: &mut Scene, index: usize) -> LayerContextApply {
+    let entry = &mut scene.meshes_mut()[index];
+    if entry.mesh.texture().is_none() {
+        return LayerContextApply::default();
+    }
+    entry.show_texture = !entry.show_texture;
+    if entry.show_texture {
+        entry.show_vertex_colors = true;
+    }
     LayerContextApply {
         scene_changed: true,
         ..LayerContextApply::default()

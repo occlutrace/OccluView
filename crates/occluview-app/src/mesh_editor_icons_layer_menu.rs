@@ -10,6 +10,7 @@ use super::{arc, arrowhead};
 /// (~15 px) gutter size a dropdown row uses. A vocabulary distinct from the
 /// editor toolbar's [`EditorIcon`]: these name layer-level operator actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum LayerMenuIcon {
     /// An open eye — the layer is visible (the "Hide" action).
     EyeOpen,
@@ -38,6 +39,10 @@ pub(crate) enum LayerMenuIcon {
     /// A slashed dot — scan colors are hidden, showing the neutral material
     /// (the "Show scan colors" action).
     ColorsOff,
+    /// A checker tile — an attached texture is currently sampled.
+    TextureOn,
+    /// A crossed checker tile — texture sampling is disabled.
+    TextureOff,
     /// A trash can — remove the layer.
     Trash,
 }
@@ -193,6 +198,20 @@ pub(crate) fn paint_layer_menu(
             painter.circle_stroke(p(0.50, 0.50), r(0.36), stroke);
             painter.line_segment([p(0.16, 0.84), p(0.84, 0.16)], stroke);
         }
+        LayerMenuIcon::TextureOn | LayerMenuIcon::TextureOff => {
+            let tile = Rect::from_min_max(p(0.18, 0.18), p(0.82, 0.82));
+            painter.rect_stroke(tile, r(0.05), stroke);
+            for (x, y) in [(0.32, 0.32), (0.58, 0.32), (0.32, 0.58), (0.58, 0.58)] {
+                painter.rect_filled(
+                    Rect::from_min_max(p(x, y), p(x + 0.14, y + 0.14)),
+                    r(0.01),
+                    soft,
+                );
+            }
+            if icon == LayerMenuIcon::TextureOff {
+                painter.line_segment([p(0.16, 0.16), p(0.84, 0.84)], stroke);
+            }
+        }
         LayerMenuIcon::Trash => {
             painter.line_segment([p(0.20, 0.30), p(0.80, 0.30)], stroke);
             painter.add(Shape::line(
@@ -233,7 +252,7 @@ fn menu_almond(painter: &egui::Painter, b: Rect, stroke: Stroke) {
 mod tests {
     use super::*;
 
-    const ALL_MENU_ICONS: [LayerMenuIcon; 14] = [
+    const ALL_MENU_ICONS: [LayerMenuIcon; 16] = [
         LayerMenuIcon::EyeOpen,
         LayerMenuIcon::EyeSlash,
         LayerMenuIcon::Solo,
@@ -247,6 +266,8 @@ mod tests {
         LayerMenuIcon::Wireframe,
         LayerMenuIcon::ColorsOn,
         LayerMenuIcon::ColorsOff,
+        LayerMenuIcon::TextureOn,
+        LayerMenuIcon::TextureOff,
         LayerMenuIcon::Trash,
     ];
 

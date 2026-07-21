@@ -4,10 +4,9 @@ use crate::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
-/// Fixed context-menu width. Wide enough that the longest label ("Show only
-/// this layer") never wraps beside its gutter glyph, and it gives the elided
-/// file-name title room to breathe.
-const MENU_WIDTH: f32 = 216.0;
+/// Fixed context-menu width. It gives the elided file-name title and operator
+/// labels room to breathe without turning the menu into a second panel.
+const MENU_WIDTH: f32 = 244.0;
 
 /// Everything the layer context menu needs about one layer. Shared verbatim by
 /// the layers-overlay rows and the viewport right-click menu so both surface the
@@ -27,9 +26,12 @@ pub(crate) struct LayerContextMenuTarget {
     /// Whether this layer's scan colors/texture are currently shown (vs the
     /// flat neutral material).
     pub(crate) show_vertex_colors: bool,
+    /// Whether an attached texture is currently sampled.
+    pub(crate) show_texture: bool,
     /// Whether the layer actually carries vertex colors or a texture — the
     /// toggle is a no-op (and stays disabled) on a plain uncolored scan.
     pub(crate) has_color_data: bool,
+    pub(crate) has_texture: bool,
 }
 
 /// Attach the layer context menu to a widget response (row controls / row body).
@@ -61,60 +63,11 @@ pub(crate) fn show_layer_context_menu(
     // spawn several coincident parts.
     menu_title(ui, &target.label);
     ui.separator();
-    show_visibility_actions(ui, target, context_request);
-    ui.separator();
     show_material_actions(ui, target, context_request);
     ui.separator();
     show_mesh_edit_actions(ui, target, context_request);
     ui.separator();
     show_layer_actions(ui, target, context_request);
-}
-
-fn show_visibility_actions(
-    ui: &mut egui::Ui,
-    target: &LayerContextMenuTarget,
-    context_request: &mut Option<LayerContextRequest>,
-) {
-    // The eye tracks the current state: an open eye to Hide, a slashed eye to
-    // Show — the same glyph the layer row uses.
-    let (visibility_label, eye) = if target.visible {
-        ("Hide", LayerMenuIcon::EyeOpen)
-    } else {
-        ("Show", LayerMenuIcon::EyeSlash)
-    };
-    layer_menu_button(
-        ui,
-        target,
-        LayerMenuButton::new(
-            eye,
-            visibility_label,
-            true,
-            LayerContextAction::ToggleVisibility,
-        ),
-        context_request,
-    );
-    layer_menu_button(
-        ui,
-        target,
-        LayerMenuButton::new(
-            LayerMenuIcon::Solo,
-            "Show only this layer",
-            true,
-            LayerContextAction::Solo,
-        ),
-        context_request,
-    );
-    layer_menu_button(
-        ui,
-        target,
-        LayerMenuButton::new(
-            LayerMenuIcon::ShowAll,
-            "Show all layers",
-            true,
-            LayerContextAction::ShowAll,
-        ),
-        context_request,
-    );
 }
 
 fn show_material_actions(
@@ -160,6 +113,24 @@ fn show_material_actions(
         ),
         context_request,
     );
+    if target.has_texture {
+        let (texture_label, texture_icon) = if target.show_texture {
+            ("Disable texture", LayerMenuIcon::TextureOn)
+        } else {
+            ("Show texture", LayerMenuIcon::TextureOff)
+        };
+        layer_menu_button(
+            ui,
+            target,
+            LayerMenuButton::new(
+                texture_icon,
+                texture_label,
+                true,
+                LayerContextAction::ToggleShowTexture,
+            ),
+            context_request,
+        );
+    }
 }
 
 fn show_mesh_edit_actions(
@@ -438,10 +409,10 @@ mod tests {
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
 
-        // Twelve operator actions, each built through `LayerMenuButton::new`.
+        // The compact operator set is built through `LayerMenuButton::new`.
         let buttons = production.matches("LayerMenuButton::new(").count();
         assert!(
-            buttons >= 12,
+            buttons >= 11,
             "expected the full operator action set; found {buttons} menu buttons"
         );
         // Every button names a glyph (the eye picks open/slashed by state, so a
@@ -542,10 +513,6 @@ mod tests {
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
         for label in [
-            "Hide",
-            "Show",
-            "Show only this layer",
-            "Show all layers",
             "Reset opacity",
             "Next tint",
             "Edit mesh",
@@ -562,6 +529,12 @@ mod tests {
             assert!(
                 production_source.contains(label),
                 "layer context menu should expose operator action: {label}"
+            );
+        }
+        for removed in ["Hide", "Show only this layer", "Show all layers"] {
+            assert!(
+                !production_source.contains(&format!("\"{removed}\"")),
+                "redundant visibility action should stay out of the compact context menu: {removed}"
             );
         }
     }

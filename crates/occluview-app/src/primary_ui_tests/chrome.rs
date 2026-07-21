@@ -70,10 +70,12 @@ fn toolbar_and_about_are_operator_focused() {
          toolbar buttons (owner decision)"
     );
     assert!(
-        toolbar.contains("toolbar_action(")
-            && toolbar.contains("Save edits")
-            && toolbar.contains("Cut view"),
+        toolbar.contains("toolbar_action(") && toolbar.contains("Cut view"),
         "toolbar should expose the real actions as direct flat buttons"
+    );
+    assert!(
+        !toolbar.contains("Save edits"),
+        "edited layers belong to the explicit editor/close guard, not the global header"
     );
     assert!(
         !toolbar.contains("Screenshot"),

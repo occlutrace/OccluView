@@ -57,6 +57,18 @@ impl OccluViewApp {
                 if let Some(entry) = draft.meshes_mut().get_mut(edit.index) {
                     entry.visible = edit.visible;
                     entry.opacity = edit.opacity;
+                    let tint_changed = entry
+                        .tint
+                        .iter()
+                        .zip(edit.tint)
+                        .any(|(before, after)| (before - after).abs() > f32::EPSILON);
+                    if tint_changed && entry.mesh.texture().is_some() {
+                        // Choosing a tint is an explicit material override. Keep
+                        // the source texture attached, but show the neutral
+                        // tinted material until the operator re-enables scan data.
+                        entry.show_texture = false;
+                        entry.show_vertex_colors = false;
+                    }
                     entry.tint = edit.tint;
                     scene_changed = true;
                 }
@@ -64,6 +76,7 @@ impl OccluViewApp {
         }
 
         if scene_changed {
+            self.remember_visibility_changes(scene, &draft);
             if structural_scene_change {
                 self.commit_structural_scene(Some(scene), draft, ctx);
             } else {
@@ -75,6 +88,30 @@ impl OccluViewApp {
                 ctx.request_repaint();
             }
         }
+    }
+
+    /// Keep one restore history for every visibility owner, not only the
+    /// Ctrl+Middle shortcut. Layer-row toggles and any future context action
+    /// therefore participate in the same Shift+Ctrl restore stack.
+    fn remember_visibility_changes(&mut self, before: &Scene, after: &Scene) {
+        for entry in after.meshes() {
+            let previous = before
+                .meshes()
+                .iter()
+                .find(|candidate| candidate.id() == entry.id())
+                .map(|candidate| candidate.visible);
+            match (previous, entry.visible) {
+                (Some(true), false) if !self.hidden_layer_stack.contains(&entry.id()) => {
+                    self.hidden_layer_stack.push(entry.id());
+                }
+                (Some(false), true) => {
+                    self.hidden_layer_stack.retain(|id| *id != entry.id());
+                }
+                _ => {}
+            }
+        }
+        self.hidden_layer_stack
+            .retain(|id| after.meshes().iter().any(|entry| entry.id() == *id));
     }
 
     /// Egui id under which the last right-clicked viewport layer target is
@@ -98,17 +135,16 @@ impl OccluViewApp {
             return None;
         }
         Some(layers_overlay::LayerContextMenuTarget {
-            label: entry
-                .mesh
-                .name()
-                .map_or_else(|| format!("layer {}", hit.layer_index + 1), String::from),
+            label: layers_overlay::layer_label(&self.current_paths, entry, hit.layer_index),
             index: hit.layer_index,
             layer_id: hit.layer_id,
             visible: entry.visible,
             wireframe: entry.wireframe,
             face_editable: !entry.mesh.is_point_cloud(),
             show_vertex_colors: entry.show_vertex_colors,
+            show_texture: entry.show_texture && entry.show_vertex_colors,
             has_color_data: entry.mesh.carries_color_data(),
+            has_texture: entry.mesh.texture().is_some(),
         })
     }
 
@@ -165,8 +201,9 @@ impl OccluViewApp {
         );
     }
 
-    /// Ctrl+MiddleClick: hide the layer under the cursor and remember it so
-    /// Shift+Ctrl+MiddleClick can bring layers back most-recent-first.
+    /// Ctrl+MiddleClick: hide the layer under the cursor. The same visibility
+    /// history is also fed by the Layers panel, so Shift+Ctrl restore is not
+    /// tied to one input path.
     pub(super) fn hide_layer_under_cursor(
         &mut self,
         response: &egui::Response,
@@ -200,10 +237,10 @@ impl OccluViewApp {
             .mesh
             .name()
             .map_or_else(|| format!("layer {}", hit.layer_index + 1), String::from);
-        self.hidden_layer_stack.push(hit.layer_id);
         self.status_message = Some(format!(
             "Hidden: {label} (Shift+Ctrl+Middle click restores)"
         ));
+        self.remember_visibility_changes(&scene, &draft);
         self.update_scene_materials(draft);
         ctx.request_repaint();
     }
@@ -255,8 +292,8 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// Shift+Ctrl+MiddleClick: unhide the most recently Ctrl+Middle-hidden
-    /// layer that is still in the scene and still hidden.
+    /// Shift+Ctrl+MiddleClick: unhide the most recently hidden layer from any
+    /// visibility control that is still in the scene and still hidden.
     pub(super) fn restore_last_hidden_layer(&mut self, ctx: &egui::Context) {
         if self.bridge_split_active() {
             return;
@@ -289,7 +326,7 @@ impl OccluViewApp {
             ctx.request_repaint();
             return;
         }
-        self.status_message = Some("No middle-click-hidden layers to restore".to_string());
+        self.status_message = Some("No hidden layers to restore".to_string());
         ctx.request_repaint();
     }
 }

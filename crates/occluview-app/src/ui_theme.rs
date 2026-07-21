@@ -7,8 +7,9 @@
 
 use eframe::egui;
 
-/// Primary accent used for active state, selection, and links.
-pub(crate) const ACCENT: egui::Color32 = egui::Color32::from_rgb(66, 117, 204);
+/// Neutral graphite accent used for active state, selection, and links. Product
+/// UI stays monochrome; semantic colors are reserved for the model diagnostics.
+pub(crate) const ACCENT: egui::Color32 = egui::Color32::from_rgb(54, 60, 68);
 /// Primary body ink.
 pub(crate) const TEXT: egui::Color32 = egui::Color32::from_rgb(26, 32, 44);
 /// Secondary ink for labels and metadata.
@@ -34,11 +35,11 @@ pub(crate) fn hairline() -> egui::Color32 {
 }
 /// Row background under the pointer.
 pub(crate) fn row_hover_fill() -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(66, 117, 204, 22)
+    egui::Color32::from_rgba_unmultiplied(54, 60, 68, 18)
 }
 /// Row background for the layer currently open in the mesh editor.
 pub(crate) fn row_active_fill() -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(66, 117, 204, 46)
+    egui::Color32::from_rgba_unmultiplied(54, 60, 68, 34)
 }
 
 /// Menubar height: compact, fixed, consistent with a professional tool.

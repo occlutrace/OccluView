@@ -431,15 +431,12 @@ impl OccluViewApp {
         match drag {
             MeshSelectionDrag::Rect { .. } => {
                 let rect = drag.rect();
-                ui.painter().rect_filled(
-                    rect,
-                    3.0,
-                    egui::Color32::from_rgba_unmultiplied(66, 117, 204, 24),
-                );
+                ui.painter()
+                    .rect_filled(rect, 3.0, crate::ui_theme::ACCENT.gamma_multiply(0.08));
                 ui.painter().rect_stroke(
                     rect,
                     3.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(66, 117, 204)),
+                    egui::Stroke::new(1.0, crate::ui_theme::ACCENT.gamma_multiply(0.85)),
                 );
             }
             MeshSelectionDrag::Lasso { points } => {
@@ -449,7 +446,7 @@ impl OccluViewApp {
                 let Some(&first) = points.first() else {
                     return;
                 };
-                let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(66, 117, 204));
+                let stroke = egui::Stroke::new(1.5, crate::ui_theme::ACCENT);
                 let (dash, gap) = (6.0, 4.0);
                 if points.len() >= 2 {
                     ui.painter()
@@ -465,10 +462,8 @@ impl OccluViewApp {
                         ));
                     }
                     if points.len() >= 2 {
-                        let hint = egui::Stroke::new(
-                            1.0,
-                            egui::Color32::from_rgba_unmultiplied(66, 117, 204, 110),
-                        );
+                        let hint =
+                            egui::Stroke::new(1.0, crate::ui_theme::ACCENT.gamma_multiply(0.48));
                         ui.painter().extend(egui::Shape::dashed_line(
                             &[hover, first],
                             hint,

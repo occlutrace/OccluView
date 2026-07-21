@@ -1,17 +1,20 @@
-//! Per-mesh GPU uniform: model matrix, tint, opacity, `has_texture`,
-//! `show_orientation`, and `show_vertex_colors` flags.
+//! Per-mesh GPU uniform: model matrix, tint, opacity, texture/color presence,
+//! and independent display flags.
 //!
 //! Bound at group 1, binding 0. One uniform per mesh lets the renderer place
 //! multiple meshes (multi-mesh scene) and branch the fragment shader between
 //! vertex-color and texture-sampled shading.
 //!
-//! Layout (96 bytes, std140-compatible):
+//! Layout (112 bytes; the final three u32 values provide the uniform-buffer
+//! alignment required by WGSL):
 //! - `model`               `[f32;16]`  64 bytes
 //! - `tint`                 `[f32;4]`  16 bytes
 //! - `opacity`               `f32`       4 bytes
 //! - `has_texture`           `u32`       4 bytes
 //! - `show_orientation`      `u32`       4 bytes
 //! - `show_vertex_colors`    `u32`       4 bytes
+//! - `show_texture`          `u32`       4 bytes
+//! - `padding`               `[u32;3]`  12 bytes
 
 use bytemuck::{Pod, Zeroable};
 
@@ -37,6 +40,12 @@ pub struct GpuMeshUniform {
     /// normal vertex-color/texture shading. Display-only: mesh data is
     /// untouched, so edits and exports keep the real colors.
     pub show_vertex_colors: u32,
+    /// 0 = do not sample the attached texture; 1 = texture sampling enabled.
+    /// This is intentionally independent from `show_vertex_colors`.
+    pub show_texture: u32,
+    /// Explicit tail padding: uniform structs have a 16-byte alignment in
+    /// WGSL even though each scalar flag is four-byte aligned.
+    pub padding: [u32; 3],
 }
 
 impl GpuMeshUniform {
@@ -59,6 +68,8 @@ impl GpuMeshUniform {
             has_texture: 0,
             show_orientation: 0,
             show_vertex_colors: 1,
+            show_texture: 1,
+            padding: [0; 3],
         }
     }
 }
@@ -74,8 +85,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identity_is_96_bytes_and_aligned() {
-        assert_eq!(size_of::<GpuMeshUniform>(), 96);
+    fn identity_is_112_bytes_and_aligned() {
+        assert_eq!(size_of::<GpuMeshUniform>(), 112);
         // The Rust struct only needs 4-byte (f32/u32) alignment; the 16-byte
         // uniform-buffer offset alignment std140 requires is a wgpu binding
         // concern, not a property of this type.

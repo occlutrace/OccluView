@@ -4,8 +4,8 @@ use crate::mesh::Mesh;
 use glam::Affine3A;
 
 /// Per-instance mesh entry in a scene.
-// Four INDEPENDENT display toggles (visibility, wireframe, orientation
-// diagnostic, vertex-color override) — orthogonal operator settings, not a
+// Five INDEPENDENT display toggles (visibility, wireframe, orientation
+// diagnostic, vertex-color override, texture visibility) — orthogonal settings, not a
 // state machine an enum would simplify.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
@@ -34,6 +34,10 @@ pub struct SceneMesh {
     /// display-only toggle for colored scans; the underlying color/texture
     /// data is untouched, so edits and exports keep the real colors.
     pub show_vertex_colors: bool,
+    /// Whether an attached texture is sampled. This is separate from vertex
+    /// colors so Tint can show a neutral material without destroying texture
+    /// data or changing export behavior.
+    pub show_texture: bool,
 }
 
 impl SceneMesh {
@@ -43,6 +47,7 @@ impl SceneMesh {
     #[must_use]
     pub fn new(mesh: Mesh) -> Self {
         let tint = default_mesh_tint(&mesh);
+        let show_texture = mesh.texture().is_some();
         Self {
             id: next_scene_mesh_id(),
             mesh,
@@ -53,6 +58,7 @@ impl SceneMesh {
             wireframe: false,
             show_orientation: false,
             show_vertex_colors: true,
+            show_texture,
         }
     }
 
@@ -101,6 +107,14 @@ impl SceneMesh {
     #[must_use]
     pub fn with_show_vertex_colors(mut self, show_vertex_colors: bool) -> Self {
         self.show_vertex_colors = show_vertex_colors;
+        self
+    }
+
+    /// Enable or disable sampling the mesh texture at display time.
+    #[inline]
+    #[must_use]
+    pub fn with_show_texture(mut self, show_texture: bool) -> Self {
+        self.show_texture = show_texture;
         self
     }
 }

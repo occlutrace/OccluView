@@ -575,6 +575,8 @@ pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         has_texture: u32::from(entry.mesh.texture().is_some()),
         show_orientation: u32::from(entry.show_orientation),
         show_vertex_colors: u32::from(entry.show_vertex_colors),
+        show_texture: u32::from(entry.show_texture),
+        padding: [0; 3],
     }
 }
 
