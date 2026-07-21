@@ -51,6 +51,24 @@ pub enum HpsReadError {
     Surface(FormatError),
 }
 
+/// HPS failures that can occur before conversion into the viewer mesh model.
+#[derive(Debug)]
+pub enum HpsDecodedReadError {
+    /// The input failed HPS parsing or validation.
+    Parser(HpsReadFailure),
+    /// The runtime key provider failed while decoding encrypted input.
+    KeyProvider(HpsReadFailure),
+}
+
+impl From<HpsDecodedReadError> for HpsReadError {
+    fn from(error: HpsDecodedReadError) -> Self {
+        match error {
+            HpsDecodedReadError::Parser(error) => Self::Parser(error),
+            HpsDecodedReadError::KeyProvider(error) => Self::KeyProvider(error),
+        }
+    }
+}
+
 /// Secret bytes used to decrypt encrypted HPS `CE` blocks.
 ///
 /// This compatibility wrapper preserves the original formats API while the
@@ -222,16 +240,16 @@ pub fn read_bytes_with_runtime_key_provider(bytes: &[u8]) -> Result<Mesh, HpsRea
 /// CAD topology for a lossless geometry export.
 ///
 /// # Errors
-/// Returns [`HpsReadError`] when parsing or runtime key resolution fails.
+/// Returns [`HpsDecodedReadError`] when parsing or runtime key resolution fails.
 pub fn read_decoded_surface_bytes_with_runtime_key_provider(
     bytes: &[u8],
-) -> Result<occluview_hps::DecodedSurface, HpsReadError> {
+) -> Result<occluview_hps::DecodedSurface, HpsDecodedReadError> {
     match occluview_hps::read_with_key_provider(bytes, &occluview_hps::RuntimeHpsKeyProvider) {
         Ok(surface) => Ok(surface),
         Err(occluview_hps::ReadError::Parser(error)) => {
-            Err(HpsReadError::Parser(classify_parser_error(&error)))
+            Err(HpsDecodedReadError::Parser(classify_parser_error(&error)))
         }
-        Err(occluview_hps::ReadError::KeyProvider(error)) => Err(HpsReadError::KeyProvider(
+        Err(occluview_hps::ReadError::KeyProvider(error)) => Err(HpsDecodedReadError::KeyProvider(
             classify_key_provider_error(&error),
         )),
     }

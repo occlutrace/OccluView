@@ -18,14 +18,11 @@ pub(crate) fn convert(
         &input,
     ) {
         Ok(surface) => surface,
-        Err(occluview_formats::hps::HpsReadError::Parser(error)) => {
+        Err(occluview_formats::hps::HpsDecodedReadError::Parser(error)) => {
             return Err(CliError::from_parser(error));
         }
-        Err(occluview_formats::hps::HpsReadError::KeyProvider(error)) => {
+        Err(occluview_formats::hps::HpsDecodedReadError::KeyProvider(error)) => {
             return Err(CliError::from_key_provider(error));
-        }
-        Err(occluview_formats::hps::HpsReadError::Surface(_)) => {
-            return Err(CliError::SurfaceConversionFailed);
         }
     };
     let geometry_mesh = occluview_formats::hps::geometry_mesh_from_decoded_surface(&surface)
