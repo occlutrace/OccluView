@@ -384,7 +384,12 @@ pub(super) fn render_coalesced_thumbnail(
     // is what "never show nothing in the folder" depends on downstream.
     match acquire_inflight_thumbnail(&key) {
         InflightThumbnailLease::Leader(entry) => {
-            let pixels = render();
+            let pixels = panic::catch_unwind(AssertUnwindSafe(render)).unwrap_or_else(|_| {
+                tracing::error!(
+                    "thumbnail leader panicked outside the worker boundary; returning a placeholder"
+                );
+                follower_fallback()
+            });
             finish_inflight_thumbnail(&key, &entry, &pixels);
             pixels
         }
@@ -402,23 +407,7 @@ pub(super) fn render_coalesced_thumbnail(
     }
 }
 
-pub(super) fn run_thumbnail_job_with_timeouts<T, F>(
-    setup_timeout: Duration,
-    render_timeout: Duration,
-    work: F,
-) -> ThumbnailJobOutcome<T>
-where
-    T: Send + 'static,
-    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
-{
-    run_thumbnail_job_with_gate_and_timeouts(
-        ThumbnailJobGate::shared(),
-        setup_timeout,
-        render_timeout,
-        work,
-    )
-}
-
+#[cfg(test)]
 pub(super) fn run_thumbnail_job_with_gate_and_timeouts<T, F>(
     gate: &ThumbnailJobGate,
     setup_timeout: Duration,
@@ -435,6 +424,7 @@ where
     run_thumbnail_job_with_permit(permit, setup_timeout, render_timeout, work)
 }
 
+#[cfg(test)]
 pub(super) fn run_thumbnail_job_with_permit<T, F>(
     permit: ThumbnailJobPermit,
     setup_timeout: Duration,
@@ -475,6 +465,85 @@ where
             setup_timeout
         };
         match rx.recv_timeout(timeout) {
+            Ok(ThumbnailJobProgress::Prepared) => prepared = true,
+            Ok(ThumbnailJobProgress::Finished(value)) => {
+                return ThumbnailJobOutcome::Finished(value)
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                timed_out.store(true, Ordering::Relaxed);
+                return if prepared {
+                    ThumbnailJobOutcome::RenderTimedOut
+                } else {
+                    ThumbnailJobOutcome::SetupTimedOut
+                };
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ThumbnailJobOutcome::Failed,
+        }
+    }
+}
+
+/// Run one thumbnail job against a single wall-clock budget. Queueing for the
+/// bounded decode slot, format loading, renderer checkout, and GPU readback all
+/// consume the same deadline so a mixed Explorer folder cannot multiply the
+/// request budget by waiting once for setup and again for rendering.
+pub(super) fn run_thumbnail_job_with_deadline<T, F>(
+    timeout: Duration,
+    work: F,
+) -> ThumbnailJobOutcome<T>
+where
+    T: Send + 'static,
+    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
+{
+    let Some(permit) = ThumbnailJobGate::shared().acquire_timeout(timeout) else {
+        return ThumbnailJobOutcome::SetupTimedOut;
+    };
+    run_thumbnail_job_with_permit_deadline(permit, timeout, work)
+}
+
+/// Variant of [`run_thumbnail_job_with_deadline`] for the Windows shell path,
+/// which reserves a gate permit before it copies an `IStream`.
+pub(super) fn run_thumbnail_job_with_permit_deadline<T, F>(
+    permit: ThumbnailJobPermit,
+    timeout: Duration,
+    work: F,
+) -> ThumbnailJobOutcome<T>
+where
+    T: Send + 'static,
+    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel(2);
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timed_out_worker = timed_out.clone();
+    let spawn = std::thread::Builder::new()
+        .name("occluview-thumbnail-job".to_string())
+        .spawn(move || {
+            // Keep the permit with the worker after the caller times out. The
+            // decode/readback can not be cancelled safely, and releasing the
+            // slot early would let a large folder create unbounded survivors.
+            let _permit = permit;
+            let _ = panic::catch_unwind(AssertUnwindSafe(|| work(tx)));
+            if timed_out_worker.load(Ordering::Relaxed) {
+                tracing::debug!(
+                    "thumbnail worker completed after caller timed out; releasing its burst slot"
+                );
+            }
+        });
+    if spawn.is_err() {
+        return ThumbnailJobOutcome::Failed;
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut prepared = false;
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            timed_out.store(true, Ordering::Relaxed);
+            return if prepared {
+                ThumbnailJobOutcome::RenderTimedOut
+            } else {
+                ThumbnailJobOutcome::SetupTimedOut
+            };
+        };
+        match rx.recv_timeout(remaining) {
             Ok(ThumbnailJobProgress::Prepared) => prepared = true,
             Ok(ThumbnailJobProgress::Finished(value)) => {
                 return ThumbnailJobOutcome::Finished(value)
