@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.5 - 2026-07-21
+
+- Made repeated sculpt strokes continue to respond on meshes with small or
+  damaged facets. Invalid local faces are isolated instead of discarding a
+  healthy brush region, while the mesh remains protected from inverted faces.
+- Moved sculpt preparation, stroke execution, sparse GPU updates, and undo
+  snapshots off the UI thread so large scans stay responsive across strokes.
+- Kept mixed-folder thumbnail work bounded and isolated across unrelated file
+  types, with the existing deterministic fallback for a single failed item.
+- Reworked the mesh editor controls so Size and Force use the full available
+  rail, and made About a compact centered dialog with balanced links.
+- Kept Linux single-instance activation and the existing Windows/Linux package
+  release checks in the same tag-driven release path.
+
 ## 1.0.4 - 2026-07-19
 
 - Sculpt brushes are now robust to abuse: Smooth still flattens hard, while the

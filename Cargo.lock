@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "occlu-mesh-edit"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "earcutr",
  "glam",
@@ -2367,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-app"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2382,16 +2382,19 @@ dependencies = [
  "occluview-update",
  "pollster 0.4.0",
  "raw-window-handle",
+ "rayon",
  "rfd",
  "tracing",
  "tracing-subscriber",
+ "wayland-client",
+ "wayland-protocols",
  "windows 0.58.0",
  "x11rb",
 ]
 
 [[package]]
 name = "occluview-cli"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "anyhow",
  "glam",
@@ -2410,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-core"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bytemuck",
  "glam",
@@ -2423,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-formats"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "glam",
  "image",
@@ -2442,7 +2445,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-hps"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "adler2",
  "blowfish",
@@ -2455,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-render"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bytemuck",
  "glam",
@@ -2470,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-robust-csg"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "glam",
  "manifold-csg",
@@ -2479,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-shell"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "glam",
  "occluview-core",
@@ -2497,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-thumbnail"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "glam",
  "occluview-core",
@@ -2513,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-update"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "minisign",
  "minisign-verify",

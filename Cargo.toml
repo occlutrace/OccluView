@@ -46,7 +46,7 @@ default-members = [
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 rust-version = "1.86"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
@@ -59,15 +59,15 @@ publish = false              # we are not on crates.io yet
 # `dep = { workspace = true }` in each crate's [dependencies].
 [workspace.dependencies]
 # Internal crates.
-occlu-mesh-edit  = { path = "crates/occlu-mesh-edit", version = "1.0.4" }
-occluview-robust-csg = { path = "crates/occluview-robust-csg", version = "1.0.4" }
-occluview-core    = { path = "crates/occluview-core", version = "1.0.4" }
-occluview-hps = { path = "crates/occluview-hps", version = "1.0.4" }
-occluview-formats = { path = "crates/occluview-formats", version = "1.0.4" }
-occluview-render  = { path = "crates/occluview-render", version = "1.0.4" }
-occluview-thumbnail = { path = "crates/occluview-thumbnail", version = "1.0.4" }
-occluview-shell   = { path = "crates/occluview-shell", version = "1.0.4" }
-occluview-update  = { path = "crates/occluview-update", version = "1.0.4" }
+occlu-mesh-edit  = { path = "crates/occlu-mesh-edit", version = "1.0.5" }
+occluview-robust-csg = { path = "crates/occluview-robust-csg", version = "1.0.5" }
+occluview-core    = { path = "crates/occluview-core", version = "1.0.5" }
+occluview-hps = { path = "crates/occluview-hps", version = "1.0.5" }
+occluview-formats = { path = "crates/occluview-formats", version = "1.0.5" }
+occluview-render  = { path = "crates/occluview-render", version = "1.0.5" }
+occluview-thumbnail = { path = "crates/occluview-thumbnail", version = "1.0.5" }
+occluview-shell   = { path = "crates/occluview-shell", version = "1.0.5" }
+occluview-update  = { path = "crates/occluview-update", version = "1.0.5" }
 
 # Math / numerics.
 glam    = "0.29"            # permissive (MIT OR Apache-2.0)
@@ -120,6 +120,11 @@ wgpu = "22.0"               # pinned; bumps need tests and a changelog entry
 egui    = "0.29"
 eframe  = { version = "0.29", default-features = false, features = ["wgpu", "default_fonts"] }
 rfd     = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
+
+# Linux window activation. The app uses the system Wayland connection exposed
+# by winit to forward startup/handoff activation tokens to its existing surface.
+wayland-client   = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 # Windows bindings (shell + windowing interop) — windows-rs only.
 # Target = x86_64-pc-windows-msvc (rust-toolchain.toml).
