@@ -412,67 +412,69 @@ impl OccluViewApp {
         let logo = self.app_logo_texture(ctx).cloned();
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
 
-        // Dimmed backdrop makes it a centered modal; clicking it dismisses.
-        let screen = ctx.screen_rect();
-        egui::Area::new(egui::Id::new("about_backdrop"))
-            .order(egui::Order::Middle)
-            .fixed_pos(screen.min)
-            .show(ctx, |ui| {
-                let response = ui.allocate_rect(screen, egui::Sense::click());
-                ui.painter()
-                    .rect_filled(screen, 0.0, egui::Color32::from_black_alpha(88));
-                if response.clicked() {
-                    close = true;
-                }
-            });
-
         egui::Window::new("About OccluView")
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .movable(false)
             .resizable(false)
             .collapsible(false)
             .title_bar(false)
+            .default_size([348.0, 190.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.set_width(300.0);
-                ui.add_space(22.0);
-                ui.vertical_centered(|ui| {
+                ui.set_min_width(324.0);
+                ui.horizontal(|ui| {
                     if let Some(logo) = &logo {
-                        ui.add(egui::Image::new((logo.id(), egui::vec2(64.0, 64.0))));
+                        ui.add(egui::Image::new((logo.id(), egui::vec2(52.0, 52.0))));
                     }
                     ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new("OccluView")
-                            .size(21.0)
-                            .strong()
-                            .color(ui_theme::TEXT),
-                    );
-                    ui.label(
-                        egui::RichText::new("3D viewer for dental scans")
-                            .color(ui_theme::TEXT_WEAK),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new(concat!(
-                            "Version ",
-                            env!("CARGO_PKG_VERSION"),
-                            " · Apache-2.0"
-                        ))
-                        .size(11.0)
-                        .color(ui_theme::TEXT_MUTED),
-                    );
-                    ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        ui.hyperlink_to("occlutrace.ai", "https://occlutrace.ai");
-                        ui.label(egui::RichText::new("·").color(ui_theme::TEXT_MUTED));
-                        ui.hyperlink_to("GitHub", "https://github.com/occlutrace/OccluView");
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("OccluView")
+                                .size(20.0)
+                                .strong()
+                                .color(ui_theme::TEXT),
+                        );
+                        ui.label(
+                            egui::RichText::new("3D viewer for dental scans")
+                                .color(ui_theme::TEXT_WEAK),
+                        );
+                        ui.label(
+                            egui::RichText::new(concat!(
+                                "Version ",
+                                env!("CARGO_PKG_VERSION"),
+                                " · Apache-2.0"
+                            ))
+                            .size(11.0)
+                            .color(ui_theme::TEXT_MUTED),
+                        );
                     });
-                    ui.add_space(16.0);
+                });
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.horizontal_centered(|ui| {
+                    let link_width =
+                        ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(1.0);
+                    ui.add_sized(
+                        [link_width, 22.0],
+                        egui::Hyperlink::from_label_and_url(
+                            "occlutrace.ai",
+                            "https://occlutrace.ai",
+                        ),
+                    );
+                    ui.add_sized(
+                        [link_width, 22.0],
+                        egui::Hyperlink::from_label_and_url(
+                            "GitHub",
+                            "https://github.com/occlutrace/OccluView",
+                        ),
+                    );
+                });
+                ui.add_space(4.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         close = true;
                     }
-                    ui.add_space(6.0);
                 });
             });
 

@@ -388,26 +388,62 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
     let ctx = ui.ctx().clone();
     let mut size = super::sculpt_size(&ctx);
     let mut intensity = super::sculpt_intensity(&ctx);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("size").size(11.0).weak());
-        ui.add_enabled(
-            enabled,
-            egui::Slider::new(&mut size, SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX).show_value(false),
-        )
-        .on_hover_text("Brush size (Shift + mouse wheel)");
-    });
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("force").size(11.0).weak());
-        ui.add_enabled(
-            enabled,
-            egui::Slider::new(&mut intensity, SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX)
-                .show_value(false),
-        )
-        .on_hover_text("Brush intensity (Ctrl + mouse wheel)");
-    });
+    sculpt_slider_row(
+        ui,
+        enabled,
+        SculptSliderControl {
+            label: "size",
+            value: &mut size,
+            range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
+            tooltip: "Brush size (Shift + mouse wheel)",
+        },
+    );
+    sculpt_slider_row(
+        ui,
+        enabled,
+        SculptSliderControl {
+            label: "force",
+            value: &mut intensity,
+            range: SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX,
+            tooltip: "Brush intensity (Ctrl + mouse wheel)",
+        },
+    );
     super::set_sculpt_size(&ctx, size);
     super::set_sculpt_intensity(&ctx, intensity);
     ui.add_space(2.0);
+}
+
+struct SculptSliderControl<'a> {
+    label: &'a str,
+    value: &'a mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    tooltip: &'a str,
+}
+
+fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
+    let label_width = 36.0;
+    let row_height = ui.spacing().interact_size.y;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [label_width, row_height],
+            egui::Label::new(egui::RichText::new(control.label).size(11.0).weak()),
+        );
+        // Measure after the label so the rail consumes the whole remaining
+        // row. Measuring before entering `horizontal` leaves egui's spacing
+        // and child layout to shorten the slider again in narrow windows.
+        let slider_width = (ui.available_width() - ui.spacing().item_spacing.x).max(1.0);
+        let response = ui
+            .add_enabled_ui(enabled, |ui| {
+                ui.add_sized(
+                    [slider_width, row_height],
+                    egui::Slider::new(control.value, control.range)
+                        .show_value(false)
+                        .trailing_fill(true),
+                )
+            })
+            .inner;
+        response.on_hover_text(control.tooltip);
+    });
 }
 
 fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
