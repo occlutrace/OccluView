@@ -1,8 +1,8 @@
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
-    Camera, CutTool, EditModeController, Instant, LayerOverlayChanges, LoadQueueCameraReset,
-    Offscreen, PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Result, Scene,
-    SceneLoadRequest, SharedLiveViewport, ViewportSpec, DEFAULT_RENDER_EXTENT_PX,
+    Camera, CutTool, Duration, EditModeController, Instant, LayerOverlayChanges,
+    LoadQueueCameraReset, Offscreen, PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Result,
+    Scene, SceneLoadRequest, SharedLiveViewport, ViewportSpec, DEFAULT_RENDER_EXTENT_PX,
 };
 
 /// Everything the bootstrap hands the app about how this process was started:
@@ -54,6 +54,8 @@ pub(crate) struct OccluViewApp {
     pub(super) offscreen_scene_dirty: bool,
     pub(super) selection_overlay_dirty: bool,
     pub(super) status_message: Option<String>,
+    pub(super) status_message_since: Option<Instant>,
+    pub(super) status_message_snapshot: Option<String>,
     pub(super) app_error: Option<AppErrorDialog>,
     pub(super) cut_view: CutTool,
     /// Bridge-separator controller and its world-fixed placement disc. Kept
@@ -78,8 +80,8 @@ pub(crate) struct OccluViewApp {
     pub(super) camera_modified_during_load: bool,
     pub(super) incoming_open_requests: single_instance::OpenRequestListener,
     pub(super) _single_instance: single_instance::SingleInstance,
-    /// Raises the window on an open-file handoff past WM focus-stealing
-    /// prevention (X11 real raise; Wayland falls back). See activation.rs.
+    /// Raises the window on an open-file handoff through the native compositor
+    /// activation protocol. See activation.rs.
     pub(super) raise_target: single_instance::RaiseTarget,
     /// Latest window-activation token forwarded by a second instance, used as
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
@@ -193,6 +195,29 @@ pub(super) struct SceneStats {
 }
 
 impl OccluViewApp {
+    /// Status text is a transient interaction hint, not a second permanent
+    /// toolbar. Track direct legacy assignments centrally so every caller gets
+    /// the same expiry behavior without duplicating timer code across tools.
+    fn expire_status_message(&mut self, ctx: &egui::Context) {
+        const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(4);
+        let now = Instant::now();
+        if self.status_message != self.status_message_snapshot {
+            self.status_message_snapshot = self.status_message.clone();
+            self.status_message_since = self.status_message.as_ref().map(|_| now);
+        }
+        let Some(since) = self.status_message_since else {
+            return;
+        };
+        let elapsed = now.saturating_duration_since(since);
+        if elapsed >= STATUS_MESSAGE_TTL {
+            self.status_message = None;
+            self.status_message_snapshot = None;
+            self.status_message_since = None;
+        } else {
+            ctx.request_repaint_after(STATUS_MESSAGE_TTL - elapsed);
+        }
+    }
+
     pub(crate) fn new(
         repaint_ctx: egui::Context,
         startup_paths: Vec<PathBuf>,
@@ -217,6 +242,8 @@ impl OccluViewApp {
             offscreen_scene_dirty: false,
             selection_overlay_dirty: false,
             status_message: None,
+            status_message_since: None,
+            status_message_snapshot: None,
             app_error: None,
             cut_view: CutTool::default(),
             bridge_split: crate::bridge_split::BridgeSplitController::default(),
@@ -488,9 +515,11 @@ impl OccluViewApp {
 impl eframe::App for OccluViewApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(super::viewer_visuals());
+        self.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
         self.poll_sculpt_preparation(ctx);
+        self.poll_sculpt_worker(ctx);
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);
         self.handle_dropped_files(ctx);

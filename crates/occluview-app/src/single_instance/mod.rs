@@ -17,7 +17,7 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
-pub(crate) use activation::{capture_activation_token, RaiseTarget};
+pub(crate) use activation::{capture_activation_token, complete_startup_notification, RaiseTarget};
 
 /// One file-open handoff from a second instance: the files to open plus, when
 /// available, the launcher's window-activation token (used to raise the running

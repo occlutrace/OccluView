@@ -117,6 +117,26 @@ impl SceneMesh {
         self.show_texture = show_texture;
         self
     }
+
+    /// Build a layer snapshot with the same instance identity and display
+    /// settings, replacing only its geometry. This avoids cloning the current
+    /// mesh when a background editor already prepared an undo mesh.
+    #[inline]
+    #[must_use]
+    pub fn with_mesh(&self, mesh: Mesh) -> Self {
+        Self {
+            id: self.id,
+            mesh,
+            transform: self.transform,
+            tint: self.tint,
+            opacity: self.opacity,
+            visible: self.visible,
+            wireframe: self.wireframe,
+            show_orientation: self.show_orientation,
+            show_vertex_colors: self.show_vertex_colors,
+            show_texture: self.show_texture,
+        }
+    }
 }
 
 impl Default for SceneMesh {

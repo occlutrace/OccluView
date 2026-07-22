@@ -1,111 +1,123 @@
-//! Raising the running instance past desktop focus-stealing prevention.
+//! Raise the viewer through the compositor's activation protocol.
 //!
-//! # Why the naive "focus the window" call is denied on Linux
-//!
-//! When a second instance hands a freshly opened file to the already-running
-//! viewer, we want the viewer's window to come to the front. Modern Linux
-//! desktops refuse a self-initiated raise unless the request carries proof of a
-//! recent *user* interaction. Both display servers deny our best effort through
-//! eframe 0.29 / winit 0.30:
-//!
-//! * **X11.** `egui::ViewportCommand::Focus` maps to winit's
-//!   `Window::focus_window`, which sends `_NET_ACTIVE_WINDOW` with source
-//!   indication `1` (application) and timestamp `CURRENT_TIME` (0). Mutter
-//!   (GNOME) and `KWin` (KDE) treat an application-sourced request with no valid
-//!   timestamp as a focus steal and, instead of raising, mark the window as
-//!   "demanding attention" — the "window is ready" notification the user sees.
-//!   winit exposes no way to inject a valid timestamp or startup-notification id
-//!   into a raise of an *already-created* window.
-//!
-//! * **Wayland.** winit's Wayland `focus_window` is a no-op
-//!   (`winit-0.30.13/src/platform_impl/linux/wayland/window/mod.rs:629`). The
-//!   xdg-activation protocol *can* raise a window, but winit only applies an
-//!   activation token at window *creation*
-//!   (`WindowAttributesExtStartupNotify::with_activation_token`); there is no
-//!   public API to re-activate a live window with a forwarded token, and eframe
-//!   never surfaces the winit `Window`, the `wl_display`, or the `xdg_activation`
-//!   global. So even though the second instance owns the activation token, there
-//!   is no reachable sink for it. Full raise on Wayland is therefore impossible
-//!   through this stack; the caller falls back to `RequestUserAttention`, which
-//!   winit implements via xdg-activation urgency (the taskbar entry highlights).
-//!
-//! # What this module does
-//!
-//! On X11 we bypass winit and send `_NET_ACTIVE_WINDOW` ourselves with valid
-//! provenance, using the window's XID (taken from the raw window handle eframe
-//! *does* expose):
-//!
-//! * If the forwarded startup id carries an X server timestamp (the
-//!   `..._TIME<n>` suffix of a `DESKTOP_STARTUP_ID`), send source `1` with that
-//!   timestamp — a legitimate, recent user-interaction time Mutter honors.
-//! * Otherwise send source `2` (pager). Mutter and `KWin` honor pager-sourced
-//!   activation unconditionally, which is the mechanism panels/taskbars use.
-//!
-//! Either way the request goes to the root window on our own X connection, so it
-//! is independent of winit's event loop. If anything fails we return `false` and
-//! the caller uses the winit/eframe fallback (no worse than before).
+//! A plain `ViewportCommand::Focus` is deliberately insufficient for an
+//! already-running Linux window: X11 window managers require a valid
+//! `_NET_ACTIVE_WINDOW` request, while Wayland requires the launcher's
+//! `xdg-activation` token. eframe 0.29 exposes raw handles but not winit's
+//! `Window`, so this module uses the raw X11/Wayland surface only for the
+//! platform-specific activation request. File delivery remains in the
+//! single-instance IPC module.
 
-use raw_window_handle::HasWindowHandle;
+use anyhow::Context;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+
+#[cfg(target_os = "linux")]
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
+#[cfg(target_os = "linux")]
+use std::{ffi::c_void, ptr::NonNull};
 
 /// A handle to the running instance's top-level window, captured once at
 /// startup, that knows how to raise itself when a file is handed off.
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 pub(crate) struct RaiseTarget {
     /// The X11 window id, when the session is X11 and the handle was readable.
-    /// `None` on Wayland (raising a live window is WM-denied there) and on
-    /// non-Linux platforms.
+    /// `None` when the raw X11 handle is unavailable and on non-Linux
+    /// platforms.
     #[cfg(target_os = "linux")]
     x11_window: Option<u32>,
+    /// The existing Wayland surface plus the compositor's activation object.
+    /// It is initialized from eframe's raw handles while the window is live.
+    #[cfg(target_os = "linux")]
+    wayland: Option<WaylandActivator>,
 }
 
 impl RaiseTarget {
-    /// Capture the raise target from eframe's creation context (or any window
-    /// handle provider). Reads the raw window handle; on X11 it keeps the XID,
-    /// otherwise it degrades to the fallback path.
+    /// Capture the raise target from eframe's creation context (or any pair of
+    /// window/display handle providers).
     #[cfg(target_os = "linux")]
-    pub(crate) fn from_window_handle<H: HasWindowHandle>(handle: &H) -> Self {
-        use raw_window_handle::RawWindowHandle;
-
-        let x11_window = handle
+    pub(crate) fn from_handles<W, D>(window_handle: &W, display_handle: &D) -> Self
+    where
+        W: HasWindowHandle,
+        D: HasDisplayHandle,
+    {
+        let raw_window = window_handle
             .window_handle()
             .ok()
-            .and_then(|handle| match handle.as_raw() {
-                // An X11 window id is a 32-bit XID even though Xlib widens it to
-                // `c_ulong`; `try_from` keeps that explicit and arch-portable.
-                RawWindowHandle::Xlib(window) => u32::try_from(window.window).ok(),
-                RawWindowHandle::Xcb(window) => Some(window.window.get()),
-                _ => None,
-            });
-        if x11_window.is_none() {
+            .map(|handle| handle.as_raw());
+        let raw_display = display_handle
+            .display_handle()
+            .ok()
+            .map(|handle| handle.as_raw());
+        let x11_window = raw_window.as_ref().and_then(|raw| match raw {
+            // An X11 window id is a 32-bit XID even though Xlib widens it
+            // to `c_ulong`; `try_from` keeps that explicit and portable.
+            RawWindowHandle::Xlib(window) => u32::try_from(window.window).ok(),
+            RawWindowHandle::Xcb(window) => Some(window.window.get()),
+            _ => None,
+        });
+        let wayland = match (raw_window, raw_display) {
+            (Some(RawWindowHandle::Wayland(window)), Some(RawDisplayHandle::Wayland(display))) => {
+                match WaylandActivator::new(display.display, window.surface) {
+                    Ok(activator) => Some(activator),
+                    Err(error) => {
+                        tracing::warn!(?error, "Wayland window activation is unavailable");
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+
+        if x11_window.is_none() && wayland.is_none() {
             tracing::debug!(
-                "no X11 window handle for open-handoff activation; \
-                 relying on winit focus fallback (expected on Wayland)"
+                "no compositor activation target for open handoff; using the window fallback"
             );
         }
-        Self { x11_window }
+        Self {
+            x11_window,
+            wayland,
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn from_window_handle<H: HasWindowHandle>(_handle: &H) -> Self {
+    pub(crate) fn from_handles<W: HasWindowHandle, D: HasDisplayHandle>(
+        _window_handle: &W,
+        _display_handle: &D,
+    ) -> Self {
         Self::default()
     }
 
     /// Try to raise the window using the forwarded activation token as
-    /// provenance. Returns `true` when a real activation request was issued and
-    /// the caller can skip the WM-denied focus fallback; `false` means the
-    /// caller must fall back (Wayland, missing handle, or a failed request).
+    /// provenance. Returns `true` only after the platform request was sent.
     #[cfg(target_os = "linux")]
-    pub(crate) fn try_activate(self, token: Option<&str>) -> bool {
-        let Some(window) = self.x11_window else {
+    pub(crate) fn try_activate(&self, token: Option<&str>) -> bool {
+        if let Some(window) = self.x11_window {
+            match x11_activate(window, token) {
+                Ok(()) => {
+                    tracing::debug!(window, "issued X11 _NET_ACTIVE_WINDOW for open handoff");
+                    return true;
+                }
+                Err(error) => {
+                    tracing::warn!(?error, window, "X11 open-handoff activation failed");
+                }
+            }
+        }
+
+        let Some(wayland) = self.wayland.as_ref() else {
             return false;
         };
-        match x11_activate(window, token) {
+        let Some(token) = token.filter(|token| !token.is_empty()) else {
+            tracing::debug!("cannot activate Wayland surface without a launch token");
+            return false;
+        };
+        match wayland.activate(token) {
             Ok(()) => {
-                tracing::debug!(window, "issued X11 _NET_ACTIVE_WINDOW for open handoff");
+                tracing::debug!("issued Wayland xdg-activation request");
                 true
             }
             Err(error) => {
-                tracing::warn!(?error, window, "X11 open-handoff activation failed");
+                tracing::warn!(?error, "Wayland open-handoff activation failed");
                 false
             }
         }
@@ -115,8 +127,117 @@ impl RaiseTarget {
     // receiver is intentionally unused off Linux.
     #[cfg(not(target_os = "linux"))]
     #[allow(clippy::unused_self)]
-    pub(crate) fn try_activate(self, _token: Option<&str>) -> bool {
+    pub(crate) fn try_activate(&self, _token: Option<&str>) -> bool {
         false
+    }
+}
+
+/// Complete a launcher's startup-notification sequence when the launch came
+/// through X11. Wayland uses the xdg-activation token itself; it has no
+/// separate remove message.
+pub(crate) fn complete_startup_notification(token: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    if let Some(token) = token.filter(|token| startup_id_timestamp(token).is_some()) {
+        if let Err(error) = x11_remove_startup_notification(token) {
+            tracing::debug!(?error, "could not complete X11 startup notification");
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn complete_startup_notification(_token: Option<&str>) {}
+
+#[cfg(target_os = "linux")]
+struct WaylandActivator {
+    connection: wayland_client::Connection,
+    // Keep the queue and registry alive for the lifetime of the bound global.
+    _event_queue: wayland_client::EventQueue<WaylandActivationState>,
+    _globals: wayland_client::globals::GlobalList,
+    activation: wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1,
+    surface: wayland_client::protocol::wl_surface::WlSurface,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct WaylandActivationState;
+
+#[cfg(target_os = "linux")]
+impl
+    wayland_client::Dispatch<
+        wayland_client::protocol::wl_registry::WlRegistry,
+        wayland_client::globals::GlobalListContents,
+    > for WaylandActivationState
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_client::protocol::wl_registry::WlRegistry,
+        _event: wayland_client::protocol::wl_registry::Event,
+        _data: &wayland_client::globals::GlobalListContents,
+        _conn: &wayland_client::Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
+    ) {
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl
+    wayland_client::Dispatch<
+        wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1,
+        (),
+    > for WaylandActivationState
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1,
+        _event: <wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &wayland_client::Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
+    ) {
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl WaylandActivator {
+    fn new(display: NonNull<c_void>, surface: NonNull<c_void>) -> anyhow::Result<Self> {
+        use wayland_client::backend::{Backend, ObjectId};
+        use wayland_client::globals::registry_queue_init;
+        use wayland_client::protocol::wl_surface::WlSurface;
+        use wayland_client::Proxy;
+        use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
+
+        // eframe/winit owns this connection. The system backend's foreign
+        // display mode borrows it and does not close or replace it on drop.
+        let backend = unsafe { Backend::from_foreign_display(display.as_ptr().cast()) };
+        let connection = wayland_client::Connection::from_backend(backend);
+        let (globals, event_queue) = registry_queue_init::<WaylandActivationState>(&connection)
+            .context("enumerating Wayland globals for window activation")?;
+        let queue_handle = event_queue.handle();
+        let activation = globals
+            .bind::<XdgActivationV1, _, _>(&queue_handle, 1..=1, ())
+            .context("binding xdg_activation_v1")?;
+
+        let surface_id =
+            unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast()) }
+                .context("importing the eframe Wayland surface")?;
+        let surface = WlSurface::from_id(&connection, surface_id)
+            .context("creating a Wayland surface proxy")?;
+
+        Ok(Self {
+            connection,
+            _event_queue: event_queue,
+            _globals: globals,
+            activation,
+            surface,
+        })
+    }
+
+    fn activate(&self, token: &str) -> anyhow::Result<()> {
+        self.activation.activate(token.to_owned(), &self.surface);
+        self.connection
+            .flush()
+            .context("flushing Wayland xdg-activation request")?;
+        Ok(())
     }
 }
 
@@ -126,17 +247,28 @@ impl RaiseTarget {
 /// provenance the running instance lacks. `XDG_ACTIVATION_TOKEN` is the Wayland
 /// carrier; `DESKTOP_STARTUP_ID` is the X11 one (and encodes an X timestamp).
 pub(crate) fn capture_activation_token() -> Option<String> {
-    for name in ["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"] {
+    let names: &[&str] = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        &["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"]
+    } else {
+        &["DESKTOP_STARTUP_ID", "XDG_ACTIVATION_TOKEN"]
+    };
+    let mut token = None;
+    for name in names {
         if let Some(value) = std::env::var_os(name) {
             if let Ok(text) = value.into_string() {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
+                    token = Some(trimmed.to_string());
+                    break;
                 }
             }
         }
     }
-    None
+    // winit documents clearing both variables after reading them; otherwise a
+    // child process can accidentally reuse a one-shot activation token.
+    std::env::remove_var("XDG_ACTIVATION_TOKEN");
+    std::env::remove_var("DESKTOP_STARTUP_ID");
+    token
 }
 
 /// Extract the X server timestamp encoded in a `DESKTOP_STARTUP_ID`. The
@@ -193,6 +325,69 @@ fn x11_activate(window: u32, token: Option<&str>) -> anyhow::Result<()> {
         EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
         event,
     )?;
+    conn.flush()?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn x11_remove_startup_notification(token: &str) -> anyhow::Result<()> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, WindowClass,
+    };
+    use x11rb::COPY_FROM_PARENT;
+
+    let (conn, screen_num) = x11rb::connect(None)?;
+    let root = conn
+        .setup()
+        .roots
+        .get(screen_num)
+        .ok_or_else(|| anyhow::anyhow!("X11 screen {screen_num} is missing"))?
+        .root;
+    let startup_info_begin = conn
+        .intern_atom(false, b"_NET_STARTUP_INFO_BEGIN")?
+        .reply()?
+        .atom;
+    let startup_info = conn.intern_atom(false, b"_NET_STARTUP_INFO")?.reply()?.atom;
+
+    // Startup notification messages use a short-lived, unmapped X window as
+    // their message identity. The protocol permits destroying it immediately
+    // after the events are queued.
+    let message_window = conn.generate_id()?;
+    conn.create_window(
+        u8::try_from(COPY_FROM_PARENT)?,
+        message_window,
+        root,
+        0,
+        0,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_ONLY,
+        0,
+        &CreateWindowAux::new(),
+    )?;
+
+    let message = format!("remove: ID={token}\0");
+    let bytes = message.as_bytes();
+    let mut offset = 0;
+    let mut first = true;
+    while offset < bytes.len() {
+        let mut data = [0_u8; 20];
+        let start = usize::from(first);
+        let available = (bytes.len() - offset).min(data.len() - start);
+        data[start..start + available].copy_from_slice(&bytes[offset..offset + available]);
+        offset += available;
+        let message_type = if first {
+            startup_info_begin
+        } else {
+            startup_info
+        };
+        let event = ClientMessageEvent::new(8, message_window, message_type, data);
+        conn.send_event(false, root, EventMask::PROPERTY_CHANGE, event)?;
+        first = false;
+    }
+    conn.destroy_window(message_window)?;
     conn.flush()?;
     Ok(())
 }

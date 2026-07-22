@@ -409,6 +409,16 @@ impl Mesh {
         ));
         let cached_principal_frame =
             principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
+        // Sculpt keeps triangle topology fixed. If the old mesh was already
+        // pick-warmed (the normal interactive path), refit its tree to the new
+        // positions so the next stroke remains immediate instead of forcing a
+        // full BVH rebuild after every committed stroke.
+        let bvh = Arc::new(OnceLock::new());
+        if let Some(previous) = self.bvh.get() {
+            let mut refit = previous.clone();
+            refit.refit(&vertices, &self.indices);
+            let _ = bvh.set(refit);
+        }
         Some(Self {
             name: self.name.clone(),
             vertices,
@@ -421,7 +431,7 @@ impl Mesh {
             cached_principal_frame,
             topology_id: self.topology_id,
             geometry_id: next_mesh_geometry_id(),
-            bvh: Arc::new(OnceLock::new()),
+            bvh,
         })
     }
 

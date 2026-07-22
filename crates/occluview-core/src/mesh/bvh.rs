@@ -79,6 +79,44 @@ impl TriangleBvh {
         Self { nodes, order }
     }
 
+    /// Recompute only the node bounds after vertex positions changed while
+    /// triangle topology stayed the same. Sculpt commits use this instead of
+    /// throwing away the acceleration structure and rebuilding/sorting every
+    /// triangle. The tree shape and leaf order remain valid; only the boxes
+    /// need to follow the edited vertices.
+    pub(crate) fn refit(&mut self, vertices: &[Vertex], indices: &[u32]) {
+        for node_index in (0..self.nodes.len()).rev() {
+            let node = self.nodes[node_index];
+            let (min, max) = if node.is_leaf {
+                let start = node.left_or_start as usize;
+                let end = start + node.right_or_count as usize;
+                let mut bounds: Option<(Vec3, Vec3)> = None;
+                for &triangle in &self.order[start..end] {
+                    let base = triangle as usize * 3;
+                    let Some(corners) = indices.get(base..base + 3) else {
+                        continue;
+                    };
+                    let a = position(vertices, corners[0]);
+                    let b = position(vertices, corners[1]);
+                    let c = position(vertices, corners[2]);
+                    let triangle_min = a.min(b).min(c);
+                    let triangle_max = a.max(b).max(c);
+                    bounds = Some(match bounds {
+                        Some((min, max)) => (min.min(triangle_min), max.max(triangle_max)),
+                        None => (triangle_min, triangle_max),
+                    });
+                }
+                bounds.unwrap_or((Vec3::ZERO, Vec3::ZERO))
+            } else {
+                let left = self.nodes[node.left_or_start as usize];
+                let right = self.nodes[node.right_or_count as usize];
+                (left.min.min(right.min), left.max.max(right.max))
+            };
+            self.nodes[node_index].min = min;
+            self.nodes[node_index].max = max;
+        }
+    }
+
     /// Nearest triangle hit of the LOCAL ray `origin + t·direction` whose local
     /// point satisfies `keep`. `direction` need not be unit; the returned
     /// distance is along the normalized direction.

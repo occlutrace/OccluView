@@ -252,7 +252,7 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
         "the update loop should pass context into scene-load completion"
     );
     assert!(
-        loading_source.contains("let load_settled = result.is_ok() && self.queued_loads.is_empty();")
+        loading_source.contains("let load_settled = self.queued_loads.is_empty();")
             && loading_source.contains("active.source == \"single-instance\" && load_settled")
             && loading_source.contains("if raise_after_handoff {")
             && loading_source.contains("self.raise_window_for_incoming_open(ctx);"),

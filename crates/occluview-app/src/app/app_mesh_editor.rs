@@ -358,6 +358,16 @@ impl OccluViewApp {
     /// still reverts individual mesh ops afterwards.
     fn finish_mesh_edit_session(&mut self, ctx: &egui::Context) {
         self.commit_sculpt_stroke(ctx);
+        if self.sculpt.worker_has_pending_work() {
+            self.sculpt.finish_requested = true;
+            self.status_message = Some("Finishing sculpt stroke...".to_string());
+            ctx.request_repaint();
+            return;
+        }
+        self.finish_mesh_edit_session_now(ctx);
+    }
+
+    pub(super) fn finish_mesh_edit_session_now(&mut self, ctx: &egui::Context) {
         self.sculpt.disarm();
         self.edit_mode.finish_edit_session();
         self.mesh_selection_drag = None;
@@ -396,6 +406,16 @@ impl OccluViewApp {
         // undo acts on a settled scene and the stroke's dabs are not silently
         // dropped when the coming scene swap invalidates the sculpt session.
         self.commit_sculpt_stroke(ctx);
+        if self.sculpt.worker_has_pending_work() {
+            self.sculpt.pending_history = Some(redo);
+            self.status_message = Some("Finishing sculpt before history change...".to_string());
+            ctx.request_repaint();
+            return;
+        }
+        self.apply_history_navigation_now(redo, ctx);
+    }
+
+    pub(super) fn apply_history_navigation_now(&mut self, redo: bool, ctx: &egui::Context) {
         let Some(scene) = self.scene.clone() else {
             return;
         };

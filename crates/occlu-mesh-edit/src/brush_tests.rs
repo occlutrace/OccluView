@@ -190,7 +190,7 @@ fn the_clamp_holds_on_soup_duplicates_of_a_tiny_edged_corner() {
     // — pre-fix they'd inherit the generous isolated-vertex budget and overrun
     // the representative's tight clamp. The step must stay bounded by the REAL
     // 0.1mm edge (budget 0.1 * 0.5 = 0.05mm), not the loose 0.5mm fallback, even
-    // under a dab whose raw amplitude (radius 1.0 * gain 0.08 = 0.08mm) exceeds
+    // under a dab whose raw amplitude (radius 1.0 * gain 0.045 = 0.045mm) exceeds
     // the correct budget.
     let s = 0.1_f32;
     let vertices = vec![
@@ -313,6 +313,76 @@ fn guard_prevents_triangle_inversion_under_a_large_add_stroke() {
 }
 
 #[test]
+fn one_session_survives_hundred_add_and_smooth_dabs() {
+    // A brush session is intentionally persistent across mouse releases. This
+    // is the regression for the reported "works once, then stops" state leak:
+    // every dab must keep finding candidates, keep all coordinates finite, and
+    // leave the source topology usable for the next dab.
+    let mesh = bumpy_patch(0.35);
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    let mut add_hits = 0;
+    for step in 0..100 {
+        let x = (step % 9) as f32 - 4.0;
+        let y = ((step * 3) % 9) as f32 - 4.0;
+        let outcome = session.apply_stroke(
+            BrushStroke {
+                center: [x * 0.45, y * 0.45, 0.0],
+                radius_mm: 3.0,
+                strength: 0.7,
+                view_dir: [0.0, 0.0, -1.0],
+            },
+            BrushMode::Add,
+        );
+        add_hits += usize::from(!outcome.touched_vertices.is_empty());
+    }
+    let mut smooth_hits = 0;
+    for step in 0..100 {
+        let x = (step % 9) as f32 - 4.0;
+        let y = ((step * 5) % 9) as f32 - 4.0;
+        let outcome = session.apply_stroke(
+            BrushStroke {
+                center: [x * 0.45, y * 0.45, 0.0],
+                radius_mm: 3.0,
+                strength: 1.0,
+                view_dir: [0.0, 0.0, -1.0],
+            },
+            BrushMode::Smooth,
+        );
+        smooth_hits += usize::from(!outcome.touched_vertices.is_empty());
+    }
+    assert!(
+        add_hits >= 95,
+        "Add stopped responding after {add_hits} dabs"
+    );
+    assert!(
+        smooth_hits >= 95,
+        "Smooth stopped responding after {smooth_hits} dabs"
+    );
+
+    let result = session.finish();
+    assert!(result.mesh.vertices.iter().all(|vertex| {
+        vertex
+            .position
+            .iter()
+            .all(|component| component.is_finite())
+    }));
+    for triangle in result.mesh.indices.chunks_exact(3) {
+        let [a, b, c] = [
+            triangle[0] as usize,
+            triangle[1] as usize,
+            triangle[2] as usize,
+        ];
+        let pa = Vec3::from_array(result.mesh.vertices[a].position);
+        let pb = Vec3::from_array(result.mesh.vertices[b].position);
+        let pc = Vec3::from_array(result.mesh.vertices[c].position);
+        assert!(
+            (pb - pa).cross(pc - pa).length() > 1e-6,
+            "repeated sculpting must not create a degenerate triangle"
+        );
+    }
+}
+
+#[test]
 fn soup_duplicates_of_one_corner_never_crack_apart() {
     // Two triangles sharing an edge, expressed as SOUP: every corner is
     // its own vertex, so the shared edge's two corners each appear twice
@@ -354,6 +424,50 @@ fn soup_duplicates_of_one_corner_never_crack_apart() {
     assert_eq!(
         result.mesh.vertices[1].position, result.mesh.vertices[3].position,
         "soup duplicates of the same physical corner must move together"
+    );
+}
+
+#[test]
+fn soup_corners_with_submicron_writer_drift_stay_coherent() {
+    // Some STL exporters round the same shared corner through separate code
+    // paths. The two copies are physically the same point but no longer
+    // bit-identical; sculpt preparation must still weld the working topology
+    // and scatter the final move to both source slots.
+    let drift = 0.00004_f32;
+    let vertices = vec![
+        v([0.0, 0.0, 0.0]),
+        v([1.0, 0.0, 0.0]),
+        v([0.0, 1.0, 0.0]),
+        v([1.0 + drift, 0.0, 0.0]),
+        v([1.0, 1.0, 0.0]),
+        v([0.0, 1.0 + drift, 0.0]),
+    ];
+    let mut mesh = MeshEditBuffers {
+        vertices,
+        indices: vec![0, 1, 2, 3, 4, 5],
+        topology: MeshTopology::TriangleMesh,
+    };
+    crate::recompute_all_normals(&mut mesh.vertices, &mesh.indices).expect("seed normals");
+
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    session.apply_stroke(
+        BrushStroke {
+            center: [0.5, 0.5, 0.0],
+            radius_mm: 5.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        },
+        BrushMode::Add,
+    );
+    assert_eq!(
+        session.position(1).to_array(),
+        session.position(3).to_array(),
+        "near-identical STL corners must not leave a crack after Add"
+    );
+    assert_eq!(
+        session.position(2).to_array(),
+        session.position(5).to_array(),
+        "near-identical STL corners must not leave a crack after Add"
     );
 }
 
@@ -490,30 +604,37 @@ fn dense_patch(spacing: f32) -> MeshEditBuffers {
 }
 
 #[test]
-fn guard_scales_the_step_budget_with_a_genuinely_tiny_edge() {
+fn coherent_push_keeps_a_genuinely_tiny_edge_valid() {
     let spacing = 0.02_f32;
     let mesh = dense_patch(spacing);
     let mut session = BrushSession::prepare(&mesh).expect("prepare");
     let center_index = 3 * 7 + 3;
     let before_z = mesh.vertices[center_index].position[2];
 
-    // A radius/gain that WANTS to move more than the local topology allows, so
-    // the edge-proportional clamp is what actually decides the step.
+    // The old per-vertex shortest-edge clamp froze this point while its
+    // neighbors moved. Sculpt now keeps the displacement coherent and uses a
+    // whole-dab inversion backoff instead.
     let outcome = session.apply_stroke(center_stroke(0.5, 1.0), BrushMode::Add);
     assert!(!outcome.touched_vertices.is_empty());
     let after_z = session.position(center_index).z;
     let step = (after_z - before_z).abs();
+    assert!(step.is_finite() && step > 0.0);
 
-    // The push is bounded by spacing * MAX_STEP_FRACTION_OF_EDGE (0.5) = 0.01mm
-    // — scaled to the real edge length, not a coarse floor — and the auto-smooth
-    // pass only reduces it further, so the net step must stay within that budget.
-    // A loose (fallback) budget would have let the push reach the full ~0.04mm.
-    let expected_budget = spacing * 0.5;
-    assert!(
-        step <= expected_budget + 1e-4,
-        "the clamped step ({step}mm) must stay within the edge-proportional \
-         budget ({expected_budget}mm)"
-    );
+    let result = session.finish();
+    for triangle in result.mesh.indices.chunks_exact(3) {
+        let [a, b, c] = [
+            triangle[0] as usize,
+            triangle[1] as usize,
+            triangle[2] as usize,
+        ];
+        let pa = Vec3::from_array(result.mesh.vertices[a].position);
+        let pb = Vec3::from_array(result.mesh.vertices[b].position);
+        let pc = Vec3::from_array(result.mesh.vertices[c].position);
+        assert!(
+            (pb - pa).cross(pc - pa).length() > 1e-8,
+            "coherent Add must keep tiny-edge triangles non-degenerate"
+        );
+    }
 }
 
 // Regression for the spatial-grid staleness bug (issue review 2026-07-18):

@@ -73,11 +73,9 @@ fn linux_window_identity_matches_desktop_metadata() {
     assert!(package_workflow
         .contains("desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop"));
     assert!(!package_workflow.contains("desktop-file-validate install/linux/occluview.desktop"));
-    // eframe 0.29 cannot complete a startup-notification sequence (no
-    // activation-token path), so the desktop file must not advertise one:
-    // advertising it makes GNOME map the first window UNFOCUSED with a
-    // "window is ready" notification.
-    assert!(desktop.contains("StartupNotify=false"));
+    assert!(desktop.contains("StartupNotify=true"));
+    assert!(bootstrap_source.contains("capture_activation_token"));
+    assert!(include_str!("../single_instance/activation.rs").contains("xdg_activation"));
 }
 
 #[test]

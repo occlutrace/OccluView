@@ -32,17 +32,26 @@ type SoupWeldKey = ([u32; 3], [u8; 4], [u32; 2]);
 pub(crate) enum TopologyWeldPolicy {
     FullPayload,
     PositionOnly,
+    TolerantPosition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum TopologyWeldKey {
     FullPayload(SoupWeldKey),
     PositionOnly([u32; 3]),
+    /// Sculpt-only position weld. STL writers sometimes quantize the same
+    /// corner through slightly different floating-point paths; a tiny position
+    /// tolerance keeps those corners moving together without changing the
+    /// exact topology contract used by repair/bridge-split.
+    TolerantPosition([i64; 3]),
+    /// Non-finite positions must never be merged into one artificial corner.
+    TolerantNonFinite(usize),
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CanonicalTopology {
     indices: Vec<u32>,
+    representative_of: Vec<u32>,
     merged_vertices: usize,
 }
 
@@ -51,14 +60,16 @@ impl CanonicalTopology {
         &self.indices
     }
 
-    fn merged_vertices(&self) -> usize {
+    pub(crate) fn merged_vertices(&self) -> usize {
         self.merged_vertices
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub(crate) fn indexed_topology(mesh: &MeshEditBuffers) -> CanonicalTopology {
     CanonicalTopology {
         indices: mesh.indices.clone(),
+        representative_of: (0..mesh.vertices.len()).map(|index| index as u32).collect(),
         merged_vertices: 0,
     }
 }
@@ -85,11 +96,42 @@ pub(crate) fn canonical_position_key(position: [f32; 3]) -> [u32; 3] {
     })
 }
 
-fn topology_weld_key(vertex: &EditVertex, policy: TopologyWeldPolicy) -> TopologyWeldKey {
+/// Position tolerance used only by the interactive sculpt topology. It is
+/// deliberately much smaller than a dental feature and is not used by the
+/// public repair or bridge-split topology policies.
+const SCULPT_POSITION_EPSILON_MM: f64 = 1e-4;
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn tolerant_position_key(position: [f32; 3]) -> [i64; 3] {
+    position.map(|component| {
+        if !component.is_finite() {
+            return 0;
+        }
+        let scaled = (f64::from(component) / SCULPT_POSITION_EPSILON_MM).round();
+        scaled.clamp(i64::MIN as f64, i64::MAX as f64) as i64
+    })
+}
+
+fn topology_weld_key(
+    vertex: &EditVertex,
+    policy: TopologyWeldPolicy,
+    original_index: usize,
+) -> TopologyWeldKey {
     match policy {
         TopologyWeldPolicy::FullPayload => TopologyWeldKey::FullPayload(soup_weld_key(vertex)),
         TopologyWeldPolicy::PositionOnly => {
             TopologyWeldKey::PositionOnly(canonical_position_key(vertex.position))
+        }
+        TopologyWeldPolicy::TolerantPosition => {
+            if vertex
+                .position
+                .iter()
+                .all(|component| component.is_finite())
+            {
+                TopologyWeldKey::TolerantPosition(tolerant_position_key(vertex.position))
+            } else {
+                TopologyWeldKey::TolerantNonFinite(original_index)
+            }
         }
     }
 }
@@ -102,6 +144,7 @@ pub(crate) fn canonical_topology(
     if vertex_count == 0 {
         return Ok(CanonicalTopology {
             indices: mesh.indices.clone(),
+            representative_of: Vec::new(),
             merged_vertices: 0,
         });
     }
@@ -110,7 +153,7 @@ pub(crate) fn canonical_topology(
         .vertices
         .iter()
         .enumerate()
-        .map(|(index, vertex)| (topology_weld_key(vertex, policy), index))
+        .map(|(index, vertex)| (topology_weld_key(vertex, policy, index), index))
         .collect();
     keyed.sort_unstable();
 
@@ -154,8 +197,34 @@ pub(crate) fn canonical_topology(
 
     Ok(CanonicalTopology {
         indices,
+        representative_of,
         merged_vertices,
     })
+}
+
+/// Build original-vertex sibling rows from a canonical position mapping. The
+/// rows deliberately retain every source vertex: the renderer and edit result
+/// still use the original soup array, while sculpting must move every corner of
+/// one physical point together.
+pub(crate) fn sibling_rows_from_representatives(canonical: &CanonicalTopology) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); canonical.representative_of.len()];
+    for (vertex_id, &representative) in canonical.representative_of.iter().enumerate() {
+        if let Some(group) = groups.get_mut(representative as usize) {
+            group.push(vertex_id);
+        }
+    }
+
+    let mut rows = vec![Vec::new(); groups.len()];
+    for group in groups.into_iter().filter(|group| group.len() > 1) {
+        for &vertex_id in &group {
+            rows[vertex_id] = group
+                .iter()
+                .copied()
+                .filter(|&sibling| sibling != vertex_id)
+                .collect();
+        }
+    }
+    rows
 }
 
 /// Weld an STL-style triangle soup back to shared topology.

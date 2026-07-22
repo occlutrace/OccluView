@@ -29,6 +29,7 @@ tracing           = { workspace = true }
 tracing-subscriber = { workspace = true }
 glam              = { workspace = true }
 pollster          = { workspace = true }
+rayon             = { workspace = true }
 bytemuck          = { workspace = true }
 egui              = { workspace = true }
 eframe            = { workspace = true, features = ["wgpu", "default_fonts", "x11", "wayland"] }
@@ -44,6 +45,8 @@ raw-window-handle = "0.6"
 # focus-stealing prevention on the file handoff. See activation.rs.
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb             = "0.13"
+wayland-client    = { workspace = true }
+wayland-protocols = { workspace = true }
 
 # Windows shell and windowing integration.
 [target.'cfg(windows)'.dependencies]

@@ -122,6 +122,10 @@ fn begin_face_selection_with_status(
         }
         app.selection_overlay_dirty = true;
         app.needs_render = true;
+        // Start the sculpt preparation while the operator is still choosing a
+        // mesh-editor action. This removes the one-time weld/adjacency wait
+        // from the first sculpt stroke without blocking the editor UI.
+        app.prepare_armed_sculpt_session();
         app.status_message = Some(format!("Face selection: {layer_label}"));
     } else {
         app.status_message = Some(format!("Cannot select faces: {layer_label}"));

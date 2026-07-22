@@ -11,19 +11,10 @@
 //! PARTIAL GPU update. [`BrushSession::finish`] bakes the session into a
 //! [`MeshEditResult`] for the batch commit path.
 //!
-//! # Why it stays clean (no potholes / no spikes)
-//!
-//! Moving each vertex along its OWN normal carves potholes (per-vertex normals
-//! diverge) and spikes (a lone vertex outruns its ring). Add/Remove instead
-//! moves the whole region COHERENTLY along one averaged brush normal, computed
-//! Blender-sculpt style: bucket sampled normals by camera-facing, average only
-//! the front bucket, fall back to the camera direction when untrustworthy — so
-//! inverted-normal scan patches never flip the push direction. Each dab runs an
-//! auto-smooth (uniform-Laplacian) pass so material builds/carves clean instead
-//! of leaving the raw push's ripple. Smooth is the same relaxer run as several
-//! whole passes (a fractional pass per frame was imperceptible). Both pin open
-//! scan boundaries and restrict a dab to the connected component under the
-//! cursor, never dragging in a disconnected surface.
+//! Add/Remove moves the region coherently along a camera-facing averaged normal,
+//! then auto-smooths the dab to avoid potholes, spikes, and raw-push ripples.
+//! Smooth reuses the same relaxer; boundaries and disconnected components stay
+//! protected.
 //!
 //! # Soup correctness
 //!
@@ -36,7 +27,7 @@
 
 use glam::Vec3;
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::brush_csr::Csr;
 use super::brush_index::VertexGrid;
@@ -45,7 +36,7 @@ use super::brush_math::{
     refresh_step_budget, scope_area_normals, smooth_pass_count, smoothstep,
 };
 use super::cap_support::build_vertex_adjacency;
-use super::topology::{canonical_position_key, weld_soup_topology};
+use super::topology::{canonical_topology, sibling_rows_from_representatives, TopologyWeldPolicy};
 use super::{
     validate_face_edit_buffers, EditVertex, MeshEditBuffers, MeshEditError, MeshEditReport,
     MeshEditResult, MeshTopology,
@@ -53,16 +44,16 @@ use super::{
 
 /// Uniform-Laplacian factor for the Smooth tool: aggressive by design (the
 /// operator asked for cardinal flattening), strength = pass count.
-const SMOOTH_LAMBDA: f32 = 0.6;
+const SMOOTH_LAMBDA: f32 = 0.72;
 /// Taubin λ/μ for the clay auto-smooth: a shrink pass then an inflate pass
 /// removes grain WITHOUT the volume loss of a plain Laplacian, so a built dome
 /// stays full while the scan's surface noise is ironed out.
-const TAUBIN_LAMBDA: f32 = 0.5;
-const TAUBIN_MU: f32 = -0.53;
+const TAUBIN_LAMBDA: f32 = 0.36;
+const TAUBIN_MU: f32 = -0.38;
 /// Add/Remove displacement per fully-weighted dab, as a fraction of brush
 /// radius. Radius-relative (not fixed mm) keeps feel consistent across scan
 /// scale and zoom; per-dab stays small since a drag accumulates many dabs.
-const ADD_REMOVE_GAIN: f32 = 0.08;
+const ADD_REMOVE_GAIN: f32 = 0.045;
 /// Auto-smooth rim-taper width as a fraction of the radius: the grain-cleaning
 /// relax is near-uniform across the interior and ramps to zero over this outer
 /// band, so the built area blends in with no hard edge.
@@ -80,9 +71,11 @@ const FRONT_BUCKET_TRUST_FRACTION: f32 = 0.6;
 /// A vertex with fewer than this many welded neighbors is a needle/spike tip,
 /// not a real interior vertex; Smooth and the auto-relax leave it alone.
 const MIN_RING_FOR_RELAX: usize = 3;
-/// Passes of the post-dab inversion guard (each reverts flipped-triangle
-/// vertices; one usually suffices, more resolve cascades).
+/// Passes of the post-dab inversion guard. The first passes back off the whole
+/// region coherently; the bounded local pass below preserves healthy parts when
+/// one tiny or damaged facet cannot accept the same displacement.
 const MAX_ROLLBACK_ITERS: usize = 4;
+const MAX_LOCAL_ROLLBACK_ITERS: usize = 4;
 /// Grid cells spanned by one brush radius: cell size is `radius / this`, so a
 /// radius query scans a small bounded cube of cells regardless of brush size
 /// vs. mesh scale — fixes a big brush stuttering over millions of empty cells.
@@ -146,8 +139,9 @@ pub struct BrushSession {
     adjacency: Csr,
     /// Per-vertex incident triangle indices (into `indices`) as CSR.
     incident_triangles: Csr,
-    /// Other original vertex ids that started at this one's exact position (soup
-    /// duplicates), as CSR; empty for a vertex with no duplicate.
+    /// Other original vertex ids that occupy this one's physical position (STL
+    /// soup duplicates), as CSR; the sculpt-only tolerance covers tiny writer
+    /// rounding differences without changing the returned topology.
     position_siblings: Csr,
     /// Whether a vertex sits on an open boundary — pinned by Smooth and the
     /// auto-relax so scan edges and hole rims never erode.
@@ -191,13 +185,18 @@ impl BrushSession {
     pub fn prepare(mesh: &MeshEditBuffers) -> Result<Self, MeshEditError> {
         validate_face_edit_buffers(mesh.topology, &mesh.vertices, &mesh.indices)?;
 
-        let welded = weld_soup_topology(mesh)?;
+        // Use sculpt-only tolerance: STL corner serialization can drift by a
+        // fraction of a micron, leaving isolated spikes without it.
+        let canonical = canonical_topology(mesh, TopologyWeldPolicy::TolerantPosition)?;
+        let welded = (canonical.merged_vertices() > 0).then(|| MeshEditBuffers {
+            vertices: mesh.vertices.clone(),
+            indices: canonical.indices().to_vec(),
+            topology: mesh.topology,
+        });
         let adjacency_source = welded.as_ref().unwrap_or(mesh);
         let adjacency = Csr::from_rows(&build_vertex_adjacency(adjacency_source));
 
         let vertex_count = mesh.vertices.len();
-        // Incident triangles, built straight into CSR via a counting sort over
-        // the triangle corners — no per-vertex `Vec` allocation.
         let incident_triangles = Csr::from_pairs(
             vertex_count,
             mesh.indices
@@ -213,28 +212,8 @@ impl BrushSession {
                 }),
         );
 
-        // Soup position clusters → sibling rows → CSR. Bare (unwelded) duplicates
-        // of one physical corner share a position; each lists the others.
-        let mut clusters: HashMap<[u32; 3], Vec<usize>> = HashMap::with_capacity(vertex_count);
-        for (index, vertex) in mesh.vertices.iter().enumerate() {
-            clusters
-                .entry(canonical_position_key(vertex.position))
-                .or_default()
-                .push(index);
-        }
-        let mut sibling_rows: Vec<Vec<usize>> = vec![Vec::new(); vertex_count];
-        for group in clusters.values() {
-            if group.len() < 2 {
-                continue;
-            }
-            for &vertex_id in group {
-                sibling_rows[vertex_id] = group
-                    .iter()
-                    .copied()
-                    .filter(|&id| id != vertex_id)
-                    .collect();
-            }
-        }
+        // The scatter uses the same tolerant representative map as adjacency.
+        let sibling_rows = sibling_rows_from_representatives(&canonical);
         let position_siblings = Csr::from_rows(&sibling_rows);
 
         let is_boundary =
@@ -261,7 +240,7 @@ impl BrushSession {
             max_step,
             pre_position: vec![Vec3::ZERO; vertex_count],
             grid,
-            // 0 forces the first dab to size the grid to its actual radius.
+            // The first dab records its radius; the prepared grid is reused.
             grid_radius: 0.0,
             grid_dirty: Vec::new(),
             component_stamp: vec![0; vertex_count],
@@ -277,8 +256,7 @@ impl BrushSession {
         let Some((weighted, strength)) = self.weighted_candidates(stroke) else {
             return BrushStrokeOutcome::default();
         };
-        // Snapshot the movable region's pre-dab positions so the grid updates in
-        // a SINGLE pass at dab end, not per-vertex on every relax pass.
+        // Snapshot the region so grid maintenance runs once at dab end.
         self.snapshot_grid_region(&weighted);
         let mut touched: Vec<usize> = Vec::new();
         match mode {
@@ -286,13 +264,15 @@ impl BrushSession {
             BrushMode::Add => self.apply_clay(&weighted, stroke, 1.0, &mut touched),
             BrushMode::Remove => self.apply_clay(&weighted, stroke, -1.0, &mut touched),
         }
-        // Guarantee no triangle ends this dab flipped vs its pre-dab
-        // orientation (the edge clamp is only a heuristic). Runs while the
-        // snapshot generation still marks the moved region.
+        // The edge budget is a heuristic; reject any flipped triangle now.
         self.rollback_inversions();
-        // Fold every vertex's net motion back into the grid once (a no-op for a
-        // vertex that never left its cell), keeping the next query exact.
+        // Fold the net motion back into the grid once, keeping the next query exact.
         self.apply_grid_maintenance();
+        // Do not report a dab that ended with no net motion.
+        touched.retain(|&vertex_id| {
+            (self.positions[vertex_id] - self.pre_position[vertex_id]).length_squared()
+                > f32::EPSILON
+        });
         if touched.is_empty() {
             return BrushStrokeOutcome::default();
         }
@@ -442,6 +422,10 @@ impl BrushSession {
         // rebuild — a rare, deliberate size-slider move. Motion during a
         // stroke is tracked incrementally, not by a per-dab O(n) rebuild
         // (the stall a big scan showed).
+        if self.grid_radius <= 0.0 {
+            self.grid_radius = radius;
+            return;
+        }
         if self.grid_radius > 0.0 && (0.6..=1.7).contains(&(radius / self.grid_radius)) {
             return;
         }
@@ -478,9 +462,8 @@ impl BrushSession {
             .filter(|&&(vertex_id, _)| !self.adjacency.is_empty_row(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
                 let here = self.position(vertex_id);
-                let clamped =
-                    self.clamp_step(vertex_id, here + normal * (sign * weight * amplitude));
-                (clamped != here).then_some((vertex_id, clamped))
+                let target = here + normal * (sign * weight * amplitude);
+                (target != here).then_some((vertex_id, target))
             })
             .collect();
         self.commit_moves(displacement.into_iter(), touched);
@@ -692,15 +675,36 @@ impl BrushSession {
         self.grid_dirty = dirty;
     }
 
-    /// Revert every moved vertex that sits on a triangle flipped vs its pre-dab
-    /// orientation, iterating until none remain. Reverting a vertex to its
-    /// pre-dab position restores all its incident triangles to known-good
-    /// geometry, so the mesh never accumulates an inversion the clamp missed.
+    /// Keep a dab valid without turning one bad facet into a dead brush area.
+    /// First back off the whole region coherently, then revert only vertices
+    /// still involved in invalid triangles. Soup siblings are included in the
+    /// same dirty set, so a local rollback cannot leave a split corner behind.
     fn rollback_inversions(&mut self) {
         let generation = self.stamp_generation;
         let dirty = std::mem::take(&mut self.grid_dirty);
         for _ in 0..MAX_ROLLBACK_ITERS {
-            let to_revert: Vec<usize> = dirty
+            let invalid = dirty.par_iter().any(|&(vertex_id, _)| {
+                on_flipped_triangle(
+                    vertex_id,
+                    generation,
+                    &self.incident_triangles,
+                    &self.indices,
+                    &self.positions,
+                    &self.pre_position,
+                    &self.component_stamp,
+                )
+            });
+            if !invalid {
+                break;
+            }
+            for &(vertex_id, _) in &dirty {
+                let before = self.pre_position[vertex_id];
+                let current = self.positions[vertex_id];
+                self.positions[vertex_id] = before.lerp(current, 0.5);
+            }
+        }
+        for _ in 0..MAX_LOCAL_ROLLBACK_ITERS {
+            let invalid: Vec<usize> = dirty
                 .par_iter()
                 .filter(|&&(vertex_id, _)| {
                     on_flipped_triangle(
@@ -715,10 +719,10 @@ impl BrushSession {
                 })
                 .map(|&(vertex_id, _)| vertex_id)
                 .collect();
-            if to_revert.is_empty() {
+            if invalid.is_empty() {
                 break;
             }
-            for vertex_id in to_revert {
+            for vertex_id in invalid {
                 self.positions[vertex_id] = self.pre_position[vertex_id];
             }
         }
@@ -770,9 +774,8 @@ impl BrushSession {
         }
     }
 
-    /// Bake the session into a [`MeshEditResult`]: same topology, updated vertex
-    /// positions/normals, `report.moved_vertices` set to the true count of
-    /// vertices touched across every dab this session.
+    /// Bake the session into a [`MeshEditResult`] with updated positions/normals
+    /// and the true count of vertices touched across the session.
     #[must_use]
     pub fn finish(self) -> MeshEditResult {
         let input_vertices = self.vertices.len();

@@ -94,10 +94,9 @@ fn real_main() -> Result<()> {
         "OccluView 3D Viewer",
         native_options,
         Box::new(move |cc| {
-            // Capture the top-level window handle now so the open-file handoff
-            // can raise us on X11 by talking to the WM directly (Wayland raise
-            // is WM-denied through this stack; see single_instance/activation.rs).
-            let raise_target = single_instance::RaiseTarget::from_window_handle(cc);
+            // Capture both raw handles now so the open-file handoff can use
+            // the compositor's native activation protocol on Linux.
+            let raise_target = single_instance::RaiseTarget::from_handles(cc, cc);
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
                 match live_viewport::LiveViewport::from_render_state(state) {
                     Ok(viewport) => Some(viewport),

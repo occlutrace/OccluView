@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use super::brush_csr::Csr;
 
+const COLLAPSE_FRACTION_SQUARED: f32 = 1e-4;
+
 /// Area-weighted vertex normal for every id in `scope`, computed in PARALLEL
 /// and conflict-free — each entry reads only its own incident faces, so no
 /// per-face dedup is needed. Returns one un-normalized normal per `scope`
@@ -224,7 +226,16 @@ pub(crate) fn on_flipped_triangle(
         }
         let normal_pre = (pre(b) - pre(a)).cross(pre(c) - pre(a));
         let normal_now = (positions[b] - positions[a]).cross(positions[c] - positions[a]);
-        if normal_pre.length_squared() > f32::EPSILON && normal_now.dot(normal_pre) < 0.0 {
+        let pre_area_squared = normal_pre.length_squared();
+        // Scan meshes contain legitimate very small facets. An absolute
+        // epsilon treated those as collapsed after an otherwise valid dab and
+        // caused the caller to discard an entire brush stroke. Use the facet's
+        // own pre-dab area for the collapse test; true winding reversals still
+        // fail regardless of scale.
+        let collapsed = pre_area_squared > f32::EPSILON
+            && normal_now.length_squared() <= pre_area_squared * COLLAPSE_FRACTION_SQUARED;
+        let reversed = pre_area_squared > f32::EPSILON && normal_now.dot(normal_pre) < 0.0;
+        if collapsed || reversed {
             return true;
         }
     }

@@ -3,16 +3,16 @@
 //! re-upload-free stroke commit, wheel resize/re-intensify, and the brush
 //! cursor. The geometry kernel lives in `occlu-mesh-edit`.
 
-use std::sync::Arc;
-
-use super::{egui, mesh_editor_overlay, pick_scene_hit, EditModeCommand, OccluViewApp};
+use super::{egui, mesh_editor_overlay, OccluViewApp};
 use crate::sculpt_tool::{
-    SculptSession, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
-    MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
-    SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
+    SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME,
+    SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
+    SCULPT_WHEEL_STEP,
 };
+use crate::sculpt_worker::SculptWorker;
+use crate::viewer::viewport_ray;
 use glam::Vec3;
-use occluview_core::{BrushMode, BrushStroke, Mesh, ScenePickHit};
+use occluview_core::{BrushMode, BrushStroke, SceneMeshId, ScenePickHit};
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
 /// does not re-read input.
@@ -36,14 +36,10 @@ struct DabParams {
 /// Lay this frame's dabs on `session`, updating `stroke`'s scheduler state, and
 /// return the touched vertex ids. The spacing decision is the pure
 /// [`plan_dab_centers`]; this only converts to local space and applies.
-fn schedule_dabs(
-    session: &mut SculptSession,
-    stroke: &mut StrokeState,
-    params: &DabParams,
-) -> Vec<usize> {
-    let radius_local = (params.radius_world * session.local_per_world).max(1e-4);
-    let center = session.world_to_local.transform_point3(params.hit_world);
-    let view_local = session
+fn schedule_dabs(worker: &SculptWorker, stroke: &mut StrokeState, params: &DabParams) -> usize {
+    let radius_local = (params.radius_world * worker.local_per_world).max(1e-4);
+    let center = worker.world_to_local.transform_point3(params.hit_world);
+    let view_local = worker
         .world_to_local
         .transform_vector3(params.view_world)
         .normalize_or_zero();
@@ -59,9 +55,9 @@ fn schedule_dabs(
     stroke.last_dab_local = last_dab;
     stroke.hold_seconds = hold_seconds;
 
-    let mut touched: Vec<usize> = Vec::new();
+    let mut queued = 0;
     for at in centers {
-        touched.extend(session.apply_dab(
+        queued += usize::from(worker.try_apply(
             BrushStroke {
                 center: at.to_array(),
                 radius_mm: radius_local,
@@ -71,14 +67,18 @@ fn schedule_dabs(
             params.mode,
         ));
     }
-    touched
+    queued
 }
 
 /// Pure dab scheduler: given the previous dab, the cursor `center`, the
 /// `spacing`, and the hold accumulator, returns this frame's dab centers and the
 /// updated `(last_dab, hold_seconds)`. Dabs are spaced by arc length while
 /// moving and by a time cadence while (near) stationary, at most
-/// [`MAX_DABS_PER_FRAME`] per frame (the rest resume next frame).
+/// [`MAX_DABS_PER_FRAME`] per frame. If the cursor jumps farther than that
+/// budget, the segment is sampled evenly and the scheduler advances all the
+/// way to the current point; this keeps input latency bounded instead of
+/// building an invisible backlog of expensive dabs.
+#[allow(clippy::cast_precision_loss)]
 fn plan_dab_centers(
     last_dab: Option<Vec3>,
     center: Vec3,
@@ -92,6 +92,13 @@ fn plan_dab_centers(
     let segment = center - last;
     let distance = segment.length();
     if distance >= spacing {
+        if distance > spacing * MAX_DABS_PER_FRAME as f32 {
+            let count = MAX_DABS_PER_FRAME as f32;
+            let centers = (1..=MAX_DABS_PER_FRAME)
+                .map(|step| last + segment * (step as f32 / count))
+                .collect();
+            return (centers, Some(center), 0.0);
+        }
         let direction = segment / distance;
         let mut cursor = last;
         let mut walked = 0.0;
@@ -122,9 +129,9 @@ impl OccluViewApp {
             // Arming a brush means the Sculpt tab: show it and drop selection.
             self.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
             self.mesh_selection_drag = None;
-            // Warm picking and brush preparation off the UI thread. Selection
-            // gesture state is intentionally preserved; sculpt owns LMB while
-            // armed and must not silently turn Lasso into Marquee.
+            // Prepare the target off the UI thread. Selection gesture state is
+            // intentionally preserved; sculpt owns LMB while armed and must
+            // not silently turn Lasso into Marquee.
             self.prepare_armed_sculpt_session();
         } else {
             self.sculpt.disarm();
@@ -214,11 +221,13 @@ impl OccluViewApp {
         if pan_drag_active {
             // LMB+RMB pan takes the primary away; end the drag cleanly.
             self.commit_sculpt_stroke(ctx);
+            self.sculpt.press_pending = false;
             return false;
         }
 
-        let (down, pointer, shift) = ctx.input(|input| {
+        let (pressed, down, pointer, shift) = ctx.input(|input| {
             (
+                input.pointer.button_pressed(egui::PointerButton::Primary),
                 input.pointer.button_down(egui::PointerButton::Primary),
                 input.pointer.interact_pos(),
                 input.modifiers.shift,
@@ -226,11 +235,22 @@ impl OccluViewApp {
         });
         let dt = ctx.input(|input| input.stable_dt);
 
+        // A fast release followed by a new press can be coalesced into one
+        // egui frame. The edge is authoritative: finalize any stale previous
+        // stroke before creating the next one, otherwise its old anchor and
+        // hold timer can make the second drag look dead.
+        if pressed && self.sculpt.stroke.is_some() {
+            self.commit_sculpt_stroke(ctx);
+            self.sculpt.press_pending = false;
+        }
+
         if !down {
             if self.sculpt.stroke.is_some() {
                 self.commit_sculpt_stroke(ctx);
+                self.sculpt.press_pending = false;
                 return true;
             }
+            self.sculpt.press_pending = false;
             return false;
         }
 
@@ -240,12 +260,18 @@ impl OccluViewApp {
             return true;
         };
         if self.sculpt.stroke.is_none() && !response.contains_pointer() {
+            self.sculpt.press_pending = false;
             return false;
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
+            // Keep owning this held gesture while the background BVH/brush
+            // preparation finishes. The next frame retries the current point,
+            // so the first press is never silently lost.
+            self.sculpt.press_pending = true;
             ctx.request_repaint();
             return true;
         };
+        self.sculpt.press_pending = false;
         self.paint_sculpt_dabs(ctx, &hit, DabInput { kind, shift, dt });
         true
     }
@@ -264,6 +290,7 @@ impl OccluViewApp {
             Some(_) => {}
             None => {
                 if !self.ensure_sculpt_session(hit) {
+                    self.sculpt.press_pending = true;
                     ctx.request_repaint();
                     return;
                 }
@@ -288,18 +315,16 @@ impl OccluViewApp {
             mode: input.kind.brush_mode(input.shift),
             dt: input.dt,
         };
-        let mut touched = {
-            let (Some(session), Some(stroke)) =
-                (self.sculpt.session.as_mut(), self.sculpt.stroke.as_mut())
-            else {
+        let Some(worker) = self.sculpt.worker.as_ref() else {
+            return;
+        };
+        let queued = {
+            let Some(stroke) = self.sculpt.stroke.as_mut() else {
                 return;
             };
-            schedule_dabs(session, stroke, &params)
+            schedule_dabs(worker, stroke, &params)
         };
-        if !touched.is_empty() {
-            touched.sort_unstable();
-            touched.dedup();
-            self.flush_sculpt_vertices(&touched);
+        if queued > 0 {
             self.needs_render = true;
         }
         ctx.request_repaint();
@@ -328,14 +353,13 @@ impl OccluViewApp {
         false
     }
 
-    /// When exactly one layer is sculptable, prepare its session as soon as the
-    /// tool is armed — so the one-time O(n) prepare happens behind the toolbar
-    /// click, not as a stall on the operator's first press.
-    fn prepare_armed_sculpt_session(&mut self) {
+    /// Prepare the active edit layer as soon as Edit Mesh/Sculpt becomes
+    /// available. The one-time O(n) weld/adjacency/grid build stays off the UI
+    /// thread and normally completes before the first brush press.
+    pub(super) fn prepare_armed_sculpt_session(&mut self) {
         let Some(scene) = self.scene.clone() else {
             return;
         };
-        self.sculpt.warm_scene_bvhs(scene.clone());
         let target = self
             .edit_mode
             .session_layer_id()
@@ -369,9 +393,11 @@ impl OccluViewApp {
                             && entry.mesh.topology_id() == session.topology_id
                     })
                 });
-                if valid && self.sculpt.armed.is_some() {
-                    self.sculpt.session = Some(session);
-                    self.status_message = None;
+                if valid && self.edit_mode.has_active_session() {
+                    self.sculpt.worker = Some(SculptWorker::spawn(session));
+                    if self.sculpt.armed.is_some() {
+                        self.status_message = None;
+                    }
                     self.needs_render = true;
                     ctx.request_repaint();
                 }
@@ -383,152 +409,17 @@ impl OccluViewApp {
         }
     }
 
-    /// Stream the `touched` sculpted vertices into whichever prepared scene is
-    /// rendering (the wgpu live viewport, or the offscreen fallback). A failed
-    /// write is harmless — the next full sync restores coherence.
-    fn flush_sculpt_vertices(&mut self, touched: &[usize]) {
-        let Some(session) = self.sculpt.session.as_ref() else {
-            return;
-        };
-        if let Some(live_viewport) = self.live_viewport.as_ref() {
-            if let Ok(viewport) = live_viewport.lock() {
-                let _ = viewport.write_scene_vertices_sparse(
-                    &session.topology,
-                    &session.shadow,
-                    touched,
-                );
-            }
-        } else if let (Some(offscreen), Some(prepared)) =
-            (self.offscreen.as_ref(), self.prepared_scene.as_ref())
-        {
-            let _ = prepared.write_entry_vertices_sparse(
-                offscreen.renderer(),
-                &session.topology,
-                &session.shadow,
-                touched,
-            );
-        }
-    }
-
-    /// Finish the drag: bake the accumulated dabs into the scene as ONE
-    /// undoable layer edit, WITHOUT a full GPU re-upload (the buffers already
-    /// hold the sculpted result and `topology_id` is preserved). The persistent
-    /// session is kept for the next stroke.
-    pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) {
-        if self.sculpt.stroke.take().is_none() {
-            return;
-        }
-        let (layer_id, dirty, shadow) = match self.sculpt.session.as_mut() {
-            Some(session) => {
-                let dirty = session.dirty_stroke;
-                session.dirty_stroke = false;
-                (session.layer_id, dirty, session.shadow.clone())
-            }
-            None => return,
-        };
-        if !dirty {
-            return;
-        }
-        let Some(scene) = self.scene.clone() else {
-            return;
-        };
-        let Some(index) = scene
-            .meshes()
-            .iter()
-            .position(|entry| entry.id() == layer_id)
-        else {
-            self.invalidate_sculpt_session(ctx);
-            return;
-        };
-        let entry = &scene.meshes()[index];
-        let Some(sculpted) = entry.mesh.with_sculpted_vertices(shadow) else {
-            self.invalidate_sculpt_session(ctx);
-            return;
-        };
-        let Some(token) = self
-            .edit_mode
-            .begin_layer_edit(entry, EditModeCommand::Sculpt)
-        else {
-            // The GPU already shows this stroke's dabs but the scene never took
-            // them; drop the session so the preview reverts on the next sync
-            // rather than diverging from the committed mesh.
-            self.status_message = Some("Layer edit already in progress".to_string());
-            self.invalidate_sculpt_session(ctx);
-            return;
-        };
-        drop(scene);
-        if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
-            let _ = self.edit_mode.finish_layer_edit_success(token);
-            self.mark_mesh_edits_unsaved(layer_id);
-            self.status_message = Some("Sculpt applied (Ctrl+Z undoes)".to_string());
-        } else {
-            let _ = self
-                .edit_mode
-                .finish_layer_edit_error(token, "sculpt commit failed".to_string());
-            self.invalidate_sculpt_session(ctx);
-        }
-    }
-
-    /// Swap the sculpted mesh into the live scene in place. The prepared GPU
-    /// scene is deliberately NOT torn down or re-uploaded: it already holds the
-    /// sculpted vertices from the per-dab sparse writes, and the mesh keeps its
-    /// `topology_id`, so the render sync's topology token still matches.
-    fn commit_sculpt_scene(
-        &mut self,
-        layer_id: occluview_core::SceneMeshId,
-        mesh: Mesh,
-        ctx: &egui::Context,
-    ) -> bool {
-        let Some(mut scene_arc) = self.scene.take() else {
-            return false;
-        };
-        {
-            let scene = Arc::make_mut(&mut scene_arc);
-            let Some(entry) = scene
-                .meshes_mut()
-                .iter_mut()
-                .find(|entry| entry.id() == layer_id)
-            else {
-                self.scene = Some(scene_arc);
-                return false;
-            };
-            entry.mesh = mesh;
-        }
-        self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene_stats = Some(super::app_render::scene_stats(&scene_arc));
-        self.scene = Some(scene_arc);
-        self.needs_render = true;
-        if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
-        }
-        ctx.request_repaint();
-        true
-    }
-
     /// Drop any in-flight stroke. If it had uncommitted dabs on the GPU, drop
     /// the persistent session too and force a full re-sync so the on-screen
     /// geometry reverts to the committed scene.
     pub(super) fn abort_sculpt_stroke(&mut self) {
         let had_stroke = self.sculpt.stroke.take().is_some();
-        let dirty = self
-            .sculpt
-            .session
-            .as_ref()
-            .is_some_and(|session| session.dirty_stroke);
-        if let Some(session) = self.sculpt.session.as_mut() {
-            session.dirty_stroke = false;
-        }
-        if had_stroke && dirty {
+        if had_stroke {
             self.invalidate_sculpt_session_silent();
         }
     }
 
-    fn invalidate_sculpt_session(&mut self, ctx: &egui::Context) {
-        self.invalidate_sculpt_session_silent();
-        ctx.request_repaint();
-    }
-
-    fn invalidate_sculpt_session_silent(&mut self) {
+    pub(super) fn invalidate_sculpt_session_silent(&mut self) {
         // Cancel any worker prepared from the pre-edit scene as well as the
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
@@ -591,18 +482,37 @@ impl OccluViewApp {
     ) -> Option<ScenePickHit> {
         let camera = self.camera?;
         let scene = self.scene.as_ref()?;
-        // `Mesh::pick_ray_local` lazily builds a BVH. Never allow that first
-        // build on the egui thread; the arm path warms all visible layers in a
-        // worker and the pointer simply waits one frame while it completes.
-        if scene.meshes().iter().any(|entry| {
-            entry.visible
-                && !entry.mesh.is_point_cloud()
-                && entry.mesh.triangle_count() > 0
-                && !entry.mesh.bvh_is_ready()
-        }) {
+        let layer_id = self.sculpt_target_layer_id(scene)?;
+        let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
+        // The preparation worker warms this exact layer. Never allow a cold
+        // scan-sized BVH to build on the egui thread, and do not wait on
+        // unrelated visible layers.
+        if !entry.mesh.bvh_is_ready() {
             return None;
         }
-        pick_scene_hit(&camera, viewport_rect, pointer, scene)
+        let (origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
+        scene.pick_layer_ray_hit(origin, direction, layer_id)
+    }
+
+    fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
+        self.edit_mode
+            .session_layer_id()
+            .filter(|layer_id| {
+                scene.meshes().iter().any(|entry| {
+                    entry.id() == *layer_id
+                        && entry.visible
+                        && !entry.mesh.is_point_cloud()
+                        && entry.mesh.triangle_count() > 0
+                })
+            })
+            .or_else(|| {
+                scene.meshes().iter().find_map(|entry| {
+                    (entry.visible
+                        && !entry.mesh.is_point_cloud()
+                        && entry.mesh.triangle_count() > 0)
+                        .then_some(entry.id())
+                })
+            })
     }
 
     /// The brush cursor is deliberately screen-space: a surface-projected ring
@@ -700,15 +610,16 @@ mod tests {
     }
 
     #[test]
-    fn a_huge_single_frame_jump_is_capped_and_resumes_next_frame() {
-        // A jump far beyond MAX_DABS_PER_FRAME spacings must not lay them all at
-        // once, and must NOT drop the remainder — `last` advances only by what
-        // was laid, so the next frame keeps walking from there.
+    fn a_huge_single_frame_jump_is_capped_without_backlog() {
+        // A jump far beyond MAX_DABS_PER_FRAME spacings is sampled evenly, but
+        // the anchor advances to the current cursor. The next frame must not
+        // replay an invisible queue of old dabs.
         let far = (MAX_DABS_PER_FRAME + 50) as f32;
         let (centers, last, _) =
             plan_dab_centers(Some(Vec3::ZERO), Vec3::new(far, 0.0, 0.0), 1.0, 0.0, 0.016);
         assert_eq!(centers.len(), MAX_DABS_PER_FRAME);
-        assert_eq!(last, Some(Vec3::new(MAX_DABS_PER_FRAME as f32, 0.0, 0.0)));
+        assert_eq!(last, Some(Vec3::new(far, 0.0, 0.0)));
+        assert_eq!(centers.last(), Some(&Vec3::new(far, 0.0, 0.0)));
     }
 
     #[test]

@@ -20,6 +20,33 @@ fn valid_mesh_constructs() {
 }
 
 #[test]
+fn sculpted_mesh_refits_a_warm_bvh_for_the_next_pick() {
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    mesh.warm_bvh();
+
+    let moved = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| Vertex::at(Vec3::from_array(vertex.position) + Vec3::new(0.0, 0.0, 5.0)))
+        .collect();
+    let sculpted = mesh
+        .with_sculpted_vertices(moved)
+        .expect("same vertex count");
+    assert!(sculpted.bvh_is_ready());
+
+    let hit = sculpted
+        .pick_ray_local(Vec3::new(0.25, 0.25, 10.0), -Vec3::Z, |_| true)
+        .expect("refitted tree should hit the moved triangle");
+    assert_eq!(hit.0, 0);
+    assert!((hit.1.z - 5.0).abs() < 1e-5);
+}
+
+#[test]
 fn triangle_mesh_computes_normals_when_source_has_none() {
     let mesh = Mesh::new(
         Some("tri".into()),

@@ -1,6 +1,6 @@
 use std::mem::{size_of, size_of_val};
 
-use occluview_core::{Scene, SceneMesh, SceneMeshId};
+use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 
 use super::state::{BusyFinish, EditModeCommand, EditModeState, EditSessionToken, LayerKey};
 use super::EditModeController;
@@ -69,6 +69,19 @@ impl EditModeController {
         layer: &SceneMesh,
         command: EditModeCommand,
     ) -> Option<EditSessionToken> {
+        self.begin_layer_edit_with_snapshot(layer, layer.mesh.clone(), command)
+    }
+
+    /// Begin a layer edit using a prebuilt mesh snapshot. Background editors
+    /// use this to keep the expensive vertex/index clone off the UI thread;
+    /// the layer's identity and display settings still come from the live
+    /// entry, so undo restores the exact instance rather than a new layer.
+    pub(crate) fn begin_layer_edit_with_snapshot(
+        &mut self,
+        layer: &SceneMesh,
+        snapshot_mesh: Mesh,
+        command: EditModeCommand,
+    ) -> Option<EditSessionToken> {
         let layer_key = LayerKey::from_scene_mesh_id(layer.id());
         if !self.state.start(layer_key) {
             return None;
@@ -77,9 +90,10 @@ impl EditModeController {
         if !self.state.begin_busy(command, token) {
             return None;
         }
+        let snapshot_bytes = scene_mesh_snapshot_bytes_from_mesh(&snapshot_mesh);
         self.last_undo_push_stored = self.undo.push_undo(
-            MeshEditUndoSnapshot::Layer(layer.clone()),
-            scene_mesh_snapshot_bytes(layer),
+            MeshEditUndoSnapshot::Layer(layer.with_mesh(snapshot_mesh)),
+            snapshot_bytes,
         );
         Some(token)
     }
@@ -337,7 +351,10 @@ impl HistoryDirection {
 }
 
 pub(super) fn scene_mesh_snapshot_bytes(layer: &SceneMesh) -> usize {
-    let mesh = &layer.mesh;
+    scene_mesh_snapshot_bytes_from_mesh(&layer.mesh)
+}
+
+fn scene_mesh_snapshot_bytes_from_mesh(mesh: &Mesh) -> usize {
     let texture_bytes = mesh.texture().map_or(0, |texture| texture.rgba.len());
     size_of::<SceneMesh>()
         + size_of_val(mesh.vertices())

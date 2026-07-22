@@ -6,13 +6,14 @@
 //! egui/viewport glue lives in `app::app_sculpt` and the geometry kernel is
 //! [`occluview_core::BrushSession`].
 
+use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{
     mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Scene, SceneMeshId, Vertex,
 };
 use occluview_render::PreparedSceneTopology;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 
 /// Brush-size slider bounds/default, in abstract 0..100 units (not mm — the
@@ -39,9 +40,10 @@ pub(crate) const DAB_SPACING_FRACTION: f32 = 0.15;
 /// this often so a held brush keeps depositing on the same spot at a steady,
 /// framerate-independent rate.
 pub(crate) const HOLD_DAB_INTERVAL_SEC: f32 = 0.03;
-/// Never emit more than this many dabs in one frame (a lag spike that jumps the
-/// cursor a long way must not stall on thousands of dabs).
-pub(crate) const MAX_DABS_PER_FRAME: usize = 64;
+/// Never emit more than this many dabs in one frame. A long cursor jump is
+/// sampled across this bounded budget and the scheduler advances to the
+/// current cursor, so expensive geometry work cannot accumulate behind input.
+pub(crate) const MAX_DABS_PER_FRAME: usize = 8;
 
 /// Map the 0..100 size slider to a mm brush radius (linear across the usable
 /// dental range).
@@ -72,11 +74,10 @@ impl SculptToolKind {
     }
 
     /// The kernel per-dab strength for this tool: the intensity slider for
-    /// Add/Remove and light Smooth; forced to full for Shift-held Smooth (which
-    /// turns into a maximum pass count in the kernel).
+    /// Add/Remove and Smooth; Shift doubles Smooth force, capped at 100%.
     pub(crate) fn dab_strength(self, intensity01: f32, shift: bool) -> f32 {
         match self {
-            Self::Smooth if shift => 1.0,
+            Self::Smooth if shift => (intensity01.clamp(0.0, 1.0) * 2.0).min(1.0),
             _ => intensity01.clamp(0.0, 1.0),
         }
     }
@@ -88,14 +89,22 @@ pub(crate) struct SculptTool {
     /// The armed tool; `None` = sculpting off, selection gestures own the
     /// primary button again.
     pub(crate) armed: Option<SculptToolKind>,
-    /// The kernel session, kept alive across strokes on the same layer so a
-    /// second stroke never pays the O(n) prepare again. Invalidated when the
-    /// layer or its topology identity changes.
-    pub(crate) session: Option<SculptSession>,
+    /// Persistent background kernel, kept alive across strokes on the same
+    /// layer. The UI never runs a dab synchronously.
+    pub(crate) worker: Option<SculptWorker>,
     /// Bookkeeping for the drag currently in flight (button held).
     pub(crate) stroke: Option<StrokeState>,
+    /// Primary was pressed over the viewport while BVH/brush preparation was
+    /// still completing. The current pointer is retried on the next frame; a
+    /// quick press-and-release is discarded rather than applied late.
+    pub(crate) press_pending: bool,
+    /// A mesh-edit Done action waits for the background commit before closing
+    /// the edit session, so a fast click cannot discard a valid stroke.
+    pub(crate) finish_requested: bool,
+    /// Undo/redo waits for an asynchronous sculpt completion before swapping
+    /// an older scene over the worker's current shadow.
+    pub(crate) pending_history: Option<bool>,
     pending: Option<PendingSculptPreparation>,
-    bvh_warm_started: bool,
 }
 
 struct PendingSculptPreparation {
@@ -112,6 +121,7 @@ impl SculptTool {
     /// drag so a half-applied stroke does not leak between tools.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
+        self.press_pending = false;
         self.armed = if self.armed == Some(kind) {
             None
         } else {
@@ -122,9 +132,11 @@ impl SculptTool {
     pub(crate) fn disarm(&mut self) {
         self.armed = None;
         self.stroke = None;
-        self.session = None;
+        self.press_pending = false;
+        self.finish_requested = false;
+        self.pending_history = None;
+        self.worker = None;
         self.cancel_pending_preparation();
-        self.bvh_warm_started = false;
     }
 
     /// Drop the prepared session and any live stroke while KEEPING the armed
@@ -135,17 +147,19 @@ impl SculptTool {
     /// the fresh scene on the next stroke.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
-        self.session = None;
+        self.worker = None;
+        self.press_pending = false;
+        self.finish_requested = false;
+        self.pending_history = None;
         self.cancel_pending_preparation();
-        self.bvh_warm_started = false;
     }
 
-    /// Whether a valid prepared session already covers `layer_id` at
+    /// Whether a valid worker already covers `layer_id` at
     /// `topology_id` (so no re-prepare is needed for the next stroke).
     pub(crate) fn session_matches(&self, layer_id: SceneMeshId, topology_id: u64) -> bool {
-        self.session
+        self.worker
             .as_ref()
-            .is_some_and(|s| s.layer_id == layer_id && s.topology_id == topology_id)
+            .is_some_and(|worker| worker.layer_id == layer_id && worker.topology_id == topology_id)
     }
 
     pub(crate) fn pending_matches(&self, layer_id: SceneMeshId, topology_id: u64) -> bool {
@@ -154,31 +168,15 @@ impl SculptTool {
         })
     }
 
-    /// Warm every visible mesh's picking BVH outside the egui thread. Picking
-    /// is lazy in the core mesh type; without this prewarm the first sculpt
-    /// hover can synchronously build a full triangle BVH and freeze the UI.
-    pub(crate) fn warm_scene_bvhs(&mut self, scene: Arc<Scene>) {
-        if self.bvh_warm_started {
-            return;
-        }
-        self.bvh_warm_started = true;
-        let _ = thread::Builder::new()
-            .name("occluview-sculpt-bvh".to_string())
-            .spawn(move || {
-                for entry in scene.meshes() {
-                    if entry.visible
-                        && !entry.mesh.is_point_cloud()
-                        && entry.mesh.triangle_count() > 0
-                    {
-                        entry.mesh.warm_bvh();
-                    }
-                }
-            });
+    pub(crate) fn worker_has_pending_work(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_quiescent())
     }
 
-    /// Queue the O(n) brush preparation. The worker owns the scene snapshot;
-    /// the UI only stores a receiver and remains responsive while welding,
-    /// adjacency construction, and grid setup run.
+    /// Queue the O(n) brush preparation. The worker owns the target mesh
+    /// snapshot; the UI only stores a receiver and remains responsive while
+    /// welding, adjacency construction, and grid setup run.
     pub(crate) fn queue_preparation(&mut self, scene: Arc<Scene>, index: usize) -> bool {
         let Some(entry) = scene.meshes().get(index) else {
             return false;
@@ -217,11 +215,16 @@ impl SculptTool {
                             layer_id: entry.id(),
                             topology_id: entry.mesh.topology_id(),
                             session,
-                            shadow: entry.mesh.vertices().to_vec(),
+                            // Keep only the target mesh in the worker. Holding
+                            // the whole Scene Arc made the UI clone the full
+                            // scene through Arc::make_mut on every commit.
+                            base_mesh: entry.mesh.clone(),
+                            shadow: Arc::new(RwLock::new(entry.mesh.vertices().to_vec())),
                             topology: PreparedSceneTopology::from_mesh(&entry.mesh),
                             world_to_local: entry.transform.inverse(),
                             local_per_world: 1.0 / scale,
                             dirty_stroke: false,
+                            stroke_start_vertices: None,
                         }
                     });
                 if !worker_cancel.load(Ordering::Relaxed) {
@@ -261,7 +264,7 @@ impl SculptTool {
     }
 }
 
-/// A prepared kernel session over one layer, reused across every stroke on it.
+/// A prepared kernel session over one layer, transferred into the worker.
 pub(crate) struct SculptSession {
     /// The sculpted layer's stable identity.
     pub(crate) layer_id: SceneMeshId,
@@ -270,10 +273,13 @@ pub(crate) struct SculptSession {
     pub(crate) topology_id: u64,
     /// The geometry kernel.
     pub(crate) session: BrushSession,
+    /// Immutable mesh template used to build completed meshes. It is cloned
+    /// on the preparation thread, never in the UI commit path.
+    pub(crate) base_mesh: occluview_core::Mesh,
     /// Display copy of the layer's vertex array, patched per dab from the
     /// kernel and streamed into the prepared GPU vertex buffer for live
     /// feedback; also the source of the final committed mesh.
-    pub(crate) shadow: Vec<Vertex>,
+    pub(crate) shadow: Arc<RwLock<Vec<Vertex>>>,
     /// GPU topology identity of the mesh being sculpted — routes the live
     /// sparse vertex write to the right prepared-scene entry.
     pub(crate) topology: PreparedSceneTopology,
@@ -285,6 +291,9 @@ pub(crate) struct SculptSession {
     /// Whether any dab in the CURRENT stroke actually moved geometry — a stroke
     /// that never touched the surface must not create an undo entry.
     pub(crate) dirty_stroke: bool,
+    /// Vertex positions before the current stroke. The worker turns these
+    /// into the undo mesh off the UI thread when the stroke finishes.
+    pub(crate) stroke_start_vertices: Option<Vec<Vertex>>,
 }
 
 impl SculptSession {
@@ -293,6 +302,9 @@ impl SculptSession {
     /// current stroke dirty so a stroke that actually moved geometry gets an
     /// undo entry (an empty dab does not).
     pub(crate) fn apply_dab(&mut self, stroke: BrushStroke, mode: BrushMode) -> Vec<usize> {
+        if self.stroke_start_vertices.is_none() {
+            self.stroke_start_vertices = self.shadow.read().ok().map(|shadow| shadow.clone());
+        }
         let outcome = self.session.apply_stroke(stroke, mode);
         if outcome.touched_vertices.is_empty() {
             return Vec::new();
@@ -306,11 +318,12 @@ impl SculptSession {
     /// into the display shadow. Color and UV are preserved untouched, so
     /// textured/colored scans keep their look while being sculpted.
     pub(crate) fn patch_shadow(&mut self, touched: &[usize]) {
+        let Ok(mut shadow) = self.shadow.write() else {
+            return;
+        };
         let live = self.session.vertices();
         for &vertex_id in touched {
-            if let (Some(target), Some(source)) =
-                (self.shadow.get_mut(vertex_id), live.get(vertex_id))
-            {
+            if let (Some(target), Some(source)) = (shadow.get_mut(vertex_id), live.get(vertex_id)) {
                 target.position = source.position;
                 target.normal = source.normal;
             }
@@ -345,9 +358,10 @@ pub(crate) fn mean_uniform_scale(transform: &Affine3A) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::expect_used, clippy::float_cmp)]
     use super::*;
     use glam::Quat;
+    use occluview_core::{Mesh, SceneMesh};
 
     #[test]
     fn toggling_a_tool_arms_it_and_toggling_again_disarms() {
@@ -368,9 +382,9 @@ mod tests {
             BrushMode::Remove
         );
         assert_eq!(SculptToolKind::Smooth.brush_mode(true), BrushMode::Smooth);
-        // Forced smooth pushes strength to the max (a full pass count); a light
-        // Add/Remove just uses the intensity slider.
-        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 1.0);
+        // Shift doubles Smooth force; a light Add/Remove uses the intensity
+        // slider unchanged.
+        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 0.6);
         assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, false), 0.3);
     }
 
@@ -393,5 +407,43 @@ mod tests {
     #[test]
     fn mean_uniform_scale_survives_a_degenerate_transform() {
         assert_eq!(mean_uniform_scale(&Affine3A::from_scale(Vec3::ZERO)), 1.0);
+    }
+
+    #[test]
+    fn persistent_session_accepts_a_second_stroke_after_first_commit() {
+        let mesh = Mesh::new(
+            Some("sculpt-test".to_string()),
+            vec![
+                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+        .expect("test mesh");
+        let layer_id = SceneMesh::new(mesh.clone()).id();
+        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+        let mut session = SculptSession {
+            layer_id,
+            topology_id: mesh.topology_id(),
+            session: brush,
+            base_mesh: mesh.clone(),
+            shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
+            topology: PreparedSceneTopology::from_mesh(&mesh),
+            world_to_local: Affine3A::IDENTITY,
+            local_per_world: 1.0,
+            dirty_stroke: false,
+            stroke_start_vertices: None,
+        };
+        let stroke = BrushStroke {
+            center: [0.0, 0.0, 0.0],
+            radius_mm: 2.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        };
+        assert!(!session.apply_dab(stroke, BrushMode::Add).is_empty());
+        session.dirty_stroke = false;
+        assert!(!session.apply_dab(stroke, BrushMode::Add).is_empty());
     }
 }

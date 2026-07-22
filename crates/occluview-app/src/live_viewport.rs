@@ -110,6 +110,16 @@ impl LiveViewport {
         })
     }
 
+    pub(super) fn write_scene_vertices(
+        &self,
+        topology: &occluview_render::PreparedSceneTopology,
+        vertices: &[occluview_core::Vertex],
+    ) -> bool {
+        self.prepared_scene
+            .as_ref()
+            .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
+    }
+
     pub(super) fn sync_selection_overlay(&mut self, sources: &[PreparedSceneSource<'_>]) {
         self.selection_overlay =
             (!sources.is_empty()).then(|| PreparedScene::prepare(&self.renderer, sources));
