@@ -22,8 +22,8 @@ impl Scene {
     ///
     /// Returns `None` for point clouds, hidden meshes, degenerate triangles,
     /// invalid rays, or misses. Each mesh is picked through its own lazily-built
-    /// BVH ([`crate::mesh::Mesh::pick_ray_local`]), so this is O(log n) per mesh
-    /// — cheap enough to run every frame under an interactive sculpt cursor.
+    /// cached BVH, so this is O(log n) per mesh and cheap enough to run every
+    /// frame under an interactive sculpt cursor.
     #[must_use]
     pub fn pick_ray(&self, origin: Vec3, direction: Vec3) -> Option<Vec3> {
         self.pick_ray_hit(origin, direction).map(|hit| hit.point)

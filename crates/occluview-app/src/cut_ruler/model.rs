@@ -191,8 +191,8 @@ impl SlicePlaneMap {
         )
     }
 
-    /// Oriented variant of [`Self::zoom_focus_at_cursor`] used by the live
-    /// Section panel when its basis follows the primary camera.
+    /// Oriented zoom-to-cursor variant used by the live Section panel when its
+    /// basis follows the primary camera.
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
     pub(crate) fn zoom_focus_at_cursor_with_basis(
