@@ -8,8 +8,10 @@
 //! platform-specific activation request. File delivery remains in the
 //! single-instance IPC module.
 
-use anyhow::Context;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 
 #[cfg(target_os = "linux")]
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -135,8 +137,8 @@ impl RaiseTarget {
 /// Complete a launcher's startup-notification sequence when the launch came
 /// through X11. Wayland uses the xdg-activation token itself; it has no
 /// separate remove message.
+#[cfg(target_os = "linux")]
 pub(crate) fn complete_startup_notification(token: Option<&str>) {
-    #[cfg(target_os = "linux")]
     if let Some(token) = token.filter(|token| startup_id_timestamp(token).is_some()) {
         if let Err(error) = x11_remove_startup_notification(token) {
             tracing::debug!(?error, "could not complete X11 startup notification");
