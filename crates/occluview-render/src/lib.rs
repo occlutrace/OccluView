@@ -39,7 +39,10 @@ pub mod texture;
 
 pub use camera::{camera_ortho_proj_matrix, camera_view_matrix, GpuCamera};
 pub use clipping::{ClipPlane, CutViewSpec};
-pub use cut_camera::{cut_view_camera, cut_view_camera_focused, slice_view_basis};
+pub use cut_camera::{
+    cut_view_camera, cut_view_camera_focused, cut_view_camera_focused_with_up, slice_view_basis,
+    slice_view_basis_with_up,
+};
 pub use error::RenderError;
 pub use gpu::GpuMesh;
 pub use mesh_uniform::GpuMeshUniform;

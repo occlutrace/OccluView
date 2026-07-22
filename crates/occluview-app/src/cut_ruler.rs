@@ -5,8 +5,9 @@
 mod model;
 mod panel;
 
-pub(crate) use model::{CutRuler, SliceCam, SlicePlaneMap};
+pub(crate) use model::{CutRuler, SliceBasis, SliceCam, SlicePlaneMap};
 pub(crate) use panel::{
-    section_image_rect_for, section_panel_contains, section_panel_rect, show_section_panel,
-    SectionDisplay, SectionPanelCommand, SectionRender, SliceMeasureMode,
+    section_image_rect_for, section_panel_contains, section_panel_rect,
+    show_section_panel_with_basis, SectionDisplay, SectionPanelCommand, SectionRender,
+    SliceMeasureMode,
 };

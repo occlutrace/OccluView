@@ -6,7 +6,8 @@
 
 use crate::cut_manipulator::{pose_moved, DiscPose};
 use crate::cut_ruler::{
-    CutRuler, SectionDisplay, SectionPanelCommand, SectionRender, SliceCam, SliceMeasureMode,
+    CutRuler, SectionDisplay, SectionPanelCommand, SectionRender, SliceBasis, SliceCam,
+    SliceMeasureMode,
 };
 use crate::probe_section::SliceProbe;
 use eframe::egui;
@@ -58,14 +59,12 @@ pub(super) struct SectionViewFrame {
     normal: Vec3,
 }
 
-/// The current primary viewport orientation, reduced to the three stable axes
-/// needed by the section-panel cue. The section image itself stays orthographic
-/// and plane-aligned; this is only a live spatial reference for the operator.
+/// The current primary viewport orientation, reduced to the two screen axes
+/// needed to orient the existing section panel in the same way as the main view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct SectionMainView {
     right: Vec3,
     up: Vec3,
-    forward: Vec3,
 }
 
 impl SectionMainView {
@@ -73,7 +72,11 @@ impl SectionMainView {
         let forward = camera.view_direction().normalize_or_zero();
         let up = camera.view_up().normalize_or_zero();
         let right = forward.cross(up).normalize_or_zero();
-        Self { right, up, forward }
+        Self { right, up }
+    }
+
+    pub(super) fn slice_basis(self, normal: Vec3) -> SliceBasis {
+        SliceBasis::from_view_axes(normal, self.right, self.up)
     }
 }
 
@@ -117,6 +120,7 @@ pub(super) struct SectionView {
     needs_render: bool,
     slice_view: SliceView,
     prefs: SectionPrefs,
+    slice_basis: SliceBasis,
 }
 
 #[derive(Default)]
@@ -144,6 +148,25 @@ impl SectionView {
         changed
     }
 
+    /// Reorient the existing section image to the primary camera. Lines mode
+    /// uses the new basis immediately; Mesh mode schedules one matching
+    /// offscreen render so the texture and vector overlays cannot diverge.
+    pub(super) fn sync_main_view(&mut self, main_view: SectionMainView) -> bool {
+        let Some(frame) = self.current_frame else {
+            return false;
+        };
+        let next = main_view.slice_basis(frame.normal());
+        if next == self.slice_basis {
+            return false;
+        }
+        self.slice_basis = next;
+        if self.slice_ready {
+            self.slice_ready = false;
+        }
+        self.needs_render = self.wants_offscreen_slice();
+        true
+    }
+
     pub(super) fn reset(&mut self) {
         self.texture = None;
         self.slice_cam = None;
@@ -154,6 +177,7 @@ impl SectionView {
         self.needs_render = false;
         self.slice_view = SliceView::default();
         self.prefs = SectionPrefs::default();
+        self.slice_basis = SliceBasis::default();
     }
 
     pub(super) fn frame(&self) -> Option<SectionViewFrame> {
@@ -241,13 +265,13 @@ impl SectionView {
             return false;
         }
         let half_ratio = self.slice_view.zoom / new_zoom;
-        let (new_focus, _) = crate::cut_ruler::SlicePlaneMap::zoom_focus_at_cursor(
+        let (new_focus, _) = crate::cut_ruler::SlicePlaneMap::zoom_focus_at_cursor_with_basis(
             cam.focus,
             cam.half_extent,
-            cam.normal,
             image_rect,
             pointer,
             half_ratio,
+            self.slice_basis,
         );
         self.slice_view.pan += new_focus - cam.focus;
         self.slice_view.zoom = new_zoom;
@@ -262,7 +286,6 @@ impl SectionView {
         viewport_rect: egui::Rect,
         section: Option<&SceneSection>,
         color_for: F,
-        main_view: Option<SectionMainView>,
     ) -> SectionViewUiOutcome
     where
         F: Fn(SceneMeshId) -> egui::Color32,
@@ -285,11 +308,14 @@ impl SectionView {
             section,
             color_for,
         };
-        let out =
-            crate::cut_ruler::show_section_panel(ui, viewport_rect, cam, &mut self.ruler, render);
-        if let Some(panel_rect) = crate::cut_ruler::section_panel_rect(viewport_rect) {
-            paint_orientation_cue(ui.painter(), panel_rect, cam.normal, main_view);
-        }
+        let out = crate::cut_ruler::show_section_panel_with_basis(
+            ui,
+            viewport_rect,
+            cam,
+            self.slice_basis,
+            &mut self.ruler,
+            render,
+        );
         if out.mode != self.prefs.mode {
             self.prefs.mode = out.mode;
             if matches!(out.mode, SectionDisplay::Mesh) {
@@ -320,6 +346,10 @@ impl SectionView {
 
     pub(super) fn set_measure_mode(&mut self, mode: SliceMeasureMode) {
         self.prefs.measure_mode = mode;
+    }
+
+    pub(super) fn slice_basis(&self) -> SliceBasis {
+        self.slice_basis
     }
 
     #[cfg(test)]
@@ -415,77 +445,6 @@ impl SectionView {
             pose.center + self.slice_view.pan,
             (half / self.slice_view.zoom).max(0.05),
         ))
-    }
-}
-
-/// Draw the live primary-camera orientation in the section header. Keeping it
-/// in the header avoids covering contours or measurement marks, while the
-/// projected R/U axes make a rotated main viewport immediately legible.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn paint_orientation_cue(
-    painter: &egui::Painter,
-    panel_rect: egui::Rect,
-    section_normal: Vec3,
-    main_view: Option<SectionMainView>,
-) {
-    let size = 42.0;
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(panel_rect.right() - size - 10.0, panel_rect.top() + 3.0),
-        egui::vec2(size, size),
-    );
-    let center = rect.center();
-    painter.rect_filled(
-        rect,
-        egui::Rounding::same(5.0),
-        egui::Color32::from_black_alpha(100),
-    );
-    painter.rect_stroke(
-        rect,
-        egui::Rounding::same(5.0),
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(35)),
-    );
-
-    let (section_right, section_up) = occluview_render::slice_view_basis(section_normal);
-    let draw_axis = |axis: Vec3, color: egui::Color32, label: &str| {
-        let projected = axis - section_normal * section_normal.dot(axis);
-        let length = projected.length();
-        if length <= 1.0e-4 {
-            return;
-        }
-        let projected = projected / length;
-        let x = section_right.dot(projected);
-        let y = section_up.dot(projected);
-        let endpoint = center + egui::vec2(x, -y) * 14.0;
-        painter.line_segment([center, endpoint], egui::Stroke::new(1.5, color));
-        painter.circle_filled(endpoint, 2.2, color);
-        painter.text(
-            endpoint
-                + egui::vec2(
-                    if x >= 0.0 { 3.0 } else { -11.0 },
-                    if y <= 0.0 { -2.0 } else { -13.0 },
-                ),
-            egui::Align2::LEFT_TOP,
-            label,
-            egui::FontId::proportional(9.0),
-            color,
-        );
-    };
-
-    if let Some(main_view) = main_view {
-        draw_axis(main_view.right, egui::Color32::from_rgb(188, 196, 205), "R");
-        draw_axis(main_view.up, egui::Color32::from_rgb(218, 211, 192), "U");
-        let facing = main_view.forward.dot(section_normal).abs();
-        painter.circle_stroke(
-            center,
-            3.0,
-            egui::Stroke::new(
-                1.0,
-                egui::Color32::from_white_alpha((45.0 + facing * 100.0) as u8),
-            ),
-        );
-    } else {
-        draw_axis(section_right, egui::Color32::from_rgb(188, 196, 205), "R");
-        draw_axis(section_up, egui::Color32::from_rgb(218, 211, 192), "U");
     }
 }
 

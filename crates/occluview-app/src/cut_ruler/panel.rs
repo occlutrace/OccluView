@@ -3,7 +3,7 @@ use glam::Vec3;
 use occluview_core::scene::SceneSection;
 use occluview_core::SceneMeshId;
 
-use super::model::{CutRuler, SliceCam, SlicePlaneMap};
+use super::model::{CutRuler, SliceBasis, SliceCam, SlicePlaneMap};
 use crate::cut_geometry::snap_to_contour;
 use crate::{probe_section, ui_theme};
 
@@ -164,10 +164,36 @@ fn section_image_rect(panel_rect: egui::Rect) -> egui::Rect {
 /// nearest contour point when the magnet is on; right-click clears. Markers are
 /// anchored in section-plane millimeters and re-project as the disc scales, so
 /// lines, ruler, zoom and pan stay exactly consistent.
+#[cfg(test)]
 pub(crate) fn show_section_panel<F>(
     ui: &mut egui::Ui,
     viewport_rect: egui::Rect,
     cam: SliceCam,
+    ruler: &mut CutRuler,
+    render: SectionRender<'_, F>,
+) -> SectionPanelOut
+where
+    F: Fn(SceneMeshId) -> egui::Color32,
+{
+    show_section_panel_with_basis(
+        ui,
+        viewport_rect,
+        cam,
+        SliceBasis::from_normal(cam.normal),
+        ruler,
+        render,
+    )
+}
+
+/// Draw the existing Section panel using the primary viewport's in-plane
+/// orientation. The same basis is used for drawing, picking, measuring, pan and
+/// zoom, so the panel never displays one orientation while interacting in another.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn show_section_panel_with_basis<F>(
+    ui: &mut egui::Ui,
+    viewport_rect: egui::Rect,
+    cam: SliceCam,
+    basis: SliceBasis,
     ruler: &mut CutRuler,
     render: SectionRender<'_, F>,
 ) -> SectionPanelOut
@@ -207,7 +233,7 @@ where
         magnet: render.magnet,
         section: render.section,
     };
-    let gesture = handle_panel_gesture(ui, image_rect, ruler, placement);
+    let gesture = handle_panel_gesture(ui, image_rect, ruler, placement, basis);
     out.pan_delta = gesture.pan_delta;
     out.panned = gesture.panned;
 
@@ -222,7 +248,7 @@ where
     } else {
         cam
     };
-    let draw_map = SlicePlaneMap::new(draw_cam, image_rect);
+    let draw_map = SlicePlaneMap::new_with_basis(draw_cam, image_rect, basis);
     let has_content = match render.mode {
         SectionDisplay::Mesh => {
             draw_slice_texture(&ui.painter_at(image_rect), image_rect, render.texture)
@@ -368,8 +394,9 @@ fn handle_panel_gesture(
     image_rect: egui::Rect,
     ruler: &mut CutRuler,
     placement: RulerPlacement<'_>,
+    basis: SliceBasis,
 ) -> PanelGesture {
-    let map = SlicePlaneMap::new(placement.cam, image_rect);
+    let map = SlicePlaneMap::new_with_basis(placement.cam, image_rect, basis);
     let response = ui.interact(
         image_rect,
         ui.id().with("cut-section-ruler"),

@@ -136,7 +136,15 @@ impl OccluViewApp {
         let eye = frame.eye;
         let hover_pos = frame.pointer;
         let update = self.cut_view.update(&frame, eye);
-        if update.pose_changed || update.planted || update.unplanted || update.exited {
+        let orientation_changed = self
+            .cut_view
+            .sync_main_view(SectionMainView::from_camera(camera));
+        if update.pose_changed
+            || update.planted
+            || update.unplanted
+            || update.exited
+            || orientation_changed
+        {
             self.needs_render = true;
             ctx.request_repaint();
         }
@@ -191,13 +199,9 @@ impl OccluViewApp {
         // so this stays one slice render per frame — the top-of-loop pass then
         // no-ops during an active cut. In Lines mode it no-ops (no GPU slice).
         self.maybe_render_cut_view(ctx);
-        let panel = self.cut_view.show_section_panel(
-            ui,
-            viewport_rect,
-            section.as_deref(),
-            &color_for,
-            Some(SectionMainView::from_camera(camera)),
-        );
+        let panel =
+            self.cut_view
+                .show_section_panel(ui, viewport_rect, section.as_deref(), &color_for);
         let panel_consumed = panel.consumed_pointer;
         self.apply_cut_section_outcome(panel, ctx);
         update.consumed_pointer || panel_consumed

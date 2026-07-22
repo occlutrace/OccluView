@@ -88,8 +88,26 @@ fn slice_up_hint(normal: Vec3) -> Vec3 {
 #[must_use]
 pub fn slice_view_basis(normal: Vec3) -> (Vec3, Vec3) {
     let forward = normal.normalize_or(Vec3::Y);
-    let up_hint = slice_up_hint(forward);
-    let right = forward.cross(up_hint).normalize_or(Vec3::X);
+    slice_view_basis_with_up(forward, slice_up_hint(forward))
+}
+
+/// Return the orthonormal in-plane axes for a section viewed with the supplied
+/// world-space up direction. The up hint is projected into the section plane,
+/// so the returned basis remains valid when the main camera is oblique to the
+/// cut. A fixed fallback prevents a singular camera position from producing
+/// NaNs or a visible orientation jump.
+#[must_use]
+pub fn slice_view_basis_with_up(normal: Vec3, up_hint: Vec3) -> (Vec3, Vec3) {
+    let forward = normal.normalize_or(Vec3::Y);
+    let projected_up = up_hint - forward * up_hint.dot(forward);
+    if projected_up.is_finite() && projected_up.length_squared() > 1.0e-8 {
+        let up = projected_up.normalize();
+        let right = forward.cross(up).normalize_or(Vec3::X);
+        return (right, right.cross(forward).normalize_or(up));
+    }
+
+    let fallback_up = slice_up_hint(forward);
+    let right = forward.cross(fallback_up).normalize_or(Vec3::X);
     let up = right.cross(forward).normalize_or(Vec3::Y);
     (right, up)
 }
@@ -116,13 +134,34 @@ pub fn cut_view_camera_focused(
     scene_extent: f32,
 ) -> GpuCamera {
     let normal = Vec3::from_array(plane.normal).normalize_or(Vec3::Y);
+    cut_view_camera_focused_with_up(
+        plane,
+        focus,
+        half_extent,
+        scene_extent,
+        slice_up_hint(normal),
+    )
+}
+
+/// Build the focused section camera with an explicit in-plane up direction.
+/// The app passes the main viewport's section basis here so the rendered panel
+/// image and its vector contour use exactly the same orientation.
+#[must_use]
+pub fn cut_view_camera_focused_with_up(
+    plane: &ClipPlane,
+    focus: Vec3,
+    half_extent: f32,
+    scene_extent: f32,
+    up_hint: Vec3,
+) -> GpuCamera {
+    let normal = Vec3::from_array(plane.normal).normalize_or(Vec3::Y);
     let half_extent = half_extent.max(0.1);
     let scene_extent = scene_extent.max(half_extent);
     // Stand off past the whole mesh on the cut-away side so nothing kept is
     // behind the near plane and the section face is nearest the camera.
     let back_off = scene_extent * 2.0 + 1.0;
     let eye = focus - normal * back_off;
-    let up = slice_up_hint(normal);
+    let (_, up) = slice_view_basis_with_up(normal, up_hint);
     let view = Mat4::look_at_rh(eye, focus, up);
     // Far must span from the eye across the entire kept half (which extends up to
     // ~scene_extent past the plane on the +normal side).
@@ -202,5 +241,14 @@ mod tests {
             assert!(up.dot(n).abs() < 1e-5, "up in plane for {n}");
             assert!(right.dot(up).abs() < 1e-5, "right perp up for {n}");
         }
+    }
+
+    #[test]
+    fn custom_up_rotates_the_section_basis_without_leaving_the_plane() {
+        let (right, up) = slice_view_basis_with_up(Vec3::Z, Vec3::X);
+        assert!((right - Vec3::Y).length() < 1e-5, "right={right}");
+        assert!((up - Vec3::X).length() < 1e-5, "up={up}");
+        assert!(right.dot(Vec3::Z).abs() < 1e-5);
+        assert!(up.dot(Vec3::Z).abs() < 1e-5);
     }
 }

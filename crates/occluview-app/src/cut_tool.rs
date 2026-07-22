@@ -119,12 +119,20 @@ impl CutTool {
         out
     }
 
+    pub(super) fn sync_main_view(&mut self, main_view: SectionMainView) -> bool {
+        self.section.sync_main_view(main_view)
+    }
+
     pub(super) fn section_plane(&self) -> Option<SectionPlane> {
         self.section.section_plane()
     }
 
     pub(super) fn cut_view_focus(&self, bbox: Aabb) -> (Vec3, f32) {
         self.section.focus(bbox)
+    }
+
+    pub(super) fn slice_basis(&self) -> crate::cut_ruler::SliceBasis {
+        self.section.slice_basis()
     }
 
     pub(super) fn zoom_slice_at_cursor(
@@ -169,13 +177,11 @@ impl CutTool {
         viewport_rect: egui::Rect,
         section: Option<&SceneSection>,
         color_for: F,
-        main_view: Option<SectionMainView>,
     ) -> CutToolUiOutcome
     where
         F: Fn(SceneMeshId) -> egui::Color32,
     {
-        self.section
-            .show(ui, viewport_rect, section, color_for, main_view)
+        self.section.show(ui, viewport_rect, section, color_for)
     }
 
     fn section_frame(&self) -> Option<SectionViewFrame> {

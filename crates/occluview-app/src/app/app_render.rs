@@ -72,8 +72,9 @@ impl OccluViewApp {
             return;
         };
         let (focus, half_extent) = self.cut_view.cut_view_focus(bbox);
+        let basis = self.cut_view.slice_basis();
         let Some((color_image, slice_cam)) =
-            self.render_section_pixels(&scene, cut.plane, focus, half_extent)
+            self.render_section_pixels(&scene, cut.plane, focus, half_extent, basis)
         else {
             return;
         };
@@ -99,8 +100,9 @@ impl OccluViewApp {
             frame.normal().dot(frame.pose().center),
         );
         let (focus, half_extent) = self.bridge_split_section.focus(bbox);
+        let basis = self.bridge_split_section.slice_basis();
         let Some((color_image, slice_cam)) =
-            self.render_section_pixels(&scene, plane, focus, half_extent)
+            self.render_section_pixels(&scene, plane, focus, half_extent, basis)
         else {
             return;
         };
@@ -108,12 +110,14 @@ impl OccluViewApp {
             .store_slice(ctx, color_image, slice_cam);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_section_pixels(
         &mut self,
         scene: &Scene,
         plane: occluview_render::ClipPlane,
         focus: glam::Vec3,
         half_extent: f32,
+        basis: crate::cut_ruler::SliceBasis,
     ) -> Option<(egui::ColorImage, crate::cut_ruler::SliceCam)> {
         let bbox = scene.bbox();
         if let Err(e) = self.ensure_offscreen() {
@@ -136,11 +140,12 @@ impl OccluViewApp {
         let pixels = {
             let offscreen = self.offscreen.as_ref()?;
             let prepared = self.prepared_scene.as_ref()?;
-            let camera = occluview_render::cut_view_camera_focused(
+            let camera = occluview_render::cut_view_camera_focused_with_up(
                 &plane,
                 focus,
                 half_extent,
                 bbox.half_diagonal(),
+                basis.up,
             );
             let spec = ThumbnailSpec {
                 size_px: CutTool::preview_size_px(),

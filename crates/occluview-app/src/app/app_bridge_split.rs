@@ -175,7 +175,11 @@ impl OccluViewApp {
             .bridge_split_disc
             .pose()
             .and_then(|pose| SectionViewFrame::new(pose, pose.plane_normal));
-        if self.bridge_split_section.sync(section_frame) {
+        let frame_changed = self.bridge_split_section.sync(section_frame);
+        let orientation_changed = self
+            .bridge_split_section
+            .sync_main_view(SectionMainView::from_camera(*frame_context.camera));
+        if frame_changed || orientation_changed {
             self.needs_render = true;
             ctx.request_repaint();
         }
@@ -221,7 +225,6 @@ impl OccluViewApp {
             frame_context.viewport_rect,
             section.as_deref(),
             &color_for,
-            Some(SectionMainView::from_camera(*frame_context.camera)),
         );
         if panel.viewport_needs_render {
             self.needs_render = true;

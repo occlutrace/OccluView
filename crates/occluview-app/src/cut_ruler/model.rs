@@ -9,13 +9,12 @@
 //!     **world** (section-plane) coordinates so they stay put while the disc
 //!     scales/zooms and re-project each frame, and clear when the plane changes.
 //!
-//! The mapping matches the render exactly by reusing
-//! [`occluview_render::slice_view_basis`] — the same basis the slice camera is
-//! built from — so a marker sits on the geometry it was clicked on.
+//! The mapping matches the render exactly through the shared [`SliceBasis`], so
+//! a marker sits on the geometry it was clicked on even while the main camera
+//! rotates.
 
 use eframe::egui;
 use glam::Vec3;
-use occluview_render::slice_view_basis;
 
 use crate::{measure_draw, probe_section::SliceProbe, ui_theme};
 
@@ -44,6 +43,54 @@ impl SliceCam {
     }
 }
 
+/// Orthonormal screen axes for a section image. The basis is supplied by the
+/// main viewport so vector contours, raster slices, ruler points, pan and zoom
+/// all use one coordinate system.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SliceBasis {
+    pub(crate) right: Vec3,
+    pub(crate) up: Vec3,
+}
+
+impl Default for SliceBasis {
+    fn default() -> Self {
+        Self::from_normal(Vec3::Y)
+    }
+}
+
+impl SliceBasis {
+    pub(crate) fn from_normal(normal: Vec3) -> Self {
+        let (right, up) = occluview_render::slice_view_basis(normal);
+        Self { right, up }
+    }
+
+    /// Build a basis from projected main-camera axes, with a normal-based
+    /// fallback for the singular case where both hints are parallel to the
+    /// section plane normal.
+    pub(crate) fn from_view_axes(normal: Vec3, right_hint: Vec3, up_hint: Vec3) -> Self {
+        let normal = normal.normalize_or(Vec3::Y);
+        let projected_right = right_hint - normal * right_hint.dot(normal);
+        if projected_right.is_finite() && projected_right.length_squared() > 1.0e-8 {
+            let right = projected_right.normalize();
+            return Self {
+                right,
+                up: right.cross(normal).normalize_or(Vec3::Y),
+            };
+        }
+
+        let projected_up = up_hint - normal * up_hint.dot(normal);
+        if projected_up.is_finite() && projected_up.length_squared() > 1.0e-8 {
+            let up = projected_up.normalize();
+            return Self {
+                right: normal.cross(up).normalize_or(Vec3::X),
+                up,
+            };
+        }
+
+        Self::from_normal(normal)
+    }
+}
+
 /// Pure mapping between the panel image rect and the section plane, in `f64`.
 ///
 /// The panel image spans `[-half_extent, half_extent]` world mm on each axis of
@@ -58,12 +105,18 @@ pub(crate) struct SlicePlaneMap {
 
 impl SlicePlaneMap {
     /// Build the mapping for a slice camera drawn into `image_rect`.
+    #[cfg(test)]
     pub(crate) fn new(cam: SliceCam, image_rect: egui::Rect) -> Self {
-        let (right, up) = slice_view_basis(cam.normal);
+        Self::new_with_basis(cam, image_rect, SliceBasis::from_normal(cam.normal))
+    }
+
+    /// Build the mapping with the exact in-plane axes used by the rendered
+    /// section image.
+    pub(crate) fn new_with_basis(cam: SliceCam, image_rect: egui::Rect, basis: SliceBasis) -> Self {
         Self {
             focus: cam.focus,
-            right,
-            up,
+            right: basis.right,
+            up: basis.up,
             half_extent: f64::from(cam.half_extent.max(0.1)),
             image_rect,
         }
@@ -117,6 +170,7 @@ impl SlicePlaneMap {
     ///
     /// The new focus stays on the section plane: it moves only along the plane's
     /// `(right, up)` basis, so `normal · focus` (the plane offset) is unchanged.
+    #[cfg(test)]
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
     pub(crate) fn zoom_focus_at_cursor(
@@ -127,7 +181,30 @@ impl SlicePlaneMap {
         cursor: egui::Pos2,
         half_ratio: f32,
     ) -> (Vec3, f32) {
-        let (right, up) = slice_view_basis(normal);
+        Self::zoom_focus_at_cursor_with_basis(
+            focus,
+            half_extent,
+            image_rect,
+            cursor,
+            half_ratio,
+            SliceBasis::from_normal(normal),
+        )
+    }
+
+    /// Oriented variant of [`Self::zoom_focus_at_cursor`] used by the live
+    /// Section panel when its basis follows the primary camera.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
+    pub(crate) fn zoom_focus_at_cursor_with_basis(
+        focus: Vec3,
+        half_extent: f32,
+        image_rect: egui::Rect,
+        cursor: egui::Pos2,
+        half_ratio: f32,
+        basis: SliceBasis,
+    ) -> (Vec3, f32) {
+        let right = basis.right;
+        let up = basis.up;
         let half = f64::from(half_extent.max(0.1));
         let w = f64::from(image_rect.width().max(1.0));
         let h = f64::from(image_rect.height().max(1.0));
