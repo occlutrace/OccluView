@@ -8,6 +8,7 @@ Before opening a pull request, run:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
 For behavior changes, add or update tests. For visible changes, include a short

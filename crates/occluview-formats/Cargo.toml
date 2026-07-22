@@ -2,7 +2,7 @@
 # Layering: depends on occluview-core only.
 [package]
 name = "occluview-formats"
-description = "3D file format readers for OccluView: STL, PLY, OBJ, glTF, 3MF."
+description = "3D file format readers for OccluView: STL, PLY, OBJ, and GLB."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

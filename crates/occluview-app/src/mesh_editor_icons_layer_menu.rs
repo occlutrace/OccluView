@@ -8,7 +8,7 @@ use super::{arc, arrowhead};
 
 /// One layer context-menu glyph, drawn in the shared line style at the small
 /// (~15 px) gutter size a dropdown row uses. A vocabulary distinct from the
-/// editor toolbar's [`EditorIcon`]: these name layer-level operator actions.
+/// editor toolbar vocabulary: these name layer-level operator actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum LayerMenuIcon {
@@ -48,7 +48,8 @@ pub(crate) enum LayerMenuIcon {
 }
 
 /// Paint `icon` inside `rect` in a single `color`, for a layer context-menu row.
-/// Same crisp line language as [`paint`], tuned for the smaller gutter glyph:
+/// Uses the same crisp line language as the editor toolbar, tuned for the
+/// smaller gutter glyph:
 /// the whole glyph takes the row's ink color so it tracks the hover accent.
 pub(crate) fn paint_layer_menu(
     painter: &egui::Painter,
