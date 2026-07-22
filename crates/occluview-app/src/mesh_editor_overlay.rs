@@ -183,6 +183,9 @@ pub(crate) fn show(
         .collapsible(false)
         .title_bar(false)
         .show(ctx, |ui| {
+            // Keep a stable content width so the tool rows, especially the
+            // sculpt rails, do not shrink to their intrinsic widget width.
+            ui.set_min_width(WINDOW_WIDTH - 24.0);
             ui.set_width(WINDOW_WIDTH - 24.0);
             action = window_action(ui, state);
         });

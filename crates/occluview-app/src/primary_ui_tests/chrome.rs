@@ -104,7 +104,9 @@ fn toolbar_and_about_are_operator_focused() {
             && function_source(dialogs, "pub(super) fn show_about_window")
                 .contains("self.app_logo_texture(ctx)")
             && dialogs.contains("https://occlutrace.ai")
-            && dialogs.contains("https://github.com/occlutrace/OccluView"),
+            && dialogs.contains("https://github.com/occlutrace/OccluView")
+            && function_source(dialogs, "pub(super) fn show_about_window")
+                .contains("horizontal_centered"),
         "About shows the product, logo, the occlutrace.ai link, and the GitHub link"
     );
     assert!(
