@@ -14,7 +14,8 @@
 //! - `show_orientation`      `u32`       4 bytes
 //! - `show_vertex_colors`    `u32`       4 bytes
 //! - `show_texture`          `u32`       4 bytes
-//! - `padding`               `[u32;3]`  12 bytes
+//! - `unlit`                 `u32`       4 bytes
+//! - `padding`               `[u32;2]`   8 bytes
 
 use bytemuck::{Pod, Zeroable};
 
@@ -43,9 +44,16 @@ pub struct GpuMeshUniform {
     /// 0 = do not sample the attached texture; 1 = texture sampling enabled.
     /// This is intentionally independent from `show_vertex_colors`.
     pub show_texture: u32,
+    /// 1 = emit the vertex color directly with no lighting and no tint.
+    ///
+    /// The deviation heat map needs this: studio lighting multiplies a
+    /// saturated ramp down towards mud, so a lit map reads washed out at
+    /// exactly the deviations that matter. Taken from the former tail padding,
+    /// so the buffer layout is unchanged.
+    pub unlit: u32,
     /// Explicit tail padding: uniform structs have a 16-byte alignment in
     /// WGSL even though each scalar flag is four-byte aligned.
-    pub padding: [u32; 3],
+    pub padding: [u32; 2],
 }
 
 impl GpuMeshUniform {
@@ -69,7 +77,8 @@ impl GpuMeshUniform {
             show_orientation: 0,
             show_vertex_colors: 1,
             show_texture: 1,
-            padding: [0; 3],
+            unlit: 0,
+            padding: [0; 2],
         }
     }
 }
@@ -82,7 +91,47 @@ impl Default for GpuMeshUniform {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
+
+    /// The WGSL struct and this one are two hand-written copies of the same
+    /// memory layout. Nothing but this test stops them drifting: a mismatch is
+    /// silent corruption of every flag past the divergence, not a compile
+    /// error.
+    #[test]
+    fn the_shader_struct_matches_this_one_field_for_field() {
+        let shader = include_str!("../shaders/mesh.wgsl");
+        let start = shader
+            .find("struct MeshUniform {")
+            .expect("mesh.wgsl must declare MeshUniform");
+        let body = &shader[start..];
+        let end = body.find('}').expect("MeshUniform must be closed");
+        let fields: Vec<&str> = body[..end]
+            .lines()
+            .skip(1)
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .filter_map(|line| line.split(':').next())
+            .collect();
+
+        assert_eq!(
+            fields,
+            vec![
+                "model",
+                "tint",
+                "opacity",
+                "has_texture",
+                "show_orientation",
+                "show_vertex_colors",
+                "show_texture",
+                "unlit",
+                "_padding_0",
+                "_padding_1",
+            ],
+            "mesh.wgsl's MeshUniform drifted from GpuMeshUniform"
+        );
+    }
 
     #[test]
     fn identity_is_112_bytes_and_aligned() {

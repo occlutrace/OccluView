@@ -573,15 +573,20 @@ impl OccluViewApp {
 }
 
 pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
+    // `unlit` is derived from the overlay rather than stored beside it, so the
+    // two can never disagree: a layer draws unlit exactly when it is showing a
+    // measured map, and that same condition forces its colors on.
+    let deviation = entry.deviation_colors().is_some();
     GpuMeshUniform {
         model: Mat4::from(entry.transform).to_cols_array(),
         tint: entry.tint,
         opacity: entry.opacity,
         has_texture: u32::from(entry.mesh.texture().is_some()),
         show_orientation: u32::from(entry.show_orientation),
-        show_vertex_colors: u32::from(entry.show_vertex_colors),
-        show_texture: u32::from(entry.show_texture),
-        padding: [0; 3],
+        show_vertex_colors: u32::from(entry.show_vertex_colors || deviation),
+        show_texture: u32::from(entry.show_texture && !deviation),
+        unlit: u32::from(deviation),
+        padding: [0; 2],
     }
 }
 
@@ -644,6 +649,48 @@ mod tests {
         assert!(
             !source.contains("load_texture(\"occluview-cut\""),
             "the cut slice must not allocate a fresh egui texture id per render"
+        );
+    }
+
+    /// A deviation map is a measurement. It must reach the screen unlit and in
+    /// its own colors whatever the layer's display toggles happen to say,
+    /// because a lit or texture-sampled heat map is not the map that was
+    /// measured.
+    #[test]
+    fn a_deviation_overlay_forces_unlit_vertex_colors() {
+        use glam::Vec3;
+        use occluview_core::scene::SceneMesh;
+        use occluview_core::{Mesh, Vertex};
+
+        let mesh = Mesh::new(
+            None,
+            vec![
+                Vertex::at(Vec3::ZERO),
+                Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
+                Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("valid mesh");
+
+        let mut entry = SceneMesh::new(mesh);
+        entry.show_vertex_colors = false;
+        entry.show_texture = true;
+
+        let plain = super::scene_mesh_uniform(&entry);
+        assert_eq!(plain.unlit, 0);
+        assert_eq!(plain.show_vertex_colors, 0);
+
+        let colors = std::sync::Arc::new(vec![[0u8, 0, 0, 255]; 3]);
+        let mapped = super::scene_mesh_uniform(&entry.with_deviation(Some(colors)));
+        assert_eq!(mapped.unlit, 1, "a deviation map must draw unlit");
+        assert_eq!(
+            mapped.show_vertex_colors, 1,
+            "a deviation map must show its own colors"
+        );
+        assert_eq!(
+            mapped.show_texture, 0,
+            "a texture must not be sampled over a measurement"
         );
     }
 }

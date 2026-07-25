@@ -2,6 +2,7 @@ use super::id::{next_scene_mesh_id, SceneMeshId};
 use super::material::default_mesh_tint;
 use crate::mesh::Mesh;
 use glam::Affine3A;
+use std::sync::Arc;
 
 /// Per-instance mesh entry in a scene.
 // Five INDEPENDENT display toggles (visibility, wireframe, orientation
@@ -38,6 +39,13 @@ pub struct SceneMesh {
     /// colors so Tint can show a neutral material without destroying texture
     /// data or changing export behavior.
     pub show_texture: bool,
+    /// Optional per-vertex deviation colors, one entry per mesh vertex.
+    ///
+    /// A **display overlay**, not mesh data: the renderer paints these instead
+    /// of the scan's own colors, unlit, while `mesh` keeps every original
+    /// color and texture. Hiding the map is therefore free, and an export is
+    /// unaffected by whether a map happens to be on screen.
+    deviation: Option<Arc<Vec<[u8; 4]>>>,
 }
 
 impl SceneMesh {
@@ -59,7 +67,23 @@ impl SceneMesh {
             show_orientation: false,
             show_vertex_colors: true,
             show_texture,
+            deviation: None,
         }
+    }
+
+    /// Attach or clear the deviation color overlay.
+    #[inline]
+    #[must_use]
+    pub fn with_deviation(mut self, deviation: Option<Arc<Vec<[u8; 4]>>>) -> Self {
+        self.deviation = deviation;
+        self
+    }
+
+    /// The deviation color overlay, if this layer carries one.
+    #[inline]
+    #[must_use]
+    pub fn deviation_colors(&self) -> Option<&Arc<Vec<[u8; 4]>>> {
+        self.deviation.as_ref()
     }
 
     /// Stable identity for this scene layer.
@@ -135,6 +159,10 @@ impl SceneMesh {
             show_orientation: self.show_orientation,
             show_vertex_colors: self.show_vertex_colors,
             show_texture: self.show_texture,
+            // Dropped deliberately: the overlay is indexed by the old
+            // vertices, so carrying it onto new geometry would paint whichever
+            // vertices happened to inherit those indices.
+            deviation: None,
         }
     }
 }
