@@ -3,6 +3,7 @@ mod label;
 mod layout;
 mod menu;
 mod row;
+mod scene_menu;
 
 use crate::layer_actions::LayerContextRequest;
 use crate::ui_theme;
@@ -17,6 +18,7 @@ use label::layer_hover;
 pub(crate) use label::layer_label;
 pub(crate) use menu::{show_layer_context_menu, LayerContextMenuTarget};
 pub(crate) use row::LayerRowChange;
+pub(crate) use scene_menu::{show_scene_context_menu, SceneContextAction};
 
 pub(crate) struct LayerOverlayChanges {
     pub(crate) context_request: Option<LayerContextRequest>,

@@ -272,7 +272,12 @@ fn layer_menu_button(
 /// then the label, over a rounded hover wash that matches the editor cells.
 /// Fully painted (not an `egui::Button`) so every item aligns on the same gutter
 /// and carries an icon. Returns the row `Response`.
-fn menu_item(ui: &mut egui::Ui, icon: LayerMenuIcon, label: &str, enabled: bool) -> egui::Response {
+pub(super) fn menu_item(
+    ui: &mut egui::Ui,
+    icon: LayerMenuIcon,
+    label: &str,
+    enabled: bool,
+) -> egui::Response {
     const ROW_H: f32 = 22.0;
     const PAD_L: f32 = 6.0;
     const GUTTER: f32 = 18.0;
