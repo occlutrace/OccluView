@@ -2383,6 +2383,7 @@ dependencies = [
  "egui",
  "glam",
  "image",
+ "occluview-align",
  "occluview-core",
  "occluview-formats",
  "occluview-render",
