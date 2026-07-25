@@ -9,6 +9,8 @@
 //! the sign of the whole deviation map hangs on them, and scanner exports
 //! routinely carry normals that disagree with their own winding.
 
+use std::ops::Range;
+
 use glam::DVec3;
 
 use crate::Soup;
@@ -25,6 +27,30 @@ const CELL_EDGE_FACTOR: f64 = 2.0;
 /// Upper bound on total grid cells. A very thin or very large mesh would
 /// otherwise allocate an absurd grid; the cell grows until the count fits.
 const MAX_CELLS: usize = 4_000_000;
+
+/// Fine cells per coarse block along each axis. The coarse level exists only to
+/// tell a query how much empty space surrounds it, so four is plenty: it costs
+/// a sixty-fourth of the grid in bytes and still resolves emptiness to a couple
+/// of millimetres on a dental scan.
+const BLOCK: i64 = 4;
+
+/// The half of the 3x3x3 neighbourhood a forward raster sweep has already
+/// visited, ending with the cell before this one on the same row.
+const EARLIER: [[i64; 3]; 13] = [
+    [-1, -1, -1],
+    [0, -1, -1],
+    [1, -1, -1],
+    [-1, 0, -1],
+    [0, 0, -1],
+    [1, 0, -1],
+    [-1, 1, -1],
+    [0, 1, -1],
+    [1, 1, -1],
+    [-1, -1, 0],
+    [0, -1, 0],
+    [1, -1, 0],
+    [-1, 0, 0],
+];
 
 /// The running answer during one query.
 ///
@@ -84,6 +110,8 @@ pub struct SurfaceIndex {
     dims: [i64; 3],
     starts: Vec<u32>,
     items: Vec<u32>,
+    blocks: [i64; 3],
+    gaps: Vec<u8>,
 }
 
 impl SurfaceIndex {
@@ -146,8 +174,10 @@ impl SurfaceIndex {
             dims,
             starts: Vec::new(),
             items: Vec::new(),
+            blocks: [1; 3],
+            gaps: Vec::new(),
         };
-        Some(index.with_buckets())
+        Some(index.in_cell_order().with_buckets().with_gaps())
     }
 
     /// The grid's cell size in millimetres — exposed so callers can reason
@@ -196,7 +226,10 @@ impl SurfaceIndex {
         };
         let mut best: Option<Candidate> = None;
 
-        for ring in 0..=query.rings() {
+        // Shells the coarse level already proved empty are not walked at all.
+        // For a point sitting in open space this is the whole answer: the walk
+        // starts past the influence radius and never begins.
+        for ring in self.first_ring(query.home)..=query.rings() {
             // A shell is skipped only when its own floor already exceeds the
             // best distance so far — never when it merely equals it, because an
             // equal distance is a tie that may still carry a lower source
@@ -258,17 +291,17 @@ impl SurfaceIndex {
             (home[axis].saturating_sub(ring).max(low[axis]))
                 ..=(home[axis].saturating_add(ring).min(high[axis]))
         };
+        let columns = span(0);
+        let run = columns.end() - columns.start() + 1;
         for z in span(2) {
             let z_edge = (z - home[2]).abs() == ring;
             for y in span(1) {
                 if z_edge || (y - home[1]).abs() == ring {
-                    for x in span(0) {
-                        self.visit_cell(query, [x, y, z], best);
-                    }
+                    self.visit_run(query, [*columns.start(), y, z], run, best);
                 } else {
                     for x in [home[0] - ring, home[0] + ring] {
                         if x >= low[0] && x <= high[0] {
-                            self.visit_cell(query, [x, y, z], best);
+                            self.visit_run(query, [x, y, z], 1, best);
                         }
                     }
                 }
@@ -276,13 +309,49 @@ impl SurfaceIndex {
         }
     }
 
+    /// Test a run of `length` cells along x, starting at `start`.
+    ///
+    /// A row is walked through the bucket table directly, so an empty cell
+    /// costs two adjacent reads and nothing else. Most of a shell is empty on
+    /// any real scan, and paying a box-distance test for each of those cells is
+    /// what made a wide radius expensive.
+    fn visit_run(&self, query: &Query, start: [i64; 3], length: i64, best: &mut Option<Candidate>) {
+        let Some(base) = self.cell_index(start) else {
+            return;
+        };
+        for offset in 0..length {
+            let Some(cell) = usize::try_from(offset).ok().map(|step| base + step) else {
+                continue;
+            };
+            let (Some(&from), Some(&to)) = (self.starts.get(cell), self.starts.get(cell + 1))
+            else {
+                continue;
+            };
+            if from == to {
+                continue;
+            }
+            self.visit_cell(
+                query,
+                [start[0] + offset, start[1], start[2]],
+                from..to,
+                best,
+            );
+        }
+    }
+
     /// Test one cell's triangles against the running best.
-    fn visit_cell(&self, query: &Query, cell: [i64; 3], best: &mut Option<Candidate>) {
+    fn visit_cell(
+        &self,
+        query: &Query,
+        cell: [i64; 3],
+        bucket: Range<u32>,
+        best: &mut Option<Candidate>,
+    ) {
         let ceiling = best.map_or(query.limit, |found| found.distance);
         if self.cell_distance_squared(query.point, cell) > ceiling {
             return;
         }
-        let Some(bucket) = self.bucket(cell) else {
+        let Some(bucket) = self.items.get(bucket.start as usize..bucket.end as usize) else {
             return;
         };
         for &slot in bucket {
@@ -318,6 +387,54 @@ impl SurfaceIndex {
                 });
             }
         }
+    }
+
+    /// Reorder the triangle arrays so triangles sharing a cell sit together in
+    /// memory. A query reads every triangle of a handful of neighbouring cells;
+    /// in file order those reads are scattered over tens of megabytes, and the
+    /// walk spends its time waiting for memory rather than testing triangles.
+    ///
+    /// This moves triangles, never renames them: a hit still reports the source
+    /// index, and the tie-break still compares source indices, so the order the
+    /// arrays happen to be in cannot change an answer.
+    ///
+    /// Counted and scattered rather than sorted, for the same reason the
+    /// buckets are: it is linear, it allocates once, and it lays out identically
+    /// for identical input.
+    fn in_cell_order(mut self) -> Self {
+        let mut counts = vec![0u32; cell_count(self.dims) + 1];
+        let home: Vec<u32> = self
+            .corners
+            .iter()
+            .map(|corners| {
+                let low = corners[0].min(corners[1]).min(corners[2]);
+                let cell = self.cell_index(self.cell_of(low)).unwrap_or(0);
+                u32::try_from(cell).unwrap_or(0)
+            })
+            .collect();
+        for &cell in &home {
+            if let Some(entry) = counts.get_mut(cell as usize + 1) {
+                *entry = entry.saturating_add(1);
+            }
+        }
+        for slot in 1..counts.len() {
+            counts[slot] += counts[slot - 1];
+        }
+        let mut order = vec![0u32; self.corners.len()];
+        for (triangle, &cell) in home.iter().enumerate() {
+            let Some(cursor) = counts.get_mut(cell as usize) else {
+                continue;
+            };
+            let slot = *cursor as usize;
+            *cursor += 1;
+            if let Some(entry) = order.get_mut(slot) {
+                *entry = u32::try_from(triangle).unwrap_or(0);
+            }
+        }
+        self.corners = gather(&self.corners, &order);
+        self.normals = gather(&self.normals, &order);
+        self.sources = gather(&self.sources, &order);
+        self
     }
 
     /// Bucket every triangle into the cells its bounding box overlaps, as a
@@ -382,23 +499,65 @@ impl SurfaceIndex {
 
     /// Flat index of a grid coordinate, or `None` when it falls outside.
     fn cell_index(&self, cell: [i64; 3]) -> Option<usize> {
-        if cell
-            .iter()
-            .zip(self.dims)
-            .any(|(&value, dim)| value < 0 || value >= dim)
-        {
-            return None;
-        }
-        let flat = (cell[2] * self.dims[1] + cell[1]) * self.dims[0] + cell[0];
-        usize::try_from(flat).ok()
+        flat_index(self.dims, cell)
     }
 
-    /// The triangles bucketed into one cell.
-    fn bucket(&self, cell: [i64; 3]) -> Option<&[u32]> {
-        let index = self.cell_index(cell)?;
-        let start = *self.starts.get(index)? as usize;
-        let end = *self.starts.get(index + 1)? as usize;
-        self.items.get(start..end)
+    /// The first shell that can hold anything, given what the coarse level
+    /// knows about the empty space around `home`.
+    ///
+    /// The recorded gap is a count of blocks, so the shells it clears are the
+    /// ones inside the block box it covers. Every fine cell nearer than that is
+    /// empty, which is why skipping them changes no answer.
+    fn first_ring(&self, home: [i64; 3]) -> i64 {
+        let block = [home[0] / BLOCK, home[1] / BLOCK, home[2] / BLOCK];
+        let Some(gap) = flat_index(self.blocks, block).and_then(|flat| self.gaps.get(flat)) else {
+            return 0;
+        };
+        if *gap == 0 {
+            return 0;
+        }
+        let reach = i64::from(*gap) - 1;
+        let mut clear = i64::MAX;
+        for axis in 0..3 {
+            let low = (block[axis] - reach) * BLOCK;
+            let high = (block[axis] + reach) * BLOCK + BLOCK - 1;
+            clear = clear.min(home[axis] - low).min(high - home[axis]);
+        }
+        clear.saturating_add(1).max(0)
+    }
+
+    /// Record, per coarse block, how many blocks away the nearest occupied one
+    /// is. This is what lets a query in open space skip straight past the void
+    /// it sits in instead of sweeping every cell of it.
+    fn with_gaps(mut self) -> Self {
+        let blocks = [
+            block_count(self.dims[0]),
+            block_count(self.dims[1]),
+            block_count(self.dims[2]),
+        ];
+        let mut gaps = vec![u8::MAX; cell_count(blocks)];
+        let mut cell = 0usize;
+        for z in 0..self.dims[2] {
+            for y in 0..self.dims[1] {
+                for x in 0..self.dims[0] {
+                    let occupied = self.starts.get(cell) != self.starts.get(cell + 1);
+                    cell += 1;
+                    if !occupied {
+                        continue;
+                    }
+                    if let Some(entry) = flat_index(blocks, [x / BLOCK, y / BLOCK, z / BLOCK])
+                        .and_then(|flat| gaps.get_mut(flat))
+                    {
+                        *entry = 0;
+                    }
+                }
+            }
+        }
+        sweep(blocks, &mut gaps, true);
+        sweep(blocks, &mut gaps, false);
+        self.blocks = blocks;
+        self.gaps = gaps;
+        self
     }
 
     /// Squared distance from `point` to a cell's own box — the cheap test that
@@ -408,6 +567,76 @@ impl SurfaceIndex {
         let low = self.min + DVec3::new(cell[0] as f64, cell[1] as f64, cell[2] as f64) * self.cell;
         let high = low + DVec3::splat(self.cell);
         (point.clamp(low, high) - point).length_squared()
+    }
+}
+
+/// Pick `values` out in the order `order` names them.
+fn gather<T: Copy>(values: &[T], order: &[u32]) -> Vec<T> {
+    order
+        .iter()
+        .filter_map(|&slot| values.get(slot as usize).copied())
+        .collect()
+}
+
+/// Coarse blocks spanning `cells` fine cells, rounding up.
+fn block_count(cells: i64) -> i64 {
+    (cells + BLOCK - 1) / BLOCK
+}
+
+/// Flat index of a coordinate in a grid of `dims`, or `None` when it falls
+/// outside.
+fn flat_index(dims: [i64; 3], cell: [i64; 3]) -> Option<usize> {
+    if cell
+        .iter()
+        .zip(dims)
+        .any(|(&value, dim)| value < 0 || value >= dim)
+    {
+        return None;
+    }
+    usize::try_from((cell[2] * dims[1] + cell[1]) * dims[0] + cell[0]).ok()
+}
+
+/// The coordinate a flat index stands for.
+fn unflatten(dims: [i64; 3], flat: i64) -> [i64; 3] {
+    let plane = dims[0] * dims[1];
+    [flat % dims[0], (flat / dims[0]) % dims[1], flat / plane]
+}
+
+/// One raster sweep of the chessboard distance transform over `gaps`.
+///
+/// A chessboard distance is exactly the number of single steps through the
+/// 3x3x3 neighbourhood, so a forward sweep against the already-visited half of
+/// that neighbourhood followed by a backward sweep against the other half is
+/// exact — no iteration to a fixed point, and the same answer every run.
+fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
+    let total = i64::try_from(gaps.len()).unwrap_or(0);
+    for step in 0..total {
+        let flat = if forward { step } else { total - 1 - step };
+        let Some(&current) = usize::try_from(flat).ok().and_then(|slot| gaps.get(slot)) else {
+            continue;
+        };
+        if current == 0 {
+            continue;
+        }
+        let cell = unflatten(dims, flat);
+        let sign = if forward { 1 } else { -1 };
+        let mut best = current;
+        for offset in EARLIER {
+            let neighbour = [
+                cell[0] + sign * offset[0],
+                cell[1] + sign * offset[1],
+                cell[2] + sign * offset[2],
+            ];
+            if let Some(&found) = flat_index(dims, neighbour).and_then(|slot| gaps.get(slot)) {
+                best = best.min(found.saturating_add(1));
+            }
+        }
+        if let Some(entry) = usize::try_from(flat)
+            .ok()
+            .and_then(|slot| gaps.get_mut(slot))
+        {
+            *entry = best;
+        }
     }
 }
 
