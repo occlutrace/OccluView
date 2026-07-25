@@ -57,6 +57,9 @@ mod validate;
 mod tests;
 
 #[cfg(test)]
+mod brush_grow_tests;
+
+#[cfg(test)]
 mod brush_tests;
 
 #[cfg(test)]

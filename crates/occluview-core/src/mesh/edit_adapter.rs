@@ -3,8 +3,8 @@ use crate::error::CoreError;
 use occlu_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
     fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
-    EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
-    MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
+    BrushSession, EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions,
+    MeshEditReport, MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
 };
 
 /// Result of applying a mesh edit to a core [`Mesh`].
@@ -82,6 +82,30 @@ pub fn mesh_from_edit_buffers_like(
     buffers: MeshEditBuffers,
 ) -> Result<Mesh, CoreError> {
     mesh_from_edit_buffers_named_like(source, buffers, source.name().map(str::to_owned))
+}
+
+/// Rebuild a core mesh from a live sculpt session, for the one case where a dab
+/// changed the TOPOLOGY: Smooth densifies the surface under the brush, so the
+/// session's vertex array grows and its triangle list is rewritten, and
+/// [`Mesh::with_sculpted_vertices`] — which deliberately freezes `topology_id`
+/// because only positions moved — no longer applies. This mints a fresh
+/// `topology_id`, exactly the signal a renderer needs to drop its
+/// exactly-sized GPU buffers and re-upload.
+///
+/// # Errors
+/// Returns [`CoreError`] if the session's buffers are not valid triangle data.
+pub fn mesh_from_sculpt_session_like(
+    source: &Mesh,
+    session: &BrushSession,
+) -> Result<Mesh, CoreError> {
+    mesh_from_edit_buffers_like(
+        source,
+        MeshEditBuffers {
+            vertices: session.vertices().to_vec(),
+            indices: session.indices().to_vec(),
+            topology: MeshTopology::TriangleMesh,
+        },
+    )
 }
 
 pub(super) fn mesh_from_edit_buffers_named_like(

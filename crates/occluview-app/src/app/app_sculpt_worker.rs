@@ -1,6 +1,7 @@
 //! UI-side bridge to the persistent sculpt worker.
 
 use super::{egui, EditModeCommand, OccluViewApp};
+use crate::sculpt_tool::SculptRebuild;
 use crate::sculpt_worker::{SculptCompletion, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
 use std::sync::Arc;
@@ -31,6 +32,12 @@ impl OccluViewApp {
         let Some(worker) = self.sculpt.worker.as_ref() else {
             return;
         };
+        // Topology first: a densifying dab replaced the layer, and any sparse
+        // vertex update queued behind it indexes the array that just went away.
+        let mut rebuilds = Vec::new();
+        while let Some(rebuild) = worker.take_rebuild() {
+            rebuilds.push(rebuild);
+        }
         let mut updates = Vec::new();
         while let Some(update) = worker.take_update() {
             updates.push(update);
@@ -39,10 +46,17 @@ impl OccluViewApp {
         while let Some(completion) = worker.take_completion() {
             completions.push(completion);
         }
+        let had_rebuilds = !rebuilds.is_empty();
         let had_updates = !updates.is_empty();
         let had_completions = !completions.is_empty();
         let error = worker.take_error();
         let needs_repaint = !worker.is_quiescent();
+        for rebuild in rebuilds {
+            if !self.install_sculpt_rebuild(rebuild) {
+                self.invalidate_sculpt_session_silent();
+                return;
+            }
+        }
         for update in updates {
             self.flush_sculpt_update(update);
         }
@@ -56,14 +70,67 @@ impl OccluViewApp {
                 break;
             }
         }
-        if had_updates || had_completions {
+        if had_rebuilds || had_updates || had_completions {
             self.needs_render = true;
         }
         self.complete_pending_mesh_edit_session(ctx);
         self.complete_pending_history_navigation(ctx);
-        if needs_repaint || had_updates || had_completions {
+        if needs_repaint || had_rebuilds || had_updates || had_completions {
             ctx.request_repaint();
         }
+    }
+
+    /// Install a whole-layer rebuild produced mid-stroke by densification.
+    ///
+    /// This is the ONE sculpt path that changes a layer's `topology_id`: the
+    /// mesh grew, so the exactly-sized GPU buffers cannot be streamed into and
+    /// the prepared scene has to be rebuilt. It deliberately does NOT open an
+    /// undo entry — the stroke is still in flight, and the worker holds the
+    /// pre-stroke mesh as the single baseline the eventual commit will use.
+    /// Returns `false` if the scene no longer matches, which makes the caller
+    /// drop the session rather than sculpt against stale geometry.
+    fn install_sculpt_rebuild(&mut self, rebuild: SculptRebuild) -> bool {
+        let Some(worker) = self.sculpt.worker.as_ref() else {
+            return false;
+        };
+        let layer_id = worker.layer_id;
+        let expected = worker.topology_id;
+        let new_topology_id = rebuild.mesh.topology_id();
+        let Some(mut scene_arc) = self.scene.take() else {
+            return false;
+        };
+        {
+            let scene = Arc::make_mut(&mut scene_arc);
+            let Some(entry) = scene
+                .meshes_mut()
+                .iter_mut()
+                .find(|entry| entry.id() == layer_id)
+            else {
+                self.scene = Some(scene_arc);
+                return false;
+            };
+            if entry.mesh.topology_id() != expected {
+                self.scene = Some(scene_arc);
+                return false;
+            }
+            entry.mesh = rebuild.mesh;
+        }
+        self.edit_mode.sync_to_scene(&scene_arc);
+        self.scene_stats = Some(super::app_render::scene_stats(&scene_arc));
+        self.scene = Some(scene_arc);
+        if let Some(worker) = self.sculpt.worker.as_mut() {
+            worker.topology_id = new_topology_id;
+            worker.topology = rebuild.topology;
+        }
+        // The uploaded geometry is the wrong SIZE now, so the prepared scene
+        // must be rebuilt rather than reconciled.
+        self.live_viewport_scene_dirty = self.live_viewport.is_some();
+        self.offscreen_scene_dirty = true;
+        self.needs_render = true;
+        if self.can_render_cut_view() {
+            self.cut_view.mark_dirty();
+        }
+        true
     }
 
     fn flush_sculpt_update(&mut self, update: SculptUpdate) {
@@ -192,5 +259,49 @@ impl OccluViewApp {
         }
         ctx.request_repaint();
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    /// Source contract for the densification corruption hazard.
+    ///
+    /// A dab that densifies replaces the layer's vertex ARRAY and triangle
+    /// list. Any sparse vertex ids the worker queued before that point index
+    /// the array that just went away, and the prepared GPU buffers are now the
+    /// wrong size. So the poll must take and install rebuilds BEFORE it flushes
+    /// sparse updates, and installing one must mark the prepared scene for a
+    /// full rebuild rather than a uniform-only reconcile.
+    #[test]
+    fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
+        let source = include_str!("app_sculpt_worker.rs").replace("\r\n", "\n");
+        let take_rebuild = source
+            .find("worker.take_rebuild()")
+            .expect("the poll must drain pending layer rebuilds");
+        let take_update = source
+            .find("worker.take_update()")
+            .expect("the poll must drain sparse updates");
+        assert!(
+            take_rebuild < take_update,
+            "rebuilds must be drained before sparse updates"
+        );
+        let install = source
+            .find("self.install_sculpt_rebuild(rebuild)")
+            .expect("the poll must install pending rebuilds");
+        let flush = source
+            .find("self.flush_sculpt_update(update)")
+            .expect("the poll must flush sparse updates");
+        assert!(
+            install < flush,
+            "a rebuild must be installed before the frame's sparse writes"
+        );
+        assert!(
+            source.contains("self.offscreen_scene_dirty = true;")
+                && source
+                    .contains("self.live_viewport_scene_dirty = self.live_viewport.is_some();"),
+            "installing a rebuild must force a full prepared-scene rebuild"
+        );
     }
 }

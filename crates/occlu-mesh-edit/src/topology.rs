@@ -63,6 +63,13 @@ impl CanonicalTopology {
     pub(crate) fn merged_vertices(&self) -> usize {
         self.merged_vertices
     }
+
+    /// The welded representative elected for every ORIGINAL vertex id. A
+    /// representative maps to itself; every soup duplicate maps to the lowest
+    /// original id in its position cluster.
+    pub(crate) fn representative_of(&self) -> &[u32] {
+        &self.representative_of
+    }
 }
 
 #[allow(clippy::cast_possible_truncation)]

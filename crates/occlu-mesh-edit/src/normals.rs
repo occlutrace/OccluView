@@ -54,7 +54,8 @@ pub fn recompute_all_normals(
             .max((c - b).length_squared())
             .max((a - c).length_squared());
         if face_normal.is_finite()
-            && face_normal.length_squared() > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
+            && face_normal.length_squared()
+                > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
         {
             normals[ia] += face_normal;
             normals[ib] += face_normal;
