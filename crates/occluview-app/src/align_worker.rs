@@ -19,10 +19,12 @@ use std::thread::{self, JoinHandle};
 use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
-    deviation, deviation_colors, deviation_stats, fit_pairs, refine, CancelFlag, DeviationSettings,
-    DeviationStats, FitRejection, IcpReport, Orientation, RampMode, RampSettings, RefineSettings,
-    Rigid, Soup, SurfaceIndex,
+    deviation, deviation_stats, fit_pairs, observability, ramp_color, refine, CancelFlag,
+    DeviationMap, DeviationSettings, DeviationStats, FitRejection, IcpReport, Observability,
+    Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex, Validity,
+    NO_DATA_COLOR,
 };
+use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 /// Operator-facing knobs, in the operator's units.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +115,28 @@ pub(crate) struct WorldPair {
     pub(crate) fixed_normal: DVec3,
 }
 
+/// Identity of everything a measurement's DISTANCES depend on.
+///
+/// Two jobs with equal keys measure the same two surfaces in the same relative
+/// pose through the same mask and reach, so they cannot produce different
+/// distances — and the second may reuse the first's map instead of spending
+/// half a second re-deriving it. Everything the ramp reads (the display scale,
+/// the band count, the colour scheme) is deliberately absent: those change the
+/// COLOUR of a measurement, never the measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MeasureKey {
+    /// Geometry and pose of the layer being measured.
+    pub(crate) moving: (u64, u64),
+    /// Geometry and pose of the surface it is measured against.
+    pub(crate) fixed: (u64, u64),
+    /// Which revision of the exclusion mask was in force.
+    pub(crate) mask: u64,
+    /// The reach, in raw bits so the key compares exactly.
+    pub(crate) influence_radius_bits: u64,
+    /// How the two surfaces are taken to face each other.
+    pub(crate) orientation: Orientation,
+}
+
 /// What a job asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AlignJobKind {
@@ -141,6 +165,8 @@ pub(crate) struct AlignJob {
     pub(crate) fixed_indices: Arc<Vec<u32>>,
     /// Identity of the fixed geometry, so its index can be reused.
     pub(crate) fixed_key: (u64, u64),
+    /// Identity of the measurement, so a colour-only change reuses its map.
+    pub(crate) measure_key: MeasureKey,
     /// The moving layer's current pose: local to world.
     pub(crate) pose: Rigid,
     /// Clicked pairs, for an `Align` job.
@@ -173,8 +199,12 @@ pub(crate) enum AlignOutcome {
     Measured {
         /// One colour per measured vertex.
         colors: Vec<[u8; 4]>,
-        /// Summary over the measured vertices.
+        /// Summary over the measured vertices. One-sided, and a lower bound on
+        /// displacement — never report it without `seen`.
         stats: DeviationStats,
+        /// How much of a rigid displacement this pair converts into measured
+        /// distance. `None` when the geometry does not determine it.
+        seen: Option<Observability>,
         /// The display scale the colours were painted at. With auto-scale on
         /// this is derived from the measurement itself, so the panel has to
         /// adopt it or its legend would describe a different range.
@@ -341,7 +371,7 @@ fn run_worker(
     running: &Arc<Mutex<Option<CancelFlag>>>,
     busy: &Arc<AtomicU64>,
 ) {
-    let mut cached: Option<((u64, u64), SurfaceIndex)> = None;
+    let mut cached = WorkerCache::default();
     loop {
         let job = {
             let Ok(mut state) = queue.state.lock() else {
@@ -390,12 +420,26 @@ fn run_worker(
     }
 }
 
+/// What the worker keeps between jobs.
+///
+/// Everything here is derived from geometry the operator has not changed. The
+/// alternative — starting from the mesh on every settings change — is what made
+/// nudging the display scale cost most of a second on a full arch.
+#[derive(Default)]
+struct WorkerCache {
+    /// The fixed surface's spatial index, and the geometry it was built for.
+    surface: Option<((u64, u64), SurfaceIndex)>,
+    /// The last deviation map, and the measurement it belongs to.
+    measured: Option<(MeasureKey, DeviationMap)>,
+    /// The last summary, and the measurement and tolerance it was taken at.
+    summary: Option<(MeasureKey, u64, DeviationStats)>,
+    /// What that measurement was capable of seeing. Independent of the ramp and
+    /// the tolerance, so it survives a re-colour exactly as the map does.
+    seen: Option<(MeasureKey, Option<Observability>)>,
+}
+
 /// Run one job.
-fn execute(
-    job: &AlignJob,
-    cancel: &CancelFlag,
-    cached: &mut Option<((u64, u64), SurfaceIndex)>,
-) -> AlignOutcome {
+fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> AlignOutcome {
     let moving = Soup {
         positions: &job.moving_positions,
         indices: &job.moving_indices,
@@ -406,29 +450,21 @@ fn execute(
         return align_from_pairs(job, moving);
     }
 
-    let index = match cached {
-        Some((key, index)) if *key == job.fixed_key => index,
-        _ => {
-            let fixed = Soup {
-                positions: &job.fixed_world_positions,
-                indices: &job.fixed_indices,
-                mask: None,
-            };
-            let Some(built) = SurfaceIndex::build(fixed) else {
-                return AlignOutcome::Failed {
-                    message: "The fixed scan has no usable surface".into(),
-                };
-            };
-            *cached = Some((job.fixed_key, built));
-            match cached {
-                Some((_, index)) => index,
-                None => {
-                    return AlignOutcome::Failed {
-                        message: "The fixed scan has no usable surface".into(),
-                    }
-                }
-            }
-        }
+    // A re-colour of a measurement already in hand never touches the surface:
+    // the distances did not change, only what they are painted with.
+    if job.kind == AlignJobKind::Measure
+        && cached
+            .measured
+            .as_ref()
+            .is_some_and(|(key, _)| *key == job.measure_key)
+    {
+        return recolor(job, cached);
+    }
+
+    let Some(index) = surface_index(&mut cached.surface, job) else {
+        return AlignOutcome::Failed {
+            message: "The fixed scan has no usable surface".into(),
+        };
     };
 
     match job.kind {
@@ -449,22 +485,107 @@ fn execute(
         }
         AlignJobKind::Measure => {
             let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
+            // A cancelled measurement is a map where nothing was measured. It
+            // must not be remembered as this key's answer, or the abandoned
+            // result would be handed to every later re-colour.
+            // Without this the operator reads a nearest-point distance as
+            // though it were a displacement — on a real arch, an understatement
+            // by about a factor of two.
+            let seen = observability(moving, index, job.pose, &job.settings.deviation(), cancel);
+            if !cancel.is_cancelled() {
+                cached.measured = Some((job.measure_key, map));
+                cached.summary = None;
+                cached.seen = Some((job.measure_key, seen));
+                return recolor(job, cached);
+            }
             let stats = deviation_stats(&map, job.settings.tolerance_mm);
-            // A fixed range is a guess about data nobody has measured yet: too
-            // wide and a good fit is one flat colour, too narrow and everything
-            // saturates. Fitting the range to the measurement is what makes the
-            // map show structure on the first press instead of the tenth.
-            let mut ramp = job.settings.ramp();
-            if job.settings.auto_scale {
-                ramp.scale_mm = suggested_scale_mm(&stats);
-            }
-            AlignOutcome::Measured {
-                colors: deviation_colors(&map, &ramp),
-                stats,
-                scale_mm: ramp.scale_mm,
-            }
+            paint(&map, job, stats, seen)
         }
     }
+}
+
+/// Colour the map already in hand, taking the summary from the cache when the
+/// tolerance has not moved either.
+fn recolor(job: &AlignJob, cached: &mut WorkerCache) -> AlignOutcome {
+    let Some((_, map)) = cached.measured.as_ref() else {
+        return AlignOutcome::Failed {
+            message: "The measurement was dropped before it could be coloured".into(),
+        };
+    };
+    let tolerance = job.settings.tolerance_mm.to_bits();
+    let stats = match cached.summary {
+        Some((key, at, stats)) if key == job.measure_key && at == tolerance => stats,
+        _ => {
+            let stats = deviation_stats(map, job.settings.tolerance_mm);
+            cached.summary = Some((job.measure_key, tolerance, stats));
+            stats
+        }
+    };
+    let seen = cached
+        .seen
+        .and_then(|(key, seen)| (key == job.measure_key).then_some(seen))
+        .flatten();
+    paint(map, job, stats, seen)
+}
+
+/// Turn a map and its summary into the colours the panel will show.
+fn paint(
+    map: &DeviationMap,
+    job: &AlignJob,
+    stats: DeviationStats,
+    seen: Option<Observability>,
+) -> AlignOutcome {
+    // A fixed range is a guess about data nobody has measured yet: too wide and
+    // a good fit is one flat colour, too narrow and everything saturates.
+    // Fitting the range to the measurement is what makes the map show structure
+    // on the first press instead of the tenth.
+    let mut ramp = job.settings.ramp();
+    if job.settings.auto_scale {
+        ramp.scale_mm = suggested_scale_mm(&stats);
+    }
+    AlignOutcome::Measured {
+        colors: color_map(map, &ramp),
+        stats,
+        seen,
+        scale_mm: ramp.scale_mm,
+    }
+}
+
+/// One RGBA per map entry, grey wherever there is no measurement.
+///
+/// [`occluview_align::deviation_colors`] does exactly this, serially. On a
+/// 945k-vertex arch that is twenty-odd milliseconds of a re-colour that should
+/// feel instant, so this walks the same ramp in parallel;
+/// `colouring_in_parallel_matches_the_library` pins the two to the same bytes.
+fn color_map(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]> {
+    map.signed_mm
+        .par_iter()
+        .zip(map.validity.par_iter())
+        .map(|(value, state)| {
+            if *state == Validity::Measured {
+                ramp_color(f64::from(*value), ramp)
+            } else {
+                NO_DATA_COLOR
+            }
+        })
+        .collect()
+}
+
+/// The fixed surface's index, built once and then reused while that surface
+/// stays where it is.
+fn surface_index<'a>(
+    cached: &'a mut Option<((u64, u64), SurfaceIndex)>,
+    job: &AlignJob,
+) -> Option<&'a SurfaceIndex> {
+    if cached.as_ref().is_none_or(|(key, _)| *key != job.fixed_key) {
+        let built = SurfaceIndex::build(Soup {
+            positions: &job.fixed_world_positions,
+            indices: &job.fixed_indices,
+            mask: None,
+        })?;
+        *cached = Some((job.fixed_key, built));
+    }
+    cached.as_ref().map(|(_, index)| index)
 }
 
 /// Fit the clicked pairs. The moving points are in the moving layer's local
@@ -555,3 +676,9 @@ fn axis_names(weak: [bool; 3]) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+// Split out to hold the workspace's 800-line file budget. A `#[path]` child
+// module so the tests still reach this file's private items.
+#[cfg(test)]
+#[path = "align_worker_tests.rs"]
+mod tests;

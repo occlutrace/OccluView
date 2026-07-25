@@ -79,6 +79,18 @@ impl SceneMesh {
         self
     }
 
+    /// Attach or clear the deviation color overlay in place.
+    ///
+    /// [`Self::with_deviation`] is a builder: it takes `self` by value, so
+    /// using it on a live layer copies the whole mesh to change one `Option`.
+    /// On a 945k-vertex arch that is forty megabytes moved per re-colour, and
+    /// the deviation map is re-coloured every time the operator nudges the
+    /// scale slider.
+    #[inline]
+    pub fn set_deviation(&mut self, deviation: Option<Arc<Vec<[u8; 4]>>>) {
+        self.deviation = deviation;
+    }
+
     /// The deviation color overlay, if this layer carries one.
     #[inline]
     #[must_use]

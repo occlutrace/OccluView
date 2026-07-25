@@ -108,7 +108,20 @@ pub(crate) struct OccluViewApp {
     pub(super) align_stats: Option<occluview_align::DeviationStats>,
     pub(super) align_rejected: Vec<u32>,
     pub(super) align_deviation: Option<Arc<Vec<[u8; 4]>>>,
+    /// The flat arrays the align worker takes, kept between jobs so a settings
+    /// change does not re-copy geometry that has not moved.
+    pub(super) align_geometry: crate::align_geometry::AlignGeometry,
+    /// The vertex buffer a deviation map is uploaded through, repainted across
+    /// re-colours instead of rebuilt.
+    pub(super) align_painted: crate::align_geometry::PaintedVertices,
+    /// Set when new colours are attached and the GPU has not seen them yet.
+    /// Consumed by the viewport sync, which is the one place that knows whether
+    /// there is a prepared scene to write into.
+    pub(super) deviation_push_pending: bool,
     pub(super) align_mask: Option<Arc<Vec<u8>>>,
+    /// Bumped on every mask write. The mask decides which vertices are
+    /// measured, so a cached measurement is only reusable at the same revision.
+    pub(super) align_mask_revision: u64,
     pub(super) align_drag: Option<super::app_align_drag::AlignDrag>,
     pub(super) align_constraint: crate::align_drag::DragConstraint,
     pub(super) align_brush: crate::align_brush::AlignBrush,
@@ -290,7 +303,11 @@ impl OccluViewApp {
             align_stats: None,
             align_rejected: Vec::new(),
             align_deviation: None,
+            align_geometry: crate::align_geometry::AlignGeometry::default(),
+            align_painted: crate::align_geometry::PaintedVertices::default(),
+            deviation_push_pending: false,
             align_mask: None,
+            align_mask_revision: 0,
             align_drag: None,
             align_constraint: crate::align_drag::DragConstraint::default(),
             align_brush: crate::align_brush::AlignBrush::default(),

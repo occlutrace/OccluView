@@ -71,11 +71,17 @@ impl LiveViewport {
             .write_buffer(&self.clip_buffer, 0, bytemuck::bytes_of(&clip_plane));
     }
 
+    /// Reconcile the GPU scene with the CPU one.
+    ///
+    /// Returns whether the vertex buffers were re-uploaded. A caller that
+    /// streams its own vertices into them — the deviation map — has to know:
+    /// a rebuild puts the scan's own colours back and would silently erase the
+    /// map, while a uniform-only reconcile leaves it exactly where it was.
     pub(super) fn sync_scene(
         &mut self,
         sources: &[PreparedSceneSource<'_>],
         updates: &[PreparedSceneUpdate],
-    ) {
+    ) -> bool {
         let rebuild = self
             .prepared_scene
             .as_mut()
@@ -94,6 +100,7 @@ impl LiveViewport {
                 "live viewport scene prepared"
             );
         }
+        rebuild
     }
 
     /// Push only the `touched` sculpted vertices into the matching prepared

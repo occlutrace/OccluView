@@ -127,7 +127,7 @@ const LEGEND_STEPS: usize = 64;
 /// metrology legend puts nominal. An operator reading that bar is told blue
 /// means nominal, when on the surface blue means zero. The signed ramp really
 /// does run `-scale` to `+scale`, and only it is swept that way.
-fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_mm: f64) -> f64 {
+pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_mm: f64) -> f64 {
     #[allow(clippy::cast_precision_loss)]
     let fraction = step as f64 / (steps.max(2) - 1) as f64;
     match mode {
