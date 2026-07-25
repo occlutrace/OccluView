@@ -86,6 +86,19 @@ pub struct DeviationStats {
     pub skipped: u32,
 }
 
+/// Which colour scheme the map uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RampMode {
+    /// Blue at nothing, red at the display scale: the false-colour bar lab
+    /// software shows, where the eye reads "how far" at a glance and the sign
+    /// is not part of the question.
+    #[default]
+    Magnitude,
+    /// Blue below, green at nominal, red above: the metrology convention, for
+    /// when which *side* a surface sits on is the point.
+    Signed,
+}
+
 /// How to turn measurements into colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RampSettings {
@@ -97,6 +110,8 @@ pub struct RampSettings {
     /// Steps per side for a banded ramp; `None` is continuous. A stepped map
     /// shows where a boundary falls far more sharply than a smooth one.
     pub bands: Option<u32>,
+    /// Which colour scheme to paint with.
+    pub mode: RampMode,
 }
 
 impl Default for RampSettings {
@@ -105,19 +120,31 @@ impl Default for RampSettings {
             scale_mm: 0.5,
             tolerance_mm: 0.2,
             bands: None,
+            mode: RampMode::Magnitude,
         }
     }
 }
 
-/// Ramp stops from `-1` to `+1`, saturated at both ends so the display scale
+/// Signed stops from `-1` to `+1`, saturated at both ends so the display scale
 /// reads hard. Blue is undersize, green is nominal, red is oversize — the
 /// convention every metrology package shares.
-const RAMP: [(f64, [u8; 3]); 5] = [
+const SIGNED_RAMP: [(f64, [u8; 3]); 5] = [
     (-1.0, [0, 32, 255]),
     (-0.5, [0, 200, 255]),
     (0.0, [0, 220, 60]),
     (0.5, [255, 220, 0]),
     (1.0, [255, 24, 0]),
+];
+
+/// Magnitude stops from `0` to `1`: cool where the surfaces agree, hot where
+/// they do not. This is the false-colour bar a lab operator reads without
+/// having to work out which side of the surface a colour means.
+const MAGNITUDE_RAMP: [(f64, [u8; 3]); 5] = [
+    (0.0, [0, 96, 255]),
+    (0.25, [0, 205, 235]),
+    (0.5, [40, 220, 60]),
+    (0.75, [255, 210, 0]),
+    (1.0, [255, 40, 0]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
@@ -280,25 +307,28 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
     } else {
         1.0
     };
-    let mut position = (value_mm / scale).clamp(-1.0, 1.0);
+    let (ramp_stops, mut position) = match ramp.mode {
+        RampMode::Magnitude => (&MAGNITUDE_RAMP, (value_mm.abs() / scale).clamp(0.0, 1.0)),
+        RampMode::Signed => (&SIGNED_RAMP, (value_mm / scale).clamp(-1.0, 1.0)),
+    };
     if let Some(bands) = ramp.bands.filter(|count| *count > 0) {
-        let steps = f64::from(bands);
-        position = ((position * steps).floor() / steps).clamp(-1.0, 1.0);
+        let quantum = f64::from(bands);
+        position = ((position * quantum).floor() / quantum).clamp(-1.0, 1.0);
     }
-    let [red, green, blue] = sample_ramp(position);
+    let [red, green, blue] = sample_ramp(ramp_stops, position);
     [red, green, blue, 255]
 }
 
-/// Linear interpolation through [`RAMP`].
+/// Linear interpolation through a stop table.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn sample_ramp(position: f64) -> [u8; 3] {
-    let mut low = RAMP[0];
-    for stop in RAMP {
+fn sample_ramp(stops: &[(f64, [u8; 3]); 5], position: f64) -> [u8; 3] {
+    let mut low = stops[0];
+    for stop in *stops {
         if position >= stop.0 {
             low = stop;
         }
     }
-    let Some(high) = RAMP.iter().copied().find(|stop| stop.0 > low.0) else {
+    let Some(high) = stops.iter().copied().find(|stop| stop.0 > low.0) else {
         return low.1;
     };
     let span = high.0 - low.0;
@@ -494,12 +524,31 @@ mod tests {
     }
 
     #[test]
-    fn the_ramp_is_blue_below_and_red_above() {
+    fn the_magnitude_ramp_is_cool_at_nothing_and_hot_at_the_scale() {
+        let map = DeviationMap {
+            signed_mm: vec![0.0, 0.5, -0.5],
+            validity: vec![Validity::Measured; 3],
+        };
+        let colors = deviation_colors(&map, &RampSettings::default());
+        assert!(colors[0][2] > colors[0][0], "no deviation must read cool");
+        assert!(colors[1][0] > colors[1][2], "full scale must read hot");
+        assert_eq!(
+            colors[1], colors[2],
+            "magnitude ignores which side the surface sits on"
+        );
+    }
+
+    #[test]
+    fn the_signed_ramp_is_blue_below_and_red_above() {
         let map = DeviationMap {
             signed_mm: vec![-0.5, 0.0, 0.5],
             validity: vec![Validity::Measured; 3],
         };
-        let colors = deviation_colors(&map, &RampSettings::default());
+        let signed = RampSettings {
+            mode: super::RampMode::Signed,
+            ..RampSettings::default()
+        };
+        let colors = deviation_colors(&map, &signed);
         assert!(colors[0][2] > colors[0][0], "the negative end must be blue");
         assert!(colors[2][0] > colors[2][2], "the positive end must be red");
         assert!(
@@ -516,12 +565,19 @@ mod tests {
         };
         let ramp = RampSettings {
             bands: Some(10),
+            mode: super::RampMode::Signed,
             ..RampSettings::default()
         };
         let colors = deviation_colors(&map, &ramp);
         assert_eq!(colors[0], colors[1], "one band must be one colour");
 
-        let continuous = deviation_colors(&map, &RampSettings::default());
+        let continuous = deviation_colors(
+            &map,
+            &RampSettings {
+                mode: super::RampMode::Signed,
+                ..RampSettings::default()
+            },
+        );
         assert_ne!(
             continuous[0], continuous[1],
             "the continuous ramp must still separate them"

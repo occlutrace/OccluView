@@ -11,12 +11,14 @@ const MAX_RADIUS_MM: f32 = 20.0;
 /// Starting brush size — about a cusp.
 const DEFAULT_RADIUS_MM: f32 = 1.5;
 
-/// Brush state: whether it is armed, how big, and which way it paints.
+/// Brush state: whether it is armed and how big.
+///
+/// There is no paint/erase mode. Holding Shift erases, which is the same
+/// gesture the sculpt brush already uses, and one fewer control to find.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AlignBrush {
     armed: bool,
     radius_mm: f32,
-    erase: bool,
 }
 
 impl Default for AlignBrush {
@@ -24,7 +26,6 @@ impl Default for AlignBrush {
         Self {
             armed: false,
             radius_mm: DEFAULT_RADIUS_MM,
-            erase: false,
         }
     }
 }
@@ -52,16 +53,6 @@ impl AlignBrush {
         } else {
             DEFAULT_RADIUS_MM
         };
-    }
-
-    /// Whether the brush erases instead of paints.
-    pub(crate) fn erases(self) -> bool {
-        self.erase
-    }
-
-    /// Choose paint or erase. Holding Shift flips this for one stroke.
-    pub(crate) fn set_erase(&mut self, erase: bool) {
-        self.erase = erase;
     }
 }
 
@@ -98,7 +89,6 @@ mod tests {
     fn a_new_brush_is_idle_at_a_usable_size() {
         let brush = AlignBrush::default();
         assert!(!brush.is_armed());
-        assert!(!brush.erases());
         assert!((brush.radius_mm() - DEFAULT_RADIUS_MM).abs() < f32::EPSILON);
     }
 
@@ -120,13 +110,11 @@ mod tests {
     }
 
     #[test]
-    fn arming_and_the_erase_flag_are_independent() {
+    fn arming_survives_a_radius_change() {
         let mut brush = AlignBrush::default();
-        brush.set_erase(true);
-        assert!(brush.erases());
-        assert!(!brush.is_armed(), "choosing erase must not arm the brush");
         brush.set_armed(true);
+        brush.set_radius_mm(4.0);
         assert!(brush.is_armed());
-        assert!(brush.erases());
+        assert!((brush.radius_mm() - 4.0).abs() < f32::EPSILON);
     }
 }

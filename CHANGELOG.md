@@ -8,13 +8,19 @@
   different scan names the one that stays, and with exactly two scans in view
   the pair is implied and needs no click at all. Align fits the clicked pairs;
   Refine seats the surfaces against each other.
-- Added a signed deviation map with an honest account of itself. It reads how
-  far apart two scans are — with or without aligning them, since naming the two
-  surfaces is all a measurement needs. Vertices with no facing surface in reach
-  are grey and excluded from the statistics rather than painted at full scale,
-  and the panel reports how many there were. The map draws unlit, so the ramp
-  reaches the screen at the colour it was measured at, and a banded mode steps
-  it so the tolerance edge reads sharply.
+- Added a deviation heatmap with an honest account of itself. It reads how far
+  apart two scans are — with or without aligning them, since naming the two
+  surfaces is all a measurement needs. One scan carries the colour and the
+  other fades, so the map is a single clean surface instead of two solids
+  fighting through each other. Vertices with no facing surface in reach are
+  grey and excluded from the statistics rather than painted at full scale, and
+  the window reports how many there were. The map draws unlit, so the ramp
+  reaches the screen at the colour it was measured at.
+- The Align Scans window moves like the mesh editor, carries icons on its
+  actions, and ends in Cancel and Done: closing it puts every scan back where
+  it was, and only Done keeps an alignment. Refine is the primary action and
+  measures on completion; the point fit does not, because the very next step
+  invalidates whatever it would have drawn.
 - Added an exclusion brush: paint an artefact or a bite block out and it leaves
   both the fit and the map.
 - A scan can also be moved by hand, with the drag free, locked to Z, or locked

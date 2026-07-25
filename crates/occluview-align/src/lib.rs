@@ -28,7 +28,7 @@ mod surface;
 
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, DeviationMap, DeviationSettings,
-    DeviationStats, RampSettings, Validity, NO_DATA_COLOR,
+    DeviationStats, RampMode, RampSettings, Validity, NO_DATA_COLOR,
 };
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};
