@@ -34,7 +34,7 @@ fn identity_uniform() -> GpuMeshUniform {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        unlit: 0,
+        measured_map: 0,
         padding: [0; 2],
     }
 }

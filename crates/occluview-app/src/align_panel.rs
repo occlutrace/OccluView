@@ -23,6 +23,26 @@ const FIT_BUTTON_HEIGHT: f32 = 34.0;
 /// Width of a small icon button.
 const ICON_BUTTON: f32 = 40.0;
 
+/// The two ways exocad's Align Meshes works, and the two this window offers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AlignTab {
+    /// Click matching points, then let the software fit them.
+    #[default]
+    Automatically,
+    /// Drag the scan into place by hand.
+    Manually,
+}
+
+impl AlignTab {
+    /// The label on the tab.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Automatically => "Automatically",
+            Self::Manually => "Manually",
+        }
+    }
+}
+
 /// What the operator asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AlignPanelAction {
@@ -66,6 +86,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) busy: bool,
     /// Whether anything has actually moved this session.
     pub(crate) moved: bool,
+    /// The open tab, switched in place.
+    pub(crate) tab: &'a mut AlignTab,
 }
 
 /// Show the movable window; returns what the operator asked for.
@@ -93,18 +115,89 @@ pub(crate) fn show(
     action
 }
 
-/// The window body, top to bottom in the order the work happens.
+/// The window body: the tab strip, the open tab, then the shared footer.
 fn body(ui: &mut egui::Ui, view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
     let enabled = !view.busy;
-    header(ui, view.tool);
-    let mut action = fits(ui, view.tool, enabled);
+    tab_strip(ui, view.tab);
+    ui.add_space(4.0);
+    let mut action = match *view.tab {
+        AlignTab::Automatically => automatically(ui, view.tool, view.settings, view.stats, enabled),
+        AlignTab::Manually => manually(ui, view.constraint, view.brush, enabled),
+    };
+    status(ui, view.status);
+    action = action.or(commit(ui, enabled, view.moved));
+    action
+}
+
+/// The two-tab strip, sized so both halves are equally reachable.
+fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        for value in [AlignTab::Automatically, AlignTab::Manually] {
+            let active = *tab == value;
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(width, 26.0), egui::Sense::click());
+            let ink = if active {
+                ui_theme::ACCENT
+            } else {
+                ui_theme::TEXT_WEAK
+            };
+            let painter = ui.painter();
+            if active {
+                painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.14));
+            } else if response.hovered() {
+                painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.07));
+            }
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                value.label(),
+                egui::FontId::proportional(12.5),
+                ink,
+            );
+            if active {
+                painter.hline(
+                    egui::Rangef::new(rect.left() + 6.0, rect.right() - 6.0),
+                    rect.bottom() - 1.0,
+                    egui::Stroke::new(1.6, ui_theme::ACCENT),
+                );
+            }
+            if response.clicked() {
+                *tab = value;
+            }
+        }
+    });
+}
+
+/// The Automatically tab: click points, fit them, then read the distance.
+fn automatically(
+    ui: &mut egui::Ui,
+    tool: &AlignTool,
+    settings: &mut AlignSettings,
+    stats: Option<DeviationStats>,
+    enabled: bool,
+) -> Option<AlignPanelAction> {
+    header(ui, tool);
+    let mut action = fits(ui, tool, enabled);
     action = action.or(points(ui, enabled));
     ui.separator();
-    action = action.or(heatmap(ui, view.settings, view.stats, enabled));
-    ui.separator();
-    action = action.or(handling(ui, view.constraint, view.brush, enabled));
-    status(ui, view.status);
-    action.or(commit(ui, enabled, view.moved))
+    action.or(heatmap(ui, settings, stats, enabled))
+}
+
+/// The Manually tab: drag the scan, and paint what should not be matched.
+fn manually(
+    ui: &mut egui::Ui,
+    constraint: &mut DragConstraint,
+    brush: &mut AlignBrush,
+    enabled: bool,
+) -> Option<AlignPanelAction> {
+    ui.label(
+        egui::RichText::new("Drag a scan to move it, Ctrl+drag to turn it")
+            .size(12.0)
+            .color(ui_theme::TEXT),
+    );
+    ui.add_space(2.0);
+    handling(ui, constraint, brush, enabled)
 }
 
 /// What the tool is waiting for, in one line.
@@ -132,11 +225,11 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         ui,
         width,
         EditorIcon::AlignFit,
-        "Align on points",
+        "Perform alignment",
         tool.can_align() && enabled,
         false,
     )
-    .on_hover_text("Bring the scan close using the clicked pairs")
+    .on_hover_text("Fit the clicked point pairs — gets the scan close")
     .clicked()
     {
         action = Some(AlignPanelAction::Align);
@@ -145,7 +238,7 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         ui,
         width,
         EditorIcon::AlignRefine,
-        "Refine on surfaces",
+        "Best fit matching",
         tool.can_measure() && enabled,
         true,
     )
@@ -207,7 +300,7 @@ fn heatmap(
         );
         let mut shown = settings.show_deviation;
         if ui
-            .checkbox(&mut shown, "Heatmap")
+            .checkbox(&mut shown, "Show distance")
             .on_hover_text("Colour the aligned scan by how far it sits from the other")
             .changed()
         {
@@ -257,7 +350,7 @@ fn heatmap(
         numbers(ui, stats, settings.tolerance_mm);
     }
 
-    ui.collapsing("Heatmap details", |ui| {
+    ui.collapsing("Distance settings", |ui| {
         if details(ui, settings) {
             action = Some(AlignPanelAction::Measure);
         }

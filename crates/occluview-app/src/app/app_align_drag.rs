@@ -173,7 +173,7 @@ impl OccluViewApp {
         self.edit_mode.finish_scene_edit_success(token, &after);
         self.set_scene(after, false);
         self.align_status = Some("Moved by hand (Ctrl+Z undoes)".into());
-        self.measure_if_shown();
+        self.invalidate_deviation_map("Moved by hand");
         true
     }
 }

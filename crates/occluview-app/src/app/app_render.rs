@@ -597,9 +597,9 @@ impl OccluViewApp {
 }
 
 pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
-    // `unlit` is derived from the overlay rather than stored beside it, so the
-    // two can never disagree: a layer draws unlit exactly when it is showing a
-    // measured map, and that same condition forces its colors on.
+    // Derived from the overlay rather than stored beside it, so the two can
+    // never disagree: a layer draws as a measured map exactly when it carries
+    // one, and that same condition forces its colors on and its texture off.
     let deviation = entry.deviation_colors().is_some();
     GpuMeshUniform {
         model: Mat4::from(entry.transform).to_cols_array(),
@@ -609,7 +609,7 @@ pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         show_orientation: u32::from(entry.show_orientation),
         show_vertex_colors: u32::from(entry.show_vertex_colors || deviation),
         show_texture: u32::from(entry.show_texture && !deviation),
-        unlit: u32::from(deviation),
+        measured_map: u32::from(deviation),
         padding: [0; 2],
     }
 }
@@ -702,12 +702,12 @@ mod tests {
         entry.show_texture = true;
 
         let plain = super::scene_mesh_uniform(&entry);
-        assert_eq!(plain.unlit, 0);
+        assert_eq!(plain.measured_map, 0);
         assert_eq!(plain.show_vertex_colors, 0);
 
         let colors = std::sync::Arc::new(vec![[0u8, 0, 0, 255]; 3]);
         let mapped = super::scene_mesh_uniform(&entry.with_deviation(Some(colors)));
-        assert_eq!(mapped.unlit, 1, "a deviation map must draw unlit");
+        assert_eq!(mapped.measured_map, 1, "a deviation map must draw unlit");
         assert_eq!(
             mapped.show_vertex_colors, 1,
             "a deviation map must show its own colors"
