@@ -14,6 +14,7 @@
 //! so a scale difference is *detected and reported*, never fitted away.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
+mod deviation;
 mod icp;
 #[cfg(test)]
 mod icp_tests;
@@ -24,6 +25,10 @@ mod rigid;
 mod sample;
 mod surface;
 
+pub use deviation::{
+    deviation, deviation_colors, deviation_stats, ramp_color, DeviationMap, DeviationSettings,
+    DeviationStats, RampSettings, Validity, NO_DATA_COLOR,
+};
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use pairs::{fit_pairs, FitRejection, PairFit};
 pub use rigid::Rigid;
