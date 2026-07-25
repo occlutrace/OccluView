@@ -8,6 +8,7 @@
 use eframe::egui;
 use occluview_align::{DeviationStats, Orientation};
 
+use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
 use crate::{align_overlay, ui_theme};
@@ -43,6 +44,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) stats: Option<DeviationStats>,
     /// Whether a job is in flight.
     pub(crate) busy: bool,
+    /// Which directions a hand drag may move in, edited in place.
+    pub(crate) constraint: &'a mut DragConstraint,
 }
 
 /// Draw the panel and return what the operator asked for.
@@ -60,6 +63,8 @@ pub(crate) fn show(ctx: &egui::Context, view: AlignPanelView<'_>) -> Option<Alig
             show_pairs(ui, view.tool);
             ui.separator();
             show_fit_buttons(ui, view.tool, view.busy, &mut action);
+            ui.separator();
+            show_drag_constraint(ui, view.constraint);
             ui.separator();
             show_measurement(ui, view.settings, view.stats, &mut action);
 
@@ -136,6 +141,32 @@ fn show_fit_buttons(
             *action = Some(AlignPanelAction::Clear);
         }
     });
+}
+
+/// How a hand drag is allowed to move. Drag moves whatever layer is grabbed;
+/// Ctrl-drag turns it about its own centre.
+fn show_drag_constraint(ui: &mut egui::Ui, constraint: &mut DragConstraint) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Drag")
+                .size(11.0)
+                .color(ui_theme::TEXT_MUTED),
+        );
+        for value in [
+            DragConstraint::Free,
+            DragConstraint::ZOnly,
+            DragConstraint::XyPlane,
+        ] {
+            if ui
+                .selectable_label(*constraint == value, value.label())
+                .clicked()
+            {
+                *constraint = value;
+            }
+        }
+    })
+    .response
+    .on_hover_text("Drag a scan to move it, Ctrl+drag to turn it about its own centre");
 }
 
 /// The deviation controls, legend, and statistics.
