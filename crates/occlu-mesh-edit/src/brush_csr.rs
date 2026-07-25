@@ -6,14 +6,38 @@
 //! array sliced by per-vertex `offsets`, stored as `u32` — makes a lookup one
 //! bounds pair plus a dense slice, and builds from two arrays instead of one
 //! `Vec` per vertex (a real win on a million-vertex `prepare`).
+//!
+//! # Growing without losing the flat fast path
+//!
+//! Dynamic-topology densification ([`super::brush::BrushSession::refine_dab`])
+//! splits edges mid-stroke, which rewrites a handful of rows and appends new
+//! ones. A flat CSR cannot absorb that in place, and rebuilding it per dab
+//! would be O(mesh) on a million-vertex scan. Instead an EDITED row moves into
+//! an overlay `Vec<u32>` and `overlay_of` redirects it; every untouched row —
+//! all but a few dozen per split — still reads straight out of the flat
+//! arrays. `overlay_of` stays empty until the first edit, so a session that
+//! never densifies pays one bounds check against an empty vector.
 
-/// A read-only compressed-sparse-row adjacency: `data[offsets[i]..offsets[i+1]]`
-/// are the neighbours of row `i`, as `u32` vertex/triangle ids.
+/// Sentinel in `overlay_of`: this row still lives in the flat base arrays.
+const NO_OVERLAY: u32 = u32::MAX;
+
+/// Shared empty slice for out-of-range / empty rows.
+const EMPTY_ROW: &[u32] = &[];
+
+/// A compressed-sparse-row adjacency: `data[offsets[i]..offsets[i + 1]]` are
+/// the neighbours of row `i`, as `u32` vertex/triangle ids, unless row `i` has
+/// been edited and redirected into `overlay`.
 pub(crate) struct Csr {
-    /// `rows + 1` prefix sums; row `i` spans `offsets[i]..offsets[i + 1]`.
+    /// `base_rows + 1` prefix sums; base row `i` spans `offsets[i]..offsets[i + 1]`.
     offsets: Vec<u32>,
-    /// Flat neighbour ids for every row, concatenated in row order.
+    /// Flat neighbour ids for every base row, concatenated in row order.
     data: Vec<u32>,
+    /// Total row count, including rows appended by [`Self::push_row`].
+    rows: usize,
+    /// Per-row overlay slot, or [`NO_OVERLAY`]. Empty until the first edit.
+    overlay_of: Vec<u32>,
+    /// Edited/appended rows, indexed by the slots in `overlay_of`.
+    overlay: Vec<Vec<u32>>,
 }
 
 impl Csr {
@@ -51,7 +75,13 @@ impl Csr {
                 cursor[row] += 1;
             }
         }
-        Self { offsets, data }
+        Self {
+            offsets,
+            data,
+            rows,
+            overlay_of: Vec::new(),
+            overlay: Vec::new(),
+        }
     }
 
     /// Build from an existing `Vec<Vec<usize>>` (for connectivity produced by a
@@ -73,27 +103,111 @@ impl Csr {
             }
             offsets.push(running);
         }
-        Self { offsets, data }
+        Self {
+            offsets,
+            data,
+            rows: rows.len(),
+            overlay_of: Vec::new(),
+            overlay: Vec::new(),
+        }
     }
 
-    /// The neighbours of row `i` as a dense slice.
+    /// The neighbours of row `i` as a dense slice; empty for an out-of-range
+    /// row (the kernel indexes by vertex id, and a stale id must not panic).
     #[inline]
     pub(crate) fn row(&self, i: usize) -> &[u32] {
-        let start = self.offsets[i] as usize;
-        let end = self.offsets[i + 1] as usize;
-        &self.data[start..end]
+        if let Some(&slot) = self.overlay_of.get(i) {
+            if slot != NO_OVERLAY {
+                return self
+                    .overlay
+                    .get(slot as usize)
+                    .map_or(EMPTY_ROW, Vec::as_slice);
+            }
+        }
+        let (Some(&start), Some(&end)) = (self.offsets.get(i), self.offsets.get(i + 1)) else {
+            return EMPTY_ROW;
+        };
+        self.data
+            .get(start as usize..end as usize)
+            .unwrap_or(EMPTY_ROW)
     }
 
     /// Number of neighbours in row `i`.
     #[inline]
     pub(crate) fn row_len(&self, i: usize) -> usize {
-        (self.offsets[i + 1] - self.offsets[i]) as usize
+        self.row(i).len()
     }
 
     /// Whether row `i` has no neighbours.
     #[inline]
     pub(crate) fn is_empty_row(&self, i: usize) -> bool {
-        self.offsets[i + 1] == self.offsets[i]
+        self.row(i).is_empty()
+    }
+
+    /// Append an empty row and return its id — one per vertex/triangle minted
+    /// by densification, so every parallel per-row array stays the same length.
+    pub(crate) fn push_row(&mut self) -> usize {
+        let id = self.rows;
+        self.rows += 1;
+        self.reserve_overlay_index();
+        let slot = self.overlay.len();
+        self.overlay.push(Vec::new());
+        self.point_at_overlay(id, slot);
+        id
+    }
+
+    /// Append `value` to row `i` unless it is already there. Order is
+    /// append-only, so the same edit sequence always yields the same row.
+    pub(crate) fn add_neighbour(&mut self, i: usize, value: u32) {
+        if i >= self.rows || self.row(i).contains(&value) {
+            return;
+        }
+        let slot = self.overlay_slot(i);
+        if let Some(row) = self.overlay.get_mut(slot) {
+            row.push(value);
+        }
+    }
+
+    /// Drop every occurrence of `value` from row `i`, preserving the order of
+    /// the survivors.
+    pub(crate) fn remove_neighbour(&mut self, i: usize, value: u32) {
+        if i >= self.rows || !self.row(i).contains(&value) {
+            return;
+        }
+        let slot = self.overlay_slot(i);
+        if let Some(row) = self.overlay.get_mut(slot) {
+            row.retain(|&neighbour| neighbour != value);
+        }
+    }
+
+    /// Materialize row `i` into the overlay (copying the flat row on first
+    /// touch) and return its overlay slot.
+    fn overlay_slot(&mut self, i: usize) -> usize {
+        self.reserve_overlay_index();
+        if let Some(&slot) = self.overlay_of.get(i) {
+            if slot != NO_OVERLAY {
+                return slot as usize;
+            }
+        }
+        let materialized = self.row(i).to_vec();
+        let slot = self.overlay.len();
+        self.overlay.push(materialized);
+        self.point_at_overlay(i, slot);
+        slot
+    }
+
+    /// Size the redirect table to the current row count, allocating it lazily
+    /// so an un-densified session never pays for it.
+    fn reserve_overlay_index(&mut self) {
+        if self.overlay_of.len() < self.rows {
+            self.overlay_of.resize(self.rows, NO_OVERLAY);
+        }
+    }
+
+    fn point_at_overlay(&mut self, row: usize, slot: usize) {
+        if let (Some(entry), Ok(slot)) = (self.overlay_of.get_mut(row), u32::try_from(slot)) {
+            *entry = slot;
+        }
     }
 }
 
@@ -129,5 +243,47 @@ mod tests {
         let csr = Csr::from_rows(&[]);
         assert_eq!(csr.offsets, vec![0]);
         assert!(csr.data.is_empty());
+    }
+
+    #[test]
+    fn editing_a_row_leaves_every_other_row_on_the_flat_path() {
+        let mut csr = Csr::from_rows(&[vec![1usize, 2], vec![0], vec![0]]);
+        csr.remove_neighbour(0, 2);
+        csr.add_neighbour(0, 7);
+        assert_eq!(csr.row(0), &[1, 7]);
+        // Untouched rows still read the base arrays byte-for-byte.
+        assert_eq!(csr.row(1), &[0]);
+        assert_eq!(csr.row(2), &[0]);
+    }
+
+    #[test]
+    fn appended_rows_extend_the_row_count_and_accept_neighbours() {
+        let mut csr = Csr::from_rows(&[vec![1usize], vec![0]]);
+        let fresh = csr.push_row();
+        assert_eq!(fresh, 2);
+        assert!(csr.is_empty_row(fresh));
+        csr.add_neighbour(fresh, 0);
+        csr.add_neighbour(fresh, 1);
+        // A duplicate is ignored, keeping rings free of repeats.
+        csr.add_neighbour(fresh, 1);
+        assert_eq!(csr.row(fresh), &[0, 1]);
+    }
+
+    #[test]
+    fn out_of_range_rows_and_edits_are_silent_no_ops() {
+        let mut csr = Csr::from_rows(&[vec![1usize], vec![0]]);
+        assert!(csr.row(99).is_empty());
+        assert_eq!(csr.row_len(99), 0);
+        csr.add_neighbour(99, 3);
+        csr.remove_neighbour(99, 3);
+        assert!(csr.row(1).is_empty() || csr.row(1) == [0]);
+    }
+
+    #[test]
+    fn removing_a_missing_neighbour_never_materializes_a_row() {
+        let mut csr = Csr::from_rows(&[vec![1usize, 2], vec![0]]);
+        csr.remove_neighbour(0, 42);
+        assert_eq!(csr.row(0), &[1, 2]);
+        assert!(csr.overlay.is_empty());
     }
 }
