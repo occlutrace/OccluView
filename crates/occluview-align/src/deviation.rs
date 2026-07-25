@@ -9,6 +9,30 @@
 //! A vertex the operator painted out is treated the same way. Excluding a
 //! region from the fit but still counting it in the numbers would report a
 //! quality the operator explicitly said not to measure.
+//!
+//! # What this map measures, and what it does not
+//!
+//! Every value here is the distance from a moving vertex to the **nearest
+//! point on the fixed surface**. That is a distance from a point to a *set*,
+//! not the distance between two corresponding pieces of material, and the two
+//! agree only where the fixed surface cannot slide onto itself. Two
+//! consequences the operator must be told about, both measured on real arch
+//! scans and on analytic primitives:
+//!
+//! 1. **Tangential blindness.** Displace two surfaces along a direction the
+//!    fixed surface is smooth in and the nearest point simply slides: the
+//!    reported value collapses towards zero while the material has genuinely
+//!    moved. A 0.30 mm rigid offset of a real 945k-vertex arch reads as a mean
+//!    of 0.14 mm — under half. On a cylinder displaced along its own axis it
+//!    reads 0.0075 mm, and on a sphere turned about any diameter, 0.0008 mm.
+//!    Measuring the other direction as well does **not** help; the surfaces
+//!    really do coincide as point sets. [`crate::observability`] quantifies how
+//!    much of a rigid displacement can hide, and is the number that must be
+//!    reported next to these statistics.
+//! 2. **One-sided blindness.** A moving scan missing a region reports a perfect
+//!    fit over it, because the vertices that would have measured it are not
+//!    there. [`crate::surface_agreement`] measures both directions and is what
+//!    an operator should read as the headline.
 
 use glam::DVec3;
 use rayon::prelude::*;
@@ -80,6 +104,9 @@ pub struct DeviationStats {
     pub median: f64,
     /// 95th-percentile absolute deviation, in millimetres.
     pub p95: f64,
+    /// Largest absolute deviation, in millimetres — the directed Hausdorff
+    /// distance from the measured moving vertices to the fixed surface.
+    pub max_abs: f64,
     /// Vertices that carry a measurement.
     pub measured: u32,
     /// Vertices that do not.
@@ -253,6 +280,13 @@ fn signed_along(offset: DVec3, normal: DVec3, distance: f64) -> f64 {
 }
 
 /// Summarize a map over its measured vertices only.
+///
+/// These are **directed** statistics: moving vertices against fixed surface,
+/// and nothing about fixed surface the moving scan never covered. They are also
+/// a lower bound on the true displacement — see the module documentation for
+/// the measured size of both effects. Report them through
+/// [`crate::surface_agreement`] and alongside [`crate::observability`], never
+/// alone.
 #[must_use]
 pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats {
     let mut values: Vec<f64> = map
@@ -272,6 +306,7 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
             rms: 0.0,
             median: 0.0,
             p95: 0.0,
+            max_abs: 0.0,
             measured,
             skipped,
         };
@@ -306,6 +341,7 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
             .get(p95_slot.clamp(1, magnitudes.len()) - 1)
             .copied()
             .unwrap_or(0.0),
+        max_abs: magnitudes.last().copied().unwrap_or(0.0),
         measured,
         skipped,
     }
