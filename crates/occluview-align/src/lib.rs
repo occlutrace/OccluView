@@ -15,8 +15,10 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
 mod rigid;
+mod surface;
 
 pub use rigid::Rigid;
+pub use surface::{SurfaceHit, SurfaceIndex};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
