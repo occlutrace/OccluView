@@ -573,12 +573,24 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
         "live viewport should bind the same clip plane path as offscreen render"
     );
     // Every viewport-owning tool must gate camera input only while it consumes
-    // its pointer gesture: Bridge Split, Cut View, and Measure all coexist with
-    // ordinary orbit/pan when idle.
+    // its pointer gesture: Bridge Split, Cut View, Measure, and Align Scans all
+    // coexist with ordinary orbit/pan when idle.
+    // Matched flag by flag rather than as one literal: rustfmt wraps a long
+    // condition, and a contract that breaks on whitespace protects nothing.
+    for flag in [
+        "!bridge_ui_consumed",
+        "!cut_ui_consumed",
+        "!measure_ui_consumed",
+        "!align_ui_consumed",
+    ] {
+        assert!(
+            app_render.contains(flag),
+            "{flag} must gate the camera, or that tool's pointer leaks into orbit/pan"
+        );
+    }
     assert!(
-        app_render.contains("if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed {")
-            && app_render.contains("self.handle_viewport_input(ctx, &response, response.rect);"),
-        "bridge/cut/measure overlay pointer interaction should not leak into camera orbit/pan"
+        app_render.contains("self.handle_viewport_input(ctx, &response, response.rect);"),
+        "the camera path must still be reachable when no tool consumed the pointer"
     );
 }
 

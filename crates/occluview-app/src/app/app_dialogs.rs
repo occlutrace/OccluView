@@ -23,6 +23,7 @@ impl OccluViewApp {
         let mut clear_recent = false;
         let mut toggle_cut_view = false;
         let mut toggle_measure: Option<MeasureMode> = None;
+        let mut toggle_align = false;
 
         egui::TopBottomPanel::top("toolbar")
             .exact_height(ui_theme::MENUBAR_HEIGHT_PX)
@@ -138,6 +139,17 @@ impl OccluViewApp {
                         }
                     }
 
+                    if crate::measure_overlay::toolbar_toggle(
+                        ui,
+                        MeasureIcon::Align,
+                        "Align",
+                        can_measure,
+                        self.align_active(),
+                        "Bring two scans together: click a point on each",
+                    ) {
+                        toggle_align = true;
+                    }
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if toolbar_action(ui, "ℹ", true, "About OccluView") {
                             self.about_window = AboutWindowState::Open;
@@ -146,6 +158,13 @@ impl OccluViewApp {
                 });
             });
 
+        if toggle_align {
+            if self.align_active() {
+                self.disarm_align_tool(ctx);
+            } else {
+                self.arm_align_tool(ctx);
+            }
+        }
         if toggle_cut_view {
             if self.cut_view.is_active() {
                 self.cut_view.disable();
