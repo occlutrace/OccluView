@@ -64,6 +64,9 @@ impl OccluViewApp {
 
         self.show_align_panel(ctx);
 
+        if self.handle_align_drag(response, ctx) {
+            return true;
+        }
         if suppress_click {
             return true;
         }
@@ -93,6 +96,7 @@ impl OccluViewApp {
     fn show_align_panel(&mut self, ctx: &egui::Context) {
         let busy = self.align_worker.as_ref().is_some_and(AlignWorker::is_busy);
         let mut settings = self.align_settings;
+        let mut constraint = self.align_constraint;
         let action = crate::align_panel::show(
             ctx,
             crate::align_panel::AlignPanelView {
@@ -101,9 +105,11 @@ impl OccluViewApp {
                 status: self.align_status.as_deref(),
                 stats: self.align_stats,
                 busy,
+                constraint: &mut constraint,
             },
         );
         self.align_settings = settings;
+        self.align_constraint = constraint;
 
         match action {
             Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
@@ -393,7 +399,7 @@ impl OccluViewApp {
     }
 
     /// Measure again after a pose change, but only if the map is on screen.
-    fn measure_if_shown(&mut self) {
+    pub(super) fn measure_if_shown(&mut self) {
         if self.align_settings.show_deviation && self.align.can_measure() {
             self.run_align_measure();
         }
@@ -528,7 +534,7 @@ impl OccluViewApp {
 }
 
 /// Find a layer by identity.
-fn layer_of(scene: &Scene, id: SceneMeshId) -> Option<&SceneMesh> {
+pub(super) fn layer_of(scene: &Scene, id: SceneMeshId) -> Option<&SceneMesh> {
     scene.meshes().iter().find(|entry| entry.id() == id)
 }
 

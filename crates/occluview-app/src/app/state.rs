@@ -109,6 +109,8 @@ pub(crate) struct OccluViewApp {
     pub(super) align_rejected: Vec<u32>,
     pub(super) align_deviation: Option<Arc<Vec<[u8; 4]>>>,
     pub(super) align_mask: Option<Arc<Vec<u8>>>,
+    pub(super) align_drag: Option<super::app_align_drag::AlignDrag>,
+    pub(super) align_constraint: crate::align_drag::DragConstraint,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
@@ -283,6 +285,8 @@ impl OccluViewApp {
             align_rejected: Vec::new(),
             align_deviation: None,
             align_mask: None,
+            align_drag: None,
+            align_constraint: crate::align_drag::DragConstraint::default(),
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),
