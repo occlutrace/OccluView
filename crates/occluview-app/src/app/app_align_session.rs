@@ -12,6 +12,7 @@ use occluview_core::SceneMeshId;
 use super::OccluViewApp;
 use crate::edit_mode::EditModeCommand;
 use glam::Affine3A;
+use std::sync::Arc;
 
 /// How solid the un-mapped scan stays while the heatmap is up. Enough to keep
 /// the shape readable, faint enough that it never covers the coloured surface.
@@ -127,12 +128,18 @@ impl OccluViewApp {
         if !self.align_ghosted.is_empty() {
             return;
         }
-        let (Some(scene), Some(other)) = (self.scene.clone(), self.align_other_layer()) else {
+        let Some(other) = self.align_other_layer() else {
             return;
         };
-        let mut next = scene.as_ref().clone();
+        let Some(scene) = self.scene.as_mut() else {
+            return;
+        };
+        // Opacity is a material, not a structure: mutate the live scene in
+        // place rather than replacing it, or fading one layer would copy every
+        // mesh in the scene and force a full GPU rebuild.
+        let live = Arc::make_mut(scene);
         let mut remembered = Vec::new();
-        for entry in next.meshes_mut() {
+        for entry in live.meshes_mut() {
             if entry.id() == other {
                 remembered.push((entry.id(), entry.opacity));
                 entry.opacity = GHOST_OPACITY;
@@ -142,7 +149,7 @@ impl OccluViewApp {
             return;
         }
         self.align_ghosted = remembered;
-        self.set_scene(next, false);
+        self.mark_scene_materials_changed();
     }
 
     /// Bring the faded scan back.
@@ -151,15 +158,15 @@ impl OccluViewApp {
             return;
         }
         let restore = std::mem::take(&mut self.align_ghosted);
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.scene.as_mut() else {
             return;
         };
-        let mut next = scene.as_ref().clone();
+        let live = Arc::make_mut(scene);
         for (id, opacity) in restore {
-            if let Some(entry) = next.meshes_mut().iter_mut().find(|entry| entry.id() == id) {
+            if let Some(entry) = live.meshes_mut().iter_mut().find(|entry| entry.id() == id) {
                 entry.opacity = opacity;
             }
         }
-        self.set_scene(next, false);
+        self.mark_scene_materials_changed();
     }
 }

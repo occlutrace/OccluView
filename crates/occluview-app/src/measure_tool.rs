@@ -362,33 +362,6 @@ fn nearest_exit(
     (distance > SELF_HIT_EPS_MM).then_some((distance, exit))
 }
 
-/// Moller-Trumbore, double-sided (an exit wall may face either way). Returns
-/// the positive ray distance; `None` on miss, degenerate triangles, or
-/// non-finite input (NaN fails every range check by construction).
-fn ray_triangle_distance(origin: Vec3, direction: Vec3, tri: &[Vec3; 3]) -> Option<f32> {
-    const EPSILON: f32 = 1.0e-7;
-    let edge0 = tri[1] - tri[0];
-    let edge1 = tri[2] - tri[0];
-    let determinant_cross = direction.cross(edge1);
-    let determinant = edge0.dot(determinant_cross);
-    if determinant.abs() <= EPSILON || determinant.is_nan() {
-        return None;
-    }
-    let inv_determinant = 1.0 / determinant;
-    let origin_to_a = origin - tri[0];
-    let bary_u = origin_to_a.dot(determinant_cross) * inv_determinant;
-    if !(0.0..=1.0).contains(&bary_u) {
-        return None;
-    }
-    let bary_cross = origin_to_a.cross(edge0);
-    let bary_v = direction.dot(bary_cross) * inv_determinant;
-    if !(0.0..=1.0).contains(&bary_v) || bary_u + bary_v > 1.0 {
-        return None;
-    }
-    let distance = edge1.dot(bary_cross) * inv_determinant;
-    (distance.is_finite() && distance > EPSILON).then_some(distance)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(

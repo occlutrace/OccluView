@@ -327,11 +327,15 @@ impl OccluViewApp {
                 if self.live_viewport_scene_dirty {
                     let sources = prepared_scene_sources(scene);
                     let updates = prepared_scene_updates(scene);
-                    viewport.sync_scene(&sources, &updates);
+                    // Only a real rebuild re-uploads the scan's own colours. A
+                    // uniform-only reconcile leaves the map on the GPU exactly
+                    // where it was, so pushing it again would move thirty-four
+                    // megabytes to write what is already there.
+                    rebuilt = viewport.sync_scene(&sources, &updates);
                     self.live_viewport_scene_dirty = false;
-                    rebuilt = true;
                 }
-                let repush_deviation = rebuilt && restore_deviation;
+                let repush_deviation =
+                    (rebuilt && restore_deviation) || self.deviation_push_pending;
                 if self.selection_overlay_dirty {
                     let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
@@ -350,7 +354,10 @@ impl OccluViewApp {
             }
         };
         if repush {
-            self.push_deviation_colors();
+            // A push before the viewport has a prepared scene writes nowhere.
+            // Keep the request standing until one exists, or the very first
+            // measurement would come out in the scan's own colours.
+            self.deviation_push_pending = !self.push_deviation_colors();
         }
     }
 

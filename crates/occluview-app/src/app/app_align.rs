@@ -3,18 +3,16 @@
 //! Every heavy call goes to [`crate::align_worker`]. This module only routes
 //! clicks, hands the worker the geometry it needs, and applies what comes back.
 
-use std::sync::Arc;
-
 use eframe::egui;
-use glam::{Affine3A, DVec3, Vec3};
+use glam::{DVec3, Vec3};
 use occluview_align::Rigid;
-use occluview_core::{Scene, SceneMesh, SceneMeshId, Vertex};
-use occluview_render::PreparedSceneTopology;
+use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
 use super::OccluViewApp;
+use crate::align_geometry::transform_key;
 use crate::align_tool::{AlignPoint, ClickOutcome};
 use crate::align_worker::{
-    AlignCompletion, AlignJob, AlignJobKind, AlignOutcome, AlignWorker, WorldPair,
+    AlignCompletion, AlignJob, AlignJobKind, AlignOutcome, AlignWorker, MeasureKey, WorldPair,
 };
 use crate::edit_mode::EditModeCommand;
 use crate::viewer::pick_scene_hit;
@@ -193,6 +191,9 @@ impl OccluViewApp {
     pub(super) fn disarm_align_tool(&mut self, ctx: &egui::Context) {
         self.clear_deviation_overlay();
         self.clear_align_mask();
+        // Tens of megabytes of cached arrays belong to a session the operator
+        // has just left.
+        self.align_geometry.clear();
         self.align.disarm();
         if let Some(worker) = self.align_worker.as_ref() {
             worker.bump_generation();
@@ -331,9 +332,9 @@ impl OccluViewApp {
         let Some(scene) = self.scene.clone() else {
             return;
         };
-        let Some(worker) = self.align_worker.as_ref() else {
+        if self.align_worker.is_none() {
             return;
-        };
+        }
         let (Some(pair_moving), Some(pair_fixed)) =
             (self.align.moving_layer(), self.align.fixed_layer())
         else {
@@ -361,21 +362,43 @@ impl OccluViewApp {
             return;
         };
 
+        // Geometry, not topology: a sculpt deliberately keeps the topology id
+        // and mints a fresh geometry id precisely so geometry-derived caches
+        // can tell that the surface changed under them.
+        let moving_key = (moving.mesh.geometry_id(), transform_key(moving.transform));
+        let fixed_key = (fixed.mesh.geometry_id(), transform_key(fixed.transform));
+        // Handed over by `Arc`: the arrays are built once per geometry and pose,
+        // not once per submit. Measure is re-submitted on every settings change,
+        // and rebuilding them there cost eleven megabytes of copying a time.
+        let moving_positions = self.align_geometry.local_positions(moving);
+        let moving_indices = self.align_geometry.indices(moving);
+        let fixed_world_positions = self.align_geometry.world_positions(fixed);
+        let fixed_indices = self.align_geometry.indices(fixed);
+        let mask_revision = self.align_mask_revision;
+        let mask = self.align_mask.clone();
+        let settings = self.align_settings;
+        let Some(worker) = self.align_worker.as_ref() else {
+            return;
+        };
         worker.submit(AlignJob {
             generation: worker.generation(),
             kind,
-            moving_positions: Arc::new(local_positions(moving)),
-            moving_indices: Arc::new(moving.mesh.indices().to_vec()),
-            fixed_world_positions: Arc::new(world_positions(fixed)),
-            fixed_indices: Arc::new(fixed.mesh.indices().to_vec()),
-            // Geometry, not topology: a sculpt deliberately keeps the topology id
-            // and mints a fresh geometry id precisely so geometry-derived caches
-            // can tell that the surface changed under them.
-            fixed_key: (fixed.mesh.geometry_id(), transform_key(fixed.transform)),
+            moving_positions,
+            moving_indices,
+            fixed_world_positions,
+            fixed_indices,
+            fixed_key,
+            measure_key: MeasureKey {
+                moving: moving_key,
+                fixed: fixed_key,
+                mask: mask_revision,
+                influence_radius_bits: settings.influence_radius_mm.to_bits(),
+                orientation: settings.orientation,
+            },
             pose,
             pairs,
-            mask: self.align_mask.clone(),
-            settings: self.align_settings,
+            mask,
+            settings,
         });
         self.align_status = Some(
             match kind {
@@ -446,6 +469,7 @@ impl OccluViewApp {
             AlignOutcome::Measured {
                 colors,
                 stats,
+                seen,
                 scale_mm,
             } => {
                 self.align_stats = Some(stats);
@@ -456,10 +480,11 @@ impl OccluViewApp {
                 }
                 self.apply_deviation_colors(colors);
                 self.align_status = Some(format!(
-                    "{:.0}% within {:.2} mm, {} vertices had nothing to measure against",
+                    "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
                     stats.within_tolerance * 100.0,
                     self.align_settings.tolerance_mm,
-                    stats.skipped
+                    stats.skipped,
+                    blind_note(seen.as_ref(), stats.rms)
                 ));
             }
             AlignOutcome::Failed { message } => {
@@ -516,152 +541,11 @@ impl OccluViewApp {
         self.edit_mode.finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
     }
-
-    /// Attach the measured colours and push them to the GPU.
-    fn apply_deviation_colors(&mut self, colors: Vec<[u8; 4]>) {
-        let Some(scene) = self.scene.clone() else {
-            return;
-        };
-        let Some(moving_id) = self.align_mapped_layer() else {
-            return;
-        };
-        let shared = Arc::new(colors);
-        let mut next = scene.as_ref().clone();
-        if let Some(entry) = next
-            .meshes_mut()
-            .iter_mut()
-            .find(|entry| entry.id() == moving_id)
-        {
-            if entry.mesh.vertices().len() != shared.len() {
-                return;
-            }
-            *entry = entry.clone().with_deviation(Some(Arc::clone(&shared)));
-        }
-        self.align_deviation = Some(shared);
-        self.set_scene(next, false);
-        self.ghost_other_layer();
-        // No push here. `set_scene` drops the prepared GPU scene, so a write
-        // straight after it has nothing to write into and silently does
-        // nothing. The colours reach the GPU when the viewport next syncs,
-        // which rebuilds and then re-pushes them.
-    }
-
-    /// Replace the moving layer's uploaded vertex colours with the measured
-    /// map. The CPU mesh is never touched, so the scan keeps its own colours
-    /// and an export is unaffected by what happens to be on screen.
-    pub(super) fn push_deviation_colors(&mut self) {
-        let (Some(scene), Some(colors), Some(moving_id)) = (
-            self.scene.clone(),
-            self.align_deviation.clone(),
-            self.align_mapped_layer(),
-        ) else {
-            return;
-        };
-        let Some(entry) = layer_of(&scene, moving_id) else {
-            return;
-        };
-        if entry.mesh.vertices().len() != colors.len() {
-            return;
-        }
-        let painted: Vec<Vertex> = entry
-            .mesh
-            .vertices()
-            .iter()
-            .zip(colors.iter())
-            .map(|(vertex, color)| {
-                let mut painted = *vertex;
-                painted.color = *color;
-                painted
-            })
-            .collect();
-        let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
-        if let Some(live_viewport) = self.live_viewport.as_ref() {
-            if let Ok(viewport) = live_viewport.lock() {
-                let _ = viewport.write_scene_vertices(&topology, &painted);
-            }
-        }
-        self.needs_render = true;
-    }
-
-    /// Drop the map and restore the scan's own colours.
-    pub(super) fn clear_deviation_overlay(&mut self) {
-        let Some(scene) = self.scene.clone() else {
-            return;
-        };
-        if self.align_deviation.take().is_none() {
-            return;
-        }
-        let mut next = scene.as_ref().clone();
-        for entry in next.meshes_mut() {
-            if entry.deviation_colors().is_some() {
-                *entry = entry.clone().with_deviation(None);
-            }
-        }
-        let restore: Vec<(PreparedSceneTopology, Vec<Vertex>)> = next
-            .meshes()
-            .iter()
-            .map(|entry| {
-                (
-                    PreparedSceneTopology::from_mesh(&entry.mesh),
-                    entry.mesh.vertices().to_vec(),
-                )
-            })
-            .collect();
-        self.set_scene(next, false);
-        if let Some(live_viewport) = self.live_viewport.as_ref() {
-            if let Ok(viewport) = live_viewport.lock() {
-                for (topology, vertices) in &restore {
-                    let _ = viewport.write_scene_vertices(topology, vertices);
-                }
-            }
-        }
-        self.align_stats = None;
-        self.needs_render = true;
-        self.unghost_layers();
-    }
 }
 
 /// Find a layer by identity.
 pub(super) fn layer_of(scene: &Scene, id: SceneMeshId) -> Option<&SceneMesh> {
     scene.meshes().iter().find(|entry| entry.id() == id)
-}
-
-/// A layer's vertex positions in its own local frame.
-fn local_positions(entry: &SceneMesh) -> Vec<f32> {
-    entry
-        .mesh
-        .vertices()
-        .iter()
-        .flat_map(|vertex| vertex.position)
-        .collect()
-}
-
-/// A layer's vertex positions posed into world.
-fn world_positions(entry: &SceneMesh) -> Vec<f32> {
-    entry
-        .mesh
-        .vertices()
-        .iter()
-        .flat_map(|vertex| {
-            entry
-                .transform
-                .transform_point3(Vec3::from_array(vertex.position))
-                .to_array()
-        })
-        .collect()
-}
-
-/// A cheap identity for a transform, so a cached surface index is reused only
-/// while the fixed layer really has not moved.
-fn transform_key(transform: Affine3A) -> u64 {
-    let mut key = 0u64;
-    for value in transform.to_cols_array() {
-        key = key
-            .rotate_left(7)
-            .wrapping_add(u64::from(value.to_bits()))
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    }
-    key
 }
 
 /// The geometric normal of one triangle, in the layer's local frame.
@@ -691,6 +575,35 @@ fn triangle_normal(entry: &SceneMesh, triangle: usize) -> Vec3 {
 /// Promote a stored position to double precision.
 fn double(value: Vec3) -> DVec3 {
     DVec3::new(f64::from(value.x), f64::from(value.y), f64::from(value.z))
+}
+
+/// Name the directions a refine could not determine, so the panel never shows
+/// a confident number for a fit that is free to slide.
+/// What the deviation map could not have seen, in a sentence.
+///
+/// The map measures the distance from each moving vertex to the nearest point
+/// on the fixed surface. Slide the two surfaces past each other along a
+/// direction the geometry is smooth in and that nearest point slides with them,
+/// so a real displacement reads as a fraction of itself — on a full arch, about
+/// half. This turns the reported RMS back into the displacement that could be
+/// behind it, which is the number a clinician thinks they are already reading.
+fn blind_note(seen: Option<&occluview_align::Observability>, rms_mm: f64) -> String {
+    /// Below this the correction is not worth a sentence.
+    const WORTH_SAYING: f64 = 1.15;
+
+    let Some(seen) = seen else {
+        return String::new();
+    };
+    if seen.has_blind_direction() {
+        return " — these surfaces can slide freely, so a displacement of any size \
+                could be hiding behind this"
+            .into();
+    }
+    let hidden = seen.hidden_displacement_mm(rms_mm);
+    if !hidden.is_finite() || hidden < rms_mm * WORTH_SAYING {
+        return String::new();
+    }
+    format!(" — a rigid mismatch of up to {hidden:.2} mm could read as this")
 }
 
 /// Name the directions a refine could not determine, so the panel never shows
@@ -780,18 +693,52 @@ mod tests {
         assert!(source.contains("finish_scene_edit_success(token, &next)"));
     }
 
-    /// The map is a display overlay. Writing it into the mesh would corrupt
-    /// the scan's own colours and leak into every export.
+    /// Measure is re-submitted on every settings change, so building the
+    /// worker's arrays here would copy eleven megabytes of an arch each time
+    /// the operator touched a slider. They are cached by the geometry and pose
+    /// they were built from and handed over by `Arc`.
     #[test]
-    fn the_deviation_map_never_touches_the_cpu_mesh() {
+    fn a_job_never_re_copies_geometry_that_has_not_changed() {
         let source = production();
-        assert!(
-            !source.contains("mesh.vertices_mut"),
-            "the map must not be written into mesh data"
-        );
-        assert!(
-            source.contains("write_scene_vertices(&topology, &painted)"),
-            "the map reaches the GPU through the vertex upload path"
-        );
+        for built_inline in ["flat_map(|vertex| vertex.position)", "indices().to_vec()"] {
+            assert!(
+                !source.contains(built_inline),
+                "{built_inline} must come from the geometry cache, not a fresh copy per submit"
+            );
+        }
+        for cached in [
+            "self.align_geometry.local_positions(moving)",
+            "self.align_geometry.world_positions(fixed)",
+        ] {
+            assert!(source.contains(cached), "a job must borrow {cached}");
+        }
+    }
+
+    /// The reuse contract: a job carries the identity of what it measures, so
+    /// the worker can tell a re-colour from a re-measurement. Without it every
+    /// nudge of the display scale would re-derive distances that did not
+    /// change.
+    #[test]
+    fn a_job_carries_the_identity_of_what_it_measures() {
+        let source = production();
+        assert!(source.contains("measure_key: MeasureKey {"));
+        for input in [
+            "moving: moving_key",
+            "fixed: fixed_key",
+            "mask: mask_revision",
+            "influence_radius_bits",
+            "orientation: settings.orientation",
+        ] {
+            assert!(
+                source.contains(input),
+                "the measurement key must cover {input}"
+            );
+        }
+        for colour_only in ["scale_mm", "bands", "ramp_mode"] {
+            assert!(
+                !source.contains(&format!("{colour_only}:")),
+                "{colour_only} only changes the colour, so it must not key the measurement"
+            );
+        }
     }
 }
