@@ -82,7 +82,8 @@ fn identity_uniform(tint: [f32; 4], opacity: f32) -> GpuMeshUniform {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        padding: [0; 3],
+        unlit: 0,
+        padding: [0; 2],
     }
 }
 
@@ -308,7 +309,8 @@ fn render_uniform_textured(texture: &MeshTexture) -> Vec<u8> {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        padding: [0; 3],
+        unlit: 0,
+        padding: [0; 2],
     };
     let entries = [occluview_render::SceneDrawEntry {
         mesh: &mesh,
@@ -393,7 +395,8 @@ fn textured_triangle_renders_checkerboard() {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        padding: [0; 3],
+        unlit: 0,
+        padding: [0; 2],
     };
 
     let entries = [occluview_render::SceneDrawEntry {
@@ -564,5 +567,94 @@ fn point_cloud_renders_readable_splats() {
     assert!(
         non_bg < 400,
         "point cloud splats grew too large ({non_bg} non-bg pixels)"
+    );
+}
+
+/// A triangle whose three vertices carry the same exact color — the fixture
+/// for proving the unlit path emits a measured color untouched.
+fn colored_triangle_mesh(color: [u8; 4]) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    let a = builder.push_vertex(
+        Vertex::at(Vec3::new(-0.5, -0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_color(color),
+    );
+    let b = builder.push_vertex(
+        Vertex::at(Vec3::new(0.5, -0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_color(color),
+    );
+    let c = builder.push_vertex(
+        Vertex::at(Vec3::new(0.0, 0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_color(color),
+    );
+    builder.push_triangle(a, b, c);
+    builder.build().expect("valid triangle mesh")
+}
+
+/// The whole point of the unlit flag: a deviation map is a measurement, so the
+/// colour that was computed must be the colour on screen. This renders the same
+/// mesh lit and unlit and requires the unlit pass to reproduce the vertex
+/// colour exactly while the lit pass does not.
+///
+/// It is also the only check that the flag reaches the shader at the right
+/// offset: a struct-layout slip would read some other field's bits and could
+/// not be caught by comparing field names.
+#[test]
+fn the_unlit_flag_emits_the_vertex_color_untouched() {
+    let _gpu = gpu_test_lock();
+    let color = [24u8, 200, 64, 255];
+    let mesh = colored_triangle_mesh(color);
+    let cam = camera_looking_at_origin();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+
+    let render = |unlit: u32| {
+        let uniform = GpuMeshUniform {
+            unlit,
+            ..identity_uniform([1.0, 1.0, 1.0, 1.0], 1.0)
+        };
+        let entries = [occluview_render::SceneDrawEntry {
+            mesh: &mesh,
+            uniform: &uniform,
+            texture: None,
+        }];
+        pollster::block_on(offscreen.render_scene(&entries, &cam, dark_thumbnail_spec()))
+            .expect("render scene")
+    };
+
+    let unlit_pixels = render(1);
+    let lit_pixels = render(0);
+
+    let background = DARK_TEST_BACKGROUND;
+    let is_background = |px: &[u8]| {
+        (f64::from(px[0]) / 255.0 - background[0]).abs() < 0.02
+            && (f64::from(px[1]) / 255.0 - background[1]).abs() < 0.02
+    };
+
+    let mut exact = 0usize;
+    let mut covered = 0usize;
+    for px in unlit_pixels.chunks_exact(4) {
+        if is_background(px) {
+            continue;
+        }
+        covered += 1;
+        if px[0] == color[0] && px[1] == color[1] && px[2] == color[2] {
+            exact += 1;
+        }
+    }
+    assert!(covered > 50, "the unlit triangle rendered almost nothing");
+    assert_eq!(
+        exact, covered,
+        "every covered pixel must carry the exact vertex colour, not a shaded one"
+    );
+
+    let shaded_differs = lit_pixels
+        .chunks_exact(4)
+        .zip(unlit_pixels.chunks_exact(4))
+        .any(|(lit, unlit)| !is_background(unlit) && lit[..3] != unlit[..3]);
+    assert!(
+        shaded_differs,
+        "the lit pass must not already equal the unlit one, or this proves nothing"
     );
 }

@@ -414,3 +414,29 @@ fn append_scene_preserves_existing_scene_settings() {
     assert_eq!(s.ambient, 0.6);
     assert_eq!(s.key_light_dir, Vec3::new(1.0, 0.0, 0.0));
 }
+
+#[test]
+fn a_layer_carries_an_optional_deviation_overlay() {
+    let entry = SceneMesh::new(tri());
+    assert!(
+        entry.deviation_colors().is_none(),
+        "a plain layer has no overlay"
+    );
+
+    let colors = std::sync::Arc::new(vec![[1u8, 2, 3, 255]; 3]);
+    let entry = entry.with_deviation(Some(colors));
+    assert_eq!(entry.deviation_colors().map(|colors| colors.len()), Some(3));
+}
+
+#[test]
+fn replacing_the_geometry_drops_a_stale_deviation_overlay() {
+    let colors = std::sync::Arc::new(vec![[9u8, 9, 9, 255]; 3]);
+    let entry = SceneMesh::new(tri()).with_deviation(Some(colors));
+
+    let rebuilt = entry.with_mesh(tri());
+
+    assert!(
+        rebuilt.deviation_colors().is_none(),
+        "an overlay indexed by the old vertices must not survive new geometry"
+    );
+}

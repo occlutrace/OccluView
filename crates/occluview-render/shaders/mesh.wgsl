@@ -41,9 +41,10 @@ struct MeshUniform {
     show_vertex_colors: u32,
     // 0 = do not sample an attached texture; vertex colors remain independent.
     show_texture: u32,
+    // 1 = emit the vertex color with no lighting and no tint (deviation map).
+    unlit: u32,
     _padding_0: u32,
     _padding_1: u32,
-    _padding_2: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -230,6 +231,14 @@ fn fs_main(
     } else {
         base_rgb = in.color;
         base_a = 1.0;
+    }
+
+    // Unlit: a measured colour must reach the screen as it was measured. The
+    // deviation heat map uses this — studio lighting multiplies a saturated
+    // ramp down towards mud, so a lit map reads washed out at exactly the
+    // small deviations that matter. Tint is skipped for the same reason.
+    if (mesh_uniform.unlit != 0u) {
+        return vec4<f32>(base_rgb, base_a * mesh_uniform.opacity * splat_coverage);
     }
 
     // Apply tint + opacity, then lighting.
