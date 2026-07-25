@@ -64,6 +64,9 @@ impl OccluViewApp {
 
         self.show_align_panel(ctx);
 
+        if self.handle_align_brush(response, ctx) {
+            return true;
+        }
         if self.handle_align_drag(response, ctx) {
             return true;
         }
@@ -97,6 +100,7 @@ impl OccluViewApp {
         let busy = self.align_worker.as_ref().is_some_and(AlignWorker::is_busy);
         let mut settings = self.align_settings;
         let mut constraint = self.align_constraint;
+        let mut brush = self.align_brush;
         let action = crate::align_panel::show(
             ctx,
             crate::align_panel::AlignPanelView {
@@ -106,10 +110,12 @@ impl OccluViewApp {
                 stats: self.align_stats,
                 busy,
                 constraint: &mut constraint,
+                brush: &mut brush,
             },
         );
         self.align_settings = settings;
         self.align_constraint = constraint;
+        self.align_brush = brush;
 
         match action {
             Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
@@ -124,8 +130,12 @@ impl OccluViewApp {
             }
             Some(crate::align_panel::AlignPanelAction::Clear) => {
                 self.align.clear();
+                self.clear_align_mask();
                 self.align_rejected.clear();
                 self.align_status = Some("Click a point on the scan that should move".into());
+            }
+            Some(crate::align_panel::AlignPanelAction::Mask(command)) => {
+                self.apply_align_mask_command(command);
             }
             Some(crate::align_panel::AlignPanelAction::Close) => self.disarm_align_tool(ctx),
             None => {}
@@ -155,6 +165,7 @@ impl OccluViewApp {
     /// Disarm the tool and drop everything it put on screen.
     pub(super) fn disarm_align_tool(&mut self, ctx: &egui::Context) {
         self.clear_deviation_overlay();
+        self.clear_align_mask();
         self.align.disarm();
         if let Some(worker) = self.align_worker.as_ref() {
             worker.bump_generation();

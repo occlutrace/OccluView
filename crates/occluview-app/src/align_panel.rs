@@ -8,6 +8,7 @@
 use eframe::egui;
 use occluview_align::{DeviationStats, Orientation};
 
+use crate::align_brush::{AlignBrush, MaskCommand};
 use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
@@ -30,6 +31,8 @@ pub(crate) enum AlignPanelAction {
     Measure,
     /// Stop showing the map.
     HideMap,
+    /// Run a whole-mask command.
+    Mask(MaskCommand),
 }
 
 /// Everything the panel needs to draw itself.
@@ -46,6 +49,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) busy: bool,
     /// Which directions a hand drag may move in, edited in place.
     pub(crate) constraint: &'a mut DragConstraint,
+    /// The exclusion brush, edited in place.
+    pub(crate) brush: &'a mut AlignBrush,
 }
 
 /// Draw the panel and return what the operator asked for.
@@ -65,6 +70,8 @@ pub(crate) fn show(ctx: &egui::Context, view: AlignPanelView<'_>) -> Option<Alig
             show_fit_buttons(ui, view.tool, view.busy, &mut action);
             ui.separator();
             show_drag_constraint(ui, view.constraint);
+            ui.separator();
+            show_brush(ui, view.brush, &mut action);
             ui.separator();
             show_measurement(ui, view.settings, view.stats, &mut action);
 
@@ -167,6 +174,58 @@ fn show_drag_constraint(ui: &mut egui::Ui, constraint: &mut DragConstraint) {
     })
     .response
     .on_hover_text("Drag a scan to move it, Ctrl+drag to turn it about its own centre");
+}
+
+/// The exclusion brush. An artefact or a bite block drags a registration off;
+/// painting it out takes it out of the fit and out of the map.
+fn show_brush(ui: &mut egui::Ui, brush: &mut AlignBrush, action: &mut Option<AlignPanelAction>) {
+    let mut armed = brush.is_armed();
+    if ui
+        .checkbox(&mut armed, "Exclude by brush")
+        .on_hover_text("Paint a region out of the comparison; hold Shift to erase")
+        .changed()
+    {
+        brush.set_armed(armed);
+    }
+    if !armed {
+        return;
+    }
+
+    let mut radius = brush.radius_mm();
+    if ui
+        .add(
+            egui::Slider::new(&mut radius, 0.1..=20.0)
+                .text("brush mm")
+                .fixed_decimals(1),
+        )
+        .changed()
+    {
+        brush.set_radius_mm(radius);
+    }
+
+    let mut erases = brush.erases();
+    if ui.checkbox(&mut erases, "Erase").changed() {
+        brush.set_erase(erases);
+    }
+
+    ui.horizontal(|ui| {
+        for (label, command, hint) in [
+            ("Nowhere", MaskCommand::Nowhere, "Compare the whole scan"),
+            ("Everywhere", MaskCommand::Everywhere, "Mask the whole scan"),
+            ("Invert", MaskCommand::Invert, "Flip the mask"),
+        ] {
+            if ui.button(label).on_hover_text(hint).clicked() {
+                *action = Some(AlignPanelAction::Mask(command));
+            }
+        }
+    });
+    if ui
+        .button("Mask around points")
+        .on_hover_text("Take the clicked spots themselves out of the surface fit")
+        .clicked()
+    {
+        *action = Some(AlignPanelAction::Mask(MaskCommand::AroundPoints));
+    }
 }
 
 /// The deviation controls, legend, and statistics.
