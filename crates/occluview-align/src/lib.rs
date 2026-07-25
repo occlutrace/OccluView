@@ -18,6 +18,7 @@ mod deviation;
 mod icp;
 #[cfg(test)]
 mod icp_tests;
+mod mask;
 mod pairs;
 #[cfg(test)]
 mod pairs_tests;
@@ -30,6 +31,7 @@ pub use deviation::{
     DeviationStats, RampSettings, Validity, NO_DATA_COLOR,
 };
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
+pub use mask::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use pairs::{fit_pairs, FitRejection, PairFit};
 pub use rigid::Rigid;
 pub use surface::{SurfaceHit, SurfaceIndex};
