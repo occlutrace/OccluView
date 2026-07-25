@@ -1,7 +1,8 @@
 use super::{
-    egui, layers_overlay, pick_scene_hit, LayerOverlayChanges, MeshSelectionDrag, OccluViewApp,
-    PathBuf, Scene,
+    egui, layers_overlay, pick_scene_hit, Arc, LayerOverlayChanges, MeshSelectionDrag,
+    OccluViewApp, PathBuf, Scene,
 };
+use crate::layers_overlay::LayerRowChange;
 
 fn discard_lasso_outline(drag: &mut Option<MeshSelectionDrag>) -> bool {
     if matches!(drag, Some(MeshSelectionDrag::Lasso { .. })) {
@@ -40,6 +41,14 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) {
         if changes.context_request.is_none() && changes.layer_edits.is_empty() {
+            return;
+        }
+        // A material-only change — which is what a slider drag emits, one per
+        // frame — mutates the live scene in place. `Scene::clone` deep-copies
+        // every vertex, index and texture of every layer: tens of megabytes a
+        // frame on a full case, to change four numbers.
+        if changes.context_request.is_none() {
+            self.apply_layer_material_edits(&changes.layer_edits, ctx);
             return;
         }
 
@@ -88,6 +97,49 @@ impl OccluViewApp {
                 ctx.request_repaint();
             }
         }
+    }
+
+    /// Apply material-only layer edits to the live scene without copying it.
+    fn apply_layer_material_edits(&mut self, edits: &[LayerRowChange], ctx: &egui::Context) {
+        let Some(scene) = self.scene.as_mut() else {
+            return;
+        };
+        let live = Arc::make_mut(scene);
+        let mut hidden: Vec<occluview_core::SceneMeshId> = Vec::new();
+        let mut changed = false;
+        for edit in edits {
+            let Some(entry) = live.meshes_mut().get_mut(edit.index) else {
+                continue;
+            };
+            if entry.visible && !edit.visible {
+                hidden.push(entry.id());
+            }
+            entry.visible = edit.visible;
+            entry.opacity = edit.opacity;
+            let tint_changed = entry
+                .tint
+                .iter()
+                .zip(edit.tint)
+                .any(|(before, after)| (before - after).abs() > f32::EPSILON);
+            if tint_changed && entry.mesh.texture().is_some() {
+                // Choosing a tint is an explicit material override. Keep the
+                // source texture attached, but show the neutral tinted material
+                // until the operator re-enables scan data.
+                entry.show_texture = false;
+                entry.show_vertex_colors = false;
+            }
+            entry.tint = edit.tint;
+            changed = true;
+        }
+        if !changed {
+            return;
+        }
+        for layer in hidden {
+            self.hidden_layer_stack.retain(|id| *id != layer);
+            self.hidden_layer_stack.push(layer);
+        }
+        self.mark_scene_materials_changed();
+        ctx.request_repaint();
     }
 
     /// Keep one restore history for every visibility owner, not only the

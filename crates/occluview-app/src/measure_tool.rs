@@ -329,28 +329,37 @@ fn barycentric_weights(point: Vec3, corner_a: Vec3, corner_b: Vec3, corner_c: Ve
 /// Nearest intersection along `direction` over the layer's own triangles,
 /// skipping the origin triangle and near-zero self-hits. Returns the ray
 /// distance (= thickness, `direction` is unit) and the exit point.
+///
+/// The search starts just past the entry wall and goes through the mesh's own
+/// cached BVH. Walking every triangle instead — three affine transforms each,
+/// before the ray test — froze the window for a tenth of a second per click on
+/// a full arch, using none of the acceleration structure the very same click
+/// had just used to pick the entry point.
 fn nearest_exit(
     entry: &SceneMesh,
     origin_triangle: usize,
     origin: Vec3,
     direction: Vec3,
 ) -> Option<(f32, Vec3)> {
-    let mut nearest: Option<f32> = None;
-    for (tri_idx, tri) in entry.mesh.indices().chunks_exact(3).enumerate() {
-        if tri_idx == origin_triangle {
-            continue;
-        }
-        let Some(world) = world_triangle(entry, tri) else {
-            continue;
-        };
-        let Some(t) = ray_triangle_distance(origin, direction, &world) else {
-            continue;
-        };
-        if t > SELF_HIT_EPS_MM && nearest.is_none_or(|best| t < best) {
-            nearest = Some(t);
-        }
+    // Step off the entry wall so the ray cannot immediately re-hit it, then
+    // cast in the layer's own local frame, which is where the BVH lives.
+    let inverse = entry.transform.inverse();
+    let start = origin + direction * SELF_HIT_EPS_MM;
+    let local_origin = inverse.transform_point3(start);
+    let local_direction = inverse.transform_vector3(direction);
+    if local_direction.length_squared() <= f32::EPSILON {
+        return None;
     }
-    nearest.map(|t| (t, origin + direction * t))
+    let (triangle, local_point) =
+        entry
+            .mesh
+            .pick_ray_local(local_origin, local_direction, |_| true)?;
+    if triangle == origin_triangle {
+        return None;
+    }
+    let exit = entry.transform.transform_point3(local_point);
+    let distance = (exit - origin).dot(direction);
+    (distance > SELF_HIT_EPS_MM).then_some((distance, exit))
 }
 
 /// Moller-Trumbore, double-sided (an exit wall may face either way). Returns

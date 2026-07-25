@@ -295,12 +295,7 @@ impl Mesh {
     /// million-triangle scan. `keep` filters candidate hit points (mesh-local);
     /// returns the surviving nearest as `(triangle_index, local_point)`. `None`
     /// for a point cloud, an empty mesh, or a miss.
-    pub(crate) fn pick_ray_local<K>(
-        &self,
-        origin: Vec3,
-        direction: Vec3,
-        keep: K,
-    ) -> Option<(usize, Vec3)>
+    pub fn pick_ray_local<K>(&self, origin: Vec3, direction: Vec3, keep: K) -> Option<(usize, Vec3)>
     where
         K: Fn(Vec3) -> bool,
     {
