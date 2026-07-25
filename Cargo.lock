@@ -2366,6 +2366,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "occluview-align"
+version = "1.0.5"
+dependencies = [
+ "glam",
+ "rayon",
+]
+
+[[package]]
 name = "occluview-app"
 version = "1.0.5"
 dependencies = [

@@ -3,12 +3,13 @@
 # Workspace layering:
 #   mesh-edit ← (nothing)
 #   hps       ← (no OccluView crates)
+#   align     ← (nothing; plain slices in, plain values out)
 #   core → mesh-edit (+ optional robust-csg bridge fallback)
 #   formats → core + hps
 #   render  → core
 #   thumbnail → core + render + formats
 #   shell   → core + render + formats + thumbnail
-#   app     → core + formats + render (+ shell on Windows for installer refresh)
+#   app     → core + formats + render + align (+ shell on Windows for installer refresh)
 #   cli     → core + formats + render + thumbnail
 # Cycles are P0. Never add an upward dependency.
 #
@@ -19,6 +20,7 @@ resolver = "2"
 members = [
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
+    "crates/occluview-align",
     "crates/occluview-core",
     "crates/occluview-hps",
     "crates/occluview-formats",
@@ -34,6 +36,7 @@ members = [
 # opt-in unless the full workspace is requested.
 default-members = [
     "crates/occlu-mesh-edit",
+    "crates/occluview-align",
     "crates/occluview-core",
     "crates/occluview-hps",
     "crates/occluview-formats",
@@ -61,6 +64,7 @@ publish = false              # we are not on crates.io yet
 # Internal crates.
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit", version = "1.0.5" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg", version = "1.0.5" }
+occluview-align   = { path = "crates/occluview-align", version = "1.0.5" }
 occluview-core    = { path = "crates/occluview-core", version = "1.0.5" }
 occluview-hps = { path = "crates/occluview-hps", version = "1.0.5" }
 occluview-formats = { path = "crates/occluview-formats", version = "1.0.5" }
