@@ -102,10 +102,22 @@ impl OccluViewApp {
 
         self.align_mask_stroke_open = true;
         if changed > 0 {
-            self.align_mask = Some(Arc::new(mask));
+            self.set_align_mask(Some(mask));
             ctx.request_repaint();
         }
         true
+    }
+
+    /// Install a mask, stamping it with a fresh revision.
+    ///
+    /// The mask decides which vertices are measured, so the worker's cached
+    /// deviation map is only reusable while the mask is the same one. Every
+    /// write goes through here so a future edit cannot forget to say the mask
+    /// moved and leave a stale map on screen — see
+    /// `every_mask_write_stamps_a_new_revision`.
+    fn set_align_mask(&mut self, mask: Option<Vec<u8>>) {
+        self.align_mask = mask.map(Arc::new);
+        self.align_mask_revision = self.align_mask_revision.wrapping_add(1);
     }
 
     /// Apply one whole-mask command from the panel.
@@ -157,7 +169,7 @@ impl OccluViewApp {
                 );
             }
         }
-        self.align_mask = Some(Arc::new(mask));
+        self.set_align_mask(Some(mask));
         self.align_status = Some(command.report().into());
         self.invalidate_deviation_map(command.report());
     }
@@ -165,7 +177,7 @@ impl OccluViewApp {
     /// Drop the mask — done whenever the pair changes, since a mask is indexed
     /// by one layer's vertices.
     pub(super) fn clear_align_mask(&mut self) {
-        self.align_mask = None;
+        self.set_align_mask(None);
         self.align_mask_stroke_open = false;
     }
 }
@@ -191,6 +203,36 @@ mod tests {
         assert!(
             !production.contains("measure_if_shown"),
             "the brush must never kick off a measurement"
+        );
+    }
+
+    /// The mask decides which vertices are measured, so the worker only reuses
+    /// a cached measurement while the mask is the same one. A write that did
+    /// not stamp a new revision would leave the pre-stroke map on screen and
+    /// call it a measurement of the masked scan.
+    #[test]
+    fn every_mask_write_stamps_a_new_revision() {
+        let source = include_str!("app_align_brush.rs");
+        let production = source
+            .split_once("\n#[cfg(test)]")
+            .map_or(source, |(before, _)| before);
+        assert_eq!(
+            production.matches("self.align_mask =").count(),
+            1,
+            "the mask must only be written inside set_align_mask"
+        );
+        let setter = production
+            .split_once("fn set_align_mask(")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        assert!(
+            setter.contains("self.align_mask_revision = self.align_mask_revision.wrapping_add(1)"),
+            "installing a mask must stamp a fresh revision"
+        );
+        assert_eq!(
+            production.matches("self.set_align_mask(").count(),
+            3,
+            "the brush stroke, the whole-mask commands, and Clear all write the mask"
         );
     }
 

@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 mod align_brush;
 mod align_drag;
+mod align_geometry;
 mod align_overlay;
 mod align_panel;
 mod align_tool;

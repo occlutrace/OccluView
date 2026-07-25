@@ -130,19 +130,22 @@ impl OccluViewApp {
     /// pose change is four rows of numbers; routing it through `set_scene` per
     /// mouse-move frame cancelled the bridge-split session, invalidated the
     /// sculpt session, and wiped every ruler measurement on screen — mid-drag.
+    /// It goes in PLACE, too. The app holds the only reference to the scene, so
+    /// copying it per mouse-move frame moved forty megabytes of mesh on a full
+    /// arch to change sixteen floats that live in the layer's uniform.
     fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.scene.as_mut() else {
             return;
         };
-        let mut next = scene.as_ref().clone();
-        if let Some(entry) = next
+        let live = std::sync::Arc::make_mut(scene);
+        if let Some(entry) = live
             .meshes_mut()
             .iter_mut()
             .find(|entry| entry.id() == layer)
         {
             entry.transform = step * entry.transform;
         }
-        self.update_scene_materials(next);
+        self.mark_scene_materials_changed();
     }
 
     /// Close an open drag, recording the whole gesture as one undo step.
