@@ -14,9 +14,13 @@
 //! so a scale difference is *detected and reported*, never fitted away.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
+mod pairs;
+#[cfg(test)]
+mod pairs_tests;
 mod rigid;
 mod surface;
 
+pub use pairs::{fit_pairs, FitRejection, PairFit};
 pub use rigid::Rigid;
 pub use surface::{SurfaceHit, SurfaceIndex};
 
