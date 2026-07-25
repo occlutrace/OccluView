@@ -178,6 +178,11 @@ impl OccluViewApp {
             }
             self.needs_render = true;
         }
+        // Arming a measurement or the cut view closes Align, the same way
+        // arming Align closes them. Two tools cannot share the primary click.
+        if (toggle_measure.is_some() || toggle_cut_view) && self.align_active() {
+            self.cancel_align_session(ctx);
+        }
         if let Some(clicked) = toggle_measure {
             let (next, disable_cut) = measure_tool::apply_menu_toggle(
                 self.measure.mode(),

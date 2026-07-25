@@ -51,6 +51,9 @@ impl OccluViewApp {
                 } else {
                     ""
                 };
+                // Everything visible is now on disk in its current pose: this
+                // is exactly the work the close guard was holding.
+                self.clear_unsaved_mesh_edits();
                 self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
             Err(error) => {
@@ -104,6 +107,9 @@ impl OccluViewApp {
             }
         }
 
+        if failed == 0 {
+            self.clear_unsaved_mesh_edits();
+        }
         self.status_message = Some(if failed == 0 {
             format!("Saved {written} layers to {}", directory.display())
         } else {
