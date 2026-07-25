@@ -290,6 +290,10 @@ impl OccluViewApp {
     }
 
     pub(super) fn sync_live_viewport_impl(&mut self) {
+        // A rebuild uploads the scan's own colours, so a live deviation map
+        // has to be pushed again or it silently vanishes on the next scene
+        // change.
+        let restore_deviation = self.align_deviation.is_some();
         let Some(live_viewport) = self.live_viewport.clone() else {
             return;
         };
@@ -313,15 +317,18 @@ impl OccluViewApp {
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let clip_plane = self.active_viewport_clip_plane(scene.bbox());
 
-        match live_viewport.lock() {
+        let repush = match live_viewport.lock() {
             Ok(mut viewport) => {
                 viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);
+                let mut rebuilt = false;
                 if self.live_viewport_scene_dirty {
                     let sources = prepared_scene_sources(scene);
                     let updates = prepared_scene_updates(scene);
                     viewport.sync_scene(&sources, &updates);
                     self.live_viewport_scene_dirty = false;
+                    rebuilt = true;
                 }
+                let repush_deviation = rebuilt && restore_deviation;
                 if self.selection_overlay_dirty {
                     let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
@@ -332,11 +339,16 @@ impl OccluViewApp {
                     self.selection_overlay_dirty = false;
                 }
                 self.needs_render = false;
+                repush_deviation
             }
             Err(e) => {
                 tracing::warn!(error = ?e, "live viewport lock failed");
+                false
             }
         };
+        if repush {
+            self.push_deviation_colors();
+        }
     }
 
     pub(super) fn clear_live_viewport_impl(&self) {
@@ -496,6 +508,8 @@ impl OccluViewApp {
                 let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
                 // A click the axis gizmo snapped on never doubles as a measure
                 // anchor.
+                let align_ui_consumed =
+                    self.show_align_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
                 let measure_ui_consumed =
                     self.show_measure_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
                 if let Some(axis) = axis_snap {
@@ -505,7 +519,11 @@ impl OccluViewApp {
                         ctx.request_repaint();
                     }
                 }
-                if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed {
+                if !bridge_ui_consumed
+                    && !cut_ui_consumed
+                    && !measure_ui_consumed
+                    && !align_ui_consumed
+                {
                     self.handle_viewport_input(ctx, &response, response.rect);
                 }
             } else if let Some((texture, stats)) = self
@@ -537,6 +555,8 @@ impl OccluViewApp {
                 let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
                 // A click the axis gizmo snapped on never doubles as a measure
                 // anchor.
+                let align_ui_consumed =
+                    self.show_align_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
                 let measure_ui_consumed =
                     self.show_measure_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
                 if let Some(axis) = axis_snap {
@@ -546,7 +566,11 @@ impl OccluViewApp {
                         ctx.request_repaint();
                     }
                 }
-                if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed {
+                if !bridge_ui_consumed
+                    && !cut_ui_consumed
+                    && !measure_ui_consumed
+                    && !align_ui_consumed
+                {
                     self.handle_viewport_input(ctx, &response, response.rect);
                 }
             } else if self.scene.is_none() {

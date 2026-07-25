@@ -15,9 +15,12 @@ use anyhow::{Context, Result};
 use occluview_formats::{hps::RuntimeHpsKeyProvider, read_files_with_key_provider};
 use std::path::PathBuf;
 
+mod align_overlay;
+mod align_panel;
 mod align_tool;
 #[cfg(test)]
 mod align_tool_tests;
+mod align_worker;
 mod app;
 mod app_bootstrap;
 mod app_chrome;

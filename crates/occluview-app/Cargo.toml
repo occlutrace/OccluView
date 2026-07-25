@@ -20,6 +20,7 @@ path = "src/main.rs"
 # Cross-platform deps usable on any host. Linux builds run the same egui/wgpu
 # viewer as Windows; Windows shell integration remains in the target block.
 [dependencies]
+occluview-align = { workspace = true }
 occluview-core    = { workspace = true, features = ["robust-csg"] }
 occluview-formats = { workspace = true }
 occluview-render  = { workspace = true }

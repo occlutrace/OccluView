@@ -101,6 +101,14 @@ pub(crate) struct OccluViewApp {
     /// plus the live per-drag stroke session. Only meaningful while a mesh
     /// edit session is active.
     pub(super) sculpt: crate::sculpt_tool::SculptTool,
+    pub(super) align: crate::align_tool::AlignTool,
+    pub(super) align_worker: Option<crate::align_worker::AlignWorker>,
+    pub(super) align_settings: crate::align_worker::AlignSettings,
+    pub(super) align_status: Option<String>,
+    pub(super) align_stats: Option<occluview_align::DeviationStats>,
+    pub(super) align_rejected: Vec<u32>,
+    pub(super) align_deviation: Option<Arc<Vec<[u8; 4]>>>,
+    pub(super) align_mask: Option<Arc<Vec<u8>>>,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
@@ -267,6 +275,14 @@ impl OccluViewApp {
             viewport_secondary_gesture_moved_since_press: false,
             mesh_selection_drag: None,
             sculpt: crate::sculpt_tool::SculptTool::default(),
+            align: crate::align_tool::AlignTool::default(),
+            align_worker: None,
+            align_settings: crate::align_worker::AlignSettings::default(),
+            align_status: None,
+            align_stats: None,
+            align_rejected: Vec::new(),
+            align_deviation: None,
+            align_mask: None,
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),
@@ -379,6 +395,16 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) -> bool {
         self.show_bridge_split_overlay_impl(ui, response, ctx)
+    }
+
+    pub(super) fn show_align_tool_overlay(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        suppress_click: bool,
+        ctx: &egui::Context,
+    ) -> bool {
+        self.show_align_tool_overlay_impl(ui, response, suppress_click, ctx)
     }
 
     pub(super) fn show_measure_tool_overlay(

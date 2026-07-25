@@ -340,6 +340,8 @@ pub(crate) enum MeasureIcon {
     Ruler,
     /// A shell cross-section with a wall-depth arrow — local thickness.
     Thickness,
+    /// Two arcs drawn together by a paired-point tie — scan alignment.
+    Align,
 }
 
 /// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
@@ -390,6 +392,23 @@ pub(crate) fn paint_measure(
             painter.line_segment([top_outer, top_inner], stroke);
             arrowhead(painter, top_outer, Vec2::new(0.0, -1.0), r(0.10), stroke);
             arrowhead(painter, top_inner, Vec2::new(0.0, 1.0), r(0.10), stroke);
+        }
+        MeasureIcon::Align => {
+            // Two arcs facing each other, tied by a short segment between one
+            // matched point on each: the gesture the tool is built around.
+            painter.add(Shape::line(
+                arc(p(0.16, 0.50), r(0.44), 300.0, 60.0, 18),
+                stroke,
+            ));
+            painter.add(Shape::line(
+                arc(p(0.84, 0.50), r(0.44), 120.0, 240.0, 18),
+                stroke,
+            ));
+            let left = p(0.16 + 0.44, 0.50);
+            let right = p(0.84 - 0.44, 0.50);
+            painter.line_segment([left, right], stroke);
+            painter.circle_filled(left, r(0.07), color);
+            painter.circle_filled(right, r(0.07), color);
         }
     }
 }

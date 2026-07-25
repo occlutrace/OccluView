@@ -11,11 +11,6 @@
 //! position is `pose x local`, recomputed every frame, so markers stay welded
 //! to the surface after a fit moves the scan underneath them.
 
-// The state machine lands ahead of its caller: it is pure logic with a full
-// test suite, and wiring it into the viewport is a separate change that should
-// be reviewable on its own. Remove this once `app_align` calls it.
-#![allow(dead_code)]
-
 use glam::Vec3;
 use occluview_core::SceneMeshId;
 
