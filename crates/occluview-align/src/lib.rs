@@ -5,6 +5,30 @@
 //!   2. REFINE — trimmed point-to-plane ICP against the fixed surface;
 //!   3. PROOF  — a signed deviation map (± mm along the fixed normal).
 //!
+//! # What the deviation number means
+//!
+//! This matters more than anything else in the crate, because the number ends
+//! up in front of a clinician. A deviation map measures the distance from each
+//! moving vertex to the **nearest point on the fixed surface**. That is not the
+//! distance between corresponding pieces of material, and the difference is not
+//! academic:
+//!
+//! * It is **one-sided**. Fixed surface the moving scan never covered is not
+//!   measured at all, so a scan with a hole in it can report a perfect fit.
+//!   [`surface_agreement`] measures both directions and is the honest headline.
+//! * It is a **lower bound on displacement**. Tangential motion slides the
+//!   nearest point along the surface instead of moving away from it. A 0.30 mm
+//!   rigid offset of a real arch reads as 0.14 mm; on a cylinder slid along its
+//!   own axis it reads 0.0075 mm. Symmetry does not fix this and nothing
+//!   derived from surface distance can. [`observability`] reports how much of a
+//!   displacement this particular pair of surfaces converts into distance, and
+//!   [`Observability::hidden_displacement_mm`] turns a reported RMS into the
+//!   largest true displacement that could be hiding behind it.
+//!
+//! Report [`surface_agreement`] with [`observability`] beside it. A
+//! [`deviation_stats`] on its own understates, and there is no setting that
+//! makes it not.
+//!
 //! The crate is a leaf: plain slices in, plain values out. It never allocates
 //! unboundedly, never panics on hostile input, and is deterministic — no RNG,
 //! fixed iteration counts, ordered reductions — so the same input yields
@@ -14,11 +38,17 @@
 //! so a scale difference is *detected and reported*, never fitted away.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
+mod agreement;
+#[cfg(test)]
+mod agreement_tests;
 mod deviation;
 mod icp;
 #[cfg(test)]
 mod icp_tests;
 mod mask;
+mod observability;
+#[cfg(test)]
+mod observability_tests;
 mod pairs;
 #[cfg(test)]
 mod pairs_tests;
@@ -26,12 +56,14 @@ mod rigid;
 mod sample;
 mod surface;
 
+pub use agreement::{reverse_deviation, surface_agreement, SurfaceAgreement};
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
     DeviationSettings, DeviationStats, RampMode, RampSettings, Validity, NO_DATA_COLOR,
 };
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};
+pub use observability::{observability, Observability};
 pub use pairs::{fit_pairs, FitRejection, PairFit};
 pub use rigid::Rigid;
 pub use surface::{SurfaceHit, SurfaceIndex};
