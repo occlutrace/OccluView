@@ -125,7 +125,9 @@ fn body(ui: &mut egui::Ui, view: AlignPanelView<'_>) -> Option<AlignPanelAction>
         AlignTab::Manually => manually(ui, view.constraint, view.brush, enabled),
     };
     status(ui, view.status);
-    action = action.or(commit(ui, enabled, view.moved));
+    // Deliberately not gated on `enabled`: a refine on a full arch takes real
+    // time, and a window whose only two exits are greyed out reads as a hang.
+    action = action.or(commit(ui, true, view.moved));
     action
 }
 
