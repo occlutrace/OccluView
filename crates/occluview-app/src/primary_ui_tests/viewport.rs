@@ -386,7 +386,9 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
          encodes THIS frame's camera (removes one frame of orbit latency)"
     );
     assert!(
-        central.contains("self.handle_viewport_input(ctx, &response, response.rect);"),
+        central.contains(
+            "self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());"
+        ),
         "camera input should still be collected from the main viewport panel"
     );
     assert!(
@@ -589,7 +591,9 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
         );
     }
     assert!(
-        app_render.contains("self.handle_viewport_input(ctx, &response, response.rect);"),
+        app_render.contains(
+            "self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());"
+        ),
         "the camera path must still be reachable when no tool consumed the pointer"
     );
 }
