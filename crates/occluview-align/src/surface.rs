@@ -5,6 +5,15 @@
 //! millimetre cell — the shape this replaces — either wastes memory on fine
 //! meshes or drops a hundred triangles into one bucket on coarse ones.
 //!
+//! A query walks the grid as shells growing out of the cell it lands in and
+//! stops at the first shell that cannot beat what it has already found, so its
+//! cost follows the distance to the surface and not the influence radius the
+//! operator dialled in. A second, coarse grid records how far the nearest
+//! occupied block is, which is what lets a query in open space skip the void it
+//! sits in instead of sweeping every cell of it. Both are pure geometry: the
+//! answer is the one a scan over every triangle would give, tie-break included,
+//! which is what `surface/tests.rs` pins.
+//!
 //! Normals are computed from triangle geometry and never read from the file:
 //! the sign of the whole deviation map hangs on them, and scanner exports
 //! routinely carry normals that disagree with their own winding.
