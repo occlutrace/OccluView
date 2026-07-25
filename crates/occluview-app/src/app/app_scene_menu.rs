@@ -71,7 +71,15 @@ impl OccluViewApp {
             entry.transform = Affine3A::IDENTITY;
         }
         self.edit_mode.finish_scene_edit_success(token, &next);
+        let moved: Vec<occluview_core::SceneMeshId> = next
+            .meshes()
+            .iter()
+            .map(occluview_core::SceneMesh::id)
+            .collect();
         self.set_scene(next, false);
+        for layer in moved {
+            self.mark_mesh_edits_unsaved(layer);
+        }
         self.status_message = Some("Layer positions reset (Ctrl+Z undoes)".into());
         ctx.request_repaint();
     }

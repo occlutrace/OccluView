@@ -37,6 +37,9 @@ impl OccluViewApp {
             if self.align_mask_stroke_open {
                 self.align_mask_stroke_open = false;
                 self.invalidate_deviation_map("Mask changed");
+                // The release frame still reads as a click. An armed brush owns
+                // it, or one dab would also drop an alignment point.
+                return true;
             }
             return false;
         }
@@ -46,6 +49,12 @@ impl OccluViewApp {
         else {
             return false;
         };
+        // The brush's own radius slider sits inches from the cursor, and the
+        // window floats over the scan. Without this, dragging that slider
+        // paints a dab per frame on whatever is behind the window — silently.
+        if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
+            return false;
+        }
         let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
             return false;
         };

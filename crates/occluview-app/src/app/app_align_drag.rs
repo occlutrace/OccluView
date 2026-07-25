@@ -36,6 +36,14 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
+        // Dragging a scan lives in the Manually tab, the way lab software
+        // splits it. In the Automatically tab a press is always a landmark:
+        // egui promotes a press to a drag after six pixels OR eight tenths of a
+        // second, so without this gate a careful click on a cusp moved the scan
+        // instead of placing a point.
+        if self.align_tab != crate::align_panel::AlignTab::Manually {
+            return self.finish_align_drag();
+        }
         let primary_down =
             ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
         if !primary_down {
@@ -117,6 +125,11 @@ impl OccluViewApp {
     /// History is written once at release: a drag is one operator gesture, and
     /// filling the undo stack with a hundred per-frame steps would make Ctrl+Z
     /// useless.
+    ///
+    /// The update goes through the material path, not the structural one. A
+    /// pose change is four rows of numbers; routing it through `set_scene` per
+    /// mouse-move frame cancelled the bridge-split session, invalidated the
+    /// sculpt session, and wiped every ruler measurement on screen — mid-drag.
     fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
         let Some(scene) = self.scene.clone() else {
             return;
@@ -129,7 +142,7 @@ impl OccluViewApp {
         {
             entry.transform = step * entry.transform;
         }
-        self.set_scene(next, false);
+        self.update_scene_materials(next);
     }
 
     /// Close an open drag, recording the whole gesture as one undo step.
@@ -172,6 +185,10 @@ impl OccluViewApp {
         }
         self.edit_mode.finish_scene_edit_success(token, &after);
         self.set_scene(after, false);
+        // A moved scan is unsaved work. The viewer has no project file, so the
+        // pose IS the work product: without this the app closes without asking
+        // and the alignment is gone.
+        self.mark_mesh_edits_unsaved(drag.layer);
         self.align_status = Some("Moved by hand (Ctrl+Z undoes)".into());
         self.invalidate_deviation_map("Moved by hand");
         true

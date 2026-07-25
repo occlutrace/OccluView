@@ -26,6 +26,41 @@ const CELL_EDGE_FACTOR: f64 = 2.0;
 /// otherwise allocate an absurd grid; the cell grows until the count fits.
 const MAX_CELLS: usize = 4_000_000;
 
+/// The running answer during one query.
+///
+/// Kept squared: the comparison and the tie-break both work on squared
+/// distances, so a query never pays for a square root it does not report.
+#[derive(Clone, Copy)]
+struct Candidate {
+    distance: f64,
+    source: u32,
+    point: DVec3,
+    slot: usize,
+}
+
+/// One query's fixed terms: the point, the squared radius, and the cell window
+/// the radius allows. Bundled so the traversal helpers keep short signatures.
+struct Query {
+    point: DVec3,
+    limit: f64,
+    home: [i64; 3],
+    low: [i64; 3],
+    high: [i64; 3],
+}
+
+impl Query {
+    /// The largest shell that can still hold a cell inside the window.
+    fn rings(&self) -> i64 {
+        let mut rings = 0;
+        for axis in 0..3 {
+            rings = rings
+                .max(self.home[axis] - self.low[axis])
+                .max(self.high[axis] - self.home[axis]);
+        }
+        rings
+    }
+}
+
 /// The nearest point found on a surface, with the geometry that produced it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceHit {
@@ -44,6 +79,7 @@ pub struct SurfaceIndex {
     normals: Vec<DVec3>,
     sources: Vec<u32>,
     min: DVec3,
+    max: DVec3,
     cell: f64,
     dims: [i64; 3],
     starts: Vec<u32>,
@@ -105,6 +141,7 @@ impl SurfaceIndex {
             normals,
             sources,
             min,
+            max,
             cell,
             dims,
             starts: Vec::new(),
@@ -129,6 +166,12 @@ impl SurfaceIndex {
     /// The closest surface point to `point` within `radius`, or `None` when
     /// nothing is in reach.
     ///
+    /// Cells are visited as shells expanding out of the one holding `point`,
+    /// and the walk stops as soon as the next shell cannot possibly beat what
+    /// has been found. For a query near a surface — which is every query this
+    /// crate makes — the answer sits in the first or second shell, so the cost
+    /// follows the distance to the surface rather than the influence radius.
+    ///
     /// Deterministic: cells are visited in a fixed order and ties break on the
     /// lower source triangle index, so the answer does not depend on traversal
     /// order or on how the caller parallelizes its queries.
@@ -137,60 +180,144 @@ impl SurfaceIndex {
         if !point.is_finite() || !radius.is_finite() || radius <= 0.0 {
             return None;
         }
+        // Every triangle lies inside the mesh box, so a point farther from that
+        // box than the radius cannot reach any of them. One clamp answers the
+        // whole query for a vertex sitting off the end of the other scan.
+        if (point.clamp(self.min, self.max) - point).length_squared() > radius * radius {
+            return None;
+        }
         let reach = DVec3::splat(radius);
-        let low = self.cell_of(point - reach);
-        let high = self.cell_of(point + reach);
-        let mut best: Option<(f64, u32, DVec3, usize)> = None;
-        let limit = radius * radius;
+        let query = Query {
+            point,
+            limit: radius * radius,
+            home: self.cell_of(point),
+            low: self.cell_of(point - reach),
+            high: self.cell_of(point + reach),
+        };
+        let mut best: Option<Candidate> = None;
 
-        for z in low[2]..=high[2] {
-            for y in low[1]..=high[1] {
-                for x in low[0]..=high[0] {
-                    let cell_floor = self.cell_distance_squared(point, [x, y, z]);
-                    let ceiling = best.map_or(limit, |(distance, _, _, _)| distance);
-                    if cell_floor > ceiling {
-                        continue;
+        for ring in 0..=query.rings() {
+            // A shell is skipped only when its own floor already exceeds the
+            // best distance so far — never when it merely equals it, because an
+            // equal distance is a tie that may still carry a lower source
+            // index. That is the same test the per-cell prune makes, so the
+            // answer is the one a full sweep of the window would give.
+            let ceiling = best.map_or(query.limit, |found| found.distance);
+            if self.ring_floor(&query, ring) > ceiling {
+                break;
+            }
+            self.visit_ring(&query, ring, &mut best);
+        }
+
+        best.map(|found| SurfaceHit {
+            point: found.point,
+            normal: self.normals.get(found.slot).copied().unwrap_or(DVec3::Z),
+            triangle: found.source,
+        })
+    }
+
+    /// Squared distance from the query point to the nearest cell of shell
+    /// `ring`, or infinity when that shell holds no cell inside the window.
+    ///
+    /// A cell in shell `ring` sits beyond one of six planes, so the bound is
+    /// the closest of those planes. Directions whose plane has already left the
+    /// window are not counted: that keeps the bound tight for a point sitting
+    /// off the end of the grid, where the window collapses to a slab.
+    #[allow(clippy::cast_precision_loss)]
+    fn ring_floor(&self, query: &Query, ring: i64) -> f64 {
+        let point = query.point.to_array();
+        let origin = self.min.to_array();
+        let mut gap = f64::INFINITY;
+        for axis in 0..3 {
+            let home = query.home[axis];
+            if home + ring <= query.high[axis] {
+                let plane = origin[axis] + (home + ring) as f64 * self.cell;
+                gap = gap.min((plane - point[axis]).max(0.0));
+            }
+            if home - ring >= query.low[axis] {
+                let plane = origin[axis] + (home - ring + 1) as f64 * self.cell;
+                gap = gap.min((point[axis] - plane).max(0.0));
+            }
+        }
+        if gap.is_finite() {
+            gap * gap
+        } else {
+            f64::INFINITY
+        }
+    }
+
+    /// Visit every cell of shell `ring` that lies inside the query window.
+    ///
+    /// A shell is the surface of a cube: rows on the near and far z planes are
+    /// full rectangles, and the rows between them contribute only their two
+    /// end columns. `ring` zero is the single home cell, which the `z_edge`
+    /// branch covers.
+    fn visit_ring(&self, query: &Query, ring: i64, best: &mut Option<Candidate>) {
+        let (home, low, high) = (query.home, query.low, query.high);
+        let span = |axis: usize| {
+            (home[axis].saturating_sub(ring).max(low[axis]))
+                ..=(home[axis].saturating_add(ring).min(high[axis]))
+        };
+        for z in span(2) {
+            let z_edge = (z - home[2]).abs() == ring;
+            for y in span(1) {
+                if z_edge || (y - home[1]).abs() == ring {
+                    for x in span(0) {
+                        self.visit_cell(query, [x, y, z], best);
                     }
-                    let Some(bucket) = self.bucket([x, y, z]) else {
-                        continue;
-                    };
-                    for &slot in bucket {
-                        let slot = slot as usize;
-                        let Some(corners) = self.corners.get(slot) else {
-                            continue;
-                        };
-                        let candidate =
-                            closest_point_on_triangle(point, corners[0], corners[1], corners[2]);
-                        let distance = (candidate - point).length_squared();
-                        if distance > limit {
-                            continue;
-                        }
-                        let source = self.sources.get(slot).copied().unwrap_or(u32::MAX);
-                        // The exact equality is deliberate: an exact tie is
-                        // what a shared edge or a duplicated facet produces,
-                        // and breaking it on the lower source index is what
-                        // makes the answer independent of traversal order.
-                        #[allow(clippy::float_cmp)]
-                        let better = match best {
-                            None => true,
-                            Some((best_distance, best_source, _, _)) => {
-                                distance < best_distance
-                                    || (distance == best_distance && source < best_source)
-                            }
-                        };
-                        if better {
-                            best = Some((distance, source, candidate, slot));
+                } else {
+                    for x in [home[0] - ring, home[0] + ring] {
+                        if x >= low[0] && x <= high[0] {
+                            self.visit_cell(query, [x, y, z], best);
                         }
                     }
                 }
             }
         }
+    }
 
-        best.map(|(_, triangle, point, slot)| SurfaceHit {
-            point,
-            normal: self.normals.get(slot).copied().unwrap_or(DVec3::Z),
-            triangle,
-        })
+    /// Test one cell's triangles against the running best.
+    fn visit_cell(&self, query: &Query, cell: [i64; 3], best: &mut Option<Candidate>) {
+        let ceiling = best.map_or(query.limit, |found| found.distance);
+        if self.cell_distance_squared(query.point, cell) > ceiling {
+            return;
+        }
+        let Some(bucket) = self.bucket(cell) else {
+            return;
+        };
+        for &slot in bucket {
+            let slot = slot as usize;
+            let Some(corners) = self.corners.get(slot) else {
+                continue;
+            };
+            let candidate =
+                closest_point_on_triangle(query.point, corners[0], corners[1], corners[2]);
+            let distance = (candidate - query.point).length_squared();
+            if distance > query.limit {
+                continue;
+            }
+            let source = self.sources.get(slot).copied().unwrap_or(u32::MAX);
+            // The exact equality is deliberate: an exact tie is what a shared
+            // edge or a duplicated facet produces, and breaking it on the lower
+            // source index is what makes the answer independent of traversal
+            // order.
+            #[allow(clippy::float_cmp)]
+            let better = match best {
+                None => true,
+                Some(found) => {
+                    distance < found.distance
+                        || (distance == found.distance && source < found.source)
+                }
+            };
+            if better {
+                *best = Some(Candidate {
+                    distance,
+                    source,
+                    point: candidate,
+                    slot,
+                });
+            }
+        }
     }
 
     /// Bucket every triangle into the cells its bounding box overlaps, as a
@@ -386,131 +513,4 @@ fn closest_point_on_triangle(point: DVec3, a: DVec3, b: DVec3, c: DVec3) -> DVec
 }
 
 #[cfg(test)]
-mod tests {
-    use super::SurfaceIndex;
-    use crate::Soup;
-    use glam::DVec3;
-
-    /// A flat `n` x `n` grid of quads on z = 0, spacing `step`, as a soup.
-    fn plane(n: usize, step: f64) -> (Vec<f32>, Vec<u32>) {
-        let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);
-        for j in 0..=n {
-            for i in 0..=n {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-                {
-                    positions.push((i as f64 * step) as f32);
-                    positions.push((j as f64 * step) as f32);
-                    positions.push(0.0);
-                }
-            }
-        }
-        let mut indices = Vec::with_capacity(n * n * 6);
-        let stride = u32::try_from(n + 1).unwrap();
-        let span = u32::try_from(n).unwrap();
-        for j in 0..span {
-            for i in 0..span {
-                let a = j * stride + i;
-                indices.extend_from_slice(&[a, a + 1, a + stride]);
-                indices.extend_from_slice(&[a + 1, a + stride + 1, a + stride]);
-            }
-        }
-        (positions, indices)
-    }
-
-    fn soup<'a>(positions: &'a [f32], indices: &'a [u32]) -> Soup<'a> {
-        Soup {
-            positions,
-            indices,
-            mask: None,
-        }
-    }
-
-    #[test]
-    fn nearest_on_a_plane_is_the_foot_of_the_perpendicular() {
-        let (positions, indices) = plane(8, 1.0);
-        let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        let hit = index.nearest(DVec3::new(3.3, 4.7, 2.5), 10.0).unwrap();
-        assert!((hit.point.x - 3.3).abs() < 1e-6);
-        assert!((hit.point.y - 4.7).abs() < 1e-6);
-        assert!(hit.point.z.abs() < 1e-6);
-    }
-
-    #[test]
-    fn the_normal_is_the_geometric_plane_normal() {
-        let (positions, indices) = plane(4, 1.0);
-        let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        let hit = index.nearest(DVec3::new(1.5, 1.5, 3.0), 10.0).unwrap();
-        assert!((hit.normal.dot(DVec3::Z).abs() - 1.0).abs() < 1e-9);
-        assert!((hit.normal.length() - 1.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn nothing_is_returned_beyond_the_radius() {
-        let (positions, indices) = plane(4, 1.0);
-        let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        assert!(index.nearest(DVec3::new(2.0, 2.0, 50.0), 1.0).is_none());
-    }
-
-    #[test]
-    fn a_query_beside_the_sheet_snaps_to_its_edge() {
-        let (positions, indices) = plane(4, 1.0);
-        let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        let hit = index.nearest(DVec3::new(-3.0, 2.0, 0.0), 10.0).unwrap();
-        assert!(
-            hit.point.x.abs() < 1e-6,
-            "expected the x = 0 border, got {hit:?}"
-        );
-    }
-
-    #[test]
-    fn build_refuses_empty_and_degenerate_input() {
-        assert!(SurfaceIndex::build(soup(&[], &[])).is_none());
-        let positions = [0.0; 9];
-        let indices = [0, 1, 2];
-        assert!(SurfaceIndex::build(soup(&positions, &indices)).is_none());
-    }
-
-    #[test]
-    fn build_ignores_out_of_range_and_non_finite_triangles() {
-        let (mut positions, mut indices) = plane(4, 1.0);
-        indices.extend_from_slice(&[9999, 10000, 10001]);
-        let base = u32::try_from(positions.len() / 3).unwrap();
-        positions.extend_from_slice(&[f32::NAN, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
-        indices.extend_from_slice(&[base, base + 1, base + 2]);
-        let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        assert!(index.nearest(DVec3::new(1.5, 1.5, 1.0), 5.0).is_some());
-    }
-
-    #[test]
-    fn the_cell_size_follows_triangle_size() {
-        let (coarse_positions, coarse_indices) = plane(4, 4.0);
-        let (fine_positions, fine_indices) = plane(32, 0.25);
-        let coarse = SurfaceIndex::build(soup(&coarse_positions, &coarse_indices)).unwrap();
-        let fine = SurfaceIndex::build(soup(&fine_positions, &fine_indices)).unwrap();
-        assert!(
-            coarse.cell_size() > fine.cell_size() * 4.0,
-            "coarse {} vs fine {}",
-            coarse.cell_size(),
-            fine.cell_size()
-        );
-        assert!(coarse.nearest(DVec3::new(6.0, 6.0, 1.0), 10.0).is_some());
-        assert!(fine.nearest(DVec3::new(4.0, 4.0, 1.0), 10.0).is_some());
-    }
-
-    #[test]
-    fn repeated_builds_answer_identically() {
-        let (positions, indices) = plane(16, 0.5);
-        let first = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        let second = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-        for k in 0..50 {
-            let q = DVec3::new(f64::from(k) * 0.17, f64::from(k) * 0.09, 0.4);
-            let a = first.nearest(q, 5.0);
-            let b = second.nearest(q, 5.0);
-            assert_eq!(a.map(|hit| hit.triangle), b.map(|hit| hit.triangle));
-            assert_eq!(
-                a.map(|hit| hit.point.to_array()),
-                b.map(|hit| hit.point.to_array())
-            );
-        }
-    }
-}
+mod tests;

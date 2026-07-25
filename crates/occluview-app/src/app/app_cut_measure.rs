@@ -305,11 +305,17 @@ impl OccluViewApp {
             ctx.request_repaint();
             return false;
         }
+        // Align Scans owns the primary click while it is armed. Without this
+        // one click would place an align point AND a ruler anchor.
+        if self.align_active() {
+            self.measure.disarm();
+            return false;
+        }
         let viewport_rect = response.rect;
         let consumed = self.handle_measure_pointer(response, suppress_click, ctx);
         let hover = ctx
             .input(|input| input.pointer.hover_pos())
-            .filter(|pos| self.measure_pointer_on_bare_viewport(ctx, viewport_rect, *pos));
+            .filter(|pos| self.pointer_on_bare_viewport(ctx, viewport_rect, *pos));
         if let Some(pointer) = hover {
             let over_anchor = self.measure.mode() == Some(MeasureMode::Ruler)
                 && self.camera.is_some_and(|camera| {
@@ -348,7 +354,7 @@ impl OccluViewApp {
     /// Whether `pos` is over the bare 3D viewport: inside the rect and not over
     /// the measure strip, the layers panel, or any floating egui surface (same
     /// chrome test the cut tool uses).
-    fn measure_pointer_on_bare_viewport(
+    pub(super) fn pointer_on_bare_viewport(
         &self,
         ctx: &egui::Context,
         viewport_rect: egui::Rect,
@@ -411,7 +417,7 @@ impl OccluViewApp {
             }
             return true;
         }
-        if !self.measure_pointer_on_bare_viewport(ctx, response.rect, pointer) {
+        if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
             return false;
         }
         if self.measure.mode() == Some(MeasureMode::Ruler)
