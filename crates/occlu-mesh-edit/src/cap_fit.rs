@@ -220,8 +220,19 @@ pub(super) fn fit_cap_surface(
             normal_rhs[i] += weight * bi * height;
         }
     }
+    // Scale the ridge by the total weight. The diagonal entries grow with the
+    // SAMPLE COUNT — the radius normalization above only removes the hole's
+    // size dependence, not its rim length — so a fixed 1e-4 is a bitwise no-op
+    // in f32 above a diagonal of 2048, which a rim of roughly 700 edges reaches.
+    // Every routine socket was therefore solving an unregularized 6x6, and on a
+    // near-rank-deficient rim (a long thin interproximal slot, whose samples are
+    // nearly collinear in plane) the coefficients blow up, the lifted interior
+    // is refused by the fold and pierce guards, and the hole comes back
+    // "damaged" instead of filled.
+    #[allow(clippy::cast_possible_truncation)]
+    let ridge = QUADRIC_RIDGE * (weight_sum as f32).max(1.0);
     for (i, row) in normal_matrix.iter_mut().enumerate() {
-        row[i] += QUADRIC_RIDGE;
+        row[i] += ridge;
     }
     let scaled = solve6(normal_matrix, normal_rhs).unwrap_or([0.0; 6]);
     // Undo the normalization: h = s*c0' + c1'*a + c2'*b + (c3'/s)*a^2 + ...

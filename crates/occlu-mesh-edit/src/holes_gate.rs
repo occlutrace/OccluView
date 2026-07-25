@@ -22,6 +22,16 @@ const BORDER_RIM_RATIO: f64 = 0.5;
 /// even when it happens to be the largest one (closed mesh with pinholes).
 const BORDER_BBOX_FRACTION: f64 = 0.5;
 
+/// Border guard, sole-rim case: with only one rim the ratio test carries no
+/// information (a rim is always at least half of itself), so the decision rests
+/// entirely on the absolute anchor — and half the diagonal is far too eager
+/// there. A scan border is the outline of an open sheet and runs close to the
+/// model's full extent; a molar socket on a closed model is 25-35 mm perimeter
+/// on a 65-75 mm arch, which the old rule declared "border" and refused to
+/// fill. Requiring the full diagonal keeps a genuine open-sheet border out
+/// while letting a socket close.
+const SOLE_RIM_BBOX_FRACTION: f64 = 1.0;
+
 /// Walk every boundary chain into loops (skipping already-visited starts),
 /// splitting merged pinch loops at coincident-position revisits, and pairing
 /// each loop with its mm perimeter. Failed / too-short chains are tallied as
@@ -69,16 +79,23 @@ pub(super) fn collect_boundary_loops(
 /// at least [`BORDER_BBOX_FRACTION`] of the referenced bounding-box diagonal.
 /// The absolute anchor keeps a closed-but-pinholed mesh fillable: without it,
 /// the largest PINHOLE would masquerade as "the border" and stay open.
+///
+/// With a single rim the ratio half of that rule is vacuous — a rim is always
+/// at least half of itself — so the anchor alone decides, and it tightens to
+/// [`SOLE_RIM_BBOX_FRACTION`]. See that constant for why.
 pub(super) fn border_perimeter_threshold(
     mesh: &MeshEditBuffers,
     loops: &[(Vec<usize>, f64)],
 ) -> f64 {
+    let diagonal = f64::from(referenced_bbox_diagonal(mesh));
+    if loops.len() <= 1 {
+        return diagonal * SOLE_RIM_BBOX_FRACTION;
+    }
     let largest = loops
         .iter()
         .map(|(_, perimeter)| *perimeter)
         .fold(0.0_f64, f64::max);
-    let absolute_floor = f64::from(referenced_bbox_diagonal(mesh)) * BORDER_BBOX_FRACTION;
-    (largest * BORDER_RIM_RATIO).max(absolute_floor)
+    (largest * BORDER_RIM_RATIO).max(diagonal * BORDER_BBOX_FRACTION)
 }
 
 /// Diagonal of the bounding box of REFERENCED vertices (unreferenced debris

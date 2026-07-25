@@ -1,4 +1,10 @@
 use glam::Vec3;
+
+/// Squared sine of the smallest angle a facet may have and still contribute a
+/// normal. Scale-free: the test compares twice the facet's area against its own
+/// longest edge squared, so it means the same thing on a 10 mm arch and on a
+/// 10 um sliver.
+const DEGENERATE_AREA_SIN: f32 = 1e-10;
 use std::collections::HashMap;
 
 use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
@@ -37,7 +43,19 @@ pub fn recompute_all_normals(
         let b = Vec3::from_array(vertices[ib].position);
         let c = Vec3::from_array(vertices[ic].position);
         let face_normal = (b - a).cross(c - a);
-        if face_normal.is_finite() && face_normal.length_squared() > f32::EPSILON {
+        // Relative to the facet's own edges, not an absolute epsilon. The
+        // cross product is twice an AREA — square millimetres — so comparing it
+        // against a dimensionless f32::EPSILON dropped every facet with edges
+        // under about 19 um. Lab scanners at 7 um point spacing produce exactly
+        // those, and their vertices fell through to a hard +Z fallback: visible
+        // shading speckle on the finest regions of a scan.
+        let longest_edge_sq = (b - a)
+            .length_squared()
+            .max((c - b).length_squared())
+            .max((a - c).length_squared());
+        if face_normal.is_finite()
+            && face_normal.length_squared() > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
+        {
             normals[ia] += face_normal;
             normals[ib] += face_normal;
             normals[ic] += face_normal;
@@ -45,7 +63,9 @@ pub fn recompute_all_normals(
     }
 
     for (vertex, normal) in vertices.iter_mut().zip(normals) {
-        vertex.normal = if normal.length_squared() > f32::EPSILON {
+        // The accumulated normal is a sum of face normals, so its magnitude
+        // carries the same area units; a normalize only needs it to be nonzero.
+        vertex.normal = if normal.length_squared() > 0.0 && normal.is_finite() {
             normal.normalize().to_array()
         } else {
             Vec3::Z.to_array()
