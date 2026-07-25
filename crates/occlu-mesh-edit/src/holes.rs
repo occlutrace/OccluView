@@ -146,21 +146,32 @@ pub fn fill_selected_holes(
 ///
 /// The returned [`MeshEditResult`] is exactly what [`fill_holes`] returns
 /// (same mesh, same report, same warnings); the stats only add resolution.
-pub(crate) fn fill_holes_with_outcome(
+/// Validate the inputs and take the input counts the report is measured against.
+fn accept_fill_inputs(
     mesh: &MeshEditBuffers,
     selection: Option<&FaceSelection>,
     options: MeshEditOptions,
-) -> Result<(MeshEditResult, FillLoopStats), MeshEditError> {
+) -> Result<(MeshEditOptions, FillInputCounts), MeshEditError> {
     let options = validate_mesh_edit_options(options)?;
     validate_face_edit_buffers(mesh.topology, &mesh.vertices, &mesh.indices)?;
     if let Some(selection) = selection {
         validate_selection_against_triangle_count(mesh.triangle_count(), selection)?;
     }
+    Ok((
+        options,
+        FillInputCounts {
+            vertices: mesh.vertices.len(),
+            triangles: mesh.triangle_count(),
+        },
+    ))
+}
 
-    let counts = FillInputCounts {
-        vertices: mesh.vertices.len(),
-        triangles: mesh.triangle_count(),
-    };
+pub(crate) fn fill_holes_with_outcome(
+    mesh: &MeshEditBuffers,
+    selection: Option<&FaceSelection>,
+    options: MeshEditOptions,
+) -> Result<(MeshEditResult, FillLoopStats), MeshEditError> {
+    let (options, counts) = accept_fill_inputs(mesh, selection, options)?;
 
     if counts.triangles == 0 {
         return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));

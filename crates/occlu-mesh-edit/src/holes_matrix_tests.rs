@@ -679,15 +679,20 @@ fn healing_reports_the_triangles_it_actually_deleted() {
 
     let filled = fill_holes(&mesh, None, options).expect("fill runs");
 
+    // The contract: whatever healing deleted has to be visible in the report.
+    // If the mesh came back smaller than it went in, `removed_triangles` is the
+    // only field that can explain it, and it used to be hardcoded to zero.
     let report = &filled.report;
-    let net = report.output_triangles as i64 - report.input_triangles as i64;
-    let accounted = report.filled_holes as i64 * 0 + net;
+    if report.output_triangles < report.input_triangles {
+        assert!(
+            report.removed_triangles > 0,
+            "the mesh shrank from {} to {} triangles but the report says nothing was removed",
+            report.input_triangles,
+            report.output_triangles
+        );
+    }
     assert!(
-        report.removed_triangles > 0 || accounted >= 0,
-        "a healing pass that shrinks the mesh must report what it removed: \
-         in {} out {} removed {}",
-        report.input_triangles,
-        report.output_triangles,
-        report.removed_triangles
+        report.removed_triangles <= report.input_triangles,
+        "cannot remove more triangles than went in"
     );
 }
