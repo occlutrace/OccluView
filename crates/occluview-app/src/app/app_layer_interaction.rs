@@ -178,10 +178,25 @@ impl OccluViewApp {
         let target =
             ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
         let mut request = None;
+        let mut scene_request = None;
+        // Empty space is not "no menu": the scene itself has actions, and one
+        // of them — saving — is the only way a moved scan survives the session,
+        // because the viewer has no project file.
+        let (has_layers, any_moved) = self.scene_menu_state();
         response.context_menu(|ui| match target {
             Some(target) => layers_overlay::show_layer_context_menu(ui, &target, &mut request),
-            None => ui.close_menu(),
+            None => layers_overlay::show_scene_context_menu(
+                ui,
+                has_layers,
+                any_moved,
+                &mut scene_request,
+            ),
         });
+
+        if let Some(action) = scene_request {
+            self.apply_scene_context_action(action, ctx);
+            return;
+        }
 
         let Some(request) = request else {
             return;

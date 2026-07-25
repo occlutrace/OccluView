@@ -71,6 +71,9 @@ pub(crate) enum EditModeCommand {
     CloseHoles,
     Sculpt,
     RepairMesh,
+    /// A layer pose changed: aligning, a hand drag, or a reset. The geometry
+    /// is untouched; only the placement moves.
+    MoveLayer,
 }
 
 /// Result of attempting to finish a busy edit operation.

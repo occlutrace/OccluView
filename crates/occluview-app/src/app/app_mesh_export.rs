@@ -1,3 +1,4 @@
+use super::app_scene_export::posed_mesh;
 use super::{
     AppErrorDialog, LayerContextAction, LayerContextRequest, OccluViewApp, PathBuf, Scene,
 };
@@ -130,11 +131,16 @@ fn write_layer_export_to_path(
     }
 
     let format = mesh_export_format_from_path(path)?;
-    write_mesh_overwrite(path, &entry.mesh, format, MeshWriteOptions::default())
-        .with_context(|| format!("writing {}", path.display()))
+    write_mesh_overwrite(
+        path,
+        &posed_mesh(entry),
+        format,
+        MeshWriteOptions::default(),
+    )
+    .with_context(|| format!("writing {}", path.display()))
 }
 
-fn mesh_export_format_from_path(path: &Path) -> Result<MeshWriteFormat> {
+pub(super) fn mesh_export_format_from_path(path: &Path) -> Result<MeshWriteFormat> {
     let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
         bail!("unsupported export format; choose an output file ending in .ply, .stl, or .obj");
     };
@@ -155,7 +161,7 @@ fn mesh_export_format_label(format: MeshWriteFormat) -> &'static str {
     }
 }
 
-fn layer_export_file_dialog(default_format: MeshWriteFormat) -> rfd::FileDialog {
+pub(super) fn layer_export_file_dialog(default_format: MeshWriteFormat) -> rfd::FileDialog {
     let formats = match default_format {
         MeshWriteFormat::StlBinary => [
             MeshWriteFormat::StlBinary,
@@ -211,7 +217,7 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
     }
 }
 
-fn default_layer_export_format(paths: &[PathBuf], index: usize) -> MeshWriteFormat {
+pub(super) fn default_layer_export_format(paths: &[PathBuf], index: usize) -> MeshWriteFormat {
     source_path_for_export_defaults(paths, index)
         .and_then(mesh_export_format_from_source_path)
         .unwrap_or(MeshWriteFormat::PlyBinaryLittleEndian)
@@ -224,7 +230,7 @@ fn default_layer_export_directory(paths: &[PathBuf], index: usize) -> Option<Pat
         .map(Path::to_path_buf)
 }
 
-fn mesh_write_extension(format: MeshWriteFormat) -> &'static str {
+pub(super) fn mesh_write_extension(format: MeshWriteFormat) -> &'static str {
     match format {
         MeshWriteFormat::StlBinary => "stl",
         MeshWriteFormat::PlyBinaryLittleEndian => "ply",
@@ -232,7 +238,10 @@ fn mesh_write_extension(format: MeshWriteFormat) -> &'static str {
     }
 }
 
-fn normalize_layer_export_path(path: PathBuf, fallback_format: MeshWriteFormat) -> PathBuf {
+pub(super) fn normalize_layer_export_path(
+    path: PathBuf,
+    fallback_format: MeshWriteFormat,
+) -> PathBuf {
     if path.extension().is_none() {
         path.with_extension(mesh_write_extension(fallback_format))
     } else {
@@ -275,7 +284,7 @@ fn mesh_export_warning_summary(warnings: &[MeshWriteWarning]) -> Option<String> 
     (!labels.is_empty()).then(|| labels.join(", "))
 }
 
-fn sanitize_filename_stem(raw: &str) -> String {
+pub(super) fn sanitize_filename_stem(raw: &str) -> String {
     raw.trim()
         .chars()
         .map(|character| match character {

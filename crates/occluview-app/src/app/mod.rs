@@ -51,6 +51,8 @@ mod app_mesh_export;
 mod app_render;
 mod app_scale_bar;
 mod app_scene_commit;
+mod app_scene_export;
+mod app_scene_menu;
 mod app_sculpt;
 mod app_sculpt_worker;
 mod app_viewport;
