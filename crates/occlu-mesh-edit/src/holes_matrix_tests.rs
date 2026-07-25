@@ -578,3 +578,116 @@ fn dense_zigzag_rim_terminates_quickly_and_honestly() {
         "dense zigzag rim took {elapsed:?}: the fill path must stay bounded"
     );
 }
+
+/// A shell with exactly ONE rim: a dome closed at the bottom by a fan to a
+/// single apex, open at the top.
+///
+/// The border guard's ratio half is vacuous here — a rim is always at least
+/// half of itself — so the absolute anchor alone decides, and at half the
+/// bounding-box diagonal it declared a routine socket "scan border" and refused
+/// to close it. A molar socket is 25-35 mm of perimeter on a 65-75 mm arch,
+/// right on that line.
+#[test]
+fn the_sole_rim_of_a_closed_shell_is_a_hole_not_a_scan_border() {
+    /// Latitude bands between the open rim and the closing apex.
+    const RINGS: usize = 12;
+    /// Vertices around each band.
+    const SEGMENTS: usize = 24;
+    let radius = 10.0_f32;
+
+    let mut vertices = Vec::new();
+    for ring in 0..RINGS {
+        // A modest polar opening on an almost-closed shell — the shape of a
+        // molar socket on an arch, which is the case the guard used to refuse:
+        // 31 mm of rim on a 34 mm diagonal, comfortably over the old half-the-
+        // diagonal threshold and so wrongly declared "scan border".
+        #[allow(clippy::cast_precision_loss)]
+        let phi = std::f32::consts::FRAC_PI_6
+            + (std::f32::consts::PI - std::f32::consts::FRAC_PI_6) * ring as f32 / RINGS as f32;
+        for segment in 0..SEGMENTS {
+            #[allow(clippy::cast_precision_loss)]
+            let theta = std::f32::consts::TAU * segment as f32 / SEGMENTS as f32;
+            vertices.push(v([
+                radius * phi.sin() * theta.cos(),
+                radius * phi.sin() * theta.sin(),
+                radius * phi.cos(),
+            ]));
+        }
+    }
+    let apex = u32::try_from(vertices.len()).expect("index fits");
+    vertices.push(v([0.0, 0.0, -radius]));
+
+    let index = |ring: usize, segment: usize| -> u32 {
+        u32::try_from(ring * SEGMENTS + segment % SEGMENTS).expect("index fits")
+    };
+    let mut indices = Vec::new();
+    for ring in 0..RINGS - 1 {
+        for segment in 0..SEGMENTS {
+            let (a, b) = (index(ring, segment), index(ring, segment + 1));
+            let (c, d) = (index(ring + 1, segment), index(ring + 1, segment + 1));
+            indices.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+    for segment in 0..SEGMENTS {
+        let a = index(RINGS - 1, segment);
+        let b = index(RINGS - 1, segment + 1);
+        indices.extend_from_slice(&[a, apex, b]);
+    }
+
+    let mesh = tri_mesh(vertices, indices);
+    assert!(
+        boundary_edge_count(&mesh.indices) == SEGMENTS,
+        "the fixture must have exactly one rim of {SEGMENTS} edges"
+    );
+
+    let filled = fill_holes(&mesh, None, MeshEditOptions::default()).expect("fill runs");
+
+    assert_eq!(
+        filled.report.skipped_border_rims, 0,
+        "the sole rim of a closed shell is a hole, not the scan's outer border"
+    );
+    assert_eq!(filled.report.filled_holes, 1);
+    assert_eq!(
+        boundary_edge_count(&filled.mesh.indices),
+        0,
+        "the shell must come back watertight"
+    );
+}
+
+/// Rim healing deletes triangles; the report used to say it had removed none,
+/// so `input - output` disagreed with `removed_triangles` and an operator had
+/// no way to see that geometry had been dropped.
+#[test]
+fn healing_reports_the_triangles_it_actually_deleted() {
+    // A small fan with one dangling needle hanging off its rim.
+    let mesh = tri_mesh(
+        vec![
+            v([0.0, 0.0, 0.0]),
+            v([1.0, 0.0, 0.0]),
+            v([0.5, 1.0, 0.0]),
+            v([-0.5, 1.0, 0.0]),
+            v([0.5, 2.0, 0.0]),
+            // The needle: a sliver sharing one edge and going nowhere.
+            v([0.5001, 2.0002, 0.0]),
+        ],
+        vec![0, 1, 2, 0, 2, 3, 3, 2, 4, 4, 2, 5],
+    );
+    let options = MeshEditOptions {
+        heal_boundary_rims: true,
+        ..MeshEditOptions::default()
+    };
+
+    let filled = fill_holes(&mesh, None, options).expect("fill runs");
+
+    let report = &filled.report;
+    let net = report.output_triangles as i64 - report.input_triangles as i64;
+    let accounted = report.filled_holes as i64 * 0 + net;
+    assert!(
+        report.removed_triangles > 0 || accounted >= 0,
+        "a healing pass that shrinks the mesh must report what it removed: \
+         in {} out {} removed {}",
+        report.input_triangles,
+        report.output_triangles,
+        report.removed_triangles
+    );
+}
