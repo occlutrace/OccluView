@@ -9,8 +9,9 @@
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
-use super::app_align::layer_of;
 use super::OccluViewApp;
+use crate::edit_mode::EditModeCommand;
+use glam::Affine3A;
 
 /// How solid the un-mapped scan stays while the heatmap is up. Enough to keep
 /// the shape readable, faint enough that it never covers the coloured surface.
@@ -40,16 +41,35 @@ impl OccluViewApp {
     }
 
     /// Whether anything actually moved since the tool opened.
+    ///
+    /// Walks the live scene, not the snapshot: a layer that arrived mid-session
+    /// is inside the transaction too, and reporting "nothing moved" after
+    /// dragging it would be a lie Cancel then acts on.
     pub(super) fn align_session_moved(&self) -> bool {
         let Some(scene) = self.scene.as_ref() else {
             return false;
         };
+        scene.meshes().iter().any(|entry| {
+            self.session_pose_of(entry.id())
+                .is_none_or(|pose| entry.transform != pose)
+        })
+    }
+
+    /// The pose a layer had when the session opened, if it was there.
+    fn session_pose_of(&self, layer: SceneMeshId) -> Option<Affine3A> {
         self.align_session_poses
             .iter()
-            .any(|(id, pose)| layer_of(scene, *id).is_some_and(|entry| entry.transform != *pose))
+            .find(|(id, _)| *id == layer)
+            .map(|(_, pose)| *pose)
     }
 
     /// Put every layer back to the pose the session started from.
+    ///
+    /// The restore is itself one history step. Without it the scene changed
+    /// under a history stack that still described the discarded poses, so
+    /// Ctrl+Z after Cancel resurrected work the operator had just thrown away.
+    /// As one step, Ctrl+Z means "actually, put the alignment back" — which is
+    /// what an operator who cancelled by mistake wants.
     fn restore_session_poses(&mut self) -> bool {
         if !self.align_session_moved() {
             return false;
@@ -58,11 +78,21 @@ impl OccluViewApp {
             return false;
         };
         let mut next = scene.as_ref().clone();
-        for (id, pose) in &self.align_session_poses {
-            if let Some(entry) = next.meshes_mut().iter_mut().find(|entry| entry.id() == *id) {
-                entry.transform = *pose;
+        let Some(focus) = next.meshes().first().map(occluview_core::SceneMesh::id) else {
+            return false;
+        };
+        let Some(token) = self
+            .edit_mode
+            .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
+        else {
+            return false;
+        };
+        for entry in next.meshes_mut() {
+            if let Some(pose) = self.session_pose_of(entry.id()) {
+                entry.transform = pose;
             }
         }
+        self.edit_mode.finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
         true
     }
