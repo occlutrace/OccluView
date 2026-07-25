@@ -5,6 +5,10 @@
 //! vertex with no fixed surface inside the influence radius is **not**
 //! measured — it is marked and painted grey, because painting it at full scale
 //! would be a lie, and letting it into the statistics would be a worse one.
+//!
+//! A vertex the operator painted out is treated the same way. Excluding a
+//! region from the fit but still counting it in the numbers would report a
+//! quality the operator explicitly said not to measure.
 
 use glam::DVec3;
 use rayon::prelude::*;
@@ -31,6 +35,8 @@ pub enum Validity {
     DegenerateNormal,
     /// The moving vertex itself is not finite.
     NonFinite,
+    /// The operator painted this vertex out of the comparison.
+    Excluded,
 }
 
 /// What to measure and how far to look.
@@ -159,6 +165,9 @@ fn measure_vertex(
     settings: &DeviationSettings,
     vertex: usize,
 ) -> (f32, Validity) {
+    if moving.is_excluded(vertex) {
+        return (0.0, Validity::Excluded);
+    }
     let Some(local) = vertex_at(moving.positions, vertex) else {
         return (0.0, Validity::NonFinite);
     };
@@ -441,6 +450,38 @@ mod tests {
         assert_eq!(stats.measured, 3);
         assert!((stats.within_tolerance - 1.0).abs() < 1e-9);
         assert!((stats.mean_abs - 0.1).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_painted_out_vertex_is_excluded_from_the_map_and_the_numbers() {
+        let (fixed_positions, fixed_indices) = sheet();
+        let index = SurfaceIndex::build(Soup {
+            positions: &fixed_positions,
+            indices: &fixed_indices,
+            mask: None,
+        })
+        .unwrap();
+        let moving = lifted(&fixed_positions, 0.1);
+        let mask = [0u8, 1, 0, 0];
+        let map = deviation(
+            Soup {
+                positions: &moving,
+                indices: &fixed_indices,
+                mask: Some(&mask),
+            },
+            &index,
+            Rigid::IDENTITY,
+            &settings(),
+            &CancelFlag::new(),
+        );
+
+        assert_eq!(map.validity[1], Validity::Excluded);
+        assert_eq!(map.validity[0], Validity::Measured);
+
+        let stats = deviation_stats(&map, 0.2);
+        assert_eq!(stats.measured, 3, "a painted vertex must leave the numbers");
+        let colors = deviation_colors(&map, &RampSettings::default());
+        assert_eq!(colors[1], NO_DATA_COLOR);
     }
 
     #[test]
