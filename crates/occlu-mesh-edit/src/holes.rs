@@ -180,6 +180,13 @@ pub(crate) fn fill_holes_with_outcome(
     // below stay byte-for-byte unchanged there.
     let healing = apply_rim_healing(mesh, selection, options.heal_boundary_rims);
     let healed_rims = healing.healed_rims;
+    // Rim healing DELETES triangles (dangling needles, lone faces, faces
+    // collapsed by a weld). Reporting zero removed while the output is smaller
+    // than the input made `input - output` disagree with the report, and left
+    // the operator no way to see that geometry had been dropped.
+    let removed_triangles = healing.mesh.as_ref().map_or(0, |healed| {
+        counts.triangles.saturating_sub(healed.indices.len() / 3)
+    });
     let (mesh, selection): (&MeshEditBuffers, Option<&FaceSelection>) = match &healing.mesh {
         Some(healed) => (healed, healing.selection.as_ref()),
         None => (mesh, selection),
@@ -215,6 +222,7 @@ pub(crate) fn fill_holes_with_outcome(
             counts,
             stats,
             healed_rims,
+            removed_triangles,
         )?;
         return Ok((result, stats));
     }
@@ -301,6 +309,7 @@ pub(crate) fn fill_holes_with_outcome(
         counts,
         stats,
         healed_rims,
+        removed_triangles,
     )?;
     Ok((result, stats))
 }
@@ -393,6 +402,7 @@ fn finalize_fill_result(
     counts: FillInputCounts,
     stats: FillLoopStats,
     healed_rims: usize,
+    removed_triangles: usize,
 ) -> Result<MeshEditResult, MeshEditError> {
     // Public contract: one DegenerateGeometry warning per skipped loop,
     // whatever the skip reason (border and oversize rims included). The
@@ -433,7 +443,7 @@ fn finalize_fill_result(
             input_triangles: counts.triangles,
             output_vertices,
             output_triangles,
-            removed_triangles: 0,
+            removed_triangles,
             filled_holes,
             moved_vertices: 0,
             skipped_border_rims: stats.skipped_border,
