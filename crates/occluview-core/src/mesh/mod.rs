@@ -47,8 +47,9 @@ pub use builder::MeshBuilder;
 pub use edit_adapter::{
     component_at_triangle_in_mesh, crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
     fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
-    mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, repair_mesh_in_mesh,
-    selected_connected_components_in_mesh, CoreMeshEditResult, CoreMeshRepairResult,
+    mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
+    repair_mesh_in_mesh, selected_connected_components_in_mesh, CoreMeshEditResult,
+    CoreMeshRepairResult,
 };
 pub use principal_axis::PrincipalFrame;
 pub use texture::MeshTexture;

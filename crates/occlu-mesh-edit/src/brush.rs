@@ -16,6 +16,16 @@
 //! Smooth reuses the same relaxer; boundaries and disconnected components stay
 //! protected.
 //!
+//! # Dynamic topology
+//!
+//! Smooth first DENSIFIES the surface under the dab (see the `grow` child
+//! module): a relaxer can only move vertices it has, so on a coarse edge there
+//! is nothing to relax until the stroke puts vertices there. Densification
+//! appends vertices and rewrites triangles, so a dab can change the topology —
+//! [`BrushStrokeOutcome::topology_changed`] tells the caller its GPU buffers
+//! and any cached mesh identity are stale and must be rebuilt from
+//! [`BrushSession::vertices`] and [`BrushSession::indices`].
+//!
 //! # Soup correctness
 //!
 //! STL gives each triangle corner its own vertex, so the vertex ARRAY keeps
@@ -32,8 +42,8 @@ use std::collections::HashSet;
 use super::brush_csr::Csr;
 use super::brush_index::VertexGrid;
 use super::brush_math::{
-    boundary_mask, compute_step_budget, falloff, is_single_component, on_flipped_triangle,
-    refresh_step_budget, scope_area_normals, smooth_pass_count, smoothstep,
+    boundary_mask, compute_step_budget, falloff, is_single_component, refresh_step_budget,
+    smooth_pass_count, smoothstep,
 };
 use super::cap_support::build_vertex_adjacency;
 use super::topology::{canonical_topology, sibling_rows_from_representatives, TopologyWeldPolicy};
@@ -41,6 +51,11 @@ use super::{
     validate_face_edit_buffers, EditVertex, MeshEditBuffers, MeshEditError, MeshEditReport,
     MeshEditResult, MeshTopology,
 };
+
+#[path = "brush_grow.rs"]
+mod grow;
+#[path = "brush_upkeep.rs"]
+mod upkeep;
 
 /// Uniform-Laplacian factor for the Smooth tool: aggressive by design (the
 /// operator asked for cardinal flattening), strength = pass count.
@@ -80,6 +95,10 @@ const MAX_LOCAL_ROLLBACK_ITERS: usize = 4;
 /// radius query scans a small bounded cube of cells regardless of brush size
 /// vs. mesh scale — fixes a big brush stuttering over millions of empty cells.
 const GRID_CELLS_ACROSS_RADIUS: f32 = 4.0;
+/// Smallest session growth allowance, in added vertices. A small crop still
+/// gets room for a real densified stroke; a big scan uses its own vertex count
+/// (see [`BrushSession::added_vertex_budget`]) instead.
+const MIN_ADDED_VERTEX_BUDGET: usize = 50_000;
 
 /// One brush dab: a soft-falloff disc centered on the surface.
 #[derive(Copy, Clone, Debug)]
@@ -121,6 +140,22 @@ pub enum BrushMode {
 pub struct BrushStrokeOutcome {
     /// Touched vertex ids, unique, in first-touched order.
     pub touched_vertices: Vec<usize>,
+    /// Vertices APPENDED by densification during this dab. New ids are always
+    /// contiguous and end the array, so they occupy
+    /// `vertex_count() - added_vertices .. vertex_count()`. Existing ids never
+    /// move, so a caller's sparse vertex mapping stays valid for the old range.
+    pub added_vertices: usize,
+}
+
+impl BrushStrokeOutcome {
+    /// Whether this dab changed the triangle list. When true the caller's
+    /// uploaded geometry is stale in both size and content: it must re-read
+    /// [`BrushSession::vertices`] and [`BrushSession::indices`] and re-upload,
+    /// rather than streaming a sparse vertex update.
+    #[must_use]
+    pub fn topology_changed(&self) -> bool {
+        self.added_vertices > 0
+    }
 }
 
 /// A prepared freeform-sculpting session over one mesh. See the module docs
@@ -169,6 +204,24 @@ pub struct BrushSession {
     component_stamp: Vec<u32>,
     /// Current generation for the stamp buffer.
     stamp_generation: u32,
+    /// Visited stamp per TRIANGLE, for the densification region flood. Grows
+    /// with the triangle list.
+    triangle_stamp: Vec<u32>,
+    /// Current generation for the triangle stamp buffer.
+    triangle_stamp_generation: u32,
+    /// Welded representative of every vertex id — the identity densification
+    /// needs to recognize one physical edge across an STL soup's duplicate
+    /// corners. A vertex minted by a split represents itself.
+    representative_of: Vec<u32>,
+    /// Whether Smooth may add vertices under the dab. On by default; the
+    /// operator's Smooth is useless on a coarse edge without it.
+    densify: bool,
+    /// Vertex count at `prepare`, the base the growth budget is measured from.
+    prepared_vertices: usize,
+    /// Triangle count at `prepare`, reported as `report.input_triangles`.
+    prepared_triangles: usize,
+    /// Most vertices densification may add across the whole session.
+    added_vertex_budget: usize,
     /// Every vertex id touched by any dab so far this session — reported as
     /// `report.moved_vertices` by `finish`.
     touched_total: HashSet<usize>,
@@ -227,6 +280,7 @@ impl BrushSession {
             .collect();
         let max_step = compute_step_budget(&positions, &adjacency, &position_siblings);
         let grid = VertexGrid::build(&positions);
+        let triangle_count = mesh.indices.len() / 3;
 
         Ok(Self {
             vertices: mesh.vertices.clone(),
@@ -245,16 +299,81 @@ impl BrushSession {
             grid_dirty: Vec::new(),
             component_stamp: vec![0; vertex_count],
             stamp_generation: 0,
+            triangle_stamp: vec![0; triangle_count],
+            triangle_stamp_generation: 0,
+            representative_of: canonical.representative_of().to_vec(),
+            densify: true,
+            prepared_vertices: vertex_count,
+            prepared_triangles: triangle_count,
+            added_vertex_budget: vertex_count.max(MIN_ADDED_VERTEX_BUDGET),
             touched_total: HashSet::new(),
         })
+    }
+
+    /// Whether Smooth densifies the surface under the dab. On by default.
+    #[must_use]
+    pub fn densify_enabled(&self) -> bool {
+        self.densify
+    }
+
+    /// Turn densification on or off for the rest of the session.
+    pub fn set_densify_enabled(&mut self, enabled: bool) {
+        self.densify = enabled;
+    }
+
+    /// Most vertices densification may add across the whole session, over and
+    /// above the prepared count. This is the enforced growth bound: no stroke,
+    /// however long, can take `vertex_count()` past
+    /// `prepared_vertex_count() + added_vertex_budget()`. Defaults to the
+    /// prepared vertex count (or [`MIN_ADDED_VERTEX_BUDGET`] for a small mesh).
+    #[must_use]
+    pub fn added_vertex_budget(&self) -> usize {
+        self.added_vertex_budget
+    }
+
+    /// Replace the session growth bound.
+    pub fn set_added_vertex_budget(&mut self, budget: usize) {
+        self.added_vertex_budget = budget;
+    }
+
+    /// Vertex count at `prepare`, before any densification.
+    #[must_use]
+    pub fn prepared_vertex_count(&self) -> usize {
+        self.prepared_vertices
+    }
+
+    /// Live vertex count, including everything densification has added.
+    #[must_use]
+    pub fn vertex_count(&self) -> usize {
+        self.vertices.len()
+    }
+
+    /// Live triangle indices. Changes only when a dab reports
+    /// [`BrushStrokeOutcome::topology_changed`].
+    #[must_use]
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
     }
 
     /// Apply one dab, mutating touched vertex positions and normals in place.
     /// Returns exactly the touched vertex ids for a partial GPU update; empty
     /// when the dab has no effect (zero strength/radius, or no vertex in reach).
     pub fn apply_stroke(&mut self, stroke: BrushStroke, mode: BrushMode) -> BrushStrokeOutcome {
+        // Densify FIRST, so the relaxer has vertices to move where the surface
+        // is coarser than the brush. Splitting is a pure topology change — it
+        // leaves the surface exactly where it was — so it never competes with
+        // the displacement guards that run below.
+        let added_vertices =
+            if self.densify && mode == BrushMode::Smooth && stroke.strength.clamp(0.0, 1.0) > 0.0 {
+                self.refine_dab(Vec3::from_array(stroke.center), stroke.radius_mm)
+            } else {
+                0
+            };
         let Some((weighted, strength)) = self.weighted_candidates(stroke) else {
-            return BrushStrokeOutcome::default();
+            return BrushStrokeOutcome {
+                touched_vertices: Vec::new(),
+                added_vertices,
+            };
         };
         // Snapshot the region so grid maintenance runs once at dab end.
         self.snapshot_grid_region(&weighted);
@@ -274,7 +393,10 @@ impl BrushSession {
                 > f32::EPSILON
         });
         if touched.is_empty() {
-            return BrushStrokeOutcome::default();
+            return BrushStrokeOutcome {
+                touched_vertices: Vec::new(),
+                added_vertices,
+            };
         }
         // Dedup via a stamp (no sort): `touched` has duplicates (displacement +
         // auto-smooth + soup siblings), and sorting tens of thousands of ids per
@@ -304,6 +426,7 @@ impl BrushSession {
         self.recompute_normals_near(&unique);
         BrushStrokeOutcome {
             touched_vertices: unique,
+            added_vertices,
         }
     }
 
@@ -342,101 +465,6 @@ impl BrushSession {
             self.restrict_to_component(weighted, center)
         };
         (!weighted.is_empty()).then_some((weighted, strength))
-    }
-
-    /// Keep only candidates in the same connected component as the vertex
-    /// nearest the dab center, by flooding welded rings (and soup siblings)
-    /// through the in-disc set. A Euclidean radius query can pull in a
-    /// spatially-close but topologically SEPARATE surface (a dropout island,
-    /// the opposing arch behind the cursor); this stops a dab from dragging
-    /// two disjoint sheets together, for Add/Remove as well as Smooth.
-    fn restrict_to_component(
-        &mut self,
-        weighted: Vec<(usize, f32)>,
-        center: Vec3,
-    ) -> Vec<(usize, f32)> {
-        if weighted.len() <= 1 {
-            return weighted;
-        }
-        let Some(seed) = weighted
-            .iter()
-            .min_by(|a, b| {
-                let da = self.position(a.0).distance(center);
-                let db = self.position(b.0).distance(center);
-                da.total_cmp(&db)
-            })
-            .map(|&(id, _)| id)
-        else {
-            return weighted;
-        };
-        // Two generations off one reusable stamp buffer, no per-dab allocation:
-        // `in_disc` marks the candidate set, `reached` marks the flood fill.
-        let in_disc = self.next_stamp();
-        for &(id, _) in &weighted {
-            self.component_stamp[id] = in_disc;
-        }
-        let reached = self.next_stamp();
-        let mut stack = vec![seed];
-        self.component_stamp[seed] = reached;
-        // The CSR rows borrow `self.adjacency`/`self.position_siblings`, disjoint
-        // from the `self.component_stamp` we stamp, so a plain iterator is fine.
-        while let Some(vertex_id) = stack.pop() {
-            for &neighbor in self.adjacency.row(vertex_id) {
-                let neighbor = neighbor as usize;
-                if self.component_stamp[neighbor] == in_disc {
-                    self.component_stamp[neighbor] = reached;
-                    stack.push(neighbor);
-                }
-            }
-            for &neighbor in self.position_siblings.row(vertex_id) {
-                let neighbor = neighbor as usize;
-                if self.component_stamp[neighbor] == in_disc {
-                    self.component_stamp[neighbor] = reached;
-                    stack.push(neighbor);
-                }
-            }
-        }
-        weighted
-            .into_iter()
-            .filter(|&(id, _)| self.component_stamp[id] == reached)
-            .collect()
-    }
-
-    /// Hand out the next stamp generation, resetting the stamp buffer on the
-    /// rare `u32` wrap so a stale stamp can never masquerade as the current one.
-    fn next_stamp(&mut self) -> u32 {
-        self.stamp_generation = self.stamp_generation.wrapping_add(1);
-        if self.stamp_generation == 0 {
-            self.component_stamp.iter_mut().for_each(|s| *s = 0);
-            self.stamp_generation = 1;
-        }
-        self.stamp_generation
-    }
-
-    /// Keep the spatial grid usable for a dab of `radius`: rebuild it (from
-    /// live positions, cell size matched to radius) only when the brush radius
-    /// changed enough to make the old cell size too coarse or fine — sized to
-    /// radius so a big brush never scans millions of empty cells.
-    fn sync_grid(&mut self, radius: f32) {
-        // ONLY a brush-radius change (which changes cell size) forces a
-        // rebuild — a rare, deliberate size-slider move. Motion during a
-        // stroke is tracked incrementally, not by a per-dab O(n) rebuild
-        // (the stall a big scan showed).
-        if self.grid_radius <= 0.0 {
-            self.grid_radius = radius;
-            return;
-        }
-        if self.grid_radius > 0.0 && (0.6..=1.7).contains(&(radius / self.grid_radius)) {
-            return;
-        }
-        let desired_cell = (radius / GRID_CELLS_ACROSS_RADIUS).max(f32::MIN_POSITIVE);
-        let positions: Vec<Vec3> = self
-            .vertices
-            .iter()
-            .map(|v| Vec3::from_array(v.position))
-            .collect();
-        self.grid = VertexGrid::build_with_cell_size(&positions, desired_cell);
-        self.grid_radius = radius;
     }
 
     /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the brushed
@@ -641,145 +669,13 @@ impl BrushSession {
         self.positions[vertex_id] = position;
     }
 
-    /// Record each movable vertex's pre-dab position (weighted candidates + soup
-    /// siblings) into `grid_dirty` and `pre_position`, deduped via a stamp.
-    fn snapshot_grid_region(&mut self, weighted: &[(usize, f32)]) {
-        self.grid_dirty.clear();
-        let generation = self.next_stamp();
-        for &(vertex_id, _) in weighted {
-            if self.component_stamp[vertex_id] != generation {
-                self.component_stamp[vertex_id] = generation;
-                self.pre_position[vertex_id] = self.positions[vertex_id];
-                self.grid_dirty.push((vertex_id, self.positions[vertex_id]));
-            }
-            for i in 0..self.position_siblings.row_len(vertex_id) {
-                let sibling = self.position_siblings.row(vertex_id)[i] as usize;
-                if self.component_stamp[sibling] != generation {
-                    self.component_stamp[sibling] = generation;
-                    self.pre_position[sibling] = self.positions[sibling];
-                    self.grid_dirty.push((sibling, self.positions[sibling]));
-                }
-            }
-        }
-    }
-
-    /// Relocate every snapshotted vertex from its pre-dab cell to its final one
-    /// in a single pass (a within-cell move is a cheap no-op), so the grid is
-    /// exact for the next dab's query without a per-pass or O(n) rebuild.
-    fn apply_grid_maintenance(&mut self) {
-        let dirty = std::mem::take(&mut self.grid_dirty);
-        for &(vertex_id, previous) in &dirty {
-            self.grid
-                .relocate(vertex_id, previous, self.positions[vertex_id]);
-        }
-        self.grid_dirty = dirty;
-    }
-
-    /// Keep a dab valid without turning one bad facet into a dead brush area.
-    /// First back off the whole region coherently, then revert only vertices
-    /// still involved in invalid triangles. Soup siblings are included in the
-    /// same dirty set, so a local rollback cannot leave a split corner behind.
-    fn rollback_inversions(&mut self) {
-        let generation = self.stamp_generation;
-        let dirty = std::mem::take(&mut self.grid_dirty);
-        for _ in 0..MAX_ROLLBACK_ITERS {
-            let invalid = dirty.par_iter().any(|&(vertex_id, _)| {
-                on_flipped_triangle(
-                    vertex_id,
-                    generation,
-                    &self.incident_triangles,
-                    &self.indices,
-                    &self.positions,
-                    &self.pre_position,
-                    &self.component_stamp,
-                )
-            });
-            if !invalid {
-                break;
-            }
-            for &(vertex_id, _) in &dirty {
-                let before = self.pre_position[vertex_id];
-                let current = self.positions[vertex_id];
-                self.positions[vertex_id] = before.lerp(current, 0.5);
-            }
-        }
-        for _ in 0..MAX_LOCAL_ROLLBACK_ITERS {
-            let invalid: Vec<usize> = dirty
-                .par_iter()
-                .filter(|&&(vertex_id, _)| {
-                    on_flipped_triangle(
-                        vertex_id,
-                        generation,
-                        &self.incident_triangles,
-                        &self.indices,
-                        &self.positions,
-                        &self.pre_position,
-                        &self.component_stamp,
-                    )
-                })
-                .map(|&(vertex_id, _)| vertex_id)
-                .collect();
-            if invalid.is_empty() {
-                break;
-            }
-            for vertex_id in invalid {
-                self.positions[vertex_id] = self.pre_position[vertex_id];
-            }
-        }
-        self.grid_dirty = dirty;
-    }
-
-    /// Recompute normals for the touched vertices and their one-ring, each
-    /// affected vertex reading its own incident faces in parallel (Blender-
-    /// sculpt PR #116209 — no single-threaded face dedup).
-    fn recompute_normals_near(&mut self, touched: &[usize]) {
-        // Build the scope (touched + welded rings + soup siblings) deduped via a
-        // stamp — index loops, no sort, no allocation churn on a big brush.
-        let scope_generation = self.next_stamp();
-        let mut scope: Vec<usize> = Vec::with_capacity(touched.len() * 4);
-        for &vertex_id in touched {
-            if self.component_stamp[vertex_id] != scope_generation {
-                self.component_stamp[vertex_id] = scope_generation;
-                scope.push(vertex_id);
-            }
-            for &neighbor in self.adjacency.row(vertex_id) {
-                let neighbor = neighbor as usize;
-                if self.component_stamp[neighbor] != scope_generation {
-                    self.component_stamp[neighbor] = scope_generation;
-                    scope.push(neighbor);
-                }
-            }
-            for &sibling in self.position_siblings.row(vertex_id) {
-                let sibling = sibling as usize;
-                if self.component_stamp[sibling] != scope_generation {
-                    self.component_stamp[sibling] = scope_generation;
-                    scope.push(sibling);
-                }
-            }
-        }
-
-        // Conflict-free parallel recompute (see `scope_area_normals`), then the
-        // trivial serial normalize + write-back.
-        let new_normals = scope_area_normals(
-            &scope,
-            &self.incident_triangles,
-            &self.indices,
-            &self.positions,
-        );
-        for (offset, &vertex_id) in scope.iter().enumerate() {
-            let sum = new_normals[offset];
-            if sum.length_squared() > f32::EPSILON {
-                self.vertices[vertex_id].normal = sum.normalize().to_array();
-            }
-        }
-    }
-
     /// Bake the session into a [`MeshEditResult`] with updated positions/normals
-    /// and the true count of vertices touched across the session.
+    /// and the true count of vertices touched across the session. Input counts
+    /// are the PREPARED ones, so the report shows what densification added.
     #[must_use]
     pub fn finish(self) -> MeshEditResult {
-        let input_vertices = self.vertices.len();
-        let input_triangles = self.indices.len() / 3;
+        let output_vertices = self.vertices.len();
+        let output_triangles = self.indices.len() / 3;
         let moved_vertices = self.touched_total.len();
         MeshEditResult {
             mesh: MeshEditBuffers {
@@ -788,10 +684,10 @@ impl BrushSession {
                 topology: MeshTopology::TriangleMesh,
             },
             report: MeshEditReport {
-                input_vertices,
-                input_triangles,
-                output_vertices: input_vertices,
-                output_triangles: input_triangles,
+                input_vertices: self.prepared_vertices,
+                input_triangles: self.prepared_triangles,
+                output_vertices,
+                output_triangles,
                 moved_vertices,
                 ..MeshEditReport::default()
             },

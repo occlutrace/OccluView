@@ -9,7 +9,8 @@
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Scene, SceneMeshId, Vertex,
+    mesh_edit_buffers_from_mesh, mesh_from_sculpt_session_like, BrushMode, BrushSession,
+    BrushStroke, Mesh, Scene, SceneMeshId, Vertex,
 };
 use occluview_render::PreparedSceneTopology;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -224,7 +225,7 @@ impl SculptTool {
                             world_to_local: entry.transform.inverse(),
                             local_per_world: 1.0 / scale,
                             dirty_stroke: false,
-                            stroke_start_vertices: None,
+                            stroke_start_mesh: None,
                         }
                     });
                 if !worker_cancel.load(Ordering::Relaxed) {
@@ -275,7 +276,7 @@ pub(crate) struct SculptSession {
     pub(crate) session: BrushSession,
     /// Immutable mesh template used to build completed meshes. It is cloned
     /// on the preparation thread, never in the UI commit path.
-    pub(crate) base_mesh: occluview_core::Mesh,
+    pub(crate) base_mesh: Mesh,
     /// Display copy of the layer's vertex array, patched per dab from the
     /// kernel and streamed into the prepared GPU vertex buffer for live
     /// feedback; also the source of the final committed mesh.
@@ -291,27 +292,88 @@ pub(crate) struct SculptSession {
     /// Whether any dab in the CURRENT stroke actually moved geometry — a stroke
     /// that never touched the surface must not create an undo entry.
     pub(crate) dirty_stroke: bool,
-    /// Vertex positions before the current stroke. The worker turns these
-    /// into the undo mesh off the UI thread when the stroke finishes.
-    pub(crate) stroke_start_vertices: Option<Vec<Vertex>>,
+    /// The layer mesh as it stood before the current stroke — the undo
+    /// baseline, built off the UI thread. It is a whole MESH, not just
+    /// positions: a densifying stroke changes the triangle list too, and undo
+    /// has to put the coarse topology back, not just the old coordinates.
+    pub(crate) stroke_start_mesh: Option<Mesh>,
+}
+
+/// A mid-stroke topology change: Smooth densified the surface, so the layer's
+/// whole geometry has to be replaced and the GPU scene re-prepared. The mesh
+/// carries a FRESH `topology_id`, which is what makes the renderer drop its
+/// exactly-sized buffers instead of streaming into buffers that are now too
+/// small.
+pub(crate) struct SculptRebuild {
+    /// The layer's new geometry, ready to swap into the scene.
+    pub(crate) mesh: Mesh,
+    /// Its GPU topology token, which the worker adopts for later sparse writes.
+    pub(crate) topology: PreparedSceneTopology,
+}
+
+/// What one dab produced: either a sparse vertex update, or a whole-layer
+/// rebuild when densification changed the topology.
+#[derive(Default)]
+pub(crate) struct DabOutcome {
+    /// Touched vertex ids for a sparse GPU write. Empty when `rebuild` is set —
+    /// the rebuild supersedes it.
+    pub(crate) touched: Vec<usize>,
+    /// Set when this dab grew the mesh.
+    pub(crate) rebuild: Option<SculptRebuild>,
 }
 
 impl SculptSession {
-    /// Apply one dab (already built in mesh-local space) and return the touched
-    /// vertex ids after patching them into the display shadow. Marks the
-    /// current stroke dirty so a stroke that actually moved geometry gets an
-    /// undo entry (an empty dab does not).
-    pub(crate) fn apply_dab(&mut self, stroke: BrushStroke, mode: BrushMode) -> Vec<usize> {
-        if self.stroke_start_vertices.is_none() {
-            self.stroke_start_vertices = self.shadow.read().ok().map(|shadow| shadow.clone());
+    /// Apply one dab (already built in mesh-local space) and return either the
+    /// touched vertex ids — patched into the display shadow — or a whole-layer
+    /// rebuild when densification changed the topology. Marks the current
+    /// stroke dirty so a stroke that actually changed geometry gets an undo
+    /// entry (an empty dab does not).
+    pub(crate) fn apply_dab(&mut self, stroke: BrushStroke, mode: BrushMode) -> DabOutcome {
+        if self.stroke_start_mesh.is_none() {
+            self.stroke_start_mesh = self.snapshot_mesh();
         }
         let outcome = self.session.apply_stroke(stroke, mode);
+        if outcome.topology_changed() {
+            // Vertex ids the caller already knows stay valid — densification
+            // only APPENDS — but the array grew and the triangle list changed,
+            // so a sparse write into the old buffers would be a corruption.
+            // Hand back the rebuilt layer instead and drop this dab's ids.
+            return DabOutcome {
+                touched: Vec::new(),
+                rebuild: self.rebuild_after_densify(),
+            };
+        }
         if outcome.touched_vertices.is_empty() {
-            return Vec::new();
+            return DabOutcome::default();
         }
         self.patch_shadow(&outcome.touched_vertices);
         self.dirty_stroke = true;
-        outcome.touched_vertices
+        DabOutcome {
+            touched: outcome.touched_vertices,
+            rebuild: None,
+        }
+    }
+
+    /// The layer mesh as the session currently holds it (template + shadow).
+    fn snapshot_mesh(&self) -> Option<Mesh> {
+        let shadow = self.shadow.read().ok()?;
+        self.base_mesh.with_sculpted_vertices(shadow.clone())
+    }
+
+    /// Adopt the densified geometry: rebuild the template mesh, resize the
+    /// display shadow to match, and take on the new GPU topology token so the
+    /// dabs that follow can stream sparsely again.
+    fn rebuild_after_densify(&mut self) -> Option<SculptRebuild> {
+        let mesh = mesh_from_sculpt_session_like(&self.base_mesh, &self.session).ok()?;
+        {
+            let mut shadow = self.shadow.write().ok()?;
+            *shadow = mesh.vertices().to_vec();
+        }
+        let topology = PreparedSceneTopology::from_mesh(&mesh);
+        self.base_mesh = mesh.clone();
+        self.topology = topology;
+        self.dirty_stroke = true;
+        Some(SculptRebuild { mesh, topology })
     }
 
     /// Copy the kernel's live position and normal for every touched vertex id
@@ -434,7 +496,7 @@ mod tests {
             world_to_local: Affine3A::IDENTITY,
             local_per_world: 1.0,
             dirty_stroke: false,
-            stroke_start_vertices: None,
+            stroke_start_mesh: None,
         };
         let stroke = BrushStroke {
             center: [0.0, 0.0, 0.0],
@@ -442,8 +504,8 @@ mod tests {
             strength: 1.0,
             view_dir: [0.0, 0.0, -1.0],
         };
-        assert!(!session.apply_dab(stroke, BrushMode::Add).is_empty());
+        assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
         session.dirty_stroke = false;
-        assert!(!session.apply_dab(stroke, BrushMode::Add).is_empty());
+        assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
     }
 }

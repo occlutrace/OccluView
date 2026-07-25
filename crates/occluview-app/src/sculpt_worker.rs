@@ -4,7 +4,7 @@
 //! bounded command queue and the worker-side [`SculptSession`]; the UI only
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
-use crate::sculpt_tool::SculptSession;
+use crate::sculpt_tool::{SculptRebuild, SculptSession};
 use glam::Affine3A;
 use occluview_core::{BrushMode, BrushStroke, Mesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
@@ -173,11 +173,27 @@ struct WorkerState {
     shadow: Arc<RwLock<Vec<Vertex>>>,
     pending_touched: Mutex<Vec<usize>>,
     full_sync: AtomicBool,
+    /// Latest whole-layer rebuild from a densifying dab. Each one carries the
+    /// complete geometry, so a newer one simply replaces an unread older one.
+    rebuild: Mutex<Option<SculptRebuild>>,
     completions: Mutex<VecDeque<SculptCompletion>>,
     error: Mutex<Option<String>>,
 }
 
 impl WorkerState {
+    /// Park a topology change for the UI thread. Any vertex ids queued from
+    /// earlier dabs are dropped: they index the pre-rebuild array, and the
+    /// rebuild replaces it wholesale.
+    fn record_rebuild(&self, rebuild: SculptRebuild) {
+        if let Ok(mut pending) = self.pending_touched.lock() {
+            pending.clear();
+        }
+        self.full_sync.store(false, Ordering::Release);
+        if let Ok(mut slot) = self.rebuild.lock() {
+            *slot = Some(rebuild);
+        }
+    }
+
     fn record_touched(&self, touched: Vec<usize>) {
         if touched.is_empty() || self.full_sync.load(Ordering::Acquire) {
             return;
@@ -223,6 +239,9 @@ pub(crate) struct SculptUpdate {
 /// Persistent worker for one prepared layer.
 pub(crate) struct SculptWorker {
     pub(crate) layer_id: SceneMeshId,
+    /// Identity of the layer geometry this worker is authoritative for. A
+    /// densifying dab replaces the layer, so the UI updates this (and
+    /// `topology`) when it installs the rebuild.
     pub(crate) topology_id: u64,
     pub(crate) topology: PreparedSceneTopology,
     pub(crate) world_to_local: Affine3A,
@@ -242,6 +261,7 @@ impl SculptWorker {
             shadow: Arc::clone(&session.shadow),
             pending_touched: Mutex::new(Vec::new()),
             full_sync: AtomicBool::new(false),
+            rebuild: Mutex::new(None),
             completions: Mutex::new(VecDeque::new()),
             error: Mutex::new(None),
         });
@@ -313,6 +333,17 @@ impl SculptWorker {
         (full_sync || !touched.is_empty()).then_some(SculptUpdate { touched, full_sync })
     }
 
+    /// Take the pending whole-layer rebuild, if a dab densified the mesh.
+    /// Must be drained BEFORE `take_update`, so a sparse write never lands on
+    /// buffers the rebuild is about to replace.
+    pub(crate) fn take_rebuild(&self) -> Option<SculptRebuild> {
+        self.state
+            .rebuild
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+    }
+
     pub(crate) fn take_completion(&self) -> Option<SculptCompletion> {
         self.state
             .completions
@@ -359,17 +390,21 @@ fn run_worker(
                 stroke,
                 mode,
             } => {
-                let touched = pool.install(|| session.apply_dab(stroke, mode));
-                state.record_touched(touched);
+                let outcome = pool.install(|| session.apply_dab(stroke, mode));
+                if let Some(rebuild) = outcome.rebuild {
+                    state.record_rebuild(rebuild);
+                } else {
+                    state.record_touched(outcome.touched);
+                }
             }
             SculptCommand::Finish {
                 stroke_id: _stroke_id,
             } => {
                 let dirty = session.dirty_stroke;
                 session.dirty_stroke = false;
-                let start_vertices = session.stroke_start_vertices.take();
+                let start_mesh = session.stroke_start_mesh.take();
                 if dirty {
-                    let Some(start_vertices) = start_vertices else {
+                    let Some(before) = start_mesh else {
                         state.set_error("sculpt stroke has no undo baseline".to_string());
                         queue.mark_idle();
                         continue;
@@ -380,9 +415,12 @@ fn run_worker(
                         continue;
                     };
                     let vertices = shadow.clone();
-                    let before = session.base_mesh.with_sculpted_vertices(start_vertices);
+                    // `base_mesh` already tracks any mid-stroke rebuild, so the
+                    // lengths match whether or not the stroke densified. Undo
+                    // restores `before`, which still has the PRE-stroke
+                    // topology — coarse triangles and all.
                     let mesh = session.base_mesh.with_sculpted_vertices(vertices);
-                    if let (Some(before), Some(mesh)) = (before, mesh) {
+                    if let Some(mesh) = mesh {
                         state.push_completion(SculptCompletion { before, mesh });
                     } else {
                         state.set_error("sculpt result changed the vertex count".to_string());
@@ -406,7 +444,13 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::expect_used,
+        clippy::float_cmp,
+        clippy::panic
+    )]
 
     use super::*;
     use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController};
@@ -414,6 +458,24 @@ mod tests {
     use glam::Vec3;
     use occluview_core::{mesh_edit_buffers_from_mesh, BrushSession, Mesh, Scene, SceneMesh};
     use std::time::Duration;
+
+    fn worker_for(mesh: &Mesh) -> SculptWorker {
+        let entry = SceneMesh::new(mesh.clone());
+        let layer_id = entry.id();
+        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
+        SculptWorker::spawn(SculptSession {
+            layer_id,
+            topology_id: mesh.topology_id(),
+            session: brush,
+            base_mesh: mesh.clone(),
+            shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
+            topology: PreparedSceneTopology::from_mesh(mesh),
+            world_to_local: Affine3A::IDENTITY,
+            local_per_world: mean_uniform_scale(&Affine3A::IDENTITY),
+            dirty_stroke: false,
+            stroke_start_mesh: None,
+        })
+    }
 
     fn test_worker() -> SculptWorker {
         let mesh = Mesh::new(
@@ -427,21 +489,41 @@ mod tests {
             vec![0, 1, 2, 0, 2, 3],
         )
         .expect("test mesh");
-        let entry = SceneMesh::new(mesh.clone());
-        let layer_id = entry.id();
-        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
-        SculptWorker::spawn(SculptSession {
-            layer_id,
-            topology_id: mesh.topology_id(),
-            session: brush,
-            base_mesh: mesh.clone(),
-            shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
-            topology: PreparedSceneTopology::from_mesh(&mesh),
-            world_to_local: Affine3A::IDENTITY,
-            local_per_world: mean_uniform_scale(&Affine3A::IDENTITY),
-            dirty_stroke: false,
-            stroke_start_vertices: None,
-        })
+        worker_for(&mesh)
+    }
+
+    /// A 5x3 lattice at 4mm spacing folded along a sharp ridge — far coarser
+    /// than the 3.5mm brush below, so a Smooth dab has to densify before it can
+    /// relax anything.
+    fn coarse_ridge_mesh() -> Mesh {
+        let mut vertices = Vec::new();
+        for j in 0..3usize {
+            for i in 0..5usize {
+                let x = i as f32 * 4.0 - 8.0;
+                let y = j as f32 * 4.0 - 4.0;
+                let z = if j == 1 { 4.0 } else { 0.0 };
+                vertices.push(Vertex::at(Vec3::new(x, y, z)));
+            }
+        }
+        let mut indices = Vec::new();
+        let idx = |i: usize, j: usize| (j * 5 + i) as u32;
+        for j in 0..2usize {
+            for i in 0..4usize {
+                indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
+                indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
+            }
+        }
+        Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
+    }
+
+    fn wait_for_rebuild(worker: &SculptWorker) -> SculptRebuild {
+        for _ in 0..2_000 {
+            if let Some(rebuild) = worker.take_rebuild() {
+                return rebuild;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("the densifying dab never produced a layer rebuild");
     }
 
     fn wait_for_completions(worker: &SculptWorker, expected: usize) -> usize {
@@ -572,5 +654,80 @@ mod tests {
                 BusyFinish::Applied
             );
         }
+    }
+
+    /// Densification changes the topology, and the ids must say so honestly:
+    /// the rebuilt layer gets a FRESH `topology_id` (the renderer's cue to drop
+    /// its exactly-sized buffers), while the undo baseline keeps the PRE-stroke
+    /// identity and the pre-stroke triangle list.
+    #[test]
+    fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline() {
+        let mesh = coarse_ridge_mesh();
+        let original_vertices = mesh.vertices().len();
+        let original_triangles = mesh.triangle_count();
+        let original_topology_id = mesh.topology_id();
+        let worker = worker_for(&mesh);
+        let stroke = BrushStroke {
+            center: [0.0, 0.0, 4.0],
+            radius_mm: 3.5,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        };
+        assert!(worker.try_apply(stroke, BrushMode::Smooth));
+        let rebuild = wait_for_rebuild(&worker);
+        assert!(worker.finish_stroke());
+        let completion = wait_for_completion(&worker);
+
+        // The rebuilt layer really grew, and its token describes ITSELF — a
+        // mismatch here is exactly how a stale GPU buffer gets written.
+        assert!(rebuild.mesh.vertices().len() > original_vertices);
+        assert!(rebuild.mesh.triangle_count() > original_triangles);
+        assert_ne!(
+            rebuild.mesh.topology_id(),
+            original_topology_id,
+            "a grown mesh must NOT reuse the frozen sculpt topology id"
+        );
+        assert_eq!(
+            rebuild.topology,
+            PreparedSceneTopology::from_mesh(&rebuild.mesh)
+        );
+
+        // Undo goes back to the coarse mesh, not to the dense one with old
+        // coordinates.
+        assert_eq!(completion.before.vertices().len(), original_vertices);
+        assert_eq!(completion.before.triangle_count(), original_triangles);
+        assert_eq!(completion.before.topology_id(), original_topology_id);
+
+        // The committed mesh matches the geometry already on the GPU, so the
+        // commit is a content swap and not another re-upload.
+        assert_eq!(
+            completion.mesh.vertices().len(),
+            rebuild.mesh.vertices().len()
+        );
+        assert_eq!(completion.mesh.indices(), rebuild.mesh.indices());
+        assert_eq!(completion.mesh.topology_id(), rebuild.mesh.topology_id());
+    }
+
+    /// The un-densified path is untouched: a stroke that changes no topology
+    /// still streams sparsely and still freezes the topology id.
+    #[test]
+    fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
+        let worker = test_worker();
+        let stroke = BrushStroke {
+            center: [0.0, 0.0, 0.0],
+            radius_mm: 2.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        };
+        assert!(worker.try_apply(stroke, BrushMode::Add));
+        assert!(worker.finish_stroke());
+        let completion = wait_for_completion(&worker);
+        assert!(worker.take_rebuild().is_none(), "Add must not densify");
+        assert_eq!(completion.mesh.vertices().len(), 4);
+        assert_eq!(
+            completion.mesh.topology_id(),
+            completion.before.topology_id(),
+            "a positions-only sculpt keeps the GPU buffer token frozen"
+        );
     }
 }

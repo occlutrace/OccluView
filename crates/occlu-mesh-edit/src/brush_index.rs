@@ -91,6 +91,17 @@ impl VertexGrid {
         }
     }
 
+    /// File a brand-new vertex into its cell. Densification mints vertices
+    /// mid-stroke; without this the next dab's radius query would not see them,
+    /// and a refined region would stop growing after the dab that created it.
+    pub(crate) fn insert(&mut self, vertex_id: usize, position: Vec3) {
+        let Ok(id) = u32::try_from(vertex_id) else {
+            return;
+        };
+        let key = cell_key(position, self.origin, self.cell_size);
+        self.cells.entry(key).or_default().push(id);
+    }
+
     /// Move `vertex_id` from the cell of `from` to the cell of `to`, if they
     /// differ. Keeps the index exact as a stroke moves vertices — O(touched)
     /// per dab — instead of periodically rebuilding the whole grid (O(n), the
