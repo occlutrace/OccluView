@@ -103,6 +103,7 @@ impl OccluViewApp {
         let mut settings = self.align_settings;
         let mut constraint = self.align_constraint;
         let mut brush = self.align_brush;
+        let mut tab = self.align_tab;
         let moved = self.align_session_moved();
         let action = crate::align_panel::show(
             ctx,
@@ -116,11 +117,13 @@ impl OccluViewApp {
                 moved,
                 constraint: &mut constraint,
                 brush: &mut brush,
+                tab: &mut tab,
             },
         );
         self.align_settings = settings;
         self.align_constraint = constraint;
         self.align_brush = brush;
+        self.align_tab = tab;
 
         match action {
             Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
@@ -441,6 +444,18 @@ impl OccluViewApp {
         if self.align_settings.show_deviation && self.align.can_measure() {
             self.run_align_measure();
         }
+    }
+
+    /// Drop a map that the scan just moved out from under.
+    ///
+    /// Showing a stale map is worse than showing none: the colours describe a
+    /// pose that no longer exists. The operator re-measures when they are ready.
+    pub(super) fn invalidate_deviation_map(&mut self, reason: &str) {
+        if self.align_deviation.is_none() {
+            return;
+        }
+        self.clear_deviation_overlay();
+        self.align_status = Some(format!("{reason} — run Best fit matching to measure again"));
     }
 
     /// Write a new pose onto the moving layer, as one undo step.

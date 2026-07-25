@@ -47,7 +47,10 @@ pub(crate) struct AlignSettings {
 impl Default for AlignSettings {
     fn default() -> Self {
         Self {
-            influence_radius_mm: 2.0,
+            // Far enough that a roughly-placed scan still has something to
+            // measure against. Too tight and the map comes out mostly grey,
+            // which reads as "broken" rather than "out of reach".
+            influence_radius_mm: 5.0,
             matching_ratio: 0.8,
             orientation: Orientation::Match,
             // Real registration deviations sit at 0.05-0.3 mm. A wider scale

@@ -31,10 +31,12 @@ impl OccluViewApp {
         let primary_down =
             ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
         if !primary_down {
-            // The stroke ended: measure once, not once per dab.
+            // The stroke ended. The mask changed what would be measured, so a
+            // map drawn before it is stale — drop it rather than silently
+            // recomputing behind the operator's hand.
             if self.align_mask_stroke_open {
                 self.align_mask_stroke_open = false;
-                self.measure_if_shown();
+                self.invalidate_deviation_map("Mask changed");
             }
             return false;
         }
@@ -148,7 +150,7 @@ impl OccluViewApp {
         }
         self.align_mask = Some(Arc::new(mask));
         self.align_status = Some(command.report().into());
-        self.measure_if_shown();
+        self.invalidate_deviation_map(command.report());
     }
 
     /// Drop the mask — done whenever the pair changes, since a mask is indexed
@@ -163,15 +165,23 @@ impl OccluViewApp {
 mod tests {
     use crate::align_brush::MaskCommand;
 
-    /// The paint has to keep up with the cursor, so a dab runs inline; the
-    /// measurement it invalidates does not, and must not run per dab.
+    /// Painting changes what would be measured, so a map drawn before the
+    /// stroke describes a comparison that no longer exists. Dropping it is
+    /// honest; silently recomputing behind the operator's hand is not, and
+    /// recomputing per dab would also be slow.
     #[test]
-    fn a_stroke_measures_once_at_release_not_once_per_dab() {
+    fn a_stroke_drops_the_map_instead_of_recomputing_it() {
         let source = include_str!("app_align_brush.rs");
+        let production = source
+            .split_once("\n#[cfg(test)]")
+            .map_or(source, |(before, _)| before);
         assert!(
-            source.contains("if self.align_mask_stroke_open {")
-                && source.contains("self.align_mask_stroke_open = false;\n                self.measure_if_shown();"),
-            "the re-measure must be deferred to the end of the stroke"
+            production.contains("self.invalidate_deviation_map("),
+            "a mask change must invalidate the map"
+        );
+        assert!(
+            !production.contains("measure_if_shown"),
+            "the brush must never kick off a measurement"
         );
     }
 

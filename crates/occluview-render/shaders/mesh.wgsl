@@ -21,6 +21,10 @@ const BACKFACE_INSPECTION_TINT: vec3<f32> = vec3<f32>(0.52, 0.60, 0.66);
 // `neutral_material_matches_the_core_untextured_tint` in mesh_uniform.rs).
 const NEUTRAL_MATERIAL_RGB: vec3<f32> = vec3<f32>(0.82, 0.68, 0.42);
 
+// How much of the studio lighting a measured colour map keeps. Enough that the
+// surface still has form; little enough that the ramp stays saturated.
+const MEASURED_MAP_SHADE: f32 = 0.55;
+
 struct Camera {
     view: mat4x4<f32>,
     projection: mat4x4<f32>,
@@ -41,8 +45,8 @@ struct MeshUniform {
     show_vertex_colors: u32,
     // 0 = do not sample an attached texture; vertex colors remain independent.
     show_texture: u32,
-    // 1 = emit the vertex color with no lighting and no tint (deviation map).
-    unlit: u32,
+    // 1 = this layer shows a measured colour map (deviation heatmap).
+    measured_map: u32,
     _padding_0: u32,
     _padding_1: u32,
 }
@@ -233,12 +237,14 @@ fn fs_main(
         base_a = 1.0;
     }
 
-    // Unlit: a measured colour must reach the screen as it was measured. The
-    // deviation heat map uses this — studio lighting multiplies a saturated
-    // ramp down towards mud, so a lit map reads washed out at exactly the
-    // small deviations that matter. Tint is skipped for the same reason.
-    if (mesh_uniform.unlit != 0u) {
-        return vec4<f32>(base_rgb, base_a * mesh_uniform.opacity * splat_coverage);
+    // A measured colour map keeps its hue and skips the tint, so a ramp reaches
+    // the screen at the colour it was measured at. Lighting is REDUCED, not
+    // removed: full studio light multiplies a saturated ramp down towards mud,
+    // but no light at all leaves a flat silhouette with no readable form — and
+    // a heat map you cannot read the shape of tells you nothing about a scan.
+    if (mesh_uniform.measured_map != 0u) {
+        let shade = clamp(mix(1.0, lit, MEASURED_MAP_SHADE), 0.0, 1.0);
+        return vec4<f32>(base_rgb * shade, base_a * mesh_uniform.opacity * splat_coverage);
     }
 
     // Apply tint + opacity, then lighting.

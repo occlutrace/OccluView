@@ -82,7 +82,7 @@ fn identity_uniform(tint: [f32; 4], opacity: f32) -> GpuMeshUniform {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        unlit: 0,
+        measured_map: 0,
         padding: [0; 2],
     }
 }
@@ -309,7 +309,7 @@ fn render_uniform_textured(texture: &MeshTexture) -> Vec<u8> {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        unlit: 0,
+        measured_map: 0,
         padding: [0; 2],
     };
     let entries = [occluview_render::SceneDrawEntry {
@@ -395,7 +395,7 @@ fn textured_triangle_renders_checkerboard() {
         show_orientation: 0,
         show_vertex_colors: 1,
         show_texture: 1,
-        unlit: 0,
+        measured_map: 0,
         padding: [0; 2],
     };
 
@@ -570,48 +570,59 @@ fn point_cloud_renders_readable_splats() {
     );
 }
 
-/// A triangle whose three vertices carry the same exact color — the fixture
-/// for proving the unlit path emits a measured color untouched.
-fn colored_triangle_mesh(color: [u8; 4]) -> Mesh {
+/// A shallow dome in one flat colour.
+///
+/// Curvature is the point: a flat triangle has uniform luminance under any
+/// lighting, so a shading test built on one would pass whatever the shader did.
+/// This fan has a raised centre, so its normals — and therefore its shading —
+/// vary across the surface.
+fn colored_dome_mesh(color: [u8; 4]) -> Mesh {
+    const RING: usize = 12;
     let mut builder = MeshBuilder::new();
-    let a = builder.push_vertex(
-        Vertex::at(Vec3::new(-0.5, -0.5, 0.0))
+    let apex = builder.push_vertex(
+        Vertex::at(Vec3::new(0.0, 0.0, 0.45))
             .with_normal(Vec3::Z)
             .with_color(color),
     );
-    let b = builder.push_vertex(
-        Vertex::at(Vec3::new(0.5, -0.5, 0.0))
-            .with_normal(Vec3::Z)
-            .with_color(color),
-    );
-    let c = builder.push_vertex(
-        Vertex::at(Vec3::new(0.0, 0.5, 0.0))
-            .with_normal(Vec3::Z)
-            .with_color(color),
-    );
-    builder.push_triangle(a, b, c);
-    builder.build().expect("valid triangle mesh")
+    let rim: Vec<u32> = (0..RING)
+        .map(|step| {
+            #[allow(clippy::cast_precision_loss)]
+            let angle = std::f32::consts::TAU * step as f32 / RING as f32;
+            let position = Vec3::new(0.6 * angle.cos(), 0.6 * angle.sin(), 0.0);
+            builder.push_vertex(
+                Vertex::at(position)
+                    .with_normal((position + Vec3::Z * 0.35).normalize())
+                    .with_color(color),
+            )
+        })
+        .collect();
+    for step in 0..RING {
+        builder.push_triangle(apex, rim[step], rim[(step + 1) % RING]);
+    }
+    builder.build().expect("valid dome mesh")
 }
 
-/// The whole point of the unlit flag: a deviation map is a measurement, so the
-/// colour that was computed must be the colour on screen. This renders the same
-/// mesh lit and unlit and requires the unlit pass to reproduce the vertex
-/// colour exactly while the lit pass does not.
+/// A measured colour map has two jobs at once, and an earlier version of this
+/// flag only did the first: it emitted the exact colour with no lighting, which
+/// left the surface a flat silhouette with no readable form. A heat map you
+/// cannot see the shape of tells you nothing about a scan.
 ///
-/// It is also the only check that the flag reaches the shader at the right
-/// offset: a struct-layout slip would read some other field's bits and could
-/// not be caught by comparing field names.
+/// So this test requires BOTH: the hue must survive (the ramp is the
+/// measurement), and the surface must still be shaded (luminance has to vary
+/// across it). It is also the only check that the flag reaches the shader at
+/// the right offset — a struct-layout slip would read another field's bits and
+/// could not be caught by comparing field names.
 #[test]
-fn the_unlit_flag_emits_the_vertex_color_untouched() {
+fn a_measured_map_keeps_its_hue_and_its_shading() {
     let _gpu = gpu_test_lock();
     let color = [24u8, 200, 64, 255];
-    let mesh = colored_triangle_mesh(color);
+    let mesh = colored_dome_mesh(color);
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
 
-    let render = |unlit: u32| {
+    let render = |measured_map: u32| {
         let uniform = GpuMeshUniform {
-            unlit,
+            measured_map,
             ..identity_uniform([1.0, 1.0, 1.0, 1.0], 1.0)
         };
         let entries = [occluview_render::SceneDrawEntry {
@@ -623,7 +634,7 @@ fn the_unlit_flag_emits_the_vertex_color_untouched() {
             .expect("render scene")
     };
 
-    let unlit_pixels = render(1);
+    let map_pixels = render(1);
     let lit_pixels = render(0);
 
     let background = DARK_TEST_BACKGROUND;
@@ -632,29 +643,36 @@ fn the_unlit_flag_emits_the_vertex_color_untouched() {
             && (f64::from(px[1]) / 255.0 - background[1]).abs() < 0.02
     };
 
-    let mut exact = 0usize;
     let mut covered = 0usize;
-    for px in unlit_pixels.chunks_exact(4) {
+    let mut brightest = 0u8;
+    let mut darkest = 255u8;
+    for px in map_pixels.chunks_exact(4) {
         if is_background(px) {
             continue;
         }
         covered += 1;
-        if px[0] == color[0] && px[1] == color[1] && px[2] == color[2] {
-            exact += 1;
-        }
+        // Hue: green dominates this colour and blue beats red. Shading scales
+        // every channel together, so the ordering must survive it.
+        assert!(
+            px[1] > px[2] && px[2] > px[0],
+            "the measured hue did not survive: {px:?}"
+        );
+        brightest = brightest.max(px[1]);
+        darkest = darkest.min(px[1]);
     }
-    assert!(covered > 50, "the unlit triangle rendered almost nothing");
-    assert_eq!(
-        exact, covered,
-        "every covered pixel must carry the exact vertex colour, not a shaded one"
+    assert!(covered > 50, "the mapped triangle rendered almost nothing");
+    assert!(
+        brightest.saturating_sub(darkest) > 8,
+        "a measured map must still be shaded: the surface came out flat \
+         ({darkest}..{brightest}), which is the unreadable blob this flag once produced"
     );
 
-    let shaded_differs = lit_pixels
+    let differs_from_plain_lit = lit_pixels
         .chunks_exact(4)
-        .zip(unlit_pixels.chunks_exact(4))
-        .any(|(lit, unlit)| !is_background(unlit) && lit[..3] != unlit[..3]);
+        .zip(map_pixels.chunks_exact(4))
+        .any(|(lit, mapped)| !is_background(mapped) && lit[..3] != mapped[..3]);
     assert!(
-        shaded_differs,
-        "the lit pass must not already equal the unlit one, or this proves nothing"
+        differs_from_plain_lit,
+        "the mapped pass must differ from the ordinary lit one, or this proves nothing"
     );
 }

@@ -14,7 +14,7 @@
 //! - `show_orientation`      `u32`       4 bytes
 //! - `show_vertex_colors`    `u32`       4 bytes
 //! - `show_texture`          `u32`       4 bytes
-//! - `unlit`                 `u32`       4 bytes
+//! - `measured_map`          `u32`       4 bytes
 //! - `padding`               `[u32;2]`   8 bytes
 
 use bytemuck::{Pod, Zeroable};
@@ -44,13 +44,14 @@ pub struct GpuMeshUniform {
     /// 0 = do not sample the attached texture; 1 = texture sampling enabled.
     /// This is intentionally independent from `show_vertex_colors`.
     pub show_texture: u32,
-    /// 1 = emit the vertex color directly with no lighting and no tint.
+    /// 1 = this layer is showing a measured colour map.
     ///
-    /// The deviation heat map needs this: studio lighting multiplies a
-    /// saturated ramp down towards mud, so a lit map reads washed out at
-    /// exactly the deviations that matter. Taken from the former tail padding,
-    /// so the buffer layout is unchanged.
-    pub unlit: u32,
+    /// The map keeps its own hue and drops the tint, so a ramp reaches the
+    /// screen at the colour it was measured at. Lighting is *reduced*, not
+    /// removed: a fully unlit surface has no shading at all and reads as a
+    /// flat silhouette, which is useless for judging a scan. Taken from the
+    /// former tail padding, so the buffer layout is unchanged.
+    pub measured_map: u32,
     /// Explicit tail padding: uniform structs have a 16-byte alignment in
     /// WGSL even though each scalar flag is four-byte aligned.
     pub padding: [u32; 2],
@@ -77,7 +78,7 @@ impl GpuMeshUniform {
             show_orientation: 0,
             show_vertex_colors: 1,
             show_texture: 1,
-            unlit: 0,
+            measured_map: 0,
             padding: [0; 2],
         }
     }
@@ -125,7 +126,7 @@ mod tests {
                 "show_orientation",
                 "show_vertex_colors",
                 "show_texture",
-                "unlit",
+                "measured_map",
                 "_padding_0",
                 "_padding_1",
             ],
