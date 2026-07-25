@@ -89,14 +89,18 @@ pub struct DeviationStats {
 /// Which colour scheme the map uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RampMode {
-    /// Blue at nothing, red at the display scale: the false-colour bar lab
-    /// software shows, where the eye reads "how far" at a glance and the sign
-    /// is not part of the question.
+    /// Blue below, green at nominal, red above: the metrology convention, and
+    /// the one lab software shows.
+    ///
+    /// The default, because it puts "the surfaces agree" in the MIDDLE of the
+    /// ramp. A registration that worked lands near zero, and on a magnitude
+    /// ramp that is the dead end of the scale — every good result comes out one
+    /// flat blue, which reads as a broken tool rather than a clean fit.
     #[default]
-    Magnitude,
-    /// Blue below, green at nominal, red above: the metrology convention, for
-    /// when which *side* a surface sits on is the point.
     Signed,
+    /// Blue at nothing, red at the display scale: magnitude only, for when
+    /// which side a surface sits on is not the question.
+    Magnitude,
 }
 
 /// How to turn measurements into colour.
@@ -114,13 +118,37 @@ pub struct RampSettings {
     pub mode: RampMode,
 }
 
+/// The display scale that actually shows this measurement's structure.
+///
+/// A fixed scale is a guess about data nobody has measured yet: too wide and
+/// every result is one flat colour at the ramp's centre, too narrow and
+/// everything saturates. Derived from the 95th percentile so a handful of
+/// outliers cannot stretch the range and flatten everything else, rounded up to
+/// a readable step, and floored so a perfect fit still gets a sane bar.
+#[must_use]
+pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
+    /// Below this a scale stops meaning anything to an operator.
+    const FLOOR_MM: f64 = 0.05;
+    /// Readable steps, in millimetres.
+    const STEPS: [f64; 10] = [0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0];
+
+    if stats.measured == 0 || !stats.p95.is_finite() {
+        return FLOOR_MM;
+    }
+    let wanted = stats.p95.max(FLOOR_MM);
+    STEPS
+        .into_iter()
+        .find(|step| *step >= wanted)
+        .unwrap_or(2.0)
+}
+
 impl Default for RampSettings {
     fn default() -> Self {
         Self {
             scale_mm: 0.5,
             tolerance_mm: 0.2,
             bands: None,
-            mode: RampMode::Magnitude,
+            mode: RampMode::Signed,
         }
     }
 }
@@ -529,12 +557,64 @@ mod tests {
             signed_mm: vec![0.0, 0.5, -0.5],
             validity: vec![Validity::Measured; 3],
         };
-        let colors = deviation_colors(&map, &RampSettings::default());
+        let colors = deviation_colors(
+            &map,
+            &RampSettings {
+                mode: super::RampMode::Magnitude,
+                ..RampSettings::default()
+            },
+        );
         assert!(colors[0][2] > colors[0][0], "no deviation must read cool");
         assert!(colors[1][0] > colors[1][2], "full scale must read hot");
         assert_eq!(
             colors[1], colors[2],
             "magnitude ignores which side the surface sits on"
+        );
+    }
+
+    /// The two assertions the "always blue" report needed. A ramp that never
+    /// leaves its first stop looks exactly like a correct one at the origin,
+    /// so checking the ends is not enough: this walks the whole scale and
+    /// requires the hue to actually pass through cyan, green and yellow on its
+    /// way to red, and requires the two hot/cold channels to move
+    /// monotonically so no stop is skipped or visited twice.
+    #[test]
+    fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
+        let ramp = RampSettings {
+            mode: super::RampMode::Magnitude,
+            ..RampSettings::default()
+        };
+        let at = |position: f64| super::ramp_color(position * ramp.scale_mm, &ramp);
+
+        let (mut cyan, mut green, mut yellow, mut red) = (false, false, false, false);
+        let mut previous = at(0.0);
+        assert!(
+            previous[2] > 200 && previous[0] == 0,
+            "nothing measured must read blue, got {previous:?}"
+        );
+        for step in 1..=100 {
+            let color = at(f64::from(step) / 100.0);
+            // Red only ever rises and blue only ever falls across a magnitude
+            // ramp; a stop table walked in the wrong order would break this
+            // long before the ends looked wrong.
+            assert!(
+                color[0] >= previous[0] && color[2] <= previous[2],
+                "the ramp doubled back at step {step}: {previous:?} then {color:?}"
+            );
+            cyan |= color[0] == 0 && color[1] > 180 && color[2] > 180;
+            green |= color[1] > 180 && color[0] < 120 && color[2] < 120;
+            yellow |= color[0] > 200 && color[1] > 150 && color[2] < 80;
+            red |= color[0] > 200 && color[1] < 90 && color[2] < 60;
+            previous = color;
+        }
+        assert!(cyan, "the ramp never passed through cyan");
+        assert!(green, "the ramp never passed through green");
+        assert!(yellow, "the ramp never passed through yellow");
+        assert!(red, "the ramp never reached red");
+        assert_eq!(
+            at(1.0),
+            [255, 40, 0, 255],
+            "the display scale must land on the hot stop exactly"
         );
     }
 
@@ -544,11 +624,7 @@ mod tests {
             signed_mm: vec![-0.5, 0.0, 0.5],
             validity: vec![Validity::Measured; 3],
         };
-        let signed = RampSettings {
-            mode: super::RampMode::Signed,
-            ..RampSettings::default()
-        };
-        let colors = deviation_colors(&map, &signed);
+        let colors = deviation_colors(&map, &RampSettings::default());
         assert!(colors[0][2] > colors[0][0], "the negative end must be blue");
         assert!(colors[2][0] > colors[2][2], "the positive end must be red");
         assert!(
@@ -565,19 +641,12 @@ mod tests {
         };
         let ramp = RampSettings {
             bands: Some(10),
-            mode: super::RampMode::Signed,
             ..RampSettings::default()
         };
         let colors = deviation_colors(&map, &ramp);
         assert_eq!(colors[0], colors[1], "one band must be one colour");
 
-        let continuous = deviation_colors(
-            &map,
-            &RampSettings {
-                mode: super::RampMode::Signed,
-                ..RampSettings::default()
-            },
-        );
+        let continuous = deviation_colors(&map, &RampSettings::default());
         assert_ne!(
             continuous[0], continuous[1],
             "the continuous ramp must still separate them"
