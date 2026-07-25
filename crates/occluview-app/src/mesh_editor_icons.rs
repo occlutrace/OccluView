@@ -65,6 +65,16 @@ pub(crate) enum EditorIcon {
     SurfaceMode,
     /// Selection mode: straight through the mesh, including backsides.
     ThroughMode,
+    /// Two paired points drawing one arc onto another — the point fit.
+    AlignFit,
+    /// Two surfaces settling together — the surface refine.
+    AlignRefine,
+    /// A graded colour bar — the deviation heatmap.
+    Heatmap,
+    /// A round brush over a patch — the exclusion brush.
+    MaskBrush,
+    /// Two arrows exchanging places — swap which surface carries the map.
+    Swap,
 }
 
 /// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
@@ -200,6 +210,66 @@ pub(crate) fn paint(
                 r(0.08),
             ));
             painter.circle_filled(p(0.50, 0.30), r(0.11), soft);
+        }
+        EditorIcon::AlignFit => {
+            // One arc pulled onto another by a paired tie: the click model.
+            painter.add(Shape::line(
+                arc(p(0.12, 0.50), r(0.42), 300.0, 60.0, 16),
+                stroke,
+            ));
+            painter.add(Shape::line(
+                arc(p(0.88, 0.50), r(0.42), 120.0, 240.0, 16),
+                stroke,
+            ));
+            let left = p(0.12 + 0.42, 0.50);
+            let right = p(0.88 - 0.42, 0.50);
+            painter.line_segment([left, right], stroke);
+            painter.circle_filled(left, r(0.075), color);
+            painter.circle_filled(right, r(0.075), color);
+        }
+        EditorIcon::AlignRefine => {
+            // Two surfaces settling together, the upper one arrowed down onto
+            // the lower: what a refine actually does.
+            painter.add(Shape::line(
+                arc(p(0.50, 0.90), r(0.46), 200.0, 340.0, 18),
+                stroke,
+            ));
+            painter.add(Shape::line(
+                arc(p(0.50, 0.52), r(0.46), 200.0, 340.0, 18),
+                stroke,
+            ));
+            arrowhead(painter, p(0.50, 0.52), Vec2::new(0.0, 1.0), r(0.11), stroke);
+        }
+        EditorIcon::Heatmap => {
+            // A graded bar: the false-colour scale the map is read against.
+            let bar = Rect::from_min_max(p(0.12, 0.34), p(0.88, 0.66));
+            painter.rect_stroke(bar, r(0.06), stroke);
+            for step in 1..4 {
+                let x = 0.12 + 0.76 * (step as f32 / 4.0);
+                painter.line_segment([p(x, 0.34), p(x, 0.66)], stroke);
+            }
+        }
+        EditorIcon::MaskBrush => {
+            // A round brush over a patch it has taken out of the comparison.
+            painter.add(Shape::line(
+                arc(p(0.50, 0.86), r(0.44), 200.0, 340.0, 16),
+                stroke,
+            ));
+            painter.circle_stroke(p(0.62, 0.36), r(0.20), stroke);
+            painter.line_segment([p(0.20, 0.72), p(0.44, 0.48)], stroke);
+        }
+        EditorIcon::Swap => {
+            // Two arrows exchanging places.
+            painter.line_segment([p(0.18, 0.36), p(0.82, 0.36)], stroke);
+            arrowhead(painter, p(0.82, 0.36), Vec2::new(1.0, 0.0), r(0.10), stroke);
+            painter.line_segment([p(0.82, 0.64), p(0.18, 0.64)], stroke);
+            arrowhead(
+                painter,
+                p(0.18, 0.64),
+                Vec2::new(-1.0, 0.0),
+                r(0.10),
+                stroke,
+            );
         }
         EditorIcon::Smooth => {
             // A bumpy line settling flat: the wavy source above a straight

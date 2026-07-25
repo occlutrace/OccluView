@@ -43,7 +43,9 @@ impl OccluViewApp {
         if !dialogs_open
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
-            self.disarm_align_tool(ctx);
+            // Escape is a close, and a close puts the scans back. Silently
+            // keeping what a cancelled tool did is how work gets lost.
+            self.cancel_align_session(ctx);
             return false;
         }
 
@@ -62,7 +64,7 @@ impl OccluViewApp {
             );
         }
 
-        self.show_align_panel(ctx);
+        self.show_align_panel(ctx, response.rect);
 
         if self.handle_align_brush(response, ctx) {
             return true;
@@ -96,19 +98,22 @@ impl OccluViewApp {
     }
 
     /// Draw the panel and run what it asked for.
-    fn show_align_panel(&mut self, ctx: &egui::Context) {
+    fn show_align_panel(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
         let busy = self.align_worker.as_ref().is_some_and(AlignWorker::is_busy);
         let mut settings = self.align_settings;
         let mut constraint = self.align_constraint;
         let mut brush = self.align_brush;
+        let moved = self.align_session_moved();
         let action = crate::align_panel::show(
             ctx,
+            viewport_rect,
             crate::align_panel::AlignPanelView {
                 tool: &self.align,
                 settings: &mut settings,
                 status: self.align_status.as_deref(),
                 stats: self.align_stats,
                 busy,
+                moved,
                 constraint: &mut constraint,
                 brush: &mut brush,
             },
@@ -137,7 +142,13 @@ impl OccluViewApp {
             Some(crate::align_panel::AlignPanelAction::Mask(command)) => {
                 self.apply_align_mask_command(command);
             }
-            Some(crate::align_panel::AlignPanelAction::Close) => self.disarm_align_tool(ctx),
+            Some(crate::align_panel::AlignPanelAction::SwapMapped) => {
+                self.align_map_on_fixed = !self.align_map_on_fixed;
+                self.clear_deviation_overlay();
+                self.run_align_measure();
+            }
+            Some(crate::align_panel::AlignPanelAction::Cancel) => self.cancel_align_session(ctx),
+            Some(crate::align_panel::AlignPanelAction::Done) => self.finish_align_session(ctx),
             None => {}
         }
     }
@@ -151,6 +162,15 @@ impl OccluViewApp {
         self.measure.disarm();
         self.cut_view.disable();
         self.align.arm();
+        // Remember where every scan started. Cancel is only honest if there is
+        // something to go back to.
+        self.align_session_poses = self.scene.as_ref().map_or_else(Vec::new, |scene| {
+            scene
+                .meshes()
+                .iter()
+                .map(|entry| (entry.id(), entry.transform))
+                .collect()
+        });
         if self.align_worker.is_none() {
             self.align_worker = Some(AlignWorker::spawn());
         }
@@ -173,6 +193,9 @@ impl OccluViewApp {
         self.align_status = None;
         self.align_stats = None;
         self.align_rejected.clear();
+        self.align_session_poses.clear();
+        self.align_map_on_fixed = false;
+        self.align_brush.set_armed(false);
         ctx.request_repaint();
     }
 
@@ -379,8 +402,12 @@ impl OccluViewApp {
                         .collect();
                     format!(", pair {} ignored as an outlier", names.join(" and "))
                 };
-                self.align_status = Some(format!("Aligned — {rms:.3} mm on the points{dropped}"));
-                self.measure_if_shown();
+                // Deliberately no measurement here. The point fit only gets
+                // the scan close; measuring it would put a map on screen that
+                // the very next step invalidates.
+                self.align_status = Some(format!(
+                    "Aligned — {rms:.3} mm on the points{dropped}. Refine to seat it."
+                ));
             }
             AlignOutcome::Refined { pose, report } => {
                 self.commit_align_pose(pose);
@@ -450,7 +477,7 @@ impl OccluViewApp {
         let Some(scene) = self.scene.clone() else {
             return;
         };
-        let Some(moving_id) = self.align.moving_layer() else {
+        let Some(moving_id) = self.align_mapped_layer() else {
             return;
         };
         let shared = Arc::new(colors);
@@ -467,6 +494,7 @@ impl OccluViewApp {
         }
         self.align_deviation = Some(shared);
         self.set_scene(next, false);
+        self.ghost_other_layer();
         self.push_deviation_colors();
     }
 
@@ -477,7 +505,7 @@ impl OccluViewApp {
         let (Some(scene), Some(colors), Some(moving_id)) = (
             self.scene.clone(),
             self.align_deviation.clone(),
-            self.align.moving_layer(),
+            self.align_mapped_layer(),
         ) else {
             return;
         };
@@ -541,6 +569,7 @@ impl OccluViewApp {
         }
         self.align_stats = None;
         self.needs_render = true;
+        self.unghost_layers();
     }
 }
 

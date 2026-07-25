@@ -132,6 +132,7 @@ pub(crate) fn paint_legend(ui: &mut egui::Ui, settings: AlignSettings) {
                 scale_mm: settings.scale_mm,
                 tolerance_mm: settings.tolerance_mm,
                 bands: settings.bands,
+                mode: settings.ramp_mode,
             },
         );
         #[allow(clippy::cast_precision_loss)]

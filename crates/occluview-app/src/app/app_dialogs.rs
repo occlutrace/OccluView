@@ -160,7 +160,9 @@ impl OccluViewApp {
 
         if toggle_align {
             if self.align_active() {
-                self.disarm_align_tool(ctx);
+                // Turning the tool off is a close, and a close reverts. Done,
+                // inside the window, is what keeps an alignment.
+                self.cancel_align_session(ctx);
             } else {
                 self.arm_align_tool(ctx);
             }

@@ -19,8 +19,8 @@ use std::thread::{self, JoinHandle};
 use glam::DVec3;
 use occluview_align::{
     deviation, deviation_colors, deviation_stats, fit_pairs, refine, CancelFlag, DeviationSettings,
-    DeviationStats, FitRejection, IcpReport, Orientation, RampSettings, RefineSettings, Rigid,
-    Soup, SurfaceIndex,
+    DeviationStats, FitRejection, IcpReport, Orientation, RampMode, RampSettings, RefineSettings,
+    Rigid, Soup, SurfaceIndex,
 };
 
 /// Operator-facing knobs, in the operator's units.
@@ -38,6 +38,8 @@ pub(crate) struct AlignSettings {
     pub(crate) tolerance_mm: f64,
     /// Steps per side for a banded ramp; `None` is continuous.
     pub(crate) bands: Option<u32>,
+    /// Which colour scheme the map paints with.
+    pub(crate) ramp_mode: RampMode,
     /// Whether the map is on screen.
     pub(crate) show_deviation: bool,
 }
@@ -54,6 +56,7 @@ impl Default for AlignSettings {
             scale_mm: 0.5,
             tolerance_mm: 0.2,
             bands: None,
+            ramp_mode: RampMode::Magnitude,
             show_deviation: true,
         }
     }
@@ -81,6 +84,7 @@ impl AlignSettings {
             scale_mm: self.scale_mm,
             tolerance_mm: self.tolerance_mm,
             bands: self.bands,
+            mode: self.ramp_mode,
         }
     }
 }

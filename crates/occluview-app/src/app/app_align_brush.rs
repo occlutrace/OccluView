@@ -73,7 +73,7 @@ impl OccluViewApp {
             .flat_map(|vertex| vertex.position)
             .collect();
 
-        let erase = self.align_brush.erases() != ctx.input(|input| input.modifiers.shift);
+        let erase = ctx.input(|input| input.modifiers.shift);
         let changed = occluview_align::apply_brush(
             &mut mask,
             &positions,
