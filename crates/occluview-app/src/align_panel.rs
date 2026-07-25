@@ -336,17 +336,30 @@ fn heatmap(
     align_overlay::paint_legend(ui, *settings);
     // One slider, directly under the bar it scales — the arrangement every
     // metrology tool uses, because the bar is the legend for the slider.
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Slider::new(&mut settings.scale_mm, 0.05..=2.0)
-                .suffix(" mm")
-                .text("scale"),
-        )
-        .drag_stopped()
-    {
-        action = Some(AlignPanelAction::Measure);
-    }
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Slider::new(&mut settings.scale_mm, 0.05..=2.0)
+                    .suffix(" mm")
+                    .text("scale"),
+            )
+            .drag_stopped()
+        {
+            // Their range now, not the tool's.
+            settings.auto_scale = false;
+            action = Some(AlignPanelAction::Measure);
+        }
+        if !settings.auto_scale
+            && ui
+                .small_button("auto")
+                .on_hover_text("Fit the range to the measurement again")
+                .clicked()
+        {
+            settings.auto_scale = true;
+            action = Some(AlignPanelAction::Measure);
+        }
+    });
 
     if let Some(stats) = stats {
         numbers(ui, stats, settings.tolerance_mm);

@@ -93,6 +93,10 @@ impl OccluViewApp {
         for layer in named {
             if !live.contains(&layer) {
                 self.align.forget_layer(layer);
+                // The mask indexes that layer's vertices. Left behind, it would
+                // be handed to the next pair and exclude an arbitrary region of
+                // a different scan, with nothing on screen to say so.
+                self.clear_align_mask();
             }
         }
     }
@@ -330,11 +334,21 @@ impl OccluViewApp {
         let Some(worker) = self.align_worker.as_ref() else {
             return;
         };
-        let (Some(moving_id), Some(fixed_id)) =
+        let (Some(pair_moving), Some(pair_fixed)) =
             (self.align.moving_layer(), self.align.fixed_layer())
         else {
             self.align_status = Some("Place a point on each scan first".into());
             return;
+        };
+        // A fit always moves the scan the points named. A measurement, though,
+        // is taken over the vertices of whichever scan is going to CARRY the
+        // colours — otherwise Swap attaches one surface's distances to the
+        // other's vertices, which is either nothing at all or noise presented
+        // as a measurement.
+        let (moving_id, fixed_id) = if kind == AlignJobKind::Measure && self.align_map_on_fixed {
+            (pair_fixed, pair_moving)
+        } else {
+            (pair_moving, pair_fixed)
         };
         let (Some(moving), Some(fixed)) = (layer_of(&scene, moving_id), layer_of(&scene, fixed_id))
         else {
@@ -354,7 +368,10 @@ impl OccluViewApp {
             moving_indices: Arc::new(moving.mesh.indices().to_vec()),
             fixed_world_positions: Arc::new(world_positions(fixed)),
             fixed_indices: Arc::new(fixed.mesh.indices().to_vec()),
-            fixed_key: (fixed.mesh.topology_id(), transform_key(fixed.transform)),
+            // Geometry, not topology: a sculpt deliberately keeps the topology id
+            // and mints a fresh geometry id precisely so geometry-derived caches
+            // can tell that the surface changed under them.
+            fixed_key: (fixed.mesh.geometry_id(), transform_key(fixed.transform)),
             pose,
             pairs,
             mask: self.align_mask.clone(),
@@ -408,6 +425,10 @@ impl OccluViewApp {
                 // Deliberately no measurement here. The point fit only gets
                 // the scan close; measuring it would put a map on screen that
                 // the very next step invalidates.
+                // The scan just moved, so a map drawn before this describes a
+                // pose that no longer exists — and the viewport would happily
+                // keep re-pushing it.
+                self.invalidate_deviation_map("Aligned on points");
                 self.align_status = Some(format!(
                     "Aligned — {rms:.3} mm on the points{dropped}. Refine to seat it."
                 ));
@@ -422,8 +443,17 @@ impl OccluViewApp {
                 ));
                 self.measure_if_shown();
             }
-            AlignOutcome::Measured { colors, stats } => {
+            AlignOutcome::Measured {
+                colors,
+                stats,
+                scale_mm,
+            } => {
                 self.align_stats = Some(stats);
+                // Auto-scale chose the range the colours were painted at. The
+                // legend has to adopt it or it would describe a different one.
+                if self.align_settings.auto_scale {
+                    self.align_settings.scale_mm = scale_mm;
+                }
                 self.apply_deviation_colors(colors);
                 self.align_status = Some(format!(
                     "{:.0}% within {:.2} mm, {} vertices had nothing to measure against",
@@ -510,7 +540,10 @@ impl OccluViewApp {
         self.align_deviation = Some(shared);
         self.set_scene(next, false);
         self.ghost_other_layer();
-        self.push_deviation_colors();
+        // No push here. `set_scene` drops the prepared GPU scene, so a write
+        // straight after it has nothing to write into and silently does
+        // nothing. The colours reach the GPU when the viewport next syncs,
+        // which rebuilds and then re-pushes them.
     }
 
     /// Replace the moving layer's uploaded vertex colours with the measured

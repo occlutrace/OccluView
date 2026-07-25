@@ -17,6 +17,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use glam::DVec3;
+use occluview_align::suggested_scale_mm;
 use occluview_align::{
     deviation, deviation_colors, deviation_stats, fit_pairs, refine, CancelFlag, DeviationSettings,
     DeviationStats, FitRejection, IcpReport, Orientation, RampMode, RampSettings, RefineSettings,
@@ -40,6 +41,11 @@ pub(crate) struct AlignSettings {
     pub(crate) bands: Option<u32>,
     /// Which colour scheme the map paints with.
     pub(crate) ramp_mode: RampMode,
+    /// Whether the display scale follows the measurement instead of a guess.
+    ///
+    /// Cleared the moment the operator moves the slider: once they have chosen
+    /// a range, the tool must not keep overriding it.
+    pub(crate) auto_scale: bool,
     /// Whether the map is on screen.
     pub(crate) show_deviation: bool,
 }
@@ -59,7 +65,8 @@ impl Default for AlignSettings {
             scale_mm: 0.5,
             tolerance_mm: 0.2,
             bands: None,
-            ramp_mode: RampMode::Magnitude,
+            ramp_mode: RampMode::default(),
+            auto_scale: true,
             show_deviation: true,
         }
     }
@@ -164,10 +171,14 @@ pub(crate) enum AlignOutcome {
     },
     /// A measurement landed.
     Measured {
-        /// One colour per moving vertex.
+        /// One colour per measured vertex.
         colors: Vec<[u8; 4]>,
         /// Summary over the measured vertices.
         stats: DeviationStats,
+        /// The display scale the colours were painted at. With auto-scale on
+        /// this is derived from the measurement itself, so the panel has to
+        /// adopt it or its legend would describe a different range.
+        scale_mm: f64,
     },
     /// Nothing trustworthy came out, and this is why.
     Failed {
@@ -358,10 +369,17 @@ fn run_worker(
         busy.fetch_add(1, Ordering::SeqCst);
 
         let outcome = execute(&job, &cancel, &mut cached);
+        // A cancelled stage returns a well-formed but meaningless value — the
+        // start pose, or a map where nothing was measured. Publishing that
+        // reverts the operator's drag or flashes a fully grey scan.
+        let abandoned = cancel.is_cancelled();
 
         busy.fetch_sub(1, Ordering::SeqCst);
         if let Ok(mut slot) = running.lock() {
             *slot = None;
+        }
+        if abandoned {
+            continue;
         }
         if let Ok(mut published) = completions.lock() {
             published.push(AlignCompletion {
@@ -432,9 +450,18 @@ fn execute(
         AlignJobKind::Measure => {
             let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
             let stats = deviation_stats(&map, job.settings.tolerance_mm);
+            // A fixed range is a guess about data nobody has measured yet: too
+            // wide and a good fit is one flat colour, too narrow and everything
+            // saturates. Fitting the range to the measurement is what makes the
+            // map show structure on the first press instead of the tenth.
+            let mut ramp = job.settings.ramp();
+            if job.settings.auto_scale {
+                ramp.scale_mm = suggested_scale_mm(&stats);
+            }
             AlignOutcome::Measured {
-                colors: deviation_colors(&map, &job.settings.ramp()),
+                colors: deviation_colors(&map, &ramp),
                 stats,
+                scale_mm: ramp.scale_mm,
             }
         }
     }
