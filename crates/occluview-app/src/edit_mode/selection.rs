@@ -24,6 +24,13 @@ pub(crate) struct ScreenPolygonSelectionRequest<'a> {
 pub(crate) struct FaceSelectionState {
     layer_id: SceneMeshId,
     selected_faces: Vec<bool>,
+    /// How many entries of `selected_faces` are set.
+    ///
+    /// Maintained, not counted. The count is read two or three times a frame
+    /// while the editor is open, and on a multi-layer case that was a linear
+    /// scan of every triangle of every layer, several times a frame, to answer
+    /// a question a single integer already knows.
+    selected_count: usize,
 }
 
 impl FaceSelectionState {
@@ -34,6 +41,7 @@ impl FaceSelectionState {
         Some(Self {
             layer_id,
             selected_faces: vec![false; triangle_count],
+            selected_count: 0,
         })
     }
 
@@ -83,18 +91,31 @@ impl FaceSelectionState {
         let component = component_triangles(entry, hit.triangle_index)?;
         let mark = !unmark;
         for &triangle in &component {
-            if let Some(slot) = self.selected_faces.get_mut(triangle) {
-                *slot = mark;
-            }
+            self.write_face(triangle, mark);
         }
         Some(())
     }
 
     pub(crate) fn selected_count(&self) -> usize {
-        self.selected_faces
-            .iter()
-            .filter(|selected| **selected)
-            .count()
+        self.selected_count
+    }
+
+    /// Set one face and keep the running count honest. Every write goes
+    /// through here; that is what makes the count trustworthy.
+    fn write_face(&mut self, triangle_index: usize, selected: bool) -> bool {
+        let Some(slot) = self.selected_faces.get_mut(triangle_index) else {
+            return false;
+        };
+        if *slot == selected {
+            return false;
+        }
+        *slot = selected;
+        if selected {
+            self.selected_count += 1;
+        } else {
+            self.selected_count -= 1;
+        }
+        true
     }
 
     pub(crate) fn triangle_count(&self) -> usize {
@@ -102,14 +123,16 @@ impl FaceSelectionState {
     }
 
     pub(super) fn clear_selection(&mut self) -> bool {
-        let had_selection = self.selected_faces.iter().any(|selected| *selected);
+        let had_selection = self.selected_count > 0;
         self.selected_faces.fill(false);
+        self.selected_count = 0;
         had_selection
     }
 
     pub(super) fn select_all(&mut self) -> bool {
-        let needs_change = self.selected_faces.iter().any(|selected| !*selected);
+        let needs_change = self.selected_count < self.selected_faces.len();
         self.selected_faces.fill(true);
+        self.selected_count = self.selected_faces.len();
         needs_change
     }
 
@@ -117,6 +140,7 @@ impl FaceSelectionState {
         if self.selected_faces.is_empty() {
             return false;
         }
+        self.selected_count = self.selected_faces.len() - self.selected_count;
         for selected in &mut self.selected_faces {
             *selected = !*selected;
         }
@@ -244,7 +268,7 @@ impl FaceSelectionState {
             }
 
             if self.selected_faces[triangle_index] != mark {
-                self.selected_faces[triangle_index] = mark;
+                self.write_face(triangle_index, mark);
                 changed = true;
             }
         }
@@ -256,7 +280,7 @@ impl FaceSelectionState {
         if triangle_index >= self.selected_faces.len() {
             return None;
         }
-        self.selected_faces[triangle_index] = selected;
+        self.write_face(triangle_index, selected);
         Some(())
     }
 

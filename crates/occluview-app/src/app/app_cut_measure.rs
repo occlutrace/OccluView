@@ -590,11 +590,12 @@ impl OccluViewApp {
         // The axis gizmo paints on the Background layer, so it needs an explicit
         // footprint test too — otherwise a follow-disc click on an axis marker
         // plants a disc AND snaps the camera in the same gesture.
-        let gizmo_avoid = self
-            .cut_view
-            .is_active()
-            .then(|| crate::cut_ruler::section_panel_rect(viewport_rect))
-            .flatten();
+        // Must match what actually painted the gizmo: `active_section_panel_rect`
+        // lifts it only when the section panel is really on screen. Testing a
+        // different condition put the hit box 400 px from the glyph, so one
+        // click both snapped the camera and planted a disc — or a patch of bare
+        // model silently refused clicks.
+        let gizmo_avoid = self.active_section_panel_rect(viewport_rect);
         let over_gizmo = pointer.is_some_and(|p| {
             crate::viewer::axis_gizmo::axis_gizmo_footprint(viewport_rect, gizmo_avoid).contains(p)
         });

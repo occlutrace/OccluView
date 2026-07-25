@@ -133,6 +133,7 @@ impl OccluViewApp {
         ctx: &egui::Context,
         response: &egui::Response,
         viewport_rect: egui::Rect,
+        gizmo_click: bool,
     ) {
         let secondary_pointer = secondary_pointer_sample(ctx);
         self.handle_viewport_secondary_context_menu(ctx, response, secondary_pointer);
@@ -187,7 +188,11 @@ impl OccluViewApp {
         // The single-click face pick belongs to the Edit Mesh tab's un-armed
         // tool only: never on the Sculpt tab (the click is a dab) nor while the
         // lasso is armed (the outline owns the gesture).
+        // A click the axis gizmo answered is a view change, not a pick. The
+        // gizmo markers sit over the model, so without this the same click
+        // snapped the camera AND marked the facet behind the marker.
         if self.editor_tab == crate::mesh_editor_overlay::EditorTab::EditMesh
+            && !gizmo_click
             && !self.edit_mode.lasso_armed()
             && response.clicked_by(egui::PointerButton::Primary)
             && !response.dragged()

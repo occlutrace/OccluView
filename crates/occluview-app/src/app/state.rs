@@ -348,6 +348,10 @@ impl OccluViewApp {
         self.set_scene_impl(scene, reset_camera);
     }
 
+    pub(super) fn mark_scene_materials_changed(&mut self) {
+        self.mark_scene_materials_changed_impl();
+    }
+
     pub(super) fn update_scene_materials(&mut self, scene: Scene) {
         self.update_scene_materials_impl(scene);
     }
@@ -473,8 +477,9 @@ impl OccluViewApp {
         ctx: &egui::Context,
         response: &egui::Response,
         viewport_rect: egui::Rect,
+        gizmo_click: bool,
     ) {
-        self.handle_viewport_input_impl(ctx, response, viewport_rect);
+        self.handle_viewport_input_impl(ctx, response, viewport_rect, gizmo_click);
     }
 
     pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {

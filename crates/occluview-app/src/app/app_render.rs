@@ -190,7 +190,10 @@ impl OccluViewApp {
         self.cut_view.viewport_clip_plane(bbox)
     }
 
-    fn active_section_panel_rect(&self, viewport_rect: egui::Rect) -> Option<egui::Rect> {
+    pub(super) fn active_section_panel_rect(
+        &self,
+        viewport_rect: egui::Rect,
+    ) -> Option<egui::Rect> {
         let visible = if self.bridge_split_active() {
             self.bridge_split_section.slice_visible()
         } else {
@@ -427,6 +430,16 @@ impl OccluViewApp {
             self.measure.disarm();
         }
         if self.can_render_cut_view() {
+            // A planted disc holds a WORLD-space plane. Scanner vendors place
+            // models at wildly different origins, so a plane kept across a
+            // scene replace usually leaves the new case entirely on the
+            // clipped-away side, drawing as a faint ghost — which reads as "the
+            // file loaded wrong". Re-arm instead: the tool stays on, the stale
+            // placement does not. Bridge split already does this three lines
+            // above; only the cut view was left behind.
+            if self.cut_view.is_active() {
+                self.cut_view.enable();
+            }
             self.cut_view.mark_dirty();
         } else {
             self.cut_view.disable();
@@ -434,10 +447,17 @@ impl OccluViewApp {
     }
 
     pub(super) fn update_scene_materials_impl(&mut self, scene: Scene) {
-        self.edit_mode.sync_to_scene(&scene);
-        let stats = scene_stats(&scene);
         self.scene = Some(Arc::new(scene));
-        self.scene_stats = Some(stats);
+        self.mark_scene_materials_changed_impl();
+    }
+
+    /// The bookkeeping a material change needs, for a caller that already owns
+    /// the live scene and mutated it in place.
+    pub(super) fn mark_scene_materials_changed_impl(&mut self) {
+        if let Some(scene) = self.scene.clone() {
+            self.edit_mode.sync_to_scene(&scene);
+            self.scene_stats = Some(scene_stats(&scene));
+        }
         self.needs_render = true;
         self.live_viewport_scene_dirty = self.live_viewport.is_some();
         self.offscreen_scene_dirty = true;
@@ -524,7 +544,7 @@ impl OccluViewApp {
                     && !measure_ui_consumed
                     && !align_ui_consumed
                 {
-                    self.handle_viewport_input(ctx, &response, response.rect);
+                    self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
                 }
             } else if let Some((texture, stats)) = self
                 .rendered
@@ -571,7 +591,7 @@ impl OccluViewApp {
                     && !measure_ui_consumed
                     && !align_ui_consumed
                 {
-                    self.handle_viewport_input(ctx, &response, response.rect);
+                    self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
                 }
             } else if self.scene.is_none() {
                 let available = ui.available_size();
