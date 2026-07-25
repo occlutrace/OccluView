@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+- Added Align Scans: click a point on one scan and the matching point on
+  another, and they pair themselves. There is no target picker and no roles —
+  the first clicked point names the scan that moves, the next click on a
+  different scan names the one that stays, and with exactly two scans in view
+  the pair is implied and needs no click at all. Align fits the clicked pairs;
+  Refine seats the surfaces against each other.
+- Added a signed deviation map with an honest account of itself. It reads how
+  far apart two scans are — with or without aligning them, since naming the two
+  surfaces is all a measurement needs. Vertices with no facing surface in reach
+  are grey and excluded from the statistics rather than painted at full scale,
+  and the panel reports how many there were. The map draws unlit, so the ramp
+  reaches the screen at the colour it was measured at, and a banded mode steps
+  it so the tolerance edge reads sharply.
+- Added an exclusion brush: paint an artefact or a bite block out and it leaves
+  both the fit and the map.
+- A scan can also be moved by hand, with the drag free, locked to Z, or locked
+  to the XY plane. Whatever scan you grab is the one that moves.
+- Every alignment step is one Ctrl+Z away, and fitting, refining, and measuring
+  run off the UI thread so a full arch never freezes the window.
+- Fixed layer export ignoring the layer's placement: a scan moved in the
+  viewport was written back in its original orientation, silently discarding
+  the alignment. The pose is now baked into the exported geometry.
+- A right-click on empty space now opens a scene menu — save the whole scene as
+  one file, save each visible layer in its own pose, reset positions, fit the
+  view. The viewer has no project file, so saving is how an alignment survives
+  the session.
+
 ## 1.0.5 - 2026-07-21
 
 - Made repeated sculpt strokes continue to respond on meshes with small or
