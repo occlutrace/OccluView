@@ -23,7 +23,15 @@ const NEUTRAL_MATERIAL_RGB: vec3<f32> = vec3<f32>(0.82, 0.68, 0.42);
 
 // How much of the studio lighting a measured colour map keeps. Enough that the
 // surface still has form; little enough that the ramp stays saturated.
-const MEASURED_MAP_SHADE: f32 = 0.55;
+const MEASURED_MAP_SHADE: f32 = 0.58;
+// Extra form for a measured map, folded INTO the shared shading factor rather
+// than added as a white highlight. A specular term would move the hue at every
+// bright pixel, and a false-colour map is read by matching its hue against the
+// legend — so the only thing the shader may do to it is scale all three
+// channels together (pinned by `measured_map.rs`). Brightening the grazing
+// edge inside that one factor is legal, and it is what makes a cusp, a groove,
+// and a margin read as geometry instead of a coloured blob.
+const MEASURED_MAP_FORM: f32 = 0.22;
 
 struct Camera {
     view: mat4x4<f32>,
@@ -243,7 +251,8 @@ fn fs_main(
     // but no light at all leaves a flat silhouette with no readable form — and
     // a heat map you cannot read the shape of tells you nothing about a scan.
     if (mesh_uniform.measured_map != 0u) {
-        let shade = clamp(mix(1.0, lit, MEASURED_MAP_SHADE), 0.0, 1.0);
+        let map_form = lit + MEASURED_MAP_FORM * fresnel;
+        let shade = clamp(mix(1.0, map_form, MEASURED_MAP_SHADE), 0.0, 1.05);
         return vec4<f32>(base_rgb * shade, base_a * mesh_uniform.opacity * splat_coverage);
     }
 

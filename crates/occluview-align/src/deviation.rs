@@ -180,26 +180,36 @@ impl Default for RampSettings {
     }
 }
 
-/// Signed stops from `-1` to `+1`, saturated at both ends so the display scale
-/// reads hard. Blue is undersize, green is nominal, red is oversize — the
-/// convention every metrology package shares.
+/// Signed stops from `-1` to `+1`. Blue is undersize, green is nominal, red is
+/// oversize — the convention every metrology package shares.
+///
+/// The stops are pulled in from the pure channel extremes on purpose. A ramp
+/// built from `0` and `255` is the most saturated thing a screen can show, and
+/// once the shader multiplies it by any lighting at all the blue end goes to
+/// ink and the red end to a flat scab. These sit far enough inside the gamut
+/// that shaded geometry keeps its hue, which is the whole point of a false
+/// colour map: the operator has to read the shape AND the colour at once.
 const SIGNED_RAMP: [(f64, [u8; 3]); 5] = [
-    (-1.0, [0, 32, 255]),
-    (-0.5, [0, 200, 255]),
-    (0.0, [0, 220, 60]),
-    (0.5, [255, 220, 0]),
-    (1.0, [255, 24, 0]),
+    (-1.0, [36, 82, 214]),
+    (-0.5, [46, 176, 208]),
+    (0.0, [74, 196, 108]),
+    (0.5, [236, 190, 56]),
+    (1.0, [240, 58, 44]),
 ];
 
 /// Magnitude stops from `0` to `1`: cool where the surfaces agree, hot where
 /// they do not. This is the false-colour bar a lab operator reads without
 /// having to work out which side of the surface a colour means.
+///
+/// Same stops as the signed ramp, folded onto one side — two ramps that
+/// disagreed about what "0.2 mm out" looks like would make the mode switch
+/// change the reading rather than the question.
 const MAGNITUDE_RAMP: [(f64, [u8; 3]); 5] = [
-    (0.0, [0, 96, 255]),
-    (0.25, [0, 205, 235]),
-    (0.5, [40, 220, 60]),
-    (0.75, [255, 210, 0]),
-    (1.0, [255, 40, 0]),
+    (0.0, [36, 82, 214]),
+    (0.25, [46, 176, 208]),
+    (0.5, [74, 196, 108]),
+    (0.75, [236, 190, 56]),
+    (1.0, [240, 58, 44]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
@@ -622,10 +632,14 @@ mod tests {
         };
         let at = |position: f64| super::ramp_color(position * ramp.scale_mm, &ramp);
 
+        // The channel bounds are loose because the stops are deliberately
+        // pulled in from the pure extremes: a ramp built from 0 and 255 turns
+        // to ink and scab the moment the shader multiplies it by any light.
+        // What is being pinned here is the WALK, not a particular blue.
         let (mut cyan, mut green, mut yellow, mut red) = (false, false, false, false);
         let mut previous = at(0.0);
         assert!(
-            previous[2] > 200 && previous[0] == 0,
+            previous[2] > 180 && previous[0] < 90,
             "nothing measured must read blue, got {previous:?}"
         );
         for step in 1..=100 {
@@ -637,7 +651,7 @@ mod tests {
                 color[0] >= previous[0] && color[2] <= previous[2],
                 "the ramp doubled back at step {step}: {previous:?} then {color:?}"
             );
-            cyan |= color[0] == 0 && color[1] > 180 && color[2] > 180;
+            cyan |= color[0] < 90 && color[1] > 160 && color[2] > 160;
             green |= color[1] > 180 && color[0] < 120 && color[2] < 120;
             yellow |= color[0] > 200 && color[1] > 150 && color[2] < 80;
             red |= color[0] > 200 && color[1] < 90 && color[2] < 60;
@@ -647,9 +661,10 @@ mod tests {
         assert!(green, "the ramp never passed through green");
         assert!(yellow, "the ramp never passed through yellow");
         assert!(red, "the ramp never reached red");
+        let [hot_r, hot_g, hot_b] = super::MAGNITUDE_RAMP[super::MAGNITUDE_RAMP.len() - 1].1;
         assert_eq!(
             at(1.0),
-            [255, 40, 0, 255],
+            [hot_r, hot_g, hot_b, 255],
             "the display scale must land on the hot stop exactly"
         );
     }
