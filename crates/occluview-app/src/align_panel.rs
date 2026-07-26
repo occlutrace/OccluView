@@ -91,6 +91,9 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) constraint: &'a mut DragConstraint,
     /// Whether the Brush tool window is open, edited in place.
     pub(crate) excluding: &'a mut bool,
+    /// Set when a half-placed arrow has to go, because the tab that places
+    /// arrows is no longer open.
+    pub(crate) drop_pending: &'a mut bool,
     /// The last thing that happened, in a sentence.
     pub(crate) status: Option<&'a str>,
     /// The measurement summary, when there is one.
@@ -142,6 +145,11 @@ fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAct
     if *view.tab != AlignTab::Automatically {
         *view.excluding = false;
     }
+    // A half-placed arrow belongs to the tab that places arrows. Left behind it
+    // draws a rubber band to a cursor that is now dragging the mesh, and its
+    // other half lands on whatever the operator clicks next time they come
+    // back — a pair they never meant to make.
+    *view.drop_pending = *view.tab != AlignTab::Automatically && view.tool.pending().is_some();
     ui.add_space(4.0);
 
     let mut action = match *view.tab {

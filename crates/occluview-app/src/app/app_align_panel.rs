@@ -55,6 +55,7 @@ impl OccluViewApp {
         let mut tab = self.align_tab;
         let mut excluding = brush.is_armed();
         let was_excluding = excluding;
+        let mut drop_pending = false;
         let moved = self.align_session_moved();
         let action = crate::align_panel::show(
             ctx,
@@ -70,6 +71,7 @@ impl OccluViewApp {
                 can_redo: self.edit_mode.redo_layer_id().is_some(),
                 constraint: &mut constraint,
                 excluding: &mut excluding,
+                drop_pending: &mut drop_pending,
                 tab: &mut tab,
             },
         );
@@ -92,6 +94,10 @@ impl OccluViewApp {
         }
         brush.set_armed(excluding);
 
+        if drop_pending {
+            self.align.back();
+            self.align_status = Some("Half-placed arrow dropped".into());
+        }
         self.align_settings = settings;
         self.align_constraint = constraint;
         self.align_brush = brush;
