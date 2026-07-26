@@ -528,6 +528,9 @@ fn recolor(job: &AlignJob, cached: &mut WorkerCache) -> AlignOutcome {
     paint(map, job, stats, seen)
 }
 
+/// How far past the nominal band an automatic range must reach.
+const BAND_HEADROOM: f64 = 2.5;
+
 /// Turn a map and its summary into the colours the panel will show.
 fn paint(
     map: &DeviationMap,
@@ -541,7 +544,11 @@ fn paint(
     // on the first press instead of the tenth.
     let mut ramp = job.settings.ramp();
     if job.settings.auto_scale {
-        ramp.scale_mm = suggested_scale_mm(&stats);
+        // Never inside the nominal band, and never so close to it that the ramp
+        // has nowhere to run: everything within tolerance is painted one
+        // colour, so a range that only just clears the band leaves a map with
+        // two colours in it and no gradient to read.
+        ramp.scale_mm = suggested_scale_mm(&stats).max(job.settings.tolerance_mm * BAND_HEADROOM);
     }
     AlignOutcome::Measured {
         colors: color_map(map, &ramp),

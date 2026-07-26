@@ -205,9 +205,12 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     );
 
     // The range the tool picks for itself, which is what the operator sees.
+    // The nominal band is set well inside the 0.30 mm standoff on purpose: a
+    // band as wide as the deviation is a legitimate way to get two colours, and
+    // this test is about the ramp BETWEEN them.
     let ramp = RampSettings {
         scale_mm: suggested_scale_mm(&stats),
-        tolerance_mm: 0.2,
+        tolerance_mm: 0.05,
         bands: None,
         mode: RampMode::Signed,
     };

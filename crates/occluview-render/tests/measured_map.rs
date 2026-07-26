@@ -140,8 +140,8 @@ fn render_measured_dome(mesh: &Mesh) -> Vec<u8> {
 /// The deviation ramp's two ends, as `occluview-align` defines them. Duplicated
 /// deliberately: this test asks whether the RENDERER changes a colour handed to
 /// it, so it must not read the answer from the same place the app does.
-const COLD_END: [u8; 4] = [36, 82, 214, 255];
-const HOT_END: [u8; 4] = [240, 58, 44, 255];
+const COLD_END: [u8; 4] = [20, 50, 235, 255];
+const HOT_END: [u8; 4] = [252, 30, 18, 255];
 
 /// The colours that reach the screen are the colours that were uploaded.
 ///
@@ -196,9 +196,9 @@ fn a_swept_deviation_arrives_on_screen_as_a_transition() {
     let _gpu = gpu_test_lock();
     let stops = [
         COLD_END,
-        [46, 176, 208, 255],
-        [74, 196, 108, 255],
-        [236, 190, 56, 255],
+        [20, 170, 235, 255],
+        [40, 200, 70, 255],
+        [250, 205, 20, 255],
         HOT_END,
     ];
     let pixels = render_measured_dome(&ramped_dome_mesh(&stops));
