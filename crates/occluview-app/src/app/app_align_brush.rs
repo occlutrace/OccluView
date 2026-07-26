@@ -7,10 +7,9 @@
 //! the deviation map — still goes to the worker, and only once the stroke ends
 //! rather than on every dab.
 //!
-//! The region is also *shown*. A brush whose only evidence is a number in the
-//! statistics is a brush an operator cannot aim: the surface that takes part in
-//! the match is tinted stone, the surface that does not is tinted red, and the
-//! tint goes away with paint mode.
+//! The markings are also *shown*. A brush whose only evidence is a number in
+//! the statistics is a brush an operator cannot aim: marked surface goes blue,
+//! exactly as it does in exocad, and the tint comes off with the window.
 
 use std::sync::Arc;
 
@@ -23,10 +22,13 @@ use super::OccluViewApp;
 use crate::align_brush::MaskCommand;
 use crate::viewer::pick_scene_hit;
 
-/// Tint for surface that takes part in the match — the scan's own stone.
+/// Tint for surface that still takes part in the match — a neutral stone, so
+/// the marked surface is the only thing that draws the eye.
 const REGION_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
-/// Tint for surface that has been taken out of the match.
-const REGION_OUT_COLOR: [u8; 4] = [193, 94, 82, 255];
+/// Tint for surface marked out of the match. Blue, because that is the colour
+/// exocad paints an excluded region, and an operator who works in that dialog
+/// should not have to learn a second convention here.
+const REGION_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
 
 impl OccluViewApp {
     /// Paint or erase under the pointer. Returns whether the brush owns this
@@ -95,8 +97,9 @@ impl OccluViewApp {
             .flat_map(|vertex| vertex.position)
             .collect();
 
-        // Which way a stroke goes comes from the panel, not from a modifier:
-        // Shift resizes the brush here, the same as it does for sculpting.
+        // exocad's rule: a plain drag marks, Shift inverses the brush, and the
+        // Brush inverse toggle inverses it standing. Held together they cancel.
+        let shift = ctx.input(|input| input.modifiers.shift);
         let changed = occluview_align::apply_brush(
             &mut mask,
             &positions,
@@ -108,7 +111,7 @@ impl OccluViewApp {
                     f64::from(hit.point.z),
                 ),
                 radius_mm: f64::from(self.align_brush.radius_mm()),
-                erase: self.align_brush.paint().erases(),
+                erase: self.align_brush.erases(shift),
             },
         );
 
@@ -129,7 +132,16 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.align_brush.is_armed() || !response.hovered() {
+        if !self.align_brush.is_armed() {
+            return false;
+        }
+        // Over the viewport itself, not over a window floating on it: the
+        // brush's own size slider takes a plain wheel, and a shifted wheel
+        // there must not also resize the brush behind it.
+        let over_viewport = ctx
+            .pointer_hover_pos()
+            .is_some_and(|pointer| self.pointer_on_bare_viewport(ctx, response.rect, pointer));
+        if !over_viewport {
             return false;
         }
         let (scroll, shift) = ctx.input(|input| {
@@ -179,14 +191,13 @@ impl OccluViewApp {
         if !radius_px.is_finite() || radius_px < 2.0 {
             return;
         }
-        let ink = if self.align_brush.paint().erases() {
-            egui::Color32::from_rgb(96, 168, 120)
+        // exocad paints with a green tool and clears with a red one; the ring
+        // says which of the two this drag will be, Shift included.
+        let shift = ctx.input(|input| input.modifiers.shift);
+        let ink = if self.align_brush.erases(shift) {
+            egui::Color32::from_rgb(196, 82, 72)
         } else {
-            egui::Color32::from_rgb(
-                REGION_OUT_COLOR[0],
-                REGION_OUT_COLOR[1],
-                REGION_OUT_COLOR[2],
-            )
+            egui::Color32::from_rgb(72, 158, 108)
         };
         let canvas = ui.painter();
         canvas.circle_filled(pointer, radius_px, ink.gamma_multiply(0.10));
@@ -224,9 +235,49 @@ impl OccluViewApp {
             _ => vec![occluview_align::INCLUDED; vertex_count],
         };
         match command {
-            MaskCommand::Everything => occluview_align::set_all(&mut mask, false),
-            MaskCommand::Nothing => occluview_align::set_all(&mut mask, true),
-            MaskCommand::Invert => occluview_align::invert(&mut mask),
+            MaskCommand::FitEverywhere => occluview_align::set_all(&mut mask, false),
+            MaskCommand::FitNowhere => occluview_align::set_all(&mut mask, true),
+            MaskCommand::InvertMarkings => occluview_align::invert(&mut mask),
+            MaskCommand::MarkAutomatic => {
+                // exocad "Mark automatic": keep only a disc of surface at each
+                // arrow end, and mark everything else out. Written as
+                // mark-everything then clear-the-discs, because the discs are
+                // what the operator wants MATCHED and the mask stores what is
+                // ignored.
+                let Some(pose) = Rigid::from_affine(&moving.transform) else {
+                    return;
+                };
+                if self.align.pairs().is_empty() {
+                    self.align_status =
+                        Some("Place at least one arrow before marking automatically".into());
+                    return;
+                }
+                occluview_align::set_all(&mut mask, true);
+                let positions: Vec<f32> = moving
+                    .mesh
+                    .vertices()
+                    .iter()
+                    .flat_map(|vertex| vertex.position)
+                    .collect();
+                let radius = f64::from(self.align_brush.auto_radius_mm());
+                for pair in self.align.pairs() {
+                    let world = moving.transform.transform_point3(pair.moving.local);
+                    occluview_align::apply_brush(
+                        &mut mask,
+                        &positions,
+                        pose,
+                        &MaskEdit {
+                            center: DVec3::new(
+                                f64::from(world.x),
+                                f64::from(world.y),
+                                f64::from(world.z),
+                            ),
+                            radius_mm: radius,
+                            erase: true,
+                        },
+                    );
+                }
+            }
         }
         self.set_align_mask(Some(mask));
         self.align_status = Some(command.report().into());
@@ -250,6 +301,11 @@ impl OccluViewApp {
         if !self.align_brush.is_armed() {
             if self.align_overlay == AlignOverlay::Region {
                 self.clear_deviation_overlay();
+                // The map was taken down to make room for the markings. Closing
+                // the brush is the moment to put it back, or an operator who
+                // opened the brush to fix one region loses the reading they
+                // opened it because of.
+                self.measure_if_shown();
             }
             return;
         }
@@ -269,31 +325,62 @@ impl OccluViewApp {
         self.apply_region_colors(colors);
     }
 
+    /// What share of the moving scan is marked out of the match, if there is a
+    /// mask at all. `None` while there is nothing to report.
+    pub(super) fn align_marked_fraction(&self) -> Option<f32> {
+        let mask = self.align_mask.as_ref()?;
+        // A mask left over from other geometry is not a reading about this
+        // mesh. Reporting its fraction would be a number about nothing.
+        let scene = self.scene.as_ref()?;
+        let moving = self
+            .align
+            .moving_layer()
+            .and_then(|id| super::app_align::layer_of(scene, id))?;
+        if mask.is_empty() || mask.len() != moving.mesh.vertices().len() {
+            return None;
+        }
+        // `bytecount` would be the crate for this, but it is one dependency for
+        // one counter over an array the operator's own brush strokes bounded.
+        #[allow(clippy::naive_bytecount)]
+        let marked = mask
+            .iter()
+            .filter(|slot| **slot == occluview_align::EXCLUDED)
+            .count();
+        #[allow(clippy::cast_precision_loss)]
+        Some(marked as f32 / mask.len() as f32)
+    }
+
     /// One colour per vertex of the moving scan: stone where it takes part in
-    /// the match, red where it does not.
+    /// the match, blue where it has been marked out.
     fn align_region_colors(&self) -> Option<Vec<[u8; 4]>> {
         let scene = self.scene.as_ref()?;
         let moving = self
             .align
             .moving_layer()
             .and_then(|id| super::app_align::layer_of(scene, id))?;
-        let count = moving.mesh.vertices().len();
+        let vertices = moving.mesh.vertices();
+        let count = vertices.len();
         // A mask of the wrong length belongs to different geometry. Reading it
-        // by index would paint arbitrary vertices red and call it a region.
+        // by index would paint arbitrary vertices blue and call it a region.
         let mask = self
             .align_mask
             .as_ref()
             .filter(|mask| mask.len() == count)
             .map(|mask| mask.as_ref().as_slice());
+        // A coloured scan keeps its own colours where nothing is marked. The
+        // operator is usually aiming AT something they can see — a stain, a
+        // bubble, a bite block — and flattening the surface to one tint takes
+        // away the very thing they were aiming at.
+        let own_colors = moving.mesh.has_vertex_colors();
         Some(
             (0..count)
                 .map(|vertex| {
-                    let excluded =
-                        mask.is_some_and(|mask| mask[vertex] == occluview_align::EXCLUDED);
-                    if excluded {
-                        REGION_OUT_COLOR
-                    } else {
-                        REGION_IN_COLOR
+                    if mask.is_some_and(|mask| mask[vertex] == occluview_align::EXCLUDED) {
+                        return REGION_OUT_COLOR;
+                    }
+                    match vertices.get(vertex) {
+                        Some(vertex) if own_colors => vertex.color,
+                        _ => REGION_IN_COLOR,
                     }
                 })
                 .collect(),
@@ -325,9 +412,19 @@ mod tests {
             production.contains("self.invalidate_deviation_map("),
             "a mask change must invalidate the map"
         );
+        // Scoped to the stroke: CLOSING the brush does re-measure, because the
+        // map was taken down to make room for the markings and the operator is
+        // asking for it back. Measuring per dab is the thing that must not
+        // happen — it is seconds of work behind a moving hand.
+        let stroke = production
+            .split_once("fn handle_align_brush(")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("fn handle_align_brush_wheel("))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
         assert!(
-            !production.contains("measure_if_shown"),
-            "the brush must never kick off a measurement"
+            !stroke.contains("measure_if_shown") && !stroke.contains("run_align_measure"),
+            "a stroke must never kick off a measurement"
         );
     }
 
@@ -363,9 +460,10 @@ mod tests {
     fn every_mask_command_is_handled() {
         let source = include_str!("app_align_brush.rs");
         for command in [
-            MaskCommand::Everything,
-            MaskCommand::Nothing,
-            MaskCommand::Invert,
+            MaskCommand::FitEverywhere,
+            MaskCommand::FitNowhere,
+            MaskCommand::InvertMarkings,
+            MaskCommand::MarkAutomatic,
         ] {
             let name = format!("MaskCommand::{command:?}");
             assert!(
@@ -375,11 +473,11 @@ mod tests {
         }
     }
 
-    /// Shift resizes the brush now, so a stroke's direction can only come from
-    /// the panel. A modifier read here would mean the same gesture did two
-    /// different things.
+    /// exocad's rule: a plain drag marks, Shift inverses the brush, and the
+    /// Brush inverse toggle inverses it standing. Both have to reach the same
+    /// decision or the toggle and the key would fight.
     #[test]
-    fn a_stroke_takes_its_direction_from_the_panel_not_a_modifier() {
+    fn a_stroke_takes_its_direction_from_the_toggle_and_shift_together() {
         let stroke = production()
             .split_once("fn handle_align_brush(")
             .map(|(_, rest)| rest)
@@ -387,12 +485,8 @@ mod tests {
             .map(|(body, _)| body)
             .unwrap_or_default();
         assert!(
-            stroke.contains("erase: self.align_brush.paint().erases()"),
-            "the stroke direction must come from the brush's own control"
-        );
-        assert!(
-            !stroke.contains("modifiers.shift"),
-            "Shift resizes the brush; it must not also flip the stroke"
+            stroke.contains("erase: self.align_brush.erases(shift)"),
+            "the stroke direction must come from the brush, Shift included"
         );
     }
 

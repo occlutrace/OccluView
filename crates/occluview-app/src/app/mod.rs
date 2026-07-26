@@ -43,6 +43,7 @@ mod app_align;
 mod app_align_brush;
 mod app_align_display;
 mod app_align_drag;
+mod app_align_panel;
 mod app_align_session;
 mod app_bridge_split;
 mod app_cut_measure;

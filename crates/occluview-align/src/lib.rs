@@ -62,7 +62,7 @@ pub use deviation::{
     DeviationSettings, DeviationStats, RampMode, RampSettings, Validity, NO_DATA_COLOR,
 };
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
-pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
+pub use mask::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
 pub use pairs::{fit_pairs, FitRejection, PairFit};
 pub use rigid::Rigid;

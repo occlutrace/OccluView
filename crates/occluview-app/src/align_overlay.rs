@@ -79,10 +79,12 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         } else {
             ui_theme::ACCENT
         };
-        painter.line_segment(
-            [moving, fixed],
-            egui::Stroke::new(1.1, ink.gamma_multiply(0.7)),
-        );
+        // An arrow, not a bare line. exocad calls each correspondence an arrow
+        // and its Back button undoes one, so the operator counts arrows; the
+        // head sits at the FIXED end, which is where the surface is going.
+        let stroke = egui::Stroke::new(1.1, ink.gamma_multiply(0.7));
+        painter.line_segment([moving, fixed], stroke);
+        arrowhead(painter, moving, fixed, stroke);
         marker(painter, moving, ink, index + 1);
         marker(painter, fixed, ink, index + 1);
     }
@@ -99,6 +101,33 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
             }
             measure_draw::anchor_dot(painter, anchor);
         }
+    }
+}
+
+/// A head on the `from`→`to` line, set back far enough to clear the marker
+/// disc at the tip.
+fn arrowhead(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: egui::Stroke) {
+    /// Length of each barb, in pixels.
+    const BARB_PX: f32 = 7.0;
+    /// Half-angle between a barb and the shaft.
+    const SPREAD: f32 = 0.45;
+
+    let along = to - from;
+    let length = along.length();
+    // Too short to carry a head: the two markers already overlap, and a barb
+    // drawn here would just be a smudge between them.
+    if length < MARKER_RADIUS_PX * 3.0 {
+        return;
+    }
+    let direction = along / length;
+    let tip = to - direction * (MARKER_RADIUS_PX + 1.0);
+    let (sin, cos) = SPREAD.sin_cos();
+    for side in [1.0_f32, -1.0] {
+        let barb = egui::vec2(
+            direction.x.mul_add(cos, direction.y * sin * side),
+            direction.y.mul_add(cos, -direction.x * sin * side),
+        );
+        painter.line_segment([tip, tip - barb * BARB_PX], stroke);
     }
 }
 
