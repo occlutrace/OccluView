@@ -41,6 +41,15 @@ const DAMPING_GROWTH: f64 = 10.0;
 /// Damping retries before a level gives up on the current iteration.
 const MAX_DAMPING_RETRIES: usize = 3;
 
+/// An iteration counts as an improvement only if it cuts the residual by more
+/// than this factor. A tenth of a percent is far below anything a scan can
+/// resolve, so anything slower than that is wandering, not converging.
+const STALL_IMPROVEMENT: f64 = 0.999;
+
+/// Consecutive non-improving iterations before a level gives up. Three, so a
+/// single flat step between two real ones cannot end the fit early.
+const STALL_ROUNDS: u32 = 3;
+
 /// A normal-equation diagonal below this fraction of the largest means that
 /// degree of freedom is not determined by the geometry.
 const WEAK_AXIS_FRACTION: f64 = 1e-6;
@@ -253,6 +262,11 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut iterations = 0u32;
     let mut converged = false;
     let mut summary: Option<Summary> = None;
+    let mut best_rms = f64::INFINITY;
+    let mut stalled = 0u32;
+    // The pose the best residual was measured AT, kept so a level that gives up
+    // returns its best answer rather than wherever it happened to wander to.
+    let mut best: Option<(Rigid, Summary)> = None;
 
     for _ in 0..level.settings.max_iterations {
         if level.cancel.is_cancelled() {
@@ -274,12 +288,17 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
             });
         }
         let (normal_matrix, gradient, centre) = accumulate(&kept);
-        summary = Some(summarize(
-            &kept,
-            matched,
-            level.samples.len(),
-            &normal_matrix,
-        ));
+        let measured = summarize(&kept, matched, level.samples.len(), &normal_matrix);
+        summary = Some(measured);
+        // `measured` describes the pose the correspondences were found AT, not
+        // the one the step below produces. Remember the pair together.
+        if measured.rms.is_finite() && measured.rms < best_rms * STALL_IMPROVEMENT {
+            best_rms = measured.rms;
+            best = Some((pose, measured));
+            stalled = 0;
+        } else {
+            stalled += 1;
+        }
 
         let Some(step) = solve_damped(&normal_matrix, &gradient) else {
             break;
@@ -292,9 +311,32 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
             converged = true;
             break;
         }
+
+        // Stop when the residual stops falling.
+        //
+        // The pose-delta test above is the textbook exit and it is the right
+        // one for a pair that really does converge: a scan nudged off its own
+        // position settles in five iterations. It never fires for a pair that
+        // CANNOT converge, though, and exocad's own warning says why — best-fit
+        // matching is for identically shaped meshes. Give it an arch with
+        // crowns on it against the same arch without, and the step never gets
+        // small, it just wanders. Left alone that is every core at full tilt
+        // for the whole iteration ceiling, and it does not even end up at its
+        // own best answer: on a real 942k-vertex pair the ceiling run finished
+        // at 0.42 mm having passed through 0.19 mm on the way.
+        if stalled >= STALL_ROUNDS {
+            break;
+        }
     }
 
-    let Some(summary) = summary else {
+    // A level that gave up hands back the best pose it saw, not the last one it
+    // wandered to. A level that converged hands back where it converged.
+    let settled = if converged {
+        summary.map(|summary| (pose, summary))
+    } else {
+        best.or_else(|| summary.map(|summary| (pose, summary)))
+    };
+    let Some((pose, summary)) = settled else {
         return Err(FitRejection::TooFewPairs {
             have: 0,
             need: MIN_CORRESPONDENCES,
