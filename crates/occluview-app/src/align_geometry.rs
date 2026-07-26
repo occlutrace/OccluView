@@ -118,21 +118,52 @@ fn remember<K: PartialEq + Copy, T, F: FnOnce() -> T>(
     fresh
 }
 
-/// The vertex array a deviation map is pushed to the GPU through.
+/// One layer's vertices, held with whatever colours are currently on it.
+#[derive(Default)]
+struct PaintedSlot {
+    /// Which geometry the positions, normals, and UVs below came from.
+    geometry: Option<u64>,
+    /// The layer's vertices, with the overlay colour written over each.
+    vertices: Vec<Vertex>,
+}
+
+/// The vertex arrays an overlay is pushed to the GPU through.
 ///
 /// The upload path takes whole vertices, but a re-colour only changes four
 /// bytes of each. Rebuilding the array per re-colour allocates and copies
 /// thirty-four megabytes on a full arch; keeping it and overwriting the colour
 /// field in place costs a tenth of that and no allocation at all.
+///
+/// Two slots, because both meshes in an alignment can carry markings at once
+/// and one slot would rebuild the whole array every time the brush crossed from
+/// one to the other.
 #[derive(Default)]
 pub(crate) struct PaintedVertices {
-    /// Which geometry the positions, normals, and UVs below came from.
-    geometry: Option<u64>,
-    /// The layer's vertices, with the measured colour written over each.
-    vertices: Vec<Vertex>,
+    slots: [PaintedSlot; 2],
 }
 
 impl PaintedVertices {
+    /// The slot holding `mesh`, made ready to carry `count` colours.
+    ///
+    /// Picks the slot that already holds this geometry, else the one that holds
+    /// nothing, else the first — two meshes are all an alignment has.
+    fn slot_for(&mut self, mesh: &Mesh, count: usize) -> &mut PaintedSlot {
+        let id = mesh.geometry_id();
+        let at = self
+            .slots
+            .iter()
+            .position(|slot| slot.geometry == Some(id))
+            .or_else(|| self.slots.iter().position(|slot| slot.geometry.is_none()))
+            .unwrap_or(0);
+        let slot = &mut self.slots[at];
+        if slot.geometry != Some(id) || slot.vertices.len() != count {
+            slot.vertices.clear();
+            slot.vertices.extend_from_slice(mesh.vertices());
+            slot.geometry = Some(id);
+        }
+        slot
+    }
+
     /// The layer's vertices carrying `colors`, or `None` if the map does not
     /// describe this mesh.
     pub(crate) fn repaint(&mut self, mesh: &Mesh, colors: &[[u8; 4]]) -> Option<&[Vertex]> {
@@ -144,12 +175,8 @@ impl PaintedVertices {
         if mesh.vertices().len() != colors.len() {
             return None;
         }
-        if self.geometry != Some(mesh.geometry_id()) || self.vertices.len() != colors.len() {
-            self.vertices.clear();
-            self.vertices.extend_from_slice(mesh.vertices());
-            self.geometry = Some(mesh.geometry_id());
-        }
-        self.vertices
+        let slot = self.slot_for(mesh, colors.len());
+        slot.vertices
             .par_chunks_mut(CHUNK)
             .zip(colors.par_chunks(CHUNK))
             .for_each(|(vertices, colors)| {
@@ -157,14 +184,49 @@ impl PaintedVertices {
                     vertex.color = *color;
                 }
             });
-        Some(&self.vertices)
+        Some(&slot.vertices)
     }
 
-    /// Drop the array. The map is gone, so thirty-four megabytes of scratch
-    /// should be too.
+    /// Rewrite only `touched`, leaving every other vertex as it was.
+    ///
+    /// The whole point of the brush being fast. A dab the size of a cusp
+    /// touches a few hundred vertices out of a million; repainting the array
+    /// for those is thirty-four megabytes of memory traffic, and the upload
+    /// that follows it is thirty-four more. Together they are what made
+    /// painting run at three frames a second.
+    pub(crate) fn patch(
+        &mut self,
+        mesh: &Mesh,
+        colors: &[[u8; 4]],
+        touched: &[u32],
+    ) -> Option<&[Vertex]> {
+        if mesh.vertices().len() != colors.len() {
+            return None;
+        }
+        let slot = self.slot_for(mesh, colors.len());
+        for index in touched {
+            let at = *index as usize;
+            let (Some(vertex), Some(color)) = (slot.vertices.get_mut(at), colors.get(at)) else {
+                continue;
+            };
+            vertex.color = *color;
+        }
+        Some(&slot.vertices)
+    }
+
+    /// Whether this mesh already has a slot ready to be patched. A patch onto a
+    /// slot that has to be rebuilt first is not a saving, so the caller repaints
+    /// instead.
+    pub(crate) fn holds(&self, mesh: &Mesh, count: usize) -> bool {
+        let id = mesh.geometry_id();
+        self.slots
+            .iter()
+            .any(|slot| slot.geometry == Some(id) && slot.vertices.len() == count)
+    }
+
+    /// Drop the arrays. The overlay is gone, so the scratch should be too.
     pub(crate) fn clear(&mut self) {
-        self.geometry = None;
-        self.vertices = Vec::new();
+        self.slots = Default::default();
     }
 }
 

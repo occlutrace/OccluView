@@ -71,7 +71,7 @@ fn body(
     let mut action = header(ui);
     ui.add_space(2.0);
     ui.label(
-        egui::RichText::new("Paint the surface best-fit matching must ignore")
+        egui::RichText::new("Paint the surface best-fit matching must ignore, on either mesh")
             .size(11.0)
             .color(ui_theme::TEXT),
     );
@@ -195,7 +195,7 @@ fn automatic(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
     }
 }
 
-/// How much of the mesh is currently marked.
+/// How much of the two meshes is currently marked.
 ///
 /// The one number that says whether the brush did what the operator meant.
 /// "Fit nowhere" and a slip of the hand look identical on a shaded surface at a
@@ -207,14 +207,14 @@ fn coverage(ui: &mut egui::Ui, marked: Option<f32>) {
     let percent = (marked * 100.0).clamp(0.0, 100.0);
     let (text, ink) = if marked >= 1.0 {
         (
-            "The whole mesh is marked — best-fit matching will have no effect".to_owned(),
+            "Everything is marked — best-fit matching will have no effect".to_owned(),
             MARKED_OUT_INK,
         )
     } else if marked <= 0.0 {
         ("Nothing marked".to_owned(), ui_theme::TEXT_MUTED)
     } else {
         (
-            format!("{percent:.0}% of the mesh marked out of the match"),
+            format!("{percent:.0}% marked out of the match"),
             ui_theme::TEXT_MUTED,
         )
     };
@@ -274,6 +274,6 @@ mod tests {
     fn the_window_says_how_much_of_the_mesh_is_marked() {
         let source = production();
         assert!(source.contains("best-fit matching will have no effect"));
-        assert!(source.contains("of the mesh marked out of the match"));
+        assert!(source.contains("marked out of the match"));
     }
 }
