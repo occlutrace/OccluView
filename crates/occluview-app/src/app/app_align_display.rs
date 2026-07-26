@@ -20,18 +20,52 @@ use occluview_render::PreparedSceneTopology;
 use super::app_align::layer_of;
 use super::OccluViewApp;
 
+/// What the per-vertex overlay on the moving scan currently means.
+///
+/// One layer, one colour channel, two things that want it: the measured map and
+/// the region tint. Without a name for which one is up, dropping a stale map
+/// also wiped the brush's own preview mid-stroke.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AlignOverlay {
+    /// The scan shows its own colours.
+    #[default]
+    Nothing,
+    /// Measured distances to the other scan.
+    Map,
+    /// Which surface takes part in the match.
+    Region,
+}
+
 impl OccluViewApp {
     /// Attach the measured colours to the mapped layer.
     ///
     /// The upload is left to the viewport sync, which runs once per frame and
     /// knows whether the prepared scene it would write into still exists.
     pub(super) fn apply_deviation_colors(&mut self, colors: Vec<[u8; 4]>) {
+        if self.attach_overlay_colors(colors, AlignOverlay::Map) {
+            self.ghost_other_layer();
+        }
+    }
+
+    /// Attach the region tint to the moving layer.
+    ///
+    /// No ghosting: while an operator is painting they are aiming at both
+    /// surfaces, and fading one of them away is the opposite of what a
+    /// measurement reading needs.
+    pub(super) fn apply_region_colors(&mut self, colors: Vec<[u8; 4]>) {
+        self.attach_overlay_colors(colors, AlignOverlay::Region);
+    }
+
+    /// Put per-vertex colours on the moving layer and record what they mean.
+    ///
+    /// Returns whether they were attached.
+    fn attach_overlay_colors(&mut self, colors: Vec<[u8; 4]>, kind: AlignOverlay) -> bool {
         let Some(moving_id) = self.align_mapped_layer() else {
-            return;
+            return false;
         };
         let shared = Arc::new(colors);
         let Some(scene) = self.scene.as_mut() else {
-            return;
+            return false;
         };
         // In place: the app holds the only reference, so nothing is copied.
         let live = Arc::make_mut(scene);
@@ -40,21 +74,22 @@ impl OccluViewApp {
             .iter_mut()
             .find(|entry| entry.id() == moving_id)
         else {
-            return;
+            return false;
         };
         // A map of the wrong length is not this layer's map. Stretching it over
         // whatever vertices are there would be colour presented as measurement.
         if entry.mesh.vertices().len() != shared.len() {
-            return;
+            return false;
         }
         entry.set_deviation(Some(Arc::clone(&shared)));
         self.align_deviation = Some(shared);
+        self.align_overlay = kind;
         // A material change, not a scene replacement: the prepared GPU scene
         // survives and only the per-layer uniform is rewritten, which is what
         // turns the layer into a measured map in the shader.
         self.mark_scene_materials_changed();
         self.deviation_push_pending = true;
-        self.ghost_other_layer();
+        true
     }
 
     /// Replace the mapped layer's uploaded vertex colours with the measured
@@ -93,6 +128,7 @@ impl OccluViewApp {
 
     /// Drop the map and restore the scan's own colours.
     pub(super) fn clear_deviation_overlay(&mut self) {
+        self.align_overlay = AlignOverlay::Nothing;
         if self.align_deviation.take().is_none() {
             return;
         }
@@ -208,6 +244,35 @@ mod tests {
         assert!(
             source.contains("self.align_painted.clear()"),
             "dropping the map must drop the scratch buffer with it"
+        );
+    }
+
+    /// Two things want the one colour channel on the moving scan. Attaching
+    /// either without recording which it was is what let a stale-map drop wipe
+    /// the brush's own preview out from under the operator's hand.
+    #[test]
+    fn every_attached_overlay_says_what_it_is() {
+        let source = production();
+        let attach = source
+            .split_once("fn attach_overlay_colors(")
+            .map(|(_, rest)| rest)
+            .expect("one place that attaches colours");
+        assert!(
+            attach.contains("self.align_overlay = kind"),
+            "attaching colours must record what they mean"
+        );
+        assert_eq!(
+            source.matches("entry.set_deviation(Some(").count(),
+            1,
+            "colours must only be attached in one place"
+        );
+        let clear = source
+            .split_once("fn clear_deviation_overlay(")
+            .map(|(_, rest)| rest)
+            .expect("one place that drops colours");
+        assert!(
+            clear.contains("self.align_overlay = AlignOverlay::Nothing"),
+            "dropping colours must clear what they meant"
         );
     }
 }

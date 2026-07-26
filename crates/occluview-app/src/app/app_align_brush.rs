@@ -1,4 +1,4 @@
-//! Painting the exclusion mask while Align Scans is armed.
+//! Painting the match region while Align Scans is armed.
 //!
 //! A dab is a plain pass over the moving layer's vertices with a distance
 //! test — no acceleration structure, no worker. That is deliberate: it costs a
@@ -6,6 +6,11 @@
 //! would mean the paint lagged the cursor. The expensive half — re-measuring
 //! the deviation map — still goes to the worker, and only once the stroke ends
 //! rather than on every dab.
+//!
+//! The region is also *shown*. A brush whose only evidence is a number in the
+//! statistics is a brush an operator cannot aim: the surface that takes part in
+//! the match is tinted stone, the surface that does not is tinted red, and the
+//! tint goes away with paint mode.
 
 use std::sync::Arc;
 
@@ -13,9 +18,15 @@ use eframe::egui;
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid};
 
+use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
 use crate::align_brush::MaskCommand;
 use crate::viewer::pick_scene_hit;
+
+/// Tint for surface that takes part in the match — the scan's own stone.
+const REGION_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
+/// Tint for surface that has been taken out of the match.
+const REGION_OUT_COLOR: [u8; 4] = [193, 94, 82, 255];
 
 impl OccluViewApp {
     /// Paint or erase under the pointer. Returns whether the brush owns this
@@ -31,12 +42,12 @@ impl OccluViewApp {
         let primary_down =
             ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
         if !primary_down {
-            // The stroke ended. The mask changed what would be measured, so a
+            // The stroke ended. The region changed what would be measured, so a
             // map drawn before it is stale — drop it rather than silently
             // recomputing behind the operator's hand.
             if self.align_mask_stroke_open {
                 self.align_mask_stroke_open = false;
-                self.invalidate_deviation_map("Mask changed");
+                self.invalidate_deviation_map("Region changed");
                 // The release frame still reads as a click. An armed brush owns
                 // it, or one dab would also drop an alignment point.
                 return true;
@@ -49,7 +60,7 @@ impl OccluViewApp {
         else {
             return false;
         };
-        // The brush's own radius slider sits inches from the cursor, and the
+        // The brush's own size slider sits inches from the cursor, and the
         // window floats over the scan. Without this, dragging that slider
         // paints a dab per frame on whatever is behind the window — silently.
         if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
@@ -62,7 +73,7 @@ impl OccluViewApp {
             return true;
         };
         if Some(hit.layer_id) != self.align.moving_layer() {
-            self.align_status = Some("The mask is painted on the scan that moves".into());
+            self.align_status = Some("The region is painted on the scan that moves".into());
             return true;
         }
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
@@ -84,7 +95,8 @@ impl OccluViewApp {
             .flat_map(|vertex| vertex.position)
             .collect();
 
-        let erase = ctx.input(|input| input.modifiers.shift);
+        // Which way a stroke goes comes from the panel, not from a modifier:
+        // Shift resizes the brush here, the same as it does for sculpting.
         let changed = occluview_align::apply_brush(
             &mut mask,
             &positions,
@@ -96,16 +108,90 @@ impl OccluViewApp {
                     f64::from(hit.point.z),
                 ),
                 radius_mm: f64::from(self.align_brush.radius_mm()),
-                erase,
+                erase: self.align_brush.paint().erases(),
             },
         );
 
         self.align_mask_stroke_open = true;
         if changed > 0 {
             self.set_align_mask(Some(mask));
+            self.refresh_align_region_preview();
             ctx.request_repaint();
         }
         true
+    }
+
+    /// Shift+wheel resizes the brush instead of zooming the camera — the same
+    /// gesture the sculpt brush uses, so there is one size gesture in the whole
+    /// application rather than one per tool.
+    pub(super) fn handle_align_brush_wheel(
+        &mut self,
+        response: &egui::Response,
+        ctx: &egui::Context,
+    ) -> bool {
+        if !self.align_brush.is_armed() || !response.hovered() {
+            return false;
+        }
+        let (scroll, shift) = ctx.input(|input| {
+            // Some platforms turn a shifted wheel into HORIZONTAL scroll, so
+            // read whichever axis actually moved.
+            let raw = input.raw_scroll_delta;
+            let axis = if raw.y.abs() >= raw.x.abs() {
+                raw.y
+            } else {
+                raw.x
+            };
+            (axis, input.modifiers.shift)
+        });
+        if !shift || scroll.abs() < f32::EPSILON {
+            return false;
+        }
+        self.align_brush.nudge_radius(scroll.signum());
+        self.align_status = Some(format!("Brush {:.1} mm", self.align_brush.radius_mm()));
+        ctx.request_repaint();
+        true
+    }
+
+    /// Draw the brush footprint under the cursor.
+    ///
+    /// Without it the operator is aiming a millimetre-sized tool with no idea
+    /// how much of the scan it covers, which on an arch is the difference
+    /// between excluding a bubble and excluding a quadrant.
+    pub(super) fn paint_align_brush_cursor(
+        &self,
+        ui: &egui::Ui,
+        viewport_rect: egui::Rect,
+        ctx: &egui::Context,
+    ) {
+        if !self.align_brush.is_armed() {
+            return;
+        }
+        let (Some(camera), Some(pointer)) = (self.camera.as_ref(), ctx.pointer_hover_pos()) else {
+            return;
+        };
+        if !self.pointer_on_bare_viewport(ctx, viewport_rect, pointer) {
+            return;
+        }
+        // The viewport camera is orthographic, so a millimetre maps to a fixed
+        // number of pixels regardless of depth.
+        let ortho_height = camera.orthographic_height.max(f32::EPSILON);
+        let radius_px = self.align_brush.radius_mm() * viewport_rect.height() / ortho_height;
+        if !radius_px.is_finite() || radius_px < 2.0 {
+            return;
+        }
+        let ink = if self.align_brush.paint().erases() {
+            egui::Color32::from_rgb(96, 168, 120)
+        } else {
+            egui::Color32::from_rgb(
+                REGION_OUT_COLOR[0],
+                REGION_OUT_COLOR[1],
+                REGION_OUT_COLOR[2],
+            )
+        };
+        let canvas = ui.painter();
+        canvas.circle_filled(pointer, radius_px, ink.gamma_multiply(0.10));
+        canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.2, ink));
+        canvas.circle_filled(pointer, 1.5, ink.gamma_multiply(0.7));
     }
 
     /// Install a mask, stamping it with a fresh revision.
@@ -120,7 +206,7 @@ impl OccluViewApp {
         self.align_mask_revision = self.align_mask_revision.wrapping_add(1);
     }
 
-    /// Apply one whole-mask command from the panel.
+    /// Apply one whole-region command from the panel.
     pub(super) fn apply_align_mask_command(&mut self, command: MaskCommand) {
         let Some(scene) = self.scene.clone() else {
             return;
@@ -138,40 +224,14 @@ impl OccluViewApp {
             _ => vec![occluview_align::INCLUDED; vertex_count],
         };
         match command {
-            MaskCommand::Nowhere => occluview_align::set_all(&mut mask, false),
-            MaskCommand::Everywhere => occluview_align::set_all(&mut mask, true),
+            MaskCommand::Everything => occluview_align::set_all(&mut mask, false),
+            MaskCommand::Nothing => occluview_align::set_all(&mut mask, true),
             MaskCommand::Invert => occluview_align::invert(&mut mask),
-            MaskCommand::AroundPoints => {
-                let Some(pose) = Rigid::from_affine(&moving.transform) else {
-                    return;
-                };
-                let positions: Vec<f32> = moving
-                    .mesh
-                    .vertices()
-                    .iter()
-                    .flat_map(|vertex| vertex.position)
-                    .collect();
-                let points: Vec<DVec3> = self
-                    .align
-                    .pairs()
-                    .iter()
-                    .map(|pair| {
-                        let world = moving.transform.transform_point3(pair.moving.local);
-                        DVec3::new(f64::from(world.x), f64::from(world.y), f64::from(world.z))
-                    })
-                    .collect();
-                occluview_align::mark_around(
-                    &mut mask,
-                    &positions,
-                    pose,
-                    &points,
-                    f64::from(self.align_brush.radius_mm()),
-                );
-            }
         }
         self.set_align_mask(Some(mask));
         self.align_status = Some(command.report().into());
         self.invalidate_deviation_map(command.report());
+        self.refresh_align_region_preview();
     }
 
     /// Drop the mask — done whenever the pair changes, since a mask is indexed
@@ -180,11 +240,79 @@ impl OccluViewApp {
         self.set_align_mask(None);
         self.align_mask_stroke_open = false;
     }
+
+    /// Put the region tint on the moving scan, take it off, or leave it alone.
+    ///
+    /// Called whenever paint mode or the mask changes. A brush that leaves no
+    /// mark on the surface is one an operator cannot aim, and the operator's
+    /// verdict on the previous build was exactly that.
+    pub(super) fn refresh_align_region_preview(&mut self) {
+        if !self.align_brush.is_armed() {
+            if self.align_overlay == AlignOverlay::Region {
+                self.clear_deviation_overlay();
+            }
+            return;
+        }
+        // A measured map and a region tint are both per-vertex colours on the
+        // same layer, so only one of them can be up. Paint mode wins: the
+        // operator is about to change what the map measured anyway.
+        if self.align_overlay == AlignOverlay::Map {
+            self.clear_deviation_overlay();
+        }
+        let Some(colors) = self.align_region_colors() else {
+            // Nothing to paint on yet. Silence here reads as a broken brush;
+            // the operator's actual problem is that no scan has been named.
+            self.align_status =
+                Some("Click a point on the scan that should move, then paint on it".into());
+            return;
+        };
+        self.apply_region_colors(colors);
+    }
+
+    /// One colour per vertex of the moving scan: stone where it takes part in
+    /// the match, red where it does not.
+    fn align_region_colors(&self) -> Option<Vec<[u8; 4]>> {
+        let scene = self.scene.as_ref()?;
+        let moving = self
+            .align
+            .moving_layer()
+            .and_then(|id| super::app_align::layer_of(scene, id))?;
+        let count = moving.mesh.vertices().len();
+        // A mask of the wrong length belongs to different geometry. Reading it
+        // by index would paint arbitrary vertices red and call it a region.
+        let mask = self
+            .align_mask
+            .as_ref()
+            .filter(|mask| mask.len() == count)
+            .map(|mask| mask.as_ref().as_slice());
+        Some(
+            (0..count)
+                .map(|vertex| {
+                    let excluded =
+                        mask.is_some_and(|mask| mask[vertex] == occluview_align::EXCLUDED);
+                    if excluded {
+                        REGION_OUT_COLOR
+                    } else {
+                        REGION_IN_COLOR
+                    }
+                })
+                .collect(),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::align_brush::MaskCommand;
+
+    /// The production half of this file: a source-contract test that scanned
+    /// its own assertions would pass or fail on its own text.
+    fn production() -> &'static str {
+        let source = include_str!("app_align_brush.rs");
+        source
+            .split_once("\n#[cfg(test)]")
+            .map_or(source, |(before, _)| before)
+    }
 
     /// Painting changes what would be measured, so a map drawn before the
     /// stroke describes a comparison that no longer exists. Dropping it is
@@ -192,10 +320,7 @@ mod tests {
     /// recomputing per dab would also be slow.
     #[test]
     fn a_stroke_drops_the_map_instead_of_recomputing_it() {
-        let source = include_str!("app_align_brush.rs");
-        let production = source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before);
+        let production = production();
         assert!(
             production.contains("self.invalidate_deviation_map("),
             "a mask change must invalidate the map"
@@ -212,10 +337,7 @@ mod tests {
     /// call it a measurement of the masked scan.
     #[test]
     fn every_mask_write_stamps_a_new_revision() {
-        let source = include_str!("app_align_brush.rs");
-        let production = source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before);
+        let production = production();
         assert_eq!(
             production.matches("self.align_mask =").count(),
             1,
@@ -232,7 +354,7 @@ mod tests {
         assert_eq!(
             production.matches("self.set_align_mask(").count(),
             3,
-            "the brush stroke, the whole-mask commands, and Clear all write the mask"
+            "the brush stroke, the whole-region commands, and Clear all write the mask"
         );
     }
 
@@ -241,16 +363,50 @@ mod tests {
     fn every_mask_command_is_handled() {
         let source = include_str!("app_align_brush.rs");
         for command in [
-            MaskCommand::Nowhere,
-            MaskCommand::Everywhere,
+            MaskCommand::Everything,
+            MaskCommand::Nothing,
             MaskCommand::Invert,
-            MaskCommand::AroundPoints,
         ] {
             let name = format!("MaskCommand::{command:?}");
             assert!(
-                source.matches(name.as_str()).count() >= 2,
+                source.contains(name.as_str()),
                 "{name} is declared but never applied"
             );
         }
+    }
+
+    /// Shift resizes the brush now, so a stroke's direction can only come from
+    /// the panel. A modifier read here would mean the same gesture did two
+    /// different things.
+    #[test]
+    fn a_stroke_takes_its_direction_from_the_panel_not_a_modifier() {
+        let stroke = production()
+            .split_once("fn handle_align_brush(")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("fn handle_align_brush_wheel("))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            stroke.contains("erase: self.align_brush.paint().erases()"),
+            "the stroke direction must come from the brush's own control"
+        );
+        assert!(
+            !stroke.contains("modifiers.shift"),
+            "Shift resizes the brush; it must not also flip the stroke"
+        );
+    }
+
+    /// A brush that leaves no mark on the surface cannot be aimed. Every path
+    /// that changes the region has to refresh what is on screen.
+    #[test]
+    fn every_region_change_refreshes_what_the_operator_sees() {
+        let production = production();
+        assert_eq!(
+            production
+                .matches("self.refresh_align_region_preview()")
+                .count(),
+            2,
+            "a stroke and a whole-region command both change the surface"
+        );
     }
 }
