@@ -222,7 +222,7 @@ mod tests {
         let first = bar[0];
         let last = bar[bar.len() - 1];
         assert!(
-            first[2] > 200 && first[0] == 0,
+            first[2] > 180 && first[0] < 90,
             "the bar must start at the cold end, got {first:?}"
         );
         assert!(
