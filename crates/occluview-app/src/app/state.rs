@@ -126,8 +126,9 @@ pub(crate) struct OccluViewApp {
     pub(super) align_constraint: crate::align_drag::DragConstraint,
     pub(super) align_brush: crate::align_brush::AlignBrush,
     pub(super) align_mask_stroke_open: bool,
+    /// What the per-vertex colours on the moving scan currently mean.
+    pub(super) align_overlay: super::app_align_display::AlignOverlay,
     pub(super) align_session_poses: Vec<(occluview_core::SceneMeshId, glam::Affine3A)>,
-    pub(super) align_map_on_fixed: bool,
     pub(super) align_tab: crate::align_panel::AlignTab,
     pub(super) align_ghosted: Vec<(occluview_core::SceneMeshId, f32)>,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
@@ -312,8 +313,8 @@ impl OccluViewApp {
             align_constraint: crate::align_drag::DragConstraint::default(),
             align_brush: crate::align_brush::AlignBrush::default(),
             align_mask_stroke_open: false,
+            align_overlay: super::app_align_display::AlignOverlay::default(),
             align_session_poses: Vec::new(),
-            align_map_on_fixed: false,
             align_tab: crate::align_panel::AlignTab::default(),
             align_ghosted: Vec::new(),
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),

@@ -25,11 +25,24 @@ pub(crate) enum DragConstraint {
 
 impl DragConstraint {
     /// The label the panel shows.
+    ///
+    /// Named for the direction a hand moves, not for the axis letter. An
+    /// operator dragging a scan is thinking "lift it", not "constrain to
+    /// world Z".
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Free => "free",
-            Self::ZOnly => "Z only",
-            Self::XyPlane => "XY plane",
+            Self::Free => "Any way",
+            Self::ZOnly => "Up · down",
+            Self::XyPlane => "Sideways",
+        }
+    }
+
+    /// What the constraint does, in one line.
+    pub(crate) fn hint(self) -> &'static str {
+        match self {
+            Self::Free => "Drag the scan in any direction",
+            Self::ZOnly => "Drag only along the vertical axis",
+            Self::XyPlane => "Drag only across the horizontal plane",
         }
     }
 }
