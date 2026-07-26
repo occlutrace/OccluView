@@ -30,9 +30,10 @@ pub(crate) fn show(
     }
 
     align_overlay::paint_legend(ui, *settings);
-    action = action.or(scale(ui, settings, enabled));
+    action = action.or(range(ui, settings, enabled));
     if let Some(stats) = stats {
         numbers(ui, stats, settings.tolerance_mm);
+        saturation(ui, stats, *settings);
     }
     ui.collapsing("More settings", |ui| {
         if details(ui, settings) {
@@ -77,21 +78,36 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
     action
 }
 
-/// The display range, directly under the bar it scales — the arrangement every
-/// metrology tool uses, because the bar is the legend for the slider.
-fn scale(
+/// The two numbers exocad exposes: the minimum and the maximum distance.
+///
+/// Directly under the bar they define — the arrangement every metrology tool
+/// uses, because the bar is the legend for the sliders. They are not decoration
+/// either: **min** is the nominal band, so everything closer than it is painted
+/// one colour, and **max** is where the ramp saturates.
+fn range(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Slider::new(&mut settings.tolerance_mm, 0.01..=1.0)
+                .suffix(" mm")
+                .text("min"),
+        )
+        .drag_stopped()
+    {
+        action = Some(AlignPanelAction::Measure);
+    }
     ui.horizontal(|ui| {
         if ui
             .add_enabled(
                 enabled,
-                egui::Slider::new(&mut settings.scale_mm, 0.05..=2.0)
+                egui::Slider::new(&mut settings.scale_mm, 0.05..=10.0)
                     .suffix(" mm")
-                    .text("scale"),
+                    .text("max"),
             )
             .drag_stopped()
         {
@@ -110,6 +126,30 @@ fn scale(
         }
     });
     action
+}
+
+/// Say so when the range is far too small for what was measured.
+///
+/// This is the state behind the map an operator called a thermal camera: a
+/// 0.20 mm range over a pair sitting 1.4 mm apart pins every vertex to an end
+/// stop, and the arch comes out as a red and blue mosaic with no structure in
+/// it. The colours are not wrong — the range is — and nothing on screen said so.
+fn saturation(ui: &mut egui::Ui, stats: DeviationStats, settings: AlignSettings) {
+    if stats.measured == 0 || !stats.p95.is_finite() || settings.auto_scale {
+        return;
+    }
+    if stats.p95 <= settings.scale_mm {
+        return;
+    }
+    ui.label(
+        egui::RichText::new(format!(
+            "Most of this is past {:.2} mm — the range is too small to show \
+             where they differ. Press auto",
+            settings.scale_mm
+        ))
+        .size(10.5)
+        .color(ui_theme::TEXT),
+    );
 }
 
 /// The numbers behind the colours, including what could not be measured.
@@ -143,21 +183,6 @@ fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
 /// The knobs that only matter when something looks wrong.
 fn details(ui: &mut egui::Ui, settings: &mut AlignSettings) -> bool {
     let mut changed = false;
-    changed |= ui
-        .add(
-            egui::Slider::new(&mut settings.tolerance_mm, 0.01..=1.0)
-                .suffix(" mm")
-                .text("tolerance"),
-        )
-        .drag_stopped();
-    changed |= ui
-        .add(
-            egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0)
-                .suffix(" mm")
-                .text("max distance"),
-        )
-        .drag_stopped();
-
     let mut banded = settings.bands.is_some();
     if ui
         .checkbox(&mut banded, "Stepped bands")
@@ -267,6 +292,38 @@ mod tests {
         assert!(production().contains("\"Hitmap\""));
     }
 
+    /// The two numbers that define the bar are exocad's minimum and maximum
+    /// distance, and both belong in front of the operator: min is the nominal
+    /// band and max is where the ramp saturates, so a map cannot be read
+    /// without them.
+    #[test]
+    fn the_minimum_and_maximum_distance_are_in_front_of_the_operator() {
+        let show = production()
+            .split_once("pub(crate) fn show(")
+            .and_then(|(_, rest)| rest.split_once("\n/// The one control"))
+            .map(|(body, _)| body)
+            .expect("the block's own body");
+        let fold = show
+            .find("ui.collapsing(\"More settings\"")
+            .expect("a fold to put the diagnostics behind");
+        let drawn = show
+            .find("range(ui, settings, enabled)")
+            .expect("the range controls");
+        assert!(drawn < fold, "the range controls are behind the fold");
+    }
+
+    /// The map an operator called a thermal camera was a correct map over a
+    /// range seven times too small. Nothing on screen said so.
+    #[test]
+    fn a_range_too_small_for_the_measurement_says_so() {
+        let source = production();
+        assert!(source.contains("the range is too small to show"));
+        assert!(
+            source.contains("stats.p95 <= settings.scale_mm"),
+            "the warning must compare the range against what was measured"
+        );
+    }
+
     /// A reading needs the bar, the scale, and the numbers. Everything else is
     /// a diagnostic, and diagnostics in front of the operator are what turned
     /// this block into the wall of knobs it replaced.
@@ -280,7 +337,7 @@ mod tests {
             .find("details(ui, settings)")
             .expect("the diagnostics are drawn by details");
         assert!(fold < call, "the diagnostics must be drawn inside the fold");
-        for knob in ["tolerance", "max distance", "Stepped bands", "Facing"] {
+        for knob in ["Stepped bands", "Colours", "Facing"] {
             let quoted = format!("\"{knob}\"");
             let at = source.find(&quoted).unwrap_or(usize::MAX);
             assert!(at > fold, "{knob} sits in front of the operator");
