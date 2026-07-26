@@ -12,7 +12,8 @@ use super::OccluViewApp;
 use crate::align_geometry::transform_key;
 use crate::align_tool::{AlignPoint, ClickOutcome};
 use crate::align_worker::{
-    AlignCompletion, AlignJob, AlignJobKind, AlignOutcome, AlignWorker, MeasureKey, WorldPair,
+    AlignCompletion, AlignJob, AlignJobKind, AlignOutcome, AlignWorker, MeasureKey, SurfaceKey,
+    WorldPair,
 };
 use crate::edit_mode::EditModeCommand;
 use crate::viewer::pick_scene_hit;
@@ -304,8 +305,16 @@ impl OccluViewApp {
         // Geometry, not topology: a sculpt deliberately keeps the topology id
         // and mints a fresh geometry id precisely so geometry-derived caches
         // can tell that the surface changed under them.
+        let mask_revision = self.align_mask_revision;
         let moving_key = (moving.mesh.geometry_id(), transform_key(moving.transform));
-        let fixed_key = (fixed.mesh.geometry_id(), transform_key(fixed.transform));
+        // The markings are part of the fixed surface's identity: masked
+        // triangles are left out of the index entirely, so a different set of
+        // markings is a different surface and must not reuse the built one.
+        let fixed_key = SurfaceKey {
+            geometry: fixed.mesh.geometry_id(),
+            pose: transform_key(fixed.transform),
+            markings: mask_revision,
+        };
         // Handed over by `Arc`: the arrays are built once per geometry and pose,
         // not once per submit. Measure is re-submitted on every settings change,
         // and rebuilding them there cost eleven megabytes of copying a time.
@@ -313,8 +322,8 @@ impl OccluViewApp {
         let moving_indices = self.align_geometry.indices(moving);
         let fixed_world_positions = self.align_geometry.world_positions(fixed);
         let fixed_indices = self.align_geometry.indices(fixed);
-        let mask_revision = self.align_mask_revision;
         let mask = self.align_mask.clone();
+        let fixed_mask = self.align_mask_fixed.clone();
         let settings = self.align_settings;
         let Some(worker) = self.align_worker.as_ref() else {
             return;
@@ -337,6 +346,7 @@ impl OccluViewApp {
             pose,
             pairs,
             mask,
+            fixed_mask,
             settings,
         });
         self.align_status = Some(

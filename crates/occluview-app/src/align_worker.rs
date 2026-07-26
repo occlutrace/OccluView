@@ -26,6 +26,18 @@ use occluview_align::{
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
+/// The nominal band a dental comparison opens at, in millimetres. Below this
+/// two surfaces are the same surface as far as any scanner can tell.
+pub(crate) const CLINICAL_MIN_MM: f64 = 0.01;
+/// The display maximum a dental comparison opens at, in millimetres. This is
+/// the number the whole field works to: a fit inside it is clinically usable,
+/// a fit outside it is not.
+pub(crate) const CLINICAL_MAX_MM: f64 = 0.20;
+/// The widest maximum the operator can dial in. Past this a deviation map stops
+/// being a clinical instrument and starts being a picture of two meshes that
+/// have not been aligned yet — which the panel says in words instead.
+pub(crate) const CLINICAL_CEILING_MM: f64 = 1.0;
+
 /// Operator-facing knobs, in the operator's units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct AlignSettings {
@@ -55,20 +67,30 @@ pub(crate) struct AlignSettings {
 impl Default for AlignSettings {
     fn default() -> Self {
         Self {
-            // Far enough that a roughly-placed scan still has something to
+            // Far enough that a roughly-placed mesh still has something to
             // measure against. Too tight and the map comes out mostly grey,
             // which reads as "broken" rather than "out of reach".
-            influence_radius_mm: 5.0,
+            influence_radius_mm: 2.0,
             matching_ratio: 0.8,
             orientation: Orientation::Match,
-            // Real registration deviations sit at 0.05-0.3 mm. A wider scale
-            // buries them in the green centre, which is exactly why the web
-            // build's map reads washed out.
-            scale_mm: 0.5,
-            tolerance_mm: 0.2,
+            // The clinical range, and the reason it is not a guess: dentistry
+            // works at a fifth of a millimetre. A map whose ends are five
+            // millimetres apart cannot show a fit that is either good or bad in
+            // that regime — everything lands in the middle and the operator is
+            // reading a picture of nothing. Opening at 0.01 to 0.20 mm means the
+            // first thing on screen is already the question they are asking.
+            scale_mm: CLINICAL_MAX_MM,
+            tolerance_mm: CLINICAL_MIN_MM,
             bands: None,
-            ramp_mode: RampMode::default(),
-            auto_scale: true,
+            // Magnitude, not signed: the question this tool answers is "how far
+            // apart are these two", and the nominal band makes everything
+            // inside tolerance one flat cold colour. Which side a surface sits
+            // on is a different question, one click away under More settings.
+            ramp_mode: RampMode::Magnitude,
+            // Deliberately off. A range that follows the measurement is a range
+            // that walks away from the clinical one the moment two meshes are
+            // roughly placed, and then the map is about millimetres again.
+            auto_scale: false,
             show_deviation: true,
         }
     }
@@ -127,14 +149,26 @@ pub(crate) struct WorldPair {
 pub(crate) struct MeasureKey {
     /// Geometry and pose of the layer being measured.
     pub(crate) moving: (u64, u64),
-    /// Geometry and pose of the surface it is measured against.
-    pub(crate) fixed: (u64, u64),
+    /// Geometry, pose and markings of the surface it is measured against.
+    pub(crate) fixed: SurfaceKey,
     /// Which revision of the exclusion mask was in force.
     pub(crate) mask: u64,
     /// The reach, in raw bits so the key compares exactly.
     pub(crate) influence_radius_bits: u64,
     /// How the two surfaces are taken to face each other.
     pub(crate) orientation: Orientation,
+}
+
+/// Identity of a built surface index: what it was built from, posed where, with
+/// which markings taken out of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SurfaceKey {
+    /// The geometry the triangles came from.
+    pub(crate) geometry: u64,
+    /// The pose they were baked into world at.
+    pub(crate) pose: u64,
+    /// Which revision of the fixed markings was left out of it.
+    pub(crate) markings: u64,
 }
 
 /// What a job asks for.
@@ -163,8 +197,8 @@ pub(crate) struct AlignJob {
     pub(crate) fixed_world_positions: Arc<Vec<f32>>,
     /// Fixed layer triangles.
     pub(crate) fixed_indices: Arc<Vec<u32>>,
-    /// Identity of the fixed geometry, so its index can be reused.
-    pub(crate) fixed_key: (u64, u64),
+    /// Identity of the fixed surface, so its index can be reused.
+    pub(crate) fixed_key: SurfaceKey,
     /// Identity of the measurement, so a colour-only change reuses its map.
     pub(crate) measure_key: MeasureKey,
     /// The moving layer's current pose: local to world.
@@ -173,6 +207,10 @@ pub(crate) struct AlignJob {
     pub(crate) pairs: Vec<WorldPair>,
     /// Per-vertex exclusion mask over the moving layer.
     pub(crate) mask: Option<Arc<Vec<u8>>>,
+    /// Per-vertex exclusion mask over the fixed layer. Masked triangles are
+    /// left out of the surface index entirely, so nothing can match against
+    /// them or measure to them.
+    pub(crate) fixed_mask: Option<Arc<Vec<u8>>>,
     /// The settings in force.
     pub(crate) settings: AlignSettings,
 }
@@ -427,8 +465,8 @@ fn run_worker(
 /// nudging the display scale cost most of a second on a full arch.
 #[derive(Default)]
 struct WorkerCache {
-    /// The fixed surface's spatial index, and the geometry it was built for.
-    surface: Option<((u64, u64), SurfaceIndex)>,
+    /// The fixed surface's spatial index, and the surface it was built for.
+    surface: Option<(SurfaceKey, SurfaceIndex)>,
     /// The last deviation map, and the measurement it belongs to.
     measured: Option<(MeasureKey, DeviationMap)>,
     /// The last summary, and the measurement and tolerance it was taken at.
@@ -548,7 +586,9 @@ fn paint(
         // has nowhere to run: everything within tolerance is painted one
         // colour, so a range that only just clears the band leaves a map with
         // two colours in it and no gradient to read.
-        ramp.scale_mm = suggested_scale_mm(&stats).max(job.settings.tolerance_mm * BAND_HEADROOM);
+        ramp.scale_mm = suggested_scale_mm(&stats)
+            .max(job.settings.tolerance_mm * BAND_HEADROOM)
+            .min(CLINICAL_CEILING_MM);
     }
     AlignOutcome::Measured {
         colors: color_map(map, &ramp),
@@ -581,14 +621,14 @@ fn color_map(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]> {
 /// The fixed surface's index, built once and then reused while that surface
 /// stays where it is.
 fn surface_index<'a>(
-    cached: &'a mut Option<((u64, u64), SurfaceIndex)>,
+    cached: &'a mut Option<(SurfaceKey, SurfaceIndex)>,
     job: &AlignJob,
 ) -> Option<&'a SurfaceIndex> {
     if cached.as_ref().is_none_or(|(key, _)| *key != job.fixed_key) {
         let built = SurfaceIndex::build(Soup {
             positions: &job.fixed_world_positions,
             indices: &job.fixed_indices,
-            mask: None,
+            mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
         })?;
         *cached = Some((job.fixed_key, built));
     }
@@ -650,9 +690,10 @@ fn soup_extent(soup: Soup<'_>) -> f64 {
 /// saying it is the difference between a tool that helps and one that shrugs.
 fn describe(rejection: FitRejection) -> String {
     match rejection {
-        FitRejection::TooFewPairs { have, need } => {
-            format!("{have} of {need} point pairs — place another pair")
-        }
+        FitRejection::TooFewPairs { have, need } => format!(
+            "Only {have} of {need} correspondences — place another arrow, or raise max influence \
+             if the meshes are still far apart"
+        ),
         FitRejection::Unpaired { moving, fixed } => {
             format!("{moving} points on one scan and {fixed} on the other — a point has no partner")
         }
