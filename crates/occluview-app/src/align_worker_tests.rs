@@ -4,7 +4,10 @@
 //! workspace's 800-line file budget.
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::items_after_statements)]
 
-use super::{color_map, AlignSettings, MeasureKey};
+use super::{
+    color_map, AlignSettings, MeasureKey, SurfaceKey, CLINICAL_CEILING_MM, CLINICAL_MAX_MM,
+    CLINICAL_MIN_MM,
+};
 use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
 };
@@ -70,7 +73,11 @@ fn unmeasured_vertices_stay_grey() {
 fn key() -> MeasureKey {
     MeasureKey {
         moving: (1, 2),
-        fixed: (3, 4),
+        fixed: SurfaceKey {
+            geometry: 3,
+            pose: 4,
+            markings: 0,
+        },
         mask: 0,
         influence_radius_bits: 5.0_f64.to_bits(),
         orientation: Orientation::Match,
@@ -102,18 +109,39 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
     assert_ne!(base, facing, "facing changes the sign of every distance");
 }
 
-/// The default range has to show a real registration. Deviations sit at
-/// 0.05-0.3 mm, and a wider default buries all of them in one flat colour —
-/// the bug that made a clean fit read as a broken tool.
+/// The window opens on the clinical range, and it opens there every time.
+///
+/// Dentistry works to a fifth of a millimetre. A map whose ends are five
+/// millimetres apart cannot show a fit that is either good or bad in that
+/// regime, and a range that FOLLOWS the measurement walks straight out of it
+/// the moment two meshes are roughly placed — which is how an operator ended up
+/// reading an arch in red and blue mosaic and calling it a thermal camera.
+///
+/// The magnitude ramp is right here because of the nominal band: everything
+/// inside tolerance lands on one flat cold colour, which is the correct reading
+/// of "these agree", and what is left burning is what genuinely differs. That
+/// was not true before the band existed, and this test used to pin the opposite.
 #[test]
-fn the_default_scale_shows_a_real_registration() {
+fn the_window_opens_on_the_clinical_range() {
     let settings = AlignSettings::default();
-    assert!(settings.scale_mm <= 0.5);
-    assert!(settings.auto_scale, "the range must follow the measurement");
-    assert_eq!(
-        settings.ramp_mode,
-        RampMode::Signed,
-        "a magnitude ramp puts every good fit at the dead end of the scale"
+    assert!(
+        (settings.scale_mm - CLINICAL_MAX_MM).abs() < f64::EPSILON,
+        "the display maximum must open at the clinical one, got {}",
+        settings.scale_mm
+    );
+    assert!(
+        (settings.tolerance_mm - CLINICAL_MIN_MM).abs() < f64::EPSILON,
+        "the nominal band must open at the clinical one, got {}",
+        settings.tolerance_mm
+    );
+    assert!(
+        !settings.auto_scale,
+        "a range that follows the measurement leaves the clinical one behind"
+    );
+    assert_eq!(settings.ramp_mode, RampMode::Magnitude);
+    assert!(
+        settings.scale_mm <= CLINICAL_CEILING_MM,
+        "the range must stay inside what a clinical instrument can mean"
     );
 }
 

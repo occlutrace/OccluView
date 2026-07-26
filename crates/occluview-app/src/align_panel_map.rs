@@ -13,7 +13,7 @@ use eframe::egui;
 use occluview_align::{DeviationStats, Orientation, RampMode};
 
 use crate::align_panel::AlignPanelAction;
-use crate::align_worker::AlignSettings;
+use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM, CLINICAL_MAX_MM, CLINICAL_MIN_MM};
 use crate::mesh_editor_icons::{self, EditorIcon};
 use crate::{align_overlay, ui_theme};
 
@@ -30,6 +30,7 @@ pub(crate) fn show(
     }
 
     align_overlay::paint_legend(ui, *settings);
+    action = action.or(presets(ui, settings, enabled));
     action = action.or(range(ui, settings, enabled));
     if let Some(stats) = stats {
         numbers(ui, stats, settings.tolerance_mm);
@@ -78,6 +79,52 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
     action
 }
 
+/// The standard ranges, one click each.
+///
+/// Dentistry works to a fifth of a millimetre, and a tool that makes an
+/// operator dial that in by hand every session is a tool that will be read at
+/// whatever range it happened to be left at. **0.20 mm** is the clinical
+/// default and the one the window opens on; the other two are the tighter and
+/// looser bands the same work uses.
+fn presets(
+    ui: &mut egui::Ui,
+    settings: &mut AlignSettings,
+    enabled: bool,
+) -> Option<AlignPanelAction> {
+    /// Maximum distance, in millimetres, and the nominal band that goes with it.
+    const RANGES: [(f64, f64); 3] = [
+        (0.10, 0.005),
+        (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
+        (0.50, 0.02),
+    ];
+
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("range")
+                .size(11.0)
+                .color(ui_theme::TEXT_MUTED),
+        );
+        let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 3.0;
+        for (max_mm, min_mm) in RANGES {
+            let active = (settings.scale_mm - max_mm).abs() < f64::EPSILON
+                && (settings.tolerance_mm - min_mm).abs() < f64::EPSILON;
+            if crate::align_panel::chip(ui, width, None, &format!("{max_mm:.2}"), enabled, active)
+                .on_hover_text(format!(
+                    "Everything under {min_mm:.3} mm reads as agreement, {max_mm:.2} mm saturates"
+                ))
+                .clicked()
+            {
+                settings.scale_mm = max_mm;
+                settings.tolerance_mm = min_mm;
+                settings.auto_scale = false;
+                action = Some(AlignPanelAction::Measure);
+            }
+        }
+    });
+    action
+}
+
 /// The two numbers exocad exposes: the minimum and the maximum distance.
 ///
 /// Directly under the bar they define — the arrangement every metrology tool
@@ -93,8 +140,9 @@ fn range(
     if ui
         .add_enabled(
             enabled,
-            egui::Slider::new(&mut settings.tolerance_mm, 0.01..=1.0)
+            egui::Slider::new(&mut settings.tolerance_mm, 0.005..=0.10)
                 .suffix(" mm")
+                .fixed_decimals(3)
                 .text("min"),
         )
         .drag_stopped()
@@ -105,8 +153,9 @@ fn range(
         if ui
             .add_enabled(
                 enabled,
-                egui::Slider::new(&mut settings.scale_mm, 0.05..=10.0)
+                egui::Slider::new(&mut settings.scale_mm, 0.05..=CLINICAL_CEILING_MM)
                     .suffix(" mm")
+                    .fixed_decimals(2)
                     .text("max"),
             )
             .drag_stopped()
@@ -135,21 +184,25 @@ fn range(
 /// stop, and the arch comes out as a red and blue mosaic with no structure in
 /// it. The colours are not wrong — the range is — and nothing on screen said so.
 fn saturation(ui: &mut egui::Ui, stats: DeviationStats, settings: AlignSettings) {
-    if stats.measured == 0 || !stats.p95.is_finite() || settings.auto_scale {
+    if stats.measured == 0 || !stats.p95.is_finite() || stats.p95 <= settings.scale_mm {
         return;
     }
-    if stats.p95 <= settings.scale_mm {
-        return;
-    }
-    ui.label(
-        egui::RichText::new(format!(
-            "Most of this is past {:.2} mm — the range is too small to show \
-             where they differ. Press auto",
+    // The advice has to be the advice that helps, and past the clinical ceiling
+    // a wider range is not it: a map of two meshes millimetres apart is a
+    // picture of an alignment that has not happened, and widening the range
+    // only makes a prettier picture of the same thing.
+    let text = if stats.p95 > CLINICAL_CEILING_MM {
+        format!(
+            "These meshes are about {:.1} mm apart — align them before reading the map",
+            stats.p95
+        )
+    } else {
+        format!(
+            "Most of this is past {:.2} mm, so the colours are pinned to the ends — widen the range",
             settings.scale_mm
-        ))
-        .size(10.5)
-        .color(ui_theme::TEXT),
-    );
+        )
+    };
+    ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::TEXT));
 }
 
 /// The numbers behind the colours, including what could not be measured.
@@ -314,13 +367,22 @@ mod tests {
 
     /// The map an operator called a thermal camera was a correct map over a
     /// range seven times too small. Nothing on screen said so.
+    ///
+    /// And the advice has to be the advice that helps: past the clinical
+    /// ceiling a wider range is not it, because the picture is of an alignment
+    /// that has not happened yet.
     #[test]
     fn a_range_too_small_for_the_measurement_says_so() {
         let source = production();
-        assert!(source.contains("the range is too small to show"));
+        assert!(source.contains("the colours are pinned to the ends"));
+        assert!(source.contains("align them before reading the map"));
         assert!(
             source.contains("stats.p95 <= settings.scale_mm"),
             "the warning must compare the range against what was measured"
+        );
+        assert!(
+            source.contains("stats.p95 > CLINICAL_CEILING_MM"),
+            "the advice must depend on how far apart the meshes actually are"
         );
     }
 
