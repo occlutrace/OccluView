@@ -72,35 +72,9 @@ pub fn invert(mask: &mut [u8]) {
     }
 }
 
-/// Paint a disc around each supplied point — the "mark around points" command
-/// that pulls the clicked pairs out of the fit.
-pub fn mark_around(
-    mask: &mut [u8],
-    positions: &[f32],
-    pose: Rigid,
-    points: &[DVec3],
-    radius_mm: f64,
-) -> usize {
-    points
-        .iter()
-        .map(|&center| {
-            apply_brush(
-                mask,
-                positions,
-                pose,
-                &MaskEdit {
-                    center,
-                    radius_mm,
-                    erase: false,
-                },
-            )
-        })
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};
+    use super::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
     use crate::Rigid;
     use glam::{DQuat, DVec3};
 
@@ -190,22 +164,6 @@ mod tests {
         assert!(mask.iter().all(|slot| *slot == EXCLUDED));
         invert(&mut mask);
         assert!(mask.iter().all(|slot| *slot == INCLUDED));
-    }
-
-    #[test]
-    fn mark_around_covers_every_supplied_point() {
-        let positions = line(10);
-        let mut mask = vec![INCLUDED; 10];
-        mark_around(
-            &mut mask,
-            &positions,
-            Rigid::IDENTITY,
-            &[DVec3::new(1.0, 0.0, 0.0), DVec3::new(8.0, 0.0, 0.0)],
-            1.0,
-        );
-        assert_eq!(mask[1], EXCLUDED);
-        assert_eq!(mask[8], EXCLUDED);
-        assert_eq!(mask[4], INCLUDED);
     }
 
     #[test]

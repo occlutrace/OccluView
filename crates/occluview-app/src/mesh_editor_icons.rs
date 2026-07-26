@@ -71,10 +71,10 @@ pub(crate) enum EditorIcon {
     AlignRefine,
     /// A graded colour bar — the deviation heatmap.
     Heatmap,
-    /// A round brush over a patch — the exclusion brush.
+    /// A round brush over a patch — the region brush.
     MaskBrush,
-    /// Two arrows exchanging places — swap which surface carries the map.
-    Swap,
+    /// A four-way arrow — move the scan by hand.
+    MoveLayer,
 }
 
 /// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
@@ -258,18 +258,18 @@ pub(crate) fn paint(
             painter.circle_stroke(p(0.62, 0.36), r(0.20), stroke);
             painter.line_segment([p(0.20, 0.72), p(0.44, 0.48)], stroke);
         }
-        EditorIcon::Swap => {
-            // Two arrows exchanging places.
-            painter.line_segment([p(0.18, 0.36), p(0.82, 0.36)], stroke);
-            arrowhead(painter, p(0.82, 0.36), Vec2::new(1.0, 0.0), r(0.10), stroke);
-            painter.line_segment([p(0.82, 0.64), p(0.18, 0.64)], stroke);
-            arrowhead(
-                painter,
-                p(0.18, 0.64),
-                Vec2::new(-1.0, 0.0),
-                r(0.10),
-                stroke,
-            );
+        EditorIcon::MoveLayer => {
+            // A four-way arrow: drag the scan wherever it needs to go.
+            painter.line_segment([p(0.50, 0.12), p(0.50, 0.88)], stroke);
+            painter.line_segment([p(0.12, 0.50), p(0.88, 0.50)], stroke);
+            for (tip, dir) in [
+                (p(0.50, 0.12), Vec2::new(0.0, -1.0)),
+                (p(0.50, 0.88), Vec2::new(0.0, 1.0)),
+                (p(0.12, 0.50), Vec2::new(-1.0, 0.0)),
+                (p(0.88, 0.50), Vec2::new(1.0, 0.0)),
+            ] {
+                arrowhead(painter, tip, dir, r(0.11), stroke);
+            }
         }
         EditorIcon::Smooth => {
             // A bumpy line settling flat: the wavy source above a straight
