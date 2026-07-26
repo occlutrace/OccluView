@@ -1,24 +1,24 @@
-//! The Align Scans window.
+//! The Align Scans window, laid out the way exocad's Align Meshes is.
 //!
 //! A movable window built from the same pieces as the mesh editor: no title
 //! bar, icon buttons, and a commit row that ends in Cancel and Done. Nothing
 //! here names a target, a source, or a role — the pair comes from the points
 //! the operator clicks in the viewport.
 //!
-//! The window is three stacked blocks, in the order the work happens:
+//! The two tabs carry different work, exactly as exocad's do:
 //!
-//! 1. **How** the scan is placed — the two tabs. *Automatically* collects
-//!    point pairs; *Manually* moves the scan by hand and paints the region the
-//!    match runs on.
-//! 2. **The fits.** Shared by both tabs on purpose: an operator who nudged a
-//!    scan by hand still wants to seat it, and a Best fit button that vanished
-//!    when they switched tabs is a button they cannot find.
-//! 3. **The Hitmap**, and then Cancel / Done.
+//! * **Automatically** is where the alignment happens. Arrows, Back, Perform
+//!   alignment, Best fit matching, the two matching sliders, the orientation
+//!   rule, and the two checkboxes that open the Brush tool window and the
+//!   distance map.
+//! * **Manually** is only hand movement: the three drag constraints and
+//!   Undo/Redo. No brush lives here — an earlier build put one here and it was
+//!   in the wrong place twice over, because the region it paints is an input to
+//!   *best-fit matching*, which is an automatic-tab action.
 
 use eframe::egui;
-use occluview_align::DeviationStats;
+use occluview_align::{DeviationStats, Orientation};
 
-use crate::align_brush::{AlignBrush, BrushPaint, MaskCommand};
 use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
@@ -26,13 +26,13 @@ use crate::mesh_editor_icons::{self, EditorIcon};
 use crate::{align_panel_map, ui_theme};
 
 /// Fixed window width, matching the mesh editor so the two read as one family.
-const WINDOW_WIDTH: f32 = 268.0;
+const WINDOW_WIDTH: f32 = 272.0;
 /// Height of the two big fit buttons.
 const FIT_BUTTON_HEIGHT: f32 = 34.0;
 /// Height of a small labelled control.
-const CHIP_HEIGHT: f32 = 26.0;
+pub(crate) const CHIP_HEIGHT: f32 = 26.0;
 /// Corner radius shared by every control in the window.
-const CHIP_ROUNDING: f32 = 5.0;
+pub(crate) const CHIP_ROUNDING: f32 = 5.0;
 
 /// The two ways exocad's Align Meshes works, and the two this window offers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -40,7 +40,7 @@ pub(crate) enum AlignTab {
     /// Click matching points, then let the software fit them.
     #[default]
     Automatically,
-    /// Drag the scan into place by hand, and paint what the match runs on.
+    /// Drag the scan into place by hand.
     Manually,
 }
 
@@ -57,20 +57,20 @@ impl AlignTab {
 /// What the operator asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AlignPanelAction {
-    /// Fit the clicked pairs.
+    /// Fit the clicked pairs — exocad "Perform alignment".
     Align,
-    /// Seat the surfaces against each other.
+    /// Seat the surfaces against each other — exocad "Best fit matching".
     Refine,
-    /// Remove the last point or pair.
+    /// Remove the last arrow — exocad "Back".
     Back,
-    /// Drop the points and start over.
-    Clear,
     /// Re-measure with the current settings.
     Measure,
     /// Stop showing the map.
     HideMap,
-    /// Run a whole-region command.
-    Mask(MaskCommand),
+    /// Step back through the scene history.
+    Undo,
+    /// Step forward through the scene history.
+    Redo,
     /// Put every scan back where it was and close.
     Cancel,
     /// Keep the alignment and close.
@@ -78,6 +78,10 @@ pub(crate) enum AlignPanelAction {
 }
 
 /// Everything the window needs to draw itself.
+// Four INDEPENDENT facts about the session (a job is running, something moved,
+// history can step back, history can step forward). They are not a state
+// machine an enum would simplify — every combination of them occurs.
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct AlignPanelView<'a> {
     /// The click model.
     pub(crate) tool: &'a AlignTool,
@@ -85,8 +89,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) settings: &'a mut AlignSettings,
     /// Which directions a hand drag may move in, edited in place.
     pub(crate) constraint: &'a mut DragConstraint,
-    /// The region brush, edited in place.
-    pub(crate) brush: &'a mut AlignBrush,
+    /// Whether the Brush tool window is open, edited in place.
+    pub(crate) excluding: &'a mut bool,
     /// The last thing that happened, in a sentence.
     pub(crate) status: Option<&'a str>,
     /// The measurement summary, when there is one.
@@ -95,6 +99,10 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) busy: bool,
     /// Whether anything has actually moved this session.
     pub(crate) moved: bool,
+    /// Whether the scene history has anything to step back to.
+    pub(crate) can_undo: bool,
+    /// Whether the scene history has anything to step forward to.
+    pub(crate) can_redo: bool,
     /// The open tab, switched in place.
     pub(crate) tab: &'a mut AlignTab,
 }
@@ -124,37 +132,27 @@ pub(crate) fn show(
     action
 }
 
-/// The window body: the open tab, then the blocks both tabs share.
-fn body(ui: &mut egui::Ui, view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
+/// The window body: the open tab, then the commit row both tabs share.
+fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
     let enabled = !view.busy;
     tab_strip(ui, view.tab);
-    // The brush belongs to the Manually tab. Leaving it armed after a tab
-    // switch would keep swallowing viewport clicks from a tab that has no
-    // brush control on it at all.
-    if *view.tab != AlignTab::Manually {
-        view.brush.set_armed(false);
+    // The brush is an input to best-fit matching, which lives on the automatic
+    // tab. Left open behind the manual tab it would keep swallowing the drags
+    // that tab exists to receive.
+    if *view.tab != AlignTab::Automatically {
+        *view.excluding = false;
     }
     ui.add_space(4.0);
 
     let mut action = match *view.tab {
-        AlignTab::Automatically => automatically(ui, view.tool, enabled),
-        AlignTab::Manually => manually(ui, view.constraint, view.brush, enabled),
+        AlignTab::Automatically => automatically(ui, &mut view, enabled),
+        AlignTab::Manually => manually(ui, view.constraint, view.can_undo, view.can_redo, enabled),
     };
-
-    ui.add_space(4.0);
-    ui.separator();
-    action = action.or(fits(ui, view.tool, enabled));
-    ui.separator();
-    action = action.or(align_panel_map::show(
-        ui,
-        view.settings,
-        view.stats,
-        enabled,
-    ));
     status(ui, view.status);
     // Deliberately not gated on `enabled`: a refine on a full arch takes real
     // time, and a window whose only two exits are greyed out reads as a hang.
-    action.or(commit(ui, view.moved))
+    action = action.or(commit(ui, view.moved));
+    action
 }
 
 /// The two-tab strip, sized so both halves are equally reachable.
@@ -197,93 +195,35 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
     });
 }
 
-/// The Automatically tab: click matching points, then take one back.
-fn automatically(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
-    prompt(ui, tool);
-    let mut action = None;
-    let placed = tool.pending().is_some() || !tool.pairs().is_empty();
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        if chip(
-            ui,
-            width,
-            Some(EditorIcon::Undo),
-            "Undo point",
-            enabled && placed,
-            false,
-        )
-        .on_hover_text("Take the last point back — right-clicking in the view does the same")
-        .clicked()
-        {
-            action = Some(AlignPanelAction::Back);
-        }
-        if chip(
-            ui,
-            width,
-            Some(EditorIcon::Delete),
-            "Clear",
-            enabled && placed,
-            false,
-        )
-        .on_hover_text("Drop every point and start over")
-        .clicked()
-        {
-            action = Some(AlignPanelAction::Clear);
-        }
-    });
-    action
+/// The Automatically tab: arrows, the two fits, and what feeds them.
+fn automatically(
+    ui: &mut egui::Ui,
+    view: &mut AlignPanelView<'_>,
+    enabled: bool,
+) -> Option<AlignPanelAction> {
+    prompt(ui, view.tool);
+    let mut action = back(ui, view.tool, enabled);
+    action = action.or(fits(ui, view.tool, enabled));
+    ui.add_space(2.0);
+    matching(ui, view.settings, enabled);
+    ui.separator();
+    exclude(ui, view.excluding, enabled);
+    action.or(align_panel_map::show(
+        ui,
+        view.settings,
+        view.stats,
+        enabled,
+    ))
 }
 
-/// The Manually tab: move the scan, or paint the region the match runs on.
+/// The Manually tab: the three drag constraints and the history buttons.
 fn manually(
     ui: &mut egui::Ui,
     constraint: &mut DragConstraint,
-    brush: &mut AlignBrush,
+    can_undo: bool,
+    can_redo: bool,
     enabled: bool,
 ) -> Option<AlignPanelAction> {
-    let mut painting = brush.is_armed();
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        if chip(
-            ui,
-            width,
-            Some(EditorIcon::MoveLayer),
-            "Move",
-            enabled,
-            !painting,
-        )
-        .on_hover_text("Drag the scan into place by hand")
-        .clicked()
-        {
-            painting = false;
-        }
-        if chip(
-            ui,
-            width,
-            Some(EditorIcon::MaskBrush),
-            "Paint",
-            enabled,
-            painting,
-        )
-        .on_hover_text("Paint the part of the scan the match runs on")
-        .clicked()
-        {
-            painting = true;
-        }
-    });
-    brush.set_armed(painting);
-    ui.add_space(2.0);
-    if painting {
-        region(ui, brush, enabled)
-    } else {
-        moving(ui, constraint);
-        None
-    }
-}
-
-/// Moving the scan by hand.
-fn moving(ui: &mut egui::Ui, constraint: &mut DragConstraint) {
-    hint(ui, "Drag to move · Ctrl+drag to turn");
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
         for value in [
@@ -291,69 +231,59 @@ fn moving(ui: &mut egui::Ui, constraint: &mut DragConstraint) {
             DragConstraint::ZOnly,
             DragConstraint::XyPlane,
         ] {
-            if chip(ui, width, None, value.label(), true, *constraint == value)
-                .on_hover_text(value.hint())
-                .clicked()
+            if chip(
+                ui,
+                width,
+                Some(value.icon()),
+                "",
+                true,
+                *constraint == value,
+            )
+            .on_hover_text(value.hint())
+            .clicked()
             {
                 *constraint = value;
             }
         }
     });
-}
+    hint(ui, constraint.label());
+    ui.add_space(2.0);
+    hint(
+        ui,
+        "Drag the mesh with the left mouse button · Ctrl+drag turns it",
+    );
+    ui.add_space(4.0);
 
-/// Choosing which part of the scan the match runs on.
-///
-/// The three whole-region buttons are always in view, not hidden behind the
-/// brush: "match on this and nothing else" starts with None and then paints,
-/// so a None the operator has to find first is a workflow they never discover.
-fn region(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) -> Option<AlignPanelAction> {
     let mut action = None;
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        for value in [BrushPaint::Ignore, BrushPaint::Use] {
-            if chip(
-                ui,
-                width,
-                None,
-                value.label(),
-                enabled,
-                brush.paint() == value,
-            )
-            .on_hover_text(value.hint())
-            .clicked()
-            {
-                brush.set_paint(value);
-            }
-        }
-    });
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
-        for (command, icon) in [
-            (MaskCommand::Everything, EditorIcon::SelectAll),
-            (MaskCommand::Nothing, EditorIcon::SelectNone),
-            (MaskCommand::Invert, EditorIcon::SelectInvert),
-        ] {
-            if chip(ui, width, Some(icon), command.label(), enabled, false)
-                .on_hover_text(command.hint())
-                .clicked()
-            {
-                action = Some(AlignPanelAction::Mask(command));
-            }
-        }
-    });
-    let mut radius = brush.radius_mm();
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Slider::new(&mut radius, 0.1..=20.0)
-                .suffix(" mm")
-                .text("size"),
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::Undo),
+            "Undo",
+            enabled && can_undo,
+            false,
         )
-        .changed()
-    {
-        brush.set_radius_mm(radius);
-    }
-    hint(ui, "Shift+wheel resizes the brush");
+        .on_hover_text("Go back one step")
+        .clicked()
+        {
+            action = Some(AlignPanelAction::Undo);
+        }
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::Redo),
+            "Redo",
+            enabled && can_redo,
+            false,
+        )
+        .on_hover_text("Go forward one step")
+        .clicked()
+        {
+            action = Some(AlignPanelAction::Redo);
+        }
+    });
     action
 }
 
@@ -361,22 +291,39 @@ fn region(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) -> Option<Al
 fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
     let placed = tool.pairs().len();
     let text = if tool.moving_layer().is_none() {
-        "Click a point on the scan that should move".to_owned()
+        "Click a point on the mesh that should move".to_owned()
     } else if tool.pending().is_some() {
-        "Click the matching spot on the other scan".to_owned()
+        "Click the same position on the other mesh".to_owned()
     } else if placed == 0 {
-        "Click a point on each scan to pair them".to_owned()
+        "Click alternating points at the same positions on the two meshes".to_owned()
     } else {
-        format!("{placed} pair{} placed", if placed == 1 { "" } else { "s" })
+        format!(
+            "{placed} arrow{} placed",
+            if placed == 1 { "" } else { "s" }
+        )
     };
     ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::TEXT));
     ui.add_space(2.0);
 }
 
-/// The two fits, shown under both tabs.
-///
-/// Refine is the primary action and is sized like one: the point fit only gets
-/// the scan close, the surface fit is what actually seats it.
+/// exocad's "Back": undo one arrow.
+fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
+    let placed = tool.pending().is_some() || !tool.pairs().is_empty();
+    let clicked = chip(
+        ui,
+        ui.available_width(),
+        Some(EditorIcon::Undo),
+        "Back",
+        enabled && placed,
+        false,
+    )
+    .on_hover_text("Undo an arrow — a right-click in the view does the same")
+    .clicked();
+    clicked.then_some(AlignPanelAction::Back)
+}
+
+/// The two fits. Best fit matching is the primary action and is sized like one:
+/// the point fit only gets the mesh close, the surface fit is what seats it.
 fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
     let mut action = None;
     let width = ui.available_width();
@@ -384,11 +331,11 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         ui,
         width,
         EditorIcon::AlignFit,
-        "Align on points",
+        "Perform alignment",
         tool.can_align() && enabled,
         false,
     )
-    .on_hover_text("Move the scan onto the clicked pairs — a rough placement")
+    .on_hover_text("Move the mesh onto the arrows — needs at least two arrows")
     .clicked()
     {
         action = Some(AlignPanelAction::Align);
@@ -401,12 +348,76 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         tool.can_measure() && enabled,
         true,
     )
-    .on_hover_text("Seat the surfaces against each other and measure the result")
+    .on_hover_text("Seat the surfaces against each other. Only for identically shaped meshes")
     .clicked()
     {
         action = Some(AlignPanelAction::Refine);
     }
     action
+}
+
+/// The two sliders and the orientation rule that steer best-fit matching.
+fn matching(ui: &mut egui::Ui, settings: &mut AlignSettings, enabled: bool) {
+    ui.add_enabled(
+        enabled,
+        egui::Slider::new(&mut settings.matching_ratio, 0.1..=1.0)
+            .custom_formatter(|value, _| format!("{:.0}%", value * 100.0))
+            .text("matching parts"),
+    )
+    .on_hover_text(
+        "The share of surface that exists on both meshes. 70-80% suits mesh pairs \
+         whose topology is largely the same",
+    );
+    ui.add_enabled(
+        enabled,
+        egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0)
+            .suffix(" mm")
+            .text("max influence"),
+    )
+    .on_hover_text(
+        "Only surface below this distance influences the matching. A large value can \
+         worsen the result",
+    );
+    ui.collapsing("Surfaces orientation shall match", |ui| {
+        facing(ui, &mut settings.orientation);
+    });
+}
+
+/// The surface-orientation rule. An inverted mesh flips the whole signed map,
+/// so this is the escape hatch for a scan whose winding disagrees with itself.
+fn facing(ui: &mut egui::Ui, orientation: &mut Orientation) {
+    for (value, label) in [
+        (Orientation::Match, "Surfaces orientation shall match"),
+        (
+            Orientation::Inverted,
+            "Surfaces orientation shall match inverted",
+        ),
+        (
+            Orientation::Ignored,
+            "Surfaces orientation shall be ignored",
+        ),
+    ] {
+        if ui
+            .radio(*orientation == value, label)
+            .on_hover_text(if value == Orientation::Ignored {
+                "Accepts either facing. The calculation often takes significantly longer"
+            } else {
+                "How the two surfaces are taken to face each other"
+            })
+            .clicked()
+        {
+            *orientation = value;
+        }
+    }
+}
+
+/// exocad's "Matching: Exclude selected parts": the checkbox that opens the
+/// Brush tool window.
+fn exclude(ui: &mut egui::Ui, excluding: &mut bool, enabled: bool) {
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.checkbox(excluding, "Matching: Exclude selected parts")
+            .on_hover_text("Paint the surface best-fit matching must ignore");
+    });
 }
 
 /// A short muted line of guidance.
@@ -443,7 +454,7 @@ fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
         if tall_button(ui, width, "Cancel", false)
             .on_hover_text(if moved {
-                "Put every scan back where it was and close"
+                "Put every mesh back where it was and close"
             } else {
                 "Close without changing anything"
             })
@@ -463,13 +474,13 @@ fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
 
 /// A compact control: optional glyph, then a label, on a rounded plate.
 ///
-/// One widget for every small control in the window, so a toggle, a command,
-/// and a mode read as the same kind of thing and differ only in whether they
-/// stay lit.
+/// One widget for every small control in the window and in the Brush tool, so
+/// a toggle, a command, and a mode read as the same kind of thing and differ
+/// only in whether they stay lit.
 // A control needs its width, glyph, label, and both state flags. Bundling them
-// into a struct would only add ceremony at each of the eight call sites.
+// into a struct would only add ceremony at each call site.
 #[allow(clippy::too_many_arguments)]
-fn chip(
+pub(crate) fn chip(
     ui: &mut egui::Ui,
     width: f32,
     icon: Option<EditorIcon>,
@@ -504,8 +515,12 @@ fn chip(
         egui::Stroke::new(1.0, ink.gamma_multiply(if active { 0.70 } else { 0.30 })),
     );
     let font = egui::FontId::proportional(11.5);
-    match icon {
-        Some(icon) => {
+    match (icon, label.is_empty()) {
+        (Some(icon), true) => {
+            let glyph = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(16.0));
+            mesh_editor_icons::paint(painter, glyph, icon, ink, active);
+        }
+        (Some(icon), false) => {
             let text_width = painter
                 .layout_no_wrap(label.to_owned(), font.clone(), ink)
                 .rect
@@ -526,7 +541,7 @@ fn chip(
                 ink,
             );
         }
-        None => {
+        (None, _) => {
             painter.text(rect.center(), egui::Align2::CENTER_CENTER, label, font, ink);
         }
     }
@@ -649,61 +664,73 @@ mod tests {
         assert!(commit.contains("AlignPanelAction::Done"));
     }
 
-    /// The bug this test exists for: the fits lived inside the Automatically
-    /// tab, so switching to Manually left an operator who had just nudged a
-    /// scan by hand with no way to seat it and no way to measure it. Both are
-    /// drawn once, by the shared body, after whichever tab is open.
+    /// exocad's labels, verbatim. The operator works in that dialog daily, and
+    /// a control that does the same job under a different name is a control
+    /// they have to translate before they can use it.
     #[test]
-    fn both_tabs_reach_the_fits() {
+    fn the_controls_carry_exocads_own_labels() {
         let source = production();
-        let body = source
-            .split_once("fn body(")
-            .and_then(|(_, rest)| rest.split_once("\n/// The two-tab strip"))
-            .map(|(body, _)| body)
-            .expect("a shared window body");
-        assert!(
-            body.contains("action.or(fits(ui, view.tool, enabled))"),
-            "the fits must be drawn by the shared body, not by one tab"
-        );
-        for tab in ["fn automatically(", "fn manually("] {
-            let block = source
-                .split_once(tab)
-                .and_then(|(_, rest)| rest.split_once("\n/// "))
-                .map(|(block, _)| block)
-                .expect("a tab body");
-            assert!(
-                !block.contains("AlignPanelAction::Refine"),
-                "{tab} draws its own Refine, so the two tabs would disagree"
-            );
+        for label in [
+            "\"Back\"",
+            "\"Perform alignment\"",
+            "\"Best fit matching\"",
+            "\"matching parts\"",
+            "\"max influence\"",
+            "\"Surfaces orientation shall match\"",
+            "\"Surfaces orientation shall match inverted\"",
+            "\"Surfaces orientation shall be ignored\"",
+            "\"Matching: Exclude selected parts\"",
+        ] {
+            assert!(source.contains(label), "the window is missing {label}");
         }
     }
 
-    /// The operator's words: "Paint the map on the other scan instead" is
-    /// "полное бредятина". It asked them which surface should carry a colour,
-    /// which is a rendering question dressed up as a measurement one.
+    /// The bug this test exists for: the brush was put on the manual tab. The
+    /// region it paints is an input to BEST-FIT MATCHING, which is an automatic
+    /// tab action, so on the manual tab it was both unreachable at the moment
+    /// it mattered and in the way of the drags that tab exists for.
+    #[test]
+    fn the_exclusion_brush_belongs_to_the_automatic_tab() {
+        let source = production();
+        let manual = source
+            .split_once("fn manually(")
+            .and_then(|(_, rest)| rest.split_once("\n/// What the tool is waiting for"))
+            .map(|(block, _)| block)
+            .expect("a manual tab body");
+        for absent in ["excluding", "brush", "Brush"] {
+            assert!(
+                !manual.contains(absent),
+                "the manual tab mentions {absent}, which belongs to the automatic tab"
+            );
+        }
+        let automatic = source
+            .split_once("fn automatically(")
+            .and_then(|(_, rest)| rest.split_once("\n/// The Manually tab"))
+            .map(|(block, _)| block)
+            .expect("an automatic tab body");
+        assert!(automatic.contains("exclude(ui, view.excluding, enabled)"));
+    }
+
+    /// The operator's report was that the manual tab had no action on it at
+    /// all. exocad's has Undo and Redo, and so does this one.
+    #[test]
+    fn the_manual_tab_offers_the_history_buttons() {
+        let manual = production()
+            .split_once("fn manually(")
+            .map(|(_, rest)| rest)
+            .expect("a manual tab body");
+        assert!(manual.contains("AlignPanelAction::Undo"));
+        assert!(manual.contains("AlignPanelAction::Redo"));
+    }
+
+    /// "Paint the map on the other scan instead" asked the operator which
+    /// surface should carry a colour, which is a rendering question dressed up
+    /// as a measurement one.
     #[test]
     fn the_window_never_asks_which_surface_carries_the_map() {
         let source = production();
         for gone in ["SwapMapped", "EditorIcon::Swap", "other scan instead"] {
             assert!(!source.contains(gone), "{gone} is back in the window");
-        }
-    }
-
-    /// Every small control carries a glyph or is one of a labelled set. A bare
-    /// row of text buttons is what the window looked like when the operator
-    /// called it a mess.
-    #[test]
-    fn the_region_commands_are_drawn_with_icons() {
-        let region = production()
-            .split_once("fn region(")
-            .map(|(_, rest)| rest)
-            .expect("a region block");
-        for icon in [
-            "EditorIcon::SelectAll",
-            "EditorIcon::SelectNone",
-            "EditorIcon::SelectInvert",
-        ] {
-            assert!(region.contains(icon), "the region commands need {icon}");
         }
     }
 }

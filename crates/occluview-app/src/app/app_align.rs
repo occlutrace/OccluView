@@ -108,100 +108,6 @@ impl OccluViewApp {
         }
     }
 
-    /// A stationary right-click takes the last point back.
-    ///
-    /// The operator asked for this by name: placing the first half of a pair
-    /// and then having to reach for a button to undo it is a trip away from
-    /// the geometry they are looking at. A right-click that has nothing to take
-    /// back is left alone, so the scene menu still opens on empty space.
-    fn handle_align_undo_click(&mut self, response: &egui::Response, ctx: &egui::Context) -> bool {
-        let (pressed, down, motion) = ctx.input(|input| {
-            (
-                input.pointer.button_pressed(egui::PointerButton::Secondary),
-                input.pointer.button_down(egui::PointerButton::Secondary),
-                input.pointer.motion().unwrap_or(input.pointer.delta()),
-            )
-        });
-        // Tracked here as well as in the camera path, because a frame this
-        // method consumes never reaches the camera path at all.
-        if pressed {
-            self.viewport_secondary_gesture_moved_since_press = false;
-        }
-        if down && motion.length_sq() > f32::EPSILON {
-            self.viewport_secondary_gesture_moved_since_press = true;
-        }
-        if !response.secondary_clicked() || self.viewport_secondary_gesture_moved_since_press {
-            return false;
-        }
-        if !self.align.back() {
-            return false;
-        }
-        self.align_rejected.clear();
-        self.align_status = Some("Point removed".into());
-        ctx.request_repaint();
-        true
-    }
-
-    /// Draw the panel and run what it asked for.
-    fn show_align_panel(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
-        let busy = self.align_worker.as_ref().is_some_and(AlignWorker::is_busy);
-        let mut settings = self.align_settings;
-        let mut constraint = self.align_constraint;
-        let mut brush = self.align_brush;
-        let mut tab = self.align_tab;
-        let was_painting = brush.is_armed();
-        let moved = self.align_session_moved();
-        let action = crate::align_panel::show(
-            ctx,
-            viewport_rect,
-            crate::align_panel::AlignPanelView {
-                tool: &self.align,
-                settings: &mut settings,
-                status: self.align_status.as_deref(),
-                stats: self.align_stats,
-                busy,
-                moved,
-                constraint: &mut constraint,
-                brush: &mut brush,
-                tab: &mut tab,
-            },
-        );
-        self.align_settings = settings;
-        self.align_constraint = constraint;
-        self.align_brush = brush;
-        self.align_tab = tab;
-        // Entering and leaving paint mode changes what is on the surface: the
-        // region tint goes up, and the scan's own colours come back.
-        if was_painting != brush.is_armed() {
-            self.refresh_align_region_preview();
-        }
-
-        match action {
-            Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
-            Some(crate::align_panel::AlignPanelAction::Refine) => self.run_align_refine(),
-            Some(crate::align_panel::AlignPanelAction::Measure) => self.run_align_measure(),
-            Some(crate::align_panel::AlignPanelAction::HideMap) => self.clear_deviation_overlay(),
-            Some(crate::align_panel::AlignPanelAction::Back) => {
-                if self.align.back() {
-                    self.align_rejected.clear();
-                    self.align_status = Some("Point removed".into());
-                }
-            }
-            Some(crate::align_panel::AlignPanelAction::Clear) => {
-                self.align.clear();
-                self.clear_align_mask();
-                self.align_rejected.clear();
-                self.align_status = Some("Click a point on the scan that should move".into());
-            }
-            Some(crate::align_panel::AlignPanelAction::Mask(command)) => {
-                self.apply_align_mask_command(command);
-            }
-            Some(crate::align_panel::AlignPanelAction::Cancel) => self.cancel_align_session(ctx),
-            Some(crate::align_panel::AlignPanelAction::Done) => self.finish_align_session(ctx),
-            None => {}
-        }
-    }
-
     /// Arm the tool, standing every other tool down first.
     ///
     /// Two tools sharing the primary click would fight over every gesture, so
@@ -485,12 +391,14 @@ impl OccluViewApp {
                 // pose that no longer exists — and the viewport would happily
                 // keep re-pushing it.
                 self.invalidate_deviation_map("Aligned on points");
+                self.rearm_auto_scale();
                 self.align_status = Some(format!(
                     "Aligned — {rms:.3} mm on the points{dropped}. Refine to seat it."
                 ));
             }
             AlignOutcome::Refined { pose, report } => {
                 self.commit_align_pose(pose);
+                self.rearm_auto_scale();
                 let weak = weak_axis_note(report.weak_trans_axes, report.weak_rot_axes);
                 self.align_status = Some(format!(
                     "Refined — {:.3} mm over {:.0}% of the surface{weak}",
@@ -529,9 +437,26 @@ impl OccluViewApp {
 
     /// Measure again after a pose change, but only if the map is on screen.
     pub(super) fn measure_if_shown(&mut self) {
+        // Not while the brush is open. The markings and the map are both
+        // per-vertex colours on the same layer, so a measurement landing here
+        // would take the operator's own paint off the surface mid-stroke.
+        if self.align_brush.is_armed() {
+            return;
+        }
         if self.align_settings.show_deviation && self.align.can_measure() {
             self.run_align_measure();
         }
+    }
+
+    /// Give the display range back to the tool after a pose change.
+    ///
+    /// A range the operator picked belongs to the alignment they picked it at.
+    /// Carried across a fit it becomes a lie in the operator's own hand: the
+    /// screenshot behind this was a 0.20 mm range over a pair sitting 1.4 mm
+    /// apart, where every vertex is pinned to an end stop and the arch reads as
+    /// a red and blue mosaic with no structure in it at all.
+    fn rearm_auto_scale(&mut self) {
+        self.align_settings.auto_scale = true;
     }
 
     /// Drop a map that the scan just moved out from under.

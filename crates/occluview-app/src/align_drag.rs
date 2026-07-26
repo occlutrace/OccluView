@@ -31,9 +31,19 @@ impl DragConstraint {
     /// world Z".
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Free => "Any way",
-            Self::ZOnly => "Up · down",
-            Self::XyPlane => "Sideways",
+            Self::Free => "Move/rotate in all directions",
+            Self::ZOnly => "Move in z-direction",
+            Self::XyPlane => "Move in xy-plane",
+        }
+    }
+
+    /// The glyph the panel shows.
+    pub(crate) fn icon(self) -> crate::mesh_editor_icons::EditorIcon {
+        use crate::mesh_editor_icons::EditorIcon;
+        match self {
+            Self::Free => EditorIcon::MoveLayer,
+            Self::ZOnly => EditorIcon::MoveVertical,
+            Self::XyPlane => EditorIcon::MovePlane,
         }
     }
 
