@@ -48,6 +48,13 @@ pub const NO_DATA_COLOR: [u8; 4] = [128, 128, 128, 255];
 /// the deviation would be arbitrary.
 const MIN_NORMAL_LENGTH: f64 = 1e-9;
 
+/// Largest share of the display range the nominal band may occupy.
+///
+/// The band is the tolerance, and an operator can set a tolerance wider than
+/// the range they are looking at. Left alone that paints the entire scan
+/// nominal, which answers every question with "fine".
+const NOMINAL_BAND_CEILING: f64 = 0.8;
+
 /// Why a vertex does or does not carry a measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validity {
@@ -135,8 +142,9 @@ pub enum RampMode {
 pub struct RampSettings {
     /// Deviation mapped to the ramp ends, in millimetres.
     pub scale_mm: f64,
-    /// Tolerance band the statistics report, in millimetres. The ramp itself
-    /// does not change with it.
+    /// Tolerance band, in millimetres. Everything inside it is painted the
+    /// ramp's nominal colour and the ramp only starts moving outside it — see
+    /// [`ramp_color`]. It is also the band the statistics report.
     pub tolerance_mm: f64,
     /// Steps per side for a banded ramp; `None` is continuous. A stepped map
     /// shows where a boundary falls far more sharply than a smooth one.
@@ -156,8 +164,14 @@ pub struct RampSettings {
 pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
     /// Below this a scale stops meaning anything to an operator.
     const FLOOR_MM: f64 = 0.05;
-    /// Readable steps, in millimetres.
-    const STEPS: [f64; 10] = [0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0];
+    /// Readable steps, in millimetres. The range runs well past a clinical
+    /// tolerance on purpose: a scan pair straight off a two-point fit really is
+    /// millimetres apart, and capping the suggestion at a clinical number
+    /// leaves every vertex pinned to an end stop — a saturated mosaic that says
+    /// nothing about where the two actually differ.
+    const STEPS: [f64; 13] = [
+        0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0,
+    ];
 
     if stats.measured == 0 || !stats.p95.is_finite() {
         return FLOOR_MM;
@@ -166,7 +180,7 @@ pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
     STEPS
         .into_iter()
         .find(|step| *step >= wanted)
-        .unwrap_or(2.0)
+        .unwrap_or(10.0)
 }
 
 impl Default for RampSettings {
@@ -183,18 +197,16 @@ impl Default for RampSettings {
 /// Signed stops from `-1` to `+1`. Blue is undersize, green is nominal, red is
 /// oversize — the convention every metrology package shares.
 ///
-/// The stops are pulled in from the pure channel extremes on purpose. A ramp
-/// built from `0` and `255` is the most saturated thing a screen can show, and
-/// once the shader multiplies it by any lighting at all the blue end goes to
-/// ink and the red end to a flat scab. These sit far enough inside the gamut
-/// that shaded geometry keeps its hue, which is the whole point of a false
-/// colour map: the operator has to read the shape AND the colour at once.
+/// The stops keep a little headroom off the pure channel extremes so shading
+/// has something to modulate — a blue whose red channel is exactly zero cannot
+/// vary with the light at all, and the surface comes out as a flat coloured
+/// silhouette with no readable form.
 const SIGNED_RAMP: [(f64, [u8; 3]); 5] = [
-    (-1.0, [36, 82, 214]),
-    (-0.5, [46, 176, 208]),
-    (0.0, [74, 196, 108]),
-    (0.5, [236, 190, 56]),
-    (1.0, [240, 58, 44]),
+    (-1.0, [20, 50, 235]),
+    (-0.5, [20, 170, 235]),
+    (0.0, [40, 200, 70]),
+    (0.5, [250, 205, 20]),
+    (1.0, [252, 30, 18]),
 ];
 
 /// Magnitude stops from `0` to `1`: cool where the surfaces agree, hot where
@@ -205,11 +217,11 @@ const SIGNED_RAMP: [(f64, [u8; 3]); 5] = [
 /// disagreed about what "0.2 mm out" looks like would make the mode switch
 /// change the reading rather than the question.
 const MAGNITUDE_RAMP: [(f64, [u8; 3]); 5] = [
-    (0.0, [36, 82, 214]),
-    (0.25, [46, 176, 208]),
-    (0.5, [74, 196, 108]),
-    (0.75, [236, 190, 56]),
-    (1.0, [240, 58, 44]),
+    (0.0, [20, 50, 235]),
+    (0.25, [20, 170, 235]),
+    (0.5, [40, 200, 70]),
+    (0.75, [250, 205, 20]),
+    (1.0, [252, 30, 18]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
@@ -374,6 +386,17 @@ pub fn deviation_colors(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]>
 }
 
 /// The colour for one measured deviation.
+///
+/// The tolerance is a **flat nominal band**, not just a number in the summary.
+/// Everything inside it lands on the ramp's nominal colour and the ramp only
+/// starts moving outside it.
+///
+/// This is the difference between a heat map and a thermal camera. Without the
+/// band every value gets its own hue, so scan noise at twenty microns paints a
+/// full rainbow and a pair of arches that agree everywhere comes out as
+/// speckle — the operator cannot tell "these match" from "these are all over
+/// the place". With it, everything that is within tolerance is one colour, and
+/// what is left burning is the part that genuinely differs.
 #[must_use]
 pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
     let scale = if ramp.scale_mm.is_finite() && ramp.scale_mm > 0.0 {
@@ -381,9 +404,18 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
     } else {
         1.0
     };
+    // Capped below the scale: a band as wide as the display range would paint
+    // the whole scan nominal and answer every question with "fine".
+    let band = if ramp.tolerance_mm.is_finite() && ramp.tolerance_mm > 0.0 {
+        ramp.tolerance_mm.min(scale * NOMINAL_BAND_CEILING)
+    } else {
+        0.0
+    };
+    let span = (scale - band).max(f64::MIN_POSITIVE);
+    let beyond = ((value_mm.abs() - band) / span).clamp(0.0, 1.0);
     let (ramp_stops, mut position) = match ramp.mode {
-        RampMode::Magnitude => (&MAGNITUDE_RAMP, (value_mm.abs() / scale).clamp(0.0, 1.0)),
-        RampMode::Signed => (&SIGNED_RAMP, (value_mm / scale).clamp(-1.0, 1.0)),
+        RampMode::Magnitude => (&MAGNITUDE_RAMP, beyond),
+        RampMode::Signed => (&SIGNED_RAMP, beyond.copysign(value_mm)),
     };
     if let Some(bands) = ramp.bands.filter(|count| *count > 0) {
         let quantum = f64::from(bands);
@@ -421,317 +453,5 @@ fn sample_ramp(stops: &[(f64, [u8; 3]); 5], position: f64) -> [u8; 3] {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        deviation, deviation_colors, deviation_stats, DeviationMap, DeviationSettings,
-        RampSettings, Validity, NO_DATA_COLOR,
-    };
-    use crate::icp::Orientation;
-    use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
-
-    /// Two triangles forming a 10 x 10 sheet on z = 0, outward normal +Z.
-    fn sheet() -> (Vec<f32>, Vec<u32>) {
-        (
-            vec![
-                0.0, 0.0, 0.0, //
-                10.0, 0.0, 0.0, //
-                10.0, 10.0, 0.0, //
-                0.0, 10.0, 0.0,
-            ],
-            vec![0, 1, 2, 0, 2, 3],
-        )
-    }
-
-    fn settings() -> DeviationSettings {
-        DeviationSettings {
-            influence_radius_mm: 3.0,
-            orientation: Orientation::Match,
-        }
-    }
-
-    fn lifted(positions: &[f32], by: f32) -> Vec<f32> {
-        positions
-            .chunks_exact(3)
-            .flat_map(|point| [point[0], point[1], point[2] + by])
-            .collect()
-    }
-
-    fn map_of(moving: &[f32], indices: &[u32], settings: &DeviationSettings) -> DeviationMap {
-        let (fixed_positions, fixed_indices) = sheet();
-        let index = SurfaceIndex::build(Soup {
-            positions: &fixed_positions,
-            indices: &fixed_indices,
-            mask: None,
-        })
-        .unwrap();
-        deviation(
-            Soup {
-                positions: moving,
-                indices,
-                mask: None,
-            },
-            &index,
-            Rigid::IDENTITY,
-            settings,
-            &CancelFlag::new(),
-        )
-    }
-
-    #[test]
-    fn a_surface_above_the_target_reads_positive() {
-        let (positions, indices) = sheet();
-        let map = map_of(&lifted(&positions, 0.4), &indices, &settings());
-        for (value, state) in map.signed_mm.iter().zip(&map.validity) {
-            assert_eq!(*state, Validity::Measured);
-            assert!((*value - 0.4).abs() < 1e-4, "expected +0.4, got {value}");
-        }
-    }
-
-    #[test]
-    fn a_surface_below_the_target_reads_negative() {
-        let (positions, indices) = sheet();
-        let map = map_of(&lifted(&positions, -0.25), &indices, &settings());
-        assert!(map
-            .signed_mm
-            .iter()
-            .all(|value| (*value + 0.25).abs() < 1e-4));
-    }
-
-    #[test]
-    fn inverted_orientation_flips_every_sign() {
-        let (positions, indices) = sheet();
-        let inverted = DeviationSettings {
-            orientation: Orientation::Inverted,
-            ..settings()
-        };
-        let map = map_of(&lifted(&positions, 0.4), &indices, &inverted);
-        assert!(map
-            .signed_mm
-            .iter()
-            .all(|value| (*value + 0.4).abs() < 1e-4));
-    }
-
-    #[test]
-    fn ignored_orientation_reports_magnitude_only() {
-        let (positions, indices) = sheet();
-        let ignored = DeviationSettings {
-            orientation: Orientation::Ignored,
-            ..settings()
-        };
-        let map = map_of(&lifted(&positions, -0.3), &indices, &ignored);
-        assert!(map
-            .signed_mm
-            .iter()
-            .all(|value| (*value - 0.3).abs() < 1e-4));
-    }
-
-    #[test]
-    fn vertices_beyond_the_radius_are_out_of_reach_and_grey() {
-        let (positions, indices) = sheet();
-        let map = map_of(&lifted(&positions, 50.0), &indices, &settings());
-        assert!(map
-            .validity
-            .iter()
-            .all(|state| *state == Validity::OutOfReach));
-
-        let stats = deviation_stats(&map, 0.2);
-        assert_eq!(stats.measured, 0);
-        assert_eq!(stats.skipped as usize, map.validity.len());
-
-        let colors = deviation_colors(&map, &RampSettings::default());
-        assert!(colors.iter().all(|color| *color == NO_DATA_COLOR));
-    }
-
-    #[test]
-    fn statistics_count_only_measured_vertices() {
-        let (positions, indices) = sheet();
-        let mut moving = lifted(&positions, 0.1);
-        moving[2] = 40.0;
-        let map = map_of(&moving, &indices, &settings());
-
-        let stats = deviation_stats(&map, 0.2);
-        assert_eq!(stats.skipped, 1);
-        assert_eq!(stats.measured, 3);
-        assert!((stats.within_tolerance - 1.0).abs() < 1e-9);
-        assert!((stats.mean_abs - 0.1).abs() < 1e-4);
-    }
-
-    #[test]
-    fn a_painted_out_vertex_is_excluded_from_the_map_and_the_numbers() {
-        let (fixed_positions, fixed_indices) = sheet();
-        let index = SurfaceIndex::build(Soup {
-            positions: &fixed_positions,
-            indices: &fixed_indices,
-            mask: None,
-        })
-        .unwrap();
-        let moving = lifted(&fixed_positions, 0.1);
-        let mask = [0u8, 1, 0, 0];
-        let map = deviation(
-            Soup {
-                positions: &moving,
-                indices: &fixed_indices,
-                mask: Some(&mask),
-            },
-            &index,
-            Rigid::IDENTITY,
-            &settings(),
-            &CancelFlag::new(),
-        );
-
-        assert_eq!(map.validity[1], Validity::Excluded);
-        assert_eq!(map.validity[0], Validity::Measured);
-
-        let stats = deviation_stats(&map, 0.2);
-        assert_eq!(stats.measured, 3, "a painted vertex must leave the numbers");
-        let colors = deviation_colors(&map, &RampSettings::default());
-        assert_eq!(colors[1], NO_DATA_COLOR);
-    }
-
-    #[test]
-    fn a_non_finite_vertex_is_named_as_such() {
-        let (positions, indices) = sheet();
-        let mut moving = lifted(&positions, 0.1);
-        moving[0] = f32::NAN;
-        let map = map_of(&moving, &indices, &settings());
-        assert_eq!(map.validity[0], Validity::NonFinite);
-    }
-
-    #[test]
-    fn the_magnitude_ramp_is_cool_at_nothing_and_hot_at_the_scale() {
-        let map = DeviationMap {
-            signed_mm: vec![0.0, 0.5, -0.5],
-            validity: vec![Validity::Measured; 3],
-        };
-        let colors = deviation_colors(
-            &map,
-            &RampSettings {
-                mode: super::RampMode::Magnitude,
-                ..RampSettings::default()
-            },
-        );
-        assert!(colors[0][2] > colors[0][0], "no deviation must read cool");
-        assert!(colors[1][0] > colors[1][2], "full scale must read hot");
-        assert_eq!(
-            colors[1], colors[2],
-            "magnitude ignores which side the surface sits on"
-        );
-    }
-
-    /// The two assertions the "always blue" report needed. A ramp that never
-    /// leaves its first stop looks exactly like a correct one at the origin,
-    /// so checking the ends is not enough: this walks the whole scale and
-    /// requires the hue to actually pass through cyan, green and yellow on its
-    /// way to red, and requires the two hot/cold channels to move
-    /// monotonically so no stop is skipped or visited twice.
-    #[test]
-    fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
-        let ramp = RampSettings {
-            mode: super::RampMode::Magnitude,
-            ..RampSettings::default()
-        };
-        let at = |position: f64| super::ramp_color(position * ramp.scale_mm, &ramp);
-
-        // The channel bounds are loose because the stops are deliberately
-        // pulled in from the pure extremes: a ramp built from 0 and 255 turns
-        // to ink and scab the moment the shader multiplies it by any light.
-        // What is being pinned here is the WALK, not a particular blue.
-        let (mut cyan, mut green, mut yellow, mut red) = (false, false, false, false);
-        let mut previous = at(0.0);
-        assert!(
-            previous[2] > 180 && previous[0] < 90,
-            "nothing measured must read blue, got {previous:?}"
-        );
-        for step in 1..=100 {
-            let color = at(f64::from(step) / 100.0);
-            // Red only ever rises and blue only ever falls across a magnitude
-            // ramp; a stop table walked in the wrong order would break this
-            // long before the ends looked wrong.
-            assert!(
-                color[0] >= previous[0] && color[2] <= previous[2],
-                "the ramp doubled back at step {step}: {previous:?} then {color:?}"
-            );
-            cyan |= color[0] < 90 && color[1] > 160 && color[2] > 160;
-            green |= color[1] > 180 && color[0] < 120 && color[2] < 120;
-            yellow |= color[0] > 200 && color[1] > 150 && color[2] < 80;
-            red |= color[0] > 200 && color[1] < 90 && color[2] < 60;
-            previous = color;
-        }
-        assert!(cyan, "the ramp never passed through cyan");
-        assert!(green, "the ramp never passed through green");
-        assert!(yellow, "the ramp never passed through yellow");
-        assert!(red, "the ramp never reached red");
-        let [hot_r, hot_g, hot_b] = super::MAGNITUDE_RAMP[super::MAGNITUDE_RAMP.len() - 1].1;
-        assert_eq!(
-            at(1.0),
-            [hot_r, hot_g, hot_b, 255],
-            "the display scale must land on the hot stop exactly"
-        );
-    }
-
-    #[test]
-    fn the_signed_ramp_is_blue_below_and_red_above() {
-        let map = DeviationMap {
-            signed_mm: vec![-0.5, 0.0, 0.5],
-            validity: vec![Validity::Measured; 3],
-        };
-        let colors = deviation_colors(&map, &RampSettings::default());
-        assert!(colors[0][2] > colors[0][0], "the negative end must be blue");
-        assert!(colors[2][0] > colors[2][2], "the positive end must be red");
-        assert!(
-            colors[1][1] > colors[1][0] && colors[1][1] > colors[1][2],
-            "zero must be green"
-        );
-    }
-
-    #[test]
-    fn banded_mode_quantizes_neighbouring_values_to_one_color() {
-        let map = DeviationMap {
-            signed_mm: vec![0.11, 0.13],
-            validity: vec![Validity::Measured; 2],
-        };
-        let ramp = RampSettings {
-            bands: Some(10),
-            ..RampSettings::default()
-        };
-        let colors = deviation_colors(&map, &ramp);
-        assert_eq!(colors[0], colors[1], "one band must be one colour");
-
-        let continuous = deviation_colors(&map, &RampSettings::default());
-        assert_ne!(
-            continuous[0], continuous[1],
-            "the continuous ramp must still separate them"
-        );
-    }
-
-    #[test]
-    fn a_cancelled_run_marks_everything_unmeasured() {
-        let (positions, indices) = sheet();
-        let (fixed_positions, fixed_indices) = sheet();
-        let index = SurfaceIndex::build(Soup {
-            positions: &fixed_positions,
-            indices: &fixed_indices,
-            mask: None,
-        })
-        .unwrap();
-        let cancel = CancelFlag::new();
-        cancel.cancel();
-
-        let map = deviation(
-            Soup {
-                positions: &positions,
-                indices: &indices,
-                mask: None,
-            },
-            &index,
-            Rigid::IDENTITY,
-            &settings(),
-            &cancel,
-        );
-
-        assert!(map
-            .validity
-            .iter()
-            .all(|state| *state != Validity::Measured));
-    }
-}
+#[path = "deviation_tests.rs"]
+mod tests;
