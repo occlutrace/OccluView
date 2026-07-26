@@ -73,8 +73,12 @@ pub(crate) enum EditorIcon {
     Heatmap,
     /// A round brush over a patch — the region brush.
     MaskBrush,
-    /// A four-way arrow — move the scan by hand.
+    /// A four-way arrow — move the scan freely by hand.
     MoveLayer,
+    /// A two-way vertical arrow — movement locked to the up axis.
+    MoveVertical,
+    /// A ground plane with an arrow on it — movement locked to the xy plane.
+    MovePlane,
 }
 
 /// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
@@ -270,6 +274,34 @@ pub(crate) fn paint(
             ] {
                 arrowhead(painter, tip, dir, r(0.11), stroke);
             }
+        }
+        EditorIcon::MoveVertical => {
+            // A two-way vertical arrow: movement locked to the up axis.
+            painter.line_segment([p(0.50, 0.12), p(0.50, 0.88)], stroke);
+            arrowhead(
+                painter,
+                p(0.50, 0.12),
+                Vec2::new(0.0, -1.0),
+                r(0.13),
+                stroke,
+            );
+            arrowhead(painter, p(0.50, 0.88), Vec2::new(0.0, 1.0), r(0.13), stroke);
+        }
+        EditorIcon::MovePlane => {
+            // A ground plane in perspective with a two-way arrow lying on it.
+            painter.add(Shape::closed_line(
+                vec![p(0.10, 0.66), p(0.42, 0.42), p(0.90, 0.42), p(0.58, 0.66)],
+                stroke,
+            ));
+            painter.line_segment([p(0.26, 0.80), p(0.80, 0.80)], stroke);
+            arrowhead(
+                painter,
+                p(0.26, 0.80),
+                Vec2::new(-1.0, 0.0),
+                r(0.11),
+                stroke,
+            );
+            arrowhead(painter, p(0.80, 0.80), Vec2::new(1.0, 0.0), r(0.11), stroke);
         }
         EditorIcon::Smooth => {
             // A bumpy line settling flat: the wavy source above a straight
