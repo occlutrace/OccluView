@@ -296,7 +296,7 @@ impl OccluViewApp {
         // A rebuild uploads the scan's own colours, so a live deviation map
         // has to be pushed again or it silently vanishes on the next scene
         // change.
-        let restore_deviation = self.align_deviation.is_some();
+        let restore_deviation = self.align_overlay_is_up();
         let Some(live_viewport) = self.live_viewport.clone() else {
             return;
         };

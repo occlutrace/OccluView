@@ -107,7 +107,8 @@ pub(crate) struct OccluViewApp {
     pub(super) align_status: Option<String>,
     pub(super) align_stats: Option<occluview_align::DeviationStats>,
     pub(super) align_rejected: Vec<u32>,
-    pub(super) align_deviation: Option<Arc<Vec<[u8; 4]>>>,
+    /// Per-layer overlay colours currently on screen.
+    pub(super) align_overlay_colors: Vec<(occluview_core::SceneMeshId, Arc<Vec<[u8; 4]>>)>,
     /// The flat arrays the align worker takes, kept between jobs so a settings
     /// change does not re-copy geometry that has not moved.
     pub(super) align_geometry: crate::align_geometry::AlignGeometry,
@@ -118,7 +119,13 @@ pub(crate) struct OccluViewApp {
     /// Consumed by the viewport sync, which is the one place that knows whether
     /// there is a prepared scene to write into.
     pub(super) deviation_push_pending: bool,
+    /// Markings over the mesh the arrows move.
     pub(super) align_mask: Option<Arc<Vec<u8>>>,
+    /// Markings over the mesh they move onto.
+    pub(super) align_mask_fixed: Option<Arc<Vec<u8>>>,
+    /// Vertices the last dab changed, kept so the buffer is not reallocated
+    /// per dab.
+    pub(super) align_touched: Vec<u32>,
     /// Bumped on every mask write. The mask decides which vertices are
     /// measured, so a cached measurement is only reusable at the same revision.
     pub(super) align_mask_revision: u64,
@@ -303,11 +310,13 @@ impl OccluViewApp {
             align_status: None,
             align_stats: None,
             align_rejected: Vec::new(),
-            align_deviation: None,
+            align_overlay_colors: Vec::new(),
             align_geometry: crate::align_geometry::AlignGeometry::default(),
             align_painted: crate::align_geometry::PaintedVertices::default(),
             deviation_push_pending: false,
             align_mask: None,
+            align_mask_fixed: None,
+            align_touched: Vec::new(),
             align_mask_revision: 0,
             align_drag: None,
             align_constraint: crate::align_drag::DragConstraint::default(),

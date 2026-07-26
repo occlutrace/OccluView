@@ -5,6 +5,8 @@
 //! thing that makes it safe to optimise further is a test that pins it to that
 //! answer, tie-break included.
 
+#![allow(clippy::expect_used, clippy::panic)]
+
 use super::{closest_point_on_triangle, SurfaceHit, SurfaceIndex};
 use crate::Soup;
 use glam::DVec3;
@@ -372,4 +374,79 @@ fn a_tie_one_shell_further_out_still_wins_on_the_lower_index() {
         hit.triangle
     );
     assert_same(&index, query, 20.0);
+}
+
+/// The fixed half of "Exclude selected parts".
+///
+/// The only honest way to keep marked surface out of a match is to leave it out
+/// of the index: a query that could still land on it would match against
+/// geometry the operator has explicitly said not to use, and a deviation
+/// measured to it would be a distance to a surface that is not in the
+/// comparison. A triangle with any marked corner straddles the boundary, so the
+/// whole triangle goes.
+#[test]
+fn marked_triangles_are_left_out_of_the_index_entirely() {
+    let (positions, indices) = plane(8, 1.0);
+    let vertex_count = positions.len() / 3;
+
+    let whole = SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    })
+    .expect("a plane is a surface");
+
+    // Mark out everything with x below 4, which is half the sheet.
+    let mut mask = vec![crate::INCLUDED; vertex_count];
+    for vertex in 0..vertex_count {
+        if positions[vertex * 3] < 4.0 {
+            mask[vertex] = crate::EXCLUDED;
+        }
+    }
+    let masked = SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: Some(&mask),
+    })
+    .expect("the unmarked half is still a surface");
+
+    // Over the marked half the whole index answers and the masked one does not.
+    let over_marked = DVec3::new(1.0, 1.0, 2.0);
+    assert!(
+        whole.nearest(over_marked, 4.0).is_some(),
+        "the unmasked index must still answer here"
+    );
+    assert!(
+        masked.nearest(over_marked, 1.0).is_none(),
+        "a query over marked surface must find nothing near it"
+    );
+
+    // Over the unmarked half both answer, and they agree.
+    let over_kept = DVec3::new(6.0, 6.0, 2.0);
+    let (Some(from_whole), Some(from_masked)) = (
+        whole.nearest(over_kept, 4.0),
+        masked.nearest(over_kept, 4.0),
+    ) else {
+        panic!("both indices must answer over surface neither excluded");
+    };
+    assert!(
+        (from_whole.point - from_masked.point).length() < 1e-9,
+        "masking one half must not move the other: {:?} vs {:?}",
+        from_whole.point,
+        from_masked.point
+    );
+}
+
+/// A mask that marks everything leaves no surface at all, and that has to be
+/// reported rather than answered with an empty index a query walks forever.
+#[test]
+fn marking_the_whole_mesh_leaves_no_index() {
+    let (positions, indices) = plane(4, 1.0);
+    let mask = vec![crate::EXCLUDED; positions.len() / 3];
+    assert!(SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: Some(&mask),
+    })
+    .is_none());
 }

@@ -127,8 +127,13 @@ impl SurfaceIndex {
     /// Build an index over every usable triangle in `soup`.
     ///
     /// Triangles with out-of-range indices, non-finite vertices, or no usable
-    /// area are dropped rather than poisoning a query. Returns `None` when
-    /// nothing usable survives.
+    /// area are dropped rather than poisoning a query. So are triangles the
+    /// operator has masked out: this is the FIXED side of exocad's "Exclude
+    /// selected parts", and the only honest way to exclude fixed surface is to
+    /// leave it out of the index, so nothing can ever match against it or
+    /// measure to it.
+    ///
+    /// Returns `None` when nothing usable survives.
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     pub fn build(soup: Soup<'_>) -> Option<Self> {
@@ -141,6 +146,12 @@ impl SurfaceIndex {
         let mut edge_total = 0.0f64;
 
         for (triangle, slice) in soup.indices.chunks_exact(3).enumerate() {
+            // Any masked corner takes the whole triangle out. A triangle with
+            // one corner inside a painted region straddles the boundary, and
+            // half a triangle is not a surface a query can land on.
+            if slice.iter().any(|index| soup.is_excluded(*index as usize)) {
+                continue;
+            }
             let Some(vertices) = read_triangle(soup.positions, vertex_count, slice) else {
                 continue;
             };
