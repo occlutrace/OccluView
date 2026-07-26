@@ -3,25 +3,36 @@
 //! A movable window built from the same pieces as the mesh editor: no title
 //! bar, icon buttons, and a commit row that ends in Cancel and Done. Nothing
 //! here names a target, a source, or a role — the pair comes from the points
-//! the operator clicks in the viewport, so this window's job is to report what
-//! was clicked, offer the two fits, and read the map honestly.
+//! the operator clicks in the viewport.
+//!
+//! The window is three stacked blocks, in the order the work happens:
+//!
+//! 1. **How** the scan is placed — the two tabs. *Automatically* collects
+//!    point pairs; *Manually* moves the scan by hand and paints the region the
+//!    match runs on.
+//! 2. **The fits.** Shared by both tabs on purpose: an operator who nudged a
+//!    scan by hand still wants to seat it, and a Best fit button that vanished
+//!    when they switched tabs is a button they cannot find.
+//! 3. **The Hitmap**, and then Cancel / Done.
 
 use eframe::egui;
-use occluview_align::{DeviationStats, Orientation, RampMode};
+use occluview_align::DeviationStats;
 
-use crate::align_brush::{AlignBrush, MaskCommand};
+use crate::align_brush::{AlignBrush, BrushPaint, MaskCommand};
 use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
 use crate::mesh_editor_icons::{self, EditorIcon};
-use crate::{align_overlay, ui_theme};
+use crate::{align_panel_map, ui_theme};
 
 /// Fixed window width, matching the mesh editor so the two read as one family.
 const WINDOW_WIDTH: f32 = 268.0;
 /// Height of the two big fit buttons.
 const FIT_BUTTON_HEIGHT: f32 = 34.0;
-/// Width of a small icon button.
-const ICON_BUTTON: f32 = 40.0;
+/// Height of a small labelled control.
+const CHIP_HEIGHT: f32 = 26.0;
+/// Corner radius shared by every control in the window.
+const CHIP_ROUNDING: f32 = 5.0;
 
 /// The two ways exocad's Align Meshes works, and the two this window offers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,7 +40,7 @@ pub(crate) enum AlignTab {
     /// Click matching points, then let the software fit them.
     #[default]
     Automatically,
-    /// Drag the scan into place by hand.
+    /// Drag the scan into place by hand, and paint what the match runs on.
     Manually,
 }
 
@@ -52,15 +63,13 @@ pub(crate) enum AlignPanelAction {
     Refine,
     /// Remove the last point or pair.
     Back,
-    /// Drop the pair and start over.
+    /// Drop the points and start over.
     Clear,
     /// Re-measure with the current settings.
     Measure,
     /// Stop showing the map.
     HideMap,
-    /// Paint the map on the other surface instead.
-    SwapMapped,
-    /// Run a whole-mask command.
+    /// Run a whole-region command.
     Mask(MaskCommand),
     /// Put every scan back where it was and close.
     Cancel,
@@ -76,7 +85,7 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) settings: &'a mut AlignSettings,
     /// Which directions a hand drag may move in, edited in place.
     pub(crate) constraint: &'a mut DragConstraint,
-    /// The exclusion brush, edited in place.
+    /// The region brush, edited in place.
     pub(crate) brush: &'a mut AlignBrush,
     /// The last thing that happened, in a sentence.
     pub(crate) status: Option<&'a str>,
@@ -115,20 +124,37 @@ pub(crate) fn show(
     action
 }
 
-/// The window body: the tab strip, the open tab, then the shared footer.
+/// The window body: the open tab, then the blocks both tabs share.
 fn body(ui: &mut egui::Ui, view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
     let enabled = !view.busy;
     tab_strip(ui, view.tab);
+    // The brush belongs to the Manually tab. Leaving it armed after a tab
+    // switch would keep swallowing viewport clicks from a tab that has no
+    // brush control on it at all.
+    if *view.tab != AlignTab::Manually {
+        view.brush.set_armed(false);
+    }
     ui.add_space(4.0);
+
     let mut action = match *view.tab {
-        AlignTab::Automatically => automatically(ui, view.tool, view.settings, view.stats, enabled),
+        AlignTab::Automatically => automatically(ui, view.tool, enabled),
         AlignTab::Manually => manually(ui, view.constraint, view.brush, enabled),
     };
+
+    ui.add_space(4.0);
+    ui.separator();
+    action = action.or(fits(ui, view.tool, enabled));
+    ui.separator();
+    action = action.or(align_panel_map::show(
+        ui,
+        view.settings,
+        view.stats,
+        enabled,
+    ));
     status(ui, view.status);
     // Deliberately not gated on `enabled`: a refine on a full arch takes real
     // time, and a window whose only two exits are greyed out reads as a hang.
-    action = action.or(commit(ui, true, view.moved));
-    action
+    action.or(commit(ui, view.moved))
 }
 
 /// The two-tab strip, sized so both halves are equally reachable.
@@ -138,7 +164,7 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
         for value in [AlignTab::Automatically, AlignTab::Manually] {
             let active = *tab == value;
             let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(width, 26.0), egui::Sense::click());
+                ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
             let ink = if active {
                 ui_theme::ACCENT
             } else {
@@ -171,41 +197,170 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
     });
 }
 
-/// The Automatically tab: click points, fit them, then read the distance.
-fn automatically(
-    ui: &mut egui::Ui,
-    tool: &AlignTool,
-    settings: &mut AlignSettings,
-    stats: Option<DeviationStats>,
-    enabled: bool,
-) -> Option<AlignPanelAction> {
-    header(ui, tool);
-    let mut action = fits(ui, tool, enabled);
-    action = action.or(points(ui, enabled));
-    ui.separator();
-    action.or(heatmap(ui, settings, stats, enabled))
+/// The Automatically tab: click matching points, then take one back.
+fn automatically(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
+    prompt(ui, tool);
+    let mut action = None;
+    let placed = tool.pending().is_some() || !tool.pairs().is_empty();
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::Undo),
+            "Undo point",
+            enabled && placed,
+            false,
+        )
+        .on_hover_text("Take the last point back — right-clicking in the view does the same")
+        .clicked()
+        {
+            action = Some(AlignPanelAction::Back);
+        }
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::Delete),
+            "Clear",
+            enabled && placed,
+            false,
+        )
+        .on_hover_text("Drop every point and start over")
+        .clicked()
+        {
+            action = Some(AlignPanelAction::Clear);
+        }
+    });
+    action
 }
 
-/// The Manually tab: drag the scan, and paint what should not be matched.
+/// The Manually tab: move the scan, or paint the region the match runs on.
 fn manually(
     ui: &mut egui::Ui,
     constraint: &mut DragConstraint,
     brush: &mut AlignBrush,
     enabled: bool,
 ) -> Option<AlignPanelAction> {
-    ui.label(
-        egui::RichText::new("Drag a scan to move it, Ctrl+drag to turn it")
-            .size(12.0)
-            .color(ui_theme::TEXT),
-    );
+    let mut painting = brush.is_armed();
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::MoveLayer),
+            "Move",
+            enabled,
+            !painting,
+        )
+        .on_hover_text("Drag the scan into place by hand")
+        .clicked()
+        {
+            painting = false;
+        }
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::MaskBrush),
+            "Paint",
+            enabled,
+            painting,
+        )
+        .on_hover_text("Paint the part of the scan the match runs on")
+        .clicked()
+        {
+            painting = true;
+        }
+    });
+    brush.set_armed(painting);
     ui.add_space(2.0);
-    handling(ui, constraint, brush, enabled)
+    if painting {
+        region(ui, brush, enabled)
+    } else {
+        moving(ui, constraint);
+        None
+    }
+}
+
+/// Moving the scan by hand.
+fn moving(ui: &mut egui::Ui, constraint: &mut DragConstraint) {
+    hint(ui, "Drag to move · Ctrl+drag to turn");
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
+        for value in [
+            DragConstraint::Free,
+            DragConstraint::ZOnly,
+            DragConstraint::XyPlane,
+        ] {
+            if chip(ui, width, None, value.label(), true, *constraint == value)
+                .on_hover_text(value.hint())
+                .clicked()
+            {
+                *constraint = value;
+            }
+        }
+    });
+}
+
+/// Choosing which part of the scan the match runs on.
+///
+/// The three whole-region buttons are always in view, not hidden behind the
+/// brush: "match on this and nothing else" starts with None and then paints,
+/// so a None the operator has to find first is a workflow they never discover.
+fn region(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) -> Option<AlignPanelAction> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        for value in [BrushPaint::Ignore, BrushPaint::Use] {
+            if chip(
+                ui,
+                width,
+                None,
+                value.label(),
+                enabled,
+                brush.paint() == value,
+            )
+            .on_hover_text(value.hint())
+            .clicked()
+            {
+                brush.set_paint(value);
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
+        for (command, icon) in [
+            (MaskCommand::Everything, EditorIcon::SelectAll),
+            (MaskCommand::Nothing, EditorIcon::SelectNone),
+            (MaskCommand::Invert, EditorIcon::SelectInvert),
+        ] {
+            if chip(ui, width, Some(icon), command.label(), enabled, false)
+                .on_hover_text(command.hint())
+                .clicked()
+            {
+                action = Some(AlignPanelAction::Mask(command));
+            }
+        }
+    });
+    let mut radius = brush.radius_mm();
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Slider::new(&mut radius, 0.1..=20.0)
+                .suffix(" mm")
+                .text("size"),
+        )
+        .changed()
+    {
+        brush.set_radius_mm(radius);
+    }
+    hint(ui, "Shift+wheel resizes the brush");
+    action
 }
 
 /// What the tool is waiting for, in one line.
-fn header(ui: &mut egui::Ui, tool: &AlignTool) {
+fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
     let placed = tool.pairs().len();
-    let prompt = if tool.moving_layer().is_none() {
+    let text = if tool.moving_layer().is_none() {
         "Click a point on the scan that should move".to_owned()
     } else if tool.pending().is_some() {
         "Click the matching spot on the other scan".to_owned()
@@ -214,12 +369,14 @@ fn header(ui: &mut egui::Ui, tool: &AlignTool) {
     } else {
         format!("{placed} pair{} placed", if placed == 1 { "" } else { "s" })
     };
-    ui.label(egui::RichText::new(prompt).size(12.0).color(ui_theme::TEXT));
+    ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::TEXT));
     ui.add_space(2.0);
 }
 
-/// The two fits. Refine is the primary action and is sized like one: the point
-/// fit only gets the scan close, the surface fit is what actually seats it.
+/// The two fits, shown under both tabs.
+///
+/// Refine is the primary action and is sized like one: the point fit only gets
+/// the scan close, the surface fit is what actually seats it.
 fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
     let mut action = None;
     let width = ui.available_width();
@@ -227,11 +384,11 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         ui,
         width,
         EditorIcon::AlignFit,
-        "Perform alignment",
+        "Align on points",
         tool.can_align() && enabled,
         false,
     )
-    .on_hover_text("Fit the clicked point pairs — gets the scan close")
+    .on_hover_text("Move the scan onto the clicked pairs — a rough placement")
     .clicked()
     {
         action = Some(AlignPanelAction::Align);
@@ -252,340 +409,13 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
     action
 }
 
-/// Taking a click back.
-fn points(ui: &mut egui::Ui, enabled: bool) -> Option<AlignPanelAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        if small_button(ui, width, "Back", enabled)
-            .on_hover_text("Remove the last point")
-            .clicked()
-        {
-            action = Some(AlignPanelAction::Back);
-        }
-        if small_button(ui, width, "Clear", enabled)
-            .on_hover_text("Drop the pair and start over")
-            .clicked()
-        {
-            action = Some(AlignPanelAction::Clear);
-        }
-    });
-    action
-}
-
-/// The heatmap: the colour bar, the one slider that scales it, and the numbers.
-///
-/// Compact on purpose. Lab software puts a false-colour bar and a single
-/// scaling slider in front of the operator; everything else is a detail that
-/// only matters when something looks wrong, and lives behind the fold.
-fn heatmap(
-    ui: &mut egui::Ui,
-    settings: &mut AlignSettings,
-    stats: Option<DeviationStats>,
-    enabled: bool,
-) -> Option<AlignPanelAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        let glyph = ui
-            .allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover())
-            .0;
-        mesh_editor_icons::paint(
-            ui.painter(),
-            glyph,
-            EditorIcon::Heatmap,
-            if settings.show_deviation {
-                ui_theme::ACCENT
-            } else {
-                ui_theme::TEXT_MUTED
-            },
-            settings.show_deviation,
-        );
-        let mut shown = settings.show_deviation;
-        if ui
-            .checkbox(&mut shown, "Show distance")
-            .on_hover_text("Colour the aligned scan by how far it sits from the other")
-            .changed()
-        {
-            settings.show_deviation = shown;
-            action = Some(if shown {
-                AlignPanelAction::Measure
-            } else {
-                AlignPanelAction::HideMap
-            });
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if mesh_editor_icons::icon_button(
-                ui,
-                egui::vec2(ICON_BUTTON, 24.0),
-                EditorIcon::Swap,
-                "",
-                "Paint the map on the other scan instead",
-                settings.show_deviation && enabled,
-                false,
-            )
-            .clicked()
-            {
-                action = Some(AlignPanelAction::SwapMapped);
-            }
-        });
-    });
-    if !settings.show_deviation {
-        return action;
-    }
-
-    align_overlay::paint_legend(ui, *settings);
-    // One slider, directly under the bar it scales — the arrangement every
-    // metrology tool uses, because the bar is the legend for the slider.
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                enabled,
-                egui::Slider::new(&mut settings.scale_mm, 0.05..=2.0)
-                    .suffix(" mm")
-                    .text("scale"),
-            )
-            .drag_stopped()
-        {
-            // Their range now, not the tool's.
-            settings.auto_scale = false;
-            action = Some(AlignPanelAction::Measure);
-        }
-        if !settings.auto_scale
-            && ui
-                .small_button("auto")
-                .on_hover_text("Fit the range to the measurement again")
-                .clicked()
-        {
-            settings.auto_scale = true;
-            action = Some(AlignPanelAction::Measure);
-        }
-    });
-
-    if let Some(stats) = stats {
-        numbers(ui, stats, settings.tolerance_mm);
-    }
-
-    ui.collapsing("Distance settings", |ui| {
-        if details(ui, settings) {
-            action = Some(AlignPanelAction::Measure);
-        }
-    });
-    action
-}
-
-/// The knobs that only matter when something looks wrong.
-fn details(ui: &mut egui::Ui, settings: &mut AlignSettings) -> bool {
-    let mut changed = false;
-    changed |= ui
-        .add(
-            egui::Slider::new(&mut settings.tolerance_mm, 0.01..=1.0)
-                .suffix(" mm")
-                .text("tolerance"),
-        )
-        .drag_stopped();
-    changed |= ui
-        .add(
-            egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0)
-                .suffix(" mm")
-                .text("max distance"),
-        )
-        .drag_stopped();
-
-    let mut banded = settings.bands.is_some();
-    if ui
-        .checkbox(&mut banded, "Stepped bands")
-        .on_hover_text("Step the ramp instead of blending it")
-        .changed()
-    {
-        settings.bands = banded.then_some(10);
-        changed = true;
-    }
-    changed |= colours(ui, &mut settings.ramp_mode);
-    changed |= facing(ui, &mut settings.orientation);
-    changed
-}
-
-/// Which colour scheme the map paints with.
-fn colours(ui: &mut egui::Ui, mode: &mut RampMode) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Colours")
-                .size(11.0)
-                .color(ui_theme::TEXT_MUTED),
-        );
-        for (value, label, hint) in [
-            (
-                RampMode::Magnitude,
-                "distance",
-                "Cool where the scans agree, hot where they do not",
-            ),
-            (
-                RampMode::Signed,
-                "signed",
-                "Blue below the surface, green nominal, red above",
-            ),
-        ] {
-            if ui
-                .selectable_label(*mode == value, label)
-                .on_hover_text(hint)
-                .clicked()
-                && *mode != value
-            {
-                *mode = value;
-                changed = true;
-            }
-        }
-    });
-    changed
-}
-
-/// The surface-orientation rule. An inverted mesh flips the whole signed map,
-/// so this is the escape hatch for a scan whose winding disagrees with itself.
-fn facing(ui: &mut egui::Ui, orientation: &mut Orientation) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Facing")
-                .size(11.0)
-                .color(ui_theme::TEXT_MUTED),
-        );
-        for (value, label, hint) in [
-            (Orientation::Match, "as is", "Surfaces face the same way"),
-            (
-                Orientation::Inverted,
-                "flipped",
-                "The other scan's winding is inverted",
-            ),
-            (Orientation::Ignored, "either", "Accept either facing"),
-        ] {
-            if ui
-                .selectable_label(*orientation == value, label)
-                .on_hover_text(hint)
-                .clicked()
-                && *orientation != value
-            {
-                *orientation = value;
-                changed = true;
-            }
-        }
-    });
-    changed
-}
-
-/// The numbers behind the colours, including what could not be measured.
-fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(format!(
-                "{:.0}% within {tolerance_mm:.2} mm",
-                stats.within_tolerance * 100.0
-            ))
+/// A short muted line of guidance.
+fn hint(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
             .size(11.0)
-            .color(ui_theme::TEXT),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(format!("rms {:.3}", stats.rms))
-                    .size(11.0)
-                    .color(ui_theme::TEXT_MUTED),
-            );
-        });
-    });
-    if stats.skipped > 0 {
-        ui.label(
-            egui::RichText::new(format!("{} vertices had nothing to measure", stats.skipped))
-                .size(10.0)
-                .color(ui_theme::TEXT_MUTED),
-        );
-    }
-}
-
-/// Hand movement and the exclusion brush.
-fn handling(
-    ui: &mut egui::Ui,
-    constraint: &mut DragConstraint,
-    brush: &mut AlignBrush,
-    enabled: bool,
-) -> Option<AlignPanelAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Drag")
-                .size(11.0)
-                .color(ui_theme::TEXT_MUTED),
-        );
-        for value in [
-            DragConstraint::Free,
-            DragConstraint::ZOnly,
-            DragConstraint::XyPlane,
-        ] {
-            if ui
-                .selectable_label(*constraint == value, value.label())
-                .clicked()
-            {
-                *constraint = value;
-            }
-        }
-    })
-    .response
-    .on_hover_text("Drag a scan to move it, Ctrl+drag to turn it about its own centre");
-
-    ui.horizontal(|ui| {
-        let mut armed = brush.is_armed();
-        if mesh_editor_icons::icon_button(
-            ui,
-            egui::vec2(ICON_BUTTON, 26.0),
-            EditorIcon::MaskBrush,
-            "",
-            "Paint a region out of the comparison; hold Shift to erase",
-            enabled,
-            armed,
-        )
-        .clicked()
-        {
-            armed = !armed;
-            brush.set_armed(armed);
-        }
-        if armed {
-            let mut radius = brush.radius_mm();
-            if ui
-                .add(egui::Slider::new(&mut radius, 0.1..=20.0).suffix(" mm"))
-                .changed()
-            {
-                brush.set_radius_mm(radius);
-            }
-        } else {
-            ui.label(
-                egui::RichText::new("Exclude by brush")
-                    .size(11.0)
-                    .color(ui_theme::TEXT_MUTED),
-            );
-        }
-    });
-    if brush.is_armed() {
-        ui.horizontal(|ui| {
-            let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 4.0;
-            for (label, command, hint) in [
-                ("None", MaskCommand::Nowhere, "Compare the whole scan"),
-                ("All", MaskCommand::Everywhere, "Mask the whole scan"),
-                ("Invert", MaskCommand::Invert, "Flip the mask"),
-                (
-                    "Points",
-                    MaskCommand::AroundPoints,
-                    "Take the clicked spots out of the surface fit",
-                ),
-            ] {
-                if small_button(ui, width, label, enabled)
-                    .on_hover_text(hint)
-                    .clicked()
-                {
-                    action = Some(AlignPanelAction::Mask(command));
-                }
-            }
-        });
-    }
-    action
+            .color(ui_theme::TEXT_MUTED),
+    );
 }
 
 /// The last thing that happened.
@@ -606,12 +436,12 @@ fn status(ui: &mut egui::Ui, status: Option<&str>) {
 /// Cancel means what it says: every scan goes back where it was. Closing a tool
 /// and silently keeping what it did is how an operator loses work they thought
 /// they had discarded.
-fn commit(ui: &mut egui::Ui, enabled: bool, moved: bool) -> Option<AlignPanelAction> {
+fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
     let mut action = None;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        if tall_button(ui, width, "Cancel", enabled, false)
+        if tall_button(ui, width, "Cancel", false)
             .on_hover_text(if moved {
                 "Put every scan back where it was and close"
             } else {
@@ -621,7 +451,7 @@ fn commit(ui: &mut egui::Ui, enabled: bool, moved: bool) -> Option<AlignPanelAct
         {
             action = Some(AlignPanelAction::Cancel);
         }
-        if tall_button(ui, width, "Done", enabled, true)
+        if tall_button(ui, width, "Done", true)
             .on_hover_text("Keep the alignment and close")
             .clicked()
         {
@@ -631,10 +461,81 @@ fn commit(ui: &mut egui::Ui, enabled: bool, moved: bool) -> Option<AlignPanelAct
     action
 }
 
+/// A compact control: optional glyph, then a label, on a rounded plate.
+///
+/// One widget for every small control in the window, so a toggle, a command,
+/// and a mode read as the same kind of thing and differ only in whether they
+/// stay lit.
+// A control needs its width, glyph, label, and both state flags. Bundling them
+// into a struct would only add ceremony at each of the eight call sites.
+#[allow(clippy::too_many_arguments)]
+fn chip(
+    ui: &mut egui::Ui,
+    width: f32,
+    icon: Option<EditorIcon>,
+    label: &str,
+    enabled: bool,
+    active: bool,
+) -> egui::Response {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), sense);
+    let ink = if enabled {
+        if active {
+            ui_theme::ACCENT
+        } else {
+            ui_theme::TEXT
+        }
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let painter = ui.painter();
+    if enabled && active {
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.16));
+    } else if enabled && response.hovered() {
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.08));
+    }
+    painter.rect_stroke(
+        rect,
+        CHIP_ROUNDING,
+        egui::Stroke::new(1.0, ink.gamma_multiply(if active { 0.70 } else { 0.30 })),
+    );
+    let font = egui::FontId::proportional(11.5);
+    match icon {
+        Some(icon) => {
+            let text_width = painter
+                .layout_no_wrap(label.to_owned(), font.clone(), ink)
+                .rect
+                .width();
+            let glyph_side = 15.0;
+            let block = glyph_side + 5.0 + text_width;
+            let left = rect.center().x - block / 2.0;
+            let glyph = egui::Rect::from_center_size(
+                egui::pos2(left + glyph_side / 2.0, rect.center().y),
+                egui::Vec2::splat(glyph_side),
+            );
+            mesh_editor_icons::paint(painter, glyph, icon, ink, active);
+            painter.text(
+                egui::pos2(glyph.right() + 5.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                font,
+                ink,
+            );
+        }
+        None => {
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, label, font, ink);
+        }
+    }
+    response
+}
+
 /// A full-width fit button: glyph, then label, at a size that says which of the
 /// two is the one that matters.
-// A button needs its width, glyph, label, and both state flags; bundling them
-// into a struct would only add ceremony at each of the two call sites.
+// Same shape as `chip`, and the same reason for taking its parts loose.
 #[allow(clippy::too_many_arguments)]
 fn fit_button(
     ui: &mut egui::Ui,
@@ -661,14 +562,14 @@ fn fit_button(
     };
     let painter = ui.painter();
     if enabled && primary {
-        painter.rect_filled(rect, 5.0, ui_theme::ACCENT.gamma_multiply(0.14));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.14));
     }
     if enabled && response.hovered() {
-        painter.rect_filled(rect, 5.0, ui_theme::ACCENT.gamma_multiply(0.10));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.10));
     }
     painter.rect_stroke(
         rect,
-        5.0,
+        CHIP_ROUNDING,
         egui::Stroke::new(1.0, ink.gamma_multiply(if primary { 0.75 } else { 0.35 })),
     );
     let glyph = egui::Rect::from_center_size(
@@ -686,31 +587,14 @@ fn fit_button(
     response
 }
 
-/// A short text button.
-fn small_button(ui: &mut egui::Ui, width: f32, label: &str, enabled: bool) -> egui::Response {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(egui::RichText::new(label).size(11.5)).min_size(egui::vec2(width, 22.0)),
-    )
-}
-
 /// A tall commit button.
-fn tall_button(
-    ui: &mut egui::Ui,
-    width: f32,
-    label: &str,
-    enabled: bool,
-    primary: bool,
-) -> egui::Response {
+fn tall_button(ui: &mut egui::Ui, width: f32, label: &str, primary: bool) -> egui::Response {
     let text = egui::RichText::new(label).size(12.5).color(if primary {
         ui_theme::ACCENT
     } else {
         ui_theme::TEXT
     });
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(text).min_size(egui::vec2(width, 28.0)),
-    )
+    ui.add(egui::Button::new(text).min_size(egui::vec2(width, 28.0)))
 }
 
 #[cfg(test)]
@@ -765,10 +649,61 @@ mod tests {
         assert!(commit.contains("AlignPanelAction::Done"));
     }
 
-    /// The measurement is only honest if the window says how much of the scan
-    /// it could not measure.
+    /// The bug this test exists for: the fits lived inside the Automatically
+    /// tab, so switching to Manually left an operator who had just nudged a
+    /// scan by hand with no way to seat it and no way to measure it. Both are
+    /// drawn once, by the shared body, after whichever tab is open.
     #[test]
-    fn the_numbers_report_unmeasured_vertices() {
-        assert!(production().contains("had nothing to measure"));
+    fn both_tabs_reach_the_fits() {
+        let source = production();
+        let body = source
+            .split_once("fn body(")
+            .and_then(|(_, rest)| rest.split_once("\n/// The two-tab strip"))
+            .map(|(body, _)| body)
+            .expect("a shared window body");
+        assert!(
+            body.contains("action.or(fits(ui, view.tool, enabled))"),
+            "the fits must be drawn by the shared body, not by one tab"
+        );
+        for tab in ["fn automatically(", "fn manually("] {
+            let block = source
+                .split_once(tab)
+                .and_then(|(_, rest)| rest.split_once("\n/// "))
+                .map(|(block, _)| block)
+                .expect("a tab body");
+            assert!(
+                !block.contains("AlignPanelAction::Refine"),
+                "{tab} draws its own Refine, so the two tabs would disagree"
+            );
+        }
+    }
+
+    /// The operator's words: "Paint the map on the other scan instead" is
+    /// "полное бредятина". It asked them which surface should carry a colour,
+    /// which is a rendering question dressed up as a measurement one.
+    #[test]
+    fn the_window_never_asks_which_surface_carries_the_map() {
+        let source = production();
+        for gone in ["SwapMapped", "EditorIcon::Swap", "other scan instead"] {
+            assert!(!source.contains(gone), "{gone} is back in the window");
+        }
+    }
+
+    /// Every small control carries a glyph or is one of a labelled set. A bare
+    /// row of text buttons is what the window looked like when the operator
+    /// called it a mess.
+    #[test]
+    fn the_region_commands_are_drawn_with_icons() {
+        let region = production()
+            .split_once("fn region(")
+            .map(|(_, rest)| rest)
+            .expect("a region block");
+        for icon in [
+            "EditorIcon::SelectAll",
+            "EditorIcon::SelectNone",
+            "EditorIcon::SelectInvert",
+        ] {
+            assert!(region.contains(icon), "the region commands need {icon}");
+        }
     }
 }

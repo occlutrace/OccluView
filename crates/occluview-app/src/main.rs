@@ -20,6 +20,7 @@ mod align_drag;
 mod align_geometry;
 mod align_overlay;
 mod align_panel;
+mod align_panel_map;
 mod align_tool;
 #[cfg(test)]
 mod align_tool_tests;

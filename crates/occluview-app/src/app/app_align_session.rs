@@ -98,25 +98,20 @@ impl OccluViewApp {
         true
     }
 
-    /// Which layer carries the map. The measured surface is the one that moved,
-    /// but an operator often wants to read the map on the one that stayed —
-    /// that is a display choice, not a role.
+    /// Which layer carries the map: the one that moved.
+    ///
+    /// There used to be a control that put the map on the other surface
+    /// instead. It asked the operator a rendering question dressed up as a
+    /// measurement one — the distances are the same either way — so it is gone,
+    /// and the answer is now always "the scan you are placing".
     pub(super) fn align_mapped_layer(&self) -> Option<SceneMeshId> {
-        if self.align_map_on_fixed {
-            self.align.fixed_layer()
-        } else {
-            self.align.moving_layer()
-        }
+        self.align.moving_layer()
     }
 
     /// The layer the map is *not* on, which is the one that has to get out of
     /// the way.
     fn align_other_layer(&self) -> Option<SceneMeshId> {
-        if self.align_map_on_fixed {
-            self.align.moving_layer()
-        } else {
-            self.align.fixed_layer()
-        }
+        self.align.fixed_layer()
     }
 
     /// Fade the other scan while the map is up.

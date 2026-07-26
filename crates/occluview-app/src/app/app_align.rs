@@ -63,7 +63,16 @@ impl OccluViewApp {
         }
 
         self.show_align_panel(ctx, response.rect);
+        self.paint_align_brush_cursor(ui, response.rect, ctx);
 
+        if self.handle_align_brush_wheel(response, ctx) {
+            return true;
+        }
+        // Before the brush and the drag: a right-click is an undo whichever of
+        // them happens to be live, and neither of them wants the button.
+        if self.handle_align_undo_click(response, ctx) {
+            return true;
+        }
         if self.handle_align_brush(response, ctx) {
             return true;
         }
@@ -99,6 +108,40 @@ impl OccluViewApp {
         }
     }
 
+    /// A stationary right-click takes the last point back.
+    ///
+    /// The operator asked for this by name: placing the first half of a pair
+    /// and then having to reach for a button to undo it is a trip away from
+    /// the geometry they are looking at. A right-click that has nothing to take
+    /// back is left alone, so the scene menu still opens on empty space.
+    fn handle_align_undo_click(&mut self, response: &egui::Response, ctx: &egui::Context) -> bool {
+        let (pressed, down, motion) = ctx.input(|input| {
+            (
+                input.pointer.button_pressed(egui::PointerButton::Secondary),
+                input.pointer.button_down(egui::PointerButton::Secondary),
+                input.pointer.motion().unwrap_or(input.pointer.delta()),
+            )
+        });
+        // Tracked here as well as in the camera path, because a frame this
+        // method consumes never reaches the camera path at all.
+        if pressed {
+            self.viewport_secondary_gesture_moved_since_press = false;
+        }
+        if down && motion.length_sq() > f32::EPSILON {
+            self.viewport_secondary_gesture_moved_since_press = true;
+        }
+        if !response.secondary_clicked() || self.viewport_secondary_gesture_moved_since_press {
+            return false;
+        }
+        if !self.align.back() {
+            return false;
+        }
+        self.align_rejected.clear();
+        self.align_status = Some("Point removed".into());
+        ctx.request_repaint();
+        true
+    }
+
     /// Draw the panel and run what it asked for.
     fn show_align_panel(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
         let busy = self.align_worker.as_ref().is_some_and(AlignWorker::is_busy);
@@ -106,6 +149,7 @@ impl OccluViewApp {
         let mut constraint = self.align_constraint;
         let mut brush = self.align_brush;
         let mut tab = self.align_tab;
+        let was_painting = brush.is_armed();
         let moved = self.align_session_moved();
         let action = crate::align_panel::show(
             ctx,
@@ -126,6 +170,11 @@ impl OccluViewApp {
         self.align_constraint = constraint;
         self.align_brush = brush;
         self.align_tab = tab;
+        // Entering and leaving paint mode changes what is on the surface: the
+        // region tint goes up, and the scan's own colours come back.
+        if was_painting != brush.is_armed() {
+            self.refresh_align_region_preview();
+        }
 
         match action {
             Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
@@ -146,11 +195,6 @@ impl OccluViewApp {
             }
             Some(crate::align_panel::AlignPanelAction::Mask(command)) => {
                 self.apply_align_mask_command(command);
-            }
-            Some(crate::align_panel::AlignPanelAction::SwapMapped) => {
-                self.align_map_on_fixed = !self.align_map_on_fixed;
-                self.clear_deviation_overlay();
-                self.run_align_measure();
             }
             Some(crate::align_panel::AlignPanelAction::Cancel) => self.cancel_align_session(ctx),
             Some(crate::align_panel::AlignPanelAction::Done) => self.finish_align_session(ctx),
@@ -202,7 +246,6 @@ impl OccluViewApp {
         self.align_stats = None;
         self.align_rejected.clear();
         self.align_session_poses.clear();
-        self.align_map_on_fixed = false;
         self.align_brush.set_armed(false);
         ctx.request_repaint();
     }
@@ -335,21 +378,11 @@ impl OccluViewApp {
         if self.align_worker.is_none() {
             return;
         }
-        let (Some(pair_moving), Some(pair_fixed)) =
+        let (Some(moving_id), Some(fixed_id)) =
             (self.align.moving_layer(), self.align.fixed_layer())
         else {
             self.align_status = Some("Place a point on each scan first".into());
             return;
-        };
-        // A fit always moves the scan the points named. A measurement, though,
-        // is taken over the vertices of whichever scan is going to CARRY the
-        // colours — otherwise Swap attaches one surface's distances to the
-        // other's vertices, which is either nothing at all or noise presented
-        // as a measurement.
-        let (moving_id, fixed_id) = if kind == AlignJobKind::Measure && self.align_map_on_fixed {
-            (pair_fixed, pair_moving)
-        } else {
-            (pair_moving, pair_fixed)
         };
         let (Some(moving), Some(fixed)) = (layer_of(&scene, moving_id), layer_of(&scene, fixed_id))
         else {
@@ -506,7 +539,9 @@ impl OccluViewApp {
     /// Showing a stale map is worse than showing none: the colours describe a
     /// pose that no longer exists. The operator re-measures when they are ready.
     pub(super) fn invalidate_deviation_map(&mut self, reason: &str) {
-        if self.align_deviation.is_none() {
+        // Only a MAP goes stale. The region tint is the operator's own paint,
+        // and dropping it here would erase the brush stroke that called this.
+        if self.align_overlay != super::app_align_display::AlignOverlay::Map {
             return;
         }
         self.clear_deviation_overlay();
