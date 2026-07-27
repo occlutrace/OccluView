@@ -16,8 +16,6 @@
 //! the brush marks whichever mesh is under the cursor, so painting both sides
 //! of a comparison is one continuous gesture and there is nothing to get wrong.
 
-use std::sync::Arc;
-
 use eframe::egui;
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid};
@@ -26,7 +24,7 @@ use occluview_core::{SceneMesh, SceneMeshId};
 use super::app_align::layer_of;
 use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
-use crate::align_brush::MaskCommand;
+use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MaskCommand};
 use crate::viewer::pick_scene_hit;
 
 /// Tint for surface that still takes part in the match — a neutral stone, so
@@ -54,8 +52,7 @@ impl OccluViewApp {
             // The stroke ended. The markings changed what would be matched and
             // measured, so a map drawn before them is stale — drop it rather
             // than silently recomputing behind the operator's hand.
-            if self.align_mask_stroke_open {
-                self.align_mask_stroke_open = false;
+            if self.align_markings.close_stroke() {
                 self.invalidate_deviation_map("Markings changed");
                 // The release frame still reads as a click. An armed brush owns
                 // it, or one dab would also drop an alignment arrow.
@@ -110,33 +107,21 @@ impl OccluViewApp {
         );
         // Cached: rebuilding this per dab was seven milliseconds of pure copy.
         let positions = self.align_geometry.local_positions(entry);
-        let vertex_count = entry.mesh.vertices().len();
-
-        let mut owned = match self.mask_slot(painting).take() {
-            Some(existing) if existing.len() == vertex_count => existing,
-            _ => Arc::new(vec![occluview_align::INCLUDED; vertex_count]),
-        };
-        let mut touched = std::mem::take(&mut self.align_touched);
-        touched.clear();
-        // In place through `Arc::make_mut`: the app holds the only reference,
-        // so nothing is copied.
-        let changed = occluview_align::apply_brush(
-            Arc::make_mut(&mut owned).as_mut_slice(),
-            &positions,
+        let mesh = MarkedMesh {
+            positions: &positions,
             pose,
+            vertex_count: entry.mesh.vertices().len(),
+        };
+        let changed = self.align_markings.dab(
+            painting,
+            &mesh,
             &MaskEdit {
                 center,
                 radius_mm,
                 erase,
             },
-            &mut touched,
         );
-        *self.mask_slot(painting) = Some(owned);
-        self.align_touched = touched;
-
-        self.align_mask_stroke_open = true;
         if changed > 0 {
-            self.align_mask_revision = self.align_mask_revision.wrapping_add(1);
             self.patch_region_preview(hit.layer_id, painting);
             ctx.request_repaint();
         }
@@ -224,14 +209,6 @@ impl OccluViewApp {
         canvas.circle_filled(pointer, 1.5, ink.gamma_multiply(0.7));
     }
 
-    /// The mask belonging to one side of the alignment.
-    fn mask_slot(&mut self, side: AlignSide) -> &mut Option<Arc<Vec<u8>>> {
-        match side {
-            AlignSide::Moving => &mut self.align_mask,
-            AlignSide::Fixed => &mut self.align_mask_fixed,
-        }
-    }
-
     /// Apply one whole-mesh command from the Brush tool window.
     ///
     /// Both sides at once, because the buttons say "the mesh" and an operator
@@ -242,7 +219,7 @@ impl OccluViewApp {
             return;
         };
         let mut reached = false;
-        for side in [AlignSide::Moving, AlignSide::Fixed] {
+        for side in AlignSide::BOTH {
             let Some(layer) = self.side_layer(side) else {
                 continue;
             };
@@ -255,9 +232,14 @@ impl OccluViewApp {
             }
         }
         if !reached {
+            // "Mark automatic" is the only command that can decline, and it
+            // declines for one reason the operator can act on.
+            if command == MaskCommand::MarkAutomatic {
+                self.align_status =
+                    Some("Place at least one arrow before marking automatically".into());
+            }
             return;
         }
-        self.align_mask_revision = self.align_mask_revision.wrapping_add(1);
         self.align_status = Some(command.report().into());
         self.invalidate_deviation_map(command.report());
     }
@@ -269,61 +251,27 @@ impl OccluViewApp {
         side: AlignSide,
         entry: &SceneMesh,
     ) -> bool {
-        let vertex_count = entry.mesh.vertices().len();
-        if vertex_count == 0 {
-            return false;
-        }
-        // "Mark automatic" keeps a disc at each arrow end, and the arrows only
-        // touch the surface they were clicked on.
-        let discs: Vec<DVec3> = if command == MaskCommand::MarkAutomatic {
-            let points = self.side_arrow_points(side, entry);
-            if points.is_empty() {
-                self.align_status =
-                    Some("Place at least one arrow before marking automatically".into());
-                return false;
-            }
-            points
-        } else {
-            Vec::new()
-        };
         let Some(pose) = Rigid::from_affine(&entry.transform) else {
             return false;
         };
-        let positions = self.align_geometry.local_positions(entry);
-        let auto_radius = f64::from(self.align_brush.auto_radius_mm());
-
-        let mut owned = match self.mask_slot(side).take() {
-            Some(existing) if existing.len() == vertex_count => existing,
-            _ => Arc::new(vec![occluview_align::INCLUDED; vertex_count]),
+        // "Mark automatic" keeps a disc at each arrow end, and the arrows only
+        // touch the surface they were clicked on.
+        let keep: Vec<DVec3> = if command == MaskCommand::MarkAutomatic {
+            self.side_arrow_points(side, entry)
+        } else {
+            Vec::new()
         };
-        let mask = Arc::make_mut(&mut owned).as_mut_slice();
-        match command {
-            MaskCommand::FitEverywhere => occluview_align::set_all(mask, false),
-            MaskCommand::FitNowhere => occluview_align::set_all(mask, true),
-            MaskCommand::InvertMarkings => occluview_align::invert(mask),
-            MaskCommand::MarkAutomatic => {
-                // Written as mark-everything then clear-the-discs, because the
-                // discs are what the operator wants MATCHED and the mask stores
-                // what is ignored.
-                occluview_align::set_all(mask, true);
-                let mut touched = Vec::new();
-                for center in discs {
-                    occluview_align::apply_brush(
-                        mask,
-                        &positions,
-                        pose,
-                        &MaskEdit {
-                            center,
-                            radius_mm: auto_radius,
-                            erase: true,
-                        },
-                        &mut touched,
-                    );
-                }
-            }
-        }
-        *self.mask_slot(side) = Some(owned);
-        true
+        let positions = self.align_geometry.local_positions(entry);
+        let mesh = MarkedMesh {
+            positions: &positions,
+            pose,
+            vertex_count: entry.mesh.vertices().len(),
+        };
+        let keep = AutoKeep {
+            centres: &keep,
+            radius_mm: f64::from(self.align_brush.auto_radius_mm()),
+        };
+        self.align_markings.command(side, command, &mesh, &keep)
     }
 
     /// The world positions of the arrow ends that sit on one side's mesh.
@@ -353,45 +301,24 @@ impl OccluViewApp {
     /// Drop both masks — done whenever the pair changes, since a mask is
     /// indexed by one layer's vertices.
     pub(super) fn clear_align_mask(&mut self) {
-        self.align_mask = None;
-        self.align_mask_fixed = None;
-        self.align_mask_revision = self.align_mask_revision.wrapping_add(1);
-        self.align_mask_stroke_open = false;
+        self.align_markings.clear();
     }
 
-    /// What share of the two meshes is marked, if there is a mask at all.
+    /// What share of the two scans is marked, if either carries a mask that
+    /// fits its mesh.
+    ///
+    /// The panel asks every frame the Brush window is open. Walking both masks
+    /// to answer would be a two-million-byte scan per frame, so the counts are
+    /// maintained where the masks are edited and this only reads them.
     pub(super) fn align_marked_fraction(&self) -> Option<f32> {
         let scene = self.scene.as_ref()?;
-        let mut marked = 0usize;
-        let mut total = 0usize;
-        for side in [AlignSide::Moving, AlignSide::Fixed] {
-            let Some(entry) = self.side_layer(side).and_then(|id| layer_of(scene, id)) else {
-                continue;
-            };
-            let mask = match side {
-                AlignSide::Moving => self.align_mask.as_ref(),
-                AlignSide::Fixed => self.align_mask_fixed.as_ref(),
-            };
-            // A mask left over from other geometry is not a reading about this
-            // mesh. Counting it would be a number about nothing.
-            let Some(mask) = mask.filter(|mask| mask.len() == entry.mesh.vertices().len()) else {
-                continue;
-            };
-            // `bytecount` would be the crate for this, but it is one dependency
-            // for one counter over an array a hand-held brush bounded.
-            #[allow(clippy::naive_bytecount)]
-            let hit = mask
-                .iter()
-                .filter(|slot| **slot == occluview_align::EXCLUDED)
-                .count();
-            marked += hit;
-            total += mask.len();
-        }
-        if total == 0 {
-            return None;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        Some(marked as f32 / total as f32)
+        let vertices = |side: AlignSide| -> usize {
+            self.side_layer(side)
+                .and_then(|id| layer_of(scene, id))
+                .map_or(0, |entry| entry.mesh.vertices().len())
+        };
+        self.align_markings
+            .marked_fraction(vertices(AlignSide::Moving), vertices(AlignSide::Fixed))
     }
 
     /// Put the markings on both meshes, take them off, or leave them alone.
@@ -413,8 +340,14 @@ impl OccluViewApp {
         if self.align_overlay == AlignOverlay::Map {
             self.clear_deviation_overlay();
         }
+        // A measurement already running would land on top of the markings a
+        // moment later. Retiring the generation drops it at the door instead of
+        // letting it race the brush.
+        if let Some(worker) = self.align_worker.as_ref() {
+            worker.bump_generation();
+        }
         let mut reached = false;
-        for side in [AlignSide::Moving, AlignSide::Fixed] {
+        for side in AlignSide::BOTH {
             if let Some(layer) = self.side_layer(side) {
                 reached |= self.repaint_region_preview(layer, side);
             }
@@ -448,11 +381,7 @@ impl OccluViewApp {
             return;
         };
         let count = entry.mesh.vertices().len();
-        let mask = match side {
-            AlignSide::Moving => self.align_mask.clone(),
-            AlignSide::Fixed => self.align_mask_fixed.clone(),
-        };
-        let Some(mask) = mask.filter(|mask| mask.len() == count) else {
+        let Some(mask) = self.align_markings.mask_for(side, count) else {
             self.repaint_region_preview(layer, side);
             return;
         };
@@ -471,14 +400,8 @@ impl OccluViewApp {
         let entry = layer_of(scene, layer)?;
         let vertices = entry.mesh.vertices();
         let count = vertices.len();
-        let mask = match side {
-            AlignSide::Moving => self.align_mask.as_ref(),
-            AlignSide::Fixed => self.align_mask_fixed.as_ref(),
-        };
-        let mask = mask
-            .filter(|mask| mask.len() == count)
-            .map(|mask| mask.as_ref().as_slice());
-        // A coloured scan keeps its own colours where nothing is marked.
+        let mask = self.align_markings.mask_for(side, count);
+        let mask = mask.as_ref().map(|mask| mask.as_slice());
         // A coloured scan keeps its own colours where nothing is marked. The
         // operator is usually aiming AT something they can see — a stain, a
         // bubble, a bite block — and flattening the surface to one tint takes
@@ -513,18 +436,8 @@ fn region_color(
     }
 }
 
-/// Which half of the alignment a mask belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AlignSide {
-    /// The mesh the arrows move.
-    Moving,
-    /// The mesh they move onto.
-    Fixed,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::align_brush::MaskCommand;
 
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.
@@ -566,10 +479,12 @@ mod tests {
         );
     }
 
-    /// The three things that make a dab cheap. Any one of them undone puts the
-    /// brush back at three frames a second on a real arch.
+    /// The two things this file, and only this file, is responsible for keeping
+    /// cheap. What a dab does to the mask itself is covered by real tests over
+    /// `AlignMarkings`; these are the wiring around it, which has no behaviour
+    /// of its own to run.
     #[test]
-    fn a_dab_rebuilds_re_colours_and_uploads_nothing_it_does_not_have_to() {
+    fn a_dab_reuses_the_cached_geometry_and_re_colours_only_what_it_touched() {
         let stroke = stroke();
         assert!(
             stroke.contains("self.align_geometry.local_positions(entry)"),
@@ -580,56 +495,17 @@ mod tests {
             "a dab must not rebuild the position array"
         );
         assert!(
-            stroke.contains("Arc::make_mut(&mut owned)"),
-            "the mask must be edited in place, not cloned per dab"
-        );
-        assert!(
             stroke.contains("self.patch_region_preview("),
             "a dab must re-colour only what it touched"
         );
     }
 
-    /// The masks decide what is matched and measured, so the worker only reuses
-    /// a cached measurement while they are the same ones.
-    #[test]
-    fn every_mask_change_stamps_a_new_revision() {
-        assert_eq!(
-            production()
-                .matches("self.align_mask_revision = self.align_mask_revision.wrapping_add(1)")
-                .count(),
-            3,
-            "a stroke, a whole-mesh command, and clearing all move the revision"
-        );
-    }
-
-    /// Every command must actually reach the mask, or a panel button is a lie.
-    #[test]
-    fn every_mask_command_is_handled() {
-        let source = include_str!("app_align_brush.rs");
-        for command in [
-            MaskCommand::FitEverywhere,
-            MaskCommand::FitNowhere,
-            MaskCommand::InvertMarkings,
-            MaskCommand::MarkAutomatic,
-        ] {
-            let name = format!("MaskCommand::{command:?}");
-            assert!(
-                source.contains(name.as_str()),
-                "{name} is declared but never applied"
-            );
-        }
-    }
-
     /// The operator's report: "on one surface it marks, on the other nothing".
-    /// Both meshes carry markings, and which one a dab lands on comes from the
-    /// cursor rather than from a picker.
+    /// That both sides carry markings is tested for real over `AlignMarkings`;
+    /// what this file owns is where the side comes from — the cursor, not a
+    /// picker.
     #[test]
-    fn both_meshes_can_be_marked_and_neither_has_to_be_chosen_first() {
-        let production = production();
-        assert!(
-            production.contains("AlignSide::Moving") && production.contains("AlignSide::Fixed"),
-            "both sides must carry a mask"
-        );
+    fn the_side_a_dab_lands_on_comes_from_the_cursor() {
         let stroke = stroke();
         assert!(
             stroke.contains("Some(hit.layer_id) == self.align.moving_layer()")
