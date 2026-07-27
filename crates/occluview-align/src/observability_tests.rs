@@ -8,6 +8,7 @@
 //! direction the measure names as blindest*, measure the deviation that
 //! actually results, and require the reported bound to come back to the
 //! displacement that was applied.
+#![allow(clippy::expect_used)]
 
 use glam::{DMat3, DQuat, DVec3};
 
@@ -188,7 +189,10 @@ fn the_hidden_displacement_bound_recovers_a_known_offset_along_the_blind_mode() 
     );
 
     let map = deviation(mesh, &index, pose, &settings(), &CancelFlag::new());
-    let reported = deviation_stats(&map, 0.2).rms;
+    let reported = deviation_stats(&map, 0.2)
+        .summary
+        .expect("sphere(5.0, 120, 60, 0.6) clears MIN_MEASURED")
+        .rms;
     assert!(
         reported < truth * 0.9,
         "this fixture is supposed to under-report: reported {reported} against {truth}"
@@ -224,7 +228,10 @@ fn a_free_slide_reports_an_unbounded_hidden_displacement() {
 
     let pose = Rigid::new(DQuat::IDENTITY, DVec3::Z * 0.30);
     let map = deviation(mesh, &index, pose, &settings(), &CancelFlag::new());
-    let reported = deviation_stats(&map, 0.2).rms;
+    let reported = deviation_stats(&map, 0.2)
+        .summary
+        .expect("cylinder(5.0, 24.0, 96, 40) clears MIN_MEASURED")
+        .rms;
 
     assert!(
         reported < 0.06,
