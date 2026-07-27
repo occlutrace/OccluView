@@ -3,11 +3,12 @@
 //! Split out under `#[path]` rather than left inline: the module they cover is
 //! already at the file-size budget, and a proof suite that cannot grow is a
 //! proof suite that stops being written.
+#![allow(clippy::expect_used)]
 
 use super::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
-    DeviationSettings, DeviationStats, RampMode, RampSettings, Validity, MAGNITUDE_RAMP,
-    NO_DATA_COLOR,
+    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Validity,
+    MAGNITUDE_RAMP, MIN_MEASURED, NO_DATA_COLOR,
 };
 use crate::icp::Orientation;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
@@ -36,6 +37,20 @@ fn lifted(positions: &[f32], by: f32) -> Vec<f32> {
     positions
         .chunks_exact(3)
         .flat_map(|point| [point[0], point[1], point[2] + by])
+        .collect()
+}
+
+/// `count` vertices strung along a diagonal inside the fixed `sheet()`, well
+/// clear of its 10 x 10 bounds. Used wherever a test needs enough measured
+/// vertices to clear `MIN_MEASURED` rather than tripping the floor by
+/// accident.
+fn many_positions(count: usize) -> Vec<f32> {
+    (0..count)
+        .flat_map(|index| {
+            #[allow(clippy::cast_precision_loss)]
+            let along = index as f32 / count as f32 * 9.0;
+            [along, along, 0.0]
+        })
         .collect()
 }
 
@@ -127,16 +142,25 @@ fn vertices_beyond_the_radius_are_out_of_reach_and_grey() {
 
 #[test]
 fn statistics_count_only_measured_vertices() {
-    let (positions, indices) = sheet();
-    let mut moving = lifted(&positions, 0.1);
+    // 40 vertices, not the 4-vertex `sheet()`: one is about to be pushed out of
+    // reach, and the other 39 must still clear `MIN_MEASURED` so this test
+    // keeps pinning the actual arithmetic (`within_tolerance`, `mean_abs`)
+    // rather than degrading into a check that the summary merely exists.
+    const COUNT: usize = 40;
+    let mut moving = lifted(&many_positions(COUNT), 0.1);
     moving[2] = 40.0;
-    let map = map_of(&moving, &indices, &settings());
+    let map = map_of(&moving, &[], &settings());
 
     let stats = deviation_stats(&map, 0.2);
     assert_eq!(stats.skipped, 1);
-    assert_eq!(stats.measured, 3);
-    assert!((stats.within_tolerance - 1.0).abs() < 1e-9);
-    assert!((stats.mean_abs - 0.1).abs() < 1e-4);
+    #[allow(clippy::cast_possible_truncation)]
+    let expected_measured = COUNT as u32 - 1;
+    assert_eq!(stats.measured, expected_measured);
+    let summary = stats
+        .summary
+        .expect("39 measured vertices clears MIN_MEASURED");
+    assert!((summary.within_tolerance - 1.0).abs() < 1e-9);
+    assert!((summary.mean_abs - 0.1).abs() < 1e-4);
 }
 
 #[test]
@@ -342,21 +366,24 @@ fn a_tolerance_wider_than_the_range_still_leaves_a_ramp() {
 /// which is the saturated mosaic the operator reported.
 #[test]
 fn the_suggested_scale_follows_a_badly_aligned_pair_instead_of_capping() {
-    let rough = DeviationStats {
+    let summary = DeviationSummary {
         within_tolerance: 0.19,
         mean_abs: 1.1,
         rms: 1.378,
         median: 0.4,
         p95: 3.24,
         max_abs: 6.0,
+    };
+    let rough = DeviationStats {
         measured: 100_000,
         skipped: 10_855,
+        summary: Some(summary),
     };
     let scale = suggested_scale_mm(&rough);
     assert!(
-        scale >= rough.p95,
+        scale >= summary.p95,
         "a scale of {scale} mm saturates a p95 of {} mm",
-        rough.p95
+        summary.p95
     );
 }
 
@@ -389,4 +416,51 @@ fn a_cancelled_run_marks_everything_unmeasured() {
         .validity
         .iter()
         .all(|state| *state != Validity::Measured));
+}
+
+/// A struct of zeroes here would read, in `within_tolerance` — the one field a
+/// clinician looks at first — as a perfect fit, when in truth nothing was ever
+/// measured. `summary` must be absent instead of quietly all-zero.
+#[test]
+fn a_map_where_nothing_was_measured_reports_no_summary() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0; 4],
+        validity: vec![Validity::OutOfReach; 4],
+    };
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.measured, 0);
+    assert_eq!(stats.skipped, 4);
+    assert!(
+        stats.summary.is_none(),
+        "zero measured vertices must not produce a summary at all"
+    );
+}
+
+/// `count` measured vertices, each a fixed small deviation — the one shape
+/// shared by both halves of the floor test below, so the count is the only
+/// thing that differs between them.
+fn all_measured(count: u32) -> DeviationMap {
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    DeviationMap {
+        signed_mm: vec![0.05; count],
+        validity: vec![Validity::Measured; count],
+    }
+}
+
+/// The exact floor `MIN_MEASURED` promises: one vertex short of it must read
+/// as unsummarized, and the floor itself must read as summarized.
+#[test]
+fn fewer_than_min_measured_yields_none_and_the_floor_itself_yields_some() {
+    let below = deviation_stats(&all_measured(MIN_MEASURED - 1), 0.2);
+    assert!(
+        below.summary.is_none(),
+        "{} measured vertices is one short of MIN_MEASURED",
+        MIN_MEASURED - 1
+    );
+
+    let at_floor = deviation_stats(&all_measured(MIN_MEASURED), 0.2);
+    assert!(
+        at_floor.summary.is_some(),
+        "{MIN_MEASURED} measured vertices clears the floor"
+    );
 }

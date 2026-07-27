@@ -59,7 +59,8 @@ mod surface;
 pub use agreement::{reverse_deviation, surface_agreement, SurfaceAgreement};
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
-    DeviationSettings, DeviationStats, RampMode, RampSettings, Validity, NO_DATA_COLOR,
+    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Validity,
+    MIN_MEASURED, NO_DATA_COLOR,
 };
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};

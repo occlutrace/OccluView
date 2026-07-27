@@ -5,6 +5,7 @@
 //! missing a region the fixed mesh has. A one-sided map calls that a perfect
 //! fit, and every assertion below exists because that must never again reach an
 //! operator as a passing number.
+#![allow(clippy::expect_used)]
 
 use crate::agreement::{reverse_deviation, surface_agreement};
 use crate::{deviation, CancelFlag, DeviationSettings, Orientation, Rigid, Soup, SurfaceIndex};
@@ -95,25 +96,35 @@ fn a_moving_scan_missing_a_region_no_longer_reports_a_perfect_fit() {
 
     let agreement = compare(cropped, full, Rigid::IDENTITY);
 
+    let moving_to_fixed = agreement
+        .moving_to_fixed
+        .summary
+        .expect("the cropped dome(40) still clears MIN_MEASURED forward");
+    let fixed_to_moving = agreement
+        .fixed_to_moving
+        .summary
+        .expect("the full dome(40) still clears MIN_MEASURED backward");
     assert!(
-        agreement.moving_to_fixed.mean_abs < 1e-4,
+        moving_to_fixed.mean_abs < 1e-4,
         "the one-sided direction is supposed to be blind here: {}",
-        agreement.moving_to_fixed.mean_abs
+        moving_to_fixed.mean_abs
     );
     assert!(
-        agreement.fixed_to_moving.mean_abs > 0.05,
+        fixed_to_moving.mean_abs > 0.05,
         "the reverse direction must see the missing region, got {}",
-        agreement.fixed_to_moving.mean_abs
+        fixed_to_moving.mean_abs
     );
     assert!(
         agreement.hausdorff > 1.0,
         "a 12 mm hole must show as a large symmetric Hausdorff, got {}",
         agreement.hausdorff
     );
+    let asymmetry = agreement
+        .asymmetry_mm()
+        .expect("both directions measured enough here for the summary to exist");
     assert!(
-        agreement.asymmetry_mm() > 0.05,
-        "the two directions must not agree here, got {}",
-        agreement.asymmetry_mm()
+        asymmetry > 0.05,
+        "the two directions must not agree here, got {asymmetry}"
     );
     assert!(
         agreement.within_tolerance < 0.999,
@@ -130,7 +141,10 @@ fn two_copies_of_one_surface_agree_in_both_directions() {
 
     assert!(agreement.mean_abs < 1e-5, "{}", agreement.mean_abs);
     assert!(agreement.hausdorff < 1e-4, "{}", agreement.hausdorff);
-    assert!(agreement.asymmetry_mm() < 1e-5);
+    let asymmetry = agreement
+        .asymmetry_mm()
+        .expect("dome(24) clears MIN_MEASURED on both sides");
+    assert!(asymmetry < 1e-5, "{asymmetry}");
     assert!((agreement.within_tolerance - 1.0).abs() < 1e-9);
 }
 
@@ -152,8 +166,14 @@ fn the_reverse_direction_keeps_the_forward_sign_convention() {
     let forward = deviation(moving, &fixed_index, Rigid::IDENTITY, &settings(), &cancel);
     let backward = reverse_deviation(fixed, &moving_index, Rigid::IDENTITY, &settings(), &cancel);
 
-    let forward_median = crate::deviation_stats(&forward, 0.2).median;
-    let backward_median = crate::deviation_stats(&backward, 0.2).median;
+    let forward_median = crate::deviation_stats(&forward, 0.2)
+        .summary
+        .expect("dome(16) clears MIN_MEASURED")
+        .median;
+    let backward_median = crate::deviation_stats(&backward, 0.2)
+        .summary
+        .expect("dome(16) clears MIN_MEASURED")
+        .median;
     assert!(forward_median > 0.2, "forward {forward_median}");
     assert!(
         backward_median > 0.2,
@@ -178,10 +198,12 @@ fn symmetry_does_not_rescue_a_tangential_offset() {
          pins that so nobody claims it does: {}",
         agreement.mean_abs
     );
+    let asymmetry = agreement
+        .asymmetry_mm()
+        .expect("the cylinder fixture clears MIN_MEASURED on both sides");
     assert!(
-        agreement.asymmetry_mm() < 0.01,
-        "both directions are equally blind here: {}",
-        agreement.asymmetry_mm()
+        asymmetry < 0.01,
+        "both directions are equally blind here: {asymmetry}"
     );
 }
 
