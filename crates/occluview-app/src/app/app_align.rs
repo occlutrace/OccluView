@@ -10,6 +10,7 @@ use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
 use super::OccluViewApp;
 use crate::align_geometry::transform_key;
+use crate::align_markings::AlignSide;
 use crate::align_tool::{AlignPoint, ClickOutcome};
 use crate::align_worker::{
     AlignCompletion, AlignJob, AlignJobKind, AlignOutcome, AlignWorker, MeasureKey, SurfaceKey,
@@ -105,6 +106,15 @@ impl OccluViewApp {
                 // be handed to the next pair and exclude an arbitrary region of
                 // a different scan, with nothing on screen to say so.
                 self.clear_align_mask();
+                // The rejection list indexes pairs by position. The pairs are
+                // gone, so a freshly placed first pair would inherit the red of
+                // whatever the last fit rejected, with no fit having run.
+                self.align_rejected.clear();
+                // Colours and a reading that described a pair this tool no
+                // longer has. Left up, they keep rendering under a tool that
+                // has forgotten what they were about.
+                self.clear_deviation_overlay();
+                self.align_stats = None;
             }
         }
     }
@@ -140,6 +150,14 @@ impl OccluViewApp {
 
     /// Disarm the tool and drop everything it put on screen.
     pub(super) fn disarm_align_tool(&mut self, ctx: &egui::Context) {
+        // A gesture can still be open: Escape is read before the drag handler,
+        // and arming another tool disarms this one from the outside. Closing it
+        // here records the movement as one undo step. Left dangling, the scan
+        // kept a pose that no history step described and no save prompt knew
+        // about — and the stale gesture was still live the next time the tool
+        // opened.
+        self.finish_align_drag();
+        self.align_drag = None;
         self.clear_deviation_overlay();
         self.clear_align_mask();
         // Tens of megabytes of cached arrays belong to a session the operator
@@ -154,6 +172,9 @@ impl OccluViewApp {
         self.align_rejected.clear();
         self.align_session_poses.clear();
         self.align_brush.set_armed(false);
+        // A session that ended on Manually used to re-open there, with the tab
+        // the operator last left rather than the one the tool starts in.
+        self.align_tab = crate::align_panel::AlignTab::default();
         ctx.request_repaint();
     }
 
@@ -184,6 +205,15 @@ impl OccluViewApp {
     ) -> bool {
         if !response.clicked_by(egui::PointerButton::Primary) {
             return false;
+        }
+        // Arrows belong to the Automatically tab. The drag handler already
+        // refuses to run outside Manually; without the mirror of that here, a
+        // press too short to become a drag fell through and started a pair on
+        // the tab that has no arrows in it — and the panel only drops a
+        // half-placed point on the way OUT of Automatically, so that arrow
+        // survived every later switch.
+        if self.align_tab != crate::align_panel::AlignTab::Automatically {
+            return true;
         }
         let Some(pointer) = response.interact_pointer_pos() else {
             return false;
@@ -305,7 +335,7 @@ impl OccluViewApp {
         // Geometry, not topology: a sculpt deliberately keeps the topology id
         // and mints a fresh geometry id precisely so geometry-derived caches
         // can tell that the surface changed under them.
-        let mask_revision = self.align_mask_revision;
+        let mask_revision = self.align_markings.revision();
         let moving_key = (moving.mesh.geometry_id(), transform_key(moving.transform));
         // The markings are part of the fixed surface's identity: masked
         // triangles are left out of the index entirely, so a different set of
@@ -322,8 +352,16 @@ impl OccluViewApp {
         let moving_indices = self.align_geometry.indices(moving);
         let fixed_world_positions = self.align_geometry.world_positions(fixed);
         let fixed_indices = self.align_geometry.indices(fixed);
-        let mask = self.align_mask.clone();
-        let fixed_mask = self.align_mask_fixed.clone();
+        // Filtered by vertex count on the way out. A mask taken on geometry that
+        // has since changed under the tool indexes vertices that no longer mean
+        // what it thinks, and handing it to a job would exclude an arbitrary
+        // region of the current scan with nothing on screen to say so.
+        let mask = self
+            .align_markings
+            .mask_for(AlignSide::Moving, moving.mesh.vertices().len());
+        let fixed_mask = self
+            .align_markings
+            .mask_for(AlignSide::Fixed, fixed.mesh.vertices().len());
         let settings = self.align_settings;
         let Some(worker) = self.align_worker.as_ref() else {
             return;
@@ -423,6 +461,16 @@ impl OccluViewApp {
                 seen,
                 scale_mm,
             } => {
+                // The brush owns the per-vertex colour channel while it is
+                // open, and this measurement was submitted before it opened.
+                // Applying it would repaint the moving scan with map colours
+                // while the fixed scan still showed the markings — one tool
+                // claiming the legend, two surfaces disagreeing, and the
+                // operator reading it as "it marks on one mesh and not the
+                // other".
+                if self.align_brush.is_armed() {
+                    return;
+                }
                 self.align_stats = Some(stats);
                 // Auto-scale chose the range the colours were painted at. The
                 // legend has to adopt it or it would describe a different one.
@@ -430,13 +478,23 @@ impl OccluViewApp {
                     self.align_settings.scale_mm = scale_mm;
                 }
                 self.apply_deviation_colors(colors);
-                self.align_status = Some(format!(
-                    "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
-                    stats.within_tolerance * 100.0,
-                    self.align_settings.tolerance_mm,
-                    stats.skipped,
-                    blind_note(seen.as_ref(), stats.rms)
-                ));
+                // No summary means too little surface reached the other scan to
+                // characterise. Saying "0% within 0.20 mm" there would be a
+                // reading about a measurement that did not happen.
+                self.align_status = Some(match stats.summary {
+                    Some(summary) => format!(
+                        "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
+                        summary.within_tolerance * 100.0,
+                        self.align_settings.tolerance_mm,
+                        stats.skipped,
+                        blind_note(seen.as_ref(), summary.rms)
+                    ),
+                    None => format!(
+                        "Not enough surface to measure — only {} of {} vertices reached the other scan",
+                        stats.measured,
+                        stats.measured.saturating_add(stats.skipped)
+                    ),
+                });
             }
             AlignOutcome::Failed { message } => {
                 self.align_status = Some(message);
@@ -547,8 +605,6 @@ fn double(value: Vec3) -> DVec3 {
     DVec3::new(f64::from(value.x), f64::from(value.y), f64::from(value.z))
 }
 
-/// Name the directions a refine could not determine, so the panel never shows
-/// a confident number for a fit that is free to slide.
 /// What the deviation map could not have seen, in a sentence.
 ///
 /// The map measures the distance from each moving vertex to the nearest point
@@ -579,16 +635,8 @@ fn blind_note(seen: Option<&occluview_align::Observability>, rms_mm: f64) -> Str
 /// Name the directions a refine could not determine, so the panel never shows
 /// a confident number for a fit that is free to slide.
 fn weak_axis_note(translation: [bool; 3], rotation: [bool; 3]) -> String {
-    let names = |flags: [bool; 3]| -> String {
-        ["X", "Y", "Z"]
-            .into_iter()
-            .zip(flags)
-            .filter_map(|(name, flagged)| flagged.then_some(name))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let sliding = names(translation);
-    let spinning = names(rotation);
+    let sliding = crate::align_worker::axis_names(translation);
+    let spinning = crate::align_worker::axis_names(rotation);
     match (sliding.is_empty(), spinning.is_empty()) {
         (true, true) => String::new(),
         (false, true) => format!(" — the fit can still slide along {sliding}"),

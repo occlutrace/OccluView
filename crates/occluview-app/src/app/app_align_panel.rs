@@ -119,13 +119,13 @@ impl OccluViewApp {
             Some(crate::align_panel::AlignPanelAction::Back) => {
                 self.take_align_arrow_back();
             }
+            // The invalidation lives inside the navigation itself, so the
+            // Ctrl+Z shortcut gets it too.
             Some(crate::align_panel::AlignPanelAction::Undo) => {
                 self.apply_history_navigation_now(false, ctx);
-                self.invalidate_deviation_map("Stepped back");
             }
             Some(crate::align_panel::AlignPanelAction::Redo) => {
                 self.apply_history_navigation_now(true, ctx);
-                self.invalidate_deviation_map("Stepped forward");
             }
             Some(crate::align_panel::AlignPanelAction::Cancel) => self.cancel_align_session(ctx),
             Some(crate::align_panel::AlignPanelAction::Done) => self.finish_align_session(ctx),
