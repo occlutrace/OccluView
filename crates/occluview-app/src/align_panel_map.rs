@@ -10,7 +10,7 @@
 //! behind "More settings".
 
 use eframe::egui;
-use occluview_align::{DeviationStats, Orientation, RampMode};
+use occluview_align::{DeviationStats, RampMode};
 
 use crate::align_panel::AlignPanelAction;
 use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM, CLINICAL_MAX_MM, CLINICAL_MIN_MM};
@@ -184,41 +184,69 @@ fn range(
 /// stop, and the arch comes out as a red and blue mosaic with no structure in
 /// it. The colours are not wrong — the range is — and nothing on screen said so.
 fn saturation(ui: &mut egui::Ui, stats: DeviationStats, settings: AlignSettings) {
-    if stats.measured == 0 || !stats.p95.is_finite() || stats.p95 <= settings.scale_mm {
-        return;
+    if let Some(text) = saturation_advice(stats, settings) {
+        ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::TEXT));
+    }
+}
+
+/// Which sentence the saturation warning is, or none if the range is fine.
+///
+/// Split from the drawing above so the decision can be run in a test. Left
+/// inside the `egui` call it was only reachable by a test that read this file's
+/// own source text as a string — which passes on a logic change and fails on a
+/// rename, the exact opposite of what a test is for.
+fn saturation_advice(stats: DeviationStats, settings: AlignSettings) -> Option<String> {
+    let summary = stats.summary.filter(|summary| summary.p95.is_finite())?;
+    if summary.p95 <= settings.scale_mm {
+        return None;
     }
     // The advice has to be the advice that helps, and past the clinical ceiling
     // a wider range is not it: a map of two meshes millimetres apart is a
     // picture of an alignment that has not happened, and widening the range
     // only makes a prettier picture of the same thing.
-    let text = if stats.p95 > CLINICAL_CEILING_MM {
+    Some(if summary.p95 > CLINICAL_CEILING_MM {
         format!(
             "These meshes are about {:.1} mm apart — align them before reading the map",
-            stats.p95
+            summary.p95
         )
     } else {
         format!(
             "Most of this is past {:.2} mm, so the colours are pinned to the ends — widen the range",
             settings.scale_mm
         )
-    };
-    ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::TEXT));
+    })
 }
 
 /// The numbers behind the colours, including what could not be measured.
+///
+/// When there was not enough measured surface to characterise, this says so
+/// instead of printing a figure. A "0.000" in the one field a clinician reads
+/// is indistinguishable from two surfaces that coincide perfectly.
 fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
+    let Some(summary) = stats.summary else {
+        ui.label(
+            egui::RichText::new(format!(
+                "Not enough surface to measure — {} of {} vertices reached the other scan",
+                stats.measured,
+                stats.measured.saturating_add(stats.skipped)
+            ))
+            .size(11.0)
+            .color(ui_theme::TEXT),
+        );
+        return;
+    };
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!(
                 "{:.0}% within {tolerance_mm:.2} mm",
-                stats.within_tolerance * 100.0
+                summary.within_tolerance * 100.0
             ))
             .size(11.0)
             .color(ui_theme::TEXT),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(format!("rms {:.3}", stats.rms))
+                egui::RichText::new(format!("rms {:.3}", summary.rms))
                     .size(11.0)
                     .color(ui_theme::TEXT_MUTED),
             );
@@ -246,7 +274,6 @@ fn details(ui: &mut egui::Ui, settings: &mut AlignSettings) -> bool {
         changed = true;
     }
     changed |= colours(ui, &mut settings.ramp_mode);
-    changed |= facing(ui, &mut settings.orientation);
     changed
 }
 
@@ -285,42 +312,12 @@ fn colours(ui: &mut egui::Ui, mode: &mut RampMode) -> bool {
     changed
 }
 
-/// The surface-orientation rule. An inverted mesh flips the whole signed map,
-/// so this is the escape hatch for a scan whose winding disagrees with itself.
-fn facing(ui: &mut egui::Ui, orientation: &mut Orientation) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Facing")
-                .size(11.0)
-                .color(ui_theme::TEXT_MUTED),
-        );
-        for (value, label, hint) in [
-            (Orientation::Match, "as is", "Surfaces face the same way"),
-            (
-                Orientation::Inverted,
-                "flipped",
-                "The other scan's winding is inverted",
-            ),
-            (Orientation::Ignored, "either", "Accept either facing"),
-        ] {
-            if ui
-                .selectable_label(*orientation == value, label)
-                .on_hover_text(hint)
-                .clicked()
-                && *orientation != value
-            {
-                *orientation = value;
-                changed = true;
-            }
-        }
-    });
-    changed
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
+
+    use crate::align_worker::AlignSettings;
+    use occluview_align::{DeviationStats, DeviationSummary};
 
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.
@@ -373,17 +370,64 @@ mod tests {
     /// that has not happened yet.
     #[test]
     fn a_range_too_small_for_the_measurement_says_so() {
-        let source = production();
-        assert!(source.contains("the colours are pinned to the ends"));
-        assert!(source.contains("align them before reading the map"));
+        let at = |p95: f64, scale_mm: f64| {
+            super::saturation_advice(
+                DeviationStats {
+                    measured: 1_000,
+                    skipped: 0,
+                    summary: Some(DeviationSummary {
+                        within_tolerance: 0.0,
+                        mean_abs: p95 / 2.0,
+                        rms: p95 / 2.0,
+                        median: p95 / 2.0,
+                        p95,
+                        max_abs: p95,
+                    }),
+                },
+                AlignSettings {
+                    scale_mm,
+                    ..AlignSettings::default()
+                },
+            )
+        };
+
         assert!(
-            source.contains("stats.p95 <= settings.scale_mm"),
-            "the warning must compare the range against what was measured"
+            at(0.05, 0.20).is_none(),
+            "a range that already covers the measurement needs no warning"
+        );
+
+        let pinned = at(0.40, 0.20).expect("a measurement past the range must say so");
+        assert!(
+            pinned.contains("the colours are pinned to the ends"),
+            "got: {pinned}"
+        );
+
+        // Past the clinical ceiling the honest advice changes: widening the
+        // range only makes a prettier picture of an alignment that has not
+        // happened. This is the state the operator called a thermal camera.
+        let apart = at(1.40, 0.20).expect("meshes millimetres apart must say so");
+        assert!(
+            apart.contains("align them before reading the map"),
+            "got: {apart}"
         );
         assert!(
-            source.contains("stats.p95 > CLINICAL_CEILING_MM"),
-            "the advice must depend on how far apart the meshes actually are"
+            at(f64::NAN, 0.20).is_none(),
+            "a non-finite measurement must not produce advice"
         );
+    }
+
+    /// A measurement that never happened has no range to advise about.
+    #[test]
+    fn nothing_measured_produces_no_advice_at_all() {
+        let advice = super::saturation_advice(
+            DeviationStats {
+                measured: 0,
+                skipped: 900_000,
+                summary: None,
+            },
+            AlignSettings::default(),
+        );
+        assert!(advice.is_none());
     }
 
     /// A reading needs the bar, the scale, and the numbers. Everything else is

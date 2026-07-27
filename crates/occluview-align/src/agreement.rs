@@ -50,7 +50,7 @@
 
 use crate::deviation::{deviation, deviation_stats, DeviationMap, DeviationSettings};
 use crate::icp::Orientation;
-use crate::{CancelFlag, DeviationStats, Rigid, Soup, SurfaceIndex, Validity};
+use crate::{CancelFlag, DeviationStats, DeviationSummary, Rigid, Soup, SurfaceIndex, Validity};
 
 /// A two-way surface comparison: both directed maps and the pooled statistics.
 ///
@@ -97,9 +97,13 @@ impl SurfaceAgreement {
     /// triangulated, which is what [`Self::mean_abs`] cannot promise. A scan
     /// with three times the vertex count of the one it is compared against
     /// otherwise carries three quarters of the pooled figure on its own.
+    ///
+    /// Absent when either direction measured too little to characterise.
     #[must_use]
-    pub fn balanced_mean_abs(&self) -> f64 {
-        f64::midpoint(self.moving_to_fixed.mean_abs, self.fixed_to_moving.mean_abs)
+    pub fn balanced_mean_abs(&self) -> Option<f64> {
+        let forward = self.moving_to_fixed.summary?;
+        let backward = self.fixed_to_moving.summary?;
+        Some(f64::midpoint(forward.mean_abs, backward.mean_abs))
     }
 
     /// How much larger one direction's mean is than the other's, in
@@ -108,10 +112,28 @@ impl SurfaceAgreement {
     /// Zero on two scans of the same surface. Large when one scan holds
     /// material the other does not — the signature a one-sided map cannot
     /// produce at all.
+    ///
+    /// Absent when either direction measured too little to characterise.
     #[must_use]
-    pub fn asymmetry_mm(&self) -> f64 {
-        (self.fixed_to_moving.mean_abs - self.moving_to_fixed.mean_abs).abs()
+    pub fn asymmetry_mm(&self) -> Option<f64> {
+        let forward = self.moving_to_fixed.summary?;
+        let backward = self.fixed_to_moving.summary?;
+        Some((backward.mean_abs - forward.mean_abs).abs())
     }
+}
+
+/// The larger of two directions' figures, ignoring a direction that measured
+/// too little to have one.
+fn worst(
+    forward: &DeviationStats,
+    backward: &DeviationStats,
+    pick: impl Fn(&DeviationSummary) -> f64,
+) -> f64 {
+    [forward.summary.as_ref(), backward.summary.as_ref()]
+        .into_iter()
+        .flatten()
+        .map(pick)
+        .fold(0.0, f64::max)
 }
 
 /// Measure the fixed surface against the moving one: the half a
@@ -197,8 +219,10 @@ pub fn surface_agreement(
         fixed_to_moving: backward,
         mean_abs,
         rms,
-        hausdorff_p95: forward.p95.max(backward.p95),
-        hausdorff: forward.max_abs.max(backward.max_abs),
+        // A direction that measured too little contributes no distance rather
+        // than a zero, which would silently pull the worst case down.
+        hausdorff_p95: worst(&forward, &backward, |summary| summary.p95),
+        hausdorff: worst(&forward, &backward, |summary| summary.max_abs),
         within_tolerance,
         measured: forward.measured.saturating_add(backward.measured),
         skipped: forward.skipped.saturating_add(backward.skipped),

@@ -107,6 +107,9 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean() {
         let stats = deviation_stats(&map, TOLERANCE_MM);
         let total = f64::from(stats.measured + stats.skipped).max(1.0);
         let measured_share = f64::from(stats.measured) / total;
+        let summary = stats
+            .summary
+            .expect("a real scan against itself measures far more than MIN_MEASURED vertices");
 
         assert!(
             measured_share > MIN_MEASURED_SHARE,
@@ -115,10 +118,10 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean() {
             measured_share * 100.0
         );
         assert!(
-            stats.within_tolerance > MIN_WITHIN_TOLERANCE,
+            summary.within_tolerance > MIN_WITHIN_TOLERANCE,
             "{}: only {:.0}% landed within {TOLERANCE_MM} mm",
             path.display(),
-            stats.within_tolerance * 100.0
+            summary.within_tolerance * 100.0
         );
 
         eprintln!(
@@ -127,7 +130,7 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean() {
             soup.triangle_count(),
             report.rms,
             measured_share * 100.0,
-            stats.within_tolerance * 100.0
+            summary.within_tolerance * 100.0
         );
     }
 }
@@ -250,16 +253,19 @@ fn check_offset(case: &Offset<'_>) {
     let truth = rms_displacement(case.positions, case.pose);
     let map = deviation(case.soup, case.index, case.pose, &settings, &cancel);
     let stats = deviation_stats(&map, TOLERANCE_MM);
+    let summary = stats
+        .summary
+        .expect("a real arch scan has far more than MIN_MEASURED vertices in reach");
     let reverse = reverse_deviation(case.soup, case.index, case.pose, &settings, &cancel);
     let agreement = surface_agreement(&map, &reverse, TOLERANCE_MM);
-    let estimate = case.seen.hidden_displacement_mm(stats.rms);
+    let estimate = case.seen.hidden_displacement_mm(summary.rms);
 
     assert!(
-        stats.rms < truth * MAX_HONEST_SHARE,
+        summary.rms < truth * MAX_HONEST_SHARE,
         "{label}: the one-sided rms {:.4} no longer under-reports {truth:.4}. A \
          nearest-point map cannot track a tangential offset, so either the measure \
          changed or this fixture did — do not relax this, work out which.",
-        stats.rms
+        summary.rms
     );
     assert!(
         estimate > truth * ESTIMATE_LOW,
@@ -272,23 +278,26 @@ fn check_offset(case: &Offset<'_>) {
          spread allows against a true {truth:.4}"
     );
     assert!(
-        (estimate - truth).abs() < (stats.rms - truth).abs(),
+        (estimate - truth).abs() < (summary.rms - truth).abs(),
         "{label}: the correction must land closer to the truth than the raw statistic \
          did — estimate {estimate:.4}, raw {:.4}, truth {truth:.4}",
-        stats.rms
+        summary.rms
     );
     assert!(
         agreement.rms > 0.0 && agreement.measured > stats.measured,
         "{label}: the symmetric measure must pool both directions"
     );
 
+    let balanced_mean_abs = agreement
+        .balanced_mean_abs()
+        .expect("a real arch scan clears MIN_MEASURED on both directions of the symmetric measure");
     eprintln!(
         "{label}: true {truth:.4} mm, one-sided rms {:.4} ({:.0}%), symmetric rms \
          {:.4}, balanced {:.4}, HD95 {:.4}, corrected {estimate:.4}",
-        stats.rms,
-        stats.rms / truth * 100.0,
+        summary.rms,
+        summary.rms / truth * 100.0,
         agreement.rms,
-        agreement.balanced_mean_abs(),
+        balanced_mean_abs,
         agreement.hausdorff_p95,
     );
 }

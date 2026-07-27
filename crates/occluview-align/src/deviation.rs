@@ -101,6 +101,30 @@ pub struct DeviationMap {
 /// Summary over the measured vertices only.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DeviationStats {
+    /// Vertices that carry a measurement.
+    pub measured: u32,
+    /// Vertices that do not.
+    pub skipped: u32,
+    /// The numbers themselves — **absent** when there was not enough measured
+    /// surface to characterise, which is a different answer from zero.
+    ///
+    /// This is an `Option` on purpose. A struct of zeroes returned for a
+    /// measurement that never happened reads, in the one field a clinician
+    /// looks at, as a perfect fit. Making the numbers unrepresentable in that
+    /// case is the only way a reader cannot print one by accident.
+    pub summary: Option<DeviationSummary>,
+}
+
+/// Fewest measured vertices that can characterise a surface.
+///
+/// A p95 taken over a handful of vertices is arithmetically true and clinically
+/// meaningless. The same floor idea guards the ICP correspondence count and the
+/// observability estimate; this is the deviation map's.
+pub const MIN_MEASURED: u32 = 32;
+
+/// What a measurement found, once there was enough of it to say anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviationSummary {
     /// Share of measured vertices within the tolerance band, 0 to 1.
     pub within_tolerance: f64,
     /// Mean absolute deviation, in millimetres.
@@ -114,10 +138,6 @@ pub struct DeviationStats {
     /// Largest absolute deviation, in millimetres — the directed Hausdorff
     /// distance from the measured moving vertices to the fixed surface.
     pub max_abs: f64,
-    /// Vertices that carry a measurement.
-    pub measured: u32,
-    /// Vertices that do not.
-    pub skipped: u32,
 }
 
 /// Which colour scheme the map uses.
@@ -173,10 +193,10 @@ pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
         0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0,
     ];
 
-    if stats.measured == 0 || !stats.p95.is_finite() {
+    let Some(summary) = stats.summary.filter(|summary| summary.p95.is_finite()) else {
         return FLOOR_MM;
-    }
-    let wanted = stats.p95.max(FLOOR_MM);
+    };
+    let wanted = summary.p95.max(FLOOR_MM);
     STEPS
         .into_iter()
         .find(|step| *step >= wanted)
@@ -321,16 +341,11 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
     let measured = u32::try_from(values.len()).unwrap_or(u32::MAX);
     let skipped =
         u32::try_from(map.validity.len().saturating_sub(values.len())).unwrap_or(u32::MAX);
-    if values.is_empty() {
+    if measured < MIN_MEASURED {
         return DeviationStats {
-            within_tolerance: 0.0,
-            mean_abs: 0.0,
-            rms: 0.0,
-            median: 0.0,
-            p95: 0.0,
-            max_abs: 0.0,
             measured,
             skipped,
+            summary: None,
         };
     }
 
@@ -354,18 +369,20 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
     let p95_slot = (count * 0.95).ceil() as usize;
 
     DeviationStats {
-        #[allow(clippy::cast_precision_loss)]
-        within_tolerance: inside as f64 / count,
-        mean_abs,
-        rms,
-        median: values.get(values.len() / 2).copied().unwrap_or(0.0),
-        p95: magnitudes
-            .get(p95_slot.clamp(1, magnitudes.len()) - 1)
-            .copied()
-            .unwrap_or(0.0),
-        max_abs: magnitudes.last().copied().unwrap_or(0.0),
         measured,
         skipped,
+        summary: Some(DeviationSummary {
+            #[allow(clippy::cast_precision_loss)]
+            within_tolerance: inside as f64 / count,
+            mean_abs,
+            rms,
+            median: values.get(values.len() / 2).copied().unwrap_or(0.0),
+            p95: magnitudes
+                .get(p95_slot.clamp(1, magnitudes.len()) - 1)
+                .copied()
+                .unwrap_or(0.0),
+            max_abs: magnitudes.last().copied().unwrap_or(0.0),
+        }),
     }
 }
 
