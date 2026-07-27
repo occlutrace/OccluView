@@ -318,7 +318,7 @@ impl OccluViewApp {
                 true
             }
             MeshEditorAction::Undo => {
-                self.undo_mesh_editor_action(ctx);
+                self.apply_history_navigation(false, ctx);
                 true
             }
             MeshEditorAction::Redo => {
@@ -394,10 +394,6 @@ impl OccluViewApp {
         self.status_message = Some("Edit mesh session reverted".to_string());
     }
 
-    fn undo_mesh_editor_action(&mut self, ctx: &egui::Context) {
-        self.apply_history_navigation(false, ctx);
-    }
-
     /// Undo (`redo == false`) or redo (`redo == true`) the last mesh edit and
     /// commit the resulting draft scene. Shared by the panel Undo button and
     /// the Ctrl+Z / Ctrl+Y viewport shortcuts.
@@ -430,6 +426,10 @@ impl OccluViewApp {
             return;
         }
         self.commit_scene_draft(Some(scene.as_ref()), draft, ctx);
+        // Here rather than at the call sites, so Ctrl+Z gets it too: history
+        // can revert the pose an align overlay describes, and the shortcut is
+        // live the whole time Align Scans is open.
+        self.invalidate_deviation_map("Stepped through history");
     }
 
     /// Swap the draft scene in as the live scene (or clear it, if the draft

@@ -78,6 +78,12 @@ impl OccluViewApp {
                     .transform
                     .transform_point3(entry.mesh.bbox_cached().center()),
             });
+            // The map describes the pose the scan is leaving. Dropped once, at
+            // the start of the gesture, rather than at the end: for the whole
+            // duration of a hand-drag the colours stayed welded to the surface
+            // at distances that were no longer true, which reads as a heatmap
+            // that agrees with wherever the operator drags it.
+            self.invalidate_deviation_map("Moving by hand");
         }
 
         let Some(drag) = self.align_drag else {
@@ -149,7 +155,7 @@ impl OccluViewApp {
     }
 
     /// Close an open drag, recording the whole gesture as one undo step.
-    fn finish_align_drag(&mut self) -> bool {
+    pub(super) fn finish_align_drag(&mut self) -> bool {
         let Some(drag) = self.align_drag.take() else {
             return false;
         };
