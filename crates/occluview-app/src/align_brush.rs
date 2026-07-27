@@ -118,56 +118,10 @@ fn clamp_radius(radius_mm: f32, fallback: f32) -> f32 {
     }
 }
 
-/// A whole-mesh command from the Brush tool window, named as exocad names them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MaskCommand {
-    /// Clear every marking — the whole scan takes part in the match.
-    FitEverywhere,
-    /// Mark the whole scan, so best-fit matching has no effect.
-    FitNowhere,
-    /// Swap marked for unmarked.
-    InvertMarkings,
-    /// Keep only a disc of surface at each arrow end as the matching region.
-    MarkAutomatic,
-}
-
-impl MaskCommand {
-    /// The label on the button, verbatim from exocad.
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Fit everywhere",
-            Self::FitNowhere => "Fit nowhere",
-            Self::InvertMarkings => "Invert markings",
-            Self::MarkAutomatic => "Mark automatic",
-        }
-    }
-
-    /// What the button does, in one line.
-    pub(crate) fn hint(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Clear all existing markings",
-            Self::FitNowhere => "Mark the complete mesh — best-fit matching will have no effect",
-            Self::InvertMarkings => "Mark unmarked areas and vice versa",
-            Self::MarkAutomatic => "Match only on a small area around each arrow end",
-        }
-    }
-
-    /// What to tell the operator afterwards.
-    pub(crate) fn report(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Markings cleared — matching on the whole scan",
-            Self::FitNowhere => "Whole mesh marked — best-fit matching will have no effect",
-            Self::InvertMarkings => "Markings inverted",
-            Self::MarkAutomatic => "Matching only around the arrow ends",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        AlignBrush, MaskCommand, DEFAULT_AUTO_RADIUS_MM, DEFAULT_RADIUS_MM, MAX_RADIUS_MM,
-        MIN_RADIUS_MM,
+        AlignBrush, DEFAULT_AUTO_RADIUS_MM, DEFAULT_RADIUS_MM, MAX_RADIUS_MM, MIN_RADIUS_MM,
     };
 
     #[test]
@@ -227,21 +181,5 @@ mod tests {
         assert!((brush.radius_mm() - MAX_RADIUS_MM).abs() < f32::EPSILON);
         brush.nudge_radius(f32::NAN);
         assert!(brush.radius_mm().is_finite());
-    }
-
-    /// The labels are exocad's, verbatim. An operator who knows that dialog
-    /// must not have to work out which of our words means which of theirs.
-    #[test]
-    fn the_commands_carry_exocads_own_labels() {
-        for (command, label) in [
-            (MaskCommand::FitEverywhere, "Fit everywhere"),
-            (MaskCommand::FitNowhere, "Fit nowhere"),
-            (MaskCommand::InvertMarkings, "Invert markings"),
-            (MaskCommand::MarkAutomatic, "Mark automatic"),
-        ] {
-            assert_eq!(command.label(), label);
-            assert!(!command.hint().is_empty());
-            assert!(!command.report().is_empty());
-        }
     }
 }

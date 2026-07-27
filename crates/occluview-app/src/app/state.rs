@@ -119,20 +119,13 @@ pub(crate) struct OccluViewApp {
     /// Consumed by the viewport sync, which is the one place that knows whether
     /// there is a prepared scene to write into.
     pub(super) deviation_push_pending: bool,
-    /// Markings over the mesh the arrows move.
-    pub(super) align_mask: Option<Arc<Vec<u8>>>,
-    /// Markings over the mesh they move onto.
-    pub(super) align_mask_fixed: Option<Arc<Vec<u8>>>,
-    /// Vertices the last dab changed, kept so the buffer is not reallocated
-    /// per dab.
-    pub(super) align_touched: Vec<u32>,
-    /// Bumped on every mask write. The mask decides which vertices are
-    /// measured, so a cached measurement is only reusable at the same revision.
-    pub(super) align_mask_revision: u64,
+    /// What the operator marked out of the match, on both scans. Owns its own
+    /// revision and coverage counts, so no caller can change a mask without the
+    /// caches downstream hearing about it.
+    pub(super) align_markings: crate::align_markings::AlignMarkings,
     pub(super) align_drag: Option<super::app_align_drag::AlignDrag>,
     pub(super) align_constraint: crate::align_drag::DragConstraint,
     pub(super) align_brush: crate::align_brush::AlignBrush,
-    pub(super) align_mask_stroke_open: bool,
     /// What the per-vertex colours on the moving scan currently mean.
     pub(super) align_overlay: super::app_align_display::AlignOverlay,
     pub(super) align_session_poses: Vec<(occluview_core::SceneMeshId, glam::Affine3A)>,
@@ -314,14 +307,10 @@ impl OccluViewApp {
             align_geometry: crate::align_geometry::AlignGeometry::default(),
             align_painted: crate::align_geometry::PaintedVertices::default(),
             deviation_push_pending: false,
-            align_mask: None,
-            align_mask_fixed: None,
-            align_touched: Vec::new(),
-            align_mask_revision: 0,
+            align_markings: crate::align_markings::AlignMarkings::default(),
             align_drag: None,
             align_constraint: crate::align_drag::DragConstraint::default(),
             align_brush: crate::align_brush::AlignBrush::default(),
-            align_mask_stroke_open: false,
             align_overlay: super::app_align_display::AlignOverlay::default(),
             align_session_poses: Vec::new(),
             align_tab: crate::align_panel::AlignTab::default(),
