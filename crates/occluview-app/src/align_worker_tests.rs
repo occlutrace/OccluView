@@ -226,10 +226,13 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
 
     let stats = deviation_stats(&map, 0.2);
     assert_eq!(stats.skipped, 0, "every vertex had surface within reach");
+    let summary = stats
+        .summary
+        .expect("the 21 x 21 tilted sheet clears MIN_MEASURED");
     assert!(
-        (stats.p95 - 0.30).abs() < 0.02,
+        (summary.p95 - 0.30).abs() < 0.02,
         "the geometry does not carry the offset it was built with: p95 {:.3}",
-        stats.p95
+        summary.p95
     );
 
     // The range the tool picks for itself, which is what the operator sees.
