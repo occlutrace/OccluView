@@ -9,7 +9,8 @@
 
 use eframe::egui;
 
-use crate::align_brush::{AlignBrush, MaskCommand};
+use crate::align_brush::AlignBrush;
+use crate::align_markings::MaskCommand;
 use crate::align_panel::chip;
 use crate::mesh_editor_icons::{self, EditorIcon};
 use crate::ui_theme;
@@ -127,15 +128,19 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
     action
 }
 
-/// exocad's three whole-mesh commands.
+/// exocad's whole-mesh commands, driven off the command list itself so a new
+/// one cannot be added to the enum and forgotten here.
 fn commands(ui: &mut egui::Ui, enabled: bool) -> Option<BrushPanelAction> {
     let mut action = None;
-    for (command, icon) in [
-        (MaskCommand::FitEverywhere, EditorIcon::SelectNone),
-        (MaskCommand::FitNowhere, EditorIcon::SelectAll),
-        (MaskCommand::InvertMarkings, EditorIcon::SelectInvert),
-        (MaskCommand::MarkAutomatic, EditorIcon::AlignFit),
-    ] {
+    for command in MaskCommand::ALL {
+        // A match rather than a lookup table: a new command stops the build here
+        // instead of quietly rendering without a picture.
+        let icon = match command {
+            MaskCommand::FitEverywhere => EditorIcon::SelectNone,
+            MaskCommand::FitNowhere => EditorIcon::SelectAll,
+            MaskCommand::InvertMarkings => EditorIcon::SelectInvert,
+            MaskCommand::MarkAutomatic => EditorIcon::AlignFit,
+        };
         if chip(
             ui,
             ui.available_width(),
@@ -226,7 +231,7 @@ fn coverage(ui: &mut egui::Ui, marked: Option<f32>) {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use crate::align_brush::MaskCommand;
+    use crate::align_markings::MaskCommand;
 
     fn production() -> &'static str {
         let source = include_str!("align_panel_brush.rs");

@@ -129,7 +129,12 @@ impl OccluViewApp {
 
         // In place through `Arc::make_mut`: the app holds the only reference
         // outside the scene's own, and the scene's is replaced below.
-        let touched = std::mem::take(&mut self.align_touched);
+        //
+        // The list belongs to the markings, which produced it. Borrowed rather
+        // than stolen: a `mem::take` here left the markings holding an empty
+        // list for the rest of the frame, so anything else that asked what the
+        // last dab touched was told "nothing".
+        let touched = self.align_markings.touched().to_vec();
         let colors = Arc::make_mut(&mut slot.1);
         for index in &touched {
             let at = *index as usize;
@@ -158,7 +163,6 @@ impl OccluViewApp {
                 viewport.write_scene_vertices_sparse(&topology, painted, &indices);
             }
         }
-        self.align_touched = touched;
         self.needs_render = true;
         true
     }
