@@ -476,6 +476,17 @@ struct WorkerCache {
     seen: Option<(MeasureKey, Option<Observability>)>,
 }
 
+/// The jobs that need the fixed surface's spatial index. Fitting the clicked
+/// pairs is not one of them, and naming that in the type is what keeps a
+/// "cannot happen" arm out of the dispatch below.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SurfaceJob {
+    /// Seat the surfaces with ICP.
+    Refine,
+    /// Measure the deviation map.
+    Measure,
+}
+
 /// Run one job.
 fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> AlignOutcome {
     let moving = Soup {
@@ -484,13 +495,15 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         mask: job.mask.as_ref().map(|mask| mask.as_slice()),
     };
 
-    if job.kind == AlignJobKind::Align {
-        return align_from_pairs(job, moving);
-    }
+    let surface_job = match job.kind {
+        AlignJobKind::Align => return align_from_pairs(job, moving),
+        AlignJobKind::Refine => SurfaceJob::Refine,
+        AlignJobKind::Measure => SurfaceJob::Measure,
+    };
 
     // A re-colour of a measurement already in hand never touches the surface:
     // the distances did not change, only what they are painted with.
-    if job.kind == AlignJobKind::Measure
+    if surface_job == SurfaceJob::Measure
         && cached
             .measured
             .as_ref()
@@ -505,12 +518,8 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         };
     };
 
-    match job.kind {
-        // Handled above, before the surface index is touched.
-        AlignJobKind::Align => AlignOutcome::Failed {
-            message: "Internal routing error".into(),
-        },
-        AlignJobKind::Refine => {
+    match surface_job {
+        SurfaceJob::Refine => {
             match refine(moving, index, job.pose, &job.settings.refine(), cancel) {
                 Ok(report) => AlignOutcome::Refined {
                     pose: report.rigid,
@@ -521,7 +530,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
                 },
             }
         }
-        AlignJobKind::Measure => {
+        SurfaceJob::Measure => {
             let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
             // A cancelled measurement is a map where nothing was measured. It
             // must not be remembered as this key's answer, or the abandoned
@@ -716,7 +725,7 @@ fn describe(rejection: FitRejection) -> String {
 }
 
 /// Name the world axes a degeneracy report flagged.
-fn axis_names(weak: [bool; 3]) -> String {
+pub(crate) fn axis_names(weak: [bool; 3]) -> String {
     ["X", "Y", "Z"]
         .into_iter()
         .zip(weak)
