@@ -1,4 +1,4 @@
-//! The Hitmap block of the Align Scans window.
+//! The Heatmap block of the Align Scans window.
 //!
 //! Split from the window itself because it answers a different question. That
 //! module is about getting two scans onto each other; this one is about reading
@@ -17,7 +17,7 @@ use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM};
 use crate::mesh_editor_icons::{self, EditorIcon};
 use crate::{align_overlay, ui_theme};
 
-/// Show the Hitmap block; returns what the operator asked for.
+/// Show the Heatmap block; returns what the operator asked for.
 pub(crate) fn show(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
@@ -64,7 +64,7 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
         );
         let mut shown = settings.show_deviation;
         if ui
-            .checkbox(&mut shown, "Hitmap")
+            .checkbox(&mut shown, "Heatmap")
             .on_hover_text("Colour one scan by how far it sits from the other")
             .changed()
         {
@@ -365,11 +365,18 @@ mod tests {
             .map_or(source, |(before, _)| before)
     }
 
-    /// The operator asked for this name specifically. "Show distance" was a
-    /// description of a checkbox; Hitmap is what they call the thing.
+    /// The control is named for the thing, not for what it does: "Show distance"
+    /// described a checkbox. **Heatmap**, one word — the earlier spelling was
+    /// "Hitmap", which in English is a map of where something struck rather than a
+    /// map of how hot it is, and the icon next to it was spelt correctly all along.
     #[test]
     fn the_map_is_called_what_the_operator_calls_it() {
-        assert!(production().contains("\"Hitmap\""));
+        let source = production();
+        assert!(source.contains("\"Heatmap\""));
+        assert!(
+            !source.contains("Hitmap"),
+            "the misspelling is back in the interface"
+        );
     }
 
     /// The two numbers that define the bar are exocad's minimum and maximum
