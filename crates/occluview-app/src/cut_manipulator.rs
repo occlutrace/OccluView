@@ -36,6 +36,26 @@ pub(crate) const CENTER_GRAB_RADIUS_PX: f32 = 14.0;
 /// Grab tolerance (screen px) around the rim ring for push/pull handles.
 pub(crate) const RIM_GRAB_RADIUS_PX: f32 = 11.0;
 
+/// How the disc follows a zoom of the section window.
+///
+/// The section window frames `1.6 x radius / zoom`, so a plain "radius times the
+/// zoom step" would cancel exactly: the window would show the same patch of the
+/// plane after every notch, and the wheel would look dead. Splitting the step
+/// evenly between the two — the square root to each — moves both, in the
+/// directions the operator asked for. Scroll out and the lines get smaller while
+/// the disc narrows; scroll in and both grow. Invertible, so a notch out and a
+/// notch back in land on the radius you started from.
+pub(crate) fn radius_after_slice_zoom(radius_mm: f32, zoom_before: f32, zoom_after: f32) -> f32 {
+    if !(radius_mm.is_finite() && zoom_before > 0.0 && zoom_after > 0.0) {
+        return radius_mm;
+    }
+    let wanted = radius_mm * (zoom_after / zoom_before).sqrt();
+    if !wanted.is_finite() {
+        return radius_mm;
+    }
+    wanted.clamp(MIN_DISC_RADIUS_MM, MAX_DISC_RADIUS_MM)
+}
+
 /// Pose of the cut disc in world space. The disc lies in the plane through
 /// `center` with `plane_normal`; the same plane is the GPU clip / section plane.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -462,6 +482,78 @@ pub(crate) fn pose_moved(a: &DiscPose, b: &DiscPose) -> bool {
 mod tests {
     #![allow(clippy::float_cmp, clippy::expect_used, clippy::unnecessary_wraps)]
     use super::*;
+
+    /// Scrolling the section window out narrows the disc, and scrolling in grows
+    /// it — the direction the operator asked for, in their words: "if we move the
+    /// lines away in the viewport, the disc shrinks proportionally".
+    #[test]
+    fn the_disc_follows_the_section_window_in_the_same_direction() {
+        let out = radius_after_slice_zoom(8.0, 1.0, 1.0 / 1.15);
+        assert!(out < 8.0, "scrolling out must narrow the disc, got {out}");
+        let into = radius_after_slice_zoom(8.0, 1.0, 1.15);
+        assert!(into > 8.0, "scrolling in must widen it, got {into}");
+    }
+
+    /// It moves by HALF the zoom step, in the geometric sense. The section window
+    /// frames 1.6 x radius / zoom, so taking the whole step would cancel exactly
+    /// and the wheel would look dead: same patch of plane after every notch.
+    #[test]
+    fn the_window_and_the_disc_split_the_step_between_them() {
+        let step = 1.15_f32;
+        let radius = radius_after_slice_zoom(8.0, 1.0, step);
+        assert!(
+            (radius - 8.0 * step.sqrt()).abs() < 1e-4,
+            "expected the square root of the step, got {radius}"
+        );
+        // What the window ends up framing, before and after: it has to change.
+        let framed_before = 1.6 * 8.0 / 1.0;
+        let framed_after = 1.6 * radius / step;
+        assert!(
+            (framed_after - framed_before).abs() > 0.05,
+            "the section window framed the same extent either side of a notch, so \
+             the wheel does nothing there: {framed_before} then {framed_after}"
+        );
+        assert!(
+            framed_after < framed_before,
+            "scrolling in has to show LESS of the plane, not more"
+        );
+    }
+
+    /// A notch out and a notch back in lands where it started.
+    #[test]
+    fn the_disc_returns_to_where_it_was() {
+        let there = radius_after_slice_zoom(8.0, 1.0, 1.15);
+        let back = radius_after_slice_zoom(there, 1.15, 1.0);
+        assert!((back - 8.0).abs() < 1e-4, "came back to {back}, not 8");
+    }
+
+    /// It never leaves the range the wheel on the disc itself can reach, and
+    /// hostile numbers leave the radius alone rather than producing a NaN disc.
+    #[test]
+    fn the_disc_stays_inside_its_own_limits() {
+        assert!(
+            (radius_after_slice_zoom(MAX_DISC_RADIUS_MM, 1.0, 100.0) - MAX_DISC_RADIUS_MM).abs()
+                < 1e-3
+        );
+        assert!(
+            (radius_after_slice_zoom(MIN_DISC_RADIUS_MM, 1.0, 0.001) - MIN_DISC_RADIUS_MM).abs()
+                < 1e-3
+        );
+        for (radius, before, after) in [
+            (8.0, 0.0, 1.0),
+            (8.0, 1.0, 0.0),
+            (8.0, 1.0, -1.0),
+            (f32::NAN, 1.0, 2.0),
+            (8.0, f32::NAN, 2.0),
+        ] {
+            let held = radius_after_slice_zoom(radius, before, after);
+            assert!(
+                held.is_nan() == radius.is_nan(),
+                "{radius}/{before}/{after} produced {held}"
+            );
+        }
+    }
+
     use crate::cut_geometry::scale_radius;
     use eframe::egui::pos2;
 

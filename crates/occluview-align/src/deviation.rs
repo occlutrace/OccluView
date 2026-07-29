@@ -31,8 +31,9 @@
 //!    reported next to these statistics.
 //! 2. **One-sided blindness.** A moving scan missing a region reports a perfect
 //!    fit over it, because the vertices that would have measured it are not
-//!    there. [`crate::surface_agreement`] measures both directions and is what
-//!    an operator should read as the headline.
+//!    there. Nothing derived from this map can see that, so what the map could
+//!    not reach is counted and reported by cause — see [`Unmeasured`] — rather
+//!    than folded into a single number that looks like a verdict.
 
 use glam::DVec3;
 use rayon::prelude::*;
@@ -122,16 +123,6 @@ impl Unmeasured {
         self.excluded
             .saturating_add(self.out_of_reach)
             .saturating_add(self.unusable)
-    }
-
-    /// The two added together, cause by cause.
-    #[must_use]
-    pub const fn combined(self, other: Self) -> Self {
-        Self {
-            excluded: self.excluded.saturating_add(other.excluded),
-            out_of_reach: self.out_of_reach.saturating_add(other.out_of_reach),
-            unusable: self.unusable.saturating_add(other.unusable),
-        }
     }
 }
 
@@ -367,9 +358,8 @@ fn signed_along(offset: DVec3, normal: DVec3, distance: f64) -> f64 {
 /// These are **directed** statistics: moving vertices against fixed surface,
 /// and nothing about fixed surface the moving scan never covered. They are also
 /// a lower bound on the true displacement — see the module documentation for
-/// the measured size of both effects. Report them through
-/// [`crate::surface_agreement`] and alongside [`crate::observability`], never
-/// alone.
+/// the measured size of both effects. Report them alongside
+/// [`crate::observability`] and the [`Unmeasured`] counts, never alone.
 #[must_use]
 pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats {
     let mut values: Vec<f64> = map

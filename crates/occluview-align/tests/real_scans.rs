@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 
 use glam::{DQuat, DVec3};
 use occluview_align::{
-    deviation, deviation_stats, observability, refine, reverse_deviation, surface_agreement,
-    CancelFlag, DeviationSettings, RefineSettings, Rigid, Soup, SurfaceIndex,
+    deviation, deviation_stats, observability, refine, CancelFlag, DeviationSettings,
+    RefineSettings, Rigid, Soup, SurfaceIndex,
 };
 
 /// Residual the refine must reach, in millimetres.
@@ -256,8 +256,6 @@ fn check_offset(case: &Offset<'_>) {
     let summary = stats
         .summary
         .expect("a real arch scan has far more than MIN_MEASURED vertices in reach");
-    let reverse = reverse_deviation(case.soup, case.index, case.pose, &settings, &cancel);
-    let agreement = surface_agreement(&map, &reverse, TOLERANCE_MM);
     let estimate = case.seen.hidden_displacement_mm(summary.rms);
 
     assert!(
@@ -283,25 +281,13 @@ fn check_offset(case: &Offset<'_>) {
          did — estimate {estimate:.4}, raw {:.4}, truth {truth:.4}",
         summary.rms
     );
-    let pooled = agreement
-        .summary
-        .expect("a real arch scan against itself measures plenty in both directions");
-    assert!(
-        pooled.rms > 0.0 && agreement.measured > stats.measured,
-        "{label}: the symmetric measure must pool both directions"
-    );
-
-    let balanced_mean_abs = agreement
-        .balanced_mean_abs()
-        .expect("a real arch scan clears MIN_MEASURED on both directions of the symmetric measure");
     eprintln!(
-        "{label}: true {truth:.4} mm, one-sided rms {:.4} ({:.0}%), symmetric rms \
-         {:.4}, balanced {:.4}, HD95 {:.4}, corrected {estimate:.4}",
+        "{label}: true {truth:.4} mm, one-sided rms {:.4} ({:.0}%), p95 {:.4}, \
+         unmeasured {}, corrected {estimate:.4}",
         summary.rms,
         summary.rms / truth * 100.0,
-        pooled.rms,
-        balanced_mean_abs,
-        pooled.hausdorff_p95,
+        summary.p95,
+        stats.unmeasured.total(),
     );
 }
 

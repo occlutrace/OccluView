@@ -241,6 +241,11 @@ impl SectionView {
         })
     }
 
+    /// How far the section window is zoomed in. One is the framing it opens at.
+    pub(super) fn slice_zoom(&self) -> f32 {
+        self.slice_view.zoom
+    }
+
     pub(super) fn zoom_at_cursor(
         &mut self,
         viewport_rect: egui::Rect,
