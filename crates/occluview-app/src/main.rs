@@ -23,6 +23,7 @@ mod align_overlay;
 mod align_panel;
 mod align_panel_brush;
 mod align_panel_map;
+mod align_panel_roles;
 mod align_tool;
 #[cfg(test)]
 mod align_tool_tests;

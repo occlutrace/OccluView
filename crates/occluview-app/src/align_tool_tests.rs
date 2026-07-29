@@ -238,3 +238,132 @@ fn disarming_drops_the_session() {
     assert!(tool.pairs().is_empty());
     assert_eq!(tool.moving_layer(), None);
 }
+
+/// The arm-time guess is a guess, and the first click overrides it.
+///
+/// This is the bug an operator reported as "it aligned the other way round". Two
+/// scans in view, so the pair was implied from scene order — which is the order
+/// the files were opened in. Clicking the scan they wanted moved then landed on
+/// whichever role that scan had been handed, and half the time the alignment ran
+/// backwards for reasons nothing on screen explained.
+#[test]
+fn the_first_clicked_scan_is_the_one_that_moves_even_after_a_guess() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.imply_pair(&[a, b]);
+    assert!(
+        tool.roles_are_implied(),
+        "a guess has to admit to being one"
+    );
+
+    // The operator clicks the scan the guess had put on the fixed side.
+    tool.click(point(b, Vec3::ZERO));
+    assert_eq!(
+        tool.moving_layer(),
+        Some(b),
+        "the clicked scan is the mover"
+    );
+    assert_eq!(tool.fixed_layer(), Some(a));
+    assert!(
+        !tool.roles_are_implied(),
+        "once the operator has clicked, the roles are theirs"
+    );
+}
+
+/// Clicking the scan the guess already had right changes nothing.
+#[test]
+fn a_guess_the_operator_agrees_with_is_left_alone() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.imply_pair(&[a, b]);
+    tool.click(point(a, Vec3::ZERO));
+    assert_eq!(tool.moving_layer(), Some(a));
+    assert_eq!(tool.fixed_layer(), Some(b));
+}
+
+/// A second click never re-decides. The roles are settled by the first point,
+/// and a pair is placed by clicking alternately — so re-deciding on every click
+/// would flip the direction on the way to placing one arrow.
+#[test]
+fn only_the_first_click_decides_the_direction() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.imply_pair(&[a, b]);
+    tool.click(point(a, Vec3::ZERO));
+    tool.click(point(b, Vec3::X));
+    tool.click(point(b, Vec3::Y));
+    assert_eq!(tool.moving_layer(), Some(a), "the direction held");
+    assert_eq!(tool.pairs().len(), 1);
+}
+
+/// Swapping trades the roles and takes the placed arrows with them. A pair holds
+/// "the moving point and its partner", so leaving the halves alone would fit the
+/// scans with every correspondence reversed.
+#[test]
+fn swapping_the_pair_turns_the_arrows_round_too() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.click(point(a, Vec3::ZERO));
+    tool.click(point(b, Vec3::X));
+    let before = tool.pairs()[0];
+
+    assert!(tool.swap_roles());
+    assert_eq!(tool.moving_layer(), Some(b));
+    assert_eq!(tool.fixed_layer(), Some(a));
+
+    let after = tool.pairs()[0];
+    assert_eq!(
+        after.moving, before.fixed,
+        "the halves swapped with the roles"
+    );
+    assert_eq!(after.fixed, before.moving);
+    assert_eq!(
+        after.moving.layer,
+        tool.moving_layer()
+            .expect("a pair means both roles are named"),
+        "every pair's moving half must belong to the moving layer"
+    );
+}
+
+/// Swapping twice is where it started. Nothing accumulates.
+#[test]
+fn swapping_twice_puts_everything_back() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.click(point(a, Vec3::ZERO));
+    tool.click(point(b, Vec3::X));
+    let before = tool.pairs()[0];
+    assert!(tool.swap_roles());
+    assert!(tool.swap_roles());
+    assert_eq!(tool.moving_layer(), Some(a));
+    assert_eq!(tool.pairs()[0], before);
+}
+
+/// There is nothing to swap before both scans are named.
+#[test]
+fn a_half_named_pair_cannot_be_turned_round() {
+    let [a, _, _] = ids();
+    let mut tool = armed();
+    tool.click(point(a, Vec3::ZERO));
+    assert!(!tool.swap_roles());
+    assert_eq!(tool.moving_layer(), Some(a));
+}
+
+/// Clear takes the guess with it, so the next click decides from scratch. This
+/// is the path to aligning a third file without closing the tool.
+#[test]
+fn clearing_a_guessed_pair_leaves_nothing_guessed() {
+    let [a, b, c] = ids();
+    let mut tool = armed();
+    tool.imply_pair(&[a, b]);
+    tool.clear();
+    assert!(!tool.roles_are_implied());
+    assert_eq!(tool.moving_layer(), None);
+
+    tool.click(point(c, Vec3::ZERO));
+    assert_eq!(
+        tool.moving_layer(),
+        Some(c),
+        "a third scan can start a pair"
+    );
+}
