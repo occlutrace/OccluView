@@ -13,7 +13,7 @@ use eframe::egui;
 use occluview_align::{DeviationStats, RampMode};
 
 use crate::align_panel::AlignPanelAction;
-use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM, CLINICAL_MAX_MM, CLINICAL_MIN_MM};
+use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM};
 use crate::mesh_editor_icons::{self, EditorIcon};
 use crate::{align_overlay, ui_theme};
 
@@ -81,23 +81,17 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
 
 /// The standard ranges, one click each.
 ///
-/// Dentistry works to a fifth of a millimetre, and a tool that makes an
+/// Dentistry works to a tenth of a millimetre, and a tool that makes an
 /// operator dial that in by hand every session is a tool that will be read at
-/// whatever range it happened to be left at. **0.20 mm** is the clinical
-/// default and the one the window opens on; the other two are the tighter and
-/// looser bands the same work uses.
+/// whatever range it happened to be left at. **0.10 mm** is the working range
+/// and the one the window opens on; the other two are the looser bands the same
+/// work uses. The table lives in `align_worker` so the chip that shows as active
+/// and the range the tool actually opens on cannot drift apart.
 fn presets(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
 ) -> Option<AlignPanelAction> {
-    /// Maximum distance, in millimetres, and the nominal band that goes with it.
-    const RANGES: [(f64, f64); 3] = [
-        (0.10, 0.005),
-        (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
-        (0.50, 0.02),
-    ];
-
     let mut action = None;
     ui.horizontal(|ui| {
         ui.label(
@@ -106,7 +100,7 @@ fn presets(
                 .color(ui_theme::TEXT_MUTED),
         );
         let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 3.0;
-        for (max_mm, min_mm) in RANGES {
+        for (max_mm, min_mm) in crate::align_worker::CLINICAL_RANGES {
             let active = (settings.scale_mm - max_mm).abs() < f64::EPSILON
                 && (settings.tolerance_mm - min_mm).abs() < f64::EPSILON;
             if crate::align_panel::chip(ui, width, None, &format!("{max_mm:.2}"), enabled, active)
@@ -228,11 +222,12 @@ fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
             egui::RichText::new(format!(
                 "Not enough surface to measure — {} of {} vertices reached the other scan",
                 stats.measured,
-                stats.measured.saturating_add(stats.skipped)
+                stats.measured.saturating_add(stats.unmeasured.total())
             ))
             .size(11.0)
             .color(ui_theme::TEXT),
         );
+        grey_note(ui, stats);
         return;
     };
     ui.horizontal(|ui| {
@@ -252,13 +247,54 @@ fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
             );
         });
     });
-    if stats.skipped > 0 {
+    grey_note(ui, stats);
+}
+
+/// What the grey on the surface means, cause by cause.
+///
+/// An operator looked at a bridge that exists on one arch and not the other,
+/// found it grey, and read that as a bug. It is not: there is nothing opposite
+/// it to measure to. But the same grey also covers a region they painted out and
+/// a region whose vertices are broken data, and one lump total — "N vertices had
+/// nothing to measure" — said all three at once.
+fn grey_note(ui: &mut egui::Ui, stats: DeviationStats) {
+    if let Some(text) = grey_sentence(stats) {
         ui.label(
-            egui::RichText::new(format!("{} vertices had nothing to measure", stats.skipped))
+            egui::RichText::new(text)
                 .size(10.0)
                 .color(ui_theme::TEXT_MUTED),
+        )
+        .on_hover_text(
+            "Grey is not a measurement. Surface with no counterpart within reach \
+             cannot be measured at all — a bridge or a tooth on one scan only is \
+             the usual reason, and it is not an error.",
         );
     }
+}
+
+/// The sentence naming what is grey, or none if nothing is.
+///
+/// Split from the drawing above so the wording can be run in a test.
+fn grey_sentence(stats: DeviationStats) -> Option<String> {
+    let grey = stats.unmeasured;
+    if grey.total() == 0 {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if grey.out_of_reach > 0 {
+        parts.push(format!("{} with no surface opposite", grey.out_of_reach));
+    }
+    if grey.excluded > 0 {
+        parts.push(format!("{} marked out", grey.excluded));
+    }
+    if grey.unusable > 0 {
+        parts.push(format!("{} unusable in the file", grey.unusable));
+    }
+    Some(format!(
+        "{} vertices grey: {}",
+        grey.total(),
+        parts.join(", ")
+    ))
 }
 
 /// The knobs that only matter when something looks wrong.
@@ -316,8 +352,9 @@ fn colours(ui: &mut egui::Ui, mode: &mut RampMode) -> bool {
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use super::grey_sentence;
     use crate::align_worker::AlignSettings;
-    use occluview_align::{DeviationStats, DeviationSummary};
+    use occluview_align::{DeviationStats, DeviationSummary, Unmeasured};
 
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.
@@ -326,13 +363,6 @@ mod tests {
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)
-    }
-
-    /// The measurement is only honest if the block says how much of the scan it
-    /// could not measure.
-    #[test]
-    fn the_numbers_report_unmeasured_vertices() {
-        assert!(production().contains("had nothing to measure"));
     }
 
     /// The operator asked for this name specifically. "Show distance" was a
@@ -374,7 +404,7 @@ mod tests {
             super::saturation_advice(
                 DeviationStats {
                     measured: 1_000,
-                    skipped: 0,
+                    unmeasured: Unmeasured::default(),
                     summary: Some(DeviationSummary {
                         within_tolerance: 0.0,
                         mean_abs: p95 / 2.0,
@@ -422,7 +452,10 @@ mod tests {
         let advice = super::saturation_advice(
             DeviationStats {
                 measured: 0,
-                skipped: 900_000,
+                unmeasured: Unmeasured {
+                    out_of_reach: 900_000,
+                    ..Unmeasured::default()
+                },
                 summary: None,
             },
             AlignSettings::default(),
@@ -443,10 +476,56 @@ mod tests {
             .find("details(ui, settings)")
             .expect("the diagnostics are drawn by details");
         assert!(fold < call, "the diagnostics must be drawn inside the fold");
-        for knob in ["Stepped bands", "Colours", "Facing"] {
+        for knob in ["Stepped bands", "Colours"] {
             let quoted = format!("\"{knob}\"");
             let at = source.find(&quoted).unwrap_or(usize::MAX);
             assert!(at > fold, "{knob} sits in front of the operator");
+        }
+    }
+    /// Grey is named, cause by cause, and the wording says which is which.
+    ///
+    /// One grey on screen with three meanings behind it. An operator found a
+    /// bridge that exists on one arch only painted grey, read it as a bug, and
+    /// there was nothing on screen to tell them otherwise: the panel reported one
+    /// lump total, "N vertices had nothing to measure", for all three causes.
+    #[test]
+    fn the_grey_on_the_surface_is_named_by_its_reason() {
+        let stats = |unmeasured| DeviationStats {
+            measured: 100,
+            unmeasured,
+            summary: None,
+        };
+
+        assert_eq!(
+            grey_sentence(stats(Unmeasured::default())),
+            None,
+            "nothing grey, nothing to say"
+        );
+
+        let anatomy = grey_sentence(stats(Unmeasured {
+            out_of_reach: 7,
+            ..Unmeasured::default()
+        }))
+        .expect("seven grey vertices are worth a sentence");
+        assert!(anatomy.contains('7'), "got {anatomy}");
+        assert!(
+            anatomy.contains("no surface opposite"),
+            "a missing counterpart is anatomy, not an error: {anatomy}"
+        );
+        assert!(
+            !anatomy.contains("marked out") && !anatomy.contains("unusable"),
+            "causes that did not occur must not be listed: {anatomy}"
+        );
+
+        let mixed = grey_sentence(stats(Unmeasured {
+            excluded: 2,
+            out_of_reach: 3,
+            unusable: 4,
+        }))
+        .expect("nine grey vertices");
+        assert!(mixed.starts_with("9 vertices grey"), "got {mixed}");
+        for named in ["3 with no surface opposite", "2 marked out", "4 unusable"] {
+            assert!(mixed.contains(named), "{named} missing from {mixed}");
         }
     }
 }

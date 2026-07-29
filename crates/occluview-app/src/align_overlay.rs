@@ -221,6 +221,38 @@ pub(crate) fn paint_legend(ui: &mut egui::Ui, settings: AlignSettings) {
             label(ui, high);
         });
     });
+    no_data_key(ui);
+}
+
+/// The grey swatch, named.
+///
+/// Grey is the one colour on the surface that the ramp above cannot explain, and
+/// it sat there unlabelled: an operator found a bridge that exists on one arch
+/// only painted grey and read it as a bug. The key goes here rather than in the
+/// numbers block because this is where the eye already is when it asks what a
+/// colour means.
+fn no_data_key(ui: &mut egui::Ui) {
+    const SWATCH: f32 = 9.0;
+
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::hover());
+        let grey = occluview_align::NO_DATA_COLOR;
+        ui.painter().rect_filled(
+            rect,
+            1.5,
+            egui::Color32::from_rgb(grey[0], grey[1], grey[2]),
+        );
+        ui.label(
+            egui::RichText::new("not measured")
+                .size(10.0)
+                .color(ui_theme::TEXT_MUTED),
+        )
+        .on_hover_text(
+            "No surface on the other scan within reach of these vertices. A tooth \
+             or a bridge that only one scan has is the usual reason, and it is not \
+             an error — there is nothing there to measure to.",
+        );
+    });
 }
 
 #[cfg(test)]
