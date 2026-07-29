@@ -115,40 +115,9 @@ pub fn invert(mask: &mut [u8]) {
     }
 }
 
-/// Paint a disc around each supplied point.
-///
-/// exocad's "Mark automatic": with a point pair placed on each landmark, the
-/// only surface worth matching on is often the surface right at those
-/// landmarks, and this marks exactly that.
-pub fn mark_around(
-    mask: &mut [u8],
-    positions: &[f32],
-    pose: Rigid,
-    points: &[DVec3],
-    radius_mm: f64,
-) -> usize {
-    let mut touched = Vec::new();
-    points
-        .iter()
-        .map(|&center| {
-            apply_brush(
-                mask,
-                positions,
-                pose,
-                &MaskEdit {
-                    center,
-                    radius_mm,
-                    erase: false,
-                },
-                &mut touched,
-            )
-        })
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{apply_brush, invert, mark_around, set_all, MaskEdit, CHUNK, EXCLUDED, INCLUDED};
+    use super::{apply_brush, invert, set_all, MaskEdit, CHUNK, EXCLUDED, INCLUDED};
 
     /// A dab that throws its touched-index list away, for the tests that only
     /// care about the mask it leaves behind.
@@ -244,22 +213,6 @@ mod tests {
         assert!(mask.iter().all(|slot| *slot == EXCLUDED));
         invert(&mut mask);
         assert!(mask.iter().all(|slot| *slot == INCLUDED));
-    }
-
-    #[test]
-    fn mark_around_covers_every_supplied_point() {
-        let positions = line(10);
-        let mut mask = vec![INCLUDED; 10];
-        mark_around(
-            &mut mask,
-            &positions,
-            Rigid::IDENTITY,
-            &[DVec3::new(1.0, 0.0, 0.0), DVec3::new(8.0, 0.0, 0.0)],
-            1.0,
-        );
-        assert_eq!(mask[1], EXCLUDED);
-        assert_eq!(mask[8], EXCLUDED);
-        assert_eq!(mask[4], INCLUDED);
     }
 
     #[test]

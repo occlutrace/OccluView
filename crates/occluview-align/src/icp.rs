@@ -164,7 +164,7 @@ pub fn refine(
         if samples.is_empty() {
             continue;
         }
-        let level = run_level(&Level {
+        let outcome = run_level(&Level {
             moving,
             normals: &normals,
             fixed,
@@ -172,7 +172,24 @@ pub fn refine(
             settings,
             cancel,
             start: pose,
-        })?;
+        });
+        let level = match outcome {
+            Ok(level) => level,
+            // A later level that cannot run does not undo an earlier one that
+            // did. This used to propagate, so a clean coarse pass followed by a
+            // dense pass that ran out of correspondences — or a cancellation
+            // arriving between the two — threw the good pose away and reported
+            // the whole refine as failed. `CancelFlag`'s own contract is to
+            // return what there is so far.
+            Err(rejection) if summary.is_some() => {
+                debug_assert!(
+                    matches!(rejection, FitRejection::TooFewPairs { .. }),
+                    "an unexpected rejection is being swallowed: {rejection:?}"
+                );
+                break;
+            }
+            Err(rejection) => return Err(rejection),
+        };
         iterations += level.iterations;
         converged = level.converged;
         pose = level.pose;

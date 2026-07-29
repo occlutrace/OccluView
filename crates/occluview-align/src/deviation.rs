@@ -98,13 +98,54 @@ pub struct DeviationMap {
     pub validity: Vec<Validity>,
 }
 
+/// Why the vertices that carry no measurement do not.
+///
+/// They all paint the same grey, and that grey has three different meanings
+/// behind it. Counted apart because the operator's next move differs for each:
+/// the first is what they asked for, the second is anatomy — a bridge on one
+/// arch with nothing opposite it has nothing to measure against, and no reach
+/// will change that — and the third is a defect in the file itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Unmeasured {
+    /// Painted out of the comparison by the operator.
+    pub excluded: u32,
+    /// No fixed surface within the influence radius.
+    pub out_of_reach: u32,
+    /// The vertex, or the surface under it, is not usable data.
+    pub unusable: u32,
+}
+
+impl Unmeasured {
+    /// Every vertex that carries no measurement.
+    #[must_use]
+    pub const fn total(self) -> u32 {
+        self.excluded
+            .saturating_add(self.out_of_reach)
+            .saturating_add(self.unusable)
+    }
+
+    /// The two added together, cause by cause.
+    #[must_use]
+    pub const fn combined(self, other: Self) -> Self {
+        Self {
+            excluded: self.excluded.saturating_add(other.excluded),
+            out_of_reach: self.out_of_reach.saturating_add(other.out_of_reach),
+            unusable: self.unusable.saturating_add(other.unusable),
+        }
+    }
+}
+
 /// Summary over the measured vertices only.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DeviationStats {
     /// Vertices that carry a measurement.
     pub measured: u32,
-    /// Vertices that do not.
-    pub skipped: u32,
+    /// Vertices that do not, and why.
+    ///
+    /// The plain total used to live here on its own, and it could not tell "there
+    /// is no tooth opposite this one" from "this file has broken vertices" —
+    /// which is the whole difference between a normal result and a bad scan.
+    pub unmeasured: Unmeasured,
     /// The numbers themselves — **absent** when there was not enough measured
     /// surface to characterise, which is a different answer from zero.
     ///
@@ -339,12 +380,24 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
         .map(|(value, _)| f64::from(*value))
         .collect();
     let measured = u32::try_from(values.len()).unwrap_or(u32::MAX);
-    let skipped =
-        u32::try_from(map.validity.len().saturating_sub(values.len())).unwrap_or(u32::MAX);
+    let unmeasured = map
+        .validity
+        .iter()
+        .fold(Unmeasured::default(), |mut count, state| {
+            match state {
+                Validity::Measured => {}
+                Validity::Excluded => count.excluded = count.excluded.saturating_add(1),
+                Validity::OutOfReach => count.out_of_reach = count.out_of_reach.saturating_add(1),
+                Validity::DegenerateNormal | Validity::NonFinite => {
+                    count.unusable = count.unusable.saturating_add(1);
+                }
+            }
+            count
+        });
     if measured < MIN_MEASURED {
         return DeviationStats {
             measured,
-            skipped,
+            unmeasured,
             summary: None,
         };
     }
@@ -370,7 +423,7 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
 
     DeviationStats {
         measured,
-        skipped,
+        unmeasured,
         summary: Some(DeviationSummary {
             #[allow(clippy::cast_precision_loss)]
             within_tolerance: inside as f64 / count,

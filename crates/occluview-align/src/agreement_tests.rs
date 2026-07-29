@@ -114,10 +114,13 @@ fn a_moving_scan_missing_a_region_no_longer_reports_a_perfect_fit() {
         "the reverse direction must see the missing region, got {}",
         fixed_to_moving.mean_abs
     );
+    let pooled = agreement
+        .summary
+        .expect("both directions measured plenty here");
     assert!(
-        agreement.hausdorff > 1.0,
+        pooled.hausdorff > 1.0,
         "a 12 mm hole must show as a large symmetric Hausdorff, got {}",
-        agreement.hausdorff
+        pooled.hausdorff
     );
     let asymmetry = agreement
         .asymmetry_mm()
@@ -127,9 +130,9 @@ fn a_moving_scan_missing_a_region_no_longer_reports_a_perfect_fit() {
         "the two directions must not agree here, got {asymmetry}"
     );
     assert!(
-        agreement.within_tolerance < 0.999,
+        pooled.within_tolerance < 0.999,
         "a hole cannot be 100% within tolerance, got {}",
-        agreement.within_tolerance
+        pooled.within_tolerance
     );
 }
 
@@ -139,13 +142,14 @@ fn two_copies_of_one_surface_agree_in_both_directions() {
     let mesh = soup(&positions, &indices);
     let agreement = compare(mesh, mesh, Rigid::IDENTITY);
 
-    assert!(agreement.mean_abs < 1e-5, "{}", agreement.mean_abs);
-    assert!(agreement.hausdorff < 1e-4, "{}", agreement.hausdorff);
+    let pooled = agreement.summary.expect("dome(24) measures plenty");
+    assert!(pooled.mean_abs < 1e-5, "{}", pooled.mean_abs);
+    assert!(pooled.hausdorff < 1e-4, "{}", pooled.hausdorff);
     let asymmetry = agreement
         .asymmetry_mm()
         .expect("dome(24) clears MIN_MEASURED on both sides");
     assert!(asymmetry < 1e-5, "{asymmetry}");
-    assert!((agreement.within_tolerance - 1.0).abs() < 1e-9);
+    assert!((pooled.within_tolerance - 1.0).abs() < 1e-9);
 }
 
 #[test]
@@ -192,11 +196,14 @@ fn symmetry_does_not_rescue_a_tangential_offset() {
 
     let agreement = compare(mesh, mesh, pose);
 
+    let pooled = agreement
+        .summary
+        .expect("the cylinder fixture measures plenty");
     assert!(
-        agreement.mean_abs < 0.05,
+        pooled.mean_abs < 0.05,
         "a symmetric measure cannot see an axial slide either, and this test \
          pins that so nobody claims it does: {}",
-        agreement.mean_abs
+        pooled.mean_abs
     );
     let asymmetry = agreement
         .asymmetry_mm()
@@ -207,8 +214,15 @@ fn symmetry_does_not_rescue_a_tangential_offset() {
     );
 }
 
+/// A pair with nothing in common has **no** summary.
+///
+/// It used to have one, made of zeroes, and this test asserted them. Nought
+/// millimetres mean is what a flawless fit reads as; it was reported together
+/// with nought per cent inside tolerance, so the two numbers contradicted each
+/// other and both were wrong. The one-sided statistics had already been fixed
+/// for exactly this and the pooled ones were missed.
 #[test]
-fn an_unmeasurable_pair_summarizes_to_zero_rather_than_to_nonsense() {
+fn an_unmeasurable_pair_has_no_summary_at_all() {
     let (positions, indices) = dome(8);
     let far: Vec<f32> = positions
         .chunks_exact(3)
@@ -221,9 +235,17 @@ fn an_unmeasurable_pair_summarizes_to_zero_rather_than_to_nonsense() {
     );
 
     assert_eq!(agreement.measured, 0);
-    assert!(agreement.skipped > 0);
-    assert_eq!(agreement.mean_abs, 0.0);
-    assert_eq!(agreement.hausdorff, 0.0);
+    assert!(agreement.unmeasured.total() > 0);
+    assert!(
+        agreement.unmeasured.out_of_reach > 0,
+        "500 mm apart is out of reach, not broken data: {:?}",
+        agreement.unmeasured
+    );
+    assert!(
+        agreement.summary.is_none(),
+        "a measurement that never happened must not carry numbers: {:?}",
+        agreement.summary
+    );
 }
 
 #[test]
