@@ -224,6 +224,13 @@ impl OccluViewApp {
     /// Drop every overlay and restore the meshes' own colours.
     pub(super) fn clear_deviation_overlay(&mut self) {
         self.align_overlay = AlignOverlay::Nothing;
+        // Unconditionally, ahead of the early return below. Fading the other scan
+        // and colouring this one are two separate mutations, and a teardown that
+        // skipped the fade whenever the colour list happened to be empty would
+        // leave one arch sitting at sixteen per cent opacity with no tool
+        // claiming it — which reads as a scan that has been switched off. Cheap:
+        // it returns immediately when nothing is faded.
+        self.unghost_layers();
         if self.align_overlay_colors.is_empty() {
             return;
         }
@@ -248,7 +255,6 @@ impl OccluViewApp {
         self.restore_layer_colors(&overlaid);
         self.align_stats = None;
         self.needs_render = true;
-        self.unghost_layers();
     }
 
     /// Whether anything is currently overlaid.

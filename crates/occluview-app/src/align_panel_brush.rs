@@ -19,10 +19,15 @@ use crate::ui_theme;
 /// worth of content and floats over the mesh being painted.
 const WINDOW_WIDTH: f32 = 236.0;
 
-/// Ink for the line that says the whole mesh has been marked out. The same
-/// colour the marked surface itself is painted, so the sentence and the mesh
-/// agree at a glance.
-const MARKED_OUT_INK: egui::Color32 = egui::Color32::from_rgb(58, 108, 196);
+/// Ink for the line that says the whole mesh has been marked out.
+///
+/// Derived from the colour the marked surface itself is painted, not copied from
+/// it: the two were separate literals in separate files, each with a comment
+/// claiming they agreed.
+const MARKED_OUT_INK: egui::Color32 = {
+    let ink = crate::align_markings::MARKED_OUT_COLOR;
+    egui::Color32::from_rgb(ink[0], ink[1], ink[2])
+};
 
 /// What the Brush tool window asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
