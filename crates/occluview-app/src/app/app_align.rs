@@ -180,6 +180,24 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
+    /// A layer's name, the way the operator named the file.
+    ///
+    /// Every message about a scan uses this. An operator who is told "moved by
+    /// hand" cannot tell which of two arches moved, and in this tool whichever
+    /// one they grabbed is the one that moves — so the name is the whole message.
+    pub(super) fn layer_display_name(&self, layer: SceneMeshId) -> Option<String> {
+        let scene = self.scene.as_ref()?;
+        let index = scene
+            .meshes()
+            .iter()
+            .position(|entry| entry.id() == layer)?;
+        Some(crate::layers_overlay::layer_label(
+            &self.current_paths,
+            &scene.meshes()[index],
+            index,
+        ))
+    }
+
     /// Whether the tool owns the primary click this frame.
     pub(super) fn align_active(&self) -> bool {
         self.align.is_armed()

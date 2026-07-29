@@ -142,21 +142,9 @@ impl OccluViewApp {
 
     /// Which scan the fit will move, named the way the operator named the files.
     fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
-        let scene = self.scene.as_ref()?;
-        let name_of = |layer| {
-            let index = scene
-                .meshes()
-                .iter()
-                .position(|entry| entry.id() == layer)?;
-            Some(crate::layers_overlay::layer_label(
-                &self.current_paths,
-                &scene.meshes()[index],
-                index,
-            ))
-        };
         Some(crate::align_panel_roles::AlignRoles {
-            moving: name_of(self.align.moving_layer()?)?,
-            fixed: name_of(self.align.fixed_layer()?)?,
+            moving: self.layer_display_name(self.align.moving_layer()?)?,
+            fixed: self.layer_display_name(self.align.fixed_layer()?)?,
             implied: self.align.roles_are_implied(),
         })
     }

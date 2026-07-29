@@ -267,10 +267,11 @@ fn manually(
     });
     hint(ui, constraint.label());
     ui.add_space(2.0);
-    hint(
-        ui,
-        "Drag the mesh with the left mouse button · Ctrl+drag turns it",
-    );
+    // States the rule, because the rule is not what the other tab does. There
+    // the roles are fixed and named; here the scan under the cursor is the one
+    // that moves, the fixed scan included — and an operator who grabbed the arch
+    // they did not mean to had nothing on screen to tell them so.
+    hint(ui, "Drags whichever scan you grab · Ctrl+drag turns it");
     ui.add_space(4.0);
 
     let mut action = None;
@@ -493,8 +494,13 @@ fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
         if tall_button(ui, width, "Cancel", false)
+            // Spelt out when there is something to lose. An operator who reads
+            // Cancel as "close the window" loses every move they made in the
+            // session, and the only clue afterwards was a status line they had
+            // already scrolled past. Ctrl+Z does bring it back — the restore is
+            // one history step — so that is said here, where the decision is.
             .on_hover_text(if moved {
-                "Put every mesh back where it was and close"
+                "Put every scan back where it was and close — Ctrl+Z brings the alignment back"
             } else {
                 "Close without changing anything"
             })
@@ -503,7 +509,7 @@ fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
             action = Some(AlignPanelAction::Cancel);
         }
         if tall_button(ui, width, "Done", true)
-            .on_hover_text("Keep the alignment and close")
+            .on_hover_text("Keep the alignment and close — export the scan to write it to disk")
             .clicked()
         {
             action = Some(AlignPanelAction::Done);

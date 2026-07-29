@@ -27,14 +27,6 @@ use super::OccluViewApp;
 use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MaskCommand};
 use crate::viewer::pick_scene_hit;
 
-/// Tint for surface that still takes part in the match — a neutral stone, so
-/// the marked surface is the only thing that draws the eye.
-const REGION_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
-/// Tint for surface marked out of the match. Blue, because that is the colour
-/// exocad paints an excluded region, and an operator who works in that dialog
-/// should not have to learn a second convention here.
-pub(super) const REGION_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
-
 impl OccluViewApp {
     /// Paint or clear under the pointer. Returns whether the brush owns this
     /// frame's pointer.
@@ -429,11 +421,11 @@ fn region_color(
     vertex: usize,
 ) -> [u8; 4] {
     if mask.and_then(|mask| mask.get(vertex).copied()) == Some(occluview_align::EXCLUDED) {
-        return REGION_OUT_COLOR;
+        return crate::align_markings::MARKED_OUT_COLOR;
     }
     match vertices.get(vertex) {
         Some(vertex) if own_colors => vertex.color,
-        _ => REGION_IN_COLOR,
+        _ => crate::align_markings::MARKED_IN_COLOR,
     }
 }
 

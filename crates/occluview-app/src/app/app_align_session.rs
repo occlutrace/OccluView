@@ -26,7 +26,7 @@ impl OccluViewApp {
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.status_message = Some(if restored {
-            "Alignment cancelled — every scan is back where it was".into()
+            "Alignment cancelled — every scan is back where it was (Ctrl+Z brings it back)".into()
         } else {
             "Alignment closed".to_string()
         });

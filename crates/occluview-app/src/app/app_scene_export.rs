@@ -162,10 +162,18 @@ pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
     if entry.mesh.is_point_cloud() {
         return Mesh::point_cloud(name, vertices);
     }
-    // The vertex count and indices are unchanged, so this cannot fail for a
-    // mesh that already validated; fall back rather than lose the export.
-    let Ok(mut posed) = Mesh::new(name, vertices, entry.mesh.indices().to_vec()) else {
-        return entry.mesh.clone();
+    // The vertex count and the indices are unchanged, so this cannot fail for a
+    // mesh that already validated. If it ever does, the fallback must NOT be the
+    // source mesh: that writes the scan in its original position and calls it a
+    // success, which is the one outcome an export must never produce — the
+    // operator's alignment thrown away silently. Keep the posed vertices and let
+    // the point-cloud form carry them.
+    let Ok(mut posed) = Mesh::new(
+        name.clone(),
+        vertices.clone(),
+        entry.mesh.indices().to_vec(),
+    ) else {
+        return Mesh::point_cloud(name, vertices);
     };
     if let Some(texture) = entry.mesh.texture() {
         posed.set_texture(texture.clone());
