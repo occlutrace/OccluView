@@ -63,6 +63,10 @@ pub(crate) enum AlignPanelAction {
     Refine,
     /// Remove the last arrow — exocad "Back".
     Back,
+    /// Turn the pair around: the scan that was staying put is the one that moves.
+    SwapRoles,
+    /// Drop every arrow and both scan names, so a different pair can be picked.
+    Clear,
     /// Re-measure with the current settings.
     Measure,
     /// Stop showing the map.
@@ -98,6 +102,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) status: Option<&'a str>,
     /// The measurement summary, when there is one.
     pub(crate) stats: Option<DeviationStats>,
+    /// Which scan moves onto which, once both are named.
+    pub(crate) roles: Option<crate::align_panel_roles::AlignRoles>,
     /// Whether a job is in flight.
     pub(crate) busy: bool,
     /// Whether anything has actually moved this session.
@@ -209,8 +215,13 @@ fn automatically(
     view: &mut AlignPanelView<'_>,
     enabled: bool,
 ) -> Option<AlignPanelAction> {
+    let mut action = if crate::align_panel_roles::show(ui, view.roles.as_ref(), enabled) {
+        Some(AlignPanelAction::SwapRoles)
+    } else {
+        None
+    };
     prompt(ui, view.tool);
-    let mut action = back(ui, view.tool, enabled);
+    action = action.or(back(ui, view.tool, enabled));
     action = action.or(fits(ui, view.tool, enabled));
     ui.add_space(2.0);
     matching(ui, view.settings, enabled);
@@ -314,20 +325,41 @@ fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
     ui.add_space(2.0);
 }
 
-/// exocad's "Back": undo one arrow.
+/// exocad's "Back", and the way out to a different pair of scans.
+///
+/// **Clear** is not decoration. Once two scans are paired, a click on a third is
+/// refused — and the refusal used to tell the operator to "press Clear", which
+/// was not a control that existed. Aligning a third file in the same session
+/// meant closing the tool and opening it again.
 fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
     let placed = tool.pending().is_some() || !tool.pairs().is_empty();
-    let clicked = chip(
-        ui,
-        ui.available_width(),
-        Some(EditorIcon::Undo),
-        "Back",
-        enabled && placed,
-        false,
-    )
-    .on_hover_text("Undo an arrow — a right-click in the view does the same")
-    .clicked();
-    clicked.then_some(AlignPanelAction::Back)
+    let paired = tool.moving_layer().is_some();
+    let mut action = None;
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        if chip(
+            ui,
+            width,
+            Some(EditorIcon::Undo),
+            "Back",
+            enabled && placed,
+            false,
+        )
+        .on_hover_text("Undo an arrow — a right-click in the view does the same")
+        .clicked()
+        {
+            action = Some(AlignPanelAction::Back);
+        }
+        if chip(ui, width, None, "Clear", enabled && paired, false)
+            .on_hover_text(
+                "Drop every arrow and pick two scans again — the scans stay where they are",
+            )
+            .clicked()
+        {
+            action = Some(AlignPanelAction::Clear);
+        }
+    });
+    action
 }
 
 /// The two fits. Best fit matching is the primary action and is sized like one:

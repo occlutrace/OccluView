@@ -1,11 +1,16 @@
 //! Align Scans: the click model, with no object picker anywhere in it.
 //!
 //! Lab software makes you choose which mesh moves onto which before you may
-//! place a point. This tool has no such step and no roles in its UI: the first
-//! clicked point names the moving scan, the next click on a different layer
-//! names the fixed one, and the pair falls out of the points themselves. With
-//! exactly two visible layers the pair is implied and the first click already
-//! belongs to one.
+//! place a point. This tool has no such step: **the first clicked point names
+//! the moving scan**, the next click on a different layer names the fixed one,
+//! and the pair falls out of the points themselves.
+//!
+//! With exactly two visible layers the pair is guessed at arm time so a plain
+//! "compare these two files" needs no clicks at all. That guess is *provisional*
+//! — it can only go by scene order, which is the order the files were opened in.
+//! The first placed point overrides it. It used to stick, and then an operator
+//! who clicked the scan they wanted moved got the alignment run the other way
+//! round, decided by which file they had happened to open first.
 //!
 //! Points are stored in their layer's **local** coordinates. A marker's world
 //! position is `pose x local`, recomputed every frame, so markers stay welded
@@ -63,6 +68,10 @@ pub(crate) struct AlignTool {
     fixed: Option<SceneMeshId>,
     pairs: Vec<AlignPair>,
     pending: Option<AlignPoint>,
+    /// Whether the roles are still the arm-time guess rather than the
+    /// operator's. A guess is overridden by the first placed point; a choice
+    /// never is.
+    implied: bool,
 }
 
 impl AlignTool {
@@ -118,12 +127,42 @@ impl AlignTool {
 
     /// Adopt the pair implied by a scene that holds exactly two eligible
     /// layers. Does nothing once any layer has been named.
+    ///
+    /// Scene order is the only thing there is to go on here, and scene order is
+    /// the order the files were opened in — which the operator has no reason to
+    /// remember and no way to see. So this is recorded as a guess, and
+    /// [`Self::click`] overrides it.
     pub(crate) fn imply_pair(&mut self, eligible: &[SceneMeshId]) {
         if !self.armed || self.moving.is_some() || eligible.len() != 2 {
             return;
         }
         self.moving = Some(eligible[0]);
         self.fixed = Some(eligible[1]);
+        self.implied = true;
+    }
+
+    /// Whether the roles are still the arm-time guess. The panel says so, and
+    /// offers the swap, only while this holds.
+    pub(crate) fn roles_are_implied(&self) -> bool {
+        self.implied
+    }
+
+    /// Trade the two roles, keeping every point where the operator put it.
+    ///
+    /// Each pair's halves swap with them, because a pair stores "the moving
+    /// point and its partner" — leaving the halves alone would fit the scans
+    /// with every correspondence reversed. Marks the roles as chosen, so no
+    /// later click undoes the swap.
+    pub(crate) fn swap_roles(&mut self) -> bool {
+        if self.moving.is_none() || self.fixed.is_none() {
+            return false;
+        }
+        std::mem::swap(&mut self.moving, &mut self.fixed);
+        for pair in &mut self.pairs {
+            std::mem::swap(&mut pair.moving, &mut pair.fixed);
+        }
+        self.implied = false;
+        true
     }
 
     /// Place a clicked surface point.
@@ -132,6 +171,15 @@ impl AlignTool {
             return ClickOutcome::Ignored;
         }
         let layer = point.layer;
+
+        // The operator has now said which scan they mean, so the arm-time guess
+        // gives way: whichever layer they touch first is the one that moves.
+        if self.implied {
+            self.implied = false;
+            if self.fixed == Some(layer) {
+                self.swap_roles();
+            }
+        }
 
         // Nothing named yet: this click names the moving scan.
         let Some(moving) = self.moving else {
@@ -201,6 +249,7 @@ impl AlignTool {
         self.fixed = None;
         self.pairs.clear();
         self.pending = None;
+        self.implied = false;
     }
 
     /// Forget a layer that has left the scene. A pair naming a removed layer
