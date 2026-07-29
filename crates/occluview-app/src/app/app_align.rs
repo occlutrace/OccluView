@@ -1,7 +1,8 @@
 //! Align Scans: wiring the click model, the worker, and the scene together.
 //!
 //! Every heavy call goes to [`crate::align_worker`]. This module only routes
-//! clicks, hands the worker the geometry it needs, and applies what comes back.
+//! clicks and hands the worker the geometry it needs; what comes back is applied
+//! in [`super::app_align_results`].
 
 use eframe::egui;
 use glam::{DVec3, Vec3};
@@ -12,11 +13,7 @@ use super::OccluViewApp;
 use crate::align_geometry::transform_key;
 use crate::align_markings::AlignSide;
 use crate::align_tool::{AlignPoint, ClickOutcome};
-use crate::align_worker::{
-    AlignCompletion, AlignJob, AlignJobKind, AlignOutcome, AlignWorker, MeasureKey, SurfaceKey,
-    WorldPair,
-};
-use crate::edit_mode::EditModeCommand;
+use crate::align_worker::{AlignJob, AlignJobKind, AlignWorker, MeasureKey, SurfaceKey, WorldPair};
 use crate::viewer::pick_scene_hit;
 
 impl OccluViewApp {
@@ -115,6 +112,11 @@ impl OccluViewApp {
                 // has forgotten what they were about.
                 self.clear_deviation_overlay();
                 self.align_stats = None;
+                // And whatever the worker is still computing about that pair.
+                // Without this the cleanup above was undone a beat later by the
+                // abandoned job's own result, which repopulated the status and
+                // the statistics for a scan that had left the scene.
+                self.abandon_align_jobs();
             }
         }
     }
@@ -396,179 +398,6 @@ impl OccluViewApp {
             .into(),
         );
     }
-
-    /// Drain finished jobs and apply them.
-    pub(super) fn drain_align_worker(&mut self, ctx: &egui::Context) {
-        let Some(worker) = self.align_worker.as_ref() else {
-            return;
-        };
-        let completions: Vec<AlignCompletion> = worker.drain();
-        if completions.is_empty() {
-            return;
-        }
-        for completion in completions {
-            self.apply_align_outcome(completion, ctx);
-        }
-        ctx.request_repaint();
-    }
-
-    /// Apply one finished job.
-    fn apply_align_outcome(&mut self, completion: AlignCompletion, ctx: &egui::Context) {
-        match completion.outcome {
-            AlignOutcome::Aligned {
-                pose,
-                rms,
-                rejected,
-            } => {
-                self.commit_align_pose(pose);
-                self.align_rejected = rejected;
-                let dropped = if self.align_rejected.is_empty() {
-                    String::new()
-                } else {
-                    let names: Vec<String> = self
-                        .align_rejected
-                        .iter()
-                        .map(|index| (index + 1).to_string())
-                        .collect();
-                    format!(", pair {} ignored as an outlier", names.join(" and "))
-                };
-                // Deliberately no measurement here. The point fit only gets
-                // the scan close; measuring it would put a map on screen that
-                // the very next step invalidates.
-                // The scan just moved, so a map drawn before this describes a
-                // pose that no longer exists — and the viewport would happily
-                // keep re-pushing it.
-                self.invalidate_deviation_map("Aligned on points");
-                self.rearm_auto_scale();
-                self.align_status = Some(format!(
-                    "Aligned — {rms:.3} mm on the points{dropped}. Refine to seat it."
-                ));
-            }
-            AlignOutcome::Refined { pose, report } => {
-                self.commit_align_pose(pose);
-                self.rearm_auto_scale();
-                let weak = weak_axis_note(report.weak_trans_axes, report.weak_rot_axes);
-                self.align_status = Some(format!(
-                    "Refined — {:.3} mm over {:.0}% of the surface{weak}",
-                    report.rms,
-                    report.coverage * 100.0
-                ));
-                self.measure_if_shown();
-            }
-            AlignOutcome::Measured {
-                colors,
-                stats,
-                seen,
-                scale_mm,
-            } => {
-                // The brush owns the per-vertex colour channel while it is
-                // open, and this measurement was submitted before it opened.
-                // Applying it would repaint the moving scan with map colours
-                // while the fixed scan still showed the markings — one tool
-                // claiming the legend, two surfaces disagreeing, and the
-                // operator reading it as "it marks on one mesh and not the
-                // other".
-                if self.align_brush.is_armed() {
-                    return;
-                }
-                self.align_stats = Some(stats);
-                // Auto-scale chose the range the colours were painted at. The
-                // legend has to adopt it or it would describe a different one.
-                if self.align_settings.auto_scale {
-                    self.align_settings.scale_mm = scale_mm;
-                }
-                self.apply_deviation_colors(colors);
-                // No summary means too little surface reached the other scan to
-                // characterise. Saying "0% within 0.20 mm" there would be a
-                // reading about a measurement that did not happen.
-                self.align_status = Some(match stats.summary {
-                    Some(summary) => format!(
-                        "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
-                        summary.within_tolerance * 100.0,
-                        self.align_settings.tolerance_mm,
-                        stats.skipped,
-                        blind_note(seen.as_ref(), summary.rms)
-                    ),
-                    None => format!(
-                        "Not enough surface to measure — only {} of {} vertices reached the other scan",
-                        stats.measured,
-                        stats.measured.saturating_add(stats.skipped)
-                    ),
-                });
-            }
-            AlignOutcome::Failed { message } => {
-                self.align_status = Some(message);
-            }
-        }
-        ctx.request_repaint();
-    }
-
-    /// Measure again after a pose change, but only if the map is on screen.
-    pub(super) fn measure_if_shown(&mut self) {
-        // Not while the brush is open. The markings and the map are both
-        // per-vertex colours on the same layer, so a measurement landing here
-        // would take the operator's own paint off the surface mid-stroke.
-        if self.align_brush.is_armed() {
-            return;
-        }
-        if self.align_settings.show_deviation && self.align.can_measure() {
-            self.run_align_measure();
-        }
-    }
-
-    /// Give the display range back to the tool after a pose change.
-    ///
-    /// A range the operator picked belongs to the alignment they picked it at.
-    /// Carried across a fit it becomes a lie in the operator's own hand: the
-    /// screenshot behind this was a 0.20 mm range over a pair sitting 1.4 mm
-    /// apart, where every vertex is pinned to an end stop and the arch reads as
-    /// a red and blue mosaic with no structure in it at all.
-    fn rearm_auto_scale(&mut self) {
-        self.align_settings.auto_scale = true;
-    }
-
-    /// Drop a map that the scan just moved out from under.
-    ///
-    /// Showing a stale map is worse than showing none: the colours describe a
-    /// pose that no longer exists. The operator re-measures when they are ready.
-    pub(super) fn invalidate_deviation_map(&mut self, reason: &str) {
-        // Only a MAP goes stale. The region tint is the operator's own paint,
-        // and dropping it here would erase the brush stroke that called this.
-        if self.align_overlay != super::app_align_display::AlignOverlay::Map {
-            return;
-        }
-        self.clear_deviation_overlay();
-        self.align_status = Some(format!("{reason} — run Best fit matching to measure again"));
-    }
-
-    /// Write a new pose onto the moving layer, as one undo step.
-    fn commit_align_pose(&mut self, pose: Rigid) {
-        let Some(scene) = self.scene.clone() else {
-            return;
-        };
-        let Some(moving_id) = self.align.moving_layer() else {
-            return;
-        };
-        let mut next = scene.as_ref().clone();
-        if !next.meshes().iter().any(|entry| entry.id() == moving_id) {
-            return;
-        }
-        let Some(token) =
-            self.edit_mode
-                .begin_scene_edit(&next, moving_id, EditModeCommand::MoveLayer)
-        else {
-            return;
-        };
-        if let Some(entry) = next
-            .meshes_mut()
-            .iter_mut()
-            .find(|entry| entry.id() == moving_id)
-        {
-            entry.transform = pose.to_affine();
-        }
-        self.edit_mode.finish_scene_edit_success(token, &next);
-        self.set_scene(next, false);
-    }
 }
 
 /// Find a layer by identity.
@@ -603,48 +432,6 @@ fn triangle_normal(entry: &SceneMesh, triangle: usize) -> Vec3 {
 /// Promote a stored position to double precision.
 fn double(value: Vec3) -> DVec3 {
     DVec3::new(f64::from(value.x), f64::from(value.y), f64::from(value.z))
-}
-
-/// What the deviation map could not have seen, in a sentence.
-///
-/// The map measures the distance from each moving vertex to the nearest point
-/// on the fixed surface. Slide the two surfaces past each other along a
-/// direction the geometry is smooth in and that nearest point slides with them,
-/// so a real displacement reads as a fraction of itself — on a full arch, about
-/// half. This turns the reported RMS back into the displacement that could be
-/// behind it, which is the number a clinician thinks they are already reading.
-fn blind_note(seen: Option<&occluview_align::Observability>, rms_mm: f64) -> String {
-    /// Below this the correction is not worth a sentence.
-    const WORTH_SAYING: f64 = 1.15;
-
-    let Some(seen) = seen else {
-        return String::new();
-    };
-    if seen.has_blind_direction() {
-        return " — these surfaces can slide freely, so a displacement of any size \
-                could be hiding behind this"
-            .into();
-    }
-    let hidden = seen.hidden_displacement_mm(rms_mm);
-    if !hidden.is_finite() || hidden < rms_mm * WORTH_SAYING {
-        return String::new();
-    }
-    format!(" — a rigid mismatch of up to {hidden:.2} mm could read as this")
-}
-
-/// Name the directions a refine could not determine, so the panel never shows
-/// a confident number for a fit that is free to slide.
-fn weak_axis_note(translation: [bool; 3], rotation: [bool; 3]) -> String {
-    let sliding = crate::align_worker::axis_names(translation);
-    let spinning = crate::align_worker::axis_names(rotation);
-    match (sliding.is_empty(), spinning.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => format!(" — the fit can still slide along {sliding}"),
-        (true, false) => format!(" — the fit can still turn about {spinning}"),
-        (false, false) => {
-            format!(" — the fit can still slide along {sliding} and turn about {spinning}")
-        }
-    }
 }
 
 #[cfg(test)]
@@ -700,15 +487,6 @@ mod tests {
         ] {
             assert!(arm.contains(other), "arming align must stand down {other}");
         }
-    }
-
-    /// A pose change has to reach the same history Ctrl+Z reads, or an
-    /// alignment would be unundoable.
-    #[test]
-    fn a_pose_change_is_recorded_in_the_scene_history() {
-        let source = production();
-        assert!(source.contains("begin_scene_edit(&next, moving_id, EditModeCommand::MoveLayer)"));
-        assert!(source.contains("finish_scene_edit_success(token, &next)"));
     }
 
     /// Measure is re-submitted on every settings change, so building the

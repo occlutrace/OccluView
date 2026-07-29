@@ -83,7 +83,7 @@ impl OccluViewApp {
             // duration of a hand-drag the colours stayed welded to the surface
             // at distances that were no longer true, which reads as a heatmap
             // that agrees with wherever the operator drags it.
-            self.invalidate_deviation_map("Moving by hand");
+            self.forget_align_fit("Moving by hand");
         }
 
         let Some(drag) = self.align_drag else {
@@ -112,7 +112,8 @@ impl OccluViewApp {
                 * Affine3A::from_quat(turn)
                 * Affine3A::from_translation(-drag.centroid)
         } else {
-            let world_per_pixel = camera.orthographic_height / response.rect.height().max(1.0);
+            let world_per_pixel =
+                crate::align_drag::mm_per_pixel(camera.orthographic_height, response.rect.height());
             let moved =
                 crate::align_drag::screen_delta_to_world(motion, right, up, world_per_pixel);
             Affine3A::from_translation(crate::align_drag::constrain_translation(
@@ -199,7 +200,7 @@ impl OccluViewApp {
         // and the alignment is gone.
         self.mark_mesh_edits_unsaved(drag.layer);
         self.align_status = Some("Moved by hand (Ctrl+Z undoes)".into());
-        self.invalidate_deviation_map("Moved by hand");
+        self.forget_align_fit("Moved by hand");
         true
     }
 }

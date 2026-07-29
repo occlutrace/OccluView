@@ -5,8 +5,7 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::items_after_statements)]
 
 use super::{
-    color_map, AlignSettings, MeasureKey, SurfaceKey, CLINICAL_CEILING_MM, CLINICAL_MAX_MM,
-    CLINICAL_MIN_MM,
+    color_map, AlignSettings, MeasureKey, SurfaceKey, CLINICAL_CEILING_MM, CLINICAL_RANGES,
 };
 use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
@@ -109,9 +108,9 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
     assert_ne!(base, facing, "facing changes the sign of every distance");
 }
 
-/// The window opens on the clinical range, and it opens there every time.
+/// The window opens on the working range, and it opens there every time.
 ///
-/// Dentistry works to a fifth of a millimetre. A map whose ends are five
+/// Dentistry works to a tenth of a millimetre. A map whose ends are five
 /// millimetres apart cannot show a fit that is either good or bad in that
 /// regime, and a range that FOLLOWS the measurement walks straight out of it
 /// the moment two meshes are roughly placed — which is how an operator ended up
@@ -122,27 +121,54 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
 /// of "these agree", and what is left burning is what genuinely differs. That
 /// was not true before the band existed, and this test used to pin the opposite.
 #[test]
-fn the_window_opens_on_the_clinical_range() {
+fn the_window_opens_on_the_working_range() {
     let settings = AlignSettings::default();
+    let (max_mm, min_mm) = CLINICAL_RANGES[0];
     assert!(
-        (settings.scale_mm - CLINICAL_MAX_MM).abs() < f64::EPSILON,
-        "the display maximum must open at the clinical one, got {}",
+        (settings.scale_mm - max_mm).abs() < f64::EPSILON,
+        "the display maximum must open at the tightest standard range, got {}",
         settings.scale_mm
     );
     assert!(
-        (settings.tolerance_mm - CLINICAL_MIN_MM).abs() < f64::EPSILON,
-        "the nominal band must open at the clinical one, got {}",
+        (settings.tolerance_mm - min_mm).abs() < f64::EPSILON,
+        "the nominal band must open at the one that goes with it, got {}",
         settings.tolerance_mm
     );
     assert!(
         !settings.auto_scale,
-        "a range that follows the measurement leaves the clinical one behind"
+        "a range that follows the measurement leaves the working one behind"
     );
     assert_eq!(settings.ramp_mode, RampMode::Magnitude);
     assert!(
         settings.scale_mm <= CLINICAL_CEILING_MM,
         "the range must stay inside what a clinical instrument can mean"
     );
+}
+
+/// The standard ranges are ordered tightest first and stay inside the ceiling.
+///
+/// The chip row and the range the tool opens on read the same table, so the
+/// order is what decides the default. It used to be two separate literals and
+/// they disagreed: the row highlighted one range while the map was painted at
+/// another.
+#[test]
+fn the_standard_ranges_run_tightest_first_and_carry_a_band_each() {
+    let mut previous = 0.0;
+    for (max_mm, min_mm) in CLINICAL_RANGES {
+        assert!(
+            max_mm > previous,
+            "the ranges must widen, got {max_mm} after {previous}"
+        );
+        assert!(
+            min_mm > 0.0 && min_mm < max_mm,
+            "the nominal band must sit inside its own range, got {min_mm} in {max_mm}"
+        );
+        assert!(
+            max_mm <= CLINICAL_CEILING_MM,
+            "a range past the ceiling is not a clinical instrument, got {max_mm}"
+        );
+        previous = max_mm;
+    }
 }
 
 /// A 10 x 10 sheet on z = 0 with its outward normal along +Z: the surface a
@@ -225,7 +251,11 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     );
 
     let stats = deviation_stats(&map, 0.2);
-    assert_eq!(stats.skipped, 0, "every vertex had surface within reach");
+    assert_eq!(
+        stats.unmeasured.total(),
+        0,
+        "every vertex had surface within reach"
+    );
     let summary = stats
         .summary
         .expect("the 21 x 21 tilted sheet clears MIN_MEASURED");
@@ -303,4 +333,131 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
             );
         }
     }
+}
+
+/// One real measurement job, on geometry small enough to finish immediately.
+fn measure_job(generation: u64) -> super::AlignJob {
+    use std::sync::Arc;
+
+    let (fixed_positions, fixed_indices) = fixed_sheet();
+    let (moving_positions, moving_indices) = tilted_sheet(0.30);
+    super::AlignJob {
+        generation,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: Arc::new(moving_positions),
+        moving_indices: Arc::new(moving_indices),
+        fixed_world_positions: Arc::new(fixed_positions),
+        fixed_indices: Arc::new(fixed_indices),
+        fixed_key: SurfaceKey {
+            geometry: 1,
+            pose: 2,
+            markings: 0,
+        },
+        measure_key: key(),
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings::default(),
+    }
+}
+
+/// Poll until a result arrives, or give up. Bounded so a wedged worker fails the
+/// test instead of hanging the suite. `is_busy` is no good here: it is still
+/// false in the moment between submitting and the thread picking the job up.
+fn harvest_one(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
+    for _ in 0..600 {
+        let batch = worker.drain();
+        if !batch.is_empty() {
+            return batch;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Vec::new()
+}
+
+/// Poll for a fixed stretch and return everything that turned up. Used where the
+/// expected answer is "nothing", which needs a wait rather than one look.
+fn harvest_quiet(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
+    let mut out = Vec::new();
+    for _ in 0..60 {
+        out.extend(worker.drain());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    out
+}
+
+/// The positive control. Without this the staleness test below could pass on a
+/// worker that simply never returns anything.
+#[test]
+fn a_job_of_the_current_generation_comes_back() {
+    let worker = super::AlignWorker::spawn();
+    let generation = worker.generation();
+    worker.submit(measure_job(generation));
+    let completions = harvest_one(&worker);
+    assert_eq!(
+        completions.len(),
+        1,
+        "one submitted measurement, one result expected"
+    );
+    assert!(matches!(
+        completions[0].outcome,
+        super::AlignOutcome::Measured { .. }
+    ));
+}
+
+/// A result the operator has overtaken never comes back.
+///
+/// This is the mechanism behind the whole class of "it undid what I just did"
+/// reports: a **refine** result carries a pose and commits it. One landing after
+/// a hand drag or a Ctrl+Z put the scan back where the operator had just taken it
+/// from, as a fresh history step, with nothing on screen to say why.
+#[test]
+fn a_result_from_an_abandoned_generation_is_dropped() {
+    let worker = super::AlignWorker::spawn();
+    let generation = worker.generation();
+    worker.submit(measure_job(generation));
+    // Exactly what a hand drag, a step through history, or a turned-around pair
+    // does: everything in flight stops being about this scan.
+    let next = worker.bump_generation();
+    assert!(next > generation, "the generation has to move");
+    assert!(
+        harvest_quiet(&worker).is_empty(),
+        "a measurement of a pose the operator has left must not be applied"
+    );
+}
+
+/// Abandoning also empties the queue, so a job that had not started yet does not
+/// start after the operator has moved on. And the worker still takes work
+/// afterwards — abandoning is not shutting down.
+#[test]
+fn abandoning_clears_work_that_had_not_started() {
+    let worker = super::AlignWorker::spawn();
+    let generation = worker.generation();
+    for _ in 0..4 {
+        worker.submit(measure_job(generation));
+    }
+    worker.bump_generation();
+    assert!(harvest_quiet(&worker).is_empty());
+
+    let fresh = worker.generation();
+    worker.submit(measure_job(fresh));
+    assert_eq!(harvest_one(&worker).len(), 1, "the worker still takes work");
+}
+
+/// Measurements queued back to back collapse. Dragging a slider must not queue a
+/// hundred measurements of an arch.
+#[test]
+fn a_second_job_of_the_same_kind_replaces_the_one_still_queued() {
+    let worker = super::AlignWorker::spawn();
+    let generation = worker.generation();
+    for _ in 0..5 {
+        worker.submit(measure_job(generation));
+    }
+    let completions = harvest_quiet(&worker);
+    assert!(
+        completions.len() <= 2,
+        "five submissions produced {} results — the queue is not collapsing",
+        completions.len()
+    );
 }
