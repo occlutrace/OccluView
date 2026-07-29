@@ -14,8 +14,9 @@
 //! academic:
 //!
 //! * It is **one-sided**. Fixed surface the moving scan never covered is not
-//!   measured at all, so a scan with a hole in it can report a perfect fit.
-//!   [`surface_agreement`] measures both directions and is the honest headline.
+//!   measured at all, so a scan with a hole in it can report a perfect fit. What
+//!   the map could not reach is reported as such — see [`Unmeasured`] — rather
+//!   than folded into the numbers.
 //! * It is a **lower bound on displacement**. Tangential motion slides the
 //!   nearest point along the surface instead of moving away from it. A 0.30 mm
 //!   rigid offset of a real arch reads as 0.14 mm; on a cylinder slid along its
@@ -25,9 +26,9 @@
 //!   [`Observability::hidden_displacement_mm`] turns a reported RMS into the
 //!   largest true displacement that could be hiding behind it.
 //!
-//! Report [`surface_agreement`] with [`observability`] beside it. A
-//! [`deviation_stats`] on its own understates, and there is no setting that
-//! makes it not.
+//! Report [`deviation_stats`] with [`observability`] beside it, and read the
+//! unmeasured counts: on its own the distance figure understates, and there is
+//! no setting that makes it not.
 //!
 //! The crate is a leaf: plain slices in, plain values out. It never allocates
 //! unboundedly, never panics on hostile input, and is deterministic — no RNG,
@@ -38,9 +39,6 @@
 //! so a scale difference is *detected and reported*, never fitted away.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
-mod agreement;
-#[cfg(test)]
-mod agreement_tests;
 mod deviation;
 mod icp;
 #[cfg(test)]
@@ -56,7 +54,6 @@ mod rigid;
 mod sample;
 mod surface;
 
-pub use agreement::{reverse_deviation, surface_agreement, AgreementSummary, SurfaceAgreement};
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
     DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Unmeasured,

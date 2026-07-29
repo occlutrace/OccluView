@@ -367,3 +367,46 @@ fn clearing_a_guessed_pair_leaves_nothing_guessed() {
         "a third scan can start a pair"
     );
 }
+
+/// Leaving for the Manually tab drops the arrows and keeps the pair.
+///
+/// The operator asked for this by name. A hand nudge moves the scan out from
+/// under every point placed on it, so arrows that survived the trip described a
+/// fit that no longer held. The two scan names are a different thing — they chose
+/// those two scans and did not un-choose them, and a plain comparison needs them.
+#[test]
+fn clearing_the_arrows_keeps_the_pair() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.click(point(a, Vec3::ZERO));
+    tool.click(point(b, Vec3::X));
+    tool.click(point(a, Vec3::Y));
+    assert_eq!(tool.pairs().len(), 1);
+    assert!(tool.pending().is_some());
+
+    assert!(tool.clear_points());
+    assert!(tool.pairs().is_empty());
+    assert_eq!(tool.pending(), None);
+    assert_eq!(tool.moving_layer(), Some(a), "the pair is still the pair");
+    assert_eq!(tool.fixed_layer(), Some(b));
+    assert!(
+        tool.can_measure(),
+        "a named pair with no arrows can still be compared"
+    );
+    assert!(!tool.can_align(), "but it cannot be fitted on points");
+}
+
+/// Nothing to drop reports nothing, so a tab switch on an untouched pair costs
+/// no status line and no re-measure.
+#[test]
+fn clearing_arrows_that_are_not_there_changes_nothing() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.imply_pair(&[a, b]);
+    assert!(!tool.clear_points());
+    assert_eq!(tool.moving_layer(), Some(a));
+    assert!(
+        tool.roles_are_implied(),
+        "dropping no arrows is not the operator making a choice"
+    );
+}

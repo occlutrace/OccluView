@@ -135,13 +135,35 @@ impl CutTool {
         self.section.slice_basis()
     }
 
+    /// Zoom the section window, and take the disc with it.
+    ///
+    /// The operator asked for the two to be one gesture: scroll in the little
+    /// section window and the disc in the 3D view resizes to match. Before this
+    /// they were separate knobs that both changed how big the section read, which
+    /// is why a freshly planted disc could look far too small and there was no
+    /// obvious way to fix it from the window you were reading.
     pub(super) fn zoom_slice_at_cursor(
         &mut self,
         viewport_rect: egui::Rect,
         pointer: Option<egui::Pos2>,
         notches: f32,
     ) -> bool {
-        self.section.zoom_at_cursor(viewport_rect, pointer, notches)
+        let before = self.section.slice_zoom();
+        if !self.section.zoom_at_cursor(viewport_rect, pointer, notches) {
+            return false;
+        }
+        let after = self.section.slice_zoom();
+        if let Some(pose) = self.manipulator.pose() {
+            let wanted =
+                crate::cut_manipulator::radius_after_slice_zoom(pose.radius_mm, before, after);
+            // The clip plane is untouched: a radius is how much disc is DRAWN,
+            // and the plane it lies in has not moved. Dropping the cached plane
+            // here would blank the clipping for a frame.
+            if self.manipulator.set_radius_mm(wanted) {
+                self.mark_dirty();
+            }
+        }
+        true
     }
 
     pub(super) fn viewport_clip_plane(&self, bbox: Aabb) -> ClipPlane {
