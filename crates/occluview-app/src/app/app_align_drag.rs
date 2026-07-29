@@ -64,7 +64,24 @@ impl OccluViewApp {
             let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
                 return false;
             };
-            let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
+            // The scan being placed gets first refusal on the grab.
+            //
+            // Two scans in an alignment overlap by definition, so the nearest
+            // surface under the cursor is often the OTHER one. An operator aiming
+            // at the arch they are placing grabbed the reference instead, moved
+            // it, pressed Done, then exported the arch they had aimed at — which
+            // came back in its original position, with nothing anywhere
+            // connecting the two. Only after the moving scan misses entirely does
+            // the general pick run, so deliberately grabbing the reference still
+            // works: aim where the moving scan is not.
+            let hit = self
+                .align
+                .moving_layer()
+                .and_then(|moving| {
+                    crate::viewer::pick_layer_hit(&camera, response.rect, pointer, &scene, moving)
+                })
+                .or_else(|| pick_scene_hit(&camera, response.rect, pointer, &scene));
+            let Some(hit) = hit else {
                 // A drag from empty space is the camera's, not the tool's.
                 return false;
             };
@@ -106,11 +123,12 @@ impl OccluViewApp {
         let rotating = ctx.input(|input| input.modifiers.command);
 
         let step = if rotating {
-            let turn = crate::align_drag::rotation_from_drag(
+            let turn = crate::align_drag::constrained_rotation_from_drag(
                 motion,
                 right,
                 up,
                 crate::align_drag::DEGREES_PER_PIXEL,
+                self.align_constraint,
             );
             // Turn about the layer's own centre, so the scan spins in place
             // instead of orbiting the world origin.
@@ -185,10 +203,22 @@ impl OccluViewApp {
         {
             entry.transform = drag.start;
         }
+        // Marked unsaved BEFORE the history step is attempted, because the pose is
+        // already in the live scene — `nudge_align_layer` put it there frame by
+        // frame. When the edit state machine was busy at the release frame this
+        // function returned here, and the move went unrecorded AND unflagged: the
+        // scan sat in its new pose, the close guard could not see it, and the app
+        // shut without asking.
+        self.mark_mesh_edits_unsaved(drag.layer);
         let Some(token) =
             self.edit_mode
                 .begin_scene_edit(&before, drag.layer, EditModeCommand::MoveLayer)
         else {
+            self.align_status = Some(
+                "Moved by hand, but this step could not be added to the history — \
+                 Ctrl+Z will not undo it"
+                    .into(),
+            );
             return false;
         };
         let mut after = before;
@@ -204,7 +234,6 @@ impl OccluViewApp {
         // A moved scan is unsaved work. The viewer has no project file, so the
         // pose IS the work product: without this the app closes without asking
         // and the alignment is gone.
-        self.mark_mesh_edits_unsaved(drag.layer);
         // Named, and with the distance. This tool moves whichever scan the
         // operator grabbed — the fixed one included — and nothing on screen said
         // which that was. An operator who grabs the wrong arch by accident finds

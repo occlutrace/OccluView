@@ -115,6 +115,34 @@ pub(crate) fn rotation_from_drag(
     (Quat::from_axis_angle(up, yaw) * Quat::from_axis_angle(right, pitch)).normalize()
 }
 
+/// Turn a screen drag into a rotation the chosen constraint allows.
+///
+/// The chips are labelled for movement — "Move in z-direction", "Move in
+/// xy-plane" — and only Free says "Move/rotate in all directions". A Ctrl+drag
+/// used to spin about the camera's axes whatever was selected, so the panel
+/// showed one restriction and the scan obeyed none.
+///
+/// Both restricted modes turn about world **Z**, and in a dental scene that is
+/// the one rotation an operator asks for by name: an arch spun about the
+/// vertical while it stays seated. Horizontal drag only, because a vertical drag
+/// under a Z-only rotation has nothing left to mean.
+pub(crate) fn constrained_rotation_from_drag(
+    delta_px: egui::Vec2,
+    camera_right: Vec3,
+    camera_up: Vec3,
+    degrees_per_pixel: f32,
+    constraint: DragConstraint,
+) -> Quat {
+    match constraint {
+        DragConstraint::Free => {
+            rotation_from_drag(delta_px, camera_right, camera_up, degrees_per_pixel)
+        }
+        DragConstraint::ZOnly | DragConstraint::XyPlane => {
+            Quat::from_axis_angle(Vec3::Z, (delta_px.x * degrees_per_pixel).to_radians())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// One conversion, one guard. The brush ring and the hand drag each had

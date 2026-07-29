@@ -19,13 +19,21 @@
 use eframe::egui;
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid};
-use occluview_core::{SceneMesh, SceneMeshId};
+use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
 use super::app_align::layer_of;
 use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
-use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MaskCommand};
+use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MarkedOn, MaskCommand};
 use crate::viewer::pick_scene_hit;
+
+/// The identity a mask painted on this layer has to match later.
+fn marked_on(entry: &SceneMesh) -> MarkedOn {
+    MarkedOn {
+        geometry: entry.mesh.geometry_id(),
+        vertex_count: entry.mesh.vertices().len(),
+    }
+}
 
 impl OccluViewApp {
     /// Paint or clear under the pointer. Returns whether the brush owns this
@@ -103,6 +111,7 @@ impl OccluViewApp {
             positions: &positions,
             pose,
             vertex_count: entry.mesh.vertices().len(),
+            geometry: entry.mesh.geometry_id(),
         };
         let changed = self.align_markings.dab(
             painting,
@@ -259,6 +268,7 @@ impl OccluViewApp {
             positions: &positions,
             pose,
             vertex_count: entry.mesh.vertices().len(),
+            geometry: entry.mesh.geometry_id(),
         };
         let keep = AutoKeep {
             centres: &keep,
@@ -305,13 +315,24 @@ impl OccluViewApp {
     /// maintained where the masks are edited and this only reads them.
     pub(super) fn align_marked_fraction(&self) -> Option<f32> {
         let scene = self.scene.as_ref()?;
-        let vertices = |side: AlignSide| -> usize {
-            self.side_layer(side)
-                .and_then(|id| layer_of(scene, id))
-                .map_or(0, |entry| entry.mesh.vertices().len())
-        };
-        self.align_markings
-            .marked_fraction(vertices(AlignSide::Moving), vertices(AlignSide::Fixed))
+        self.align_markings.marked_fraction(
+            self.side_identity(AlignSide::Moving, scene),
+            self.side_identity(AlignSide::Fixed, scene),
+        )
+    }
+
+    /// What a mask on this side has to match, or an identity nothing matches when
+    /// the side names no layer.
+    fn side_identity(&self, side: AlignSide, scene: &Scene) -> MarkedOn {
+        self.side_layer(side)
+            .and_then(|id| layer_of(scene, id))
+            .map_or(
+                MarkedOn {
+                    geometry: 0,
+                    vertex_count: 0,
+                },
+                marked_on,
+            )
     }
 
     /// Put the markings on both meshes, take them off, or leave them alone.
@@ -373,8 +394,7 @@ impl OccluViewApp {
         let Some(entry) = layer_of(&scene, layer) else {
             return;
         };
-        let count = entry.mesh.vertices().len();
-        let Some(mask) = self.align_markings.mask_for(side, count) else {
+        let Some(mask) = self.align_markings.mask_for(side, marked_on(entry)) else {
             self.repaint_region_preview(layer, side);
             return;
         };
@@ -393,7 +413,7 @@ impl OccluViewApp {
         let entry = layer_of(scene, layer)?;
         let vertices = entry.mesh.vertices();
         let count = vertices.len();
-        let mask = self.align_markings.mask_for(side, count);
+        let mask = self.align_markings.mask_for(side, marked_on(entry));
         let mask = mask.as_ref().map(|mask| mask.as_slice());
         // A coloured scan keeps its own colours where nothing is marked. The
         // operator is usually aiming AT something they can see — a stain, a

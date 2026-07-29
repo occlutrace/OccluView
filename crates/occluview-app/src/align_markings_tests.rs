@@ -6,16 +6,27 @@
 
 #![allow(clippy::expect_used)]
 
-use super::{AlignMarkings, AlignSide, AutoKeep, MarkedMesh, MaskCommand};
+use super::{AlignMarkings, AlignSide, AutoKeep, MarkedMesh, MarkedOn, MaskCommand};
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid, EXCLUDED, INCLUDED};
 
+/// The one mesh identity every test below paints on.
+const SUBJECT: u64 = 7;
+
+/// The identity of a mesh with this many vertices, as production builds it.
+fn on(vertex_count: usize) -> MarkedOn {
+    MarkedOn {
+        geometry: SUBJECT,
+        vertex_count,
+    }
+}
+
 /// Whether one vertex is marked out of the match, read the way production reads
-/// it — through the length-checked mask, so a test cannot pass on a mask that
+/// it — through the identity-checked mask, so a test cannot pass on a mask that
 /// belongs to different geometry.
 fn marked(markings: &AlignMarkings, side: AlignSide, vertices: usize, vertex: usize) -> bool {
     markings
-        .mask_for(side, vertices)
+        .mask_for(side, on(vertices))
         .and_then(|mask| mask.get(vertex).copied())
         .is_some_and(|slot| slot == EXCLUDED)
 }
@@ -40,6 +51,7 @@ fn mesh(positions: &[f32]) -> MarkedMesh<'_> {
         positions,
         pose: Rigid::IDENTITY,
         vertex_count: positions.len() / 3,
+        geometry: SUBJECT,
     }
 }
 
@@ -86,9 +98,9 @@ fn marking_one_scan_leaves_the_other_untouched() {
         &mesh(&positions),
         &dab_at(DVec3::ZERO, 2.0, false),
     );
-    assert!(markings.mask_for(AlignSide::Moving, 16 * 16).is_some());
+    assert!(markings.mask_for(AlignSide::Moving, on(16 * 16)).is_some());
     assert!(
-        markings.mask_for(AlignSide::Fixed, 16 * 16).is_none(),
+        markings.mask_for(AlignSide::Fixed, on(16 * 16)).is_none(),
         "a dab on one scan invented a mask on the other"
     );
 }
@@ -115,7 +127,7 @@ fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
     };
     let reported = |markings: &AlignMarkings| -> f32 {
         markings
-            .marked_fraction(vertices, 0)
+            .marked_fraction(on(vertices), on(0))
             .expect("a mask that fits the mesh reports a fraction")
     };
     let agrees = |markings: &AlignMarkings, after: &str| {
@@ -197,7 +209,7 @@ fn fit_everywhere_leaves_nothing_marked_and_fit_nowhere_leaves_everything() {
         },
     );
     let all = markings
-        .mask_for(AlignSide::Moving, handle.vertex_count)
+        .mask_for(AlignSide::Moving, handle.identity())
         .expect("fit nowhere makes a mask");
     assert!(all.iter().all(|slot| *slot == EXCLUDED));
 
@@ -211,7 +223,7 @@ fn fit_everywhere_leaves_nothing_marked_and_fit_nowhere_leaves_everything() {
         },
     );
     let none = markings
-        .mask_for(AlignSide::Moving, handle.vertex_count)
+        .mask_for(AlignSide::Moving, handle.identity())
         .expect("fit everywhere keeps the mask, emptied");
     assert!(none.iter().all(|slot| *slot == INCLUDED));
 }
@@ -236,7 +248,7 @@ fn mark_automatic_refuses_without_a_single_arrow() {
 
     assert!(!reached, "mark automatic ran with no arrows to keep");
     assert!(markings
-        .mask_for(AlignSide::Moving, handle.vertex_count)
+        .mask_for(AlignSide::Moving, handle.identity())
         .is_none());
 }
 
@@ -342,15 +354,42 @@ fn a_mask_taken_on_other_geometry_is_not_a_reading_about_this_mesh() {
     markings.dab(AlignSide::Moving, &handle, &dab_at(DVec3::ZERO, 3.0, false));
 
     assert!(markings
-        .mask_for(AlignSide::Moving, handle.vertex_count)
+        .mask_for(AlignSide::Moving, handle.identity())
         .is_some());
     assert!(
-        markings.mask_for(AlignSide::Moving, 999).is_none(),
-        "a mask from other geometry was handed out for this mesh"
+        markings.mask_for(AlignSide::Moving, on(999)).is_none(),
+        "a mask from a mesh of another size was handed out for this one"
     );
     assert!(
-        markings.marked_fraction(999, 0).is_none(),
+        markings.marked_fraction(on(999), on(0)).is_none(),
         "a mask from other geometry was counted into the coverage"
+    );
+
+    // The nastier half, and the one a vertex count cannot catch: a repair or a
+    // sculpt can hand back a DIFFERENT mesh with the SAME number of vertices.
+    // Checked by length alone, the old marks passed and then excluded an
+    // arbitrary region of a surface nobody had painted.
+    let same_size_other_mesh = MarkedOn {
+        geometry: SUBJECT + 1,
+        vertex_count: handle.vertex_count,
+    };
+    assert!(
+        markings
+            .mask_for(AlignSide::Moving, same_size_other_mesh)
+            .is_none(),
+        "identical vertex counts are not identical meshes"
+    );
+    assert!(
+        markings.stale_for(AlignSide::Moving, same_size_other_mesh),
+        "the operator has to be told their markings no longer apply"
+    );
+    assert!(
+        !markings.stale_for(AlignSide::Moving, handle.identity()),
+        "marks that still fit their own mesh are not stale"
+    );
+    assert!(
+        !markings.stale_for(AlignSide::Fixed, same_size_other_mesh),
+        "a side that was never marked has nothing to go stale"
     );
 }
 
@@ -390,11 +429,11 @@ fn clearing_drops_the_markings_on_both_scans_together() {
     assert!(markings.clear());
 
     assert!(markings
-        .mask_for(AlignSide::Moving, handle.vertex_count)
+        .mask_for(AlignSide::Moving, handle.identity())
         .is_none());
-    assert!(markings.mask_for(AlignSide::Fixed, 16 * 16).is_none());
+    assert!(markings.mask_for(AlignSide::Fixed, on(16 * 16)).is_none());
     assert!(!markings.any());
-    assert!(markings.marked_fraction(handle.vertex_count, 0).is_none());
+    assert!(markings.marked_fraction(handle.identity(), on(0)).is_none());
 }
 
 #[test]
