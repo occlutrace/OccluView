@@ -190,8 +190,9 @@ impl OccluViewApp {
         }
         // The viewport camera is orthographic, so a millimetre maps to a fixed
         // number of pixels regardless of depth.
-        let ortho_height = camera.orthographic_height.max(f32::EPSILON);
-        let radius_px = self.align_brush.radius_mm() * viewport_rect.height() / ortho_height;
+        let mm_per_pixel =
+            crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport_rect.height());
+        let radius_px = self.align_brush.radius_mm() / mm_per_pixel;
         if !radius_px.is_finite() || radius_px < 2.0 {
             return;
         }

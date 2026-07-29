@@ -57,6 +57,17 @@ impl DragConstraint {
     }
 }
 
+/// How many millimetres one viewport pixel spans.
+///
+/// The brush ring and the hand drag both need this, in opposite directions, and
+/// each used to compute it with its own degenerate-input guard: one floored the
+/// camera height, the other floored the viewport height. A viewport of zero
+/// height with a near-zero camera height was therefore safe on one path and not
+/// the other. Both operands are floored here, once.
+pub(crate) fn mm_per_pixel(orthographic_height: f32, viewport_height: f32) -> f32 {
+    orthographic_height.max(f32::EPSILON) / viewport_height.max(1.0)
+}
+
 /// Drop the components a constraint forbids.
 pub(crate) fn constrain_translation(delta: Vec3, constraint: DragConstraint) -> Vec3 {
     match constraint {
@@ -106,7 +117,41 @@ pub(crate) fn rotation_from_drag(
 
 #[cfg(test)]
 mod tests {
-    use super::{constrain_translation, rotation_from_drag, screen_delta_to_world, DragConstraint};
+    /// One conversion, one guard. The brush ring and the hand drag each had
+    /// their own, guarding a different operand, so a zero-height viewport was
+    /// safe on one path and produced an infinity on the other.
+    #[test]
+    fn a_degenerate_viewport_never_produces_an_infinity() {
+        for (camera_mm, viewport_px) in [
+            (0.0, 0.0),
+            (0.0, 800.0),
+            (40.0, 0.0),
+            (f32::EPSILON, 0.5),
+            (1e9, 1.0),
+        ] {
+            let scale = mm_per_pixel(camera_mm, viewport_px);
+            assert!(
+                scale.is_finite() && scale > 0.0,
+                "{camera_mm} mm over {viewport_px} px gave {scale}"
+            );
+        }
+    }
+
+    /// The ordinary case is exact: an orthographic camera has no perspective to
+    /// approximate away.
+    #[test]
+    fn a_pixel_spans_the_camera_height_over_the_viewport_height() {
+        assert!((mm_per_pixel(40.0, 800.0) - 0.05).abs() < f32::EPSILON);
+        assert!(
+            mm_per_pixel(40.0, 400.0) > mm_per_pixel(40.0, 800.0),
+            "a shorter viewport puts more millimetres in a pixel"
+        );
+    }
+
+    use super::{
+        constrain_translation, mm_per_pixel, rotation_from_drag, screen_delta_to_world,
+        DragConstraint,
+    };
     use eframe::egui;
     use glam::{Quat, Vec3};
 

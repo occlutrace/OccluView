@@ -38,6 +38,21 @@ pub(crate) const CLINICAL_MAX_MM: f64 = 0.20;
 /// have not been aligned yet — which the panel says in words instead.
 pub(crate) const CLINICAL_CEILING_MM: f64 = 1.0;
 
+/// The standard ranges, tightest first: a display maximum and the nominal band
+/// that goes with it. The panel offers one chip each and the tool opens on the
+/// first, so both read this table rather than each carrying its own copy —
+/// which is how the chip row could show a range highlighted that the tool was
+/// not actually using.
+///
+/// **The first entry is the working range.** A tenth of a millimetre is where a
+/// seated fit and a fit that only looks seated stop looking the same, so it is
+/// the range the map is read at, not the one it is dialled to.
+pub(crate) const CLINICAL_RANGES: [(f64, f64); 3] = [
+    (0.10, 0.005),
+    (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
+    (0.50, 0.02),
+];
+
 /// Operator-facing knobs, in the operator's units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct AlignSettings {
@@ -57,8 +72,11 @@ pub(crate) struct AlignSettings {
     pub(crate) ramp_mode: RampMode,
     /// Whether the display scale follows the measurement instead of a guess.
     ///
-    /// Cleared the moment the operator moves the slider: once they have chosen
-    /// a range, the tool must not keep overriding it.
+    /// Cleared the moment the operator moves the slider, and set only by the
+    /// `auto` button next to it. A finished fit used to switch this back on so
+    /// the range would re-fit itself, which meant the working range could not be
+    /// held: an operator who set 0.10 mm got some other range back on the next
+    /// fit. Saturation is called out in words instead — see `saturation_advice`.
     pub(crate) auto_scale: bool,
     /// Whether the map is on screen.
     pub(crate) show_deviation: bool,
@@ -73,14 +91,15 @@ impl Default for AlignSettings {
             influence_radius_mm: 2.0,
             matching_ratio: 0.8,
             orientation: Orientation::Match,
-            // The clinical range, and the reason it is not a guess: dentistry
-            // works at a fifth of a millimetre. A map whose ends are five
+            // The working range, and the reason it is not a guess: dentistry
+            // works at a tenth of a millimetre. A map whose ends are five
             // millimetres apart cannot show a fit that is either good or bad in
             // that regime — everything lands in the middle and the operator is
-            // reading a picture of nothing. Opening at 0.01 to 0.20 mm means the
-            // first thing on screen is already the question they are asking.
-            scale_mm: CLINICAL_MAX_MM,
-            tolerance_mm: CLINICAL_MIN_MM,
+            // reading a picture of nothing. Opening at the tightest standard
+            // range means the first thing on screen is already the question
+            // they are asking, and it stays there: nothing below re-dials it.
+            scale_mm: CLINICAL_RANGES[0].0,
+            tolerance_mm: CLINICAL_RANGES[0].1,
             bands: None,
             // Magnitude, not signed: the question this tool answers is "how far
             // apart are these two", and the nominal band makes everything
@@ -652,7 +671,7 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     let fixed_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed).collect();
     let moving_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.moving_normal).collect();
     let fixed_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed_normal).collect();
-    let extent = soup_extent(moving);
+    let extent = occluview_align::extent_of(moving);
 
     match fit_pairs(
         &moving_points,
@@ -668,28 +687,6 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
         Err(rejection) => AlignOutcome::Failed {
             message: describe(rejection),
         },
-    }
-}
-
-/// Bounding-box diagonal of a soup, used as the runaway guard's budget.
-fn soup_extent(soup: Soup<'_>) -> f64 {
-    let mut min = DVec3::splat(f64::INFINITY);
-    let mut max = DVec3::splat(f64::NEG_INFINITY);
-    for chunk in soup.positions.chunks_exact(3) {
-        let point = DVec3::new(
-            f64::from(chunk[0]),
-            f64::from(chunk[1]),
-            f64::from(chunk[2]),
-        );
-        if point.is_finite() {
-            min = min.min(point);
-            max = max.max(point);
-        }
-    }
-    if min.x.is_finite() && max.x.is_finite() {
-        (max - min).length()
-    } else {
-        0.0
     }
 }
 
