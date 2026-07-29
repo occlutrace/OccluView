@@ -428,6 +428,14 @@ impl OccluViewApp {
         self.selection_overlay_dirty = true;
         self.mesh_selection_drag = None;
         self.rendered = None;
+        // Whatever the align tool was showing described the geometry that just
+        // got replaced. Undo and redo already dropped it by hand; every other
+        // structural path — repair, close holes, crop, cut, separate, a bridge
+        // split commit, a cancelled mesh-edit session — did not, so a repaired
+        // scan kept a map of its own former surface, lost its tint to the map
+        // shading, and the panel went on reporting a percentage for a surface
+        // that no longer existed. Hoisted to the one place they all pass through.
+        self.forget_align_fit("The scan changed");
         // Structural scene change: world anchors may now dangle over deleted or
         // replaced geometry, so measurements are cleared (the tool stays armed
         // while something remains to measure). Material-only updates keep them

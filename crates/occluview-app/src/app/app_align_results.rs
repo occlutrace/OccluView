@@ -125,6 +125,13 @@ impl OccluViewApp {
                 // operator reading it as "it marks on one mesh and not the
                 // other".
                 if self.align_brush.is_armed() {
+                    // And say so. The status still read "Measuring…" from the
+                    // submit, and nothing replaced it until the brush closed — so
+                    // the panel claimed a measurement was running that had already
+                    // finished and been thrown away.
+                    self.align_status =
+                        Some("Measurement dropped — the marking brush owns the colours".into());
+                    ctx.request_repaint();
                     return;
                 }
                 // Auto-scale chose the range the colours were painted at. The

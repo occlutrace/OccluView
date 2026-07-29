@@ -345,6 +345,19 @@ impl OccluViewApp {
         else {
             return;
         };
+        // A hidden scan is still geometry, so every stage below would happily fit
+        // against it and measure it, and the panel would report a percentage for a
+        // surface nobody can see. Worse for a map: the colours land on an
+        // invisible layer while the visible one is faded to sixteen per cent, so
+        // the viewport shows a ghost and nothing else.
+        if !moving.visible || !fixed.visible {
+            let hidden = if moving.visible { fixed_id } else { moving_id };
+            let name = self
+                .layer_display_name(hidden)
+                .unwrap_or_else(|| "One of the scans".to_owned());
+            self.align_status = Some(format!("{name} is hidden — show it to align against it"));
+            return;
+        }
 
         let Some(pose) = Rigid::from_affine(&moving.transform) else {
             self.align_status =
@@ -376,12 +389,28 @@ impl OccluViewApp {
         // has since changed under the tool indexes vertices that no longer mean
         // what it thinks, and handing it to a job would exclude an arbitrary
         // region of the current scan with nothing on screen to say so.
+        let moving_marked = crate::align_markings::MarkedOn {
+            geometry: moving.mesh.geometry_id(),
+            vertex_count: moving.mesh.vertices().len(),
+        };
+        let fixed_marked = crate::align_markings::MarkedOn {
+            geometry: fixed.mesh.geometry_id(),
+            vertex_count: fixed.mesh.vertices().len(),
+        };
+        // Marks that no longer describe the scan in front of the operator are
+        // dropped, and SAID. They used to be dropped in silence, so a region
+        // painted out before a repair or a sculpt quietly re-entered the match and
+        // the fit changed for no visible reason.
+        let stale = [
+            (AlignSide::Moving, moving_marked),
+            (AlignSide::Fixed, fixed_marked),
+        ]
+        .into_iter()
+        .any(|(side, mesh)| self.align_markings.stale_for(side, mesh));
         let mask = self
             .align_markings
-            .mask_for(AlignSide::Moving, moving.mesh.vertices().len());
-        let fixed_mask = self
-            .align_markings
-            .mask_for(AlignSide::Fixed, fixed.mesh.vertices().len());
+            .mask_for(AlignSide::Moving, moving_marked);
+        let fixed_mask = self.align_markings.mask_for(AlignSide::Fixed, fixed_marked);
         let settings = self.align_settings;
         let Some(worker) = self.align_worker.as_ref() else {
             return;
@@ -407,6 +436,12 @@ impl OccluViewApp {
             fixed_mask,
             settings,
         });
+        if stale {
+            self.align_status = Some(
+                "Markings dropped — the scan's surface changed since they were painted".into(),
+            );
+            return;
+        }
         self.align_status = Some(
             match kind {
                 AlignJobKind::Align => "Aligning…",

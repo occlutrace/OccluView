@@ -35,11 +35,25 @@ impl OccluViewApp {
     /// Close the tool and keep what it did.
     pub(super) fn finish_align_session(&mut self, ctx: &egui::Context) {
         let moved = self.align_session_moved();
+        // Read before the teardown, which cancels it. Done is deliberately never
+        // greyed out — a window whose only two exits are disabled reads as a hang
+        // — so an operator can close over a fit that is still computing, and that
+        // fit is then discarded. It used to be discarded in silence, and the
+        // result was a session that closed reporting success at the pose from
+        // before the fit they had just asked for.
+        let running = self
+            .align_worker
+            .as_ref()
+            .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
-        self.status_message = Some(if moved {
-            "Alignment kept — save the scan to keep it on disk".into()
-        } else {
-            "Alignment closed".to_string()
+        self.status_message = Some(match (running, moved) {
+            (true, _) => {
+                "Alignment closed — a fit was still running and was dropped, so the scans are \
+                 exactly as you last saw them"
+                    .into()
+            }
+            (false, true) => "Alignment kept — save the scan to keep it on disk".to_string(),
+            (false, false) => "Alignment closed".to_string(),
         });
     }
 
