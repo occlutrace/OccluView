@@ -96,30 +96,59 @@ impl MaskCommand {
     }
 }
 
+/// Which mesh a mask was painted on.
+///
+/// A vertex count on its own is not an identity. Two arches can carry the same
+/// count, and a repair or a sculpt can replace a mesh under the tool while
+/// keeping it — so a mask checked only by length could pass, and then excluded an
+/// arbitrary region of a surface nobody had marked, with nothing on screen saying
+/// so. The geometry id changes whenever the vertices do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MarkedOn {
+    /// The mesh the marks were painted on.
+    pub(crate) geometry: u64,
+    /// How many vertices it had.
+    pub(crate) vertex_count: usize,
+}
+
 /// One scan's markings, and how much of it they cover.
 #[derive(Clone, Debug, Default)]
 struct SideMarkings {
     /// One byte per vertex, or nothing if this side was never marked.
     mask: Option<Arc<Vec<u8>>>,
+    /// The mesh those bytes describe.
+    painted_on: Option<MarkedOn>,
     /// How many of those bytes are [`EXCLUDED`]. Kept in step with `mask` by
     /// every method below, so the panel never has to count.
     marked: usize,
 }
 
 impl SideMarkings {
-    /// The mask, but only if it still describes a mesh of this size. A mask
-    /// left over from other geometry is not a reading about this mesh.
-    fn fitting(&self, vertex_count: usize) -> Option<&Arc<Vec<u8>>> {
-        self.mask.as_ref().filter(|mask| mask.len() == vertex_count)
+    /// The mask, but only if it still describes this exact mesh. A mask left over
+    /// from other geometry is not a reading about this one.
+    fn fitting(&self, mesh: MarkedOn) -> Option<&Arc<Vec<u8>>> {
+        if self.painted_on != Some(mesh) {
+            return None;
+        }
+        self.mask
+            .as_ref()
+            .filter(|mask| mask.len() == mesh.vertex_count)
+    }
+
+    /// Whether marks exist that no longer describe this mesh.
+    fn stale_for(&self, mesh: MarkedOn) -> bool {
+        self.mask.is_some() && self.fitting(mesh).is_none()
     }
 
     /// Take the mask out for editing, or make a fresh unmarked one.
-    fn take_for_edit(&mut self, vertex_count: usize) -> Arc<Vec<u8>> {
-        match self.mask.take() {
-            Some(existing) if existing.len() == vertex_count => existing,
+    fn take_for_edit(&mut self, mesh: MarkedOn) -> Arc<Vec<u8>> {
+        let existing = self.mask.take().filter(|_| self.painted_on == Some(mesh));
+        self.painted_on = Some(mesh);
+        match existing {
+            Some(existing) if existing.len() == mesh.vertex_count => existing,
             _ => {
                 self.marked = 0;
-                Arc::new(vec![INCLUDED; vertex_count])
+                Arc::new(vec![INCLUDED; mesh.vertex_count])
             }
         }
     }
@@ -161,8 +190,15 @@ impl AlignMarkings {
     }
 
     /// The mask to hand a job for this side, if it matches the mesh.
-    pub(crate) fn mask_for(&self, side: AlignSide, vertex_count: usize) -> Option<Arc<Vec<u8>>> {
-        self.side(side).fitting(vertex_count).map(Arc::clone)
+    pub(crate) fn mask_for(&self, side: AlignSide, mesh: MarkedOn) -> Option<Arc<Vec<u8>>> {
+        self.side(side).fitting(mesh).map(Arc::clone)
+    }
+
+    /// Whether this side carries marks that no longer describe the mesh in front
+    /// of the operator. The panel says so rather than letting them wonder why
+    /// their excluded region stopped taking effect.
+    pub(crate) fn stale_for(&self, side: AlignSide, mesh: MarkedOn) -> bool {
+        self.side(side).stale_for(mesh)
     }
 
     /// The generation every downstream cache keys on.
@@ -183,21 +219,14 @@ impl AlignMarkings {
 
     /// What share of the two scans is marked, or nothing if neither carries a
     /// mask that fits its mesh. Free to call: the counts are maintained here.
-    pub(crate) fn marked_fraction(
-        &self,
-        moving_vertices: usize,
-        fixed_vertices: usize,
-    ) -> Option<f32> {
+    pub(crate) fn marked_fraction(&self, moving: MarkedOn, fixed: MarkedOn) -> Option<f32> {
         let mut marked = 0usize;
         let mut total = 0usize;
-        for (side, vertex_count) in [
-            (AlignSide::Moving, moving_vertices),
-            (AlignSide::Fixed, fixed_vertices),
-        ] {
+        for (side, mesh) in [(AlignSide::Moving, moving), (AlignSide::Fixed, fixed)] {
             let state = self.side(side);
-            if state.fitting(vertex_count).is_some() {
+            if state.fitting(mesh).is_some() {
                 marked += state.marked;
-                total += vertex_count;
+                total += mesh.vertex_count;
             }
         }
         if total == 0 {
@@ -215,7 +244,7 @@ impl AlignMarkings {
     /// Paint one dab. Returns how many vertices changed; the list of which ones
     /// is in [`Self::touched`].
     pub(crate) fn dab(&mut self, side: AlignSide, mesh: &MarkedMesh<'_>, edit: &MaskEdit) -> usize {
-        let mut owned = self.side_mut(side).take_for_edit(mesh.vertex_count);
+        let mut owned = self.side_mut(side).take_for_edit(mesh.identity());
         let mut touched = std::mem::take(&mut self.touched);
         touched.clear();
         // In place through `Arc::make_mut`: this type holds the only reference
@@ -257,7 +286,7 @@ impl AlignMarkings {
         if command == MaskCommand::MarkAutomatic && keep.centres.is_empty() {
             return false;
         }
-        let mut owned = self.side_mut(side).take_for_edit(mesh.vertex_count);
+        let mut owned = self.side_mut(side).take_for_edit(mesh.identity());
         let previously_marked = self.side(side).marked;
         let mask = Arc::make_mut(&mut owned).as_mut_slice();
         let marked = match command {
@@ -356,6 +385,18 @@ pub(crate) struct MarkedMesh<'a> {
     pub(crate) pose: Rigid,
     /// How many vertices the mesh has.
     pub(crate) vertex_count: usize,
+    /// Which mesh this is. Changes whenever its vertices do.
+    pub(crate) geometry: u64,
+}
+
+impl MarkedMesh<'_> {
+    /// What a mask painted on this mesh has to match later.
+    pub(crate) fn identity(&self) -> MarkedOn {
+        MarkedOn {
+            geometry: self.geometry,
+            vertex_count: self.vertex_count,
+        }
+    }
 }
 
 // Split out to hold the workspace's 800-line file budget.

@@ -70,6 +70,23 @@ pub(crate) fn pick_scene_hit(
     scene.pick_ray_hit(origin, direction)
 }
 
+/// Pick a surface point on one named layer, ignoring every other layer.
+///
+/// For a tool whose target was decided before the pointer went down. Two dental
+/// scans in an alignment overlap by definition, so the nearest surface under the
+/// cursor is often the OTHER one — and a tool that acts on the nearest hit then
+/// acts on the scan the operator was not aiming at.
+pub(crate) fn pick_layer_hit(
+    camera: &Camera,
+    viewport_rect: egui::Rect,
+    pointer: egui::Pos2,
+    scene: &Scene,
+    layer: occluview_core::SceneMeshId,
+) -> Option<ScenePickHit> {
+    let (origin, direction) = viewport_ray_for_scene(camera, viewport_rect, pointer, scene)?;
+    scene.pick_layer_ray_hit(origin, direction, layer)
+}
+
 pub(crate) fn project_world_to_viewport(
     camera: &Camera,
     viewport_rect: egui::Rect,
