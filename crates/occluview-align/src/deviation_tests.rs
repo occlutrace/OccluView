@@ -7,8 +7,8 @@
 
 use super::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
-    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Validity,
-    MAGNITUDE_RAMP, MIN_MEASURED, NO_DATA_COLOR,
+    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Unmeasured,
+    Validity, MAGNITUDE_RAMP, MIN_MEASURED, NO_DATA_COLOR,
 };
 use crate::icp::Orientation;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
@@ -134,7 +134,12 @@ fn vertices_beyond_the_radius_are_out_of_reach_and_grey() {
 
     let stats = deviation_stats(&map, 0.2);
     assert_eq!(stats.measured, 0);
-    assert_eq!(stats.skipped as usize, map.validity.len());
+    assert_eq!(stats.unmeasured.total() as usize, map.validity.len());
+    assert_eq!(
+        stats.unmeasured.out_of_reach as usize,
+        map.validity.len(),
+        "out of reach is not the same answer as unusable data"
+    );
 
     let colors = deviation_colors(&map, &RampSettings::default());
     assert!(colors.iter().all(|color| *color == NO_DATA_COLOR));
@@ -152,7 +157,8 @@ fn statistics_count_only_measured_vertices() {
     let map = map_of(&moving, &[], &settings());
 
     let stats = deviation_stats(&map, 0.2);
-    assert_eq!(stats.skipped, 1);
+    assert_eq!(stats.unmeasured.total(), 1);
+    assert_eq!(stats.unmeasured.out_of_reach, 1);
     #[allow(clippy::cast_possible_truncation)]
     let expected_measured = COUNT as u32 - 1;
     assert_eq!(stats.measured, expected_measured);
@@ -376,7 +382,10 @@ fn the_suggested_scale_follows_a_badly_aligned_pair_instead_of_capping() {
     };
     let rough = DeviationStats {
         measured: 100_000,
-        skipped: 10_855,
+        unmeasured: Unmeasured {
+            out_of_reach: 10_855,
+            ..Unmeasured::default()
+        },
         summary: Some(summary),
     };
     let scale = suggested_scale_mm(&rough);
@@ -429,7 +438,7 @@ fn a_map_where_nothing_was_measured_reports_no_summary() {
     };
     let stats = deviation_stats(&map, 0.2);
     assert_eq!(stats.measured, 0);
-    assert_eq!(stats.skipped, 4);
+    assert_eq!(stats.unmeasured.total(), 4);
     assert!(
         stats.summary.is_none(),
         "zero measured vertices must not produce a summary at all"
@@ -463,4 +472,70 @@ fn fewer_than_min_measured_yields_none_and_the_floor_itself_yields_some() {
         at_floor.summary.is_some(),
         "{MIN_MEASURED} measured vertices clears the floor"
     );
+}
+
+/// Grey has three meanings and they are counted apart.
+///
+/// One colour on screen, and the operator's next move differs for each: a region
+/// they painted out is what they asked for, a region with nothing opposite it is
+/// anatomy that no reach will fix, and a broken vertex is a defect in the file.
+/// Reported as one lump total, "4 vertices had nothing to measure" said all three
+/// at once and none of them usefully.
+#[test]
+fn every_reason_a_vertex_is_grey_is_counted_on_its_own() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0; 6],
+        validity: vec![
+            Validity::Measured,
+            Validity::Excluded,
+            Validity::Excluded,
+            Validity::OutOfReach,
+            Validity::NonFinite,
+            Validity::DegenerateNormal,
+        ],
+    };
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.measured, 1);
+    assert_eq!(stats.unmeasured.excluded, 2);
+    assert_eq!(stats.unmeasured.out_of_reach, 1);
+    assert_eq!(
+        stats.unmeasured.unusable, 2,
+        "a non-finite vertex and a degenerate normal are both bad data"
+    );
+    assert_eq!(stats.unmeasured.total(), 5, "and they still add up");
+}
+
+/// The count is kept even when there is too little measured surface to summarise
+/// — that is exactly the case where the operator needs to know why.
+#[test]
+fn the_reasons_survive_a_measurement_too_small_to_summarise() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0; 3],
+        validity: vec![Validity::Measured, Validity::Excluded, Validity::OutOfReach],
+    };
+    let stats = deviation_stats(&map, 0.2);
+    assert!(stats.summary.is_none(), "one measured vertex says nothing");
+    assert_eq!(stats.unmeasured.excluded, 1);
+    assert_eq!(stats.unmeasured.out_of_reach, 1);
+}
+
+/// Two directions' reasons add up cause by cause, so a pooled report can still
+/// tell "no counterpart" from "bad data".
+#[test]
+fn reasons_from_two_directions_add_up_without_being_flattened() {
+    let forward = Unmeasured {
+        excluded: 1,
+        out_of_reach: 2,
+        unusable: 0,
+    };
+    let backward = Unmeasured {
+        excluded: 0,
+        out_of_reach: 3,
+        unusable: 4,
+    };
+    let both = forward.combined(backward);
+    assert_eq!(both.excluded, 1);
+    assert_eq!(both.out_of_reach, 5);
+    assert_eq!(both.unusable, 4);
+    assert_eq!(both.total(), 10);
 }

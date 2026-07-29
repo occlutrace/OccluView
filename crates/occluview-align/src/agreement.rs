@@ -50,7 +50,10 @@
 
 use crate::deviation::{deviation, deviation_stats, DeviationMap, DeviationSettings};
 use crate::icp::Orientation;
-use crate::{CancelFlag, DeviationStats, DeviationSummary, Rigid, Soup, SurfaceIndex, Validity};
+use crate::{
+    CancelFlag, DeviationStats, DeviationSummary, Rigid, Soup, SurfaceIndex, Unmeasured, Validity,
+    MIN_MEASURED,
+};
 
 /// A two-way surface comparison: both directed maps and the pooled statistics.
 ///
@@ -65,17 +68,40 @@ pub struct SurfaceAgreement {
     /// Fixed vertices measured against the moving surface — the direction that
     /// sees material the moving scan is missing.
     pub fixed_to_moving: DeviationStats,
+    /// The pooled numbers — **absent** when the two directions together did not
+    /// measure enough surface to characterise.
+    ///
+    /// An `Option` for the same reason [`DeviationStats::summary`] is one, and
+    /// the reason is worth repeating because this struct used to get it wrong:
+    /// two scans with no overlap at all came back as `mean_abs: 0.0` and
+    /// `hausdorff: 0.0`, which is what a flawless fit looks like. It reported
+    /// `within_tolerance: 0.0` in the same breath, so the two fields
+    /// contradicted each other — nought millimetres apart, nought per cent
+    /// inside tolerance.
+    pub summary: Option<AgreementSummary>,
+    /// Measurements pooled over both directions.
+    pub measured: u32,
+    /// Vertices, either side, that carried no measurement, and why.
+    pub unmeasured: Unmeasured,
+}
+
+/// What a two-way comparison found, once there was enough of it to say anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AgreementSummary {
     /// Mean absolute distance pooled over both directions, in millimetres: the
     /// average symmetric surface distance (ASSD).
     ///
     /// Pooled, so the denser of the two meshes carries proportionally more of
-    /// it. Prefer [`Self::balanced_mean_abs`] when the two are not comparable
-    /// in size.
+    /// it. Prefer [`SurfaceAgreement::balanced_mean_abs`] when the two are not
+    /// comparable in size.
     pub mean_abs: f64,
     /// Root-mean-square distance pooled over both directions, in millimetres.
     pub rms: f64,
     /// Larger of the two directed 95th percentiles, in millimetres: the robust
     /// symmetric Hausdorff distance, which one bad vertex cannot set.
+    ///
+    /// A direction that measured too little contributes nothing here rather than
+    /// a zero, which would silently pull the worst case down.
     pub hausdorff_p95: f64,
     /// Larger of the two directed maxima, in millimetres: the symmetric
     /// Hausdorff distance. A single spike sets it, so it is a bound and not a
@@ -83,10 +109,6 @@ pub struct SurfaceAgreement {
     pub hausdorff: f64,
     /// Share of the pooled measurements within the tolerance band, 0 to 1.
     pub within_tolerance: f64,
-    /// Measurements pooled over both directions.
-    pub measured: u32,
-    /// Vertices, either side, that carried no measurement.
-    pub skipped: u32,
 }
 
 impl SurfaceAgreement {
@@ -204,27 +226,27 @@ pub fn surface_agreement(
         }
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    let total = count as f64;
-    let (mean_abs, rms, within_tolerance) = if count == 0 {
-        (0.0, 0.0, 0.0)
-    } else {
+    // The same floor the one-sided statistics use, over the pooled count. A
+    // pooled mean taken across a handful of vertices is arithmetically true and
+    // clinically meaningless, and it is the one number a reader trusts.
+    let summary = (u32::try_from(count).unwrap_or(u32::MAX) >= MIN_MEASURED).then(|| {
         #[allow(clippy::cast_precision_loss)]
-        let share = inside as f64 / total;
-        (sum / total, (squares / total).sqrt(), share)
-    };
+        let total = count as f64;
+        AgreementSummary {
+            mean_abs: sum / total,
+            rms: (squares / total).sqrt(),
+            hausdorff_p95: worst(&forward, &backward, |summary| summary.p95),
+            hausdorff: worst(&forward, &backward, |summary| summary.max_abs),
+            #[allow(clippy::cast_precision_loss)]
+            within_tolerance: inside as f64 / total,
+        }
+    });
 
     SurfaceAgreement {
         moving_to_fixed: forward,
         fixed_to_moving: backward,
-        mean_abs,
-        rms,
-        // A direction that measured too little contributes no distance rather
-        // than a zero, which would silently pull the worst case down.
-        hausdorff_p95: worst(&forward, &backward, |summary| summary.p95),
-        hausdorff: worst(&forward, &backward, |summary| summary.max_abs),
-        within_tolerance,
+        summary,
         measured: forward.measured.saturating_add(backward.measured),
-        skipped: forward.skipped.saturating_add(backward.skipped),
+        unmeasured: forward.unmeasured.combined(backward.unmeasured),
     }
 }

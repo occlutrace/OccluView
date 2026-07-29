@@ -56,17 +56,18 @@ mod rigid;
 mod sample;
 mod surface;
 
-pub use agreement::{reverse_deviation, surface_agreement, SurfaceAgreement};
+pub use agreement::{reverse_deviation, surface_agreement, AgreementSummary, SurfaceAgreement};
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
-    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Validity,
-    MIN_MEASURED, NO_DATA_COLOR,
+    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Unmeasured,
+    Validity, MIN_MEASURED, NO_DATA_COLOR,
 };
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
-pub use mask::{apply_brush, invert, mark_around, set_all, MaskEdit, EXCLUDED, INCLUDED};
+pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
 pub use pairs::{fit_pairs, FitRejection, PairFit};
 pub use rigid::Rigid;
+pub use sample::extent_of;
 pub use surface::{SurfaceHit, SurfaceIndex};
 
 use std::sync::atomic::{AtomicBool, Ordering};
