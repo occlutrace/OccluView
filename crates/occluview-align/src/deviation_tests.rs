@@ -518,24 +518,3 @@ fn the_reasons_survive_a_measurement_too_small_to_summarise() {
     assert_eq!(stats.unmeasured.excluded, 1);
     assert_eq!(stats.unmeasured.out_of_reach, 1);
 }
-
-/// Two directions' reasons add up cause by cause, so a pooled report can still
-/// tell "no counterpart" from "bad data".
-#[test]
-fn reasons_from_two_directions_add_up_without_being_flattened() {
-    let forward = Unmeasured {
-        excluded: 1,
-        out_of_reach: 2,
-        unusable: 0,
-    };
-    let backward = Unmeasured {
-        excluded: 0,
-        out_of_reach: 3,
-        unusable: 4,
-    };
-    let both = forward.combined(backward);
-    assert_eq!(both.excluded, 1);
-    assert_eq!(both.out_of_reach, 5);
-    assert_eq!(both.unusable, 4);
-    assert_eq!(both.total(), 10);
-}

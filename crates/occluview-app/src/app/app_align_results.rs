@@ -232,17 +232,32 @@ impl OccluViewApp {
     /// moment they touched the mesh. Coming back re-measures, so the tab reads
     /// the same on the way in as it did on the way out.
     pub(super) fn settle_align_tab_change(&mut self) {
+        // Either direction: a gesture belongs to the tab it started on. The drag
+        // handler closes one when it finds itself on the wrong tab, but that is a
+        // frame later, and one frame is enough for the release to land somewhere
+        // that no longer expects it.
+        self.finish_align_drag();
+        self.align_drag = None;
         if self.align_tab == crate::align_panel::AlignTab::Automatically {
             self.measure_if_shown();
             return;
         }
-        self.finish_align_drag();
-        self.align_drag = None;
         self.abandon_align_jobs();
+        // The arrows go too. A hand nudge moves the scan out from under every
+        // point that was placed on it, so they would come back describing a fit
+        // that no longer holds — and the operator asked for a clean slate here by
+        // name. The pair itself stays: they chose those two scans and did not
+        // un-choose them.
+        let dropped_arrows = self.align.clear_points();
+        if dropped_arrows {
+            self.align_rejected.clear();
+        }
         if self.align_overlay == super::app_align_display::AlignOverlay::Map {
             self.clear_deviation_overlay();
             self.align_status =
                 Some("Distance map is on the Automatically tab — it comes back there".into());
+        } else if dropped_arrows {
+            self.align_status = Some("Arrows cleared — moving by hand from here".into());
         }
     }
 

@@ -241,6 +241,25 @@ impl AlignTool {
         self.pairs.pop().is_some()
     }
 
+    /// Drop the arrows but keep the pair.
+    ///
+    /// The Manually tab has nothing to do with arrows, and an operator who nudges
+    /// a scan by hand has moved it out from under every point they placed — the
+    /// arrows then draw a fit that no longer describes anything. Coming back to
+    /// the Automatically tab with a clean slate is what the operator asked for by
+    /// name. The two scan names stay, because they are what "compare these two"
+    /// needs and the operator did not un-choose them.
+    ///
+    /// Returns whether there was anything to drop.
+    pub(crate) fn clear_points(&mut self) -> bool {
+        if self.pairs.is_empty() && self.pending.is_none() {
+            return false;
+        }
+        self.pairs.clear();
+        self.pending = None;
+        true
+    }
+
     /// Drop every point and both layer names, leaving the tool armed so the
     /// next click can start a fresh pair — which is how a third scan gets
     /// aligned to the second.
