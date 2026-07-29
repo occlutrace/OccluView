@@ -291,6 +291,22 @@ impl AlignMarkings {
         true
     }
 
+    /// Trade the two sides, because the scans traded roles.
+    ///
+    /// A marking belongs to a surface, not to a role. When the operator swaps
+    /// which scan moves, leaving the masks alone would take the region they
+    /// painted on one arch and apply it to the other — silently excluding
+    /// anatomy nobody marked.
+    pub(crate) fn swap_sides(&mut self) -> bool {
+        if !self.any() {
+            return false;
+        }
+        std::mem::swap(&mut self.moving, &mut self.fixed);
+        self.touched.clear();
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
     /// Drop every marking on both scans. Bumps the revision only if there was
     /// something to drop, so a Cancel on an unmarked pair costs no re-measure.
     pub(crate) fn clear(&mut self) -> bool {

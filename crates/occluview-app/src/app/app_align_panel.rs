@@ -65,6 +65,7 @@ impl OccluViewApp {
                 settings: &mut settings,
                 status: self.align_status.as_deref(),
                 stats: self.align_stats,
+                roles: self.align_roles(),
                 busy,
                 moved,
                 can_undo: self.edit_mode.undo_layer_id().is_some(),
@@ -101,11 +102,15 @@ impl OccluViewApp {
         self.align_settings = settings;
         self.align_constraint = constraint;
         self.align_brush = brush;
+        let tab_changed = self.align_tab != tab;
         self.align_tab = tab;
         // Opening and closing the brush changes what is on the surface: the
         // markings go up, and the scan's own colours come back.
         if was_excluding != excluding {
             self.refresh_align_region_preview();
+        }
+        if tab_changed {
+            self.settle_align_tab_change();
         }
         if let Some(command) = mask_command {
             self.apply_align_mask_command(command);
@@ -119,6 +124,8 @@ impl OccluViewApp {
             Some(crate::align_panel::AlignPanelAction::Back) => {
                 self.take_align_arrow_back();
             }
+            Some(crate::align_panel::AlignPanelAction::SwapRoles) => self.swap_align_roles(),
+            Some(crate::align_panel::AlignPanelAction::Clear) => self.clear_align_pair(),
             // The invalidation lives inside the navigation itself, so the
             // Ctrl+Z shortcut gets it too.
             Some(crate::align_panel::AlignPanelAction::Undo) => {
@@ -131,6 +138,53 @@ impl OccluViewApp {
             Some(crate::align_panel::AlignPanelAction::Done) => self.finish_align_session(ctx),
             None => {}
         }
+    }
+
+    /// Which scan the fit will move, named the way the operator named the files.
+    fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
+        let scene = self.scene.as_ref()?;
+        let name_of = |layer| {
+            let index = scene
+                .meshes()
+                .iter()
+                .position(|entry| entry.id() == layer)?;
+            Some(crate::layers_overlay::layer_label(
+                &self.current_paths,
+                &scene.meshes()[index],
+                index,
+            ))
+        };
+        Some(crate::align_panel_roles::AlignRoles {
+            moving: name_of(self.align.moving_layer()?)?,
+            fixed: name_of(self.align.fixed_layer()?)?,
+            implied: self.align.roles_are_implied(),
+        })
+    }
+
+    /// Turn the pair around, and take everything that described the old
+    /// direction down with it.
+    fn swap_align_roles(&mut self) {
+        if !self.align.swap_roles() {
+            return;
+        }
+        // The markings belong to surfaces, not to roles.
+        self.align_markings.swap_sides();
+        // A map is a measurement of one scan against the other, in that order.
+        self.forget_align_fit("Pair turned around");
+        let named = self.align_roles().map_or_else(
+            || "Pair turned around".to_owned(),
+            |roles| format!("{} moves now, {} stays put", roles.moving, roles.fixed),
+        );
+        self.align_status = Some(named);
+    }
+
+    /// Drop the pair so a different two scans can be picked, without closing the
+    /// tool and without moving anything back.
+    fn clear_align_pair(&mut self) {
+        self.align.clear();
+        self.clear_align_mask();
+        self.forget_align_fit("Pair cleared");
+        self.align_status = Some("Click a point on the scan that should move".into());
     }
 
     /// exocad's "Back": drop the half-placed point, else the last whole arrow.
