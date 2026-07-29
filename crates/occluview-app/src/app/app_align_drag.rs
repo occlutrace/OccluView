@@ -84,6 +84,12 @@ impl OccluViewApp {
             // at distances that were no longer true, which reads as a heatmap
             // that agrees with wherever the operator drags it.
             self.forget_align_fit("Moving by hand");
+            // Said at the START as well as the end, because this is the moment
+            // the operator can still let go and try again if they grabbed the
+            // arch they did not mean to.
+            if let Some(name) = self.layer_display_name(hit.layer_id) {
+                self.align_status = Some(format!("Moving {name} by hand"));
+            }
         }
 
         let Some(drag) = self.align_drag else {
@@ -199,7 +205,18 @@ impl OccluViewApp {
         // pose IS the work product: without this the app closes without asking
         // and the alignment is gone.
         self.mark_mesh_edits_unsaved(drag.layer);
-        self.align_status = Some("Moved by hand (Ctrl+Z undoes)".into());
+        // Named, and with the distance. This tool moves whichever scan the
+        // operator grabbed — the fixed one included — and nothing on screen said
+        // which that was. An operator who grabs the wrong arch by accident finds
+        // out later, from an export that came back in its original place, with no
+        // way to connect the two.
+        let moved_mm = f64::from((current.translation - drag.start.translation).length());
+        let name = self
+            .layer_display_name(drag.layer)
+            .unwrap_or_else(|| "The scan".to_owned());
+        self.align_status = Some(format!(
+            "{name} moved {moved_mm:.2} mm by hand (Ctrl+Z undoes)"
+        ));
         self.forget_align_fit("Moved by hand");
         true
     }

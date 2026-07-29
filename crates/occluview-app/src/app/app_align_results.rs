@@ -127,30 +127,40 @@ impl OccluViewApp {
                 if self.align_brush.is_armed() {
                     return;
                 }
-                self.align_stats = Some(stats);
                 // Auto-scale chose the range the colours were painted at. The
                 // legend has to adopt it or it would describe a different one.
                 if self.align_settings.auto_scale {
                     self.align_settings.scale_mm = scale_mm;
                 }
-                self.apply_deviation_colors(colors);
                 // No summary means too little surface reached the other scan to
                 // characterise. Saying "0% within 0.20 mm" there would be a
-                // reading about a measurement that did not happen.
-                self.align_status = Some(match stats.summary {
-                    Some(summary) => format!(
-                        "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
-                        summary.within_tolerance * 100.0,
-                        self.align_settings.tolerance_mm,
-                        stats.unmeasured.total(),
-                        blind_note(seen.as_ref(), summary.rms)
-                    ),
-                    None => format!(
-                        "Not enough surface to measure — only {} of {} vertices reached the other scan",
+                // reading about a measurement that did not happen — and PAINTING
+                // it is worse: every unmeasured vertex is grey, so a scan the
+                // operator had just moved out of reach came back flat grey and
+                // read as broken. A measurement that did not happen is not
+                // painted at all.
+                let Some(summary) = stats.summary else {
+                    self.clear_deviation_overlay();
+                    self.align_stats = Some(stats);
+                    self.align_status = Some(format!(
+                        "Nothing to measure at {:.1} mm reach — {} of {} vertices found the other scan. \
+                         Move the scans closer, or widen the reach under More settings.",
+                        self.align_settings.influence_radius_mm,
                         stats.measured,
                         stats.measured.saturating_add(stats.unmeasured.total())
-                    ),
-                });
+                    ));
+                    ctx.request_repaint();
+                    return;
+                };
+                self.align_stats = Some(stats);
+                self.apply_deviation_colors(colors);
+                self.align_status = Some(format!(
+                    "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
+                    summary.within_tolerance * 100.0,
+                    self.align_settings.tolerance_mm,
+                    stats.unmeasured.total(),
+                    blind_note(seen.as_ref(), summary.rms)
+                ));
             }
             AlignOutcome::Failed { message } => {
                 self.align_status = Some(message);
@@ -420,6 +430,49 @@ mod tests {
             drain.contains("AlignWorker::generation")
                 && drain.contains("if completion.generation != current"),
             "the check has to sit inside the loop, per completion"
+        );
+    }
+
+    /// A measurement that measured nothing is never painted.
+    ///
+    /// Every unmeasured vertex is grey, so a scan the operator had just moved out
+    /// of reach came back FLAT grey — one of the two scans looking switched off,
+    /// with no explanation. Grey over part of a scan is a reading (there is no
+    /// tooth opposite that one); grey over all of it is not a reading at all.
+    ///
+    /// A source contract: the arm needs a worker result, a scene and a live GPU
+    /// layer, none of which a test can hand it while `OccluViewApp` cannot be
+    /// constructed. The absence of a summary is itself covered by real tests in
+    /// `occluview-align`.
+    #[test]
+    fn a_measurement_with_no_summary_is_not_painted_on_the_scan() {
+        let measured = production()
+            .split_once("AlignOutcome::Measured {")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("AlignOutcome::Failed"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        let guard = measured
+            .split_once("let Some(summary) = stats.summary else {")
+            .map(|(_, rest)| rest);
+        let (refusal, remainder) = guard
+            .and_then(|rest| rest.split_once("};"))
+            .unwrap_or_default();
+        assert!(
+            !refusal.is_empty(),
+            "the no-summary arm is gone; a scan can be painted flat grey again"
+        );
+        assert!(
+            refusal.contains("self.clear_deviation_overlay()") && refusal.contains("return"),
+            "a measurement that said nothing has to take the old map down and stop"
+        );
+        assert!(
+            !refusal.contains("apply_deviation_colors"),
+            "nothing is painted for a measurement that did not happen"
+        );
+        assert!(
+            remainder.contains("self.apply_deviation_colors(colors)"),
+            "the summary path still paints"
         );
     }
 

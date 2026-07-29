@@ -16,6 +16,19 @@ use std::sync::Arc;
 use glam::DVec3;
 use occluview_align::{apply_brush, invert, set_all, MaskEdit, Rigid, INCLUDED};
 
+/// The colour marked-out surface is painted.
+///
+/// Blue, because that is the colour exocad paints an excluded region, and an
+/// operator who works in that dialog should not have to learn a second
+/// convention here. Defined next to the markings themselves because both the
+/// surface and the sentence in the Brush window use it — they were two separate
+/// literals in two files, each with a comment claiming they matched.
+pub(crate) const MARKED_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
+
+/// The colour surface that still takes part in the match is tinted — a neutral
+/// stone, so the marked surface is the only thing that draws the eye.
+pub(crate) const MARKED_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
+
 /// Which scan of the pair a marking belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AlignSide {

@@ -51,8 +51,21 @@ impl OccluViewApp {
                 let warning_suffix = mesh_export_warning_summary(&report.warnings)
                     .map(|summary| format!(" (warnings: {summary})"))
                     .unwrap_or_default();
+                // Named, and with the pose called out. An operator who aligns two
+                // scans and exports one has no other way to check they exported
+                // the arch they moved: a file written in its original position and
+                // a file written in its aligned one both just said "Exported
+                // layer". Whichever it is, it is now on the status line.
+                let name = self
+                    .layer_display_name(request.layer_id)
+                    .unwrap_or_else(|| "layer".to_owned());
+                let placement = if moved_from_source(scene, request) {
+                    " in its aligned position"
+                } else {
+                    " (this scan has not been moved)"
+                };
                 self.status_message = Some(format!(
-                    "Exported layer as {}{}: {}",
+                    "Exported {name}{placement} as {}{}: {}",
                     mesh_export_format_label(report.format),
                     warning_suffix,
                     path.display()
@@ -112,6 +125,18 @@ impl OccluViewApp {
             SaveEditedLayersOutcome::Aborted
         }
     }
+}
+
+/// Whether this layer sits anywhere other than where its file put it.
+///
+/// Exactly the test the export bake uses, so the sentence on the status line and
+/// the geometry in the file cannot disagree.
+fn moved_from_source(scene: &Scene, request: LayerContextRequest) -> bool {
+    scene
+        .meshes()
+        .get(request.index)
+        .filter(|entry| entry.id() == request.layer_id)
+        .is_some_and(|entry| entry.transform != glam::Affine3A::IDENTITY)
 }
 
 fn write_layer_export_to_path(
@@ -301,7 +326,7 @@ pub(super) fn sanitize_filename_stem(raw: &str) -> String {
 mod tests {
     use super::*;
     use crate::layer_actions::{LayerContextAction, LayerContextRequest};
-    use glam::Vec3;
+    use glam::{Affine3A, Vec3};
     use occluview_core::{
         delete_selected_faces_in_mesh, FaceSelection, Mesh, MeshEditOptions, Scene, SceneMesh,
         Vertex,
@@ -496,6 +521,92 @@ mod tests {
         let triangle_count = u32::from_le_bytes(count_bytes);
         assert_eq!(triangle_count, 0);
         let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    /// The whole chain, end to end: a pose put on a layer the way a hand drag
+    /// puts it there, exported, then READ BACK OFF DISK and checked.
+    ///
+    /// The owner reported a manual move that did not survive an export. Every
+    /// step of this chain used to be covered only in pieces — the bake had a
+    /// test, the writer had a test, the reader had a test — and none of them
+    /// answered "does the file on disk hold the scan where the operator sees it".
+    /// This one does, for all three formats, because the answer must not depend
+    /// on which one they picked.
+    #[test]
+    fn an_exported_layer_lands_on_disk_in_the_pose_the_operator_sees() -> Result<()> {
+        for extension in ["ply", "stl", "obj"] {
+            let mut scene = exportable_scene()?;
+            // A drag composes its steps onto whatever pose is already there, so
+            // this is a turn AND a shift, not just a translation.
+            let pose = Affine3A::from_rotation_z(std::f32::consts::FRAC_PI_2)
+                * Affine3A::from_translation(Vec3::new(7.0, -3.0, 11.0));
+            scene.meshes_mut()[0].transform = pose;
+            let expected: Vec<Vec3> = scene.meshes()[0]
+                .mesh
+                .vertices()
+                .iter()
+                .map(|vertex| pose.transform_point3(Vec3::from_array(vertex.position)))
+                .collect();
+
+            let path = temp_file(extension);
+            let request = LayerContextRequest {
+                index: 0,
+                layer_id: scene.meshes()[0].id(),
+                action: LayerContextAction::ExportLayer,
+            };
+            write_layer_export_to_path(&scene, request, &path)?;
+
+            let read_back = occluview_formats::read_file(&path)
+                .map_err(|error| anyhow::anyhow!("reading back {extension}: {error}"))?;
+            let _ = std::fs::remove_file(&path);
+
+            assert_eq!(
+                read_back.vertices().len(),
+                expected.len(),
+                "{extension}: vertex count changed on the way through disk"
+            );
+            for (slot, (vertex, want)) in read_back.vertices().iter().zip(&expected).enumerate() {
+                let got = Vec3::from_array(vertex.position);
+                assert!(
+                    (got - *want).length() < 1e-3,
+                    "{extension}: vertex {slot} came back at {got:?}, not the posed {want:?} — \
+                     the operator's alignment was thrown away"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The status line names the layer and says whether it carries a pose, so an
+    /// operator who exported the arch they did NOT move can see that.
+    #[test]
+    fn the_export_reports_whether_the_scan_had_been_moved() -> Result<()> {
+        let mut scene = exportable_scene()?;
+        let request = LayerContextRequest {
+            index: 0,
+            layer_id: scene.meshes()[0].id(),
+            action: LayerContextAction::ExportLayer,
+        };
+        assert!(
+            !moved_from_source(&scene, request),
+            "a freshly loaded scan sits where its file put it"
+        );
+
+        scene.meshes_mut()[0].transform = Affine3A::from_translation(Vec3::new(0.0, 0.0, 4.0));
+        assert!(moved_from_source(&scene, request));
+
+        let stale = LayerContextRequest {
+            index: 0,
+            layer_id: scene.meshes()[0].id(),
+            ..request
+        };
+        let mut renamed = stale;
+        renamed.index = 9;
+        assert!(
+            !moved_from_source(&scene, renamed),
+            "a layer that is not there cannot be reported as moved"
+        );
         Ok(())
     }
 
