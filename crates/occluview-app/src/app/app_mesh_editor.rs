@@ -429,7 +429,7 @@ impl OccluViewApp {
         // Here rather than at the call sites, so Ctrl+Z gets it too: history
         // can revert the pose an align overlay describes, and the shortcut is
         // live the whole time Align Scans is open.
-        self.invalidate_deviation_map("Stepped through history");
+        self.forget_align_fit("Stepped through history");
     }
 
     /// Swap the draft scene in as the live scene (or clear it, if the draft

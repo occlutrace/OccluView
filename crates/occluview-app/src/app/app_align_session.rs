@@ -1,10 +1,9 @@
-//! The Align Scans session: what Cancel and Done mean, and how the un-mapped
-//! scan gets out of the way.
+//! The Align Scans session: what Cancel and Done mean.
 //!
 //! Split from `app_align` because it answers a different question. That module
-//! routes clicks and jobs; this one owns the transaction the operator commits
-//! or throws away, and the display trick that makes one coloured surface
-//! readable.
+//! routes clicks and jobs; this one owns the transaction the operator commits or
+//! throws away. Fading the un-mapped scan used to live here too, and moved to
+//! `app_align_display` — every caller was already there.
 
 use eframe::egui;
 use occluview_core::SceneMeshId;
@@ -12,15 +11,18 @@ use occluview_core::SceneMeshId;
 use super::OccluViewApp;
 use crate::edit_mode::EditModeCommand;
 use glam::Affine3A;
-use std::sync::Arc;
-
-/// How solid the un-mapped scan stays while the heatmap is up. Enough to keep
-/// the shape readable, faint enough that it never covers the coloured surface.
-const GHOST_OPACITY: f32 = 0.16;
 
 impl OccluViewApp {
     /// Close the tool and put every scan back where the session found it.
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
+        // An open hand gesture is dropped, not committed. Escape is read before
+        // the drag handler, so the mouse button can still be down here. Restoring
+        // first and closing the gesture afterwards — which is what the teardown
+        // below does — made the release write a history step out of a pose that
+        // the restore had already replaced: a state the scene had never actually
+        // been in, recorded as the operator's own edit, and the scene marked
+        // unsaved for a Cancel that changed nothing.
+        self.align_drag = None;
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.status_message = Some(if restored {
@@ -96,72 +98,5 @@ impl OccluViewApp {
         self.edit_mode.finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
         true
-    }
-
-    /// Which layer carries the map: the one that moved.
-    ///
-    /// There used to be a control that put the map on the other surface
-    /// instead. It asked the operator a rendering question dressed up as a
-    /// measurement one — the distances are the same either way — so it is gone,
-    /// and the answer is now always "the scan you are placing".
-    pub(super) fn align_mapped_layer(&self) -> Option<SceneMeshId> {
-        self.align.moving_layer()
-    }
-
-    /// The layer the map is *not* on, which is the one that has to get out of
-    /// the way.
-    fn align_other_layer(&self) -> Option<SceneMeshId> {
-        self.align.fixed_layer()
-    }
-
-    /// Fade the other scan while the map is up.
-    ///
-    /// Two solid surfaces a fraction of a millimetre apart interpenetrate, and
-    /// the coloured one is then only visible in patches. Lab software shows one
-    /// clean coloured surface; this is how.
-    pub(super) fn ghost_other_layer(&mut self) {
-        if !self.align_ghosted.is_empty() {
-            return;
-        }
-        let Some(other) = self.align_other_layer() else {
-            return;
-        };
-        let Some(scene) = self.scene.as_mut() else {
-            return;
-        };
-        // Opacity is a material, not a structure: mutate the live scene in
-        // place rather than replacing it, or fading one layer would copy every
-        // mesh in the scene and force a full GPU rebuild.
-        let live = Arc::make_mut(scene);
-        let mut remembered = Vec::new();
-        for entry in live.meshes_mut() {
-            if entry.id() == other {
-                remembered.push((entry.id(), entry.opacity));
-                entry.opacity = GHOST_OPACITY;
-            }
-        }
-        if remembered.is_empty() {
-            return;
-        }
-        self.align_ghosted = remembered;
-        self.mark_scene_materials_changed();
-    }
-
-    /// Bring the faded scan back.
-    pub(super) fn unghost_layers(&mut self) {
-        if self.align_ghosted.is_empty() {
-            return;
-        }
-        let restore = std::mem::take(&mut self.align_ghosted);
-        let Some(scene) = self.scene.as_mut() else {
-            return;
-        };
-        let live = Arc::make_mut(scene);
-        for (id, opacity) in restore {
-            if let Some(entry) = live.meshes_mut().iter_mut().find(|entry| entry.id() == id) {
-                entry.opacity = opacity;
-            }
-        }
-        self.mark_scene_materials_changed();
     }
 }
