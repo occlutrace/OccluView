@@ -105,7 +105,7 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean() {
             &CancelFlag::new(),
         );
         let stats = deviation_stats(&map, TOLERANCE_MM);
-        let total = f64::from(stats.measured + stats.skipped).max(1.0);
+        let total = f64::from(stats.measured + stats.unmeasured.total()).max(1.0);
         let measured_share = f64::from(stats.measured) / total;
         let summary = stats
             .summary
@@ -283,8 +283,11 @@ fn check_offset(case: &Offset<'_>) {
          did — estimate {estimate:.4}, raw {:.4}, truth {truth:.4}",
         summary.rms
     );
+    let pooled = agreement
+        .summary
+        .expect("a real arch scan against itself measures plenty in both directions");
     assert!(
-        agreement.rms > 0.0 && agreement.measured > stats.measured,
+        pooled.rms > 0.0 && agreement.measured > stats.measured,
         "{label}: the symmetric measure must pool both directions"
     );
 
@@ -296,9 +299,9 @@ fn check_offset(case: &Offset<'_>) {
          {:.4}, balanced {:.4}, HD95 {:.4}, corrected {estimate:.4}",
         summary.rms,
         summary.rms / truth * 100.0,
-        agreement.rms,
+        pooled.rms,
         balanced_mean_abs,
-        agreement.hausdorff_p95,
+        pooled.hausdorff_p95,
     );
 }
 

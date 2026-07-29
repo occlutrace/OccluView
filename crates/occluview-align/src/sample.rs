@@ -87,7 +87,7 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
 /// Bounding-box diagonal of the soup, in millimetres. Zero when nothing is
 /// usable — callers treat that as "no plausible motion".
 #[must_use]
-pub(crate) fn extent_of(soup: Soup<'_>) -> f64 {
+pub fn extent_of(soup: Soup<'_>) -> f64 {
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut seen = false;
