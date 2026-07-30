@@ -138,9 +138,11 @@ impl CutTool {
     /// Zoom the section window, and take the disc with it.
     ///
     /// The operator asked for the two to be one gesture: scroll in the little
-    /// section window and the disc in the 3D view resizes to match. Before this
-    /// they were separate knobs that both changed how big the section read, which
-    /// is why a freshly planted disc could look far too small and there was no
+    /// section window and the disc in the 3D view resizes to match. The disc is
+    /// what the window is looking at, so they move opposite ways — magnify the
+    /// section and the disc narrows onto the detail, pull back and it opens out.
+    /// Before this they were separate knobs that both changed how big the section
+    /// read, which is why a freshly planted disc could look far too small with no
     /// obvious way to fix it from the window you were reading.
     pub(super) fn zoom_slice_at_cursor(
         &mut self,
