@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.6 - 2026-07-29
 
 - Added Align Scans: click a point on one scan and the matching point on
   another, and they pair themselves. There is no target picker and no roles —
@@ -34,6 +34,50 @@
   one file, save each visible layer in its own pose, reset positions, fit the
   view. The viewer has no project file, so saving is how an alignment survives
   the session.
+- Align Scans decides direction from your first click. With two scans in view
+  the pair is still guessed before you touch anything, but that guess only goes
+  by the order the files were opened in, so the first point you place now
+  overrides it. The window names both scans in the direction the fit will run
+  and offers one button to turn it round, arrows and markings included.
+- Clear drops the pair so a third file can be aligned without closing the tool.
+  The refusal that told you to "press Clear" used to name a control that did not
+  exist.
+- The Manually tab moves the scan you aim at. Two scans in an alignment overlap,
+  so the nearest surface under the cursor was often the other one; the scan
+  being placed now gets first refusal on the grab. The status line names the
+  scan and the distance when a drag starts and again when it ends, and the axis
+  constraint applies to Ctrl+drag rotation, which used to ignore it.
+- Switching to Manually clears the placed arrows: a hand nudge moves the scan
+  out from under them.
+- An automatic fit is unsaved work. It never raised the flag the close guard
+  reads, so an alignment could be lost on close with no prompt. Save scene and
+  Save each layer no longer clear that flag for a hidden layer they skipped.
+- A result the operator has overtaken is never applied. A refine carries a pose
+  and commits it, so one landing after a hand move or a Ctrl+Z used to put the
+  scan back where it had just been taken from.
+- The heat map opens at a tenth of a millimetre and stays there. A finished fit
+  used to switch the range back to automatic, so a range you chose could not be
+  held.
+- A measurement that reached nothing is no longer painted. Every unmeasured
+  vertex is grey, so a scan moved out of reach came back flat grey; the panel
+  now says what the reach was and how many vertices found the other scan.
+- Grey is named by cause: no surface opposite, marked out, or unusable data. The
+  legend carries the swatch. A bridge that exists on one arch only has nothing
+  to measure against, and that is not an error.
+- A structural edit takes the heat map with it. Repair, close holes, crop, cut,
+  separate and a bridge split left a map of the surface the layer used to have.
+- Markings are tied to the mesh, not to its vertex count: a repair can hand back
+  different geometry with the same count, and the mask used to pass and exclude
+  a region nobody had painted.
+- A fit or a measurement against a hidden scan is refused by name instead of
+  reporting a percentage for a surface nobody can see, and "% of the surface"
+  now says "of the unmarked surface" when a region is painted out.
+- Cut View: the wheel in the section window resizes the cutting disc with it.
+  Resizing the disc no longer throws away the pan and zoom you set there.
+- The viewport scale bar follows the camera. It was derived from the scene's
+  bounding box, so it described the framing the file opened at and was wrong
+  from the first scroll onwards.
+- Removed the two-way surface-agreement statistic: it was never shown anywhere.
 
 ## 1.0.5 - 2026-07-21
 
