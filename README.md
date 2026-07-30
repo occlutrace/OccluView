@@ -4,15 +4,14 @@
 
 <h1 align="center">OccluView</h1>
 
-<p align="center">A fast native 3D viewer for dental scans and mesh files.</p>
+<p align="center">A fast, native 3D viewer for dental scans and files with basic mesh editing and sculpting features.</p>
 
 <p align="center">
   <img src="assets/screenshot1.png" alt="OccluView showing a dental scan" width="820">
 </p>
 
-OccluView opens large 3D files quickly and keeps the workspace focused on the
-model. It supports multiple layers, measurement tools, basic mesh editing,
-Windows Explorer integration, and a native Linux package.
+OccluView was created with a "nothing extra" philosophy. It offers lightning-fast file opening, mesh editing, surface sculpting, and basic scan alignment functions, complete with a discrepancy heatmap.
+The viewer is tailored to the daily work of CAD designers. It supports multiple layers, a surface ruler, a thickness analyzer, and a truly convenient cut view. It also integrates with Windows Explorer and has its own Linux package.
 
 ## Features
 
