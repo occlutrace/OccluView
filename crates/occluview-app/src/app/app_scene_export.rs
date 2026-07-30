@@ -10,7 +10,7 @@ use super::app_mesh_export::{
 };
 use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
-use occluview_core::{Mesh, SceneMesh, Vertex};
+use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
 
 impl OccluViewApp {
@@ -44,6 +44,16 @@ impl OccluViewApp {
             return;
         };
 
+        // Only the VISIBLE layers go into the file, so only their edits are on
+        // disk afterwards. Clearing the whole flag also cleared it for a hidden
+        // layer that was never written: the close guard then read clean and the
+        // app shut without asking, taking that layer's edits with it.
+        let written: Vec<SceneMeshId> = scene
+            .meshes()
+            .iter()
+            .filter(|entry| entry.visible)
+            .map(SceneMesh::id)
+            .collect();
         match write_mesh_overwrite(&path, &mesh, format, MeshWriteOptions::default()) {
             Ok(_) => {
                 let note = if dropped_texture {
@@ -51,9 +61,7 @@ impl OccluViewApp {
                 } else {
                     ""
                 };
-                // Everything visible is now on disk in its current pose: this
-                // is exactly the work the close guard was holding.
-                self.clear_unsaved_mesh_edits();
+                self.forget_unsaved_edits(&written);
                 self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
             Err(error) => {
@@ -108,7 +116,15 @@ impl OccluViewApp {
         }
 
         if failed == 0 {
-            self.clear_unsaved_mesh_edits();
+            // Same rule as the whole-scene save: a hidden layer was not written,
+            // so its edits are still only in memory.
+            let written: Vec<SceneMeshId> = scene
+                .meshes()
+                .iter()
+                .filter(|entry| entry.visible)
+                .map(SceneMesh::id)
+                .collect();
+            self.forget_unsaved_edits(&written);
         }
         self.status_message = Some(if failed == 0 {
             format!("Saved {written} layers to {}", directory.display())

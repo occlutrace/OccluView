@@ -26,9 +26,9 @@ pub struct SceneMesh {
     pub visible: bool,
     /// Whether to draw a technical wireframe overlay for this layer.
     pub wireframe: bool,
-    /// Diagnostic view (exocad "Show triangle orientation"): the renderer
-    /// paints back-facing fragments of this layer solid red so inverted
-    /// surfaces are unmistakable before "Invert normals".
+    /// Diagnostic view (the dental CAD "Show triangle orientation"): the
+    /// renderer paints back-facing fragments of this layer solid red so
+    /// inverted surfaces are unmistakable before "Invert normals".
     pub show_orientation: bool,
     /// Whether the renderer shades this layer with its own vertex color /
     /// texture (`true`, default) or a flat neutral material (`false`) — a

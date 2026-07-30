@@ -1,9 +1,10 @@
 //! What the operator has marked out of the match, on **both** scans at once.
 //!
-//! exocad marks on either mesh, so this owns two masks rather than one. The
-//! type exists because the pieces below have to move together and used to sit
-//! as five loose fields on the application struct: the two masks, the revision
-//! every cache keys on, and the scratch list of vertices the last dab touched.
+//! Dental CAD software lets the operator mark either mesh independently, so
+//! this owns two masks rather than one. The type exists because the pieces
+//! below have to move together and used to sit as five loose fields on the
+//! application struct: the two masks, the revision every cache keys on, and
+//! the scratch list of vertices the last dab touched.
 //! Changing one without the others is how markings ended up on one surface and
 //! not the other, and how a stale revision handed a cache the wrong answer.
 //!
@@ -18,11 +19,12 @@ use occluview_align::{apply_brush, invert, set_all, MaskEdit, Rigid, INCLUDED};
 
 /// The colour marked-out surface is painted.
 ///
-/// Blue, because that is the colour exocad paints an excluded region, and an
-/// operator who works in that dialog should not have to learn a second
-/// convention here. Defined next to the markings themselves because both the
-/// surface and the sentence in the Brush window use it — they were two separate
-/// literals in two files, each with a comment claiming they matched.
+/// Blue, because that is the colour dental CAD software paints an excluded
+/// region, and an operator who works in that dialog should not have to learn
+/// a second convention here. Defined next to the markings themselves because
+/// both the surface and the sentence in the Brush window use it — they were
+/// two separate literals in two files, each with a comment claiming they
+/// matched.
 pub(crate) const MARKED_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
 
 /// The colour surface that still takes part in the match is tinted — a neutral
@@ -65,7 +67,8 @@ impl MaskCommand {
         Self::MarkAutomatic,
     ];
 
-    /// The label on the button, verbatim from exocad.
+    /// The label on the button, verbatim from the dental CAD software the
+    /// operator already works in.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::FitEverywhere => "Fit everywhere",
@@ -211,8 +214,8 @@ impl AlignMarkings {
         &self.touched
     }
 
-    /// Note that the pointer came up. Returns whether a stroke was actually
-    /// open, which is the caller's cue to re-measure.
+    /// The pointer came up. Returns whether a stroke was actually open, which
+    /// is the caller's cue to re-measure.
     pub(crate) fn close_stroke(&mut self) -> bool {
         std::mem::take(&mut self.stroke_open)
     }

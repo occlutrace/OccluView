@@ -1,11 +1,12 @@
-//! The Align Scans window, laid out the way exocad's Align Meshes is.
+//! The Align Scans window, laid out the way the operator's dental CAD
+//! software lays out its own align-meshes window.
 //!
 //! A movable window built from the same pieces as the mesh editor: no title
 //! bar, icon buttons, and a commit row that ends in Cancel and Done. Nothing
 //! here names a target, a source, or a role — the pair comes from the points
 //! the operator clicks in the viewport.
 //!
-//! The two tabs carry different work, exactly as exocad's do:
+//! The two tabs carry different work, exactly as the operator's tools do:
 //!
 //! * **Automatically** is where the alignment happens. Arrows, Back, Perform
 //!   alignment, Best fit matching, the two matching sliders, the orientation
@@ -34,7 +35,8 @@ pub(crate) const CHIP_HEIGHT: f32 = 26.0;
 /// Corner radius shared by every control in the window.
 pub(crate) const CHIP_ROUNDING: f32 = 5.0;
 
-/// The two ways exocad's Align Meshes works, and the two this window offers.
+/// The two ways the operator's dental CAD software's align-meshes works, and
+/// the two this window offers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AlignTab {
     /// Click matching points, then let the software fit them.
@@ -57,11 +59,12 @@ impl AlignTab {
 /// What the operator asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AlignPanelAction {
-    /// Fit the clicked pairs — exocad "Perform alignment".
+    /// Fit the clicked pairs — the operator's dental CAD "Perform alignment".
     Align,
-    /// Seat the surfaces against each other — exocad "Best fit matching".
+    /// Seat the surfaces against each other — the operator's dental CAD
+    /// "Best fit matching".
     Refine,
-    /// Remove the last arrow — exocad "Back".
+    /// Remove the last arrow — the operator's dental CAD "Back".
     Back,
     /// Turn the pair around: the scan that was staying put is the one that moves.
     SwapRoles,
@@ -326,7 +329,8 @@ fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
     ui.add_space(2.0);
 }
 
-/// exocad's "Back", and the way out to a different pair of scans.
+/// The same "Back" the operator's dental CAD software offers, and the way out
+/// to a different pair of scans.
 ///
 /// **Clear** is not decoration. Once two scans are paired, a click on a third is
 /// refused — and the refusal used to tell the operator to "press Clear", which
@@ -452,8 +456,8 @@ fn facing(ui: &mut egui::Ui, orientation: &mut Orientation) {
     }
 }
 
-/// exocad's "Matching: Exclude selected parts": the checkbox that opens the
-/// Brush tool window.
+/// The same "Matching: Exclude selected parts" the operator's dental CAD
+/// software uses: the checkbox that opens the Brush tool window.
 fn exclude(ui: &mut egui::Ui, excluding: &mut bool, enabled: bool) {
     ui.add_enabled_ui(enabled, |ui| {
         ui.checkbox(excluding, "Matching: Exclude selected parts")
@@ -710,11 +714,12 @@ mod tests {
         assert!(commit.contains("AlignPanelAction::Done"));
     }
 
-    /// exocad's labels, verbatim. The operator works in that dialog daily, and
-    /// a control that does the same job under a different name is a control
-    /// they have to translate before they can use it.
+    /// The operator's dental CAD software's labels, verbatim. The operator
+    /// works in that dialog daily, and a control that does the same job under
+    /// a different name is a control they have to translate before they can
+    /// use it.
     #[test]
-    fn the_controls_carry_exocads_own_labels() {
+    fn the_controls_carry_the_labels_operators_already_know() {
         let source = production();
         for label in [
             "\"Back\"",
@@ -758,7 +763,8 @@ mod tests {
     }
 
     /// The operator's report was that the manual tab had no action on it at
-    /// all. exocad's has Undo and Redo, and so does this one.
+    /// all. The operator's dental CAD software has Undo and Redo, and so does
+    /// this one.
     #[test]
     fn the_manual_tab_offers_the_history_buttons() {
         let manual = production()

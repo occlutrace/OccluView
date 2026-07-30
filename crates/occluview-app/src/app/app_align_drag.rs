@@ -243,10 +243,14 @@ impl OccluViewApp {
         let name = self
             .layer_display_name(drag.layer)
             .unwrap_or_else(|| "The scan".to_owned());
+        // The teardown first: it sets its own status when it drops a map, and it
+        // would otherwise overwrite the one line that says WHICH scan moved and
+        // by how much — the whole point of naming it. Every other caller in this
+        // module already runs in this order.
+        self.forget_align_fit("Moved by hand");
         self.align_status = Some(format!(
             "{name} moved {moved_mm:.2} mm by hand (Ctrl+Z undoes)"
         ));
-        self.forget_align_fit("Moved by hand");
         true
     }
 }

@@ -1,7 +1,7 @@
 //! Structural executors: Cut selection to a new layer and Separate connected
 //! components, preserving the source layer's presentation state.
 //!
-//! # Separate contract ("Separate marked area", exocad-style)
+//! # Separate contract ("Separate marked area", the dental-CAD convention)
 //!
 //! Separate splits the MARKED material off a layer. Connectivity is computed on
 //! the mesh's TRUE shared topology — STL and other soup formats store three
@@ -25,8 +25,9 @@
 //!
 //! The REMAINDER (everything unselected) always stays a SINGLE layer, even when
 //! removing the marked islands disconnects it into multiple shells — matching
-//! exocad's "the rest stays the base". A whole-mesh selection is refused upstream
-//! (it would leave a dead empty source), and a selection that fragments past
+//! the dental CAD convention that "the rest stays the base". A whole-mesh
+//! selection is refused upstream (it would leave a dead empty source), and a
+//! selection that fragments past
 //! [`MAX_SEPARATE_COMPONENTS`] is refused with an honest count instead of a layer
 //! storm.
 
@@ -145,8 +146,8 @@ pub(super) fn apply_separate_selected_components(
     entry.mesh = split.remainder;
     // The parts are geometrically coincident with where they sat in the
     // source, so with the source tint they would be invisible as a split
-    // (exocad shows a divide by recoloring the pieces). Walk the palette so
-    // every part reads as its own layer at a glance.
+    // (dental CAD software shows a divide by recoloring the pieces). Walk
+    // the palette so every part reads as its own layer at a glance.
     let mut part_tint = source_entry.tint;
     for (offset, mesh) in split.components.into_iter().enumerate() {
         part_tint = crate::layer_actions::next_layer_tint(part_tint);

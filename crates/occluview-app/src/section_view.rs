@@ -136,6 +136,13 @@ impl SectionView {
     pub(super) fn sync(&mut self, frame: Option<SectionViewFrame>) -> bool {
         let changed = frames_moved(self.current_frame, frame)
             || (self.slice_ready && frames_moved(self.rendered_frame, frame));
+        // The operator's pan and zoom are dropped only when the PLANE moves, not
+        // when the disc merely changes size. The framing already follows the
+        // radius live — `posed_focus` reads it every frame — so resetting on a
+        // resize threw away a pan for nothing, and once the section wheel started
+        // resizing the disc it also cancelled its own zoom on the next frame,
+        // leaving the wheel looking broken.
+        let replanted = plane_moved(self.current_frame, frame);
         self.current_frame = frame;
         if let Some(frame) = frame {
             self.ruler.sync_plane(frame.plane_cam());
@@ -143,6 +150,8 @@ impl SectionView {
         if changed {
             self.slice_ready = false;
             self.needs_render = self.wants_offscreen_slice();
+        }
+        if replanted {
             self.slice_view = SliceView::default();
         }
         changed
@@ -450,6 +459,25 @@ impl SectionView {
             pose.center + self.slice_view.pan,
             (half / self.slice_view.zoom).max(0.05),
         ))
+    }
+}
+
+/// Whether the section PLANE is somewhere else — a new centre or a new facing.
+///
+/// Deliberately blind to the disc's radius: a wider disc cuts the same plane, so
+/// nothing the operator set up about where they are looking has stopped making
+/// sense.
+fn plane_moved(lhs: Option<SectionViewFrame>, rhs: Option<SectionViewFrame>) -> bool {
+    const POS_EPS: f32 = 1.0e-4;
+    const NORMAL_EPS: f32 = 1.0e-5;
+    match (lhs, rhs) {
+        (Some(lhs), Some(rhs)) => {
+            lhs.pose().center.distance_squared(rhs.pose().center) > POS_EPS * POS_EPS
+                || lhs.pose().plane_normal.dot(rhs.pose().plane_normal) < 1.0 - NORMAL_EPS
+                || lhs.normal().dot(rhs.normal()) < 1.0 - NORMAL_EPS
+        }
+        (None, None) => false,
+        _ => true,
     }
 }
 

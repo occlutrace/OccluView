@@ -4,13 +4,13 @@ use super::{
     paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, Context, CutTool, GpuCamera,
     GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
-    SceneStats, ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
+    ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
 };
 
 impl OccluViewApp {
     pub(super) fn render_now_impl(&mut self, ctx: &egui::Context) {
         let render_started_at = Instant::now();
-        let (spec, pixels, stats) = match self.render_scene_pixels() {
+        let (spec, pixels) = match self.render_scene_pixels() {
             Ok(frame) => frame,
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
@@ -42,7 +42,6 @@ impl OccluViewApp {
             frame.texture.set(color_image, egui::TextureOptions::LINEAR);
             frame.pixels = pixels;
             frame.size_px = spec.size_px;
-            frame.stats = stats;
         } else {
             let texture =
                 ctx.load_texture("occluview-mesh", color_image, egui::TextureOptions::LINEAR);
@@ -50,7 +49,6 @@ impl OccluViewApp {
                 texture,
                 pixels,
                 size_px: spec.size_px,
-                stats,
             });
         }
         self.needs_render = false;
@@ -212,9 +210,7 @@ impl OccluViewApp {
         Ok(())
     }
 
-    pub(super) fn render_scene_pixels_impl(
-        &mut self,
-    ) -> Result<(ViewportSpec, Vec<u8>, SceneStats)> {
+    pub(super) fn render_scene_pixels_impl(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
         if self.camera.is_none() {
             self.reset_camera_to_home();
         }
@@ -288,8 +284,7 @@ impl OccluViewApp {
             ))
         }
         .context("rendering viewport")?;
-        let stats = self.scene_stats.context("scene stats unavailable")?;
-        Ok((spec, pixels, stats))
+        Ok((spec, pixels))
     }
 
     pub(super) fn sync_live_viewport_impl(&mut self) {
@@ -413,9 +408,7 @@ impl OccluViewApp {
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
         // it), so drop the session here and re-prepare on the next stroke.
         self.sculpt.invalidate_session();
-        let stats = scene_stats(&scene);
         self.scene = Some(Arc::new(scene));
-        self.scene_stats = Some(stats);
         self.clear_live_viewport();
         self.prepared_scene = None;
         self.prepared_selection_overlay = None;
@@ -471,7 +464,6 @@ impl OccluViewApp {
     pub(super) fn mark_scene_materials_changed_impl(&mut self) {
         if let Some(scene) = self.scene.clone() {
             self.edit_mode.sync_to_scene(&scene);
-            self.scene_stats = Some(scene_stats(&scene));
         }
         self.needs_render = true;
         self.live_viewport_scene_dirty = self.live_viewport.is_some();
@@ -490,7 +482,6 @@ impl OccluViewApp {
         self.hidden_layer_stack.clear();
         self.translucent_layer_restore.clear();
         self.scene = None;
-        self.scene_stats = None;
         self.clear_live_viewport();
         self.prepared_scene = None;
         self.prepared_selection_overlay = None;
@@ -519,15 +510,16 @@ impl OccluViewApp {
                 .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(226, 230, 234));
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
             let live_viewport = self.live_viewport.clone();
-            let live_stats = self.scene_stats;
-            if let (Some(live_viewport), Some(stats)) = (live_viewport, live_stats) {
+            if let Some(live_viewport) = live_viewport {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
                 let mut axis_snap = None;
-                paint_scale_bar(ui, response.rect, stats);
+                if let Some(camera) = self.camera.as_ref() {
+                    paint_scale_bar(ui, response.rect, camera);
+                }
                 if let Some(camera) = self.camera.as_ref() {
                     // Lift the gizmo above the docked Section panel while cutting
                     // so it never sits under the bottom-right panel.
@@ -561,10 +553,10 @@ impl OccluViewApp {
                 {
                     self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
                 }
-            } else if let Some((texture, stats)) = self
+            } else if let Some(texture) = self
                 .rendered
                 .as_ref()
-                .map(|rendered| (rendered.texture.clone(), rendered.stats))
+                .map(|rendered| rendered.texture.clone())
             {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
@@ -574,7 +566,9 @@ impl OccluViewApp {
                         .sense(egui::Sense::click_and_drag()),
                 );
                 let mut axis_snap = None;
-                paint_scale_bar(ui, response.rect, stats);
+                if let Some(camera) = self.camera.as_ref() {
+                    paint_scale_bar(ui, response.rect, camera);
+                }
                 if let Some(camera) = self.camera.as_ref() {
                     // Lift the gizmo above the docked Section panel while cutting
                     // so it never sits under the bottom-right panel.
@@ -673,14 +667,6 @@ pub(super) fn prepared_scene_updates(scene: &Scene) -> Vec<PreparedSceneUpdate> 
             wireframe: entry.wireframe,
         })
         .collect()
-}
-
-pub(super) fn scene_stats(scene: &Scene) -> SceneStats {
-    let bbox = scene.bbox();
-    let [w, h, d] = bbox.dimensions_mm();
-    SceneStats {
-        bbox_mm: [w.as_mm(), h.as_mm(), d.as_mm()],
-    }
 }
 
 #[cfg(test)]

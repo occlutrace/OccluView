@@ -38,7 +38,7 @@ impl OccluViewApp {
         }
 
         // Delete/Backspace removes the selected faces during an edit session
-        // (exocad convention). Consumed only when it can actually act.
+        // (the dental CAD convention). Consumed only when it can actually act.
         let delete_pressed = self.edit_mode.has_active_session()
             && self
                 .scene
@@ -460,8 +460,8 @@ impl OccluViewApp {
                 );
             }
             MeshSelectionDrag::Lasso { points } => {
-                // exocad look: a dashed ribbon with no interior fill. The live
-                // cursor gets a rubber-band segment, plus a fainter hint back
+                // The dental-CAD look: a dashed ribbon with no interior fill. The
+                // live cursor gets a rubber-band segment, plus a fainter hint back
                 // to the first point (where a click closes the outline).
                 let Some(&first) = points.first() else {
                     return;
@@ -506,8 +506,8 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         pan_drag_active: bool,
     ) -> bool {
-        // The armed lasso owns primary clicks (exocad outline placement); the
-        // default mode is the marquee rectangle drag below.
+        // The armed lasso owns primary clicks (the dental CAD outline-placement
+        // convention); the default mode is the marquee rectangle drag below.
         if self.edit_mode.lasso_armed() && self.edit_mode.has_active_session() {
             return self.track_polygon_lasso(ctx, response, viewport_rect, pan_drag_active);
         }
@@ -561,9 +561,9 @@ impl OccluViewApp {
         changed
     }
 
-    /// exocad lasso: outline points are placed on the primary PRESS edge (never
-    /// on click-release — egui reclassifies a moved click as a drag and drops
-    /// it, so press-based capture is the only way input is never lost). Holding
+    /// Dental CAD lasso: outline points are placed on the primary PRESS edge (never on
+    /// click-release — egui reclassifies a moved click as a drag and drops it, so press-based
+    /// capture is the only way input is never lost). Holding
     /// and dragging samples freehand points; discrete presses make straight
     /// segments; the two mix freely. Enter, a double-click, or a press back on
     /// the first-point handle closes and applies the selection; Esc abandons the
@@ -690,7 +690,7 @@ impl OccluViewApp {
     }
 
     /// Run one closed screen-space outline through the shared selection API.
-    /// exocad convention: outlines accumulate; holding SHIFT un-marks.
+    /// Dental CAD convention: outlines accumulate; holding SHIFT un-marks.
     fn commit_screen_polygon_selection(
         &mut self,
         ctx: &egui::Context,
@@ -759,7 +759,7 @@ impl OccluViewApp {
         let camera = self.camera;
         let scene = self.scene.clone();
         let pointer = response.interact_pointer_pos();
-        // exocad convention: a click marks the face; SHIFT-click un-marks it.
+        // Dental CAD convention: a click marks the face; SHIFT-click un-marks it.
         let unmark = ctx.input(|input| input.modifiers.shift);
         let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
             return false;

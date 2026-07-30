@@ -1,6 +1,6 @@
 //! Shared UI tokens and drawn glyph primitives for the OccluView chrome.
 //!
-//! One quiet, dense, precise design language (exocad/CAD register): a single
+//! One quiet, dense, precise design language (a dental CAD register): a single
 //! accent, neutral ink, hairline separators, and small vector glyphs instead of
 //! emoji. The menubar, the layers overlay, and the About dialog all pull their
 //! colors and iconography from here so the app reads as one tool.

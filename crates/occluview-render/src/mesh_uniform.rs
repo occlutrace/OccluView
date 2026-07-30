@@ -33,7 +33,7 @@ pub struct GpuMeshUniform {
     /// std140 alignment.
     pub has_texture: u32,
     /// 1 = orientation diagnostic: paint back-facing fragments solid red
-    /// (exocad "Show triangle orientation").
+    /// (the dental CAD "Show triangle orientation" convention).
     pub show_orientation: u32,
     /// 0 = ignore scan color/texture and shade with a flat neutral material
     /// (the shader's `NEUTRAL_MATERIAL_RGB`, matching

@@ -33,8 +33,9 @@ fn boundary_edge_count(indices: &[u32]) -> usize {
         .count()
 }
 
-/// Two square "bowls" (apex + 4-vertex rim, exocad hole shape) that share
-/// EXACTLY one rim vertex (index 0). That shared vertex is a boundary junction:
+/// Two square "bowls" (apex + 4-vertex rim, the standard dental-CAD hole
+/// shape) that share EXACTLY one rim vertex (index 0). That shared vertex is
+/// a boundary junction:
 /// its boundary in/out degree is 2, so the classic walk dead-ends at it and
 /// BOTH rims stay open. This is the "closes random holes, leaves the neighbor"
 /// bug reduced to its core.

@@ -563,7 +563,7 @@ fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mod
         },
         false,
     ));
-    // Plain clicks ACCUMULATE (exocad convention — no replace).
+    // Plain clicks ACCUMULATE (dental CAD convention — no replace).
     assert!(controller.select_face_hit_with_mode(
         &scene,
         ScenePickHit {
@@ -683,7 +683,7 @@ fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
     };
     assert_eq!(selection.as_slice(), &[true, true, false, false]);
 
-    // Clicking object B accumulates (exocad convention — plain click adds).
+    // Clicking object B accumulates (dental CAD convention — plain click adds).
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 3), false));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
         return;

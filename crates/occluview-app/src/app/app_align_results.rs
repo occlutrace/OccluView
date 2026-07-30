@@ -95,6 +95,16 @@ impl OccluViewApp {
                     return;
                 }
                 let weak = weak_axis_note(report.weak_trans_axes, report.weak_rot_axes);
+                // "of the surface" is not true when a region is painted out: the
+                // marked vertices are dropped before the fit samples anything, so
+                // they leave the numerator AND the denominator and the coverage can
+                // read a hundred per cent over half a scan. Named for what was
+                // actually measured instead.
+                let measured_over = if self.align_markings.any() {
+                    "the unmarked surface"
+                } else {
+                    "the surface"
+                };
                 // A run that hit the iteration ceiling is where the solver gave
                 // up, not where the surfaces settled. Said out loud, because the
                 // two used to read identically and the second is worth another
@@ -105,7 +115,7 @@ impl OccluViewApp {
                     ", stopped at the iteration limit"
                 };
                 self.align_status = Some(format!(
-                    "Refined — {:.3} mm over {:.0}% of the surface{settled}{weak}",
+                    "Refined — {:.3} mm over {:.0}% of {measured_over}{settled}{weak}",
                     report.rms,
                     report.coverage * 100.0
                 ));

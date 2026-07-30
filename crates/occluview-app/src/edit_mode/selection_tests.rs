@@ -133,7 +133,7 @@ fn screen_polygon_selection_surface_mode_excludes_back_faces() {
 
 #[test]
 fn screen_polygon_selection_accumulates_and_shift_unmarks() {
-    // exocad convention: completed outlines ACCUMULATE into the highlight
+    // Dental CAD convention: completed outlines ACCUMULATE into the highlight
     // by default; an outline with unmark=true (SHIFT) clears its interior.
     let mesh = Mesh::new(
         Some("two".into()),

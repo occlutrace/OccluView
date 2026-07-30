@@ -1,11 +1,11 @@
 //! Section rendering for the mesh editor window (see `mesh_editor_overlay`).
 //!
-//! Extracted so the window file stays small. The layout follows exocad's "3D
-//! Data Editor" vibe: calm section captions with a thin hairline instead of
-//! shouting bold headers, one uniform icon-cell grid, an unmistakable lit state
-//! for the mode toggles, and an OK/Cancel-style commit bar with the primary
-//! `Done` pinned bottom-right. Presentation only — each cell emits exactly one
-//! [`MeshEditorAction`].
+//! Extracted so the window file stays small. The layout follows the same "3D
+//! Data Editor" presentation dental CAD software uses: calm section captions
+//! with a thin hairline instead of shouting bold headers, one uniform
+//! icon-cell grid, an unmistakable lit state for the mode toggles, and an
+//! OK/Cancel-style commit bar with the primary `Done` pinned bottom-right.
+//! Presentation only — each cell emits exactly one [`MeshEditorAction`].
 
 use eframe::egui;
 
@@ -19,13 +19,14 @@ use crate::ui_theme::{ACCENT, TEXT, TEXT_WEAK};
 /// Height of the tab strip / its pills.
 const TAB_H: f32 = 28.0;
 
-/// Height of one tool cell: a glyph over a small caption (exocad-style toolbar
-/// button). The text commit buttons share the height so the bottom row aligns.
-/// Trimmed to keep the palette compact while the glyphs stay legible.
+/// Height of one tool cell: a glyph over a small caption (the same toolbar
+/// button style dental CAD software uses). The text commit buttons share the
+/// height so the bottom row aligns. Trimmed to keep the palette compact
+/// while the glyphs stay legible.
 const ROW_H: f32 = 46.0;
 
 /// Text color for the primary `Done` button: high contrast on the accent fill
-/// in both the light and dark exocad themes.
+/// in both the light and dark themes dental CAD software offers.
 const PRIMARY_TEXT: egui::Color32 = egui::Color32::WHITE;
 
 /// The Sculpt / Edit Mesh tab strip plus the window close button. Doubles as
@@ -112,7 +113,7 @@ fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
     response
 }
 
-/// Selection mode (lasso + surface/through radio pair) and the exocad
+/// Selection mode (lasso + surface/through radio pair) and the dental CAD
 /// All / None / Invert commands.
 pub(super) fn selection(
     ui: &mut egui::Ui,
@@ -188,8 +189,9 @@ pub(super) fn selection(
     action.or(selection_bulk(ui, enabled))
 }
 
-/// The exocad All / None / Invert bulk-marking row. Split out of [`selection`]
-/// so that function stays within the line budget after the Object cell landed.
+/// The dental CAD All / None / Invert bulk-marking row. Split out of
+/// [`selection`] so that function stays within the line budget after the
+/// Object cell landed.
 fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> {
     let mut action = None;
     row(ui, 3, |ui, width| {
@@ -236,8 +238,9 @@ fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> 
     action
 }
 
-/// Destructive, selection-scoped operations (exocad Delete / Crop / Cut /
-/// Divide). All are disabled until something is marked.
+/// Destructive, selection-scoped operations (Delete / Crop / Cut / Divide,
+/// matching the dental CAD convention). All are disabled until something is
+/// marked.
 pub(super) fn edit_selection(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
@@ -265,7 +268,7 @@ pub(super) fn edit_selection(
             width,
             EditorIcon::Keep,
             "Crop",
-            "Keep only the marked area, remove the rest (exocad Crop)",
+            "Keep only the marked area, remove the rest",
             selection_enabled,
             false,
         )
@@ -278,7 +281,7 @@ pub(super) fn edit_selection(
             width,
             EditorIcon::Cut,
             "Cut",
-            "Move the marked faces to a new mesh — the original stays put (exocad Cut)",
+            "Move the marked faces to a new mesh — the original stays put",
             selection_enabled,
             false,
         )
@@ -291,7 +294,7 @@ pub(super) fn edit_selection(
             width,
             EditorIcon::Separate,
             "Separate",
-            "Split the marked region into one mesh per connected part (exocad Divide)",
+            "Split the marked region into one mesh per connected part",
             selection_enabled,
             false,
         )
@@ -336,7 +339,8 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
     action
 }
 
-/// Interactive freeform sculpting (exocad Freeforming applied to scans): two
+/// Interactive freeform sculpting (matching the dental CAD Freeforming
+/// workflow, applied to scans): two
 /// tools only — an Add/Remove clay knife (Shift carves) and a Smooth relaxer
 /// (Shift forces it) — plus the shared Size and Strength sliders. Arming a tool
 /// takes the primary drag away from the selection gestures until toggled off.
@@ -498,9 +502,10 @@ pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
     ui.label(egui::RichText::new(hint).weak().size(10.0));
 }
 
-/// History and session boundary, laid out as an exocad OK/Cancel bar: Undo/Redo
-/// as light history cells on the left, then `Cancel` and the accented `Done`
-/// pinned bottom-right. Done confirms and dismisses; Cancel reverts to baseline.
+/// History and session boundary, laid out as an OK/Cancel bar matching the
+/// dental CAD convention: Undo/Redo as light history cells on the left, then
+/// `Cancel` and the accented `Done` pinned bottom-right. Done confirms and
+/// dismisses; Cancel reverts to baseline.
 pub(super) fn session(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
@@ -559,7 +564,7 @@ pub(super) fn session(
 
 /// A calm section caption: a small, muted label followed by a thin hairline
 /// filling the row. Replaces the old bold header + full-width separator with a
-/// single quiet cue (exocad tool windows keep almost no section chrome).
+/// single quiet cue (dental CAD tool windows keep almost no section chrome).
 fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
@@ -623,7 +628,7 @@ fn icon(
 
 /// A text-only session button sized to match the icon rows. `primary` renders
 /// the accented commit style (Done): a solid accent fill with light text so it
-/// is the one obvious action, mirroring exocad's OK button.
+/// is the one obvious action, mirroring the dental CAD OK button.
 fn tall_text_button(
     ui: &mut egui::Ui,
     width: f32,
