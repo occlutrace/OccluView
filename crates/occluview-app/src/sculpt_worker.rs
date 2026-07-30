@@ -708,6 +708,43 @@ mod tests {
         assert_eq!(completion.mesh.topology_id(), rebuild.mesh.topology_id());
     }
 
+    /// A densified layer must arrive PICK-READY, and stay pick-ready across the
+    /// commit — or the brush dies for good.
+    ///
+    /// The chain the owner hit: the viewport lays a dab only where the cursor
+    /// hits the surface, the hit test refuses to build a scan-sized BVH on the
+    /// egui thread, and the only thing that ever warmed one was the session
+    /// preparation. A densifying dab swapped in a rebuilt mesh with a cold BVH,
+    /// the session still "matched" so no re-preparation ever ran, and from that
+    /// moment every stroke on the layer found no surface and silently did
+    /// nothing. First stroke worked, everything after it was dead.
+    #[test]
+    fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
+        let mesh = coarse_ridge_mesh();
+        let worker = worker_for(&mesh);
+        let stroke = BrushStroke {
+            center: [0.0, 0.0, 4.0],
+            radius_mm: 3.5,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        };
+        assert!(worker.try_apply(stroke, BrushMode::Smooth));
+        let rebuild = wait_for_rebuild(&worker);
+        assert!(
+            rebuild.mesh.bvh_is_ready(),
+            "the rebuilt layer goes into the scene as-is; a cold BVH there kills \
+             the hit test, and nothing downstream ever warms it again"
+        );
+
+        assert!(worker.finish_stroke());
+        let completion = wait_for_completion(&worker);
+        assert!(
+            completion.mesh.bvh_is_ready(),
+            "the committed mesh replaces the layer after the stroke; it has to \
+             stay pick-ready or the SECOND stroke is the one that dies"
+        );
+    }
+
     /// The un-densified path is untouched: a stroke that changes no topology
     /// still streams sparsely and still freezes the topology id.
     #[test]
