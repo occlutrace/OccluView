@@ -119,7 +119,8 @@ fn presets(
     action
 }
 
-/// The two numbers exocad exposes: the minimum and the maximum distance.
+/// The two numbers the operator's dental CAD software exposes: the minimum
+/// and the maximum distance.
 ///
 /// Directly under the bar they define — the arrangement every metrology tool
 /// uses, because the bar is the legend for the sliders. They are not decoration
@@ -379,10 +380,10 @@ mod tests {
         );
     }
 
-    /// The two numbers that define the bar are exocad's minimum and maximum
-    /// distance, and both belong in front of the operator: min is the nominal
-    /// band and max is where the ramp saturates, so a map cannot be read
-    /// without them.
+    /// The two numbers that define the bar are the operator's dental CAD
+    /// software's minimum and maximum distance, and both belong in front of
+    /// the operator: min is the nominal band and max is where the ramp
+    /// saturates, so a map cannot be read without them.
     #[test]
     fn the_minimum_and_maximum_distance_are_in_front_of_the_operator() {
         let show = production()

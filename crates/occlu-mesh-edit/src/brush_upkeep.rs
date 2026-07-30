@@ -195,8 +195,9 @@ impl BrushSession {
     }
 
     /// Recompute normals for the touched vertices and their one-ring, each
-    /// affected vertex reading its own incident faces in parallel (Blender-
-    /// sculpt PR #116209 — no single-threaded face dedup).
+    /// affected vertex reading its own incident faces in parallel (the
+    /// parallel-safe strategy sculpting engines use — no single-threaded face
+    /// dedup).
     pub(super) fn recompute_normals_near(&mut self, touched: &[usize]) {
         // Build the scope (touched + welded rings + soup siblings) deduped via a
         // stamp — index loops, no sort, no allocation churn on a big brush.

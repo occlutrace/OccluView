@@ -116,7 +116,6 @@ impl OccluViewApp {
             entry.mesh = rebuild.mesh;
         }
         self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene_stats = Some(super::app_render::scene_stats(&scene_arc));
         self.scene = Some(scene_arc);
         if let Some(worker) = self.sculpt.worker.as_mut() {
             worker.topology_id = new_topology_id;
@@ -251,7 +250,6 @@ impl OccluViewApp {
             entry.mesh = mesh;
         }
         self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene_stats = Some(super::app_render::scene_stats(&scene_arc));
         self.scene = Some(scene_arc);
         self.needs_render = true;
         if self.can_render_cut_view() {

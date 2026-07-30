@@ -45,9 +45,9 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action(
 }
 
 /// Apply a Mesh Editor operation across the scene. Close Holes follows the
-/// same explicit-selection contract as exocad: only marked faces on visible
-/// layers enter the repair plan. An empty selection is a no-op; hidden layers
-/// never enter the plan.
+/// same explicit-selection contract dental CAD software uses: only marked
+/// faces on visible layers enter the repair plan. An empty selection is a
+/// no-op; hidden layers never enter the plan.
 pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
     scene: &mut Scene,
     edit_mode: &mut EditModeController,

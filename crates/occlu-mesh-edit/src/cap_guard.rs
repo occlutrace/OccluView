@@ -1,9 +1,9 @@
 //! Post-cap self-intersection guard.
 //!
 //! A cap over a strongly curved or badly damaged rim can fold onto itself or
-//! poke through nearby surface (`MeshLab`'s close-holes refuses such caps; we
-//! previously emitted them silently). This module answers one question: does
-//! a candidate cap PIERCE itself or the surface around its rim?
+//! poke through nearby surface (mesh-repair tools generally refuse such caps;
+//! we previously emitted them silently). This module answers one question:
+//! does a candidate cap PIERCE itself or the surface around its rim?
 //!
 //! Test model: segment-vs-triangle piercing between triangles that share no
 //! vertex id, evaluated in `f64`. Pairs sharing a vertex (cap fans around rim

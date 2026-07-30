@@ -179,7 +179,7 @@ where
     I: Iterator<Item = &'a str>,
 {
     // Find the vertex-indices list property (by name). Faces may carry multiple
-    // list properties (real-world case: iTero and other textured scanners emit
+    // list properties (real-world case: some intraoral scanners emit
     // `property list uchar int vertex_indices` PLUS `property list uchar float
     // texcoord`). We must consume every declared list per row or the next row's
     // tokens get misaligned.
@@ -463,8 +463,8 @@ end_header
 
     #[test]
     fn face_with_texcoord_list_parses() {
-        // Real iTero / textured-scan layout: each face has TWO list properties
-        // - vertex_indices (the geometry) and texcoord (UV pairs). We must
+        // Real textured-scan layout: each face has TWO list properties -
+        // vertex_indices (the geometry) and texcoord (UV pairs). We must
         // consume the texcoord list so the next face row parses correctly,
         // instead of reading UV floats as vertex indices.
         let ply = "ply

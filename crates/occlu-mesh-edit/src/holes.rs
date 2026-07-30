@@ -74,8 +74,9 @@ pub(crate) struct FillLoopStats {
     pub(crate) skipped_degenerate: usize,
 }
 
-/// Close boundary loops in a triangle mesh, exocad-style: every interior hole
-/// closes by default; only the scan's natural OUTER boundary is protected.
+/// Close boundary loops in a triangle mesh, matching the convention dental CAD
+/// software uses: every interior hole closes by default; only the scan's
+/// natural outer boundary is protected.
 ///
 /// Border protection (`options.protect_scan_border`, default on, whole-mesh
 /// path only): a rim whose perimeter is at least half of the largest rim's
@@ -93,15 +94,15 @@ pub(crate) struct FillLoopStats {
 /// both become independent simple loops that fill — previously the shared
 /// junction dead-ended the walk and neither closed.
 ///
-/// Caps are exocad-style "interpolated from surrounding edges": loops above
-/// the interpolated-cap edge threshold are refined with generated interior
-/// vertices (density matched to the rim, attributes per
-/// `options.attribute_policy`), relaxed to the harmonic surface spanning the
-/// rim, and faired against the fixed outside ring. Tiny holes keep a plain
-/// planar cap on rim vertices only. Strongly curved rims whose planar
+/// Caps use the "interpolated from surrounding edges" convention dental CAD
+/// software uses: loops above the interpolated-cap edge threshold are refined
+/// with generated interior vertices (density matched to the rim, attributes
+/// per `options.attribute_policy`), relaxed to the harmonic surface spanning
+/// the rim, and faired against the fixed outside ring. Tiny holes keep a
+/// plain planar cap on rim vertices only. Strongly curved rims whose planar
 /// projection self-overlaps fall back to a projection-free minimum-area
 /// triangulation. Every candidate cap is refused (never emitted) if it would
-/// PIERCE itself or the surface around its rim.
+/// pierce itself or the surface around its rim.
 ///
 /// Guards, each surfaced as one [`MeshEditWarning::DegenerateGeometry`] per
 /// skipped loop in the returned report, with per-reason counts in the
@@ -512,14 +513,14 @@ fn triangle_already_exists(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> b
 /// watertight `loop_len - 2` fan — a partial cap is never emitted):
 ///
 /// 1. Tiny holes (`< MIN_INTERPOLATED_LOOP`): the plain planar ear-clip fan.
-/// 2. Larger holes: the exocad-style interpolated cap (refined interior +
+/// 2. Larger holes: the dental-CAD-style interpolated cap (refined interior +
 ///    harmonic relaxation), which continues curvature across the seam.
 /// 3. Fallbacks for a refused/failed cap, EACH self-intersection guarded, first
 ///    non-piercing wins: the compact minimum-area membrane (uncapped in size
 ///    via hierarchical splitting — good for deep sockets and strongly wrapped
 ///    rims) then the flat ear-clip lid (good where the membrane grazes a wall).
 ///    Only for rims simple in 3D, so an hourglass crossing is never baked in.
-/// 4. Selection path (explicit operator intent — exocad's rule that a lasso'd
+/// 4. Selection path (explicit operator intent — the convention that a lasso'd
 ///    socket ALWAYS closes): if every guarded candidate grazed nearby surface,
 ///    still emit the best watertight cover (membrane first, else the flat lid).
 ///    Whole-mesh auto-close does not do this — it stays conservative and
@@ -572,7 +573,7 @@ fn triangulate_loop(
         return Ok(true);
     }
 
-    // 2) Larger holes: the exocad-style interpolated cap (bounded — a socket
+    // 2) Larger holes: the dental-CAD-style interpolated cap (bounded — a socket
     // rim past `MAX_INTERPOLATED_LOOP` skips straight to the fast membrane).
     if !ear.is_empty()
         && (MIN_INTERPOLATED_LOOP..=MAX_INTERPOLATED_LOOP).contains(&loop_len)

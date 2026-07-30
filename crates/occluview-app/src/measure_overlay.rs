@@ -261,9 +261,9 @@ mod tests {
         }
     }
 
-    /// The exocad-ruler invariant: a world anchor projects onto the SAME model
-    /// point after any orbit — the pixel through which it projects always rays
-    /// back through the anchor.
+    /// The same ruler invariant dental CAD software follows: a world anchor
+    /// projects onto the SAME model point after any orbit — the pixel through
+    /// which it projects always rays back through the anchor.
     #[test]
     fn world_anchor_reprojects_onto_the_same_model_point_across_orbits() {
         let anchor = Vec3::new(3.0, -2.0, 4.0);

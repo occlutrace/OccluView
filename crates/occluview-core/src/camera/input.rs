@@ -3,7 +3,7 @@ use glam::Vec2;
 /// Shared CAD orbit gain for raw pointer motion in the app and shell preview.
 ///
 /// Owner-tuned for a crisp, unbraked feel: dragging half the viewport's
-/// smaller dimension turns the model ~172° (the exocad "half screen, half
+/// smaller dimension turns the model ~172° (the dental CAD "half screen, half
 /// turn" rule). Retune only the magnitude — the drag direction is pinned by
 /// `orbit_gain_scales_speed_without_flipping_direction`.
 pub const CAD_ORBIT_DRAG_GAIN: f32 = 3.0;

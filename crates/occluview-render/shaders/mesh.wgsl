@@ -47,7 +47,7 @@ struct MeshUniform {
     tint: vec4<f32>,
     opacity: f32,
     has_texture: u32,
-    // exocad "Show triangle orientation": paint back-facing fragments red.
+    // The dental CAD "Show triangle orientation": paint back-facing fragments red.
     show_orientation: u32,
     // 0 = ignore scan color/texture, shade with NEUTRAL_MATERIAL_RGB instead.
     show_vertex_colors: u32,
@@ -276,7 +276,8 @@ fn fs_main(
     let backface_mix = select(0.0, 0.14, !front_facing);
     var rgb = mix(lit_rgb, BACKFACE_INSPECTION_TINT * lit, backface_mix);
     // Orientation diagnostic: back-facing fragments render solid red so an
-    // inside-out surface is unmistakable (exocad "Show triangle orientation").
+    // inside-out surface is unmistakable (the dental CAD "Show triangle
+    // orientation" convention).
     if (mesh_uniform.show_orientation != 0u && !front_facing) {
         rgb = vec3<f32>(0.80, 0.10, 0.10);
     }

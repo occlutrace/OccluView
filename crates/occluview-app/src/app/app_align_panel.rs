@@ -175,7 +175,8 @@ impl OccluViewApp {
         self.align_status = Some("Click a point on the scan that should move".into());
     }
 
-    /// exocad's "Back": drop the half-placed point, else the last whole arrow.
+    /// The operator's dental CAD "Back": drop the half-placed point, else the
+    /// last whole arrow.
     fn take_align_arrow_back(&mut self) -> bool {
         if !self.align.back() {
             return false;

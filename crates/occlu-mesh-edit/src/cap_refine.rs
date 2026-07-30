@@ -1,4 +1,4 @@
-//! Interpolated hole caps (exocad-style "close holes"): refine a planar
+//! Interpolated hole caps (the dental CAD "close holes" convention): refine a planar
 //! ear-clip cap with interior vertices until it matches the rim's edge
 //! density, then drape the interior onto a smooth surface fitted to the rim so
 //! the patch follows the surrounding shape instead of denting inward.

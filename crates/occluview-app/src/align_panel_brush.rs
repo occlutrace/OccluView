@@ -1,11 +1,12 @@
-//! The Brush tool window: exocad's "Exclude selected parts", control for
-//! control.
+//! The Brush tool window: the "Exclude selected parts" convention dental CAD
+//! software uses, control for control.
 //!
 //! A **separate movable window**, opened by the "Matching: Exclude selected
-//! parts" checkbox on the automatic tab, exactly as exocad opens it. It is not
-//! a section of the main window and not a mode of the manual tab: the operator
-//! is painting on the mesh with one hand while reading the alignment controls
-//! with the other, so the two have to be positionable independently.
+//! parts" checkbox on the automatic tab, exactly as the operator's dental CAD
+//! software opens it. It is not a section of the main window and not a mode
+//! of the manual tab: the operator is painting on the mesh with one hand
+//! while reading the alignment controls with the other, so the two have to
+//! be positionable independently.
 
 use eframe::egui;
 
@@ -133,8 +134,9 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
     action
 }
 
-/// exocad's whole-mesh commands, driven off the command list itself so a new
-/// one cannot be added to the enum and forgotten here.
+/// The same whole-mesh commands the operator's dental CAD software offers,
+/// driven off the command list itself so a new one cannot be added to the
+/// enum and forgotten here.
 fn commands(ui: &mut egui::Ui, enabled: bool) -> Option<BrushPanelAction> {
     let mut action = None;
     for command in MaskCommand::ALL {
@@ -187,7 +189,8 @@ fn size(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
     }
 }
 
-/// exocad's "Mark automatic" and the radius it uses.
+/// The same "Mark automatic" control and radius the operator's dental CAD
+/// software uses.
 fn automatic(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
     ui.add_space(2.0);
     let mut radius = brush.auto_radius_mm();
@@ -245,9 +248,10 @@ mod tests {
             .map_or(source, |(before, _)| before)
     }
 
-    /// exocad opens this as its own window, and the reason is practical: the
-    /// operator paints on the mesh with one hand and reads the alignment
-    /// controls with the other, so the two have to move independently.
+    /// The operator's dental CAD software opens this as its own window, and
+    /// the reason is practical: the operator paints on the mesh with one hand
+    /// and reads the alignment controls with the other, so the two have to
+    /// move independently.
     #[test]
     fn the_brush_is_its_own_movable_window() {
         let source = production();
@@ -259,8 +263,8 @@ mod tests {
         );
     }
 
-    /// Every command exocad's brush window offers has to be here, or an
-    /// operator who reaches for one finds a gap.
+    /// Every command the operator's dental CAD brush window offers has to be
+    /// here, or an operator who reaches for one finds a gap.
     #[test]
     fn every_whole_mesh_command_is_offered() {
         let source = production();

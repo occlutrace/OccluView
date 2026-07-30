@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn obj_dispatches_and_reads() {
-        // A minimal OBJ with one triangle and vertex colors (exocad extension).
+        // A minimal OBJ with one triangle and vertex colors (dental CAD extension).
         let obj = b"v 0 0 0 255 128 0\nv 1 0 0 0 255 0\nv 0 1 0 0 0 255\nf 1 2 3\n";
         let mesh = dispatch_by_extension("obj", obj).expect("OBJ should read");
         assert_eq!(mesh.triangle_count(), 1);

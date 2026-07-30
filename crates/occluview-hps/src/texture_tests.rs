@@ -354,7 +354,7 @@ fn solid_rgba_png_bytes(
     buf.into_inner()
 }
 
-// Regression for a real owner-reported bug: a 3Shape/HPS dental scan whose
+// Regression for a real owner-reported bug: an HPS dental scan whose
 // embedded JPEG texture atlas has its chroma channels swapped AT THE SOURCE
 // (standards-compliant decode still comes out blue — there is no container
 // pixel-format ambiguity to resolve here, unlike the raw-D3DFMT tests above).

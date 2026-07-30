@@ -1,8 +1,16 @@
-use super::{egui, ScaleBar, SceneStats};
+use super::{egui, Camera, ScaleBar};
 
-pub(super) fn paint_scale_bar(ui: &egui::Ui, image_rect: egui::Rect, stats: SceneStats) {
-    let scene_width_mm = stats.bbox_mm[0].max(stats.bbox_mm[2]);
-    let Some(bar) = ScaleBar::for_viewport(scene_width_mm, image_rect.width()) else {
+/// Draw the scale bar for what is on screen right now.
+///
+/// The scale comes from the camera, not from the scene's size: an orthographic
+/// view puts `orthographic_height / viewport_height` millimetres in a pixel, and
+/// that is the only number the bar can honestly be built from. It used to be
+/// derived from the mesh's bounding box, so the bar was right for the first frame
+/// after a file opened and wrong from the first scroll onwards.
+pub(super) fn paint_scale_bar(ui: &egui::Ui, image_rect: egui::Rect, camera: &Camera) {
+    let mm_per_px =
+        crate::align_drag::mm_per_pixel(camera.orthographic_height, image_rect.height());
+    let Some(bar) = ScaleBar::for_mm_per_px(mm_per_px) else {
         return;
     };
 

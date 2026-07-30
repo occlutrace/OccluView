@@ -1,4 +1,5 @@
-//! Pure decision logic for the armed mesh-edit lasso (exocad-style outline).
+//! Pure decision logic for the armed mesh-edit lasso (the dental-CAD-style
+//! outline).
 //!
 //! # Why this exists (the bug it fixes)
 //!
@@ -115,8 +116,8 @@ pub(crate) fn decide(input: &LassoFrameInput) -> LassoEvent {
         return LassoEvent::None;
     }
 
-    // Primary PRESS: the exocad point-placement edge. egui always reports this,
-    // so no input is lost regardless of how far the click travels.
+    // Primary PRESS: the dental-CAD point-placement edge. egui always reports
+    // this, so no input is lost regardless of how far the click travels.
     if input.pressed {
         if !input.over_viewport {
             // The press belongs to an egui window/panel, not the viewport.

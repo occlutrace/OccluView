@@ -4,10 +4,11 @@ use occluview_core::FaceSelection;
 use occluview_core::{Camera, Scene, SceneMesh, SceneMeshId, ScenePickHit};
 
 /// Region selection request (freehand lasso or the marquee rectangle as a
-/// 4-point polygon). exocad "Mark triangles" semantics: a triangle is taken iff
-/// its projected footprint INTERSECTS the outline in screen space (any triangle
-/// vertex inside the outline, any outline vertex inside the triangle, or any
-/// edges crossing) — so a lasso smaller than a big flat triangle, or one whose
+/// 4-point polygon). The dental CAD "Mark triangles" semantics: a triangle
+/// is taken iff its projected footprint INTERSECTS the outline in screen
+/// space (any triangle vertex inside the outline, any outline vertex inside
+/// the triangle, or any edges crossing) — so a lasso smaller than a big flat
+/// triangle, or one whose
 /// edge merely clips it, still marks it. When `through_mesh` is false the
 /// triangle must ALSO face the camera (surface mode). Completed outlines
 /// ACCUMULATE into the existing highlight; with `unmark` (SHIFT) the outline
@@ -45,8 +46,9 @@ impl FaceSelectionState {
         })
     }
 
-    /// Click selection, exocad convention: a click MARKS the face (accumulates
-    /// into the highlight); with `unmark` (SHIFT) it un-marks instead.
+    /// Click selection, dental CAD convention: a click MARKS the face
+    /// (accumulates into the highlight); with `unmark` (SHIFT) it un-marks
+    /// instead.
     pub(super) fn select_scene_hit(
         &mut self,
         scene: &Scene,
@@ -149,7 +151,7 @@ impl FaceSelectionState {
 
     /// Region selection (lasso outline or the marquee as a 4-point polygon). A
     /// triangle is taken iff its screen projection INTERSECTS the outline —
-    /// exocad "Mark triangles" semantics — so a lasso smaller than a big flat
+    /// the dental CAD "Mark triangles" semantics — so a lasso smaller than a big flat
     /// triangle, or one whose edge merely crosses it, still marks it (the old
     /// "all three vertices inside" rule silently dropped sparse flat regions,
     /// whose triangles are much larger than a dense curved surface's). In
@@ -235,9 +237,10 @@ impl FaceSelectionState {
                 continue;
             }
 
-            // True polygon/triangle intersection (exocad "Mark triangles"): mark
-            // on ANY screen-space overlap, not only full containment. This is
-            // what makes a small lasso catch a large flat triangle.
+            // True polygon/triangle intersection (the dental CAD "Mark
+            // triangles" semantics): mark on ANY screen-space overlap, not
+            // only full containment. This is what makes a small lasso catch a
+            // large flat triangle.
             if !triangle_intersects_polygon(
                 ScreenPt::new(screen_a),
                 ScreenPt::new(screen_b),
@@ -427,9 +430,10 @@ fn orient(a: ScreenPt, b: ScreenPt, c: ScreenPt) -> f64 {
 }
 
 /// Whether the projected triangle intersects the outline in screen space
-/// (exocad "Mark triangles"): true if ANY of — a triangle vertex is inside the
-/// outline, an outline vertex is inside the triangle, or an outline edge
-/// crosses a triangle edge. The two vertex-inside tests catch the common
+/// (the dental CAD "Mark triangles" semantics): true if ANY of — a triangle
+/// vertex is inside the outline, an outline vertex is inside the triangle, or
+/// an outline edge crosses a triangle edge. The two vertex-inside tests catch
+/// the common
 /// fully-inside / fully-containing cases cheaply; the edge test only settles
 /// the straddling boundary triangles neither vertex test resolved.
 fn triangle_intersects_polygon(

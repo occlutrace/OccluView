@@ -374,7 +374,7 @@ fn selected_face_mesh_cut_creates_new_layer_and_scene_undo_restores_structure() 
     assert_same_color(scene.meshes()[0].tint, before_tint);
     // The extracted layer is coincident with where it sat in the source; with
     // the source tint the cut would be invisible on screen, so it steps the
-    // palette (exocad shows a divide by color).
+    // palette (dental CAD software shows a divide by color).
     assert_same_color(
         scene.meshes()[1].tint,
         crate::layer_actions::next_layer_tint(before_tint),
@@ -489,7 +489,7 @@ fn selected_face_mesh_separate_splits_components_into_multiple_layers_and_undo_r
             distance: 10.0,
         },
     ));
-    // Plain click accumulates into the highlight (exocad convention).
+    // Plain click accumulates into the highlight (dental CAD convention).
     assert!(edit_mode.select_face_hit_with_mode(
         &scene,
         ScenePickHit {

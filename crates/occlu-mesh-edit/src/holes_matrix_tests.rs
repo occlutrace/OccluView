@@ -64,12 +64,13 @@ fn guard_off() -> MeshEditOptions {
     }
 }
 
-// ---------------------------------------------------------------- HPS-like
+// HPS-like
 
 /// Spherical shell with a huge natural border, four interior holes of ~3, 10,
-/// 25 and 60 mm perimeter, one extra hole SHARING a pinch vertex with the
+/// 25 and 60 mm perimeter, one extra hole sharing a pinch vertex with the
 /// border, and a genuinely non-simple (hourglass) island rim. This is the
-/// dental-scan shape of the "close holes must behave like exocad" directive.
+/// dental-scan shape used to pin close-holes behaviour to the convention
+/// operators expect.
 fn hps_like_shell() -> (MeshEditBuffers, usize) {
     let radius = 40.0_f32;
     let sectors = 220_usize;
@@ -247,7 +248,7 @@ fn hps_like_optional_mm_restraint_still_limits_large_holes() {
     assert_eq!(result.report.skipped_border_rims, 1);
 }
 
-// ------------------------------------------------------------ pinch matrix
+// pinch matrix
 
 #[test]
 fn three_fans_meeting_at_one_vertex_all_close() {
@@ -370,7 +371,7 @@ fn tiny_rims_of_three_four_and_five_edges_close_watertight() {
     assert_eq!(boundary_edge_count(&result.mesh.indices), 0);
 }
 
-// -------------------------------------------------------------- soup seams
+// soup seams
 
 #[test]
 fn unwelded_duplicate_position_seam_closes_watertight() {
@@ -444,7 +445,7 @@ fn rim_with_duplicate_position_but_distinct_indices_on_one_loop_still_closes() {
     assert_eq!(boundary_edge_count(&result.mesh.indices), 0);
 }
 
-// ------------------------------------------------------------ mass pinholes
+// mass pinholes
 
 #[test]
 fn fifty_pinholes_in_a_plane_all_close_while_the_border_stays() {
@@ -489,7 +490,7 @@ fn fifty_pinholes_in_a_plane_all_close_while_the_border_stays() {
     );
 }
 
-// ------------------------------------------------------- attributes / color
+// attributes / color
 
 #[test]
 fn two_tone_rim_colors_blend_into_the_cap() {
@@ -533,7 +534,7 @@ fn two_tone_rim_colors_blend_into_the_cap() {
     );
 }
 
-// ------------------------------------------------- pathological (hang killer)
+// pathological (hang killer)
 
 #[test]
 fn dense_zigzag_rim_terminates_quickly_and_honestly() {

@@ -39,7 +39,6 @@ pub(crate) fn parse_args() -> Args {
 pub(crate) struct OccluViewApp {
     pub(super) repaint_ctx: egui::Context,
     pub(super) scene: Option<Arc<Scene>>,
-    pub(super) scene_stats: Option<SceneStats>,
     pub(super) current_paths: Vec<PathBuf>,
     pub(super) recent_files: RecentFiles,
     pub(super) camera: Option<Camera>,
@@ -97,9 +96,9 @@ pub(crate) struct OccluViewApp {
     /// moved the camera, including motion below egui's click/drag threshold.
     pub(super) viewport_secondary_gesture_moved_since_press: bool,
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
-    /// Interactive sculpt-brush tool (exocad Freeforming): the armed brush
-    /// plus the live per-drag stroke session. Only meaningful while a mesh
-    /// edit session is active.
+    /// Interactive sculpt-brush tool (the dental CAD Freeforming workflow):
+    /// the armed brush plus the live per-drag stroke session. Only
+    /// meaningful while a mesh edit session is active.
     pub(super) sculpt: crate::sculpt_tool::SculptTool,
     pub(super) align: crate::align_tool::AlignTool,
     pub(super) align_worker: Option<crate::align_worker::AlignWorker>,
@@ -216,12 +215,6 @@ pub(super) struct RenderedFrame {
     pub(super) texture: egui::TextureHandle,
     pub(super) pixels: Vec<u8>,
     pub(super) size_px: [u16; 2],
-    pub(super) stats: SceneStats,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct SceneStats {
-    pub(super) bbox_mm: [f32; 3],
 }
 
 impl OccluViewApp {
@@ -257,7 +250,6 @@ impl OccluViewApp {
         let mut app = Self {
             repaint_ctx: repaint_ctx.clone(),
             scene: None,
-            scene_stats: None,
             current_paths: Vec::new(),
             recent_files: load_recent_files(),
             camera: None,
@@ -336,7 +328,7 @@ impl OccluViewApp {
         self.render_now_impl(ctx);
     }
 
-    pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>, SceneStats)> {
+    pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
         self.render_scene_pixels_impl()
     }
 
@@ -468,6 +460,19 @@ impl OccluViewApp {
     pub(super) fn mark_mesh_edits_unsaved(&mut self, layer_id: occluview_core::SceneMeshId) {
         self.has_unsaved_mesh_edits = true;
         self.unsaved_edit_layer_ids.insert(layer_id);
+    }
+
+    /// Forget the unsaved-edit tracking for the layers just written to disk.
+    ///
+    /// Scoped, because a save can skip a layer: the whole-scene and per-layer
+    /// saves write only what is VISIBLE. Clearing everything after one of those
+    /// told the close guard that a hidden layer's edits were on disk when they
+    /// were only in memory, and the app then shut without asking.
+    pub(super) fn forget_unsaved_edits(&mut self, layers: &[occluview_core::SceneMeshId]) {
+        for layer in layers {
+            self.unsaved_edit_layer_ids.remove(layer);
+        }
+        self.has_unsaved_mesh_edits = !self.unsaved_edit_layer_ids.is_empty();
     }
 
     /// Forget all unsaved-edit tracking (scene replaced, closed, or saved).

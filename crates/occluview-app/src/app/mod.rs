@@ -76,7 +76,6 @@ use app_scale_bar::paint_scale_bar;
 pub(crate) use state::{parse_args, OccluViewApp, StartupHandles};
 use state::{
     AboutWindowState, AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame,
-    SceneStats,
 };
 
 #[cfg(test)]

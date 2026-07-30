@@ -71,7 +71,8 @@ pub enum Orientation {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RefineSettings {
     /// Farthest a moving vertex may look for fixed surface, in millimetres.
-    /// This is exocad's "maximum influence distance".
+    /// This is the same "maximum influence distance" the operator's dental
+    /// CAD software exposes.
     pub influence_radius_mm: f64,
     /// Fraction of correspondences kept after trimming, 0 to 1.
     pub matching_ratio: f64,
@@ -334,8 +335,9 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         // The pose-delta test above is the textbook exit and it is the right
         // one for a pair that really does converge: a scan nudged off its own
         // position settles in five iterations. It never fires for a pair that
-        // CANNOT converge, though, and exocad's own warning says why — best-fit
-        // matching is for identically shaped meshes. Give it an arch with
+        // CANNOT converge, though, and the reason is exactly what dental CAD
+        // software warns operators about — best-fit matching is for
+        // identically shaped meshes. Give it an arch with
         // crowns on it against the same arch without, and the step never gets
         // small, it just wanders. Left alone that is every core at full tilt
         // for the whole iteration ceiling, and it does not even end up at its

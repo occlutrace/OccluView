@@ -458,7 +458,7 @@ fn an_erase_reports_the_vertices_it_cleared() {
 }
 
 #[test]
-fn the_commands_carry_exocads_own_labels() {
+fn the_commands_carry_the_labels_operators_already_know() {
     // An operator who knows that dialog must not have to work out which of our
     // words means which of theirs.
     for (command, label) in [

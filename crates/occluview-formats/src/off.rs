@@ -2,7 +2,7 @@
 //!
 //! Standard Princeton OFF: `OFF BINARY\n` header + 3x LE i32 counts + LE f64
 //! positions + LE i32 face indices; ASCII variant also supported. N-gon faces
-//! are fan-triangulated. Note: the exocad CAD suite emits a non-standard
+//! are fan-triangulated. Note: some dental CAD software emits a non-standard
 //! binary OFF variant (BE floats, compressed) that is NOT supported here.
 //!
 //! Index/count casts are allowed at module scope.
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn reads_minimal_binary_off() {
-        // OFF BINARY, 3 verts, 1 face (triangle). LE per the exocad convention.
+        // OFF BINARY, 3 verts, 1 face (triangle), little-endian.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"OFF BINARY\n");
         bytes.extend_from_slice(&3i32.to_le_bytes()); // verts

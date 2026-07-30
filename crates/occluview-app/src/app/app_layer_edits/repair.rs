@@ -56,8 +56,9 @@ pub(super) fn apply_layer_repair_action_with_status(
             // dirtied — but the operator still hears about open rims left.
             let _ = app.edit_mode.finish_layer_edit_noop(token);
             app.status_message = Some(clean_status(&layer_label, &report));
-            // Positive confirmation, exocad-style: a clean scan still gets a
-            // card ("Nothing to repair — mesh is clean"), not silence.
+            // Positive confirmation, matching the convention dental CAD
+            // software uses: a clean scan still gets a card ("Nothing to
+            // repair — mesh is clean"), not silence.
             app.repair_report.present(&layer_label, report);
             LayerContextApply::default()
         }
