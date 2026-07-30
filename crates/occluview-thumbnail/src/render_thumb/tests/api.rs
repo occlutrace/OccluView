@@ -460,7 +460,7 @@ fn large_stl_file_and_ply_stream_render_through_the_public_thumbnail_entry_point
 
 #[test]
 fn fast_path_dense_surface_thumbnail_has_no_see_through_holes() {
-    // Bug A ("ВСЯ В КРАПИНКУ, я сквозь неё вижу"): the old fast path kept every
+    // Bug A (speckled, see-through thumbnails): the old fast path kept every
     // Nth triangle, punching the surface full of holes so the thumbnail read as
     // a see-through sieve. The fast path now WELDS onto a grid, so a decimated
     // dense surface must render as a SOLID disc — zero interior holes at 256px

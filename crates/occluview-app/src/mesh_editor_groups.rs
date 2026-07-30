@@ -477,7 +477,7 @@ fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
 /// One dim line of operator context: the pending-edits marker (only when it has
 /// something to say) and the interaction hint for the active selection mode. The
 /// raw selected-face count is intentionally NOT shown — it is noise that just ate
-/// an info line (owner request).
+/// an info line.
 pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
     ui.add_space(3.0);
     if state.busy {

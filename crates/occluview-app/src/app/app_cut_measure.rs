@@ -634,7 +634,7 @@ impl OccluViewApp {
             && self.cut_view.is_planted()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F));
 
-        // Wheel scoping (owner rule): the wheel acts ONLY inside the Section
+        // Wheel scoping: the wheel acts ONLY inside the Section
         // panel; over the bare viewport it stays camera zoom. Inside the panel,
         // Ctrl+wheel resizes the disc (manipulator radius) and a plain wheel
         // zooms the slice to the cursor. Drain the scroll in both cases so it

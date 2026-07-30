@@ -300,7 +300,7 @@ fn studio_material_lights_opposite_normals_evenly() {
 
     let front = pixel_at(&pixels, 96, 29, 36);
     let back = pixel_at(&pixels, 96, 66, 36);
-    // Even dental light (owner rule): a front-facing triangle whose VERTEX
+    // Even dental light (by design): a front-facing triangle whose VERTEX
     // normal points away is flipped toward the viewer and lit exactly like a
     // correctly-oriented one — no grazing grey half-shadow that would darken a
     // whole inverted-normal surface. Both must stay bright AND read the same.

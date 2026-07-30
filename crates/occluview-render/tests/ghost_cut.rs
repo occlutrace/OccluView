@@ -1,6 +1,6 @@
 //! Ghost cut-view regression tests.
 //!
-//! OWNER rule: the cut view must NOT remove geometry from the main viewport.
+//! Invariant: the cut view never removes geometry from the main viewport.
 //! The kept side draws opaque (unchanged) and the cut-away side is re-drawn as
 //! a faint translucent ghost. These tests render the main-viewport clip path
 //! (`render_prepared_viewport_with_clip_and_overlay`, which now runs the ghost

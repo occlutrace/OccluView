@@ -2,7 +2,7 @@
 //!
 //! A second draw over the *same* mesh shader module (`vs_main` + `fs_ghost`)
 //! that renders the cut-away side of a cross-section as a translucent shell,
-//! so the OWNER rule holds: a cut never removes geometry from view, it fades
+//! so the invariant holds: a cut never removes geometry from view, it fades
 //! it. Built once at renderer init (never per frame). Alpha-blended, depth
 //! test on / depth write off, drawn after the opaque pass.
 

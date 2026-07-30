@@ -79,8 +79,7 @@ pub(crate) fn label_chip(
 
 /// The full thickness "ray": the halo+accent chord from `entry` to `exit`, a
 /// white-haloed anchor at `entry`, a bare accent dot at `exit`, and the mm chip
-/// lifted above `entry`. This is the effect the owner wants reused verbatim in
-/// the Section panel.
+/// lifted above `entry`. This is the effect the Section panel reuses verbatim.
 pub(crate) fn thickness_ray(
     painter: &egui::Painter,
     entry: egui::Pos2,

@@ -177,9 +177,9 @@ fn robust_axis_range(values: &mut [f32]) -> Option<(f32, f32)> {
 /// Contiguous vertex-clustering decimator for triangle soups.
 ///
 /// The old fast surface path kept every Nth triangle. On a dense scan that
-/// punches the surface full of holes — the thumbnail renders as a see-through
-/// sieve (owner report: "ВСЯ В КРАПИНКУ, я сквозь неё вижу"). This instead
-/// snaps every vertex onto a coarse spatial grid and welds all vertices that
+/// punches the surface full of holes, the thumbnail comes out speckled and
+/// see-through instead of solid. This instead snaps every vertex onto a
+/// coarse spatial grid and welds all vertices that
 /// land in the same cell to one shared representative. Neighboring triangles go
 /// on sharing edges through those representatives, so the reduced mesh stays a
 /// closed, opaque surface — just at a lower, thumbnail-appropriate resolution.
@@ -558,7 +558,7 @@ end_header
     #[test]
     fn ply_surface_fast_path_declines_so_full_reader_renders_a_surface() {
         // A PLY that declares faces is a SURFACE. The fast reader must NOT
-        // return it as a point cloud (that is the "куча точек" bug); it declines
+        // return it as a point cloud (that is the point-soup bug); it declines
         // so `load_thumbnail_mesh_*` falls through to the full reader, which
         // triangulates the faces into a real surface.
         let bytes = br"ply

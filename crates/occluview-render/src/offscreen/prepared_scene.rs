@@ -283,7 +283,7 @@ impl PreparedScene {
     }
 
     /// Draw the cut-away side of every visible triangle mesh as a translucent
-    /// ghost (OWNER cut-view rule: a cross-section fades geometry, never
+    /// ghost (cut-view invariant: a cross-section fades geometry, never
     /// deletes it). Call this *after* [`Self::draw_with_clip`], which draws the
     /// kept side opaque and populates depth. `clip_bg` is the same clip-plane
     /// bind group as the opaque pass — `fs_ghost` inverts the test internally.

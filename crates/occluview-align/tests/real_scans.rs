@@ -38,7 +38,7 @@ const MAX_RESIDUAL_MM: f64 = 0.05;
 const MIN_MEASURED_SHARE: f64 = 0.85;
 /// Share that must land inside the clinical tolerance band.
 const MIN_WITHIN_TOLERANCE: f64 = 0.90;
-/// The tolerance band, in millimetres — the owner's "where it starts to go bad".
+/// The tolerance band, in millimetres — where alignment starts to go bad.
 const TOLERANCE_MM: f64 = 0.2;
 
 #[test]

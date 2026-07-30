@@ -1,13 +1,11 @@
 # Changelog
 
-## 1.0.7 - 2026-07-29
-
-- Cut View: the section wheel resizes the disc the other way round. The disc
-  covers the patch of the plane the window is looking at, so magnifying the
-  section narrows it onto the detail being examined and pulling back opens it
-  out again. 1.0.6 had it inverted.
-
 ## 1.0.6 - 2026-07-29
+
+- Sculpt: the brush survives its first densifying Smooth stroke. The rebuilt,
+  denser mesh arrived without its picking index and nothing ever rebuilt one,
+  so from that stroke on the cursor never found the surface again and no
+  sculpting applied at all.
 
 - Added Align Scans: click a point on one scan and the matching point on
   another, and they pair themselves. There is no target picker and no roles —
@@ -79,8 +77,10 @@
 - A fit or a measurement against a hidden scan is refused by name instead of
   reporting a percentage for a surface nobody can see, and "% of the surface"
   now says "of the unmarked surface" when a region is painted out.
-- Cut View: the wheel in the section window resizes the cutting disc with it.
-  Resizing the disc no longer throws away the pan and zoom you set there.
+- Cut View: the wheel in the section window resizes the cutting disc with it —
+  magnifying the section narrows the disc onto the detail being examined,
+  pulling back opens it out. Resizing the disc no longer throws away the pan
+  and zoom you set there.
 - The viewport scale bar follows the camera. It was derived from the scene's
   bounding box, so it described the framing the file opened at and was wrong
   from the first scroll onwards.
