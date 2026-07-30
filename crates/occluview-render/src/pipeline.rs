@@ -51,7 +51,7 @@ mod ghost;
 #[path = "pipeline_tests.rs"]
 mod tests;
 
-/// Vertex layout for the cap quad: position only (vec3<f32>).
+/// Vertex layout for the cap quad: position only (`vec3<f32>`).
 fn cap_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: 12,

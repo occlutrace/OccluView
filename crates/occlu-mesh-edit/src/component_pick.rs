@@ -5,7 +5,7 @@
 //! (every triangle owns private, unshared vertices). "Which object did I click?"
 //! is a connected-component query over the mesh's TRUE topology, so — exactly as
 //! [`selected_connected_components`] does for Separate — the soup is welded back
-//! to shared topology first (see [`weld_soup_topology`]). Without that weld every
+//! to shared topology first (see `weld_soup_topology`). Without that weld every
 //! triangle is its own component and a click would select a single facet, never
 //! the whole object (the 317k-confetti failure mode).
 

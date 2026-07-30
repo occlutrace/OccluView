@@ -11,7 +11,7 @@
 //! rims: it heals the cut line first — removing dangling needle/lone
 //! triangles to a fixpoint and welding near-coincident boundary vertices — so
 //! the surviving rims are simple loops that a cap can complete. It is OPT-IN
-//! ([`MeshEditOptions::heal_boundary_rims`],
+//! (`MeshEditOptions::heal_boundary_rims`,
 //! set by the Close Holes path); the repair pipeline leaves it off and stays
 //! byte-for-byte unchanged.
 //!

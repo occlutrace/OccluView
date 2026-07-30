@@ -325,7 +325,7 @@ impl BrushSession {
     /// above the prepared count. This is the enforced growth bound: no stroke,
     /// however long, can take `vertex_count()` past
     /// `prepared_vertex_count() + added_vertex_budget()`. Defaults to the
-    /// prepared vertex count (or [`MIN_ADDED_VERTEX_BUDGET`] for a small mesh).
+    /// prepared vertex count, with a floor of fifty thousand for a small mesh.
     #[must_use]
     pub fn added_vertex_budget(&self) -> usize {
         self.added_vertex_budget

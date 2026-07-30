@@ -3,7 +3,7 @@
 //! centroid they were computed about.
 //!
 //! This is the STABLE, per-mesh-constant "global shape" signal the cut disc
-//! (Bridge Split and Cut View both drive [`crate::cut_manipulator`] logic
+//! (Bridge Split and Cut View both drive `cut_manipulator` logic
 //! through it) anchors its orientation to, instead of the hit triangle's
 //! local normal: a dental arch or bridge span's own axes and centroid never
 //! jitter as the cursor crosses triangles, and the LOCAL direction from the
