@@ -114,8 +114,8 @@ pub(super) fn large_binary_stl_tessellated_plane(min_bytes: usize) -> Vec<u8> {
 
 /// A dense binary-STL UV sphere of at least `min_bytes`. A sphere is the sharp
 /// speckle probe: its thumbnail silhouette is a filled disc, so ANY transparent
-/// pixel strictly inside the disc is a see-through hole — exactly the "ВСЯ В
-/// КРАПИНКУ" artifact that per-Nth-triangle striding produced on dense scans.
+/// pixel strictly inside the disc is a see-through hole — exactly the speckled
+/// artifact that per-Nth-triangle striding produced on dense scans.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub(super) fn dense_binary_stl_sphere(min_bytes: usize) -> Vec<u8> {
     let triangle_target = (min_bytes.saturating_sub(84) / 50).max(8);

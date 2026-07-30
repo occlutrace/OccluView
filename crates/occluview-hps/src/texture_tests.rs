@@ -226,7 +226,7 @@ fn compressed_texture_uses_decoded_dimensions_before_raw_metadata_limits() {
 
 // A format-less raw HPS texture MUST decode deterministically as BGRA — HPS
 // emits DirectX surfaces (D3DFMT_A8R8G8B8) whose memory byte order is [B,G,R,A].
-// This is the owner-verified-correct behavior: a warm-white dental surface
+// This is the verified-correct behavior: a warm-white dental surface
 // (physical R>=G>B) is stored with the small blue value in byte 0, and swapping
 // R<->B is what keeps enamel warm instead of turning it blue.
 #[test]
@@ -262,7 +262,7 @@ fn raw_texture_image_without_format_defaults_to_bgra_swap() {
     }
 }
 
-// Regression for the owner bug ("где белое — синим красит"): a texture atlas
+// Regression for a bug where white regions decoded blue: a texture atlas
 // dominated by cool/neutral stone with a minority of warm-white enamel decodes
 // deterministically as BGRA, so the enamel stays warm regardless of what the
 // rest of the atlas looks like — no per-scan pixel-statistics guessing.
@@ -354,7 +354,7 @@ fn solid_rgba_png_bytes(
     buf.into_inner()
 }
 
-// Regression for a real owner-reported bug: an HPS dental scan whose
+// Regression for a real bug: an HPS dental scan whose
 // embedded JPEG texture atlas has its chroma channels swapped AT THE SOURCE
 // (standards-compliant decode still comes out blue — there is no container
 // pixel-format ambiguity to resolve here, unlike the raw-D3DFMT tests above).

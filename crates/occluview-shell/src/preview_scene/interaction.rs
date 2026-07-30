@@ -1,7 +1,7 @@
 use super::PreviewSceneState;
 use glam::{Vec2, Vec3};
 // Zoom shares the CAD-tuned core mapping with the app viewport so the preview
-// pane and the main window feel identical (owner rule: no braked camera).
+// pane and the main window feel identical: no braked camera.
 use occluview_core::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Aabb, Camera, CameraPreset,
 };

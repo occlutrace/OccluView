@@ -182,7 +182,7 @@ fn section_panel_docks_bottom_right_clear_of_left_chrome() {
         panel.left() > vp.center().x,
         "panel must stay in the right half, clear of the bottom-left chrome: {panel:?}"
     );
-    // The square image sub-rect is the ~340 px the owner asked for.
+    // The square image sub-rect is the required ~340 px.
     let image = section_image_rect(panel);
     assert!(
         (image.width() - image.height()).abs() < 0.5,

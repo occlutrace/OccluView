@@ -74,7 +74,7 @@ fn fill_holes_interpolated_cap_is_watertight_and_manifold() {
 
 /// Interior valence stays bounded: the ear-clip fan must be regularized into a
 /// Delaunay-quality patch, NOT left as a high-valence hub of radiating sliver
-/// triangles (the "starburst" the owner reported). Over this ~40-edge apex rim
+/// triangles (the "starburst" failure). Over this ~40-edge apex rim
 /// a surviving single-hub fan would spike a vertex to valence ~40.
 #[test]
 fn fill_holes_interpolated_cap_has_no_sliver_fan_hub() {

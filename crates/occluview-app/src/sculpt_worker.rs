@@ -711,7 +711,7 @@ mod tests {
     /// A densified layer must arrive PICK-READY, and stay pick-ready across the
     /// commit — or the brush dies for good.
     ///
-    /// The chain the owner hit: the viewport lays a dab only where the cursor
+    /// The failure chain: the viewport lays a dab only where the cursor
     /// hits the surface, the hit test refuses to build a scan-sized BVH on the
     /// egui thread, and the only thing that ever warmed one was the session
     /// preparation. A densifying dab swapped in a rebuilt mesh with a cold BVH,

@@ -141,7 +141,7 @@ pub(crate) enum CutMode {
     },
     /// Planted at a fixed WORLD pose. The disc stays put on the model while the
     /// main-viewport camera orbits freely — an orbit does NOT sweep the section
-    /// (owner rule). `keep_positive` is the clip side chosen at plant time
+    /// (by design). `keep_positive` is the clip side chosen at plant time
     /// (flipped by F); `drag` is any in-progress handle drag. Re-aim the cut by
     /// dragging the disc handles (move / Ctrl-tilt / rim push), not the camera.
     Planted {
@@ -388,7 +388,7 @@ impl CutManipulator {
             out.consumed_pointer = true;
             out.cursor = CutCursor::Grabbing;
             // Plant the pose in WORLD space: it stays fixed while the camera
-            // orbits (owner rule — an orbit must not sweep the section).
+            // orbits — an orbit must not sweep the section.
             return CutMode::Planted {
                 pose: new_pose,
                 keep_positive,
@@ -420,7 +420,7 @@ impl CutManipulator {
             };
         }
         // World-fixed: the planted pose stays put on the model. The main-viewport
-        // camera orbits freely without touching it (owner rule) — only the disc
+        // camera orbits freely without touching it — only the disc
         // handles, F, and Ctrl+wheel re-author the cut.
         let mut pose = prev_pose;
         if input.flip {

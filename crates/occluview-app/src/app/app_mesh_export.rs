@@ -527,7 +527,7 @@ mod tests {
     /// The whole chain, end to end: a pose put on a layer the way a hand drag
     /// puts it there, exported, then READ BACK OFF DISK and checked.
     ///
-    /// The owner reported a manual move that did not survive an export. Every
+    /// A manual move did not survive an export. Every
     /// step of this chain used to be covered only in pieces — the bake had a
     /// test, the writer had a test, the reader had a test — and none of them
     /// answered "does the file on disk hold the scan where the operator sees it".
