@@ -39,18 +39,21 @@ pub(crate) const RIM_GRAB_RADIUS_PX: f32 = 11.0;
 
 /// How the disc follows a zoom of the section window.
 ///
-/// The section window frames `1.6 x radius / zoom`, so a plain "radius times the
-/// zoom step" would cancel exactly: the window would show the same patch of the
-/// plane after every notch, and the wheel would look dead. Splitting the step
-/// evenly between the two — the square root to each — moves both, in the
-/// directions the operator asked for. Scroll out and the lines get smaller while
-/// the disc narrows; scroll in and both grow. Invertible, so a notch out and a
-/// notch back in land on the radius you started from.
+/// The disc covers the patch of the plane the window is looking at, so the two
+/// move **opposite** ways: magnify the section and the disc narrows onto the
+/// detail being examined; pull back and it opens out again.
+///
+/// At the square root of the step rather than the whole of it. The window already
+/// frames `1.6 x radius / zoom`, so the radius and the zoom compound — taking the
+/// full step would swing the framing by the square of every notch and make the
+/// cut size lurch. Half the step, geometrically, leaves the wheel calm and still
+/// moves both. Invertible: a notch in and a notch back out land on the radius you
+/// started from.
 pub(crate) fn radius_after_slice_zoom(radius_mm: f32, zoom_before: f32, zoom_after: f32) -> f32 {
     if !(radius_mm.is_finite() && zoom_before > 0.0 && zoom_after > 0.0) {
         return radius_mm;
     }
-    let wanted = radius_mm * (zoom_after / zoom_before).sqrt();
+    let wanted = radius_mm * (zoom_before / zoom_after).sqrt();
     if !wanted.is_finite() {
         return radius_mm;
     }
@@ -484,43 +487,42 @@ mod tests {
     #![allow(clippy::float_cmp, clippy::expect_used, clippy::unnecessary_wraps)]
     use super::*;
 
-    /// Scrolling the section window out narrows the disc, and scrolling in grows
-    /// it — the direction the operator asked for, in their words: "if we move the
-    /// lines away in the viewport, the disc shrinks proportionally".
+    /// The disc covers what the window is looking at, so magnifying the section
+    /// narrows the disc and pulling back opens it out.
     #[test]
-    fn the_disc_follows_the_section_window_in_the_same_direction() {
-        let out = radius_after_slice_zoom(8.0, 1.0, 1.0 / 1.15);
-        assert!(out < 8.0, "scrolling out must narrow the disc, got {out}");
+    fn magnifying_the_section_narrows_the_disc() {
         let into = radius_after_slice_zoom(8.0, 1.0, 1.15);
-        assert!(into > 8.0, "scrolling in must widen it, got {into}");
+        assert!(into < 8.0, "magnifying must narrow the disc, got {into}");
+        let out = radius_after_slice_zoom(8.0, 1.0, 1.0 / 1.15);
+        assert!(out > 8.0, "pulling back must open it out, got {out}");
     }
 
-    /// It moves by HALF the zoom step, in the geometric sense. The section window
-    /// frames 1.6 x radius / zoom, so taking the whole step would cancel exactly
-    /// and the wheel would look dead: same patch of plane after every notch.
+    /// It moves by HALF the zoom step, in the geometric sense. The window frames
+    /// 1.6 x radius / zoom, so the radius and the zoom compound: the full step
+    /// would swing the framing by the square of every notch.
     #[test]
     fn the_window_and_the_disc_split_the_step_between_them() {
         let step = 1.15_f32;
         let radius = radius_after_slice_zoom(8.0, 1.0, step);
         assert!(
-            (radius - 8.0 * step.sqrt()).abs() < 1e-4,
-            "expected the square root of the step, got {radius}"
+            (radius - 8.0 / step.sqrt()).abs() < 1e-4,
+            "expected the radius divided by the square root of the step, got {radius}"
         );
-        // What the window ends up framing, before and after: it has to change.
+        // What the window ends up framing, before and after.
         let framed_before = 1.6 * 8.0 / 1.0;
         let framed_after = 1.6 * radius / step;
         assert!(
-            (framed_after - framed_before).abs() > 0.05,
-            "the section window framed the same extent either side of a notch, so \
-             the wheel does nothing there: {framed_before} then {framed_after}"
+            framed_after < framed_before,
+            "magnifying has to show LESS of the plane: {framed_before} then {framed_after}"
         );
         assert!(
-            framed_after < framed_before,
-            "scrolling in has to show LESS of the plane, not more"
+            framed_after > framed_before / (step * step),
+            "one notch must not swing the framing by the square of the step — that \
+             is the lurch the square root is here to avoid: {framed_after}"
         );
     }
 
-    /// A notch out and a notch back in lands where it started.
+    /// A notch in and a notch back out lands where it started.
     #[test]
     fn the_disc_returns_to_where_it_was() {
         let there = radius_after_slice_zoom(8.0, 1.0, 1.15);
@@ -533,11 +535,11 @@ mod tests {
     #[test]
     fn the_disc_stays_inside_its_own_limits() {
         assert!(
-            (radius_after_slice_zoom(MAX_DISC_RADIUS_MM, 1.0, 100.0) - MAX_DISC_RADIUS_MM).abs()
+            (radius_after_slice_zoom(MAX_DISC_RADIUS_MM, 1.0, 0.001) - MAX_DISC_RADIUS_MM).abs()
                 < 1e-3
         );
         assert!(
-            (radius_after_slice_zoom(MIN_DISC_RADIUS_MM, 1.0, 0.001) - MIN_DISC_RADIUS_MM).abs()
+            (radius_after_slice_zoom(MIN_DISC_RADIUS_MM, 1.0, 100.0) - MIN_DISC_RADIUS_MM).abs()
                 < 1e-3
         );
         for (radius, before, after) in [

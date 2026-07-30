@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.7 - 2026-07-29
+
+- Cut View: the section wheel resizes the disc the other way round. The disc
+  covers the patch of the plane the window is looking at, so magnifying the
+  section narrows it onto the detail being examined and pulling back opens it
+  out again. 1.0.6 had it inverted.
+
 ## 1.0.6 - 2026-07-29
 
 - Added Align Scans: click a point on one scan and the matching point on
