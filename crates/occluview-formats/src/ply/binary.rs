@@ -270,8 +270,9 @@ fn read_faces(
     builder: &mut MeshBuilder,
 ) -> Result<(), FormatError> {
     // Locate the vertex_indices list (by name). Faces may carry multiple list
-    // properties (e.g. iTero: `vertex_indices` + `texcoord`); we must consume
-    // every declared list per row so the next row's bytes line up.
+    // properties (e.g. some intraoral scanners emit `vertex_indices` +
+    // `texcoord`); we must consume every declared list per row so the next
+    // row's bytes line up.
     let Some(indices_prop_idx) = element
         .properties
         .iter()

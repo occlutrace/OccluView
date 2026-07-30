@@ -1,12 +1,14 @@
-//! The exclusion brush, built the way exocad's is.
+//! The exclusion brush, built the way the operator's dental CAD software
+//! builds it.
 //!
-//! In exocad's Align Meshes the brush is not a mode of the manual tab. It is
-//! reached from the automatic tab by ticking **Matching: Exclude selected
-//! parts**, which opens a separate **Brush tool** window; painting marks the
-//! surface that best-fit matching must *ignore*, and the marked surface goes
-//! blue. That is the shape reproduced here, control for control:
+//! In the align-meshes workflow operators already use, the brush is not a
+//! mode of the manual tab. It is reached from the automatic tab by ticking
+//! **Matching: Exclude selected parts**, which opens a separate **Brush
+//! tool** window; painting marks the surface that best-fit matching must
+//! *ignore*, and the marked surface goes blue. That is the shape reproduced
+//! here, control for control:
 //!
-//! | exocad | here |
+//! | operator's dental CAD software | here |
 //! | --- | --- |
 //! | Fit everywhere | clears every marking |
 //! | Fit nowhere | marks the whole scan |
@@ -71,10 +73,10 @@ impl AlignBrush {
 
     /// Whether a stroke clears, given whether Shift is held.
     ///
-    /// exocad: "Brush inverse … You can also hold SHIFT while painting to
-    /// inverse the brush." Held together they cancel, which is what "inverse"
-    /// means and what an operator who has already set the toggle expects Shift
-    /// to do.
+    /// The operator's dental CAD software documents this as: "Brush inverse …
+    /// You can also hold SHIFT while painting to inverse the brush." Held
+    /// together they cancel, which is what "inverse" means and what an
+    /// operator who has already set the toggle expects Shift to do.
     pub(crate) fn erases(self, shift: bool) -> bool {
         self.inverse != shift
     }
@@ -155,9 +157,10 @@ mod tests {
         assert!((brush.auto_radius_mm() - DEFAULT_AUTO_RADIUS_MM).abs() < f32::EPSILON);
     }
 
-    /// exocad's rule, and the reason the toggle and the key are one control: an
-    /// operator who has set Brush inverse expects Shift to inverse THAT, not to
-    /// be a second way of saying the same thing.
+    /// The operator's dental CAD software follows this rule, and it is the
+    /// reason the toggle and the key are one control: an operator who has set
+    /// Brush inverse expects Shift to inverse THAT, not to be a second way of
+    /// saying the same thing.
     #[test]
     fn shift_inverses_the_brush_whichever_way_it_is_already_set() {
         let mut brush = AlignBrush::default();

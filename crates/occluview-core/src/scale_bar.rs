@@ -10,18 +10,19 @@ pub struct ScaleBar {
 }
 
 impl ScaleBar {
-    /// Pick a readable millimeter scale bar for a rendered view.
+    /// Pick a readable millimetre scale bar for a view at this scale.
+    ///
+    /// Takes the scale itself rather than the scene's size, because the two are
+    /// only equal for one instant: right after Fit view. This used to be derived
+    /// from the mesh's bounding box over the viewport width, which meant the bar
+    /// described the framing the scene had when it loaded and went on describing
+    /// it for the rest of the session, however far the operator zoomed.
     #[must_use]
-    pub fn for_viewport(scene_width_mm: f32, viewport_width_px: f32) -> Option<Self> {
-        if !scene_width_mm.is_finite()
-            || !viewport_width_px.is_finite()
-            || scene_width_mm <= 0.0
-            || viewport_width_px <= 0.0
-        {
+    pub fn for_mm_per_px(mm_per_px: f32) -> Option<Self> {
+        if !mm_per_px.is_finite() || mm_per_px <= 0.0 {
             return None;
         }
 
-        let mm_per_px = scene_width_mm / viewport_width_px;
         let length_mm = nice_length_mm(mm_per_px * 120.0);
         let width_px = length_mm / mm_per_px;
         if !width_px.is_finite() || width_px <= 0.0 {
@@ -60,9 +61,30 @@ fn nice_length_mm(target_mm: f32) -> f32 {
 mod tests {
     use super::*;
 
+    /// Zooming changes the bar. It used to be built from the mesh's bounding box
+    /// over the viewport width, so it was right for the first frame after a file
+    /// opened and then described that framing for the rest of the session.
+    #[test]
+    fn a_closer_view_puts_fewer_millimetres_in_the_bar() {
+        let wide = ScaleBar::for_mm_per_px(80.0 / 512.0).expect("a wide view");
+        let close = ScaleBar::for_mm_per_px(8.0 / 512.0).expect("the same view, zoomed in");
+        assert!(
+            close.length_mm < wide.length_mm,
+            "zooming in by ten did not shorten the bar: {} then {}",
+            wide.length_mm,
+            close.length_mm
+        );
+        for bar in [wide, close] {
+            assert!(
+                bar.width_px > 0.0 && bar.width_px.is_finite(),
+                "a bar has to be drawable: {bar:?}"
+            );
+        }
+    }
+
     #[test]
     fn picks_readable_bar_for_typical_arch_width() {
-        let bar = ScaleBar::for_viewport(80.0, 512.0).unwrap();
+        let bar = ScaleBar::for_mm_per_px(80.0 / 512.0).unwrap();
 
         assert_eq!(bar.length_mm, 20.0);
         assert!((bar.width_px - 128.0).abs() < 0.01);
@@ -71,14 +93,14 @@ mod tests {
 
     #[test]
     fn returns_none_for_invalid_dimensions() {
-        assert!(ScaleBar::for_viewport(0.0, 512.0).is_none());
-        assert!(ScaleBar::for_viewport(80.0, 0.0).is_none());
-        assert!(ScaleBar::for_viewport(f32::NAN, 512.0).is_none());
+        assert!(ScaleBar::for_mm_per_px(0.0).is_none());
+        assert!(ScaleBar::for_mm_per_px(f32::INFINITY).is_none());
+        assert!(ScaleBar::for_mm_per_px(f32::NAN).is_none());
     }
 
     #[test]
     fn keeps_small_scenes_in_millimeters() {
-        let bar = ScaleBar::for_viewport(4.0, 512.0).unwrap();
+        let bar = ScaleBar::for_mm_per_px(4.0 / 512.0).unwrap();
 
         assert_eq!(bar.length_mm, 1.0);
         assert!((bar.width_px - 128.0).abs() < 0.01);
@@ -87,7 +109,7 @@ mod tests {
 
     #[test]
     fn rounds_large_scenes_to_nice_lengths() {
-        let bar = ScaleBar::for_viewport(500.0, 512.0).unwrap();
+        let bar = ScaleBar::for_mm_per_px(500.0 / 512.0).unwrap();
 
         assert_eq!(bar.length_mm, 100.0);
         assert!((bar.width_px - 102.4).abs() < 0.01);

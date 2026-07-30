@@ -1,8 +1,8 @@
 //! Hand-painted vector icons for the mesh editor toolbar and the layer menu.
 //!
 //! egui ships only a thin emoji subset and glyph coverage is unreliable across
-//! platforms, so every tool draws its own crisp, monochrome glyph here (exocad /
-//! Fusion 360 toolbar style: simple geometry, even 1.2-1.6 px stroke weight,
+//! platforms, so every tool draws its own crisp, monochrome glyph here (the
+//! CAD toolbar style: simple geometry, even 1.2-1.6 px stroke weight,
 //! readable at 15-18 px). This module is presentation only — no mesh logic lives
 //! here. Two glyph vocabularies share one drawing language and the low-level
 //! primitives (`arrowhead`, `arc`, …): [`EditorIcon`] for the editor toolbar and
@@ -33,21 +33,21 @@ pub(crate) const CELL_ROUNDING: f32 = 4.0;
 /// One tool glyph. Maps 1:1 onto a mesh-editor button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EditorIcon {
-    /// Freehand outline selection (exocad "Mark triangles").
+    /// Freehand outline selection (the dental CAD "Mark triangles" semantics).
     Lasso,
     /// Object pick: select one whole connected object of a multi-part STL.
     Object,
-    /// Select every face (exocad "All").
+    /// Select every face (the dental CAD "All").
     SelectAll,
-    /// Clear the selection (exocad "None").
+    /// Clear the selection (the dental CAD "None").
     SelectNone,
-    /// Swap marked and unmarked faces (exocad "Invert").
+    /// Swap marked and unmarked faces (the dental CAD "Invert").
     SelectInvert,
     /// Trash can — remove the marked faces.
     Delete,
-    /// Crop marks — keep only the marked area (exocad "Crop").
+    /// Crop marks — keep only the marked area (the dental CAD "Crop").
     Keep,
-    /// Fill open holes with interpolated caps (exocad "Close Holes").
+    /// Fill open holes with interpolated caps (the dental CAD "Close Holes").
     CloseHoles,
     /// A wave settling flat — the smoothing sculpt brush.
     Smooth,

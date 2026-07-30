@@ -8,10 +8,11 @@
 //!
 //! ## Stencil capping
 //!
-//! For a **solid** cross-section (the cut surface appears filled, like 3D
-//! Slicer and `MeshMixer`), the renderer runs a 3-pass stencil sequence before
-//! the shaded draw: back faces increment the stencil, front faces decrement
-//! it, then a cap polygon in the plane is drawn testing `stencil != 0`.
+//! For a **solid** cross-section (the cut surface appears filled, as other
+//! 3D mesh-editing tools render it), the renderer runs a 3-pass stencil
+//! sequence before the shaded draw: back faces increment the stencil, front
+//! faces decrement it, then a cap polygon in the plane is drawn testing
+//! `stencil != 0`.
 //! See [`crate::pipeline::Renderer`] for the algorithm.
 //!
 //! ## Layout

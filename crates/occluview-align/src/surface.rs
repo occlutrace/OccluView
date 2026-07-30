@@ -128,10 +128,10 @@ impl SurfaceIndex {
     ///
     /// Triangles with out-of-range indices, non-finite vertices, or no usable
     /// area are dropped rather than poisoning a query. So are triangles the
-    /// operator has masked out: this is the FIXED side of exocad's "Exclude
-    /// selected parts", and the only honest way to exclude fixed surface is to
-    /// leave it out of the index, so nothing can ever match against it or
-    /// measure to it.
+    /// operator has masked out: this is the FIXED side of the "Exclude
+    /// selected parts" convention dental CAD software uses, and the only
+    /// honest way to exclude fixed surface is to leave it out of the index,
+    /// so nothing can ever match against it or measure to it.
     ///
     /// Returns `None` when nothing usable survives.
     #[must_use]

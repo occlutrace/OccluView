@@ -14,9 +14,9 @@ const COLLAPSE_FRACTION_SQUARED: f32 = 1e-4;
 /// Area-weighted vertex normal for every id in `scope`, computed in PARALLEL
 /// and conflict-free — each entry reads only its own incident faces, so no
 /// per-face dedup is needed. Returns one un-normalized normal per `scope`
-/// entry; the caller normalizes and writes back. Blender-sculpt strategy
-/// (PR #116209): recompute from geometry directly instead of scattering face
-/// normals through a single-threaded `VectorSet`.
+/// entry; the caller normalizes and writes back. This is the strategy
+/// parallel-safe sculpting engines use: recompute from geometry directly
+/// instead of scattering face normals through a single-threaded `VectorSet`.
 pub(crate) fn scope_area_normals(
     scope: &[usize],
     incident_triangles: &Csr,

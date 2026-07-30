@@ -614,9 +614,10 @@ impl OccluViewApp {
         // which closes both). This is what lets the two tools coexist.
         let probe_linked = self.cut_view.is_probe_linked();
 
-        // An armed lasso outline owns primary clicks (exocad placement); the
-        // follow-mode plant yields to it. A *planted* disc still owns its handle
-        // presses, so only the follow-mode plant is gated here.
+        // An armed lasso outline owns primary clicks (the same placement
+        // convention dental CAD software uses); the follow-mode plant yields
+        // to it. A *planted* disc still owns its handle presses, so only the
+        // follow-mode plant is gated here.
         let lasso_owns_lmb = self.edit_mode.lasso_armed() && self.edit_mode.has_active_session();
         let plant_suppressed = lasso_owns_lmb && !self.cut_view.is_planted();
         let primary_pressed = raw_pressed && !plant_suppressed && !probe_linked;

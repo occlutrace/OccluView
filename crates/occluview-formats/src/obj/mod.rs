@@ -1,11 +1,11 @@
 //! OBJ reader.
 //!
-//! Wavefront OBJ is a common export from intraoral scanners (notably Medit and
-//! `exocad DentalCAD`). The dental-relevant subset is small:
+//! Wavefront OBJ is a common export from intraoral scanners and dental CAD
+//! software. The dental-relevant subset is small:
 //!
 //! - `v x y z [r g b]` - vertex position, optionally followed by 3 integer
 //!   color channels in `0..=255` (a non-standard but widely-emitted extension;
-//!   exocad and several scanners write it). We honor those colors.
+//!   dental CAD software and several scanners write it). We honor those colors.
 //! - `vt u [v]` - texture coordinate (parsed, currently unused).
 //! - `vn x y z` - vertex normal (parsed and attached to the matching vertex).
 //! - `f a b c ...` - polygonal face; indices are 1-based, may carry
@@ -20,7 +20,8 @@
 //!   `ripoint-face-index-oob` corpus validates this; `bad_small.obj` has
 //!   `f 1 4 3` with 3 vertices and must fail cleanly, never panic).
 //! - **Lenient on unknown directives** - we skip lines we don't recognize
-//!   rather than aborting. exocad files carry many `#` metadata comments.
+//!   rather than aborting. Dental CAD software's files carry many `#`
+//!   metadata comments.
 //! - **Vertex colors** are detected by counting tokens after `v`: 3 floats =
 //!   position only, 6 = position + RGB (ints 0..=255).
 //! - **No external file reads**: `mtllib` is recorded but the `.mtl` is not
@@ -58,7 +59,7 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 
     for (line_no, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
         // Strip comments: everything after the first '#' that is not in a
-        // quoted string. exocad files are comment-heavy.
+        // quoted string. Dental CAD software's files are comment-heavy.
         let line = line.split('#').next().unwrap_or(line).trim();
         if line.is_empty() {
             continue;

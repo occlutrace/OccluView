@@ -5,7 +5,8 @@
 //! *card* the operator reads to SEE what the pass actually did: one human line
 //! per non-zero pass with a small painted icon, the informational open-rim
 //! tail, and a positive "nothing to repair" confirmation when the mesh was
-//! already clean (exocad-style — a clean scan still gets an answer).
+//! already clean (matching the dental CAD convention — a clean scan still
+//! gets an answer).
 //!
 //! The kernel [`RepairReport`] is consumed read-only; every number shown here
 //! is one of its existing fields. Presentation only — no mesh logic lives here.

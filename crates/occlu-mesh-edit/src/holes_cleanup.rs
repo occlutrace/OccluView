@@ -7,10 +7,11 @@
 //! "damaged", so the operator sees dozens of skipped rims next to the one
 //! socket they actually wanted closed.
 //!
-//! This pass is what makes exocad's close look "smart": it heals the cut line
-//! first — removing dangling needle/lone triangles to a fixpoint and welding
-//! near-coincident boundary vertices — so the surviving rims are clean simple
-//! loops that cap cleanly. It is OPT-IN ([`MeshEditOptions::heal_boundary_rims`],
+//! This pass is what keeps hole-closing from stalling on a mess of skipped
+//! rims: it heals the cut line first — removing dangling needle/lone
+//! triangles to a fixpoint and welding near-coincident boundary vertices — so
+//! the surviving rims are simple loops that a cap can complete. It is OPT-IN
+//! ([`MeshEditOptions::heal_boundary_rims`],
 //! set by the Close Holes path); the repair pipeline leaves it off and stays
 //! byte-for-byte unchanged.
 //!

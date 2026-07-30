@@ -1,11 +1,12 @@
 //! State machine for the interactive cut disc.
 //!
 //! The cut tool shows a small disc that stands upright on the surface under the
-//! cursor (exocad "follow cursor"): the disc plane blends continuously between
-//! an axial camera alignment and the local surface direction, so facets cannot
-//! snap the blade. A primary click *plants* the disc; drag anywhere on its body
-//! to translate, Ctrl+drag anywhere to arcball-tilt, or use the outer rim halo
-//! for depth push/pull. The wheel scales the disc radius.
+//! cursor (the same "follow cursor" convention dental CAD software uses): the
+//! disc plane blends continuously between an axial camera alignment and the
+//! local surface direction, so facets cannot snap the blade. A primary click
+//! *plants* the disc; drag anywhere on its body to translate, Ctrl+drag
+//! anywhere to arcball-tilt, or use the outer rim halo for depth push/pull.
+//! The wheel scales the disc radius.
 //!
 //! This module is deliberately free of egui/renderer side effects: the viewport
 //! adapter samples the current frame's pointer/keyboard/camera facts into a

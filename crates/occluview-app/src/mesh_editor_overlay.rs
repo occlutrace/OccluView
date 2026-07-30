@@ -1,4 +1,4 @@
-//! The mesh editor tool window (exocad "3D Data Editor" workflow).
+//! The mesh editor tool window (the dental CAD "3D Data Editor" workflow).
 //!
 //! A movable `egui::Window` with a custom top bar of two tabs — Edit Mesh
 //! (selection / repair) and Sculpt (the brushes) — over a shared status +
@@ -35,14 +35,15 @@ pub(crate) enum MeshEditorAction {
     SelectAll,
     InvertSelection,
     ClearSelection,
-    /// Arm/disarm the freehand lasso capture (exocad "Edit Mesh" lasso).
+    /// Arm/disarm the freehand lasso capture (the dental CAD "Edit Mesh" lasso).
     ToggleLasso,
     /// Arm/disarm Object pick: click one whole object of a multi-object STL.
     ToggleObject,
     /// Switch between surface (front-facing) and through-mesh selection.
     ToggleThroughMesh,
-    /// Arm/disarm one interactive sculpt tool (exocad Freeforming: the
-    /// Add/Remove clay knife or the Smooth relaxer), dragged on the surface.
+    /// Arm/disarm one interactive sculpt tool (the dental CAD Freeforming
+    /// workflow: the Add/Remove clay knife or the Smooth relaxer), dragged on
+    /// the surface.
     ToggleSculpt(SculptToolKind),
     /// Confirm the edit session: keep edits, close the window.
     Done,
@@ -86,8 +87,8 @@ pub(crate) struct MeshEditorPanelState {
     pub(crate) active_tab: EditorTab,
 }
 
-/// Overall window width. Trimmed to keep the exocad-style tool compact; the
-/// icon grid and the OK/Cancel commit bar are both sized off it.
+/// Overall window width. Trimmed to keep the dental-CAD-style tool compact;
+/// the icon grid and the OK/Cancel commit bar are both sized off it.
 const WINDOW_WIDTH: f32 = 236.0;
 
 /// Default and bounds for the optional Close Holes rim-perimeter restraint.
@@ -223,7 +224,7 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
 #[cfg(test)]
 mod tests {
     #[test]
-    fn window_groups_follow_the_exocad_workflow_order() {
+    fn window_groups_follow_the_dental_cad_workflow_order() {
         let source = include_str!("mesh_editor_overlay.rs").replace("\r\n", "\n");
         let production = source
             .split_once("\nmod tests {")
@@ -242,7 +243,7 @@ mod tests {
         for call in order {
             let at = production.find(call).unwrap_or(usize::MAX);
             assert!(at != usize::MAX, "group call {call} missing");
-            assert!(at > last, "group {call} out of exocad workflow order");
+            assert!(at > last, "group {call} out of dental CAD workflow order");
             last = at;
         }
         assert!(

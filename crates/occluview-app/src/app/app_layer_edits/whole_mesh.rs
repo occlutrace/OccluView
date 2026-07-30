@@ -198,7 +198,7 @@ fn close_holes_options(close_holes_limit_mm: Option<f32>) -> MeshEditOptions {
             // Heal the cut line first: a digitally extracted tooth leaves a
             // jagged rim (needle/lone triangles, near-coincident seam verts) —
             // clean it so the socket closes instead of reporting dozens of
-            // "damaged" nick rims. The exocad behavior.
+            // "damaged" nick rims. This is the behaviour operators expect.
             heal_boundary_rims: true,
             ..MeshEditOptions::default()
         },

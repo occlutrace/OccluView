@@ -1,8 +1,9 @@
-//! Interactive sculpt-brush state: exocad-style freeforming (an Add/Remove clay
-//! knife and a Smooth relaxer) dragged directly on a scan surface inside the
-//! Mesh Editor. This module owns the pure state and math — which tool is armed,
-//! the size/intensity sliders and their unit conversions, the persistent
-//! per-layer kernel session, and the per-drag dab scheduler — while the
+//! Interactive sculpt-brush state: dental-CAD-style freeforming (an
+//! Add/Remove clay knife and a Smooth relaxer) dragged directly on a scan
+//! surface inside the Mesh Editor. This module owns the pure state and
+//! math — which tool is armed, the size/intensity sliders and their unit
+//! conversions, the persistent per-layer kernel session, and the per-drag
+//! dab scheduler — while the
 //! egui/viewport glue lives in `app::app_sculpt` and the geometry kernel is
 //! [`occluview_core::BrushSession`].
 
@@ -35,7 +36,7 @@ const SCULPT_RADIUS_MAX_MM: f32 = 12.0;
 pub(crate) const SCULPT_WHEEL_STEP: f32 = 6.0;
 /// Dab spacing along the drag path, as a fraction of the brush radius: dabs are
 /// laid down every `radius * this` of cursor travel so buildup is even and
-/// framerate-independent (Blender's arc-length stroke spacing).
+/// framerate-independent (the arc-length stroke spacing sculpting tools use).
 pub(crate) const DAB_SPACING_FRACTION: f32 = 0.15;
 /// While the cursor is (near) stationary and the button held, lay a fresh dab
 /// this often so a held brush keeps depositing on the same spot at a steady,

@@ -19,7 +19,7 @@ use occluview_core::MeshBuilder;
 /// Parse a `v` line. Returns `(position, optional_rgb_color)`.
 ///
 /// Color is detected by counting tokens: 3 floats = position only; 6 values
-/// = position + integer RGB (the exocad/dental extension).
+/// = position + integer RGB (the dental CAD extension).
 pub(super) fn vertex_line<'a, I>(
     tokens: &mut I,
     line_no: usize,
@@ -246,7 +246,7 @@ where
 
 fn parse_color_channel(s: &str, line_no: usize, raw: &str) -> Result<u8, FormatError> {
     // Two real-world conventions for OBJ vertex colors:
-    //   1. Integer 0..=255 (exocad DentalCAD, most dental scanners).
+    //   1. Integer 0..=255 (most dental CAD software and scanners).
     //   2. Float 0.0..=1.0 (some CAD tools, research datasets like CrossTooth).
     // Detect by whether the token parses as int; if not, try float and scale.
     if let Ok(v) = s.parse::<i32>() {
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn vertex_colors_via_six_token_v() {
-        // exocad extension: v x y z r g b (integer 0..=255).
+        // Dental CAD extension: v x y z r g b (integer 0..=255).
         let m = read_obj("v 0 0 0 255 0 0\nv 1 0 0 0 255 0\nv 0 1 0 0 0 255\nf 1 2 3\n");
         assert!(m.has_vertex_colors());
         assert_eq!(m.vertices()[0].color, [255, 0, 0, 255]);
@@ -385,9 +385,9 @@ mod tests {
 
     #[test]
     fn comments_and_unknown_directives_tolerated() {
-        // exocad files are full of metadata comments.
-        let text = "# exocad GmbH - DentalCAD v8349
-# DentalBase-OBJ-File Version: 2.7
+        // Dental CAD software's files are full of metadata comments.
+        let text = "# Dental CAD Suite Export - v8349
+# Mesh-OBJ-File Version: 2.7
 # Mesh: (3 Vertices, 1 Triangles)
 o \"upper\"
 s on

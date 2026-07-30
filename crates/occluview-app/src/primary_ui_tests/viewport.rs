@@ -433,50 +433,24 @@ fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
 }
 
 #[test]
-fn scene_stats_are_cached_on_scene_mutation_not_recomputed_on_repaint() {
-    let app_source = app_module_source();
+fn the_scale_bar_reads_the_camera_and_not_the_scene() {
     let app_render = app_render_source();
+    let scale_bar = repo_source_file("src/app/app_scale_bar.rs");
 
     assert!(
-        app_source.contains("scene_stats: Option<SceneStats>"),
-        "scene stats should be cached in app state"
+        !app_render.contains("SceneStats"),
+        "the cached scene bounding box existed only to size the scale bar; nothing \
+         should be caching it now"
     );
     assert!(
-        app_render.contains(
-            "let stats = scene_stats(&scene);\n        self.scene = Some(Arc::new(scene));\n        self.scene_stats = Some(stats);"
-        ),
-        "set_scene should refresh cached stats exactly when the scene changes"
+        scale_bar.contains("camera.orthographic_height"),
+        "an orthographic view puts orthographic_height / viewport_height millimetres \
+         in a pixel, and that is the only honest source for the bar's length"
     );
     assert!(
-        app_render.contains("pub(super) fn update_scene_materials_impl(&mut self, scene: Scene)"),
-        "material/visibility edits should keep a dedicated mutation path"
-    );
-    assert!(
-        app_render.contains("self.scene_stats = None;"),
-        "clearing the scene should clear cached stats"
-    );
-
-    let central = function_source(
-        app_render_source(),
-        "pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {",
-    );
-    assert!(
-        central.contains("let live_stats = self.scene_stats;"),
-        "live viewport repaint should reuse cached stats"
-    );
-    assert!(
-        !central.contains("scene_stats(scene)"),
-        "live viewport repaint must not recompute scene stats"
-    );
-
-    let render_pixels = function_source(app_render, "pub(super) fn render_scene_pixels_impl(");
-    assert!(
-        render_pixels.contains("self.scene_stats.context(\"scene stats unavailable\")?"),
-        "offscreen render should use cached stats from scene mutation"
-    );
-    assert!(
-        !render_pixels.contains("scene_stats(&scene)"),
-        "camera-only redraw should not recompute scene stats"
+        !scale_bar.contains("bbox_mm"),
+        "the scene's own size is the framing it had when it loaded, not the framing \
+         on screen after the operator has zoomed"
     );
 }
 

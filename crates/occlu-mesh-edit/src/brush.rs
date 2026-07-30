@@ -1,6 +1,6 @@
 //! Freeform sculpting brushes (issue #11): an interactive Add/Remove clay knife
 //! and a Smooth relaxer, applied over a soft-falloff disc on the surface — the
-//! geometry half of exocad-style freeforming applied to intraoral SCAN meshes.
+//! geometry half of freeform sculpting applied to intraoral scan meshes.
 //!
 //! # Session shape
 //!
@@ -556,9 +556,10 @@ impl BrushSession {
     }
 
     /// Camera-oriented brush normal: bucket region vertex normals by camera-
-    /// facing (Blender's `calc_area_normal`), average only the toward-viewer
-    /// bucket, falling back to the camera direction when too weak to trust —
-    /// robust to inverted-normal patches where a naive signed average cancels.
+    /// facing (the area-normal strategy sculpting engines use), average only
+    /// the toward-viewer bucket, falling back to the camera direction when too
+    /// weak to trust — robust to inverted-normal patches where a naive signed
+    /// average cancels.
     fn brush_normal(&self, weighted: &[(usize, f32)], view_dir: Vec3) -> Vec3 {
         let view = view_dir.normalize_or_zero();
         let has_view = view.length_squared() > f32::EPSILON;

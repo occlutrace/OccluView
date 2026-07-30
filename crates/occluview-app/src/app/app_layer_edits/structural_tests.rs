@@ -456,7 +456,7 @@ fn separate_remainder_stays_one_layer_even_when_the_cut_disconnects_it() {
     // marked island splits the leftover surface into disjoint shells. Select the
     // middle column of a 3x1 soup grid: the marked island is one part, and the
     // remainder (columns 0 and 2) is geometrically disconnected yet stays one
-    // layer — matching exocad's "the rest stays the base".
+    // layer — matching the dental CAD convention that "the rest stays the base".
     let soup = explode_mesh_to_soup(&grid_mesh(3, 1));
     let mut scene = scene_with_mesh(soup);
     let mut edit_mode = EditModeController::new(4, usize::MAX);
@@ -488,7 +488,7 @@ fn separate_parts_get_distinct_tints_so_the_split_is_visible() {
     // The spawned parts are geometrically coincident with where they sat in
     // the source, so with the source tint the divide would be invisible on
     // screen (the owner's "Separate does nothing" report). Every spawned
-    // layer must step the palette, exocad-style.
+    // layer must step the palette, matching the dental CAD convention.
     let mesh = grid_mesh(4, 4);
     let tris_per_row = 2 * 4;
     let mut mask = vec![false; mesh.triangle_count()];

@@ -91,7 +91,7 @@ fn parse_texture_image(text: &str) -> Result<Option<DecodedTexture>, HpsError> {
 /// average. This holds regardless of how the texture was decoded — the
 /// embedded-raster path (`decode_embedded_raster`) trusts the container's own
 /// declared color space with no channel-order ambiguity to resolve, yet a
-/// real exporter-authored 3Shape/HPS JPEG atlas can still have its own
+/// real exporter-authored HPS JPEG atlas can still have its own
 /// chroma channels swapped at the SOURCE (Cb/Cr transposed before
 /// compression) — a standards-compliant decode of a mis-authored file still
 /// comes out blue. Detecting the physical prior and undoing a channel swap
@@ -128,7 +128,7 @@ fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTe
 /// apart (a strong localized patch can drag the mean past the margin on its
 /// own), but the per-pixel PROPORTION can, since only a real whole-texture
 /// swap makes nearly every sample agree. Matches the calibration measured
-/// against a real 3Shape/HPS dental scan JPEG atlas with swapped chroma
+/// against a real HPS dental scan JPEG atlas with swapped chroma
 /// (mean R 107 / mean B 150 on the swapped file, uniformly across the
 /// texture; mean R 150 / mean B 107 once corrected).
 fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {

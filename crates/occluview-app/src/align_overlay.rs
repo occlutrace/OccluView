@@ -79,9 +79,10 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         } else {
             ui_theme::ACCENT
         };
-        // An arrow, not a bare line. exocad calls each correspondence an arrow
-        // and its Back button undoes one, so the operator counts arrows; the
-        // head sits at the FIXED end, which is where the surface is going.
+        // An arrow, not a bare line. The operator's dental CAD software calls
+        // each correspondence an arrow and its Back button undoes one, so the
+        // operator counts arrows; the head sits at the FIXED end, which is
+        // where the surface is going.
         let stroke = egui::Stroke::new(1.1, ink.gamma_multiply(0.7));
         painter.line_segment([moving, fixed], stroke);
         arrowhead(painter, moving, fixed, stroke);

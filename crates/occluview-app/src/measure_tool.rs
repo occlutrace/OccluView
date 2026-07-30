@@ -7,7 +7,8 @@
 //! [`crate::measure_overlay`], the input adapter in `app::app_viewport`, the
 //! toolbar toggles in `app::app_dialogs`. Anchors are WORLD-SPACE points on the
 //! mesh surface: they re-project through the live camera every frame, so the
-//! drawn segment orbits/zooms/pans with the model (exocad ruler behavior).
+//! drawn segment orbits/zooms/pans with the model (matching the dental CAD
+//! ruler behaviour).
 //!
 //! The thickness probe is honest, not a proxy: from the picked surface point it
 //! casts a ray INWARD (opposite the barycentric-interpolated surface normal at

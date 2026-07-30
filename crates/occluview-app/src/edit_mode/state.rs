@@ -36,7 +36,7 @@ pub(crate) enum SelectGesture {
     #[default]
     Marquee,
     /// Freehand lasso: primary presses/drag place an outline that marks every
-    /// triangle it encloses (exocad "Mark triangles").
+    /// triangle it encloses (the dental CAD "Mark triangles" semantics).
     Lasso,
     /// Object pick: a stationary primary click selects the WHOLE connected
     /// component (one object of a multi-object STL) under the cursor. A drag is

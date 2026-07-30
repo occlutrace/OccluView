@@ -12,9 +12,10 @@
 //!    way, which is exactly the three frames a second the operator reported.
 //! 3. **The dab itself is parallel** — three milliseconds on a 942k-vertex arch.
 //!
-//! There is no mesh picker. exocad needs one because its brush is modal; here
-//! the brush marks whichever mesh is under the cursor, so painting both sides
-//! of a comparison is one continuous gesture and there is nothing to get wrong.
+//! There is no mesh picker. The operator's dental CAD software needs one
+//! because its brush is modal; here the brush marks whichever mesh is under
+//! the cursor, so painting both sides of a comparison is one continuous
+//! gesture and there is nothing to get wrong.
 
 use eframe::egui;
 use glam::DVec3;
@@ -197,8 +198,9 @@ impl OccluViewApp {
         if !radius_px.is_finite() || radius_px < 2.0 {
             return;
         }
-        // exocad paints with a green tool and clears with a red one; the ring
-        // says which of the two this drag will be, Shift included.
+        // The operator's dental CAD software paints with a green tool and
+        // clears with a red one; the ring says which of the two this drag
+        // will be, Shift included.
         let shift = ctx.input(|input| input.modifiers.shift);
         let ink = if self.align_brush.erases(shift) {
             egui::Color32::from_rgb(196, 82, 72)
@@ -527,9 +529,10 @@ mod tests {
         );
     }
 
-    /// exocad's rule: a plain drag marks, Shift inverses the brush, and the
-    /// Brush inverse toggle inverses it standing. Both have to reach the same
-    /// decision or the toggle and the key would fight.
+    /// The operator's dental CAD software's rule: a plain drag marks, Shift
+    /// inverses the brush, and the Brush inverse toggle inverses it standing.
+    /// Both have to reach the same decision or the toggle and the key would
+    /// fight.
     #[test]
     fn a_stroke_takes_its_direction_from_the_toggle_and_shift_together() {
         assert!(
