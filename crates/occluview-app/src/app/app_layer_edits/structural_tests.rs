@@ -1,5 +1,5 @@
 //! Structural-op tests: Separate/Cut single-pass correctness, the component
-//! cap, and a headline perf harness for the "Divide" hang the owner hit.
+//! cap, and a headline perf harness for the "Divide" hang.
 #![allow(
     clippy::expect_used,
     clippy::print_stdout,
@@ -338,7 +338,7 @@ fn cut_moves_selection_to_a_new_layer_preserving_presentation() {
 #[test]
 #[ignore = "perf harness: run with --ignored --nocapture"]
 fn perf_separate_soup_500k() {
-    // The owner's real input: a large STL-style SOUP model with a two-wall
+    // A real-world case: a large STL-style SOUP model with a two-wall
     // (fragmented) selection. This exercises the full executor Separate INCLUDING
     // the soup->shared-topology weld, which is the cost the fix adds. It must
     // stay interactive (sub-second), not regress to minutes.
@@ -381,7 +381,7 @@ fn perf_separate_1m() {
 /// Explode a welded mesh into STL-style soup: three fresh vertices per triangle
 /// corner, sequential indices, nothing shared — byte-for-byte the topology a
 /// binary STL reader produces. Separate on this used to explode into one part
-/// per triangle (the owner's "317000 parts"); it must now weld back to the true
+/// per triangle (a real case reported "317000 parts"); it must now weld back to the true
 /// island count before splitting.
 fn explode_mesh_to_soup(mesh: &Mesh) -> Mesh {
     let mut vertices = Vec::with_capacity(mesh.indices().len());
@@ -487,7 +487,7 @@ fn separate_remainder_stays_one_layer_even_when_the_cut_disconnects_it() {
 fn separate_parts_get_distinct_tints_so_the_split_is_visible() {
     // The spawned parts are geometrically coincident with where they sat in
     // the source, so with the source tint the divide would be invisible on
-    // screen (the owner's "Separate does nothing" report). Every spawned
+    // screen (a real "Separate does nothing" report). Every spawned
     // layer must step the palette, matching the dental CAD convention.
     let mesh = grid_mesh(4, 4);
     let tris_per_row = 2 * 4;

@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn soup_two_disjoint_walls_yield_two_components_in_order() {
-        // The owner's through-selection case: two disjoint marked patches (an
+        // A through-selection case: two disjoint marked patches (an
         // outer and an inner wall) exploded to soup weld to exactly two islands,
         // ordered by lowest source-triangle index. 4x4 grid: even rows 0 and 2
         // are two disconnected strips (odd row 1 breaks connectivity).

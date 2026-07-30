@@ -97,7 +97,7 @@ impl OccluViewApp {
                     toolbar_divider(ui);
 
                     // Measure group: two direct toggles (this toolbar is flat
-                    // by owner decision — no dropdown menus), each with a
+                    // by design — no dropdown menus), each with a
                     // hand-painted vector glyph and a lit active state, exactly
                     // like the sibling Cut view tool.
                     let edit_session_active = self.edit_mode.has_active_session();

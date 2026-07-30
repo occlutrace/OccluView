@@ -205,8 +205,8 @@ fn cutview_camera_side_dump() {
             background: BG,
         };
 
-        // (0) "Full mesh" baseline: no clip, whole-bbox framing — what the owner
-        // says the window WRONGLY shows.
+        // (0) "Full mesh" baseline: no clip, whole-bbox framing — what the window
+        // WRONGLY shows.
         let full_cam = side_camera(
             &ClipPlane::new(*n, *dist),
             bbox.center(),

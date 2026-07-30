@@ -3,7 +3,7 @@ use glam::{Vec2, Vec3};
 use occluview_core::{orbit_delta_from_pointer_motion, Aabb, Camera, Scene, ScenePickHit};
 
 // Wheel zoom shares the CAD-tuned core mapping with the shell preview so the
-// two surfaces feel identical (owner rule: no braked camera, no reversals).
+// two surfaces feel identical: no braked camera, no reversals.
 pub(crate) use occluview_core::zoom_factor_from_scroll;
 
 pub(crate) fn orbit_delta_from_drag(

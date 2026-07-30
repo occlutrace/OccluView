@@ -8,9 +8,10 @@
 //! independent vertices per triangle, so the kernel welds those bit-identical
 //! corners back before analysis (`selected_connected_components_in_mesh`).
 //! Without that weld a soup model read as one component per selected triangle and
-//! Separate exploded into hundreds of thousands of one-triangle "parts" (the
-//! owner's 317k-confetti report); computing components on welded topology makes
-//! that failure mode structurally impossible.
+//! Separate exploded into hundreds of thousands of one-triangle "parts" (a real
+//! case: a soup export split into 317k single-triangle parts); computing
+//! components on welded topology makes that failure mode structurally
+//! impossible.
 //!
 //! Given a valid selection, the results are:
 //! - **One connected marked patch** (e.g. an open scan, one lasso patch) →

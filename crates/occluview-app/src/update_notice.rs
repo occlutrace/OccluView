@@ -1,6 +1,6 @@
 //! Launch-time update check and the "update available" notice.
 //!
-//! Policy (owner decision): OFFER, never install silently. On launch a
+//! Policy: OFFER, never install silently. On launch a
 //! background thread fetches the signed manifest once; if a newer release
 //! exists, a quiet corner notice offers Download → Install & restart. All
 //! network and verification work lives in `occluview-update`; this module is

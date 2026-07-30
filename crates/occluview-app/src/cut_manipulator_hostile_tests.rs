@@ -566,7 +566,7 @@ fn idle_frame_leaves_the_planted_disc_fixed() {
 
 #[test]
 fn orbit_does_not_move_the_world_fixed_disc() {
-    // Owner rule: with a disc planted, orbiting the main-viewport camera must
+    // Invariant: with a disc planted, orbiting the main-viewport camera must
     // NOT sweep the section — the world pose stays put and nothing re-renders.
     let mut m = planted_off_target();
     let before = m.pose().expect("pose");

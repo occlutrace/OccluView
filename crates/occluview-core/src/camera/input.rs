@@ -2,7 +2,7 @@ use glam::Vec2;
 
 /// Shared CAD orbit gain for raw pointer motion in the app and shell preview.
 ///
-/// Owner-tuned for a crisp, unbraked feel: dragging half the viewport's
+/// Tuned for a crisp, unbraked feel: dragging half the viewport's
 /// smaller dimension turns the model ~172° (the dental CAD "half screen, half
 /// turn" rule). Retune only the magnitude — the drag direction is pinned by
 /// `orbit_gain_scales_speed_without_flipping_direction`.
@@ -46,7 +46,7 @@ pub fn orbit_delta_from_pointer_motion(delta_px: Vec2, viewport_size_px: Vec2) -
 mod tests {
     use super::*;
 
-    /// The owner retunes gain for feel; the sign convention must never move.
+    /// Gain gets retuned for feel; the sign convention must never move.
     /// A rightward drag yields a negative yaw delta, a downward drag a
     /// positive pitch delta — flipping either inverts on-screen rotation.
     #[test]

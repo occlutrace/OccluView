@@ -67,7 +67,7 @@ fn toolbar_and_about_are_operator_focused() {
             && !toolbar.contains("ui.menu_button(\"View\"")
             && !toolbar.contains("ui.menu_button(\"Help\""),
         "the windows-style File/View/Help menubar is retired: actions are direct \
-         toolbar buttons (owner decision)"
+         toolbar buttons (by design)"
     );
     assert!(
         toolbar.contains("toolbar_action(") && toolbar.contains("Cut view"),
@@ -111,7 +111,7 @@ fn toolbar_and_about_are_operator_focused() {
     );
     assert!(
         !dialogs.contains("Dental Cloud"),
-        "About must not surface a company name (owner decision), let alone twice"
+        "About must not surface a company name (by design), let alone twice"
     );
 }
 

@@ -387,7 +387,7 @@ fn pointer_motion_orbit_delta_is_relative_and_unbounded() {
 
 #[test]
 fn pointer_motion_orbit_delta_uses_crisp_responsive_gain() {
-    // Owner rule (2026-07-10): no braked camera. Dragging half the smaller
+    // House rule (2026-07-10): no braked camera. Dragging half the smaller
     // viewport dimension must land near a half turn, and never overshoot
     // into twitchiness.
     let viewport = Vec2::new(400.0, 200.0);
@@ -626,7 +626,7 @@ fn snap_to_vertical_axes_uses_clamped_pitch() {
     assert!(bottom_eye.y < camera.target.y - 90.0, "eye={bottom_eye}");
 }
 
-/// The owner bug (v0.1.20): open ~10 small objects, then scroll-zoom in. As the
+/// The v0.1.20 bug: open ~10 small objects, then scroll-zoom in. As the
 /// eye closes on the wide scene, the nearest corners fall behind the eye and the
 /// old `near = (min_depth - padding).max(0.001)` clamp planted an invisible clip
 /// plane in front of the camera, eating half the objects. Sweep 20 zoom levels

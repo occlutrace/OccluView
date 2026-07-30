@@ -5,8 +5,8 @@
 //! no two triangles share a vertex index. In index space EVERY edge is then a
 //! boundary half-edge and the whole model reads as a cloud of disconnected
 //! needles. On such input the pre-fill cut-line healing used to see every
-//! triangle as an "isolated nick" and chew the entire mesh — the owner's
-//! "524560 nicks healed, none closed" on a real digital-waxup STL.
+//! triangle as an "isolated nick" and chew the entire mesh — a real digital-
+//! waxup STL once reported "524560 nicks healed, none closed".
 //!
 //! These fixtures reproduce that exact shape: build a CLOSED welded solid,
 //! explode it to soup (the STL round-trip), punch real holes, and assert Close
@@ -293,8 +293,8 @@ fn select_faces_near(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> Vec<b
 }
 
 /// A LARGE hole punched across the tightest curvature of the tube (the inner
-/// wall, where the surface bends most), closed via a lasso selection — the
-/// "загибы" (curved rims) the owner said the tool refused. With the operator's
+/// wall, where the surface bends most), closed via a lasso selection —
+/// curved, folded-over rims the tool used to refuse. With the operator's
 /// explicit selection the border guard is off, so the honest strongly-curved
 /// rim must close through the fallback chain (interpolated → membrane → lid) and
 /// is never refused as damaged.

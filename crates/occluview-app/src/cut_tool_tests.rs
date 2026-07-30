@@ -378,7 +378,7 @@ fn a_new_probe_re_aims_the_same_disc() {
         },
     );
     // A second probe re-plants to the new plane and replaces the reading —
-    // exactly what the owner asked for (prefer re-planting to the new probe).
+    // re-planting to the new probe is the intended behavior.
     let repose = DiscPose {
         center: Vec3::new(-4.0, 1.0, 3.0),
         plane_normal: Vec3::X,
