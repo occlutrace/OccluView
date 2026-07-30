@@ -7,7 +7,7 @@ pub struct MeshBuilder {
     name: Option<String>,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-    /// If true, `build()` produces a [`MeshKind::PointCloud`] regardless of
+    /// If true, `build()` produces a [`crate::MeshKind::PointCloud`] regardless of
     /// indices. Set by loaders that know there is no face element.
     force_point_cloud: bool,
 }

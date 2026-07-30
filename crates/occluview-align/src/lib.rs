@@ -21,12 +21,12 @@
 //!   nearest point along the surface instead of moving away from it. A 0.30 mm
 //!   rigid offset of a real arch reads as 0.14 mm; on a cylinder slid along its
 //!   own axis it reads 0.0075 mm. Symmetry does not fix this and nothing
-//!   derived from surface distance can. [`observability`] reports how much of a
+//!   derived from surface distance can. [`observability()`] reports how much of a
 //!   displacement this particular pair of surfaces converts into distance, and
 //!   [`Observability::hidden_displacement_mm`] turns a reported RMS into the
 //!   largest true displacement that could be hiding behind it.
 //!
-//! Report [`deviation_stats`] with [`observability`] beside it, and read the
+//! Report [`deviation_stats`] with [`observability()`] beside it, and read the
 //! unmeasured counts: on its own the distance figure understates, and there is
 //! no setting that makes it not.
 //!
