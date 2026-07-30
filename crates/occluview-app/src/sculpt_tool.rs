@@ -366,6 +366,17 @@ impl SculptSession {
     /// dabs that follow can stream sparsely again.
     fn rebuild_after_densify(&mut self) -> Option<SculptRebuild> {
         let mesh = mesh_from_sculpt_session_like(&self.base_mesh, &self.session).ok()?;
+        // Pick-ready before it ships. This mesh replaces the layer in the
+        // scene, and the viewport lays a dab only where the cursor HITS the
+        // surface — a hit test that refuses to build a scan-sized BVH on the
+        // egui thread, by design. Preparation was the only thing that ever
+        // warmed one, and a rebuilt layer never re-prepares (the session still
+        // matches — that is the point of the rebuild). Shipped cold, the layer
+        // was unhittable, so after the first densifying stroke the brush went
+        // dead for good. This runs on the worker thread, where an O(n) rebuild
+        // has already been paid; a clone shares the warmed tree, so the commit
+        // path's refit keeps it alive from here on.
+        mesh.warm_bvh();
         {
             let mut shadow = self.shadow.write().ok()?;
             *shadow = mesh.vertices().to_vec();
