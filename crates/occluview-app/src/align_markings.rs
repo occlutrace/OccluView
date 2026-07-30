@@ -121,7 +121,7 @@ struct SideMarkings {
     mask: Option<Arc<Vec<u8>>>,
     /// The mesh those bytes describe.
     painted_on: Option<MarkedOn>,
-    /// How many of those bytes are [`EXCLUDED`]. Kept in step with `mask` by
+    /// How many of those bytes are `EXCLUDED`. Kept in step with `mask` by
     /// every method below, so the panel never has to count.
     marked: usize,
 }

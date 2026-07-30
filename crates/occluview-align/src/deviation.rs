@@ -26,7 +26,7 @@
 //!    of 0.14 mm — under half. On a cylinder displaced along its own axis it
 //!    reads 0.0075 mm, and on a sphere turned about any diameter, 0.0008 mm.
 //!    Measuring the other direction as well does **not** help; the surfaces
-//!    really do coincide as point sets. [`crate::observability`] quantifies how
+//!    really do coincide as point sets. [`crate::observability()`] quantifies how
 //!    much of a rigid displacement can hide, and is the number that must be
 //!    reported next to these statistics.
 //! 2. **One-sided blindness.** A moving scan missing a region reports a perfect
@@ -359,7 +359,7 @@ fn signed_along(offset: DVec3, normal: DVec3, distance: f64) -> f64 {
 /// and nothing about fixed surface the moving scan never covered. They are also
 /// a lower bound on the true displacement — see the module documentation for
 /// the measured size of both effects. Report them alongside
-/// [`crate::observability`] and the [`Unmeasured`] counts, never alone.
+/// [`crate::observability()`] and the [`Unmeasured`] counts, never alone.
 #[must_use]
 pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats {
     let mut values: Vec<f64> = map
