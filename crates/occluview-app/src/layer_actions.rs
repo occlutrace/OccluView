@@ -27,7 +27,9 @@ pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
 /// first entry because blue against orange is the one strong opposition that
 /// survives red-green colour blindness — roughly one man in twelve — where
 /// Crimson against Lime does not. Slate is last and is the odd one out: a
-/// neutral for the scan you want to recede behind a coloured one.
+/// cool near-neutral for the scan meant to recede behind a coloured one —
+/// blue-leaning enough that even multiplied into the warm neutral material
+/// it still reads cool.
 pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
     ([0.03, 0.15, 0.79, 1.0], "Cobalt"),
     ([0.89, 0.24, 0.00, 1.0], "Tangerine"),
@@ -36,7 +38,7 @@ pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
     ([0.01, 0.39, 0.35, 1.0], "Teal"),
     ([0.75, 0.05, 0.39, 1.0], "Magenta"),
     ([0.72, 0.02, 0.06, 1.0], "Crimson"),
-    ([0.16, 0.20, 0.26, 1.0], "Slate"),
+    ([0.10, 0.18, 0.28, 1.0], "Slate"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,11 +185,12 @@ fn advance_layer_tint(scene: &mut Scene, index: usize) -> LayerContextApply {
     let Some(entry) = scene.meshes_mut().get_mut(index) else {
         return LayerContextApply::default();
     };
-    entry.tint = next_layer_tint(entry.tint);
-    if entry.mesh.texture().is_some() {
-        entry.show_texture = false;
-        entry.show_vertex_colors = false;
-    }
+    // Through the one gate every picked tint goes through. Cycling used to
+    // set the tint directly with its own texture-only override, so stepping
+    // into an overlay colour from this path left scan colours multiplying it
+    // into mud — the same colour behaving differently depending on which UI
+    // path assigned it.
+    apply_picked_tint(entry, next_layer_tint(entry.tint), true);
     LayerContextApply {
         scene_changed: true,
         ..LayerContextApply::default()
@@ -265,33 +268,41 @@ fn is_overlay_tint(tint: [f32; 4]) -> bool {
         .any(|(color, _)| tint_matches(*color, tint))
 }
 
-/// Put a tint the operator picked onto `entry`, overriding whatever would stop
-/// it being the colour they see.
+/// Put a tint the operator picked onto `entry`, overriding whatever would
+/// stop it being the colour they see.
 ///
-/// The shader multiplies tint into the colour a scan already carries, so on a
-/// coloured scan a tint reads as that scan's colour darkened rather than as the
-/// colour chosen. A texture has always been overridden for exactly that reason.
-/// An overlay colour is picked for one job — telling this scan from the one it
-/// is lying on — and a muddied version of it does not do that job, so it takes
-/// vertex colour with it. The model shades deliberately do not: they are warm
-/// neutrals meant to sit under a scan's own colour, and throwing that colour
-/// away would be a surprise rather than a choice. Both are display-only and
-/// come back from the layer menu.
-pub(crate) fn apply_picked_tint(entry: &mut SceneMesh, tint: [f32; 4]) {
-    let picked = !tint_matches(entry.tint, tint);
+/// `clicked` says the operator chose this tint just now, as opposed to the
+/// value merely riding along on an opacity drag or a visibility toggle. The
+/// overrides fire on a click even when the value has not changed: re-picking
+/// the current overlay colour after re-enabling scan colours is a request to
+/// see that colour again, and gating it on the value made that a silent
+/// no-op with the swatch still highlighted as current.
+///
+/// The shader multiplies tint into whatever base the scan shows. On a scan
+/// that carries its own colours, an overlay colour times those colours is
+/// that scan darkened, so the override switches the colours off. On a scan
+/// that carries none, the base is white and tint times white IS the swatch —
+/// nothing is switched off, and the common alignment case of two plain STLs
+/// renders the overlay colours exactly. The model shades never override
+/// colours either way: they are warm neutrals meant to sit under a scan's
+/// own colour, and throwing that colour away would be a surprise rather than
+/// a choice. Every override is display-only and comes back from the layer
+/// menu.
+pub(crate) fn apply_picked_tint(entry: &mut SceneMesh, tint: [f32; 4], clicked: bool) {
+    let picked = clicked || !tint_matches(entry.tint, tint);
     if picked {
         if entry.mesh.texture().is_some() {
             entry.show_texture = false;
             entry.show_vertex_colors = false;
         }
-        if is_overlay_tint(tint) {
+        if is_overlay_tint(tint) && entry.mesh.carries_color_data() {
             entry.show_vertex_colors = false;
         }
     }
     entry.tint = tint;
 }
 
-fn tint_matches(lhs: [f32; 4], rhs: [f32; 4]) -> bool {
+pub(crate) fn tint_matches(lhs: [f32; 4], rhs: [f32; 4]) -> bool {
     lhs.into_iter()
         .zip(rhs)
         .all(|(left, right)| left.to_bits() == right.to_bits())
@@ -310,16 +321,86 @@ mod tests {
         }
     }
 
+    /// A one-triangle mesh whose vertices carry a real colour, so
+    /// `carries_color_data` is true the way a colour-bearing scan's is.
+    fn coloured_mesh() -> Mesh {
+        let corner = |position: [f32; 3]| occluview_core::Vertex {
+            position,
+            normal: [0.0, 0.0, 1.0],
+            color: [200, 60, 40, 255],
+            uv: [0.0, 0.0],
+        };
+        Mesh::new(
+            None,
+            vec![
+                corner([0.0, 0.0, 0.0]),
+                corner([1.0, 0.0, 0.0]),
+                corner([0.0, 1.0, 0.0]),
+            ],
+            vec![0, 1, 2],
+        )
+        .unwrap_or_else(|_| Mesh::empty())
+    }
+
+    #[test]
+    fn an_overlay_colour_on_a_plain_scan_keeps_the_white_base() {
+        // A colourless scan's vertices are white, and white times tint IS the
+        // swatch — switching colours off there would swap the exact colour
+        // for the warm neutral material darkening it. The common alignment
+        // case is two plain STLs, so this is the path that matters most.
+        let mut plain = SceneMesh::new(Mesh::empty());
+        plain.show_vertex_colors = true;
+
+        apply_picked_tint(&mut plain, LAYER_OVERLAY_TINT_PRESETS[0].0, true);
+
+        assert!(
+            plain.show_vertex_colors,
+            "a white base renders the swatch exactly; there is nothing to override"
+        );
+    }
+
+    #[test]
+    fn re_picking_the_current_overlay_colour_is_still_a_pick() {
+        // Pick Cobalt, re-enable scan colours from the menu, pick Cobalt
+        // again: the value has not changed, but the click is a request to see
+        // that colour again — gating on the value made this a silent no-op
+        // with the swatch highlighted as current.
+        let mut coloured = SceneMesh::new(coloured_mesh());
+        apply_picked_tint(&mut coloured, LAYER_OVERLAY_TINT_PRESETS[0].0, true);
+        coloured.show_vertex_colors = true;
+
+        apply_picked_tint(&mut coloured, LAYER_OVERLAY_TINT_PRESETS[0].0, true);
+
+        assert!(
+            !coloured.show_vertex_colors,
+            "the second click must override again"
+        );
+    }
+
+    #[test]
+    fn a_tint_riding_along_on_another_edit_overrides_nothing() {
+        // Every row interaction carries the tint value with it; only a swatch
+        // CLICK may fire the overrides, or an opacity drag on an overlay-
+        // tinted scan would flip its colours off.
+        let mut coloured = SceneMesh::new(coloured_mesh());
+        coloured.tint = LAYER_OVERLAY_TINT_PRESETS[0].0;
+        coloured.show_vertex_colors = true;
+
+        apply_picked_tint(&mut coloured, LAYER_OVERLAY_TINT_PRESETS[0].0, false);
+
+        assert!(coloured.show_vertex_colors);
+    }
+
     #[test]
     fn an_overlay_colour_wins_over_a_scan_that_carries_its_own_colour() {
         // The whole point of the overlay group is that the scan reads as that
         // one colour. The shader multiplies tint into whatever the scan already
         // carries, so leaving a coloured scan's own colours on would hand back
         // that scan darkened rather than the colour the operator picked.
-        let mut coloured = SceneMesh::new(Mesh::empty());
+        let mut coloured = SceneMesh::new(coloured_mesh());
         coloured.show_vertex_colors = true;
 
-        apply_picked_tint(&mut coloured, LAYER_OVERLAY_TINT_PRESETS[0].0);
+        apply_picked_tint(&mut coloured, LAYER_OVERLAY_TINT_PRESETS[0].0, true);
 
         assert!(tint_matches(coloured.tint, LAYER_OVERLAY_TINT_PRESETS[0].0));
         assert!(
@@ -333,10 +414,10 @@ mod tests {
         // The counterpart, and the reason the rule is not "any tint wins": the
         // model shades are warm neutrals meant to sit under a scan's colour.
         // Throwing that colour away would be a surprise, not a choice.
-        let mut coloured = SceneMesh::new(Mesh::empty());
+        let mut coloured = SceneMesh::new(coloured_mesh());
         coloured.show_vertex_colors = true;
 
-        apply_picked_tint(&mut coloured, LAYER_TINT_PRESETS[2].0);
+        apply_picked_tint(&mut coloured, LAYER_TINT_PRESETS[2].0, true);
 
         assert!(tint_matches(coloured.tint, LAYER_TINT_PRESETS[2].0));
         assert!(

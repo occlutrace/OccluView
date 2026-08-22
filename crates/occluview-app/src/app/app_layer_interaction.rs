@@ -66,7 +66,7 @@ impl OccluViewApp {
                 if let Some(entry) = draft.meshes_mut().get_mut(edit.index) {
                     entry.visible = edit.visible;
                     entry.opacity = edit.opacity;
-                    crate::layer_actions::apply_picked_tint(entry, edit.tint);
+                    crate::layer_actions::apply_picked_tint(entry, edit.tint, edit.tint_clicked);
                     scene_changed = true;
                 }
             }
@@ -104,7 +104,7 @@ impl OccluViewApp {
             }
             entry.visible = edit.visible;
             entry.opacity = edit.opacity;
-            crate::layer_actions::apply_picked_tint(entry, edit.tint);
+            crate::layer_actions::apply_picked_tint(entry, edit.tint, edit.tint_clicked);
             changed = true;
         }
         if !changed {

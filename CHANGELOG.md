@@ -25,8 +25,9 @@
   them separated. The palette now lists Model shades and eight Overlay colours
   under their own headings, led by Cobalt against Tangerine because blue
   against orange is the strong opposition that survives red-green colour
-  blindness. An overlay colour overrides a scan's own colours so it reads as
-  the colour chosen rather than that scan darkened, and cycling the tint walks
+  blindness. On a scan that carries its own colours an overlay colour
+  overrides them, so it reads as the colour chosen rather than that scan
+  darkened — a plain scan needs no override at all — and cycling the tint walks
   the whole palette instead of dropping back to Stone IV on reaching a colour
   it did not know about.
 
