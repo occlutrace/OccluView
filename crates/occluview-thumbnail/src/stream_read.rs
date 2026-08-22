@@ -13,6 +13,13 @@ pub enum StreamRead {
 }
 
 /// Read a stream in bounded chunks without exceeding `max_bytes`.
+///
+/// `declared_len` is a *hint*, not a gate: `Some(len)` beyond the cap rejects
+/// up front (no wasted copy), while `None` means the source did not report a
+/// size — cloud placeholders and pipe-like shell streams legitimately `Stat`
+/// as zero — and the only honest answer is to read until EOF or the cap.
+/// Treating "unknown" as "infinite" here once turned every size-silent stream
+/// into a permanent oversize placeholder.
 pub fn read_capped_stream(
     declared_len: Option<u64>,
     max_bytes: usize,
@@ -20,14 +27,16 @@ pub fn read_capped_stream(
     chunk_bytes: usize,
     mut read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
 ) -> StreamRead {
-    let declared_cap = declared_len
-        .and_then(|len| usize::try_from(len).ok())
-        .unwrap_or(usize::MAX);
-    if declared_cap > max_bytes {
-        return StreamRead::OverCap {
-            byte_len: declared_cap,
-        };
-    }
+    let declared_cap = match declared_len {
+        Some(len) => {
+            let len = usize::try_from(len).unwrap_or(usize::MAX);
+            if len > max_bytes {
+                return StreamRead::OverCap { byte_len: len };
+            }
+            len
+        }
+        None => 0,
+    };
 
     let initial_capacity = if declared_cap == 0 {
         min_buffer_bytes
@@ -59,6 +68,38 @@ pub fn read_capped_stream(
 #[cfg(test)]
 mod tests {
     use super::{read_capped_stream, StreamRead};
+
+    #[test]
+    fn unknown_length_stream_reads_to_completion_instead_of_overcap() {
+        // Regression: `Stat` on cloud-placeholder / pipe-like shell streams can
+        // report zero bytes. The caller maps that to `None`, which must mean
+        // "read and find out", never "assume infinite and reject".
+        let data = *b"stream without a declared size";
+        let mut cursor = 0usize;
+        let result = read_capped_stream(None, 1024, 4, 8, |buf| {
+            if cursor >= data.len() {
+                return Ok(0);
+            }
+            let take = (data.len() - cursor).min(buf.len());
+            buf[..take].copy_from_slice(&data[cursor..cursor + take]);
+            cursor += take;
+            Ok(take)
+        });
+
+        assert_eq!(result, StreamRead::Complete(data.to_vec()));
+    }
+
+    #[test]
+    fn unknown_length_stream_still_detects_overcap_while_reading() {
+        let result = read_capped_stream(None, 32, 8, 16, |buf| {
+            for byte in buf.iter_mut() {
+                *byte = 9;
+            }
+            Ok(buf.len())
+        });
+
+        assert_eq!(result, StreamRead::OverCap { byte_len: 33 });
+    }
 
     #[test]
     fn declared_oversize_stream_returns_overcap_without_reading() {
