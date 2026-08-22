@@ -619,6 +619,7 @@ fn self_registration_unregister_only_removes_occluview_values() {
 fn com_thumbnail_provider_accepts_file_paths_for_extension_hints() {
     let com = [
         include_str!("com.rs"),
+        include_str!("com/thumbnail_provider.rs"),
         include_str!("com/preview.rs"),
         include_str!("com/preview/theme.rs"),
         include_str!("com/preview/window.rs"),

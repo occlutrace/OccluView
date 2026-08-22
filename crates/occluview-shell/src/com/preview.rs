@@ -1,17 +1,17 @@
 use super::{
-    center_square_on_canvas, com_entry, e_fail, e_notimpl, e_pointer, implement, path_extension,
-    pixels_to_hbitmap, placeholder_for_oversize_input, s_false, w, win32_preview_orbit_delta,
-    BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC, CreateWindowExW, DeferredSource,
-    DeleteDC, DeleteObject, DestroyWindow, EndPaint, GetKeyboardFocus, IClassFactory,
-    IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl,
-    IInitializeWithStream, IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl,
-    IOleWindow, IOleWindow_Impl, IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream,
-    IUnknown, Interface, MoveWindow, Ordering, PathBuf, PreviewSceneState, RedrawWindow,
-    SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead, ThumbnailProvider,
-    ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, HBITMAP, HGDIOBJ, HINSTANCE, HMENU,
-    HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME,
-    RDW_INVALIDATE, RDW_UPDATENOW, RECT, SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_VISIBLE,
+    center_square_on_canvas, com_entry, e_fail, e_notimpl, e_pointer, implement,
+    own_pinned_dll_module, path_extension, pixels_to_hbitmap, placeholder_for_oversize_input,
+    s_false, w, win32_preview_orbit_delta, BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC,
+    CreateWindowExW, DeferredSource, DeleteDC, DeleteObject, DestroyWindow, EndPaint,
+    GetKeyboardFocus, IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl,
+    IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
+    IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
+    IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface, MoveWindow,
+    Ordering, PathBuf, PreviewSceneState, RedrawWindow, SelectObject, SetKeyboardFocus, SetParent,
+    ShellError, StreamRead, ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID,
+    HBITMAP, HGDIOBJ, HINSTANCE, HMENU, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT,
+    PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT,
+    SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod context_menu;
@@ -19,7 +19,7 @@ mod theme;
 mod window;
 
 use theme::preview_theme;
-use window::{ensure_preview_window_class, own_pinned_dll_module};
+use window::ensure_preview_window_class;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PreviewDragMode {

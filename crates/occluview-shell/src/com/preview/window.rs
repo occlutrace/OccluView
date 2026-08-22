@@ -1,14 +1,10 @@
 use super::super::{
-    com_entry, e_fail, DefWindowProcW, RegisterClassW, ReleaseCapture, SetCapture,
-    SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HINSTANCE,
-    HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME, WM_CANCELMODE,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WPARAM,
-};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::HMODULE;
-use windows::Win32::System::LibraryLoader::{
-    GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+    com_entry, e_fail, own_pinned_dll_module, DefWindowProcW, RegisterClassW, ReleaseCapture,
+    SetCapture, SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+    HINSTANCE, HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME,
+    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WNDCLASSW, WPARAM,
 };
 
 /// Virtual-key code for the `F` (fit view) shortcut.
@@ -16,28 +12,6 @@ const VK_F: u32 = 0x46;
 /// Virtual-key code for the `W` (wireframe toggle) shortcut.
 const VK_W: u32 = 0x57;
 use super::{PreviewDragMode, PreviewHandler};
-
-/// This DLL's own module handle, pinned into the process.
-///
-/// The preview window class's wndproc points into this DLL, so the class must
-/// be registered against the DLL's `HINSTANCE` — `GetModuleHandleW(None)`
-/// returned the host EXE's module and tied the class to the wrong image. The
-/// pin closes the remaining lifetime hole: `DllCanUnloadNow` can otherwise let
-/// COM unmap the DLL while the registered class (and any straggler window
-/// message) still points at the unmapped wndproc. A pinned module is a small,
-/// bounded cost — the shell recycles its surrogate hosts anyway.
-pub(super) fn own_pinned_dll_module() -> windows::core::Result<HMODULE> {
-    // An address inside our own mapped image, used to find the DLL's module.
-    // Typed as `u16` so it can become a `PCWSTR` (an opaque address here,
-    // never dereferenced) without an alignment-widening pointer cast.
-    static ANCHOR: u16 = 0;
-    let mut module = HMODULE::default();
-    let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN;
-    let address = PCWSTR(core::ptr::addr_of!(ANCHOR));
-    // SAFETY: `address` lies within this DLL; `module` is a valid out-param.
-    unsafe { GetModuleHandleExW(flags, address, &mut module) }?;
-    Ok(module)
-}
 
 pub(super) fn ensure_preview_window_class() -> windows::core::Result<()> {
     let init = PREVIEW_WINDOW_CLASS.get_or_init(|| {

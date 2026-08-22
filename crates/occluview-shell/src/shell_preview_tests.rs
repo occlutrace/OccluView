@@ -140,7 +140,7 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
 
 #[test]
 fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
-    let com = include_str!("com.rs");
+    let com = include_str!("com/thumbnail_provider.rs");
     let start = com
         .find("fn render_attempt(&self, spec: ThumbnailSpec)")
         .expect("thumbnail render_attempt");
@@ -167,7 +167,7 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
 
 #[test]
 fn thumbnail_provider_releases_full_stream_bytes_after_each_request() {
-    let com = include_str!("com.rs");
+    let com = include_str!("com/thumbnail_provider.rs");
     let start = com
         .find("fn render_attempt(&self, spec: ThumbnailSpec)")
         .expect("thumbnail render_attempt");
@@ -399,7 +399,10 @@ fn every_com_boundary_is_panic_guarded() {
     // Whitespace-normalize so rustfmt's argument wrapping cannot break the
     // assertions; the guard is the call plus its context literal.
     let flatten = |source: &str| source.split_whitespace().collect::<String>();
-    let com = flatten(include_str!("com.rs"));
+    let com = flatten(concat!(
+        include_str!("com.rs"),
+        include_str!("com/thumbnail_provider.rs")
+    ));
     let preview = flatten(include_str!("com/preview.rs"));
     let window = flatten(include_str!("com/preview/window.rs"));
     let registration = flatten(include_str!("registration/mod.rs"));
