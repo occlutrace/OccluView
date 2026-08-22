@@ -188,7 +188,7 @@ fn finish(
     }
     let moved_by = rigid.translation.length();
     let allowed = moving_extent.max(1.0);
-    if moved_by > allowed {
+    if moved_by > allowed * 1.5 {
         return Err(FitRejection::Runaway { moved_by, allowed });
     }
     #[allow(clippy::cast_precision_loss)]

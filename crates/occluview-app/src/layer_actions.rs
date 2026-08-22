@@ -1,11 +1,16 @@
 use occluview_core::{Scene, SceneMeshId};
 
-pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 5] = [
+pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
     (occluview_core::DEFAULT_UNTEXTURED_MESH_TINT, "Stone IV"),
     ([0.74, 0.58, 0.32, 1.0], "Baked"),
     ([0.92, 0.80, 0.56, 1.0], "Plaster"),
     ([0.72, 0.75, 0.68, 1.0], "Sage"),
     ([0.82, 0.74, 0.64, 1.0], "Wax"),
+    ([0.55, 0.65, 0.85, 1.0], "Glacier"),
+    ([0.85, 0.45, 0.45, 1.0], "Coral"),
+    ([0.45, 0.75, 0.55, 1.0], "Mint"),
+    ([0.80, 0.65, 0.85, 1.0], "Lilac"),
+    ([0.85, 0.75, 0.35, 1.0], "Amber"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

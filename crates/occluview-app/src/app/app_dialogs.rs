@@ -150,6 +150,36 @@ impl OccluViewApp {
                         toggle_align = true;
                     }
 
+                    let can_edit_mesh = self.scene.is_some()
+                        && self
+                            .scene
+                            .as_ref()
+                            .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
+                    let edit_active = self.edit_mode.has_active_session();
+                    if crate::measure_overlay::toolbar_toggle(
+                        ui,
+                        MeasureIcon::EditMesh,
+                        "Edit",
+                        can_edit_mesh,
+                        edit_active,
+                        if edit_active {
+                            "Mesh editor is open"
+                        } else {
+                            "Edit mesh: selection and sculpting"
+                        },
+                    ) {
+                        if !edit_active {
+                            if let Some(scene) = self.scene.clone() {
+                                for entry in scene.meshes() {
+                                    if !entry.mesh.is_point_cloud() && entry.visible {
+                                        let _ = self.edit_mode.begin_face_selection(entry, &scene);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if toolbar_action(ui, "ℹ", true, "About OccluView") {
                             self.about_window = AboutWindowState::Open;

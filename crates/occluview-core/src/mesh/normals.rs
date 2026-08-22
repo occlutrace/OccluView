@@ -25,9 +25,36 @@ pub(super) fn repair_missing_normals(vertices: &mut [Vertex], indices: &[u32]) {
         .iter()
         .all(|vertex| normal_is_usable(vertex.normal))
     {
-        // Every vertex already has a usable normal, so the fill-in loop below
-        // would be a no-op for all of them — skip the O(triangles) smoothing
-        // pass entirely and go straight to duplicate-position averaging.
+        // STL and some exporters write per-facet normals (one flat normal per
+        // triangle). These are "usable" but produce a faceted/specular speckle
+        // that disappears under sculpt's full recompute. Only replace when the
+        // geometric variance is high (large mesh with many distinct positions);
+        // otherwise defer to duplicate-position averaging which preserves soft vs
+        // sharp edges on small fixtures.
+        if vertices.len() > 100 {
+            let smooth = smooth_normals(vertices, indices);
+            let mut disagree = 0usize;
+            let mut total = 0usize;
+            for (vertex, s) in vertices.iter().zip(&smooth) {
+                if s.length_squared() > f32::EPSILON {
+                    let a = Vec3::from_array(vertex.normal).normalize_or_zero();
+                    let b = s.normalize_or_zero();
+                    if a.length_squared() > f32::EPSILON && b.length_squared() > f32::EPSILON {
+                        total += 1;
+                        if a.dot(b) < 0.85 {
+                            disagree += 1;
+                        }
+                    }
+                }
+            }
+            if total > 0 && disagree * 4 > total {
+                for (vertex, s) in vertices.iter_mut().zip(smooth) {
+                    if s.length_squared() > f32::EPSILON {
+                        vertex.normal = s.normalize().to_array();
+                    }
+                }
+            }
+        }
         smooth_duplicate_position_normals(vertices);
         return;
     }

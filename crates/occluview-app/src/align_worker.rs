@@ -671,7 +671,16 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     let fixed_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed).collect();
     let moving_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.moving_normal).collect();
     let fixed_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed_normal).collect();
-    let extent = occluview_align::extent_of(moving);
+    let moving_extent = occluview_align::extent_of(moving);
+    let fixed_extent = {
+        let fixed_soup = Soup {
+            positions: &job.fixed_world_positions,
+            indices: &job.fixed_indices,
+            mask: job.fixed_mask.as_ref().map(|m| m.as_slice()),
+        };
+        occluview_align::extent_of(fixed_soup)
+    };
+    let extent = moving_extent.max(fixed_extent);
 
     match fit_pairs(
         &moving_points,

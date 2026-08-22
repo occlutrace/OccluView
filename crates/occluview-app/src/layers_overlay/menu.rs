@@ -79,17 +79,6 @@ fn show_material_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Opacity,
-            "Reset opacity",
-            true,
-            LayerContextAction::ResetOpacity,
-        ),
-        context_request,
-    );
-    layer_menu_button(
-        ui,
-        target,
-        LayerMenuButton::new(
             LayerMenuIcon::Tint,
             "Next tint",
             true,
@@ -417,7 +406,7 @@ mod tests {
         // The compact operator set is built through `LayerMenuButton::new`.
         let buttons = production.matches("LayerMenuButton::new(").count();
         assert!(
-            buttons >= 11,
+            buttons >= 10,
             "expected the full operator action set; found {buttons} menu buttons"
         );
         // Every button names a glyph (the eye picks open/slashed by state, so a
@@ -518,7 +507,6 @@ mod tests {
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
         for label in [
-            "Reset opacity",
             "Next tint",
             "Edit mesh",
             "Split bridge...",

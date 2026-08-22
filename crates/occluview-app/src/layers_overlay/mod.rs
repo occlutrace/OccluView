@@ -90,8 +90,12 @@ pub(crate) fn show(
     }
 }
 
-/// A quiet title row (name + layer count) closed by a hairline separator.
 fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
+    let count_text = if layer_count == 1 {
+        "1 layer".to_string()
+    } else {
+        format!("{layer_count} layers")
+    };
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Layers")
@@ -101,7 +105,7 @@ fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(layer_count.to_string())
+                egui::RichText::new(count_text)
                     .color(ui_theme::TEXT_WEAK)
                     .size(11.0),
             );

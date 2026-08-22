@@ -444,6 +444,8 @@ pub(crate) enum MeasureIcon {
     Thickness,
     /// Two arcs drawn together by a paired-point tie — scan alignment.
     Align,
+    /// Pencil on a mesh patch — mesh editor (selection & sculpt).
+    EditMesh,
 }
 
 /// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
@@ -511,6 +513,20 @@ pub(crate) fn paint_measure(
             painter.line_segment([left, right], stroke);
             painter.circle_filled(left, r(0.07), color);
             painter.circle_filled(right, r(0.07), color);
+        }
+        MeasureIcon::EditMesh => {
+            // Mesh patch with a pencil diagonally across it.
+            painter.add(Shape::line(
+                arc(p(0.42, 0.62), r(0.36), 200.0, 340.0, 16),
+                stroke,
+            ));
+            let tip = p(0.78, 0.14);
+            let base = p(0.52, 0.40);
+            painter.line_segment([tip, base], stroke);
+            painter.line_segment([base, p(0.46, 0.48)], stroke);
+            painter.line_segment([base, p(0.60, 0.46)], stroke);
+            painter.line_segment([p(0.46, 0.48), p(0.60, 0.46)], stroke);
+            painter.circle_filled(tip, r(0.05), color);
         }
     }
 }

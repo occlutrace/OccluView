@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.7 - 2026-08-22
+
+- Fixed shading on sub-20um facets: the absolute epsilon test culled every
+  small triangle from lab scanners (7 um spacing), falling back to a flat
+  +Z normal and a uniform specular wash. Replaced with a scale-invariant
+  `longest_edge^2 * 1e-10` test in core, formats, and HPS.
+- Fixed Mesh Editor window: now scales with the viewport (22% clamped
+  200-320 px), opens bottom-left, and stays draggable within the viewport.
+  Modal dialogs no longer anchor-center over the 3D scene.
+- Hardened release pipeline: least-privilege `contents: read` on build jobs,
+  `write` only on publish, `persist-credentials: false`, HPS key step-scoped,
+  WiX 3.14.1 pinned, all Actions SHA-pinned, toolchain `1.86.0` explicit,
+  Authenticode required on tags with post-build signature verification.
+- Added SBOM (CycloneDX) and SLSA build provenance attestation for release
+  artifacts.
+- Added fuzz targets for the hostile-input surface (dispatch, HPS, STL, PLY):
+  60s smoke on every PR and 300s nightly deep fuzz with artifact upload.
+- Hardened Windows single-instance IPC with per-user mutex/pipe names (SID
+  hash) against Low-IL squatting.
+- Added `docs/ARCHITECTURE.md`, ADR for texture channel correction, README
+  badges and precise DCM disclaimer, expanded SECURITY disclosure, CODEOWNERS
+  and issue/PR templates, compressed `animation.webm` alongside GIF.
+
 ## 1.0.6 - 2026-07-29
 
 - Sculpt: the brush survives its first densifying Smooth stroke. The rebuilt,
