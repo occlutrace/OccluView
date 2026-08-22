@@ -19,6 +19,17 @@
   too wide. Both axes now share one scale factor, so the target always keeps
   the viewport's shape.
 
+- Added a second tint group for telling two scans apart where they overlap.
+  The existing shades are neighbours on one warm band by design, so two scans
+  wearing any of them are hardest to separate exactly where an alignment needs
+  them separated. The palette now lists Model shades and eight Overlay colours
+  under their own headings, led by Cobalt against Tangerine because blue
+  against orange is the strong opposition that survives red-green colour
+  blindness. An overlay colour overrides a scan's own colours so it reads as
+  the colour chosen rather than that scan darkened, and cycling the tint walks
+  the whole palette instead of dropping back to Stone IV on reaching a colour
+  it did not know about.
+
 ## 1.0.7 - 2026-08-22
 
 - Fixed shading on sub-20um facets: the absolute epsilon test culled every

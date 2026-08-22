@@ -5,7 +5,9 @@ use super::layout::{
     LAYER_ROW_TINT_WIDTH_PX,
 };
 use super::menu::{attach_layer_context_menu, LayerContextMenuTarget};
-use crate::layer_actions::{LayerContextAction, LayerContextRequest, LAYER_TINT_PRESETS};
+use crate::layer_actions::{
+    LayerContextAction, LayerContextRequest, LAYER_OVERLAY_TINT_PRESETS, LAYER_TINT_PRESETS,
+};
 use crate::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
@@ -183,6 +185,11 @@ pub(super) fn show_layer_row(
     })
 }
 
+/// How tall the tint palette popup may get before it scrolls. Enough for the
+/// model shades and the first overlay colours at once, so the two groups are
+/// visibly two groups without the list reaching the bottom of the window.
+const TINT_PALETTE_MAX_HEIGHT_PX: f32 = 300.0;
+
 /// A color swatch that opens a small named palette popup. Selecting a preset
 /// sets the tint directly (a real color choice), rather than blind-cycling.
 fn tint_swatch(
@@ -216,32 +223,58 @@ fn tint_swatch(
         egui::popup::PopupCloseBehavior::CloseOnClick,
         |ui| {
             ui.set_min_width(150.0);
-            ui.label(
-                egui::RichText::new("Tint")
-                    .color(ui_theme::TEXT_WEAK)
-                    .size(10.5),
-            );
-            for (color, name) in LAYER_TINT_PRESETS {
-                let is_current = tint_eq(color, *tint);
-                let entry = ui
-                    .horizontal(|ui| {
-                        let (swatch_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                        ui.painter()
-                            .rect_filled(swatch_rect, 3.0, color32_from_linear(color));
-                        ui.painter().rect_stroke(
-                            swatch_rect,
-                            3.0,
-                            egui::Stroke::new(1.0, ui_theme::hairline()),
+            // Bounded and scrolling: the palette is two groups long now, and a
+            // popup opening off a layer row near the bottom of the window would
+            // otherwise run past the edge and put its last colours somewhere
+            // nobody can click.
+            egui::ScrollArea::vertical()
+                .max_height(TINT_PALETTE_MAX_HEIGHT_PX)
+                .show(ui, |ui| {
+                    // Two headed groups rather than one long list. The distinction is
+                    // real work, not decoration: the model shades are neighbours on one
+                    // warm band, so two scans wearing any two of them are still hard to
+                    // tell apart where they overlap — which is the moment during an
+                    // alignment when telling them apart is the entire task.
+                    for (heading, presets) in [
+                        ("Model", LAYER_TINT_PRESETS.as_slice()),
+                        (
+                            "Overlay — two scans at once",
+                            LAYER_OVERLAY_TINT_PRESETS.as_slice(),
+                        ),
+                    ] {
+                        ui.label(
+                            egui::RichText::new(heading)
+                                .color(ui_theme::TEXT_WEAK)
+                                .size(10.5),
                         );
-                        ui.selectable_label(is_current, name)
-                    })
-                    .inner;
-                if entry.clicked() {
-                    *tint = color;
-                    changed = true;
-                }
-            }
+                        for &(color, name) in presets {
+                            let is_current = tint_eq(color, *tint);
+                            let entry = ui
+                                .horizontal(|ui| {
+                                    let (swatch_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(16.0, 16.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        swatch_rect,
+                                        3.0,
+                                        color32_from_linear(color),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        swatch_rect,
+                                        3.0,
+                                        egui::Stroke::new(1.0, ui_theme::hairline()),
+                                    );
+                                    ui.selectable_label(is_current, name)
+                                })
+                                .inner;
+                            if entry.clicked() {
+                                *tint = color;
+                                changed = true;
+                            }
+                        }
+                    }
+                });
         },
     );
     changed

@@ -66,19 +66,7 @@ impl OccluViewApp {
                 if let Some(entry) = draft.meshes_mut().get_mut(edit.index) {
                     entry.visible = edit.visible;
                     entry.opacity = edit.opacity;
-                    let tint_changed = entry
-                        .tint
-                        .iter()
-                        .zip(edit.tint)
-                        .any(|(before, after)| (before - after).abs() > f32::EPSILON);
-                    if tint_changed && entry.mesh.texture().is_some() {
-                        // Choosing a tint is an explicit material override. Keep
-                        // the source texture attached, but show the neutral
-                        // tinted material until the operator re-enables scan data.
-                        entry.show_texture = false;
-                        entry.show_vertex_colors = false;
-                    }
-                    entry.tint = edit.tint;
+                    crate::layer_actions::apply_picked_tint(entry, edit.tint);
                     scene_changed = true;
                 }
             }
@@ -116,19 +104,7 @@ impl OccluViewApp {
             }
             entry.visible = edit.visible;
             entry.opacity = edit.opacity;
-            let tint_changed = entry
-                .tint
-                .iter()
-                .zip(edit.tint)
-                .any(|(before, after)| (before - after).abs() > f32::EPSILON);
-            if tint_changed && entry.mesh.texture().is_some() {
-                // Choosing a tint is an explicit material override. Keep the
-                // source texture attached, but show the neutral tinted material
-                // until the operator re-enables scan data.
-                entry.show_texture = false;
-                entry.show_vertex_colors = false;
-            }
-            entry.tint = edit.tint;
+            crate::layer_actions::apply_picked_tint(entry, edit.tint);
             changed = true;
         }
         if !changed {
