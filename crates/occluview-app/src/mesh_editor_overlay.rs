@@ -87,9 +87,23 @@ pub(crate) struct MeshEditorPanelState {
     pub(crate) active_tab: EditorTab,
 }
 
-/// Overall window width. Trimmed to keep the dental-CAD-style tool compact;
-/// the icon grid and the OK/Cancel commit bar are both sized off it.
-const WINDOW_WIDTH: f32 = 236.0;
+const WINDOW_WIDTH_MIN: f32 = 200.0;
+const WINDOW_WIDTH_MAX: f32 = 320.0;
+
+fn window_width(viewport: egui::Rect) -> f32 {
+    let max_width = (viewport.width() - 28.0).max(180.0);
+    (viewport.width() * 0.22)
+        .clamp(WINDOW_WIDTH_MIN, WINDOW_WIDTH_MAX)
+        .min(max_width)
+}
+
+fn default_pos(viewport: egui::Rect) -> egui::Pos2 {
+    let width = window_width(viewport);
+    let estimated_height = 380.0;
+    let x = viewport.min.x + 16.0;
+    let y = (viewport.max.y - estimated_height - 16.0).max(viewport.min.y + 16.0);
+    egui::pos2(x.min(viewport.max.x - width - 16.0), y)
+}
 
 /// Default and bounds for the optional Close Holes rim-perimeter restraint.
 /// It is off by default: the kernel preserves scan borders and repairs every
@@ -174,20 +188,18 @@ pub(crate) fn show(
     viewport_rect: egui::Rect,
     state: MeshEditorPanelState,
 ) -> Option<MeshEditorAction> {
-    let default_pos = viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 16.0, 16.0);
+    let width = window_width(viewport_rect);
     let mut action = None;
     egui::Window::new("Mesh editor")
         .id(egui::Id::new("occluview_mesh_editor_window"))
-        .default_pos(default_pos)
+        .default_pos(default_pos(viewport_rect))
         .constrain_to(viewport_rect)
         .resizable(false)
         .collapsible(false)
         .title_bar(false)
         .show(ctx, |ui| {
-            // Keep a stable content width so the tool rows, especially the
-            // sculpt rails, do not shrink to their intrinsic widget width.
-            ui.set_min_width(WINDOW_WIDTH - 24.0);
-            ui.set_width(WINDOW_WIDTH - 24.0);
+            ui.set_min_width(width - 24.0);
+            ui.set_width(width - 24.0);
             action = window_action(ui, state);
         });
     action

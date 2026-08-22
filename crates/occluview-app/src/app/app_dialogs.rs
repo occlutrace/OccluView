@@ -278,10 +278,13 @@ impl OccluViewApp {
         let edited_count = self.unsaved_edit_layer_ids.len().max(1);
         let mut open = true;
         let mut do_save = false;
+        let vp = ctx.screen_rect();
+        let unsaved_default = vp.center() - egui::vec2(200.0, 60.0);
         egui::Window::new("Unsaved mesh edits")
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .default_pos(unsaved_default)
+            .constrain_to(vp)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.label(if edited_count == 1 {
@@ -352,10 +355,13 @@ impl OccluViewApp {
         let mut do_save = false;
         let mut do_discard = false;
         let mut do_cancel = false;
+        let vp2 = ctx.screen_rect();
+        let edit_default = vp2.center() - egui::vec2(200.0, 60.0);
         egui::Window::new("Edit in progress")
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .default_pos(edit_default)
+            .constrain_to(vp2)
             .open(&mut open)
             .show(ctx, |ui| {
                 if let Some(layer) = &session_layer {
@@ -438,8 +444,10 @@ impl OccluViewApp {
         let logo = self.app_logo_texture(ctx).cloned();
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
 
+        let vp3 = ctx.screen_rect();
         egui::Window::new("About OccluView")
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_pos(vp3.center() - egui::vec2(174.0, 95.0))
+            .constrain_to(vp3)
             .movable(false)
             .resizable(false)
             .collapsible(false)

@@ -4,6 +4,7 @@ use rayon::prelude::*;
 
 const SMOOTH_DUPLICATE_NORMAL_DOT: f32 = 0.5;
 const SMOOTH_POSITION_EPS_MM: f32 = 0.002;
+const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
 fn normal_is_usable(normal: [f32; 3]) -> bool {
     let n = Vec3::from_array(normal);
@@ -61,7 +62,14 @@ fn smooth_normals(vertices: &[Vertex], indices: &[u32]) -> Vec<Vec3> {
         let b = Vec3::from_array(vertices[ib].position);
         let c = Vec3::from_array(vertices[ic].position);
         let face_normal = (b - a).cross(c - a);
-        if face_normal.is_finite() && face_normal.length_squared() > f32::EPSILON {
+        let longest_edge_sq = (b - a)
+            .length_squared()
+            .max((c - b).length_squared())
+            .max((a - c).length_squared());
+        if face_normal.is_finite()
+            && face_normal.length_squared()
+                > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
+        {
             normals[ia] += face_normal;
             normals[ib] += face_normal;
             normals[ic] += face_normal;
