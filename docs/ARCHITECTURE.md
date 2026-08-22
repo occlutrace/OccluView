@@ -2,6 +2,8 @@
 
 ## Workspace layering
 
+> See [`Cargo.toml:3-14`](../Cargo.toml#L3-L14) for the canonical layering comment.
+
 ```
 mesh-edit  ← (nothing)
 hps        ← (no OccluView crates)
@@ -11,7 +13,7 @@ formats    → core + hps
 render     → core
 thumbnail  → core + render + formats
 shell      → core + render + formats + thumbnail
-app        → core + formats + render + align (+ shell on Windows)
+  app       → core + formats + render + align + update (+ shell on Windows)
 cli        → core + formats + render + thumbnail
 update     → (nothing; minisign / semver / ureq)
 ```
@@ -56,4 +58,4 @@ One `occluview-render` pipeline. Explorer thumbnails are pixel-identical to in-a
 
 ## Fuzzing
 
-`fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `hps_parser`, `stl`, `ply`. CI runs 30 s smoke. For deeper runs: `cargo fuzz run <target> -- -max_total_time=300` in `fuzz/`.
+`fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `hps_parser`, `stl`, `ply`. CI runs 60s smoke (4 targets) and nightly 300s deep fuzz on `schedule: 0 2 * * 1`. For deeper runs: `cargo fuzz run <target> -- -max_total_time=300` in `fuzz/`.

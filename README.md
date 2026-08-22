@@ -75,7 +75,7 @@ cargo test --workspace --all-targets
 cargo run -p occluview-app --release -- path/to/scan.stl
 ```
 
-Fuzz targets: `cargo fuzz run <target> -- -max_total_time=30` in `fuzz/` (requires `cargo install cargo-fuzz`).
+Fuzz targets: `cargo fuzz run <target> -- -max_total_time=60` in `fuzz/` (requires `cargo install cargo-fuzz`); nightly deep fuzz 300s on schedule.
 
 ## Security
 
