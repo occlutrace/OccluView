@@ -204,7 +204,7 @@ pub fn refine(
         });
     };
     let moved_by = (pose.translation - start.translation).length();
-    let allowed = extent.max(1.0);
+    let allowed = extent.max(1.0) * 1.5;
     if moved_by > allowed {
         return Err(FitRejection::Runaway { moved_by, allowed });
     }
