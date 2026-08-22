@@ -53,7 +53,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use windows::core::{implement, w, IUnknown, Interface, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    BOOL, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
+    BOOL, CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_NOTIMPL, E_POINTER, HANDLE,
+    HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, S_FALSE, S_OK, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, EndPaint,
@@ -107,9 +108,6 @@ pub const OCCLUVIEW_PREVIEW_CLSID: &str = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046
 
 const OCCLUVIEW_THUMBNAIL_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3045);
 const OCCLUVIEW_PREVIEW_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3046);
-const E_POINTER_HR: HRESULT = HRESULT(-2_147_467_259);
-const CLASS_E_CLASSNOTAVAILABLE: HRESULT = HRESULT(-2_147_221_231);
-const CLASS_E_NOAGGREGATION: HRESULT = HRESULT(-2_147_221_232);
 const MAX_PREVIEW_EDGE: u32 = 2048;
 const PREVIEW_WINDOW_CLASS_NAME: PCWSTR = w!("OccluViewPreviewPane");
 const PREVIEW_LIGHT_BACKGROUND_LINEAR: [f64; 4] = [0.80, 0.82, 0.84, 1.0];
@@ -435,16 +433,22 @@ impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
         phbmp: *mut HBITMAP,
         pdwalpha: *mut WTS_ALPHATYPE,
     ) -> windows::core::Result<()> {
-        if phbmp.is_null() || pdwalpha.is_null() {
-            return Err(e_pointer());
-        }
-        let hbmp = self.this.render_to_hbitmap(cx)?;
-        // SAFETY: phbmp is a caller-provided out-pointer; the shell owns the
-        // handle we write through it.
-        unsafe { *phbmp = hbmp };
-        // SAFETY: pdwalpha is a caller-provided out-pointer.
-        unsafe { *pdwalpha = WTSAT_ARGB };
-        Ok(())
+        com_entry(
+            "IThumbnailProvider::GetThumbnail",
+            || Err(e_fail()),
+            || {
+                if phbmp.is_null() || pdwalpha.is_null() {
+                    return Err(e_pointer());
+                }
+                let hbmp = self.this.render_to_hbitmap(cx)?;
+                // SAFETY: phbmp is a caller-provided out-pointer; the shell owns
+                // the handle we write through it.
+                unsafe { *phbmp = hbmp };
+                // SAFETY: pdwalpha is a caller-provided out-pointer.
+                unsafe { *pdwalpha = WTSAT_ARGB };
+                Ok(())
+            },
+        )
     }
 }
 
@@ -452,14 +456,20 @@ impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
     /// Called by the shell with a read-only stream over the file (handles
     /// MotW / OneDrive placeholders).
     fn Initialize(&self, pstream: Option<&IStream>, _grfmode: u32) -> windows::core::Result<()> {
-        let stream = pstream.ok_or_else(e_pointer)?;
-        self.this
-            .source
-            .borrow_mut()
-            .initialize_stream(stream.clone());
-        *self.this.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-        self.this.oversize_stream_len.set(None);
-        Ok(())
+        com_entry(
+            "thumbnail IInitializeWithStream",
+            || Err(e_fail()),
+            || {
+                let stream = pstream.ok_or_else(e_pointer)?;
+                self.this
+                    .source
+                    .borrow_mut()
+                    .initialize_stream(stream.clone());
+                *self.this.bytes.borrow_mut() = Arc::<[u8]>::from([]);
+                self.this.oversize_stream_len.set(None);
+                Ok(())
+            },
+        )
     }
 }
 
@@ -468,10 +478,16 @@ impl IInitializeWithFile_Impl for ThumbnailProvider_Impl {
     /// extension available, which is more reliable than pure magic-byte
     /// probing for text formats and HPS variants.
     fn Initialize(&self, pszfilepath: &PCWSTR, _grfmode: u32) -> windows::core::Result<()> {
-        let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
-        let path = PathBuf::from(&path_string);
-        self.this.initialize_path(path);
-        Ok(())
+        com_entry(
+            "thumbnail IInitializeWithFile",
+            || Err(e_fail()),
+            || {
+                let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
+                let path = PathBuf::from(&path_string);
+                self.this.initialize_path(path);
+                Ok(())
+            },
+        )
     }
 }
 
@@ -480,20 +496,27 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
     /// Explorer code paths that do not use `IInitializeWithFile`, preserving
     /// extension hints for HPS and using mmap-backed file loading.
     fn Initialize(&self, psi: Option<&IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
-        let item = psi.ok_or_else(e_pointer)?;
-        // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
-        // allocated null-terminated UTF-16 path. We copy it into a Rust String
-        // before freeing the COM allocation.
-        let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-        let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
-            // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
-            unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-            e_fail()
-        })?;
-        // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
-        unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-        self.this.initialize_path(PathBuf::from(path_string));
-        Ok(())
+        com_entry(
+            "thumbnail IInitializeWithItem",
+            || Err(e_fail()),
+            || {
+                let item = psi.ok_or_else(e_pointer)?;
+                // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
+                // allocated null-terminated UTF-16 path. We copy it into a Rust
+                // String before freeing the COM allocation.
+                let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
+                let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
+                    // SAFETY: freeing the COM-owned pointer returned by
+                    // GetDisplayName.
+                    unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                    e_fail()
+                })?;
+                // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
+                unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                self.this.initialize_path(PathBuf::from(path_string));
+                Ok(())
+            },
+        )
     }
 }
 
@@ -599,22 +622,28 @@ impl IClassFactory_Impl for ThumbnailProvider_Impl {
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
-        if ppvobject.is_null() {
-            return Err(e_pointer());
-        }
-        if punkouter.is_some() {
-            return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
-        }
-        let provider = ThumbnailProvider::new();
-        let unknown: IUnknown = provider.into();
-        // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows the
-        // COM ABI contract for QueryInterface.
-        let hr = unsafe { unknown.query(riid, ppvobject) };
-        if hr.is_ok() {
-            Ok(())
-        } else {
-            Err(windows::core::Error::from_hresult(hr))
-        }
+        com_entry(
+            "thumbnail IClassFactory::CreateInstance",
+            || Err(e_fail()),
+            || {
+                if ppvobject.is_null() {
+                    return Err(e_pointer());
+                }
+                if punkouter.is_some() {
+                    return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
+                }
+                let provider = ThumbnailProvider::new();
+                let unknown: IUnknown = provider.into();
+                // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows
+                // the COM ABI contract for QueryInterface.
+                let hr = unsafe { unknown.query(riid, ppvobject) };
+                if hr.is_ok() {
+                    Ok(())
+                } else {
+                    Err(windows::core::Error::from_hresult(hr))
+                }
+            },
+        )
     }
 
     fn LockServer(&self, _flock: BOOL) -> windows::core::Result<()> {
@@ -631,22 +660,28 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
-        if ppvobject.is_null() {
-            return Err(e_pointer());
-        }
-        if punkouter.is_some() {
-            return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
-        }
-        let provider = PreviewHandler::new();
-        let unknown: IUnknown = provider.into();
-        // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows the
-        // COM ABI contract for QueryInterface.
-        let hr = unsafe { unknown.query(riid, ppvobject) };
-        if hr.is_ok() {
-            Ok(())
-        } else {
-            Err(windows::core::Error::from_hresult(hr))
-        }
+        com_entry(
+            "preview IClassFactory::CreateInstance",
+            || Err(e_fail()),
+            || {
+                if ppvobject.is_null() {
+                    return Err(e_pointer());
+                }
+                if punkouter.is_some() {
+                    return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
+                }
+                let provider = PreviewHandler::new();
+                let unknown: IUnknown = provider.into();
+                // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows
+                // the COM ABI contract for QueryInterface.
+                let hr = unsafe { unknown.query(riid, ppvobject) };
+                if hr.is_ok() {
+                    Ok(())
+                } else {
+                    Err(windows::core::Error::from_hresult(hr))
+                }
+            },
+        )
     }
 
     fn LockServer(&self, flock: BOOL) -> windows::core::Result<()> {
@@ -659,25 +694,51 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
     }
 }
 
-/// `E_FAIL` (0x80004005) as a `windows::core::Error`.
+/// `E_FAIL` as a `windows::core::Error`.
+///
+/// These helpers wrap the canonical `Win32::Foundation` constants. Earlier
+/// revisions hand-transcribed the decimal values and drifted into
+/// `0x8000FF85`-style non-codes — still failures, but meaningless to anyone
+/// reading an Explorer trace. Never write an HRESULT literal here again.
 fn e_fail() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(-2_147_418_235))
+    windows::core::Error::from_hresult(E_FAIL)
 }
 
-/// `E_POINTER` (0x80004003) as a `windows::core::Error`.
+/// `E_POINTER` as a `windows::core::Error`.
 fn e_pointer() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(-2_147_418_237))
+    windows::core::Error::from_hresult(E_POINTER)
 }
 
-/// `E_NOTIMPL` (0x80004001) as a `windows::core::Error`.
+/// `E_NOTIMPL` as a `windows::core::Error`.
 fn e_notimpl() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(-2_147_418_239))
+    windows::core::Error::from_hresult(E_NOTIMPL)
 }
 
-/// `S_FALSE` (0x00000001) as a `windows::core::Error` so COM returns the
-/// non-fatal "not handled" status instead of incorrectly claiming success.
+/// `S_FALSE` as a `windows::core::Error` so COM returns the non-fatal "not
+/// handled" status instead of incorrectly claiming success.
 fn s_false() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(1))
+    windows::core::Error::from_hresult(S_FALSE)
+}
+
+/// Run a COM entry body, converting a panic into `fallback`.
+///
+/// The `#[implement]` vtable shims are `extern "system"`; Rust aborts the
+/// whole process when a panic unwinds past that ABI boundary — even under the
+/// unwind profile the DLL ships with — and in a shared surrogate that abort
+/// blanks every other file's thumbnail or preview in flight. Catching at each
+/// entry keeps one poisoned request from taking the host down.
+/// `AssertUnwindSafe` is sound here: a panicking request abandons only its own
+/// per-instance state, and the process-wide pool/gate statics recover poisoned
+/// locks by design (see `occluview-thumbnail`'s `lock_recover`).
+pub(super) fn com_entry<T>(
+    context: &'static str,
+    fallback: impl FnOnce() -> T,
+    body: impl FnOnce() -> T,
+) -> T {
+    catch_unwind(AssertUnwindSafe(body)).unwrap_or_else(|_panic| {
+        tracing::error!(context, "panic caught at the COM boundary");
+        fallback()
+    })
 }
 
 /// `DllGetClassObject` — the COM runtime calls this when our CLSID is
@@ -688,29 +749,35 @@ pub extern "system" fn DllGetClassObject(
     riid: *const std::ffi::c_void,
     ppv: *mut *mut std::ffi::c_void,
 ) -> HRESULT {
-    if ppv.is_null() || riid.is_null() || rclsid.is_null() {
-        return E_POINTER_HR;
-    }
-    // SAFETY: `rclsid` is supplied by COM and points to a GUID for the
-    // activation request.
-    let requested = unsafe { *(rclsid as *const GUID) };
-    spawn_renderer_prewarm(&requested);
-    let factory: IUnknown = if requested == OCCLUVIEW_THUMBNAIL_GUID {
-        ThumbnailProvider::new().into()
-    } else if requested == OCCLUVIEW_PREVIEW_GUID {
-        PreviewHandler::new().into()
-    } else {
-        // SAFETY: ppv is a caller-provided out-pointer.
-        unsafe { *ppv = std::ptr::null_mut() };
-        return CLASS_E_CLASSNOTAVAILABLE;
-    };
-    // SAFETY: caller-supplied COM pointers; query follows the ABI contract.
-    let hr = unsafe { factory.query(riid as *const GUID, ppv) };
-    if hr.is_ok() {
-        HRESULT(0) // S_OK
-    } else {
-        hr
-    }
+    com_entry(
+        "DllGetClassObject",
+        || E_FAIL,
+        || {
+            if ppv.is_null() || riid.is_null() || rclsid.is_null() {
+                return E_POINTER;
+            }
+            // SAFETY: `rclsid` is supplied by COM and points to a GUID for the
+            // activation request.
+            let requested = unsafe { *(rclsid as *const GUID) };
+            spawn_renderer_prewarm(&requested);
+            let factory: IUnknown = if requested == OCCLUVIEW_THUMBNAIL_GUID {
+                ThumbnailProvider::new().into()
+            } else if requested == OCCLUVIEW_PREVIEW_GUID {
+                PreviewHandler::new().into()
+            } else {
+                // SAFETY: ppv is a caller-provided out-pointer.
+                unsafe { *ppv = std::ptr::null_mut() };
+                return CLASS_E_CLASSNOTAVAILABLE;
+            };
+            // SAFETY: caller-supplied COM pointers; query follows the ABI contract.
+            let hr = unsafe { factory.query(riid as *const GUID, ppv) };
+            if hr.is_ok() {
+                S_OK
+            } else {
+                hr
+            }
+        },
+    )
 }
 
 /// `DllCanUnloadNow` — the COM runtime asks whether this DLL can be unloaded.
@@ -718,8 +785,8 @@ pub extern "system" fn DllGetClassObject(
 pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if ACTIVE_COM_OBJECTS.load(Ordering::Acquire) == 0 && SERVER_LOCKS.load(Ordering::Acquire) == 0
     {
-        HRESULT(0) // S_OK
+        S_OK
     } else {
-        HRESULT(1) // S_FALSE
+        S_FALSE
     }
 }

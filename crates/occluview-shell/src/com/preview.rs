@@ -1,5 +1,5 @@
 use super::{
-    center_square_on_canvas, e_fail, e_notimpl, e_pointer, implement, path_extension,
+    center_square_on_canvas, com_entry, e_fail, e_notimpl, e_pointer, implement, path_extension,
     pixels_to_hbitmap, placeholder_for_oversize_input, s_false, w, win32_preview_orbit_delta,
     BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC, CreateWindowExW, DeferredSource,
     DeleteDC, DeleteObject, DestroyWindow, EndPaint, GetKeyboardFocus, GetModuleHandleW,
@@ -434,50 +434,74 @@ impl Drop for PreviewHandler {
 
 impl IPreviewHandler_Impl for PreviewHandler_Impl {
     fn SetWindow(&self, hwnd: HWND, prc: *const RECT) -> windows::core::Result<()> {
-        if prc.is_null() {
-            return Err(e_pointer());
-        }
-        if hwnd.0.is_null() {
-            return Err(e_fail());
-        }
-        let previous_parent = self.this.parent_hwnd.replace(hwnd);
-        let preview = self.this.preview_hwnd.get();
-        if !preview.0.is_null() && previous_parent != hwnd {
-            // SAFETY: `preview` is our live child preview window.
-            let _ = unsafe { SetParent(preview, hwnd)? };
-        }
-        // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
-        *self.this.rect.borrow_mut() = unsafe { *prc };
-        // One render per resize: `MoveWindow` synchronously delivers `WM_SIZE`
-        // when the size actually changed, and that handler re-renders. Adding
-        // a second explicit render here made every host resize pay two full
-        // GPU renders + readbacks back to back.
-        self.this.resize_preview_window()?;
-        Ok(())
+        com_entry(
+            "IPreviewHandler::SetWindow",
+            || Err(e_fail()),
+            || {
+                if prc.is_null() {
+                    return Err(e_pointer());
+                }
+                if hwnd.0.is_null() {
+                    return Err(e_fail());
+                }
+                let previous_parent = self.this.parent_hwnd.replace(hwnd);
+                let preview = self.this.preview_hwnd.get();
+                if !preview.0.is_null() && previous_parent != hwnd {
+                    // SAFETY: `preview` is our live child preview window.
+                    let _ = unsafe { SetParent(preview, hwnd)? };
+                }
+                // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
+                *self.this.rect.borrow_mut() = unsafe { *prc };
+                // One render per resize: `MoveWindow` synchronously delivers
+                // `WM_SIZE` when the size actually changed, and that handler
+                // re-renders. Adding a second explicit render here made every host
+                // resize pay two full GPU renders + readbacks back to back.
+                self.this.resize_preview_window()?;
+                Ok(())
+            },
+        )
     }
 
     fn SetRect(&self, prc: *const RECT) -> windows::core::Result<()> {
-        if prc.is_null() {
-            return Err(e_pointer());
-        }
-        // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
-        *self.this.rect.borrow_mut() = unsafe { *prc };
-        // See SetWindow: the WM_SIZE handler owns the re-render, so a resize
-        // renders once, and a pure move (same size, no WM_SIZE) keeps the
-        // already-correct bitmap without any render at all.
-        self.this.resize_preview_window()?;
-        Ok(())
+        com_entry(
+            "IPreviewHandler::SetRect",
+            || Err(e_fail()),
+            || {
+                if prc.is_null() {
+                    return Err(e_pointer());
+                }
+                // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
+                *self.this.rect.borrow_mut() = unsafe { *prc };
+                // See SetWindow: the WM_SIZE handler owns the re-render, so a
+                // resize renders once, and a pure move (same size, no WM_SIZE)
+                // keeps the already-correct bitmap without any render at all.
+                self.this.resize_preview_window()?;
+                Ok(())
+            },
+        )
     }
 
     fn DoPreview(&self) -> windows::core::Result<()> {
-        let _ = self.this.ensure_preview_window()?;
-        self.this.render_preview_now()
+        com_entry(
+            "IPreviewHandler::DoPreview",
+            || Err(e_fail()),
+            || {
+                let _ = self.this.ensure_preview_window()?;
+                self.this.render_preview_now()
+            },
+        )
     }
 
     fn Unload(&self) -> windows::core::Result<()> {
-        self.this.destroy_preview_window();
-        self.this.clear_loaded_content();
-        Ok(())
+        com_entry(
+            "IPreviewHandler::Unload",
+            || Err(e_fail()),
+            || {
+                self.this.destroy_preview_window();
+                self.this.clear_loaded_content();
+                Ok(())
+            },
+        )
     }
 
     fn SetFocus(&self) -> windows::core::Result<()> {
@@ -524,8 +548,14 @@ impl IOleWindow_Impl for PreviewHandler_Impl {
 
 impl IObjectWithSite_Impl for PreviewHandler_Impl {
     fn SetSite(&self, punksite: Option<&IUnknown>) -> windows::core::Result<()> {
-        *self.this.site.borrow_mut() = punksite.cloned();
-        Ok(())
+        com_entry(
+            "IObjectWithSite::SetSite",
+            || Err(e_fail()),
+            || {
+                *self.this.site.borrow_mut() = punksite.cloned();
+                Ok(())
+            },
+        )
     }
 
     fn GetSite(
@@ -533,58 +563,84 @@ impl IObjectWithSite_Impl for PreviewHandler_Impl {
         riid: *const GUID,
         ppvsite: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
-        if riid.is_null() || ppvsite.is_null() {
-            return Err(e_pointer());
-        }
-        if let Some(site) = self.this.site.borrow().as_ref() {
-            // SAFETY: COM supplied `riid`/`ppvsite`.
-            let hr = unsafe { site.query(riid, ppvsite) };
-            if hr.is_ok() {
-                Ok(())
-            } else {
-                Err(windows::core::Error::from_hresult(hr))
-            }
-        } else {
-            Err(e_fail())
-        }
+        com_entry(
+            "IObjectWithSite::GetSite",
+            || Err(e_fail()),
+            || {
+                if riid.is_null() || ppvsite.is_null() {
+                    return Err(e_pointer());
+                }
+                if let Some(site) = self.this.site.borrow().as_ref() {
+                    // SAFETY: COM supplied `riid`/`ppvsite`.
+                    let hr = unsafe { site.query(riid, ppvsite) };
+                    if hr.is_ok() {
+                        Ok(())
+                    } else {
+                        Err(windows::core::Error::from_hresult(hr))
+                    }
+                } else {
+                    Err(e_fail())
+                }
+            },
+        )
     }
 }
 
 impl IInitializeWithStream_Impl for PreviewHandler_Impl {
     fn Initialize(&self, pstream: Option<&IStream>, _grfmode: u32) -> windows::core::Result<()> {
-        let stream = pstream.ok_or_else(e_pointer)?;
-        self.this
-            .source
-            .borrow_mut()
-            .initialize_stream(stream.clone());
-        self.this.preview_scene.borrow_mut().take();
-        self.this.oversize_stream_len.set(None);
-        Ok(())
+        com_entry(
+            "preview IInitializeWithStream",
+            || Err(e_fail()),
+            || {
+                let stream = pstream.ok_or_else(e_pointer)?;
+                self.this
+                    .source
+                    .borrow_mut()
+                    .initialize_stream(stream.clone());
+                self.this.preview_scene.borrow_mut().take();
+                self.this.oversize_stream_len.set(None);
+                Ok(())
+            },
+        )
     }
 }
 
 impl IInitializeWithFile_Impl for PreviewHandler_Impl {
     fn Initialize(&self, pszfilepath: &PCWSTR, _grfmode: u32) -> windows::core::Result<()> {
-        let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
-        self.this.initialize_path(PathBuf::from(path_string));
-        Ok(())
+        com_entry(
+            "preview IInitializeWithFile",
+            || Err(e_fail()),
+            || {
+                let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
+                self.this.initialize_path(PathBuf::from(path_string));
+                Ok(())
+            },
+        )
     }
 }
 
 impl IInitializeWithItem_Impl for PreviewHandler_Impl {
     fn Initialize(&self, psi: Option<&IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
-        let item = psi.ok_or_else(e_pointer)?;
-        // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem path.
-        let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-        let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
-            // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
-            unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-            e_fail()
-        })?;
-        // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
-        unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-        self.this.initialize_path(PathBuf::from(path_string));
-        Ok(())
+        com_entry(
+            "preview IInitializeWithItem",
+            || Err(e_fail()),
+            || {
+                let item = psi.ok_or_else(e_pointer)?;
+                // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
+                // path.
+                let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
+                let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
+                    // SAFETY: freeing the COM-owned pointer returned by
+                    // GetDisplayName.
+                    unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                    e_fail()
+                })?;
+                // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
+                unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                self.this.initialize_path(PathBuf::from(path_string));
+                Ok(())
+            },
+        )
     }
 }
 

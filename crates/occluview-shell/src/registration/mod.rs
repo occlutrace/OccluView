@@ -51,38 +51,46 @@ use registry::delete_tree;
 use crate::com::{OCCLUVIEW_PREVIEW_CLSID, OCCLUVIEW_THUMBNAIL_CLSID};
 use crate::{APP_EXE_NAME, SUPPORTED_EXTENSIONS};
 use windows::core::{HRESULT, HSTRING, PCWSTR};
-use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Foundation::{E_FAIL, HMODULE, S_OK};
 use windows::Win32::System::LibraryLoader::{
     GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
     GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 };
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
 
-const S_OK: HRESULT = HRESULT(0);
-const E_FAIL: HRESULT = HRESULT(-2_147_418_235);
-
 /// `regsvr32 occluview_shell.dll` calls this. Creates all registry entries.
+///
+/// Wrapped in `com_entry` like every other exported COM boundary: a panic
+/// unwinding out of an `extern "system"` fn aborts the calling process.
 #[no_mangle]
 pub extern "system" fn DllRegisterServer() -> HRESULT {
-    match register_all() {
-        Ok(()) => S_OK,
-        Err(e) => {
-            tracing::error!(error = ?e, "DllRegisterServer failed");
-            E_FAIL
-        }
-    }
+    crate::com::com_entry(
+        "DllRegisterServer",
+        || E_FAIL,
+        || match register_all() {
+            Ok(()) => S_OK,
+            Err(e) => {
+                tracing::error!(error = ?e, "DllRegisterServer failed");
+                E_FAIL
+            }
+        },
+    )
 }
 
 /// `regsvr32 /u occluview_shell.dll` calls this. Removes all entries.
 #[no_mangle]
 pub extern "system" fn DllUnregisterServer() -> HRESULT {
-    match unregister_all() {
-        Ok(()) => S_OK,
-        Err(e) => {
-            tracing::error!(error = ?e, "DllUnregisterServer failed");
-            E_FAIL
-        }
-    }
+    crate::com::com_entry(
+        "DllUnregisterServer",
+        || E_FAIL,
+        || match unregister_all() {
+            Ok(()) => S_OK,
+            Err(e) => {
+                tracing::error!(error = ?e, "DllUnregisterServer failed");
+                E_FAIL
+            }
+        },
+    )
 }
 
 /// Write every registry entry. Idempotent — re-running over existing entries

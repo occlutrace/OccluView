@@ -390,6 +390,54 @@ fn preview_resize_renders_once_through_wm_size() {
 }
 
 #[test]
+fn every_com_boundary_is_panic_guarded() {
+    // Rust aborts the process when a panic unwinds out of an `extern "system"`
+    // fn — the ABI of every #[implement] vtable shim, the Dll* exports, and
+    // the wndproc — regardless of the unwind profile the DLL builds with. In a
+    // shared surrogate that abort blanks every other file's thumbnail or
+    // preview in flight, so each boundary must catch via `com_entry`.
+    // Whitespace-normalize so rustfmt's argument wrapping cannot break the
+    // assertions; the guard is the call plus its context literal.
+    let flatten = |source: &str| source.split_whitespace().collect::<String>();
+    let com = flatten(include_str!("com.rs"));
+    let preview = flatten(include_str!("com/preview.rs"));
+    let window = flatten(include_str!("com/preview/window.rs"));
+    let registration = flatten(include_str!("registration/mod.rs"));
+
+    for guarded in [
+        "com_entry(\"IThumbnailProvider::GetThumbnail\"",
+        "com_entry(\"thumbnailIInitializeWithStream\"",
+        "com_entry(\"thumbnailIInitializeWithFile\"",
+        "com_entry(\"thumbnailIInitializeWithItem\"",
+        "com_entry(\"thumbnailIClassFactory::CreateInstance\"",
+        "com_entry(\"previewIClassFactory::CreateInstance\"",
+        "com_entry(\"DllGetClassObject\"",
+    ] {
+        assert!(com.contains(guarded), "missing panic guard: {guarded}");
+    }
+    for guarded in [
+        "com_entry(\"IPreviewHandler::SetWindow\"",
+        "com_entry(\"IPreviewHandler::SetRect\"",
+        "com_entry(\"IPreviewHandler::DoPreview\"",
+        "com_entry(\"IPreviewHandler::Unload\"",
+        "com_entry(\"IObjectWithSite::SetSite\"",
+        "com_entry(\"IObjectWithSite::GetSite\"",
+        "com_entry(\"previewIInitializeWithStream\"",
+        "com_entry(\"previewIInitializeWithFile\"",
+        "com_entry(\"previewIInitializeWithItem\"",
+    ] {
+        assert!(preview.contains(guarded), "missing panic guard: {guarded}");
+    }
+    assert!(window.contains("com_entry(\"preview_window_proc\""));
+    assert!(registration.contains("com_entry(\"DllRegisterServer\""));
+    assert!(registration.contains("com_entry(\"DllUnregisterServer\""));
+    // The HRESULT vocabulary comes from Win32::Foundation, never hand-typed
+    // decimal literals (which once drifted into 0x8000FF85-style non-codes).
+    assert!(!com.contains("HRESULT(-2_147_4"));
+    assert!(!registration.contains("HRESULT(-2_147_4"));
+}
+
+#[test]
 fn class_activation_prewarms_the_matching_renderer() {
     // Under Apartment hosting the first GetThumbnail serializes in front of a
     // whole folder's queue; starting device creation at class activation

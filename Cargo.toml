@@ -198,8 +198,11 @@ panic = "abort"
 
 # The Explorer shell DLL builds with THIS profile: panic = "abort" in a cdylib
 # hosted by dllhost.exe turns any panic into an abort of the whole surrogate
-# process, blanking every thumbnail in the folder. Unwinding lets the COM
-# boundary's catch_unwind substitute a placeholder instead.
+# process, blanking every thumbnail in the folder. Unwinding alone is not the
+# protection, though — Rust also aborts when a panic reaches an extern
+# "system" boundary (every COM vtable shim), so the real safety net is the
+# catch_unwind at each COM entry (`com_entry` in occluview-shell). This
+# profile is what makes those catches able to catch at all.
 [profile.release-unwind]
 inherits = "release"
 panic = "unwind"

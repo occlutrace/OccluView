@@ -1,9 +1,10 @@
 use super::super::{
-    e_fail, DefWindowProcW, GetModuleHandleW, RegisterClassW, ReleaseCapture, SetCapture,
-    SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HINSTANCE,
-    HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME, WM_CANCELMODE,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WPARAM,
+    com_entry, e_fail, DefWindowProcW, GetModuleHandleW, RegisterClassW, ReleaseCapture,
+    SetCapture, SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+    HINSTANCE, HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME,
+    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WNDCLASSW, WPARAM,
 };
 
 /// Virtual-key code for the `F` (fit view) shortcut.
@@ -32,8 +33,28 @@ pub(super) fn ensure_preview_window_class() -> windows::core::Result<()> {
     init.map_err(windows::core::Error::from_hresult)
 }
 
-#[allow(clippy::too_many_lines)]
+/// The preview child wndproc. Every pointer, paint, and resize interaction
+/// funnels through here, so this is a COM-ABI-equivalent boundary: a panic
+/// unwinding out of this `extern "system"` fn aborts the whole `prevhost`
+/// surrogate. `com_entry` converts a panic into a no-op `LRESULT(0)` — a
+/// degraded frame beats taking down every preview the host is serving.
 unsafe extern "system" fn preview_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    com_entry(
+        "preview_window_proc",
+        || LRESULT(0),
+        // SAFETY: the closure runs on the same thread inside the same call;
+        // pointer parameters keep their validity contract.
+        || unsafe { preview_window_proc_body(hwnd, message, wparam, lparam) },
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+unsafe fn preview_window_proc_body(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
