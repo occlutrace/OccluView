@@ -2,16 +2,16 @@ use super::{
     center_square_on_canvas, com_entry, e_fail, e_notimpl, e_pointer, implement, path_extension,
     pixels_to_hbitmap, placeholder_for_oversize_input, s_false, w, win32_preview_orbit_delta,
     BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC, CreateWindowExW, DeferredSource,
-    DeleteDC, DeleteObject, DestroyWindow, EndPaint, GetKeyboardFocus, GetModuleHandleW,
-    IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem,
-    IInitializeWithItem_Impl, IInitializeWithStream, IInitializeWithStream_Impl, IObjectWithSite,
-    IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl, IPreviewHandler, IPreviewHandler_Impl,
-    IShellItem, IStream, IUnknown, Interface, MoveWindow, Ordering, PathBuf, PreviewSceneState,
-    RedrawWindow, SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead,
-    ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, HBITMAP, HGDIOBJ,
-    HINSTANCE, HMENU, HRESULT, HWND, MAX_PREVIEW_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT,
-    PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT, SIGDN_FILESYSPATH, SRCCOPY,
-    WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    DeleteDC, DeleteObject, DestroyWindow, EndPaint, GetKeyboardFocus, IClassFactory,
+    IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl,
+    IInitializeWithStream, IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl,
+    IOleWindow, IOleWindow_Impl, IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream,
+    IUnknown, Interface, MoveWindow, Ordering, PathBuf, PreviewSceneState, RedrawWindow,
+    SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead, ThumbnailProvider,
+    ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, HBITMAP, HGDIOBJ, HINSTANCE, HMENU,
+    HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME,
+    RDW_INVALIDATE, RDW_UPDATENOW, RECT, SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod context_menu;
@@ -19,7 +19,7 @@ mod theme;
 mod window;
 
 use theme::preview_theme;
-use window::ensure_preview_window_class;
+use window::{ensure_preview_window_class, own_pinned_dll_module};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PreviewDragMode {
@@ -100,8 +100,8 @@ impl PreviewHandler {
     }
 
     fn preview_render_to_hbitmap(&self, width: u32, height: u32) -> windows::core::Result<HBITMAP> {
-        let width = width.clamp(1, MAX_PREVIEW_EDGE);
-        let height = height.clamp(1, MAX_PREVIEW_EDGE);
+        let width = width.clamp(1, MAX_OFFSCREEN_EDGE);
+        let height = height.clamp(1, MAX_OFFSCREEN_EDGE);
         let theme = preview_theme();
         let pixels = match self.render_preview_pixels(
             [width as u16, height as u16],
@@ -116,7 +116,7 @@ impl PreviewHandler {
                 // next paint reloads against a fresh renderer instead of
                 // replaying the same failure for the rest of this file view.
                 self.preview_scene.borrow_mut().take();
-                let preview_edge_px = width.min(height).clamp(1, MAX_PREVIEW_EDGE) as u16;
+                let preview_edge_px = width.min(height).clamp(1, MAX_OFFSCREEN_EDGE) as u16;
                 let spec = ThumbnailSpec {
                     size_px: preview_edge_px,
                     background: [0.0, 0.0, 0.0, 0.0],
@@ -248,7 +248,9 @@ impl PreviewHandler {
         let (width, height) = self.preview_size();
         let style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS;
         let create_param = std::ptr::from_ref::<Self>(self) as *const std::ffi::c_void;
-        let module = unsafe { GetModuleHandleW(None) }.map_err(|_| e_fail())?;
+        // The child window must carry the DLL's module identity, matching the
+        // class registration (see `own_pinned_dll_module`).
+        let module = own_pinned_dll_module().map_err(|_| e_fail())?;
         // SAFETY: Explorer supplied `parent` via IPreviewHandler::SetWindow.
         let hwnd = unsafe {
             CreateWindowExW(
@@ -388,13 +390,13 @@ impl PreviewHandler {
                 // SAFETY: the bitmap handle is owned by this module.
                 let previous = unsafe { SelectObject(memory_dc, HGDIOBJ(bitmap.0)) };
                 // The DIB was rendered at the pane size clamped to
-                // MAX_PREVIEW_EDGE; blitting the raw pane size on a >2048 px
+                // MAX_OFFSCREEN_EDGE; blitting the raw pane size on a >2048 px
                 // pane would read past the bitmap and leave garbage rows. Blit
                 // exactly the bitmap extent — the window class background
                 // covers any remainder on those extreme panes.
                 let (width, height) = self.preview_size();
-                let blit_width = width.min(MAX_PREVIEW_EDGE);
-                let blit_height = height.min(MAX_PREVIEW_EDGE);
+                let blit_width = width.min(MAX_OFFSCREEN_EDGE);
+                let blit_height = height.min(MAX_OFFSCREEN_EDGE);
                 // SAFETY: both DCs are valid for this paint cycle.
                 let _ = unsafe {
                     BitBlt(

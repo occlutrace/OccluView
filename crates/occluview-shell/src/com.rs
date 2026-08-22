@@ -65,7 +65,6 @@ use windows::Win32::System::Com::STREAM_SEEK_SET;
 use windows::Win32::System::Com::{
     CoTaskMemFree, IClassFactory, IClassFactory_Impl, IStream, STATFLAG, STATSTG,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{
     IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
 };
@@ -108,7 +107,7 @@ pub const OCCLUVIEW_PREVIEW_CLSID: &str = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046
 
 const OCCLUVIEW_THUMBNAIL_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3045);
 const OCCLUVIEW_PREVIEW_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3046);
-const MAX_PREVIEW_EDGE: u32 = 2048;
+const MAX_OFFSCREEN_EDGE: u32 = 2048;
 const PREVIEW_WINDOW_CLASS_NAME: PCWSTR = w!("OccluViewPreviewPane");
 const PREVIEW_LIGHT_BACKGROUND_LINEAR: [f64; 4] = [0.80, 0.82, 0.84, 1.0];
 const PREVIEW_DARK_BACKGROUND_LINEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -261,7 +260,14 @@ impl ThumbnailProvider {
         ))
     }
 
-    /// Render at `size` px (square, clamped to 1..=1024) and return the HBITMAP.
+    /// Render at `size` px (square, clamped to 1..=2048) and return the HBITMAP.
+    ///
+    /// The ceiling matches the renderer's `downlevel_defaults` texture limit
+    /// (`max_texture_dimension_2d = 2048`). Explorer's documented cache
+    /// request cap is 1024, but high-DPI extra-large views can ask for the
+    /// bigger cache buckets; when the request exceeds the ceiling the shell
+    /// scales our smaller bitmap per the `GetThumbnail` contract ("the Shell
+    /// draws the returned bitmap at this size or smaller").
     ///
     /// A transient pipeline failure becomes an error HRESULT here, never a
     /// bitmap: Explorer's thumbcache permanently stores any bitmap returned
@@ -271,7 +277,7 @@ impl ThumbnailProvider {
     /// browse and stays eligible for re-extraction — usually served instantly
     /// from the process cache the background worker populated meanwhile.
     fn render_to_hbitmap(&self, size: u32) -> windows::core::Result<HBITMAP> {
-        let size_px = size.clamp(1, 1024) as u16;
+        let size_px = size.clamp(1, MAX_OFFSCREEN_EDGE) as u16;
         let spec = ThumbnailSpec {
             size_px,
             ..Default::default()
