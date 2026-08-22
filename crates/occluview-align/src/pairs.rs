@@ -69,7 +69,8 @@ pub struct PairFit {
     pub max_pair_err: f64,
     /// Indices of pairs dropped as outliers, ascending.
     pub rejected: Vec<u32>,
-    /// Mean fixed distance over mean moving distance. One means same units.
+    /// Median fixed pairwise distance over median moving pairwise distance.
+    /// One means same units.
     pub unit_ratio: f64,
 }
 
@@ -99,7 +100,8 @@ pub enum FitRejection {
     },
     /// The two sets are in different units.
     UnitMismatch {
-        /// Mean fixed distance over mean moving distance.
+        /// Median fixed pairwise distance over median moving pairwise
+        /// distance.
         ratio: f64,
     },
     /// The fit does not leave the two scans on top of each other — a
@@ -176,6 +178,12 @@ impl FitBounds {
     fn miss(&self, rigid: &Rigid) -> Option<(f64, f64)> {
         let separation = (rigid.apply(self.moving_center) - self.fixed_center).length();
         let allowed = ((self.moving_extent + self.fixed_extent) * 0.5).max(MIN_OVERLAP_MM);
+        // Non-finite bounds cannot be judged. The comparison below would
+        // quietly answer "no miss" for a NaN either way; making the pass
+        // explicit keeps it a decision instead of an accident.
+        if !separation.is_finite() || !allowed.is_finite() {
+            return None;
+        }
         (separation > allowed).then_some((separation, allowed))
     }
 }
@@ -274,10 +282,18 @@ fn finish(
 /// The quaternion form is deliberate: it can only ever produce a proper
 /// rotation, so a mirrored point set yields the best real rotation instead of
 /// a reflection that would silently turn a scan inside out.
+///
+/// Degeneracy is tested on BOTH sides. Moving clicks on a line leave the
+/// rotation about that line free — and fixed clicks on a line do exactly the
+/// same, with the fit otherwise returning an arbitrary member of a circle of
+/// equally good rotations as though it were confident.
 fn horn_fit(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Result<Rigid, FitRejection> {
     let moving_centroid = centroid(moving, keep);
     let fixed_centroid = centroid(fixed, keep);
     if let Some(rejection) = line_degeneracy(moving, keep, moving_centroid) {
+        return Err(rejection);
+    }
+    if let Some(rejection) = line_degeneracy(fixed, keep, fixed_centroid) {
         return Err(rejection);
     }
     let mut covariance = DMat3::ZERO;
@@ -550,18 +566,33 @@ fn worst_outlier(residuals: &[f64]) -> Option<usize> {
     (value > TRIM_FLOOR_MM && value > median * TRIM_MEDIAN_FACTOR).then_some(position)
 }
 
-/// Mean fixed pairwise distance over mean moving pairwise distance.
+/// Median fixed pairwise distance over median moving pairwise distance.
+///
+/// Medians, not means: one grossly mis-clicked pair drags every mean it
+/// touches, and the gate then reports a unit problem for what is really one
+/// bad arrow — sending the operator to import scaling while the trimming
+/// loop that exists for exactly that click never runs.
 fn distance_ratio(moving: &[DVec3], fixed: &[DVec3]) -> f64 {
-    let mut moving_total = 0.0;
-    let mut fixed_total = 0.0;
+    let mut moving_gaps = Vec::new();
+    let mut fixed_gaps = Vec::new();
     for left in 0..moving.len() {
         for right in (left + 1)..moving.len() {
-            moving_total += moving[left].distance(moving[right]);
-            fixed_total += fixed[left].distance(fixed[right]);
+            moving_gaps.push(moving[left].distance(moving[right]));
+            fixed_gaps.push(fixed[left].distance(fixed[right]));
         }
     }
-    if moving_total <= f64::EPSILON {
+    let moving_median = median(&mut moving_gaps);
+    if moving_median <= f64::EPSILON {
         return 1.0;
     }
-    fixed_total / moving_total
+    median(&mut fixed_gaps) / moving_median
+}
+
+/// Median of `values`, which are sorted in place. Zero when empty.
+fn median(values: &mut [f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
 }

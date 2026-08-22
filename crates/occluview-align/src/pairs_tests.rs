@@ -367,3 +367,83 @@ fn the_fit_is_bit_identical_across_repeats() {
     );
     assert_eq!(first.rejected, second.rejected);
 }
+
+#[test]
+fn collinear_fixed_clicks_are_refused_like_collinear_moving_ones() {
+    // The degeneracy is symmetric. Four spread clicks against four on a line
+    // leave the rotation about that line free, and an arbitrary member of the
+    // circle of equally good rotations must not come back as a confident fit.
+    let moving = spread();
+    let fixed: Vec<DVec3> = (0..4)
+        .map(|step| DVec3::new(f64::from(step) * 3.0, 0.0, 0.0))
+        .collect();
+
+    let outcome = fit(&moving, &fixed, None, 40.0);
+
+    assert!(
+        matches!(outcome, Err(FitRejection::Degenerate { .. })),
+        "a line of fixed clicks determines no rotation, got {outcome:?}"
+    );
+}
+
+#[test]
+fn one_wild_click_is_an_outlier_not_a_unit_problem() {
+    // A click on the wrong side of an arch lands ~60 mm off. Gating the unit
+    // check on MEAN pairwise distances read that as "3x apart in size —
+    // probably different units" and sent the operator to import scaling,
+    // while the trimming loop that exists for exactly that click never ran.
+    // Seven clean anchors, so the fit cannot tilt far enough to absorb the
+    // wild click into everyone's residuals.
+    let mut moving = spread();
+    moving.extend([
+        DVec3::new(3.0, 2.0, -4.0),
+        DVec3::new(-5.0, 4.0, 2.0),
+        DVec3::new(8.0, -6.0, -3.0),
+    ]);
+    let mut fixed = posed(&moving);
+    fixed[6] += DVec3::new(60.0, 0.0, 0.0);
+
+    let fit = fit(&moving, &fixed, None, 40.0).unwrap();
+
+    assert_eq!(fit.rejected, vec![6], "the wild click is the one to drop");
+    assert!(fit.pair_rms < 1e-6, "the surviving pairs fit cleanly");
+}
+
+#[test]
+fn the_overlap_allowance_sits_exactly_at_touching_spheres() {
+    // Pin the guard's SHAPE, not only its origin-independence: the boundary
+    // is the sum of the two bounding-sphere radii. A fit landing just inside
+    // passes; just outside is refused; and two tiny scans fall back to the
+    // one-millimetre floor.
+    let points = spread();
+    let bounds_at = |gap: f64, extent: f64| FitBounds {
+        moving_center: centre(&points),
+        moving_extent: extent,
+        fixed_center: centre(&points) + DVec3::X * gap,
+        fixed_extent: extent,
+    };
+
+    // Identical point sets fit to the identity, so the separation IS the gap.
+    assert!(
+        fit_pairs(&points, &points, None, &bounds_at(39.9, 40.0)).is_ok(),
+        "just inside touching must pass"
+    );
+    assert!(
+        matches!(
+            fit_pairs(&points, &points, None, &bounds_at(40.1, 40.0)),
+            Err(FitRejection::Apart { .. })
+        ),
+        "just outside touching must be refused"
+    );
+    assert!(
+        fit_pairs(&points, &points, None, &bounds_at(0.9, 0.2)).is_ok(),
+        "tiny scans judge against the floor, not their own size"
+    );
+    assert!(
+        matches!(
+            fit_pairs(&points, &points, None, &bounds_at(1.1, 0.2)),
+            Err(FitRejection::Apart { .. })
+        ),
+        "past the floor is a miss even for tiny scans"
+    );
+}

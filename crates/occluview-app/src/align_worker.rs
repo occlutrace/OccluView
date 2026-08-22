@@ -680,10 +680,20 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
         indices: &job.fixed_indices,
         mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
     };
-    let (moving_center, moving_extent) =
-        occluview_align::bounds_of(moving).unwrap_or((DVec3::ZERO, 0.0));
-    let (fixed_center, fixed_extent) =
-        occluview_align::bounds_of(fixed_soup).unwrap_or((DVec3::ZERO, 0.0));
+    // A scan with no usable vertex has no bounds, and inventing (origin,
+    // zero) for it hands the guard a 1 mm allowance measured to nowhere —
+    // refusing honest fits with a message about arrows. Unreachable through
+    // the UI today, and named rather than trusted to stay that way.
+    let Some((moving_center, moving_extent)) = occluview_align::bounds_of(moving) else {
+        return AlignOutcome::Failed {
+            message: "The moving scan has no usable surface".into(),
+        };
+    };
+    let Some((fixed_center, fixed_extent)) = occluview_align::bounds_of(fixed_soup) else {
+        return AlignOutcome::Failed {
+            message: "The fixed scan has no usable surface".into(),
+        };
+    };
     let bounds = FitBounds {
         moving_center,
         moving_extent,
