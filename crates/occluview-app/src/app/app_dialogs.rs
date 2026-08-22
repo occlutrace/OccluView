@@ -168,13 +168,15 @@ impl OccluViewApp {
                             "Edit mesh: selection and sculpting"
                         },
                     ) {
-                        if !edit_active {
-                            if let Some(scene) = self.scene.clone() {
-                                for entry in scene.meshes() {
-                                    if !entry.mesh.is_point_cloud() && entry.visible {
-                                        let _ = self.edit_mode.begin_face_selection(entry, &scene);
-                                        break;
-                                    }
+                        // Pressing it while the editor is already open is the
+                        // toggle's business, not this button's: opening a second
+                        // session over a live one would discard the first one's
+                        // selection.
+                        if let (false, Some(scene)) = (edit_active, self.scene.clone()) {
+                            for entry in scene.meshes() {
+                                if !entry.mesh.is_point_cloud() && entry.visible {
+                                    let _ = self.edit_mode.begin_face_selection(entry, &scene);
+                                    break;
                                 }
                             }
                         }
