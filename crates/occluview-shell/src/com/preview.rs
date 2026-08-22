@@ -111,6 +111,11 @@ impl PreviewHandler {
             Ok(pixels) => pixels,
             Err(error) => {
                 tracing::warn!(?error, "preview render failed; returning placeholder");
+                // The resident scene may reference a retired device (the
+                // renderer discards itself on render errors). Drop it so the
+                // next paint reloads against a fresh renderer instead of
+                // replaying the same failure for the rest of this file view.
+                self.preview_scene.borrow_mut().take();
                 let preview_edge_px = width.min(height).clamp(1, MAX_PREVIEW_EDGE) as u16;
                 let spec = ThumbnailSpec {
                     size_px: preview_edge_px,
@@ -382,15 +387,22 @@ impl PreviewHandler {
             if !memory_dc.0.is_null() {
                 // SAFETY: the bitmap handle is owned by this module.
                 let previous = unsafe { SelectObject(memory_dc, HGDIOBJ(bitmap.0)) };
+                // The DIB was rendered at the pane size clamped to
+                // MAX_PREVIEW_EDGE; blitting the raw pane size on a >2048 px
+                // pane would read past the bitmap and leave garbage rows. Blit
+                // exactly the bitmap extent — the window class background
+                // covers any remainder on those extreme panes.
                 let (width, height) = self.preview_size();
+                let blit_width = width.min(MAX_PREVIEW_EDGE);
+                let blit_height = height.min(MAX_PREVIEW_EDGE);
                 // SAFETY: both DCs are valid for this paint cycle.
                 let _ = unsafe {
                     BitBlt(
                         hdc,
                         0,
                         0,
-                        width as i32,
-                        height as i32,
+                        blit_width as i32,
+                        blit_height as i32,
                         memory_dc,
                         0,
                         0,
@@ -436,10 +448,11 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
         }
         // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
         *self.this.rect.borrow_mut() = unsafe { *prc };
+        // One render per resize: `MoveWindow` synchronously delivers `WM_SIZE`
+        // when the size actually changed, and that handler re-renders. Adding
+        // a second explicit render here made every host resize pay two full
+        // GPU renders + readbacks back to back.
         self.this.resize_preview_window()?;
-        if !preview.0.is_null() && self.this.preview_bitmap.borrow().is_some() {
-            self.this.render_preview_now()?;
-        }
         Ok(())
     }
 
@@ -449,10 +462,10 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
         }
         // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
         *self.this.rect.borrow_mut() = unsafe { *prc };
+        // See SetWindow: the WM_SIZE handler owns the re-render, so a resize
+        // renders once, and a pure move (same size, no WM_SIZE) keeps the
+        // already-correct bitmap without any render at all.
         self.this.resize_preview_window()?;
-        if self.this.preview_bitmap.borrow().is_some() {
-            self.this.render_preview_now()?;
-        }
         Ok(())
     }
 

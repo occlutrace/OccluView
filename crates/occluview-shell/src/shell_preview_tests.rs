@@ -334,6 +334,75 @@ fn preview_render_forces_paint_after_bitmap_refresh() {
 }
 
 #[test]
+fn preview_reuses_one_process_shared_offscreen_renderer() {
+    // prevhost keeps the handler process alive between file clicks; creating a
+    // fresh wgpu device + compiling shaders per click was the dominant fixed
+    // cost of first paint. The scene loader must borrow the process-shared
+    // renderer, and the render path must retire it on failure so a lost device
+    // heals instead of failing every later preview.
+    let factory = include_str!("offscreen_factory.rs");
+    let load = include_str!("preview_scene/load.rs");
+    let render = include_str!("preview_scene/render.rs");
+
+    assert!(factory.contains("fn shared_shell_offscreen()"));
+    assert!(factory.contains("fn discard_shared_shell_offscreen("));
+    assert!(factory.contains("fn prewarm_shared_shell_offscreen()"));
+    assert!(load.contains("let offscreen = shared_shell_offscreen()?;"));
+    assert!(
+        !load.contains("create_shell_offscreen()"),
+        "preview loads must not create a per-file wgpu device"
+    );
+    assert!(render.contains("discard_shared_shell_offscreen(&self.offscreen)"));
+}
+
+#[test]
+fn preview_resize_renders_once_through_wm_size() {
+    // MoveWindow synchronously delivers WM_SIZE when the size changed, and the
+    // WM_SIZE handler re-renders. A second explicit render in SetRect/SetWindow
+    // made every host resize pay two full GPU renders and readbacks.
+    let preview = include_str!("com/preview.rs");
+    let window = include_str!("com/preview/window.rs");
+
+    let set_rect_start = preview.find("fn SetRect(").expect("SetRect impl");
+    let set_rect_end = preview[set_rect_start..]
+        .find("fn DoPreview(")
+        .map(|offset| set_rect_start + offset)
+        .expect("DoPreview follows SetRect");
+    let set_window_start = preview.find("fn SetWindow(").expect("SetWindow impl");
+    let set_window_end = preview[set_window_start..]
+        .find("fn SetRect(")
+        .map(|offset| set_window_start + offset)
+        .expect("SetRect follows SetWindow");
+
+    assert!(
+        !preview[set_rect_start..set_rect_end].contains("render_preview_now"),
+        "SetRect must leave the re-render to the WM_SIZE handler"
+    );
+    assert!(
+        !preview[set_window_start..set_window_end].contains("render_preview_now"),
+        "SetWindow must leave the re-render to the WM_SIZE handler"
+    );
+    let wm_size = window.find("WM_SIZE =>").expect("WM_SIZE arm");
+    assert!(
+        window[wm_size..].contains("render_preview_now"),
+        "the WM_SIZE handler owns the resize re-render"
+    );
+}
+
+#[test]
+fn class_activation_prewarms_the_matching_renderer() {
+    // Under Apartment hosting the first GetThumbnail serializes in front of a
+    // whole folder's queue; starting device creation at class activation
+    // overlaps it with Initialize instead. Each host warms only its own path.
+    let com = include_str!("com.rs");
+
+    assert!(com.contains("fn spawn_renderer_prewarm(class: &GUID)"));
+    assert!(com.contains("spawn_renderer_prewarm(&requested);"));
+    assert!(com.contains("prewarm_thumbnail_renderer"));
+    assert!(com.contains("prewarm_shared_shell_offscreen"));
+}
+
+#[test]
 fn linux_host_has_windows_msvc_build_script() {
     let script_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-windows-msvc.sh");

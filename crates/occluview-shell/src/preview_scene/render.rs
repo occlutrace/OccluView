@@ -66,7 +66,13 @@ impl PreviewSceneState {
                 size_px: [width, height],
                 background,
             },
-        ))?;
+        ))
+        .inspect_err(|_| {
+            // A failed render means the shared device may be lost (driver
+            // reset, TDR). Retire it so the next preview load creates a fresh
+            // renderer instead of failing on the same dead device forever.
+            crate::offscreen_factory::discard_shared_shell_offscreen(&self.offscreen);
+        })?;
         Ok(present_app_convention_rows(rgba, [width, height]))
     }
 }

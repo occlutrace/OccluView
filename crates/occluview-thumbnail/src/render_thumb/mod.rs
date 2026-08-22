@@ -134,6 +134,16 @@ pub fn reserve_thumbnail_stream_job(timeout: Duration) -> Option<ThumbnailJobRes
         .map(ThumbnailJobReservation)
 }
 
+/// Create the pooled offscreen renderer ahead of the first request.
+///
+/// Call from a background thread at shell activation so device creation
+/// overlaps Initialize instead of stalling the first `GetThumbnail` (see
+/// `concurrency::prewarm_renderer_pool` for the full rationale). Blocking:
+/// runs the wgpu adapter/device acquisition to completion.
+pub fn prewarm_thumbnail_renderer() {
+    concurrency::prewarm_renderer_pool();
+}
+
 /// Load `bytes` (a file with the given lowercase extension, no dot) and render
 /// a thumbnail per `spec`. Returns RGBA8 pixels in row-major order, length
 /// `spec.size_px * spec.size_px * 4`, top-to-bottom.

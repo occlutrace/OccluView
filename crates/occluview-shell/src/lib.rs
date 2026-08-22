@@ -70,9 +70,9 @@ pub mod render_thumb {
     use std::path::Path;
 
     pub use occluview_thumbnail::render_thumb::{
-        placeholder_for_oversize_input, render_thumbnail_file_or_placeholder,
-        render_thumbnail_file_or_placeholder_with_timeout, render_thumbnail_or_placeholder,
-        render_thumbnail_or_placeholder_with_timeout,
+        placeholder_for_oversize_input, prewarm_thumbnail_renderer,
+        render_thumbnail_file_or_placeholder, render_thumbnail_file_or_placeholder_with_timeout,
+        render_thumbnail_or_placeholder, render_thumbnail_or_placeholder_with_timeout,
         render_thumbnail_shared_or_placeholder_with_timeout, reserve_thumbnail_stream_job,
         try_render_thumbnail_file, try_render_thumbnail_shared,
         try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, ThumbnailJobReservation,

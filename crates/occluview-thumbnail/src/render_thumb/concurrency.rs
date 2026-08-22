@@ -323,6 +323,23 @@ impl Drop for ThumbnailRendererLease<'_> {
     }
 }
 
+/// Create the pooled renderer ahead of the first request and park it idle.
+///
+/// Under Explorer's Apartment hosting every extraction serializes through one
+/// host STA thread, so the very first `GetThumbnail` used to pay wgpu
+/// instance + adapter + device + pipeline creation in line, in front of the
+/// whole folder's queue. Prewarming from a background thread at class
+/// activation overlaps that fixed cost with the shell's Initialize and
+/// stream-copy phase. A failure is deliberately swallowed: the first real
+/// request repeats the attempt and owns the error path, and the pool's
+/// capacity accounting already tolerates a failed create.
+pub(super) fn prewarm_renderer_pool() {
+    let pool = ThumbnailRendererPool::shared();
+    if let Ok(renderer) = pool.checkout_renderer() {
+        drop(ThumbnailRendererLease::new(pool, renderer));
+    }
+}
+
 const fn default_thumbnail_job_capacity() -> usize {
     MAX_THUMBNAIL_JOB_LANES
 }
