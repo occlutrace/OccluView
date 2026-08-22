@@ -40,6 +40,11 @@ const TRIM_FLOOR_MM: f64 = 0.05;
 /// the frame it would build is meaningless.
 const NORMAL_ALONG_SEGMENT_LIMIT: f64 = 0.99;
 
+/// Two scans smaller than this are treated as this big when asking whether a
+/// fit left them overlapping. Without a floor a pair of degenerate meshes
+/// would have zero radius between them and every fit would read as a miss.
+const MIN_OVERLAP_MM: f64 = 1.0;
+
 /// A world axis is named in a degeneracy report when the undetermined
 /// direction has at least this much of its length along that axis. A unit
 /// vector always clears it on at least one axis.
@@ -97,12 +102,23 @@ pub enum FitRejection {
         /// Mean fixed distance over mean moving distance.
         ratio: f64,
     },
-    /// The fit would move the mesh farther than its own size — a mis-click,
-    /// not a registration.
+    /// The fit does not leave the two scans on top of each other — a
+    /// mis-click, not a registration.
+    Apart {
+        /// How far apart the two scans end up, centre to centre, in
+        /// millimetres.
+        separation: f64,
+        /// The largest separation at which they still overlap at all, in
+        /// millimetres.
+        allowed: f64,
+    },
+    /// A surface refine displaced the scan farther than its own size. A
+    /// refine seats a scan that is already roughly in place, so a journey
+    /// that long means it wandered off rather than settled.
     Runaway {
-        /// Translation length the fit produced, in millimetres.
+        /// How far the scan actually travelled, in millimetres.
         moved_by: f64,
-        /// Largest translation considered plausible, in millimetres.
+        /// Largest displacement a refine is allowed, in millimetres.
         allowed: f64,
     },
     /// A supplied point or normal was not finite.
@@ -115,12 +131,61 @@ const ALL_AXES_WEAK: FitRejection = FitRejection::Degenerate {
     weak_axes: [true, true, true],
 };
 
+/// Where the two scans are and how big they are — everything the overlap
+/// guard needs, and nothing it can be fooled by.
+///
+/// Deliberately centres, not extents alone. The pose a pair fit produces maps
+/// the moving layer's LOCAL frame to world, so its translation column is
+/// `fixed_centroid - rotation * moving_centroid`: a number that grows with how
+/// far the file's zero sits from the geometry it carries, and that a rotation
+/// alone can drive to twice that distance while the scan itself does not move
+/// a millimetre. Measuring the pose's translation therefore measures the
+/// scanner's choice of origin, not the fit. Real exports routinely put an
+/// arch tens of millimetres from its own file zero — a surface lifted out of
+/// a DICOM volume can sit hundreds away — so that is not a corner case; it
+/// is the ordinary spread of dental data.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FitBounds {
+    /// Bounding-box centre of the moving mesh, in the moving layer's local
+    /// frame — the same frame the moving points are in.
+    pub moving_center: DVec3,
+    /// Bounding-box diagonal of the moving mesh, in millimetres.
+    pub moving_extent: f64,
+    /// Bounding-box centre of the fixed mesh, in world.
+    pub fixed_center: DVec3,
+    /// Bounding-box diagonal of the fixed mesh, in millimetres.
+    pub fixed_extent: f64,
+}
+
+impl FitBounds {
+    /// Whether `rigid` leaves the two scans overlapping, and by how far it
+    /// misses when it does not.
+    ///
+    /// The test is the one thing a registration must be true of, and the only
+    /// one that survives both scans being stored in unrelated coordinate
+    /// systems: afterwards the scans sit on each other. Bounding spheres that
+    /// still touch is the loosest honest reading of "on each other", so a
+    /// quadrant fitted against a full arch passes as readily as two full
+    /// arches, and a pose that flings the scan clear of its partner does not.
+    ///
+    /// For clicks that lie on the two surfaces this refusal cannot fire: the
+    /// fitted pose carries the click centroid onto the click centroid, and
+    /// both centroids sit inside their own bounding spheres, so the triangle
+    /// inequality keeps the separation inside the allowance. The guard exists
+    /// for library callers, whose points arrive with no such guarantee.
+    fn miss(&self, rigid: &Rigid) -> Option<(f64, f64)> {
+        let separation = (rigid.apply(self.moving_center) - self.fixed_center).length();
+        let allowed = ((self.moving_extent + self.fixed_extent) * 0.5).max(MIN_OVERLAP_MM);
+        (separation > allowed).then_some((separation, allowed))
+    }
+}
+
 /// Fit `moving` onto `fixed`.
 ///
 /// `normals`, when supplied, are the clicked surface normals for each side and
-/// are used only in the two-pair case. `moving_extent` is the moving mesh's
-/// bounding-box diagonal in millimetres; a fit translating farther than that
-/// is refused as [`FitRejection::Runaway`].
+/// are used only in the two-pair case. `bounds` says where the two meshes are
+/// and how big they are; a fit that does not leave them overlapping is refused
+/// as [`FitRejection::Apart`].
 ///
 /// # Errors
 ///
@@ -129,7 +194,7 @@ pub fn fit_pairs(
     moving: &[DVec3],
     fixed: &[DVec3],
     normals: Option<(&[DVec3], &[DVec3])>,
-    moving_extent: f64,
+    bounds: &FitBounds,
 ) -> Result<PairFit, FitRejection> {
     if moving.len() != fixed.len() {
         return Err(FitRejection::Unpaired {
@@ -155,7 +220,7 @@ pub fn fit_pairs(
     if moving.len() == MIN_PAIRS {
         let rigid = two_pair_frame(moving, fixed, normals)?;
         let residuals = residuals_of(&rigid, moving, fixed, &[0, 1]);
-        return finish(rigid, &residuals, Vec::new(), unit_ratio, moving_extent);
+        return finish(rigid, &residuals, Vec::new(), unit_ratio, bounds);
     }
 
     let mut keep: Vec<usize> = (0..moving.len()).collect();
@@ -172,24 +237,25 @@ pub fn fit_pairs(
     }
     rejected.sort_unstable();
     let residuals = residuals_of(&rigid, moving, fixed, &keep);
-    finish(rigid, &residuals, rejected, unit_ratio, moving_extent)
+    finish(rigid, &residuals, rejected, unit_ratio, bounds)
 }
 
-/// Apply the runaway guard and package the diagnostics.
+/// Apply the overlap guard and package the diagnostics.
 fn finish(
     rigid: Rigid,
     residuals: &[f64],
     rejected: Vec<u32>,
     unit_ratio: f64,
-    moving_extent: f64,
+    bounds: &FitBounds,
 ) -> Result<PairFit, FitRejection> {
     if !rigid.is_finite() {
         return Err(FitRejection::NonFinite);
     }
-    let moved_by = rigid.translation.length();
-    let allowed = moving_extent.max(1.0);
-    if moved_by > allowed * 1.5 {
-        return Err(FitRejection::Runaway { moved_by, allowed });
+    if let Some((separation, allowed)) = bounds.miss(&rigid) {
+        return Err(FitRejection::Apart {
+            separation,
+            allowed,
+        });
     }
     #[allow(clippy::cast_precision_loss)]
     let count = residuals.len().max(1) as f64;

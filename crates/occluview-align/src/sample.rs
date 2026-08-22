@@ -84,10 +84,17 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
     normals
 }
 
-/// Bounding-box diagonal of the soup, in millimetres. Zero when nothing is
-/// usable — callers treat that as "no plausible motion".
+/// Bounding-box centre and diagonal of the soup, in millimetres, in the
+/// soup's own frame.
+///
+/// `None` when nothing is usable. The centre matters as much as the diagonal:
+/// a scan's own coordinates say nothing about where the file that carries
+/// them put its zero — real exports put it anywhere from millimetres to
+/// hundreds of millimetres away — so anything that reasons about where a
+/// mesh IS has to ask, rather than assume the origin is anywhere near the
+/// geometry.
 #[must_use]
-pub fn extent_of(soup: Soup<'_>) -> f64 {
+pub fn bounds_of(soup: Soup<'_>) -> Option<(DVec3, f64)> {
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut seen = false;
@@ -98,11 +105,14 @@ pub fn extent_of(soup: Soup<'_>) -> f64 {
             seen = true;
         }
     }
-    if seen {
-        (max - min).length()
-    } else {
-        0.0
-    }
+    seen.then(|| ((min + max) * 0.5, (max - min).length()))
+}
+
+/// Bounding-box diagonal of the soup, in millimetres. Zero when nothing is
+/// usable — callers treat that as "no plausible motion".
+#[must_use]
+pub fn extent_of(soup: Soup<'_>) -> f64 {
+    bounds_of(soup).map_or(0.0, |(_, diagonal)| diagonal)
 }
 
 #[cfg(test)]

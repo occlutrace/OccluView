@@ -73,6 +73,24 @@ fn soup<'a>(positions: &'a [f32], indices: &'a [u32]) -> Soup<'a> {
     }
 }
 
+/// The same vertices, re-quoted in a frame whose zero sits `delta` away.
+///
+/// Nothing about the surface changes — only the arbitrary point the file
+/// counts from.
+#[allow(clippy::cast_possible_truncation)]
+fn requoted(positions: &[f32], delta: DVec3) -> Vec<f32> {
+    positions
+        .chunks_exact(3)
+        .flat_map(|vertex| {
+            [
+                (f64::from(vertex[0]) + delta.x) as f32,
+                (f64::from(vertex[1]) + delta.y) as f32,
+                (f64::from(vertex[2]) + delta.z) as f32,
+            ]
+        })
+        .collect()
+}
+
 #[test]
 fn refine_closes_a_small_offset() {
     let (positions, indices) = dome(24, 0.5);
@@ -290,4 +308,81 @@ fn an_empty_moving_mesh_is_refused() {
     );
 
     assert!(outcome.is_err());
+}
+
+#[test]
+fn where_the_file_puts_its_zero_does_not_change_the_refine() {
+    // A scan's file coordinates say nothing about where the scanner's zero
+    // was: a surface lifted out of a DICOM volume is quoted in patient
+    // coordinates, hundreds of millimetres from the anatomy, while an STL off
+    // the same case sits on top of its own origin. Re-quote the moving mesh in
+    // such a frame and compensate in the start pose, and the refine sees a
+    // bit-identical surface in a bit-identical place. It has to answer the
+    // same — the guard included.
+    //
+    // The pose's translation column does NOT stay the same: turning the mesh
+    // through a small angle swings it by twice the distance to the file's
+    // zero, which here is far more than the mesh's own size. Reading that as
+    // "how far the scan moved" is what refused refines that had not moved the
+    // scan at all.
+    // Across the turn axis, not along it: an offset parallel to the axis
+    // survives the rotation untouched and would leave the two numbers below
+    // identical, testing nothing.
+    let elsewhere = DVec3::new(2000.0, 0.0, 0.0);
+    let (positions, indices) = dome(24, 0.5);
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let start = Rigid::new(
+        DQuat::from_axis_angle(DVec3::Z, 0.02),
+        DVec3::new(0.25, -0.18, 0.12),
+    );
+
+    // Both refines must land. An unwrap here prints the refusal itself, which
+    // is the part worth reading: a `Runaway` is the regression this test is
+    // for, and any other rejection is a different bug.
+    let here = refine(
+        soup(&positions, &indices),
+        &index,
+        start,
+        &settings(),
+        &CancelFlag::new(),
+    )
+    .unwrap();
+
+    let requoted_positions = requoted(&positions, elsewhere);
+    let compensated = Rigid::new(
+        start.rotation,
+        start.translation - start.rotation * elsewhere,
+    );
+    let there = refine(
+        soup(&requoted_positions, &indices),
+        &index,
+        compensated,
+        &settings(),
+        &CancelFlag::new(),
+    )
+    .unwrap();
+
+    // Read the second answer back in the first one's frame.
+    // The offset is a whole multiple of the grid step, so requoting is
+    // bit-exact in `f32` and any drift is the solver's own — measured at
+    // ~1e-13 mm. The bound stays a loose micron so the test pins the
+    // regression, not one fixture's noise floor.
+    let read_back = there.rigid.translation + there.rigid.rotation * elsewhere;
+    let drift = (read_back - here.rigid.translation).length();
+    assert!(
+        drift < 1e-3,
+        "the same surface in the same place reached a different pose, off by {drift} mm"
+    );
+
+    // The two numbers the guard could have read are not the same number, which
+    // is the whole point: the scan travelled a third of a millimetre while the
+    // pose's translation column swung by millimetres, purely because the file
+    // counts from somewhere else. The guard has to read the first.
+    let bookkeeping = (there.rigid.translation - compensated.translation).length();
+    let travelled = (here.rigid.translation - start.translation).length();
+    assert!(
+        bookkeeping > travelled * 5.0,
+        "expected the translation column to swing wider than the scan moved, \
+         got {bookkeeping} against {travelled}"
+    );
 }

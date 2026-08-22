@@ -20,9 +20,9 @@ use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
     deviation, deviation_stats, fit_pairs, observability, ramp_color, refine, CancelFlag,
-    DeviationMap, DeviationSettings, DeviationStats, FitRejection, IcpReport, Observability,
-    Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex, Validity,
-    NO_DATA_COLOR,
+    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, IcpReport,
+    Observability, Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex,
+    Validity, NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
@@ -671,22 +671,31 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     let fixed_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed).collect();
     let moving_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.moving_normal).collect();
     let fixed_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed_normal).collect();
-    let moving_extent = occluview_align::extent_of(moving);
-    let fixed_extent = {
-        let fixed_soup = Soup {
-            positions: &job.fixed_world_positions,
-            indices: &job.fixed_indices,
-            mask: job.fixed_mask.as_ref().map(|m| m.as_slice()),
-        };
-        occluview_align::extent_of(fixed_soup)
+    // Both meshes, each measured in the frame its points are quoted in: the
+    // moving mesh in its layer's local frame, the fixed one already in world.
+    // The guard asks whether the fit leaves them overlapping, so it needs to
+    // know where each one IS — a diagonal alone cannot answer that.
+    let fixed_soup = Soup {
+        positions: &job.fixed_world_positions,
+        indices: &job.fixed_indices,
+        mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
     };
-    let extent = moving_extent.max(fixed_extent);
+    let (moving_center, moving_extent) =
+        occluview_align::bounds_of(moving).unwrap_or((DVec3::ZERO, 0.0));
+    let (fixed_center, fixed_extent) =
+        occluview_align::bounds_of(fixed_soup).unwrap_or((DVec3::ZERO, 0.0));
+    let bounds = FitBounds {
+        moving_center,
+        moving_extent,
+        fixed_center,
+        fixed_extent,
+    };
 
     match fit_pairs(
         &moving_points,
         &fixed_points,
         Some((&moving_normals, &fixed_normals)),
-        extent,
+        &bounds,
     ) {
         Ok(fit) => AlignOutcome::Aligned {
             pose: fit.rigid,
@@ -723,10 +732,21 @@ fn describe(rejection: FitRejection) -> String {
         FitRejection::UnitMismatch { ratio } => format!(
             "The two scans are {ratio:.1}x apart in size — they are probably in different units"
         ),
-        FitRejection::Runaway { moved_by, allowed } => format!(
-            "That fit would move the scan {moved_by:.0} mm, further than its own size ({allowed:.0} mm) — check the pairs"
+        FitRejection::Apart {
+            separation,
+            allowed,
+        } => format!(
+            "That fit leaves the two scans {separation:.0} mm apart instead of on top of each \
+             other ({allowed:.0} mm) — check that each arrow pair points at the same spot on both \
+             scans"
         ),
-        FitRejection::NonFinite => "A clicked point or surface normal was not a finite number".into(),
+        FitRejection::Runaway { moved_by, allowed } => format!(
+            "Best fit wandered {moved_by:.0} mm, further than the scan's own size ({allowed:.0} \
+             mm) — place a few arrow pairs first, or lower max influence"
+        ),
+        FitRejection::NonFinite => {
+            "A clicked point or surface normal was not a finite number".into()
+        }
     }
 }
 

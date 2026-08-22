@@ -14,7 +14,7 @@ use glam::{DMat3, DQuat, DVec3};
 use rayon::prelude::*;
 
 use crate::pairs::FitRejection;
-use crate::sample::{extent_of, sample_vertices, vertex_at, vertex_normals};
+use crate::sample::{bounds_of, sample_vertices, vertex_at, vertex_normals};
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
 /// Samples used by the coarse level.
@@ -154,7 +154,7 @@ pub fn refine(
     }
 
     let normals = vertex_normals(moving);
-    let extent = extent_of(moving);
+    let (center, extent) = bounds_of(moving).unwrap_or((DVec3::ZERO, 0.0));
     let mut pose = start;
     let mut iterations = 0u32;
     let mut converged = false;
@@ -203,8 +203,15 @@ pub fn refine(
             need: MIN_CORRESPONDENCES,
         });
     };
-    let moved_by = (pose.translation - start.translation).length();
-    let allowed = extent.max(1.0) * 1.5;
+    // How far the scan ACTUALLY travelled, not how far the pose's translation
+    // column moved. The two agree only when the rotation does not change:
+    // turning a mesh in place swings that column by up to twice the distance
+    // from the file's zero to the geometry — tens of millimetres of pure
+    // bookkeeping on a real arch. Reading it as displacement refused fits that had not
+    // moved the scan at all — and no widening of the threshold repairs a
+    // measurement of the wrong quantity.
+    let moved_by = (pose.apply(center) - start.apply(center)).length();
+    let allowed = extent.max(1.0);
     if moved_by > allowed {
         return Err(FitRejection::Runaway { moved_by, allowed });
     }

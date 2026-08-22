@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Fixed Align Scans refusing correct fits between two scans stored in
+  different coordinate systems, such as a DICOM-derived surface against an
+  STL of the same case. The guard read the pose's translation as "how far the
+  scan moves" — a number that grows with how far a file's zero sits from its
+  own geometry — so a scan turned over where it stands reported a 142 mm
+  "move" against an 88 mm limit, having travelled 2.3 mm. The guard now asks
+  the only question a registration has to answer: whether the fit leaves the
+  two scans on top of each other. That reads the same whichever scan moves
+  and wherever either file puts its zero, so the two directions now agree.
+
 ## 1.0.7 - 2026-08-22
 
 - Fixed shading on sub-20um facets: the absolute epsilon test culled every

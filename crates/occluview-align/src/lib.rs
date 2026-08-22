@@ -62,9 +62,9 @@ pub use deviation::{
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
-pub use pairs::{fit_pairs, FitRejection, PairFit};
+pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 pub use rigid::Rigid;
-pub use sample::extent_of;
+pub use sample::{bounds_of, extent_of};
 pub use surface::{SurfaceHit, SurfaceIndex};
 
 use std::sync::atomic::{AtomicBool, Ordering};
