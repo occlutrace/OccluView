@@ -12,6 +12,13 @@
   two scans on top of each other. That reads the same whichever scan moves
   and wherever either file puts its zero, so the two directions now agree.
 
+- Fixed 3D models rendering distorted on 4K displays, seen in fullscreen,
+  where the width first passes the render target's 2560 px cap. The target
+  was clamped one axis at a time, which changed its shape: 3840 x 2160 became
+  a 2560 x 2160 texture painted across a 16:9 viewport, everything half again
+  too wide. Both axes now share one scale factor, so the target always keeps
+  the viewport's shape.
+
 ## 1.0.7 - 2026-08-22
 
 - Fixed shading on sub-20um facets: the absolute epsilon test culled every
