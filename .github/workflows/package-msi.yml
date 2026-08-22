@@ -45,7 +45,7 @@ jobs:
           }
       - name: Install WiX Toolset
         shell: pwsh
-        run: choco install wixtoolset --yes --no-progress
+        run: choco install wixtoolset --version 3.14.1 --yes --no-progress
       - name: Prepare signing certificate
         shell: pwsh
         env:
@@ -178,8 +178,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -209,6 +207,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y appstream desktop-file-utils libxml2-utils shared-mime-info lintian
       - name: Verify embedded HPS key build path
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: |
           if [[ -z "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
             echo "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux so encrypted HPS files work in the shipped package." >&2
@@ -244,6 +244,8 @@ jobs:
             exit "$test_status"
           fi
       - name: Build Debian package
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: install/linux/build-deb.sh
       - name: Validate Debian package
         run: |
