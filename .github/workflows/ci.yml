@@ -5,11 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: short
-  # Don't let a stray println slow the build or pull optional features.
   CARGO_NET_RETRY: 3
 
 permissions:
@@ -25,11 +26,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: "1.86.0"
           components: rustfmt
       - name: rustfmt check
         run: cargo fmt --all -- --check
@@ -41,29 +43,30 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: "1.86.0"
           components: clippy
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: clippy --workspace --all-targets
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   cross-compile:
-    # Catch type bugs in the Windows-adjacent cross-platform crates from Linux.
     name: cross-compile (windows-gnu)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: "1.86.0"
           targets: x86_64-pc-windows-gnu
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install mingw
         run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - name: cargo check (cross-platform crates)
@@ -72,34 +75,32 @@ jobs:
             --target x86_64-pc-windows-gnu
 
   windows-only:
-    # Build the Windows COM shell path and app Windows integration on a real
-    # Windows host. Other jobs compile the cross-platform app path.
     name: build (windows integration)
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo check (shell + app)
         run: cargo check -p occluview-shell -p occluview-app
 
   linux-renderer-tests:
-    # The real offscreen raster suite runs on a supported software Vulkan
-    # adapter here. GitHub's Windows WARP adapter is not a reliable pixel-test
-    # target: it can exhaust device allocations or stall map callbacks despite
-    # working production hardware paths.
     name: test (linux renderer)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install Lavapipe Vulkan adapter
         run: |
           sudo apt-get update
@@ -113,18 +114,17 @@ jobs:
         run: cargo test --workspace --all-targets --no-fail-fast
 
   test:
-    # Keep Windows logic/COM coverage on the real target OS. Pixel assertions
-    # run in the Linux renderer job above; WARP is exercised separately by the
-    # MSI lifecycle smoke and is not stable enough for a large raster suite.
     name: test (windows shell)
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo test --workspace (without WARP pixel suites)
         run: >
           cargo test --workspace --all-targets --no-fail-fast --
@@ -136,11 +136,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo doc (no warnings)
         env:
           RUSTDOCFLAGS: -D warnings
@@ -151,10 +153,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@v2.0.20
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
           arguments: --workspace --all-features
 
@@ -163,21 +165,56 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
-      - name: Fuzz dispatch 30s
-        run: cargo fuzz run dispatch -- -max_total_time=30 -max_len=65536
+        run: cargo install cargo-fuzz --version 0.12.0 --locked
+      - name: Fuzz dispatch 60s
+        run: cargo fuzz run dispatch -- -max_total_time=60 -max_len=65536
         working-directory: fuzz
-      - name: Fuzz HPS parser 30s
-        run: cargo fuzz run hps_parser -- -max_total_time=30 -max_len=65536
+      - name: Fuzz HPS parser 60s
+        run: cargo fuzz run hps_parser -- -max_total_time=60 -max_len=65536
         working-directory: fuzz
-      - name: Fuzz STL 30s
-        run: cargo fuzz run stl -- -max_total_time=30 -max_len=65536
+      - name: Fuzz STL 60s
+        run: cargo fuzz run stl -- -max_total_time=60 -max_len=65536
         working-directory: fuzz
-      - name: Fuzz PLY 30s
-        run: cargo fuzz run ply -- -max_total_time=30 -max_len=65536
+      - name: Fuzz PLY 60s
+        run: cargo fuzz run ply -- -max_total_time=60 -max_len=65536
         working-directory: fuzz
+
+  fuzz-nightly:
+    name: fuzz nightly (300s deep)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.12.0 --locked
+      - name: Fuzz dispatch 300s
+        run: cargo fuzz run dispatch -- -max_total_time=300 -max_len=131072
+        working-directory: fuzz
+      - name: Fuzz HPS parser 300s
+        run: cargo fuzz run hps_parser -- -max_total_time=300 -max_len=131072
+        working-directory: fuzz
+      - name: Fuzz STL 300s
+        run: cargo fuzz run stl -- -max_total_time=300 -max_len=131072
+        working-directory: fuzz
+      - name: Fuzz PLY 300s
+        run: cargo fuzz run ply -- -max_total_time=300 -max_len=131072
+        working-directory: fuzz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          retention-days: 14

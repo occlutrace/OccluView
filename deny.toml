@@ -7,7 +7,8 @@ targets = ["x86_64-pc-windows-msvc"]
 
 [advisories]
 unmaintained = "workspace"
-# Allow these specific advisories with a reason (none by default).
+vulnerability = "deny"
+yanked = "warn"
 ignore = []
 
 [licenses]
