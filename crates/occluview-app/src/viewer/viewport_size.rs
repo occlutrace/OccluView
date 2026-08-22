@@ -16,7 +16,10 @@ pub(crate) fn desired_render_extent_px(
     }
     let width_px = viewport_points.x * pixels_per_point;
     let height_px = viewport_points.y * pixels_per_point;
-    if width_px <= 0.0 || height_px <= 0.0 {
+    // The factors are finite, but their product can still overflow to
+    // infinity, and infinity would ride the shared scale below into a NaN
+    // and out the far end as a zero-size render target.
+    if !width_px.is_finite() || !height_px.is_finite() || width_px <= 0.0 || height_px <= 0.0 {
         return None;
     }
     Some(fitted_render_extent_px(width_px, height_px))
@@ -171,6 +174,21 @@ mod tests {
         assert!(
             f64::from(3840.0_f32 / 300.0) > EXPRESSIBLE_ASPECT,
             "this fixture is only interesting while it is past what the bounds can express"
+        );
+    }
+
+    #[test]
+    fn an_overflowing_product_is_refused_rather_than_a_zero_size_target() {
+        // Finite times finite can still be infinite, and infinity used to
+        // ride the shared scale into a NaN and out the far end as a
+        // zero-size texture.
+        assert_eq!(
+            desired_render_extent_px(egui::vec2(f32::MAX, 1080.0), 2.0),
+            None
+        );
+        assert_eq!(
+            desired_render_extent_px(egui::vec2(f32::MAX, f32::MAX), 2.0),
+            None
         );
     }
 
