@@ -267,7 +267,11 @@ foreach ($path in $required) {
     }
 }
 
+$isTaggedRelease = Test-HasText $env:GITHUB_REF -and ($env:GITHUB_REF -like "refs/tags/v*")
 $resolvedSignMode = Resolve-SigningMode $SignMode
+if ($resolvedSignMode -eq "none" -and $isTaggedRelease) {
+    throw "Authenticode signing is required for tagged releases: no signing certificate configured (SignMode=$SignMode)."
+}
 if ($resolvedSignMode -eq "none") {
     Write-Host "Signing disabled: no signing certificate configured."
 } else {

@@ -7,7 +7,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: package-${{ github.ref }}
@@ -20,13 +20,16 @@ jobs:
   windows-package:
     name: build msi
     runs-on: windows-latest
+    permissions:
+      contents: read
     env:
       OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
       OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
       OCCLUVIEW_SIGN_TIMESTAMP_URL: ${{ vars.OCCLUVIEW_SIGN_TIMESTAMP_URL }}
-      OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Check release tag
@@ -57,6 +60,8 @@ jobs:
           "OCCLUVIEW_SIGN_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Verify embedded HPS key build path
         shell: pwsh
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:OCCLUVIEW_HPS_EMBEDDED_KEY)) {
             throw "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package MSI so encrypted HPS files work in the shipped installer."
@@ -84,6 +89,8 @@ jobs:
           }
       - name: Build MSI
         shell: pwsh
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: ./install/build-msi.ps1 -SignMode auto
       - name: Build portable ZIP
         shell: pwsh
@@ -104,8 +111,37 @@ jobs:
           Copy-Item ./NOTICE $portableDir
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
+      - name: Verify Authenticode signatures (tagged release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          if (([string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_PFX_BASE64) -and [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1))) {
+            throw "Authenticode signing is required for tagged releases but no signing certificate is configured."
+          }
+          $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
+          $hasPfx = -not [string]::IsNullOrWhiteSpace($pfxPath) -and (Test-Path $pfxPath)
+          $hasCert = -not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1)
+          if (-not $hasPfx -and -not $hasCert) {
+            throw "No signing material resolved for tagged release."
+          }
+          $buildDir = Join-Path $pwd "target/x86_64-pc-windows-msvc/release"
+          $artifacts = @(
+            (Join-Path $buildDir "occluview.exe"),
+            (Join-Path $buildDir "occluview_shell.dll"),
+            (Get-ChildItem ./dist -Filter *.msi | Select-Object -First 1).FullName
+          )
+          foreach ($path in $artifacts) {
+            if (-not (Test-Path $path)) { throw "Expected signed artifact missing: $path" }
+            $sig = Get-AuthenticodeSignature -FilePath $path
+            if ($sig.Status -ne "Valid") { throw "Authenticode signature for $path is $($sig.Status): $($sig.StatusMessage)" }
+            Write-Host "Authenticode valid: $path ($($sig.SignerCertificate.Subject))"
+          }
       - name: Build upgrade smoke MSI
         shell: pwsh
+        env:
+          OCCLUVIEW_SIGN_PFX_BASE64: ${{ secrets.OCCLUVIEW_SIGN_PFX_BASE64 }}
+          OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
+          OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
         run: |
           $cargoText = Get-Content ./Cargo.toml -Raw
           $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
@@ -140,10 +176,14 @@ jobs:
   linux-package:
     name: build linux deb
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Check release tag
@@ -234,6 +274,8 @@ jobs:
       - windows-package
       - linux-package
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:

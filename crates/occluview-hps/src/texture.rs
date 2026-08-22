@@ -104,6 +104,7 @@ fn parse_texture_image(text: &str) -> Result<Option<DecodedTexture>, HpsError> {
 fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTexture, HpsError> {
     let (width, height, mut rgba) = texture.into_parts();
     if texture_is_implausibly_blue(&rgba) {
+        tracing::debug!("texture channel correction: swapping R/B (implausibly blue)");
         for pixel in rgba.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }

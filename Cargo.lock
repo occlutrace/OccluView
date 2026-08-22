@@ -2461,6 +2461,7 @@ dependencies = [
  "image",
  "md-5",
  "thiserror 1.0.69",
+ "tracing",
  "zeroize",
  "zip",
 ]

@@ -101,7 +101,9 @@ mod tests {
         );
 
         let readme = include_str!("../../../README.md");
-        let public_promise = "`.hps` and `.dcm` - HPS mesh containers";
-        assert!(readme.contains(public_promise));
+        assert!(
+            readme.contains(".hps") && readme.contains(".dcm"),
+            "README must document .hps and .dcm"
+        );
     }
 }

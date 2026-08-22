@@ -1,0 +1,6 @@
+* @occlutrace/maintainers
+/crates/occluview-hps/ @occlutrace/maintainers
+/crates/occluview-formats/ @occlutrace/maintainers
+/crates/occluview-shell/ @occlutrace/maintainers
+/.github/workflows/ @occlutrace/maintainers
+/install/ @occlutrace/maintainers

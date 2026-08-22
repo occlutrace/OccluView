@@ -128,3 +128,18 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2.0.20
         with:
           arguments: --workspace --all-features
+
+  fuzz-smoke:
+    name: fuzz smoke (parsers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz dispatch 30s
+        run: cargo fuzz run dispatch -- -max_total_time=30 -max_len=65536
+        working-directory: fuzz
+      - name: Fuzz HPS parser 30s
+        run: cargo fuzz run hps_parser -- -max_total_time=30 -max_len=65536
+        working-directory: fuzz

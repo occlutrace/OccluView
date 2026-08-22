@@ -18,6 +18,8 @@
 *.lib binary
 *.3mf binary
 *.glb binary
+*.webm binary
+*.mp4 binary
 
 # Markdown / source — force LF (these are edited on Windows too).
 *.md   text eol=lf
