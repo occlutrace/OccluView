@@ -12,6 +12,9 @@ env:
   # Don't let a stray println slow the build or pull optional features.
   CARGO_NET_RETRY: 3
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,19 +23,27 @@ jobs:
   fmt:
     name: cargo fmt
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: rustfmt check
         run: cargo fmt --all -- --check
+      - name: rustfmt check (fuzz)
+        run: cargo fmt --check --manifest-path fuzz/Cargo.toml
 
   clippy:
     name: clippy (windows)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -44,8 +55,11 @@ jobs:
     # Catch type bugs in the Windows-adjacent cross-platform crates from Linux.
     name: cross-compile (windows-gnu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
@@ -62,8 +76,11 @@ jobs:
     # Windows host. Other jobs compile the cross-platform app path.
     name: build (windows integration)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: cargo check (shell + app)
@@ -76,8 +93,11 @@ jobs:
     # working production hardware paths.
     name: test (linux renderer)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Install Lavapipe Vulkan adapter
@@ -98,8 +118,11 @@ jobs:
     # MSI lifecycle smoke and is not stable enough for a large raster suite.
     name: test (windows shell)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: cargo test --workspace (without WARP pixel suites)
@@ -110,9 +133,12 @@ jobs:
 
   docs:
     name: cargo doc
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: cargo doc (no warnings)
@@ -123,8 +149,11 @@ jobs:
   deny:
     name: cargo deny (licenses + advisories)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@v2.0.20
         with:
           arguments: --workspace --all-features
@@ -132,9 +161,12 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (parsers)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Fuzz dispatch 30s
@@ -142,4 +174,10 @@ jobs:
         working-directory: fuzz
       - name: Fuzz HPS parser 30s
         run: cargo fuzz run hps_parser -- -max_total_time=30 -max_len=65536
+        working-directory: fuzz
+      - name: Fuzz STL 30s
+        run: cargo fuzz run stl -- -max_total_time=30 -max_len=65536
+        working-directory: fuzz
+      - name: Fuzz PLY 30s
+        run: cargo fuzz run ply -- -max_total_time=30 -max_len=65536
         working-directory: fuzz

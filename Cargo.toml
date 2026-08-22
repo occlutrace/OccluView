@@ -4,13 +4,14 @@
 #   mesh-edit ← (nothing)
 #   hps       ← (no OccluView crates)
 #   align     ← (nothing; plain slices in, plain values out)
-#   core → mesh-edit (+ optional robust-csg bridge fallback)
-#   formats → core + hps
-#   render  → core
+#   core      → mesh-edit (+ optional robust-csg bridge fallback)
+#   formats   → core + hps
+#   render    → core
 #   thumbnail → core + render + formats
-#   shell   → core + render + formats + thumbnail
-#   app     → core + formats + render + align (+ shell on Windows for installer refresh)
-#   cli     → core + formats + render + thumbnail
+#   shell     → core + render + formats + thumbnail
+#   app       → core + formats + render + align + update (+ shell on Windows for installer refresh)
+#   cli       → core + formats + render + thumbnail
+#   update    → (nothing)
 # Cycles are P0. Never add an upward dependency.
 #
 # License: Apache-2.0 (NOTICE + LICENSE).
@@ -31,6 +32,8 @@ members = [
     "crates/occluview-app",
     "crates/occluview-cli",
 ]
+exclude = ["fuzz"]
+
 # `cargo check/test` without `--workspace` uses default-members. Keep the
 # cross-platform app and logic crates here; the Windows COM shell crate remains
 # opt-in unless the full workspace is requested.

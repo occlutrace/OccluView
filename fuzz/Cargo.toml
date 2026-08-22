@@ -8,19 +8,3 @@ publish = false
 occluview-formats = { path = "../crates/occluview-formats" }
 occluview-hps = { path = "../crates/occluview-hps" }
 libfuzzer-sys = "0.4"
-
-[[bin]]
-name = "fuzz_dispatch"
-path = "fuzz_targets/dispatch.rs"
-
-[[bin]]
-name = "fuzz_hps_parser"
-path = "fuzz_targets/hps_parser.rs"
-
-[[bin]]
-name = "fuzz_stl"
-path = "fuzz_targets/stl.rs"
-
-[[bin]]
-name = "fuzz_ply"
-path = "fuzz_targets/ply.rs"
