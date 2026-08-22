@@ -73,10 +73,10 @@ pub mod render_thumb {
         placeholder_for_oversize_input, render_thumbnail_file_or_placeholder,
         render_thumbnail_file_or_placeholder_with_timeout, render_thumbnail_or_placeholder,
         render_thumbnail_or_placeholder_with_timeout,
-        render_thumbnail_shared_or_placeholder_with_reservation,
         render_thumbnail_shared_or_placeholder_with_timeout, reserve_thumbnail_stream_job,
-        ThumbnailJobReservation, DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_FILE_BYTES,
-        MAX_THUMBNAIL_INPUT_BYTES,
+        try_render_thumbnail_file, try_render_thumbnail_shared,
+        try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, ThumbnailJobReservation,
+        DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
     };
 
     /// Render a thumbnail from bytes, preserving the shell error type.

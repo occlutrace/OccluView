@@ -6,8 +6,14 @@
 //! detects the format, renders the mesh, and calls the same
 //! `render_thumbnail` code path the CLI uses.
 //!
-//! On render errors we return an OccluView placeholder bitmap. COM ABI errors
-//! still return `E_FAIL`. We never propagate a panic across the COM boundary.
+//! Verdict policy at the COM boundary: a broken or unsupported file returns an
+//! OccluView placeholder bitmap (a stable verdict Explorer may cache), while a
+//! *transient* miss — timeout, saturated queue, GPU fault, unreadable stream —
+//! returns a failure `HRESULT`. Explorer's thumbcache permanently stores any
+//! bitmap returned with `S_OK`, so answering "busy" with a placeholder would
+//! freeze the placeholder into the file's icon until the file is modified.
+//! COM ABI errors still return `E_FAIL`. We never propagate a panic across
+//! the COM boundary.
 
 // This module is the COM ABI boundary: FFI exports, raw pointer parameters,
 // and windows-rs calls that are `unsafe` by definition. The rest of the crate
@@ -30,12 +36,11 @@
 )]
 
 use crate::deferred_source::DeferredSource;
-use crate::placeholder::placeholder_thumbnail;
 use crate::preview_scene::{win32_preview_orbit_delta, PreviewSceneState};
 use crate::render_thumb::{
-    placeholder_for_oversize_input, render_thumbnail_file_or_placeholder,
-    render_thumbnail_shared_or_placeholder_with_reservation, reserve_thumbnail_stream_job,
-    DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_INPUT_BYTES,
+    placeholder_for_oversize_input, reserve_thumbnail_stream_job, try_render_thumbnail_file,
+    try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, DEFAULT_THUMBNAIL_TIMEOUT,
+    MAX_THUMBNAIL_INPUT_BYTES,
 };
 use crate::stream_read::{read_capped_stream, StreamRead};
 use crate::ShellError;
@@ -231,83 +236,110 @@ impl ThumbnailProvider {
     }
 
     /// Render at `size` px (square, clamped to 1..=1024) and return the HBITMAP.
+    ///
+    /// A transient pipeline failure becomes an error HRESULT here, never a
+    /// bitmap: Explorer's thumbcache permanently stores any bitmap returned
+    /// with `S_OK`, keyed only by the file's modification time, so a "busy
+    /// right now" placeholder would freeze into the file's icon until the file
+    /// itself changes. A failed extraction shows the format icon for this
+    /// browse and stays eligible for re-extraction — usually served instantly
+    /// from the process cache the background worker populated meanwhile.
     fn render_to_hbitmap(&self, size: u32) -> windows::core::Result<HBITMAP> {
         let size_px = size.clamp(1, 1024) as u16;
         let spec = ThumbnailSpec {
             size_px,
             ..Default::default()
         };
-        let pixels = self.thumbnail_pixels(spec);
-        pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px))
-    }
-
-    /// Produce the RGBA pixels for this request. Infallible, correctly sized,
-    /// and never empty: over-budget files, unreadable shell streams, decode
-    /// failures, and renderer/timeout errors all collapse to a deterministic
-    /// placeholder of exactly `spec.size_px`.
-    ///
-    /// This matters for a *folder* of files, not just one file. Returning an
-    /// error HRESULT or a wrong-sized/empty buffer here makes Explorer show a
-    /// generic icon for this file; a panic escaping this COM method is worse
-    /// still — it unwinds across the `extern "system"` ABI (undefined behavior
-    /// when the DLL is built `panic = "unwind"`, an immediate `abort` of the
-    /// whole `dllhost` surrogate when built `panic = "abort"`). Either way one
-    /// bad file would blank the thumbnails of every *other* file the same
-    /// surrogate is servicing. Catching here keeps each request isolated.
-    fn thumbnail_pixels(&self, spec: ThumbnailSpec) -> Vec<u8> {
-        let produced = catch_unwind(AssertUnwindSafe(|| self.render_pixels(spec)));
-        let pixels = produced.unwrap_or_else(|_panic| {
-            tracing::error!(
-                "thumbnail render panicked; substituting placeholder to keep the COM boundary safe"
-            );
-            placeholder_thumbnail(spec)
-        });
-
-        let expected = usize::from(spec.size_px) * usize::from(spec.size_px) * 4;
-        if pixels.len() == expected {
-            pixels
-        } else {
-            tracing::warn!(
-                got = pixels.len(),
-                expected,
-                "thumbnail pixels had an unexpected size; substituting placeholder"
-            );
-            placeholder_thumbnail(spec)
+        match self.thumbnail_attempt(spec) {
+            ThumbnailAttempt::Bitmap(pixels) => {
+                pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px))
+            }
+            ThumbnailAttempt::TransientFailure => Err(e_fail()),
         }
     }
 
-    /// The underlying pixel producer. May read the shell stream; a stream-read
-    /// failure resolves to a placeholder rather than an error HRESULT so the
-    /// shell never gets "nothing" for a file it asked us to render.
-    fn render_pixels(&self, spec: ThumbnailSpec) -> Vec<u8> {
+    /// Produce the verdict for this request: cacheable pixels of exactly
+    /// `spec.size_px` (a real render or a deterministic placeholder), or a
+    /// transient failure the COM layer reports as an error.
+    ///
+    /// This matters for a *folder* of files, not just one file. A panic
+    /// escaping this COM method unwinds across the `extern "system"` ABI —
+    /// which Rust turns into an immediate abort of the whole `dllhost`
+    /// surrogate regardless of panic profile — and one bad file would blank
+    /// the thumbnails of every *other* file the same surrogate is servicing.
+    /// Catching here keeps each request isolated.
+    fn thumbnail_attempt(&self, spec: ThumbnailSpec) -> ThumbnailAttempt {
+        let produced = catch_unwind(AssertUnwindSafe(|| self.render_attempt(spec)));
+        let attempt = produced.unwrap_or_else(|_panic| {
+            tracing::error!(
+                "thumbnail render panicked; reporting transient failure to keep the COM boundary safe"
+            );
+            ThumbnailAttempt::TransientFailure
+        });
+
+        let expected = usize::from(spec.size_px) * usize::from(spec.size_px) * 4;
+        match attempt {
+            ThumbnailAttempt::Bitmap(pixels) if pixels.len() == expected => {
+                ThumbnailAttempt::Bitmap(pixels)
+            }
+            ThumbnailAttempt::Bitmap(pixels) => {
+                tracing::warn!(
+                    got = pixels.len(),
+                    expected,
+                    "thumbnail pixels had an unexpected size; reporting transient failure"
+                );
+                ThumbnailAttempt::TransientFailure
+            }
+            ThumbnailAttempt::TransientFailure => ThumbnailAttempt::TransientFailure,
+        }
+    }
+
+    /// The underlying verdict producer. May read the shell stream; a stream
+    /// read failure is transient (cloud placeholder hydration, network
+    /// hiccup), while over-budget and decode verdicts are deterministic
+    /// placeholders the shell may cache.
+    fn render_attempt(&self, spec: ThumbnailSpec) -> ThumbnailAttempt {
         if let Some(byte_len) = self.oversize_stream_len.get() {
-            return placeholder_for_oversize_input(spec, byte_len);
+            return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
         }
         // Bind the owned path first so the `source` borrow is released before
         // `ensure_stream_bytes` may borrow it mutably.
         let source_path = self.source.borrow().path().map(PathBuf::from);
         if let Some(path) = source_path {
-            return render_thumbnail_file_or_placeholder(&path, spec);
+            return try_render_thumbnail_file(&path, spec, DEFAULT_THUMBNAIL_TIMEOUT);
         }
         let _stream_bytes_guard = ThumbnailStreamBytesGuard::new(&self.bytes);
         let Some(reservation) = reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT) else {
             tracing::warn!(
-                "thumbnail stream budget was busy; returning a bounded placeholder instead of overcommitting dllhost"
+                "thumbnail stream budget was busy; reporting transient failure instead of overcommitting dllhost"
             );
-            return placeholder_thumbnail(spec);
+            return ThumbnailAttempt::TransientFailure;
         };
         let ext = self.source.borrow().extension().map(str::to_owned);
         let bytes = match self.ensure_stream_bytes() {
-            Ok(bytes) => bytes,
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                // The stream was already consumed (a repeat GetThumbnail on an
+                // exhausted instance) or it failed mid-read. Neither says
+                // anything about the file's content, so fail rather than hand
+                // the cache a stand-in bitmap.
+                tracing::warn!(
+                    "shell stream unavailable for this request; reporting transient failure"
+                );
+                return ThumbnailAttempt::TransientFailure;
+            }
             Err(error) => {
-                tracing::warn!(?error, "shell stream read failed; returning placeholder");
-                return placeholder_thumbnail(spec);
+                tracing::warn!(
+                    ?error,
+                    "shell stream read failed; reporting transient failure"
+                );
+                return ThumbnailAttempt::TransientFailure;
             }
         };
         if let Some(byte_len) = self.oversize_stream_len.get() {
-            placeholder_for_oversize_input(spec, byte_len)
+            ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len))
         } else {
-            render_thumbnail_shared_or_placeholder_with_reservation(
+            try_render_thumbnail_shared_with_reservation(
                 ext,
                 bytes,
                 spec,
@@ -317,9 +349,16 @@ impl ThumbnailProvider {
         }
     }
 
-    fn ensure_stream_bytes(&self) -> windows::core::Result<Arc<[u8]>> {
+    /// Read the pending shell stream into shared bytes.
+    ///
+    /// `Ok(Some(bytes))` is a complete copy; `Ok(None)` means no bytes are
+    /// available and no deterministic verdict applies (stream consumed, or the
+    /// read failed partway) — except the over-cap case, which sets
+    /// `oversize_stream_len` and returns empty bytes for the caller's
+    /// deterministic oversize placeholder.
+    fn ensure_stream_bytes(&self) -> windows::core::Result<Option<Arc<[u8]>>> {
         if !self.bytes.borrow().is_empty() {
-            return Ok(self.bytes.borrow().clone());
+            return Ok(Some(self.bytes.borrow().clone()));
         }
 
         let Some(stream_result) = self.source.borrow_mut().consume_pending_stream(
@@ -328,7 +367,7 @@ impl ThumbnailProvider {
                 ThumbnailProvider::read_stream(&stream)
             },
         ) else {
-            return Ok(Arc::<[u8]>::from([]));
+            return Ok(None);
         };
 
         match stream_result? {
@@ -336,16 +375,16 @@ impl ThumbnailProvider {
                 let bytes = Arc::<[u8]>::from(bytes);
                 *self.bytes.borrow_mut() = bytes.clone();
                 self.oversize_stream_len.set(None);
-                Ok(bytes)
+                Ok(Some(bytes))
             }
             StreamRead::OverCap { byte_len } => {
                 *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
                 self.oversize_stream_len.set(Some(byte_len));
-                Ok(Arc::<[u8]>::from([]))
+                Ok(Some(Arc::<[u8]>::from([])))
             }
             StreamRead::ReadFailed => {
                 *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-                Ok(Arc::<[u8]>::from([]))
+                Ok(None)
             }
         }
     }

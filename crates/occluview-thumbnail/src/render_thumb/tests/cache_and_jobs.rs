@@ -688,16 +688,11 @@ fn inflight_thumbnail_coalesces_duplicate_requests() {
         let key = key.clone();
         thread::spawn(move || {
             barrier.wait();
-            render_coalesced_thumbnail(
-                key,
-                Duration::from_millis(250),
-                move || {
-                    run_count.fetch_add(1, Ordering::SeqCst);
-                    thread::sleep(Duration::from_millis(40));
-                    vec![1, 2, 3, 4]
-                },
-                move || vec![9, 9, 9, 9],
-            )
+            render_coalesced_thumbnail(key, Duration::from_millis(250), move || {
+                run_count.fetch_add(1, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(40));
+                ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4])
+            })
         })
     };
 
@@ -707,13 +702,13 @@ fn inflight_thumbnail_coalesces_duplicate_requests() {
 
     let left = left.join().expect("left worker should complete");
     let right = right.join().expect("right worker should complete");
-    assert_eq!(left, vec![1, 2, 3, 4]);
-    assert_eq!(right, vec![1, 2, 3, 4]);
+    assert_eq!(left, ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4]));
+    assert_eq!(right, ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4]));
     assert_eq!(run_count.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn inflight_thumbnail_follower_timeout_uses_fallback_without_duplicate_render() {
+fn inflight_thumbnail_follower_timeout_reports_transient_failure_without_duplicate_render() {
     let bytes = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
     let key = ThumbnailRequestKey::Stream {
         cache_key: cache::ThumbnailStreamCacheKey::new(occluview_formats::FormatKind::Obj, bytes),
@@ -731,17 +726,12 @@ fn inflight_thumbnail_follower_timeout_uses_fallback_without_duplicate_render() 
     let leader_key = key.clone();
     let leader_count = run_count.clone();
     let leader = thread::spawn(move || {
-        render_coalesced_thumbnail(
-            leader_key,
-            Duration::from_millis(250),
-            move || {
-                leader_count.fetch_add(1, Ordering::SeqCst);
-                let _ = leader_entered_render.send(());
-                thread::sleep(Duration::from_millis(90));
-                vec![9, 8, 7, 6]
-            },
-            move || vec![0, 0, 0, 0],
-        )
+        render_coalesced_thumbnail(leader_key, Duration::from_millis(250), move || {
+            leader_count.fetch_add(1, Ordering::SeqCst);
+            let _ = leader_entered_render.send(());
+            thread::sleep(Duration::from_millis(90));
+            ThumbnailAttempt::Bitmap(vec![9, 8, 7, 6])
+        })
     });
 
     leader_registered
@@ -750,21 +740,19 @@ fn inflight_thumbnail_follower_timeout_uses_fallback_without_duplicate_render() 
     let follower_key = key.clone();
     let follower_count = run_count.clone();
     let follower = thread::spawn(move || {
-        render_coalesced_thumbnail(
-            follower_key,
-            Duration::from_millis(10),
-            move || {
-                follower_count.fetch_add(1, Ordering::SeqCst);
-                vec![5, 4, 3, 2]
-            },
-            move || vec![4, 3, 2, 1],
-        )
+        render_coalesced_thumbnail(follower_key, Duration::from_millis(10), move || {
+            follower_count.fetch_add(1, Ordering::SeqCst);
+            ThumbnailAttempt::Bitmap(vec![5, 4, 3, 2])
+        })
     });
     let leader = leader.join().expect("leader should complete");
     let follower = follower.join().expect("follower should complete");
 
-    assert_eq!(leader, vec![9, 8, 7, 6]);
-    assert_eq!(follower, vec![4, 3, 2, 1]);
+    assert_eq!(leader, ThumbnailAttempt::Bitmap(vec![9, 8, 7, 6]));
+    // A follower that outwaits its budget reports the transient failure so the
+    // COM layer can answer with an error HRESULT; inventing pixels here would
+    // be cached by Explorer as the file's icon.
+    assert_eq!(follower, ThumbnailAttempt::TransientFailure);
     assert_eq!(run_count.load(Ordering::SeqCst), 1);
 }
 

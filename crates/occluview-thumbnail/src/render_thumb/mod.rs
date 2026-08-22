@@ -60,14 +60,14 @@ pub const MAX_THUMBNAIL_INPUT_BYTES: usize = 192 * 1024 * 1024;
 /// file into the COM surrogate's heap.
 pub const MAX_THUMBNAIL_FILE_BYTES: usize = 512 * 1024 * 1024;
 // Ceiling on how long a request may wait for a free render slot (the "setup"
-// phase) before it gives up and returns a placeholder. This is the longest a
-// single `GetThumbnail` can tie up one of Explorer's thumbnail worker threads
-// while queued, so it must stay well under Explorer's own extraction window:
-// hold the thread too long and Explorer abandons the call, shows the format
-// icon, AND negative-caches it. A timed-out render keeps going in the
-// background and caches its result (see the job workers), so returning a
-// placeholder here is never the final word — the real thumbnail lands on the
-// next repaint.
+// phase) before it gives up with a transient failure. Under Explorer's
+// Apartment hosting every extraction of our CLSID serializes through one host
+// STA thread, so this bound is the longest a single `GetThumbnail` can stall
+// the entire folder's queue while merely waiting its turn internally: hold it
+// too long and the shell abandons not just this call but the calls queued
+// behind it. A timed-out render keeps going in the background and caches its
+// result (see the job workers), so a transient failure here is never the
+// final word — the real thumbnail is served from the cache on the retry.
 const MAX_THUMBNAIL_SETUP_TIMEOUT: Duration = Duration::from_secs(8);
 
 static THUMBNAIL_INFLIGHT: OnceLock<
@@ -79,6 +79,43 @@ static THUMBNAIL_FILE_CONTENT_CACHE: OnceLock<Mutex<cache::ThumbnailFileContentC
 static THUMBNAIL_STREAM_CACHE: OnceLock<Mutex<cache::ThumbnailStreamCache>> = OnceLock::new();
 static THUMBNAIL_RENDERER_POOL: OnceLock<ThumbnailRendererPool> = OnceLock::new();
 static THUMBNAIL_JOB_GATE: OnceLock<concurrency::ThumbnailJobGate> = OnceLock::new();
+
+/// Outcome of one thumbnail request against the shared pipeline.
+///
+/// The distinction exists because Explorer's thumbnail cache permanently
+/// stores ANY bitmap a provider returns with `S_OK`, keyed by the file's
+/// modification time ("once a thumbnail is computed ... it is cached and your
+/// handler won't be called again for that item unless you invalidate the cache
+/// by updating the modification date" — Microsoft, `RecipeThumbnailProvider`).
+/// Returning a placeholder for a *transient* condition therefore freezes that
+/// placeholder into the file's icon until the file itself changes. Only
+/// verdicts that will reproduce on every future attempt may become pixels.
+#[derive(Debug, Eq, PartialEq)]
+pub enum ThumbnailAttempt {
+    /// Pixels the shell may cache: a real render, or a deterministic
+    /// placeholder verdict (corrupt file, unsupported payload, over budget).
+    Bitmap(Vec<u8>),
+    /// No verdict inside the caller's budget: the job queue was saturated, the
+    /// render timed out, the GPU faulted, or the source stream misbehaved.
+    /// The worker may still be finishing in the background and will publish
+    /// into the process cache; the COM layer must answer with a failure
+    /// `HRESULT` so Explorer retries instead of caching a stand-in bitmap.
+    TransientFailure,
+}
+
+impl ThumbnailAttempt {
+    /// Collapse to pixels, substituting the deterministic placeholder for a
+    /// transient failure. This is the freedesktop-thumbnailer contract (the
+    /// CLI must always emit a PNG) and the pre-cache-aware compatibility
+    /// behavior of the `*_or_placeholder` entry points.
+    #[must_use]
+    pub fn into_pixels_or_placeholder(self, spec: ThumbnailSpec) -> Vec<u8> {
+        match self {
+            Self::Bitmap(pixels) => pixels,
+            Self::TransientFailure => placeholder_thumbnail(spec),
+        }
+    }
+}
 
 /// Capacity reserved before a shell stream is copied into memory.
 ///
@@ -106,8 +143,8 @@ pub fn reserve_thumbnail_stream_job(timeout: Duration) -> Option<ThumbnailJobRes
 /// Job Object with a watchdog.
 ///
 /// # Errors
-/// See [`ThumbnailError`]. The shell layer translates any error into a branded
-/// placeholder returned to Windows.
+/// See [`ThumbnailError`]. The shell layer translates decode errors into a
+/// branded placeholder and transient errors into a failure `HRESULT`.
 pub fn render_thumbnail(
     extension: &str,
     bytes: &[u8],
@@ -199,21 +236,41 @@ pub fn render_thumbnail_file_or_placeholder_with_timeout(
     spec: ThumbnailSpec,
     timeout: Duration,
 ) -> Vec<u8> {
+    try_render_thumbnail_file(path, spec, timeout).into_pixels_or_placeholder(spec)
+}
+
+/// Render a local file with a bounded wait, reporting transient failures
+/// instead of masking them as placeholder pixels.
+///
+/// This is the shell-facing entry point: see [`ThumbnailAttempt`] for why a
+/// timeout must NOT become a bitmap when the caller is Explorer's thumbnail
+/// cache.
+#[must_use]
+pub fn try_render_thumbnail_file(
+    path: &Path,
+    spec: ThumbnailSpec,
+    timeout: Duration,
+) -> ThumbnailAttempt {
     let plan = match prepare_file_thumbnail_render(path, timeout) {
         Ok(plan) => plan,
         Err(FileThumbnailPreflightError::UnsupportedExtension) => {
+            // Deterministic: the extension is simply not ours. This repeats on
+            // every attempt, so the placeholder is a correct cacheable verdict.
             tracing::warn!(
                 path = %path.display(),
                 "thumbnail file extension is not registered for OccluView; returning placeholder"
             );
-            return placeholder_thumbnail(spec);
+            return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
         }
         Err(FileThumbnailPreflightError::Metadata(error)) => {
+            // Transient: the common causes are a sharing violation while the
+            // scanner is still writing the file, or a file that vanished
+            // mid-browse. Neither is a verdict about the file's content.
             tracing::warn!(?error, path = %path.display(), "thumbnail file metadata failed");
-            return placeholder_thumbnail(spec);
+            return ThumbnailAttempt::TransientFailure;
         }
         Err(FileThumbnailPreflightError::Oversize { byte_len }) => {
-            return placeholder_for_oversize_input(spec, byte_len);
+            return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
         }
     };
 
@@ -223,7 +280,7 @@ pub fn render_thumbnail_file_or_placeholder_with_timeout(
     // Content hashing is bounded and also deduplicates copied CAD exports.
     let (content_key, content_hit) = file_content_cache_lookup(path, &plan, spec);
     if let Some(pixels) = content_hit {
-        return pixels;
+        return ThumbnailAttempt::Bitmap(pixels);
     }
 
     let inflight_key = match content_key.clone() {
@@ -246,12 +303,9 @@ pub fn render_thumbnail_file_or_placeholder_with_timeout(
         path: path_cache_key,
         content: content_key,
     };
-    render_coalesced_thumbnail(
-        inflight_key,
-        wait_timeout,
-        move || render_file_thumbnail_job(path, metadata, cache_keys, spec, timeout),
-        move || placeholder_thumbnail(spec),
-    )
+    render_coalesced_thumbnail(inflight_key, wait_timeout, move || {
+        render_file_thumbnail_job(path, metadata, cache_keys, spec, timeout)
+    })
 }
 
 fn file_content_cache_lookup(
@@ -296,7 +350,7 @@ fn render_file_thumbnail_job(
     cache_keys: FileThumbnailCacheKeys,
     spec: ThumbnailSpec,
     timeout: Duration,
-) -> Vec<u8> {
+) -> ThumbnailAttempt {
     let result = run_thumbnail_job_with_deadline(timeout, move |progress| {
         let result = (|| -> Result<Vec<u8>, ThumbnailError> {
             let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
@@ -315,34 +369,66 @@ fn render_file_thumbnail_job(
         let _ = progress.send(ThumbnailJobProgress::Finished(result));
     });
 
-    match result {
-        ThumbnailJobOutcome::Finished(Ok(pixels)) => pixels,
-        ThumbnailJobOutcome::Finished(Err(error)) => {
-            let kind = placeholder_kind_for_error(&error);
-            tracing::warn!(
-                ?error,
-                ?kind,
-                "thumbnail file render failed; returning placeholder"
-            );
-            placeholder_thumbnail_kind(spec, kind)
-        }
+    thumbnail_attempt_for_job_outcome(result, spec, timeout, "file")
+}
+
+/// Translate a worker outcome into the cache-safety split: decode verdicts
+/// become pixels, everything a retry could plausibly fix stays a failure.
+///
+/// A render/GPU error is deliberately on the transient side even though the
+/// old behavior painted a plain placeholder: a lost device or a driver reset
+/// says nothing about the file, and the retry path is cheap because the pool
+/// discards the sick renderer and the next attempt gets a fresh one.
+fn thumbnail_attempt_for_job_outcome(
+    outcome: ThumbnailJobOutcome<Result<Vec<u8>, ThumbnailError>>,
+    spec: ThumbnailSpec,
+    timeout: Duration,
+    source: &'static str,
+) -> ThumbnailAttempt {
+    match outcome {
+        ThumbnailJobOutcome::Finished(Ok(pixels)) => ThumbnailAttempt::Bitmap(pixels),
+        ThumbnailJobOutcome::Finished(Err(error)) => match &error {
+            ThumbnailError::Format(_) => {
+                let kind = placeholder_kind_for_error(&error);
+                tracing::warn!(
+                    ?error,
+                    ?kind,
+                    source,
+                    "thumbnail decode failed; returning placeholder verdict"
+                );
+                ThumbnailAttempt::Bitmap(placeholder_thumbnail_kind(spec, kind))
+            }
+            ThumbnailError::Render(_) => {
+                tracing::warn!(
+                    ?error,
+                    source,
+                    "thumbnail render failed; reporting transient failure"
+                );
+                ThumbnailAttempt::TransientFailure
+            }
+        },
         ThumbnailJobOutcome::SetupTimedOut => {
             tracing::warn!(
                 ?timeout,
-                "thumbnail file exceeded its end-to-end budget before preparation completed; returning placeholder"
+                source,
+                "thumbnail exceeded its end-to-end budget before preparation completed; reporting transient failure"
             );
-            placeholder_thumbnail(spec)
+            ThumbnailAttempt::TransientFailure
         }
         ThumbnailJobOutcome::RenderTimedOut => {
             tracing::warn!(
                 ?timeout,
-                "thumbnail file render timed out after renderer checkout; returning placeholder"
+                source,
+                "thumbnail render timed out after renderer checkout; reporting transient failure"
             );
-            placeholder_thumbnail(spec)
+            ThumbnailAttempt::TransientFailure
         }
         ThumbnailJobOutcome::Failed => {
-            tracing::warn!("thumbnail file worker failed; returning placeholder");
-            placeholder_thumbnail(spec)
+            tracing::warn!(
+                source,
+                "thumbnail worker failed; reporting transient failure"
+            );
+            ThumbnailAttempt::TransientFailure
         }
     }
 }
@@ -372,47 +458,57 @@ pub fn render_thumbnail_shared_or_placeholder_with_timeout(
     spec: ThumbnailSpec,
     timeout: Duration,
 ) -> Vec<u8> {
-    render_thumbnail_shared_or_placeholder_with_timeout_impl(extension, bytes, spec, timeout, None)
+    try_render_thumbnail_shared_impl(extension, bytes, spec, timeout, None)
+        .into_pixels_or_placeholder(spec)
+}
+
+#[must_use]
+/// Render shared stream bytes with a bounded wait, reporting transient
+/// failures instead of masking them as placeholder pixels.
+pub fn try_render_thumbnail_shared(
+    extension: Option<String>,
+    bytes: Arc<[u8]>,
+    spec: ThumbnailSpec,
+    timeout: Duration,
+) -> ThumbnailAttempt {
+    try_render_thumbnail_shared_impl(extension, bytes, spec, timeout, None)
 }
 
 #[must_use]
 #[cfg_attr(not(windows), allow(dead_code))]
-/// Render shared stream bytes using a previously acquired job reservation.
-pub fn render_thumbnail_shared_or_placeholder_with_reservation(
+/// Render shared stream bytes using a previously acquired job reservation,
+/// reporting transient failures instead of masking them as placeholder pixels.
+pub fn try_render_thumbnail_shared_with_reservation(
     extension: Option<String>,
     bytes: Arc<[u8]>,
     spec: ThumbnailSpec,
     timeout: Duration,
     reservation: ThumbnailJobReservation,
-) -> Vec<u8> {
-    render_thumbnail_shared_or_placeholder_with_timeout_impl(
-        extension,
-        bytes,
-        spec,
-        timeout,
-        Some(reservation),
-    )
+) -> ThumbnailAttempt {
+    try_render_thumbnail_shared_impl(extension, bytes, spec, timeout, Some(reservation))
 }
 
-fn render_thumbnail_shared_or_placeholder_with_timeout_impl(
+fn try_render_thumbnail_shared_impl(
     extension: Option<String>,
     bytes: Arc<[u8]>,
     spec: ThumbnailSpec,
     timeout: Duration,
     reservation: Option<ThumbnailJobReservation>,
-) -> Vec<u8> {
+) -> ThumbnailAttempt {
     let plan = match prepare_stream_thumbnail_render(extension.as_deref(), bytes.as_ref(), timeout)
     {
         Ok(plan) => plan,
         Err(StreamThumbnailPreflightError::Oversize { byte_len }) => {
-            return placeholder_for_oversize_input(spec, byte_len);
+            return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
         }
         Err(StreamThumbnailPreflightError::Format(error)) => {
+            // Deterministic: neither magic bytes nor the extension hint mapped
+            // these bytes to a reader we ship. Retrying cannot change that.
             tracing::warn!(
                 ?error,
                 "thumbnail stream format inference failed before worker startup; returning placeholder"
             );
-            return placeholder_thumbnail(spec);
+            return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
         }
     };
     if let Ok(mut cache) = thumbnail_stream_cache().lock() {
@@ -421,7 +517,7 @@ fn render_thumbnail_shared_or_placeholder_with_timeout_impl(
             spec.size_px,
             thumbnail_background_key(spec.background),
         ) {
-            return pixels;
+            return ThumbnailAttempt::Bitmap(pixels);
         }
     }
 
@@ -430,75 +526,41 @@ fn render_thumbnail_shared_or_placeholder_with_timeout_impl(
         size_px: spec.size_px,
         background: thumbnail_background_key(spec.background),
     };
-    render_coalesced_thumbnail(
-        inflight_key,
-        plan.wait_timeout,
-        move || {
-            let cache_key_for_store = plan.cache_key.clone();
-            let kind = plan.kind;
-            let work = move |progress: std::sync::mpsc::SyncSender<
-                ThumbnailJobProgress<Result<Vec<u8>, ThumbnailError>>,
-            >| {
-                let result = (|| -> Result<Vec<u8>, ThumbnailError> {
-                    let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
-                    let _ = progress.send(ThumbnailJobProgress::Prepared);
-                    rendering::render_mesh_thumbnail(mesh, spec)
-                })();
-                // See the file path: cache from the worker so a render that
-                // outran the caller's deadline still lands in the cache for the
-                // next repaint instead of being thrown away.
-                if let Ok(pixels) = &result {
-                    if let Ok(mut cache) = thumbnail_stream_cache().lock() {
-                        cache.insert_with_background(
-                            cache_key_for_store,
-                            spec.size_px,
-                            thumbnail_background_key(spec.background),
-                            pixels,
-                        );
-                    }
-                }
-                let _ = progress.send(ThumbnailJobProgress::Finished(result));
-            };
-            let result = match reservation {
-                Some(ThumbnailJobReservation(permit)) => {
-                    run_thumbnail_job_with_permit_deadline(permit, timeout, work)
-                }
-                None => run_thumbnail_job_with_deadline(timeout, work),
-            };
-
-            match result {
-                ThumbnailJobOutcome::Finished(Ok(pixels)) => pixels,
-                ThumbnailJobOutcome::Finished(Err(error)) => {
-                    let kind = placeholder_kind_for_error(&error);
-                    tracing::warn!(
-                        ?error,
-                        ?kind,
-                        "thumbnail render failed; returning placeholder"
+    render_coalesced_thumbnail(inflight_key, plan.wait_timeout, move || {
+        let cache_key_for_store = plan.cache_key.clone();
+        let kind = plan.kind;
+        let work = move |progress: std::sync::mpsc::SyncSender<
+            ThumbnailJobProgress<Result<Vec<u8>, ThumbnailError>>,
+        >| {
+            let result = (|| -> Result<Vec<u8>, ThumbnailError> {
+                let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
+                let _ = progress.send(ThumbnailJobProgress::Prepared);
+                rendering::render_mesh_thumbnail(mesh, spec)
+            })();
+            // See the file path: cache from the worker so a render that
+            // outran the caller's deadline still lands in the cache for the
+            // next repaint instead of being thrown away.
+            if let Ok(pixels) = &result {
+                if let Ok(mut cache) = thumbnail_stream_cache().lock() {
+                    cache.insert_with_background(
+                        cache_key_for_store,
+                        spec.size_px,
+                        thumbnail_background_key(spec.background),
+                        pixels,
                     );
-                    placeholder_thumbnail_kind(spec, kind)
-                }
-                ThumbnailJobOutcome::SetupTimedOut => {
-                    tracing::warn!(
-                        ?timeout,
-                        "thumbnail stream exceeded its end-to-end budget before preparation completed; returning placeholder"
-                    );
-                    placeholder_thumbnail(spec)
-                }
-                ThumbnailJobOutcome::RenderTimedOut => {
-                    tracing::warn!(
-                        ?timeout,
-                        "thumbnail render timed out after renderer checkout; returning placeholder"
-                    );
-                    placeholder_thumbnail(spec)
-                }
-                ThumbnailJobOutcome::Failed => {
-                    tracing::warn!("thumbnail worker failed; returning placeholder");
-                    placeholder_thumbnail(spec)
                 }
             }
-        },
-        move || placeholder_thumbnail(spec),
-    )
+            let _ = progress.send(ThumbnailJobProgress::Finished(result));
+        };
+        let result = match reservation {
+            Some(ThumbnailJobReservation(permit)) => {
+                run_thumbnail_job_with_permit_deadline(permit, timeout, work)
+            }
+            None => run_thumbnail_job_with_deadline(timeout, work),
+        };
+
+        thumbnail_attempt_for_job_outcome(result, spec, timeout, "stream")
+    })
 }
 
 /// Return the policy placeholder for an input that exceeds the size ceiling.

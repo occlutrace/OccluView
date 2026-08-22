@@ -21,6 +21,7 @@ pub use render_thumb::{
     render_thumbnail, render_thumbnail_bytes, render_thumbnail_file,
     render_thumbnail_file_or_placeholder, render_thumbnail_file_or_placeholder_with_timeout,
     render_thumbnail_or_placeholder, render_thumbnail_or_placeholder_with_timeout,
+    try_render_thumbnail_file, try_render_thumbnail_shared, ThumbnailAttempt,
 };
 
 #[cfg(test)]

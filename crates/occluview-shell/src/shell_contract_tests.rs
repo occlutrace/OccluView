@@ -630,7 +630,7 @@ fn com_thumbnail_provider_accepts_file_paths_for_extension_hints() {
     assert!(com.contains("IInitializeWithItem"));
     assert!(com.contains("impl IInitializeWithFile_Impl for ThumbnailProvider_Impl"));
     assert!(com.contains("impl IInitializeWithItem_Impl for ThumbnailProvider_Impl"));
-    assert!(com.contains("render_thumbnail_file_or_placeholder(&path, spec)"));
+    assert!(com.contains("try_render_thumbnail_file(&path, spec, DEFAULT_THUMBNAIL_TIMEOUT)"));
     assert!(!com.contains("ThumbnailProvider::read_file(&path)"));
     assert!(!com.contains("std::fs::read(path)"));
     assert!(com.contains(".initialize_path(path.clone(), path_extension(&path));"));

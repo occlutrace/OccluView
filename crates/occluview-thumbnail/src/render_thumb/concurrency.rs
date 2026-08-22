@@ -3,8 +3,8 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used, clippy::panic))]
 
 use super::{
-    Duration, Mutex, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT, THUMBNAIL_JOB_GATE,
-    THUMBNAIL_RENDERER_POOL,
+    Duration, Mutex, ThumbnailAttempt, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT,
+    THUMBNAIL_JOB_GATE, THUMBNAIL_RENDERER_POOL,
 };
 use crate::offscreen_factory::create_thumbnail_offscreen;
 use occluview_render::Offscreen;
@@ -80,7 +80,37 @@ pub(super) struct InflightThumbnail {
 
 enum InflightThumbnailState {
     Running,
-    Finished(Vec<u8>),
+    Finished(InflightThumbnailResult),
+}
+
+/// The clonable form of a leader's verdict, published to coalesced followers.
+///
+/// Followers must inherit the leader's transient/deterministic split: handing
+/// a follower a placeholder bitmap while the leader reported a transient
+/// failure would put exactly the cacheable stand-in into Explorer's thumbcache
+/// that the split exists to prevent.
+#[derive(Clone)]
+enum InflightThumbnailResult {
+    Bitmap(Vec<u8>),
+    TransientFailure,
+}
+
+impl From<ThumbnailAttempt> for InflightThumbnailResult {
+    fn from(attempt: ThumbnailAttempt) -> Self {
+        match attempt {
+            ThumbnailAttempt::Bitmap(pixels) => Self::Bitmap(pixels),
+            ThumbnailAttempt::TransientFailure => Self::TransientFailure,
+        }
+    }
+}
+
+impl From<InflightThumbnailResult> for ThumbnailAttempt {
+    fn from(result: InflightThumbnailResult) -> Self {
+        match result {
+            InflightThumbnailResult::Bitmap(pixels) => Self::Bitmap(pixels),
+            InflightThumbnailResult::TransientFailure => Self::TransientFailure,
+        }
+    }
 }
 
 pub(super) enum InflightThumbnailLease {
@@ -330,11 +360,11 @@ fn acquire_inflight_thumbnail(key: &ThumbnailRequestKey) -> InflightThumbnailLea
 fn finish_inflight_thumbnail(
     key: &ThumbnailRequestKey,
     entry: &Arc<InflightThumbnail>,
-    pixels: &[u8],
+    result: InflightThumbnailResult,
 ) {
     {
         let mut state = lock_recover(&entry.state);
-        *state = InflightThumbnailState::Finished(pixels.to_vec());
+        *state = InflightThumbnailState::Finished(result);
         entry.ready.notify_all();
     }
 
@@ -350,13 +380,13 @@ fn finish_inflight_thumbnail(
 fn wait_for_inflight_thumbnail(
     entry: &Arc<InflightThumbnail>,
     timeout: Duration,
-) -> Option<Vec<u8>> {
+) -> Option<InflightThumbnailResult> {
     let deadline = Instant::now() + timeout;
     let mut state = lock_recover(&entry.state);
 
     loop {
         match &*state {
-            InflightThumbnailState::Finished(pixels) => return Some(pixels.clone()),
+            InflightThumbnailState::Finished(result) => return Some(result.clone()),
             InflightThumbnailState::Running => {
                 let remaining = deadline.checked_duration_since(Instant::now())?;
                 let (next_state, wait_result) = entry
@@ -375,33 +405,34 @@ fn wait_for_inflight_thumbnail(
 pub(super) fn render_coalesced_thumbnail(
     key: ThumbnailRequestKey,
     timeout: Duration,
-    render: impl FnOnce() -> Vec<u8>,
-    follower_fallback: impl FnOnce() -> Vec<u8>,
-) -> Vec<u8> {
-    // Both `render` and `follower_fallback` are infallible producers of a
-    // full-size bitmap (a real thumbnail or a placeholder), so every arm here
-    // returns real pixels — this function never yields an empty buffer, which
-    // is what "never show nothing in the folder" depends on downstream.
+    render: impl FnOnce() -> ThumbnailAttempt,
+) -> ThumbnailAttempt {
+    // `render` is an infallible producer of a verdict: a full-size bitmap (a
+    // real thumbnail or a deterministic placeholder) or an explicit transient
+    // failure. Followers inherit the leader's verdict verbatim; a follower
+    // that outwaits its budget reports transient failure rather than
+    // duplicating the render or inventing a cacheable placeholder.
     match acquire_inflight_thumbnail(&key) {
         InflightThumbnailLease::Leader(entry) => {
-            let pixels = panic::catch_unwind(AssertUnwindSafe(render)).unwrap_or_else(|_| {
+            let attempt = panic::catch_unwind(AssertUnwindSafe(render)).unwrap_or_else(|_| {
                 tracing::error!(
-                    "thumbnail leader panicked outside the worker boundary; returning a placeholder"
+                    "thumbnail leader panicked outside the worker boundary; reporting transient failure"
                 );
-                follower_fallback()
+                ThumbnailAttempt::TransientFailure
             });
-            finish_inflight_thumbnail(&key, &entry, &pixels);
-            pixels
+            let result = InflightThumbnailResult::from(attempt);
+            finish_inflight_thumbnail(&key, &entry, result.clone());
+            result.into()
         }
         InflightThumbnailLease::Follower(entry) => {
-            if let Some(pixels) = wait_for_inflight_thumbnail(&entry, timeout) {
-                pixels
+            if let Some(result) = wait_for_inflight_thumbnail(&entry, timeout) {
+                result.into()
             } else {
                 tracing::warn!(
                     ?timeout,
-                    "waiting for an identical in-flight thumbnail timed out; returning fallback instead of duplicate render"
+                    "waiting for an identical in-flight thumbnail timed out; reporting transient failure instead of duplicate render"
                 );
-                follower_fallback()
+                ThumbnailAttempt::TransientFailure
             }
         }
     }

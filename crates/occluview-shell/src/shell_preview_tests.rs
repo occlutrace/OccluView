@@ -142,8 +142,8 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
 fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
     let com = include_str!("com.rs");
     let start = com
-        .find("fn render_pixels(&self, spec: ThumbnailSpec)")
-        .expect("thumbnail render_pixels");
+        .find("fn render_attempt(&self, spec: ThumbnailSpec)")
+        .expect("thumbnail render_attempt");
     let body = &com[start..];
     let reserve = body
         .find("reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT)")
@@ -152,7 +152,7 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
         .find("self.ensure_stream_bytes()")
         .expect("shell stream read");
     let reserved_render = body
-        .find("render_thumbnail_shared_or_placeholder_with_reservation(")
+        .find("try_render_thumbnail_shared_with_reservation(")
         .expect("reserved render path");
 
     assert!(
@@ -169,8 +169,8 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
 fn thumbnail_provider_releases_full_stream_bytes_after_each_request() {
     let com = include_str!("com.rs");
     let start = com
-        .find("fn render_pixels(&self, spec: ThumbnailSpec)")
-        .expect("thumbnail render_pixels");
+        .find("fn render_attempt(&self, spec: ThumbnailSpec)")
+        .expect("thumbnail render_attempt");
     let body = &com[start..];
     let guard = body
         .find("ThumbnailStreamBytesGuard::new(&self.bytes)")
