@@ -173,3 +173,124 @@ fn inflight_followers_inherit_the_leaders_transient_failure() {
 fn write_verdict_fixture(name: &str, bytes: &[u8]) -> PathBuf {
     fixtures::write_temp_fixture(name, bytes)
 }
+
+/// The Explorer failure scenario, reproduced at the verdict level: one folder,
+/// several files, several formats, all extracted concurrently through both the
+/// file- and stream-backed entry points. Every healthy source must resolve to
+/// a real bitmap, every broken source to its deterministic placeholder — and
+/// no request may deadlock, panic, or launder a transient miss into pixels.
+#[test]
+fn mixed_format_burst_resolves_every_verdict_concurrently() {
+    let spec = ThumbnailSpec {
+        size_px: 48,
+        ..Default::default()
+    };
+    let budget = Duration::from_secs(30);
+
+    let stl_path = write_verdict_fixture("burst-real.stl", &fixtures::binary_stl_cube());
+    let obj_path = write_verdict_fixture("burst-real.obj", fixtures::colored_obj_cube().as_bytes());
+    let corrupt_path = {
+        let mut bytes = vec![0u8; 84];
+        bytes[80..84].copy_from_slice(&5000u32.to_le_bytes());
+        write_verdict_fixture("burst-corrupt.stl", &bytes)
+    };
+    let hps_zip = fixtures::hps_zip_triangle().expect("HPS ZIP fixture should build");
+
+    enum Expect {
+        RealBitmap,
+        ExactPlaceholder(Vec<u8>),
+    }
+    let corrupt_placeholder = placeholder_thumbnail_kind(spec, PlaceholderKind::Corrupt);
+    let plain_placeholder = placeholder_thumbnail(spec);
+
+    let mut requests: Vec<(
+        &'static str,
+        Box<dyn FnOnce() -> ThumbnailAttempt + Send>,
+        Expect,
+    )> = Vec::new();
+    for round in 0..2 {
+        let stl = stl_path.clone();
+        let obj = obj_path.clone();
+        let corrupt = corrupt_path.clone();
+        let ply_stream = Arc::<[u8]>::from(fixtures::colored_ply_cube());
+        let stl_stream = Arc::<[u8]>::from(fixtures::binary_stl_cube());
+        let hps_stream = Arc::<[u8]>::from(hps_zip.clone());
+        let noise_stream = Arc::<[u8]>::from(&b"\x07\x03garbage that matches no reader"[..]);
+        let _ = round;
+        requests.push((
+            "stl file",
+            Box::new(move || try_render_thumbnail_file(&stl, spec, budget)),
+            Expect::RealBitmap,
+        ));
+        requests.push((
+            "obj file",
+            Box::new(move || try_render_thumbnail_file(&obj, spec, budget)),
+            Expect::RealBitmap,
+        ));
+        requests.push((
+            "ply stream",
+            Box::new(move || {
+                try_render_thumbnail_shared(Some("ply".to_string()), ply_stream, spec, budget)
+            }),
+            Expect::RealBitmap,
+        ));
+        requests.push((
+            "extensionless stl stream",
+            Box::new(move || try_render_thumbnail_shared(None, stl_stream, spec, budget)),
+            Expect::RealBitmap,
+        ));
+        requests.push((
+            "hps zip stream",
+            Box::new(move || {
+                try_render_thumbnail_shared(Some("dcm".to_string()), hps_stream, spec, budget)
+            }),
+            Expect::RealBitmap,
+        ));
+        requests.push((
+            "corrupt stl file",
+            Box::new(move || try_render_thumbnail_file(&corrupt, spec, budget)),
+            Expect::ExactPlaceholder(corrupt_placeholder.clone()),
+        ));
+        requests.push((
+            "unrecognized stream",
+            Box::new(move || try_render_thumbnail_shared(None, noise_stream, spec, budget)),
+            Expect::ExactPlaceholder(plain_placeholder.clone()),
+        ));
+    }
+
+    let handles: Vec<_> = requests
+        .into_iter()
+        .map(|(label, request, expect)| (label, thread::spawn(request), expect))
+        .collect();
+    for (label, handle, expect) in handles {
+        let attempt = handle
+            .join()
+            .unwrap_or_else(|_| panic!("burst request panicked: {label}"));
+        let ThumbnailAttempt::Bitmap(pixels) = attempt else {
+            panic!("{label} reported a transient failure inside a generous budget");
+        };
+        match expect {
+            Expect::RealBitmap => {
+                assert_ne!(
+                    pixels, plain_placeholder,
+                    "{label} must render real geometry, not the plain placeholder"
+                );
+                assert_ne!(
+                    pixels, corrupt_placeholder,
+                    "{label} must render real geometry, not the corrupt placeholder"
+                );
+                assert!(
+                    pixels.chunks_exact(4).any(|px| px[3] > 0),
+                    "{label} rendered a fully transparent tile"
+                );
+            }
+            Expect::ExactPlaceholder(expected) => {
+                assert_eq!(pixels, expected, "{label} verdict drifted");
+            }
+        }
+    }
+
+    for path in [stl_path, obj_path, corrupt_path] {
+        let _ = fs::remove_file(path);
+    }
+}

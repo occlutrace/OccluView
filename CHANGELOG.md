@@ -54,6 +54,28 @@
   badges and precise DCM disclaimer, expanded SECURITY disclosure, CODEOWNERS
   and issue/PR templates, compressed `animation.webm` alongside GIF.
 
+- Fixed Explorer folders full of scans losing their thumbnails for good. When
+  several files — especially several formats — were extracted at once, any
+  request that ran out of time answered Windows with a placeholder image, and
+  Windows cached that image as the file's thumbnail until the file itself was
+  modified. A busy moment became a folder of permanent grey cubes. The
+  extension now answers "not yet" only as a retryable failure and reserves the
+  placeholder for files that are genuinely broken or unsupported, so a folder
+  that stumbled once heals on the next browse instead of staying blank.
+- Explorer thumbnails and the preview pane start faster: the renderer is
+  created once per host process — warmed in the background the moment Windows
+  loads the extension — instead of being rebuilt for every file. Clicking
+  through scans in the preview pane no longer pays a fresh GPU setup per
+  click, and a preview-pane resize renders once instead of twice.
+- Files stored by cloud sync as size-less placeholders no longer come back as
+  the oversize placeholder cube: a stream that does not declare its size is
+  read to the normal limit instead of being rejected unread.
+- One bad file can no longer take down every thumbnail and preview around it:
+  every entry point into the extension now contains failures to that one
+  request instead of letting them crash the shared Windows host process.
+- Thumbnails render at full sharpness up to 2048 px, covering the largest
+  Explorer icon sizes on high-DPI displays.
+
 ## 1.0.6 - 2026-07-29
 
 - Sculpt: the brush survives its first densifying Smooth stroke. The rebuilt,
