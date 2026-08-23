@@ -674,3 +674,28 @@ fn the_preview_window_and_the_com_object_die_together() {
         "the preview smoke should cover a host that releases without Unload"
     );
 }
+
+/// The COM boundary guard has to catch, not merely be spelled at every site.
+///
+/// Windows-only, because the module it tests is: CI runs the workspace suite
+/// on windows-latest, which is where this one counts.
+///
+/// The guard beside it checks that every entry point names `com_entry`. That
+/// is all a Linux build can check about the call sites, and it is worth
+/// having -- but it says nothing about the body. Deleting the `catch_unwind`
+/// from `com_entry` left the whole shell suite green, and `[profile.release]`
+/// sets `panic = "abort"` for the cdylib, so what these catches prevent is one
+/// bad file taking down `dllhost` and blanking every thumbnail in the folder.
+#[cfg(windows)]
+#[test]
+fn com_entry_returns_the_fallback_when_the_body_panics() {
+    let value = crate::com::com_entry("test::body_returns", || 0_u32, || 7);
+    assert_eq!(value, 7, "a body that returns must pass its value through");
+
+    let caught = crate::com::com_entry("test::body_panics", || 0_u32, || panic!("boom"));
+    assert_eq!(
+        caught, 0,
+        "a panicking body must come back as the fallback, not unwind into the \
+         COM caller"
+    );
+}

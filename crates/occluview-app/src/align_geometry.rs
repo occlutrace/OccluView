@@ -285,13 +285,46 @@ mod tests {
         assert!(cache.world.len() <= SLOTS);
     }
 
-    /// A pose that never changed must key the same way twice, or every job
-    /// would miss the cache and the whole thing would be dead weight.
+    /// The key has to separate every part of a pose.
+    ///
+    /// Asserting that one pose keys the same way twice says nothing: the
+    /// function is pure and its argument is `Copy`. What matters is that two
+    /// DIFFERENT poses key differently -- a key over translation alone lets a
+    /// rotated layer reuse the entry cached for its unrotated self, which is
+    /// stale geometry presented as current.
     #[test]
-    fn the_same_pose_keys_the_same_way() {
-        let pose = Affine3A::from_translation(Vec3::new(1.0, 2.0, 3.0));
-        assert_eq!(transform_key(pose), transform_key(pose));
-        assert_ne!(transform_key(pose), transform_key(Affine3A::IDENTITY));
+    fn poses_that_differ_anywhere_key_differently() {
+        let base = Affine3A::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        assert_ne!(transform_key(base), transform_key(Affine3A::IDENTITY));
+
+        let rotated = Affine3A::from_rotation_translation(
+            glam::Quat::from_rotation_z(0.3),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        assert_ne!(
+            transform_key(base),
+            transform_key(rotated),
+            "a rotation must change the key, or a rotated layer reuses the \
+             positions cached for its unrotated pose"
+        );
+
+        let scaled = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(1.5),
+            glam::Quat::IDENTITY,
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        assert_ne!(
+            transform_key(base),
+            transform_key(scaled),
+            "so must a scale"
+        );
+
+        let nudged = Affine3A::from_translation(Vec3::new(1.0, 2.0, 3.001));
+        assert_ne!(
+            transform_key(base),
+            transform_key(nudged),
+            "and a millimetre of translation"
+        );
     }
 
     /// The scratch buffer keeps the scan's own positions and normals and only

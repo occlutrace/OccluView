@@ -662,10 +662,20 @@ mod tests {
         assert!((width - 48.5).abs() < 0.01, "unexpected cell width {width}");
         // Four cells plus three gaps exactly refill the row (aligned grid).
         assert!((4.0 * width + 3.0 * 6.0 - 212.0).abs() < 0.01);
-        // Uniform and deterministic: same inputs give a bit-identical width.
-        assert_eq!(
-            cell_width(212.0, 3, 6.0).to_bits(),
-            cell_width(212.0, 3, 6.0).to_bits()
+        // The width has to answer to all three inputs. Calling the same pure
+        // function twice with the same arguments says nothing -- a body that
+        // ignored the count and the gap passed that.
+        assert!(
+            cell_width(212.0, 3, 6.0) > cell_width(212.0, 4, 6.0),
+            "fewer controls in the same row means wider cells"
+        );
+        assert!(
+            cell_width(212.0, 4, 6.0) > cell_width(212.0, 4, 12.0),
+            "a wider gap leaves less for each cell"
+        );
+        assert!(
+            cell_width(300.0, 4, 6.0) > cell_width(212.0, 4, 6.0),
+            "a wider row means wider cells"
         );
     }
 

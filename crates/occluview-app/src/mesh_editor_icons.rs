@@ -608,11 +608,21 @@ pub(crate) fn icon_button(
 
 /// Two barbs forming an arrowhead at `tip`, opening opposite `dir`.
 pub(super) fn arrowhead(painter: &egui::Painter, tip: Pos2, dir: Vec2, len: f32, stroke: Stroke) {
+    let [left, right] = arrowhead_barbs(tip, dir, len);
+    painter.line_segment([tip, left], stroke);
+    painter.line_segment([tip, right], stroke);
+}
+
+/// Where the two barbs of an arrowhead end, given its tip and direction.
+///
+/// Separate from the painting so the geometry can be asserted: a painter
+/// swallows whatever it is given, and a barb sent to infinity by a
+/// normalization edge case draws nothing anyone would notice in a test.
+fn arrowhead_barbs(tip: Pos2, dir: Vec2, len: f32) -> [Pos2; 2] {
     let d = dir.normalized();
     let n = Vec2::new(-d.y, d.x);
     let back = tip - d * len;
-    painter.line_segment([tip, back + n * len * 0.6], stroke);
-    painter.line_segment([tip, back - n * len * 0.6], stroke);
+    [back + n * len * 0.6, back - n * len * 0.6]
 }
 
 /// A circular history arrow. `redo` draws the clockwise (right-hand) sense; the
@@ -743,16 +753,30 @@ mod tests {
 
     #[test]
     fn arrowhead_barbs_stay_near_the_tip() {
-        // A regression guard: the barbs must not shoot off to infinity when the
-        // direction is axis-aligned (normalization edge cases).
-        let ctx = egui::Context::default();
-        let painter = ctx.debug_painter();
-        arrowhead(
-            &painter,
-            Pos2::new(10.0, 10.0),
+        // The barbs must not shoot off when the direction is axis-aligned or
+        // degenerate. This used to call the painter and assert nothing, so
+        // barbs a thousand times too far away passed it.
+        let tip = Pos2::new(10.0, 10.0);
+        let len = 3.0;
+        for dir in [
             Vec2::new(0.0, 1.0),
-            3.0,
-            Stroke::new(1.4, Color32::WHITE),
-        );
+            Vec2::new(1.0, 0.0),
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(0.7, -0.7),
+            Vec2::ZERO,
+        ] {
+            for barb in arrowhead_barbs(tip, dir, len) {
+                let offset = barb - tip;
+                assert!(
+                    offset.x.is_finite() && offset.y.is_finite(),
+                    "barb at {barb:?} for direction {dir:?}"
+                );
+                assert!(
+                    offset.length() <= len * 2.0,
+                    "barb sits {} px from a {len} px arrowhead, direction {dir:?}",
+                    offset.length()
+                );
+            }
+        }
     }
 }

@@ -351,6 +351,7 @@ fn colours(ui: &mut egui::Ui, mode: &mut RampMode) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::panic)]
     #![allow(clippy::expect_used)]
 
     use super::grey_sentence;
@@ -485,8 +486,13 @@ mod tests {
             .expect("the diagnostics are drawn by details");
         assert!(fold < call, "the diagnostics must be drawn inside the fold");
         for knob in ["Stepped bands", "Colours"] {
+            // A knob that has been renamed or deleted used to satisfy this:
+            // `unwrap_or(usize::MAX)` made a missing needle the largest
+            // possible position, which is always after the fold.
             let quoted = format!("\"{knob}\"");
-            let at = source.find(&quoted).unwrap_or(usize::MAX);
+            let Some(at) = source.find(&quoted) else {
+                panic!("{knob} is not in the panel at all");
+            };
             assert!(at > fold, "{knob} sits in front of the operator");
         }
     }

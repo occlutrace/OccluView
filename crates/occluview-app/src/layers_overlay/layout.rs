@@ -84,14 +84,25 @@ mod tests {
     }
 
     #[test]
-    fn layer_row_columns_do_not_overflow_available_width() {
+    fn the_name_column_takes_what_the_controls_leave() {
+        // The old form asserted `C + max(w - C, 0) <= max(w, C)`, which is the
+        // same expression on both sides and true for any constants at all --
+        // the control stack could have been five thousand pixels wide.
         for row_width in [120.0, 216.0, 260.0, 320.0] {
-            let used = LAYER_ROW_CONTROL_WIDTH_PX + layer_name_width(row_width);
-            assert!(
-                used <= row_width.max(LAYER_ROW_CONTROL_WIDTH_PX) + f32::EPSILON,
-                "row columns should stay bounded: row_width={row_width}, used={used}"
-            );
+            let name = layer_name_width(row_width);
+            let expected = (row_width - LAYER_ROW_CONTROL_WIDTH_PX).max(0.0);
+            assert_near(name, expected);
         }
+        // The panel is never narrower than the 236 px floor in
+        // `layer_overlay_rect`, less its 20 px of frame. The controls have to
+        // leave a readable name column at that width.
+        let narrowest_row = 236.0 - 20.0;
+        assert!(
+            layer_name_width(narrowest_row) >= 60.0,
+            "the controls take {LAYER_ROW_CONTROL_WIDTH_PX} px and leave \
+             {} px for the layer name in the narrowest panel",
+            layer_name_width(narrowest_row)
+        );
     }
 
     #[test]
@@ -113,29 +124,6 @@ mod tests {
         assert!(
             action_gap >= 4.0,
             "remove action needs a distinct gap from the tint swatch"
-        );
-        assert_near(
-            LAYER_ROW_CONTROL_WIDTH_PX,
-            LAYER_ROW_EYE_WIDTH_PX
-                + LAYER_ROW_SLIDER_WIDTH_PX
-                + LAYER_ROW_TINT_WIDTH_PX
-                + LAYER_ROW_REMOVE_WIDTH_PX
-                + LAYER_ROW_GAP_PX * 3.0
-                + LAYER_ROW_ACTION_GAP_PX,
-        );
-    }
-
-    #[test]
-    fn layer_row_controls_use_one_height_contract() {
-        let source = crate::primary_ui_tests::production_source(include_str!("layout.rs"))
-            .replace("\r\n", "\n");
-        let production_source = source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source.as_str(), |(source, _)| source);
-
-        assert!(
-            production_source.contains("LAYER_ROW_CONTROL_HEIGHT_PX"),
-            "row controls should share one height contract instead of repeating literals"
         );
     }
 }
