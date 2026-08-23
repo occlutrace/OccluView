@@ -9,13 +9,9 @@
 //!   * the kept side is pixel-for-pixel the same whether or not the ghost runs,
 //!   * the cut-away side is faint-but-present in the ghost render, and
 //!   * the cut-away side is background (fully removed) in the hard-clip render.
-//!
-//! `ghost_cut_view_visual_dump` (ignored) writes PNGs at several disc poses on
-//! a sphere and an arch fixture for human review:
-//!   `cargo test -p occluview-render --test ghost_cut -- --ignored`
 
-// Pixel-grid math and fixture generation use casts and short vertex names;
-// `eprintln!` reports the dump path. All test-only, allowed crate-wide here.
+// Pixel-grid math and fixture generation use casts and short vertex names.
+// All test-only, allowed crate-wide here.
 #![allow(
     clippy::expect_used,
     clippy::cast_lossless,
@@ -23,8 +19,7 @@
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::many_single_char_names,
-    clippy::too_many_arguments,
-    clippy::print_stderr
+    clippy::too_many_arguments
 )]
 
 mod common;
@@ -92,40 +87,6 @@ fn uv_sphere(radius: f32, stacks: usize, slices: usize) -> Mesh {
         }
     }
     b.build().expect("valid sphere mesh")
-}
-
-/// A torus standing in for a curved dental arch: a plane cuts curved geometry
-/// on both sides so the ghost half is clearly a bent solid, not a flat disc.
-fn torus(major: f32, minor: f32, seg_major: usize, seg_minor: usize) -> Mesh {
-    let mut b = MeshBuilder::new();
-    let color = [206, 198, 214, 255];
-    let mut grid = vec![vec![0u32; seg_minor + 1]; seg_major + 1];
-    for (i, row) in grid.iter_mut().enumerate() {
-        let u = (i as f32 / seg_major as f32) * std::f32::consts::TAU;
-        let (su, cu) = u.sin_cos();
-        for (j, cell) in row.iter_mut().enumerate() {
-            let v = (j as f32 / seg_minor as f32) * std::f32::consts::TAU;
-            let (sv, cv) = v.sin_cos();
-            let n = Vec3::new(cu * cv, sv, su * cv);
-            let pos = Vec3::new(
-                cu * (major + minor * cv),
-                minor * sv,
-                su * (major + minor * cv),
-            );
-            *cell = b.push_vertex(Vertex::at(pos).with_normal(n).with_color(color));
-        }
-    }
-    for i in 0..seg_major {
-        for j in 0..seg_minor {
-            let a = grid[i][j];
-            let c = grid[i + 1][j];
-            let d = grid[i][j + 1];
-            let e = grid[i + 1][j + 1];
-            b.push_triangle(a, c, d);
-            b.push_triangle(d, c, e);
-        }
-    }
-    b.build().expect("valid torus mesh")
 }
 
 /// A UV sphere with texture coordinates and a WHITE per-vertex color — the
@@ -480,76 +441,4 @@ fn disabled_clip_on_textured_matches_plain() {
         ghost_path, plain,
         "disabled clip on a textured mesh must render identically with the ghost path"
     );
-}
-
-/// Visual dump for human review — writes ghost + hard-clip PNGs for several
-/// disc poses on a sphere and an arch (torus). Ignored by default.
-#[test]
-#[ignore = "writes PNGs to the scratchpad for manual inspection"]
-fn ghost_cut_view_visual_dump() {
-    let _gpu = gpu_test_lock();
-    let out_dir = concat!(
-        "/tmp/claude-1101/-home-wow-occlutraceio/",
-        "4e21c36a-f8d7-487e-89e0-33dc0df28bdb/scratchpad/ghost-verify"
-    );
-    std::fs::create_dir_all(out_dir).expect("create dump dir");
-    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
-    let dump = 256u16;
-
-    let poses = [
-        ("x", ClipPlane::new([1.0, 0.0, 0.0], 0.0)),
-        ("y", ClipPlane::new([0.0, 1.0, 0.0], 0.0)),
-        ("oblique", ClipPlane::new([1.0, 0.0, 1.0], 0.3)),
-    ];
-
-    let fixtures: [(&str, Mesh, f32); 2] = [
-        ("sphere", uv_sphere(1.0, 64, 96), 4.0),
-        ("arch", torus(2.0, 0.6, 96, 32), 7.0),
-    ];
-
-    for (fixture_name, mesh, eye_z) in &fixtures {
-        let scene = prepared(&offscreen, mesh);
-        let cam = camera(*eye_z);
-        for (pose_name, clip) in &poses {
-            let ghost =
-                pollster::block_on(offscreen.render_prepared_viewport_with_clip_and_overlay(
-                    &scene,
-                    None,
-                    &cam,
-                    clip,
-                    ViewportSpec {
-                        size_px: [dump, dump],
-                        background: DARK_BG,
-                    },
-                ))
-                .expect("ghost render");
-            let hard = pollster::block_on(offscreen.render_prepared_scene_with_clip(
-                &scene,
-                &cam,
-                clip,
-                ThumbnailSpec {
-                    size_px: dump,
-                    background: DARK_BG,
-                },
-            ))
-            .expect("hard render");
-            save_png(
-                &format!("{out_dir}/{fixture_name}_{pose_name}_ghost.png"),
-                &ghost,
-                dump,
-            );
-            save_png(
-                &format!("{out_dir}/{fixture_name}_{pose_name}_hard.png"),
-                &hard,
-                dump,
-            );
-        }
-    }
-    eprintln!("ghost-verify PNGs written to {out_dir}");
-}
-
-fn save_png(path: &str, pixels: &[u8], size: u16) {
-    let img = image::RgbaImage::from_raw(u32::from(size), u32::from(size), pixels.to_vec())
-        .expect("rgba buffer matches dimensions");
-    img.save(path).expect("write png");
 }
