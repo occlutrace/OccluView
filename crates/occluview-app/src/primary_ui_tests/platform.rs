@@ -323,3 +323,33 @@ fn the_fuzz_targets_are_actually_buildable_and_ci_actually_runs_them() {
         "the corpus should carry between runs or every run starts from zero"
     );
 }
+
+#[test]
+fn no_scan_path_reaches_the_crash_report() {
+    // `write_crash_report` dumps the log ring buffer to a text file, and a
+    // dental scan's path is the case it belongs to. The moment someone is asked
+    // to attach that report to a public issue, they attach patient identifiers.
+    let bootstrap = app_bootstrap_source();
+
+    assert!(
+        !bootstrap.contains("files = ?args.files"),
+        "startup must log the shape of the session, not the paths in it"
+    );
+    assert!(
+        bootstrap.contains("file_count = args.files.len()")
+            && bootstrap.contains("file_extensions("),
+        "startup should log how many files and of which kinds"
+    );
+    assert!(
+        bootstrap.contains("fn write_crash_report"),
+        "this test is about what the crash report can contain"
+    );
+
+    // The Explorer handlers run over whatever folder is on screen, so the same
+    // rule applies to the thumbnail crate.
+    let thumbnail = include_str!("../../../occluview-thumbnail/src/render_thumb/mod.rs");
+    assert!(
+        !thumbnail.contains("path = %path.display()"),
+        "the thumbnail path must not be logged; the extension is enough to diagnose"
+    );
+}

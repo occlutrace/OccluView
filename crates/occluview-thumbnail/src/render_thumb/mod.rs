@@ -266,8 +266,10 @@ pub fn try_render_thumbnail_file(
         Err(FileThumbnailPreflightError::UnsupportedExtension) => {
             // Deterministic: the extension is simply not ours. This repeats on
             // every attempt, so the placeholder is a correct cacheable verdict.
+            // Extension, not path: this runs inside dllhost over whatever
+            // folder Explorer is showing, and a scan's file name is the case.
             tracing::warn!(
-                path = %path.display(),
+                extension = ?path.extension(),
                 "thumbnail file extension is not registered for OccluView; returning placeholder"
             );
             return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
@@ -276,7 +278,7 @@ pub fn try_render_thumbnail_file(
             // Transient: the common causes are a sharing violation while the
             // scanner is still writing the file, or a file that vanished
             // mid-browse. Neither is a verdict about the file's content.
-            tracing::warn!(?error, path = %path.display(), "thumbnail file metadata failed");
+            tracing::warn!(?error, extension = ?path.extension(), "thumbnail file metadata failed");
             return ThumbnailAttempt::TransientFailure;
         }
         Err(FileThumbnailPreflightError::Oversize { byte_len }) => {

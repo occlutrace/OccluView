@@ -57,7 +57,15 @@ fn real_main() -> Result<()> {
         }
     }
 
-    tracing::info!(files = ?args.files, "OccluView starting");
+    // Shape, not identity. This line goes into the ring buffer that
+    // `write_crash_report` dumps to disk, and a dental scan's path is the case
+    // it belongs to. Someone asked to attach a crash report to a public issue
+    // should not be attaching patient identifiers with it.
+    tracing::info!(
+        file_count = args.files.len(),
+        formats = ?file_extensions(&args.files),
+        "OccluView starting"
+    );
     let single_instance = single_instance::SingleInstance::acquire()?;
     if single_instance.is_secondary() {
         if !args.files.is_empty() {
@@ -194,6 +202,19 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
         "OccluView crash report\nversion: {}\nthread: {thread_name}\nlocation: {location}\n\n{payload}",
         env!("CARGO_PKG_VERSION")
     )
+}
+
+/// The distinct lowercase extensions of `files`, for a log line that says what
+/// kind of session this is without saying whose.
+fn file_extensions(files: &[PathBuf]) -> Vec<String> {
+    let mut extensions: Vec<String> = files
+        .iter()
+        .filter_map(|path| path.extension().and_then(|extension| extension.to_str()))
+        .map(str::to_ascii_lowercase)
+        .collect();
+    extensions.sort();
+    extensions.dedup();
+    extensions
 }
 
 fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {

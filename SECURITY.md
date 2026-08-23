@@ -31,6 +31,17 @@ Set `OCCLUVIEW_NO_UPDATE_CHECK` (any value) to disable the check entirely.
 workspace reaches the network. The single-instance handshake uses a local Unix
 socket or named pipe and never leaves the machine.
 
+## Local state
+
+The viewer writes to one directory: `%APPDATA%\OccluView\` on Windows (the
+roaming profile, so it follows a domain user between machines) or
+`$XDG_STATE_HOME/OccluView/` on Linux. It holds the recent-files list, crash
+reports, the skipped-update marker, and short-lived hand-off files. Scan paths
+are case identifiers in dental work, so note that the recent list contains them
+and roams; crash reports deliberately do not — the startup log records how many
+files and of which formats, never which. The README section *What OccluView
+stores on this machine* has the full inventory and how to clear it.
+
 ## Verifying a release
 
 Every asset carries a SHA-256 file and a minisign signature, releases carry a

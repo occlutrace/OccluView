@@ -93,6 +93,32 @@ The same three commands work for the MSI and the portable ZIP. `sbom-windows.jso
 and `sbom-linux.json` on the release page list every third-party component that
 went into the binaries, for anyone whose scanner wants it.
 
+### What OccluView stores on this machine
+
+Everything the viewer keeps between sessions lives in one directory:
+
+- Windows: `%APPDATA%\OccluView\` — this is the **roaming** profile, so on a
+  domain it follows the user to every machine they sign in to.
+- Linux: `$XDG_STATE_HOME/OccluView/`, or `~/.local/state/OccluView/`.
+
+| File | What it holds |
+| --- | --- |
+| `recent-files.txt` | Full paths of recently opened scans |
+| `crashes/occluview-*.txt` | A crash report: version, thread, panic location, and the last log lines |
+| `skipped-update` | The one version number the operator chose to skip |
+| `open-requests/` | Short-lived hand-off files when a second launch forwards paths to the running window |
+| `single-instance.lock` | Linux only, and only when `$XDG_RUNTIME_DIR` is unavailable |
+
+Scan paths are case identifiers in dental work, so two of these are worth
+knowing about. `recent-files.txt` roams with a Windows profile. Crash reports do
+**not** contain scan paths — startup logs how many files and of which formats,
+never which — but they do name the OccluView version and the crash location.
+
+To clear it: *Clear recent* in the layers menu empties the recent list and the
+Windows Jump List; deleting the directory above removes everything. Uninstalling
+leaves it in place, on purpose — an uninstall is often an upgrade, and silently
+deleting a user's recent list is not something an installer should decide.
+
 ### Update check
 
 The viewer asks once per launch whether a newer release exists: two HTTPS GETs
