@@ -114,7 +114,7 @@ impl SceneMesh {
         self
     }
 
-    /// Set the linear-sRGB tint.
+    /// Set the display tint, in the renderer's own space -- see the `tint` field.
     #[inline]
     #[must_use]
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
