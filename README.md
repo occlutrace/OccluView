@@ -181,6 +181,11 @@ cargo test --workspace --all-targets
 cargo run -p occluview-app --release -- path/to/scan.stl
 ```
 
+Load-path timings: `cargo test -p occluview-formats --release -- --ignored --nocapture load_`
+prints how long parsing a 500k- and a 2M-triangle STL takes, with the recorded
+baseline in the test module. Not wired into CI on purpose — shared runners vary
+by more than any regression worth catching.
+
 Fuzzing: `./scripts/run-fuzz.sh <target> 60 65536` from the repository root
 (requires `cargo install cargo-fuzz` and a nightly toolchain). Targets are
 `dispatch`, `stl`, `ply`, `glb`, and `hps_parser`; the script feeds each one the

@@ -45,6 +45,8 @@ pub mod error;
 pub mod glb_writer;
 pub mod gltf;
 pub mod hps;
+#[cfg(test)]
+mod load_perf_tests;
 mod mappable;
 pub mod obj;
 pub mod off;

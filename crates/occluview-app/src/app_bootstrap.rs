@@ -109,6 +109,22 @@ fn real_main() -> Result<()> {
             // Capture both raw handles now so the open-file handoff can use
             // the compositor's native activation protocol on Linux.
             let raise_target = single_instance::RaiseTarget::from_handles(cc, cc);
+            // What actually reaches the offscreen fallback, traced rather than
+            // assumed: this closure runs only after eframe has already built a
+            // device, because `WgpuWinitApp::init_run_state` calls
+            // `set_window(..)?` before `painter.render_state()`. An adapter or
+            // device failure therefore aborts `run_native` and never gets here.
+            // The single remaining trigger is `with_shared_device_sample_count`
+            // failing on a device that already works -- a pipeline, shader or
+            // bind-group failure -- and the fallback's cure for that is a
+            // second wgpu device building the same pipelines from the same
+            // shaders.
+            //
+            // So the branch is kept, but nobody should mistake it for "this
+            // machine has no GPU" coverage: that case never arrives here. It is
+            // exercised by the same overlay body as the live path (see
+            // `show_viewport_overlays`), which is what stops it rotting
+            // unnoticed for the operators it does serve.
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
                 match live_viewport::LiveViewport::from_render_state(state) {
                     Ok(viewport) => Some(viewport),
