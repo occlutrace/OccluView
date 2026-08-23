@@ -1,6 +1,6 @@
 use super::error::malformed;
 use super::json;
-use super::scene::{first_primitive_material, walk_node};
+use super::scene::{first_primitive_material, SceneWalk};
 use super::texture::resolve_material_texture;
 use crate::error::FormatError;
 use glam::Mat4;
@@ -16,10 +16,13 @@ pub(super) fn read_doc(doc: &json::GltfDoc, bin_chunk: &[u8]) -> Result<Mesh, Fo
     // Track the first primitive's material so we can resolve a texture after
     // the build (the builder only handles geometry).
     let mut first_material: Option<usize> = None;
-    for &node_idx in &scene.nodes {
-        walk_node(doc, node_idx, Mat4::IDENTITY, bin_chunk, &mut builder)?;
-        if first_material.is_none() {
-            first_material = first_primitive_material(doc, node_idx);
+    {
+        let mut walk = SceneWalk::new(doc, bin_chunk, &mut builder);
+        for &node_idx in &scene.nodes {
+            walk.node(node_idx, Mat4::IDENTITY)?;
+            if first_material.is_none() {
+                first_material = first_primitive_material(doc, node_idx);
+            }
         }
     }
     let mut mesh = builder.build().map_err(FormatError::Core)?;
