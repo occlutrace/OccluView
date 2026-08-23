@@ -162,82 +162,117 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     }
 
     // Each run touches a disjoint set of vertex indices, so runs can be
-    // averaged independently in parallel. Updates are collected rather than
-    // written directly, then scattered back serially to avoid unsafe
-    // concurrent writes into `smoothed`.
-    let updates: Vec<(usize, Vec3)> = runs
-        .par_iter()
-        .flat_map_iter(|&(start, end)| {
-            let members = &keyed[start..end];
-            let mut group_updates = Vec::new();
+    // averaged independently in parallel.
+    //
+    // The result goes into one slot per keyed entry rather than into a
+    // collected `Vec<(usize, Vec3)>` of updates. That vector was the largest
+    // temporary in the whole loader -- 24 bytes per duplicated vertex, and an
+    // STL soup duplicates nearly all of them -- and rayon's collect built it
+    // per thread before concatenating, so the peak was a multiple of that
+    // again. A pre-sized `Vec<Vec3>` carved into disjoint run slices costs 12
+    // bytes per vertex, exactly once, with no unsafe and no concurrent write.
+    // `Vec3::ZERO` means "this member kept its own normal", which no real
+    // update can be: every update below is normalized.
+    //
+    // Sized by the total length of the runs, not by the vertex count: a welded
+    // mesh has almost no duplicates and allocates almost nothing, while an STL
+    // soup -- where nearly every vertex is duplicated -- pays 12 bytes each
+    // instead of the 24 the old tuple cost, once.
+    let duplicated: usize = runs.iter().map(|&(start, end)| end - start).sum();
+    let mut slots: Vec<Vec3> = vec![Vec3::ZERO; duplicated];
+    let mut run_slices: Vec<(usize, &mut [Vec3])> = Vec::with_capacity(runs.len());
+    {
+        let mut rest: &mut [Vec3] = &mut slots;
+        for &(start, end) in &runs {
+            let (piece, tail) = rest.split_at_mut(end - start);
+            run_slices.push((start, piece));
+            rest = tail;
+        }
+    }
 
-            // The exact form below compares every member against every other,
-            // which is fine at real valences and quadratic at absurd ones. A
-            // pile of coincident vertices is not hypothetical -- a fan
-            // collapsed by bad decimation, a scanner artefact, or a file
-            // written to be one. Measured: k=2000 costs 19 ms, k=8000 costs
-            // 214 ms, k=20000 costs 1.3 s, and it runs on the loading thread
-            // with no cancellation, or inside `dllhost` holding one of twelve
-            // thumbnail lanes long after Explorer has been told the request
-            // timed out.
-            //
-            // Past the threshold, agreement is judged against the group's mean
-            // normal instead of pairwise: one pass to sum, one to accept or
-            // reject. Same answer wherever the group is coherent, which is
-            // every case a real scan produces, and linear everywhere.
-            if members.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
-                let mut mean = Vec3::ZERO;
-                for &(_, index) in members {
-                    let candidate = source_normals[index];
-                    if candidate.length_squared() > f32::EPSILON {
-                        mean += candidate;
-                    }
-                }
-                if mean.length_squared() > f32::EPSILON {
-                    let mean = mean.normalize();
-                    for &(_, index) in members {
-                        let current = source_normals[index];
-                        if current.length_squared() > f32::EPSILON
-                            && mean.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
-                        {
-                            group_updates.push((index, mean));
-                        }
-                    }
-                }
-                return group_updates;
+    run_slices.into_par_iter().for_each(|(start, out)| {
+        let end = start + out.len();
+        average_duplicate_run(&keyed[start..end], &source_normals, out);
+    });
+
+    let mut written = 0usize;
+    for &(start, end) in &runs {
+        for (slot, &(_, index)) in slots[written..written + (end - start)]
+            .iter()
+            .zip(&keyed[start..end])
+        {
+            if slot.length_squared() > f32::EPSILON {
+                smoothed[index] = *slot;
             }
-
-            for &(_, index) in members {
-                let current = source_normals[index];
-                if current.length_squared() <= f32::EPSILON {
-                    continue;
-                }
-
-                let mut normal = Vec3::ZERO;
-                for &(_, neighbor) in members {
-                    let candidate = source_normals[neighbor];
-                    if candidate.length_squared() > f32::EPSILON
-                        && candidate.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
-                    {
-                        normal += candidate;
-                    }
-                }
-
-                if normal.length_squared() > f32::EPSILON {
-                    group_updates.push((index, normal.normalize()));
-                }
-            }
-            group_updates
-        })
-        .collect();
-
-    for (index, normal) in updates {
-        smoothed[index] = normal;
+        }
+        written += end - start;
     }
 
     for (vertex, normal) in vertices.iter_mut().zip(smoothed) {
         if normal.length_squared() > f32::EPSILON {
             vertex.normal = normal.to_array();
+        }
+    }
+}
+
+/// Average one run of coincident vertices into `out`, one slot per member.
+///
+/// `Vec3::ZERO` is left where a member keeps its own normal; every value
+/// written is normalized, so zero is unambiguous.
+fn average_duplicate_run(members: &[([i32; 3], usize)], source_normals: &[Vec3], out: &mut [Vec3]) {
+    // The exact form below compares every member against every other, which is
+    // fine at real valences and quadratic at absurd ones. A pile of coincident
+    // vertices is not hypothetical -- a fan collapsed by bad decimation, a
+    // scanner artefact, or a file written to be one. Measured: k=2000 costs
+    // 19 ms, k=8000 costs 214 ms, k=20000 costs 1.3 s, and it runs on the
+    // loading thread with no cancellation, or inside `dllhost` holding one of
+    // twelve thumbnail lanes long after Explorer has been told the request
+    // timed out.
+    //
+    // Past the threshold, agreement is judged against the group's mean normal
+    // instead of pairwise: one pass to sum, one to accept or reject. Same
+    // answer wherever the group is coherent, which is every case a real scan
+    // produces, and linear everywhere.
+    if members.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
+        let mut mean = Vec3::ZERO;
+        for &(_, index) in members {
+            let candidate = source_normals[index];
+            if candidate.length_squared() > f32::EPSILON {
+                mean += candidate;
+            }
+        }
+        if mean.length_squared() > f32::EPSILON {
+            let mean = mean.normalize();
+            for (slot, &(_, index)) in members.iter().enumerate() {
+                let current = source_normals[index];
+                if current.length_squared() > f32::EPSILON
+                    && mean.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
+                {
+                    out[slot] = mean;
+                }
+            }
+        }
+        return;
+    }
+
+    for (slot, &(_, index)) in members.iter().enumerate() {
+        let current = source_normals[index];
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+
+        let mut normal = Vec3::ZERO;
+        for &(_, neighbor) in members {
+            let candidate = source_normals[neighbor];
+            if candidate.length_squared() > f32::EPSILON
+                && candidate.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
+            {
+                normal += candidate;
+            }
+        }
+
+        if normal.length_squared() > f32::EPSILON {
+            out[slot] = normal.normalize();
         }
     }
 }
