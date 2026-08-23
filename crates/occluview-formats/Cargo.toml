@@ -30,7 +30,6 @@ glam           = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 memmap2        = { workspace = true }
-zip            = { workspace = true }
 # PNG + JPEG decode for glTF texture images (GLB embeds them in bufferViews).
 image          = { workspace = true }
 
@@ -38,9 +37,10 @@ image          = { workspace = true }
 # whose disappearance would raise EXCEPTION_IN_PAGE_ERROR instead of an error.
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
-features = ["Win32_Foundation", "Win32_Storage_FileSystem"]
+features = ["Win32_Storage_FileSystem"]
 
 [dev-dependencies]
+zip            = { workspace = true }
 proptest = { workspace = true }
 tempfile = "3"
 

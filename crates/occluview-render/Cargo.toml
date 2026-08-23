@@ -15,15 +15,13 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-occluview-core = { workspace = true }
 wgpu           = { workspace = true }
 bytemuck       = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }
 glam           = { workspace = true }
+occluview-core = { workspace = true }
 
 [dev-dependencies]
 image     = { workspace = true }
 pollster  = { workspace = true }
-glam      = { workspace = true }
-occluview-core = { workspace = true }
