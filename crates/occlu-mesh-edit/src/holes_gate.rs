@@ -8,7 +8,7 @@ use glam::Vec3;
 
 use super::holes_walk::{
     split_loop_at_coincident_positions, vertex_position, walk_boundary_loop, BoundaryNextMap,
-    BoundaryOwnerMap,
+    BoundaryOwners,
 };
 use super::{FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions};
 use crate::holes::{FillLoopStats, CLOSE_HOLES_EDGE_CEILING};
@@ -162,7 +162,7 @@ pub(super) fn rim_exceeds_size_cap(
 /// large unrelated rim stays well under the threshold and is refused.
 pub(super) fn rim_selection_qualifies(
     boundary_loop: &[usize],
-    owner_by_edge: &BoundaryOwnerMap,
+    owner_by_edge: &BoundaryOwners,
     selection: &FaceSelection,
 ) -> bool {
     let loop_len = boundary_loop.len();
@@ -174,8 +174,8 @@ pub(super) fn rim_selection_qualifies(
             let a = boundary_loop[index];
             let b = boundary_loop[(index + 1) % loop_len];
             owner_by_edge
-                .get(&(a, b))
-                .is_some_and(|owner| selection.as_slice().get(*owner).copied().unwrap_or(false))
+                .owner(a, b)
+                .is_some_and(|owner| selection.as_slice().get(owner).copied().unwrap_or(false))
         })
         .count();
     // `selected / loop_len >= 0.5`, done in integers to stay exact.
