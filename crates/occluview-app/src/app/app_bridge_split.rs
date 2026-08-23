@@ -62,13 +62,11 @@ impl OccluViewApp {
         // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
         // first hover/plant doesn't freeze the UI building it on a big scan.
         //
-        // The thread takes the one mesh it warms, not the case it came from.
-        // Holding an `Arc<Scene>` here made every in-place scene edit on the UI
-        // thread copy the whole case through `Arc::make_mut` for as long as the
-        // warm ran -- 52 ms a frame on two 945k-vertex arches, against a warm
-        // that takes the better part of a second, so an opacity slider dragged
-        // meanwhile ran at about 19 fps. The BVH cell is an `Arc` shared across
-        // mesh clones, which is what makes warming a clone worth anything.
+        // The thread takes the one mesh it warms, not the case it came from:
+        // an `Arc<Scene>` held here made every scene edit on the UI thread copy
+        // the whole case for as long as the warm ran, which is most of a
+        // second on a full arch. The mesh is shared, so this costs a pointer
+        // and the thread warms the very cell the scene will read.
         let target_mesh = self
             .scene
             .as_ref()

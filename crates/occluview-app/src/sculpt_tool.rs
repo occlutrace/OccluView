@@ -221,10 +221,8 @@ impl SculptTool {
         // nudge or a ghost toggle each paid 45 ms, and a debug build tripped
         // the assertion in `live_scene_mut`.
         //
-        // Cloning the mesh copies its vertex and index arrays once. The BVH
-        // cell is an `Arc` shared across clones, so `warm_bvh` below is still
-        // visible to the mesh sitting in the scene -- which is the point of
-        // warming it here.
+        // The mesh itself is shared, so this is a pointer: the worker warms the
+        // very cell the scene will read, which is the point of warming it.
         let mesh = entry.mesh.clone();
         let transform = entry.transform;
         drop(scene);

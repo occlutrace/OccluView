@@ -6,11 +6,6 @@ use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 use super::state::{BusyFinish, EditModeCommand, EditModeState, EditSessionToken, LayerKey};
 use super::EditModeController;
 
-// `SceneMesh` is 336 bytes because it holds a `Mesh` inline, against 72 for the
-// whole-scene variant, which holds its meshes behind a `Vec`. Boxing would add
-// an allocation per snapshot to save padding in a history that holds four; the
-// size difference is a symptom of where `Mesh` lives, not of this enum.
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub(super) enum MeshEditUndoSnapshot {
     Layer(SceneMesh),
