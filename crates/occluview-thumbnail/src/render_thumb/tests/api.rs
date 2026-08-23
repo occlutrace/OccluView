@@ -1,6 +1,6 @@
 use super::*;
 use occluview_formats::dispatch::{
-    dispatch_by_kind_with_key_provider, read_file_with_key_provider,
+    dispatch_by_kind_shaded, dispatch_by_kind_with_key_provider, read_file_with_key_provider,
 };
 use occluview_formats::{hps::RuntimeHpsKeyProvider, FormatError, FormatKind};
 
@@ -292,7 +292,11 @@ fn noisy_obj_thumbnail_at_small_shell_size_stays_visible_not_edge_on() {
 }
 
 #[test]
-fn large_obj_streams_use_fast_surrogate_policy() {
+fn a_thirty_two_megabyte_obj_is_read_in_full_not_decimated() {
+    // The OBJ budget used to stop at 24 MB, which sent a scan this size to the
+    // decimating reader -- measured at 345 ms against 218 ms for the canonical
+    // one, for a third fewer triangles. Decimation is held for the sizes where
+    // resident memory is the constraint, not the clock.
     let spec = ThumbnailSpec {
         size_px: 256,
         ..Default::default()
@@ -302,15 +306,19 @@ fn large_obj_streams_use_fast_surrogate_policy() {
     );
     let direct_pixels =
         render_thumbnail_bytes(Some("obj"), &bytes, spec).expect("large OBJ stream should render");
-    let fast_mesh =
-        crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind(FormatKind::Obj, &bytes)
-            .expect("fast OBJ surrogate should parse");
-    let fast_pixels = rendering::render_mesh_thumbnail(fast_mesh, spec)
-        .expect("fast OBJ surrogate should render");
+    let full_mesh = dispatch_by_kind_shaded(
+        FormatKind::Obj,
+        &bytes,
+        &RuntimeHpsKeyProvider,
+        occluview_formats::MeshShading::AsWritten,
+    )
+    .expect("the canonical reader should load the OBJ fixture");
+    let full_pixels =
+        rendering::render_mesh_thumbnail(full_mesh, spec).expect("full parsed OBJ should render");
 
     assert_eq!(
-        direct_pixels, fast_pixels,
-        "stream-backed large OBJ thumbnails should use the fast surrogate path before full parse"
+        direct_pixels, full_pixels,
+        "an OBJ inside the fidelity budget must stay on the canonical reader"
     );
 }
 

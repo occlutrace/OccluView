@@ -17,15 +17,24 @@ use occluview_formats::{FormatError, FormatKind};
 // parsed with the canonical `occluview-formats` reader (full triangle/point
 // data); larger files go through the `fast_thumb` decimated reader instead.
 //
-// The cutoffs are set from measured full-decode cost so a real dental scan
-// still gets an exact, full-detail thumbnail: the canonical binary-STL reader
-// is a parallel triangle decode that turns a ~40 MB / 840k-triangle file into a
-// hole-free surface in ~1.1 s (parse + offscreen render) even on a software
-// rasterizer, and the OBJ text parser clears a ~24 MB file in well under that.
-// Above the cutoff the fast reader takes over — and it now WELDS onto a coarse
-// grid (contiguous decimation), so even those thumbnails render as a solid
-// surface, never the see-through triangle-stride sieve. One constant per format
-// so each can be tuned independently as the readers evolve.
+// The cutoffs are no longer about speed, and the numbers say so plainly. Once
+// the thumbnail stopped reconstructing normals the canonical readers became
+// the faster ones at every size measured here, because the decimating reader
+// welds onto a grid and that weld now costs more than the parse it replaces:
+//
+//     20.5 MB STL   full  42 ms   fast 113 ms
+//     46.7 MB STL   full 115 ms   fast 289 ms
+//    186.7 MB STL   full 415 ms   fast 938 ms
+//     31.7 MB OBJ   full 218 ms   fast 345 ms
+//
+// What the decimating reader still buys is memory. A full read of that 186 MB
+// scan is 3.9 million triangles, about 420 MB of vertices resident, and the
+// shell hosts several of these at once in a process it does not own. So the
+// cutoffs stay, sized to hold that resident cost inside a surrogate rather
+// than to save time, and the formats that were held to a tighter budget than
+// their cost justified -- OBJ at 24 MB, PLY at 4 MB, where the fast reader
+// declines a faced PLY anyway and the file is read twice for nothing -- move
+// up to the same line as STL.
 /// A thumbnail keeps the normals the file wrote.
 ///
 /// Welding vertices by position and averaging normals across each run is what
@@ -38,8 +47,8 @@ use occluview_formats::{FormatError, FormatKind};
 const THUMBNAIL_SHADING: occluview_formats::MeshShading = occluview_formats::MeshShading::AsWritten;
 
 const FULL_FIDELITY_STL_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
-const FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES: u64 = 24 * 1024 * 1024;
-const FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
+const FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
 
 fn reject_oversize_input(bytes: &[u8]) -> Result<(), ThumbnailError> {
     if bytes.len() > MAX_THUMBNAIL_INPUT_BYTES {
