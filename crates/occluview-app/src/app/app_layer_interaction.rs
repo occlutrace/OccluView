@@ -60,6 +60,22 @@ impl OccluViewApp {
             return;
         }
 
+        // MEASURED, and deliberately still synchronous.
+        //
+        // A structural edit on a full arch costs, in release: a scene deep copy
+        // (45 ms for two 945k-vertex layers), the edit kernel over ~2 million
+        // triangles, and `Mesh::new` on the result -- 662 ms on its own at that
+        // size, 178 ms at 500k triangles. Well over a second of a window that
+        // does not repaint, with no progress and no cancel, and the editor's
+        // `Busy` state can never be drawn because nothing yields to draw it.
+        //
+        // Moving this onto the worker pattern `sculpt_tool::queue_preparation`
+        // already uses is the right answer and is not a small change: it is the
+        // undo pipeline, the save-guard bookkeeping and the edit state machine
+        // at once, on the path where a mistake silently loses an operator's
+        // work. It is not being attempted blind, in a release where the
+        // interactive behaviour cannot be exercised. The numbers are here so
+        // the next person starts from a measurement rather than an impression.
         let mut draft = scene.as_ref().clone();
         let mut scene_changed = false;
         let mut structural_scene_change = false;
