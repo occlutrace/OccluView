@@ -22,10 +22,19 @@ pub(super) fn registration_source() -> String {
 
 #[test]
 fn thumbnail_registration_only_includes_implemented_stream_formats() {
-    assert_eq!(
-        SUPPORTED_EXTENSIONS,
-        ["stl", "ply", "obj", "glb", "hps", "dcm"]
-    );
+    // This used to compare the constant with a copy of itself written out
+    // longhand, which is true whatever the list holds -- including an
+    // extension Explorer would then hand to a reader that does not exist.
+    // Registering a format is a promise to the shell that a stream of those
+    // bytes produces a thumbnail; the promise is kept by the dispatcher.
+    // An empty list would pass the loop below vacuously; it cannot be empty,
+    // and the compiler says so -- clippy rejects the check as always false.
+    for extension in SUPPORTED_EXTENSIONS {
+        assert!(
+            occluview_formats::probe::by_extension(extension).is_some(),
+            "{extension} is registered with Explorer, and no reader claims it"
+        );
+    }
 }
 
 #[test]
@@ -692,4 +701,28 @@ fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
         return rest.get(..rest.find('"')?);
     }
     None
+}
+
+#[test]
+fn both_offscreen_factories_choose_the_adapter_the_same_way() {
+    // The rule is duplicated because `cfg!(test)` is per crate: a shared
+    // definition would answer "not under test" while this crate's own tests
+    // run, and they are exactly the ones that must not touch a hardware
+    // adapter. A copy is the right answer; a copy that drifts is not.
+    let shell = include_str!("offscreen_factory.rs");
+    let thumbnail = include_str!("../../occluview-thumbnail/src/offscreen_factory.rs");
+    let rule = concat!(
+        "pub(crate) const fn should_prefer_hardware_offscreen() -> bool {\n",
+        "    cfg!(all(windows, not(test)))\n",
+        "}"
+    );
+    for (crate_name, source) in [
+        ("occluview-shell", shell),
+        ("occluview-thumbnail", thumbnail),
+    ] {
+        assert!(
+            source.contains(rule),
+            "{crate_name} chooses its adapter by a different rule"
+        );
+    }
 }

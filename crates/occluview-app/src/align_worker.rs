@@ -26,12 +26,22 @@ use occluview_align::{
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-/// The nominal band a dental comparison opens at, in millimetres. Below this
-/// two surfaces are the same surface as far as any scanner can tell.
+/// The display maximum the tool opens at, in millimetres.
+///
+/// A tenth of a millimetre is where a seated fit and a fit that only looks
+/// seated stop looking the same, which is why the map is read at this range
+/// rather than at the wider one below.
+pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+/// The nominal band that goes with [`WORKING_MAX_MM`]. Below this two surfaces
+/// are the same surface as far as any scanner can tell at this range.
+pub(crate) const WORKING_MIN_MM: f64 = 0.005;
+/// The nominal band of the standard range, in millimetres.
 pub(crate) const CLINICAL_MIN_MM: f64 = 0.01;
-/// The display maximum a dental comparison opens at, in millimetres. This is
-/// the number the whole field works to: a fit inside it is clinically usable,
-/// a fit outside it is not.
+/// The display maximum of the standard range, in millimetres: a fit inside it
+/// is clinically usable, a fit outside it is not.
+///
+/// This is the range the field quotes, and the second chip in the panel. It is
+/// not what the tool opens at -- see [`WORKING_MAX_MM`] for that.
 pub(crate) const CLINICAL_MAX_MM: f64 = 0.20;
 /// The widest maximum the operator can dial in. Past this a deviation map stops
 /// being a clinical instrument and starts being a picture of two meshes that
@@ -44,11 +54,9 @@ pub(crate) const CLINICAL_CEILING_MM: f64 = 1.0;
 /// which is how the chip row could show a range highlighted that the tool was
 /// not actually using.
 ///
-/// **The first entry is the working range.** A tenth of a millimetre is where a
-/// seated fit and a fit that only looks seated stop looking the same, so it is
-/// the range the map is read at, not the one it is dialled to.
+/// **The first entry is the working range** -- see [`WORKING_MAX_MM`].
 pub(crate) const CLINICAL_RANGES: [(f64, f64); 3] = [
-    (0.10, 0.005),
+    (WORKING_MAX_MM, WORKING_MIN_MM),
     (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
     (0.50, 0.02),
 ];

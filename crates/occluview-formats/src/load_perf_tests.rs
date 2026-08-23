@@ -1,7 +1,7 @@
 //! A measured baseline for the path that is the product.
 //!
 //! Opening a file runs mmap-or-read, parse, normal generation and mesh
-//! construction, and every one of those has been changed this cycle. The 1600
+//! construction, and every one of those has been changed this cycle. The
 //! correctness tests would all stay green if a dependency bump made a
 //! four-hundred-megabyte scan thirty percent slower, because none of them look
 //! at time.
@@ -64,15 +64,39 @@ fn time_parse(triangles: usize) -> Duration {
     elapsed
 }
 
+/// Compare against the recorded baseline, in the build the harness is for.
+///
+/// The ceilings used to be 20 s and 60 s against baselines of 0.24 s and
+/// 0.89 s -- 83x and 67x, so the "regressed by an order of magnitude" the
+/// message promised would sail through. They are five times the baseline now,
+/// which tolerates a machine several times slower than the one the numbers
+/// come from and still fails on a tenfold regression.
+///
+/// A debug build is three to five times slower here for reasons that have
+/// nothing to do with the load path, so it prints the number and judges
+/// nothing: the module says to run this with --release, and a ceiling that
+/// only holds in one build mode is a ceiling nobody can trust in the other.
+fn assert_within_baseline(what: &str, elapsed: Duration, ceiling: Duration) {
+    if cfg!(debug_assertions) {
+        println!(
+            "  (debug build: {elapsed:?} is not judged against {ceiling:?}; \
+             re-run with --release)"
+        );
+        return;
+    }
+    assert!(
+        elapsed < ceiling,
+        "parsing {what} took {elapsed:?} against a {ceiling:?} ceiling \
+         (five times the recorded baseline); the load path has regressed"
+    );
+}
+
 #[test]
 #[ignore = "perf baseline: run with --release --ignored --nocapture"]
 fn load_binary_stl_500k_triangles() {
     let elapsed = time_parse(500_000);
     println!("LOAD 500k triangles -> {elapsed:?}");
-    assert!(
-        elapsed < Duration::from_secs(20),
-        "parsing 500k triangles took {elapsed:?}; the load path has regressed by an order of magnitude"
-    );
+    assert_within_baseline("500k triangles", elapsed, Duration::from_millis(1_200));
 }
 
 #[test]
@@ -80,8 +104,5 @@ fn load_binary_stl_500k_triangles() {
 fn load_binary_stl_2m_triangles() {
     let elapsed = time_parse(2_000_000);
     println!("LOAD 2M triangles -> {elapsed:?}");
-    assert!(
-        elapsed < Duration::from_secs(60),
-        "parsing 2M triangles took {elapsed:?}; the load path has regressed by an order of magnitude"
-    );
+    assert_within_baseline("2M triangles", elapsed, Duration::from_millis(4_500));
 }

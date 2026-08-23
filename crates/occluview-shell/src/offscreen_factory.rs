@@ -2,10 +2,17 @@ use crate::ShellError;
 use occluview_render::Offscreen;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Unit tests must use wgpu's fallback adapter: GitHub's Windows runner may
-/// expose a nominal hardware adapter that accepts commands but produces an
-/// empty headless render target. Installed shell code still prefers hardware
-/// and falls back inside the renderer when one is unavailable.
+/// Whether this build should ask wgpu for a hardware adapter.
+///
+/// Unit tests must take the fallback adapter: GitHub's Windows runner can
+/// expose a nominal hardware adapter that accepts commands and then produces
+/// an empty headless render target. Installed code prefers hardware and lets
+/// the renderer fall back when no suitable adapter exists.
+///
+/// Deliberately a copy of the same function in `occluview-thumbnail`. `cfg!(test)` is
+/// evaluated per crate: a shared definition would report "not under test"
+/// while this crate's own tests run, which is the case the fallback exists
+/// for. The two bodies must stay identical, and a contract test says so.
 pub(crate) const fn should_prefer_hardware_offscreen() -> bool {
     cfg!(all(windows, not(test)))
 }
