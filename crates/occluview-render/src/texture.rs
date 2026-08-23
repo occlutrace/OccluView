@@ -5,6 +5,56 @@ use crate::pipeline::Renderer;
 use occluview_core::MeshTexture;
 
 /// A texture resident on the GPU: the `wgpu::Texture`, its view, a sampler,
+/// Box-filter `tex` down until both sides fit `limit`, or `None` if it already
+/// does.
+///
+/// Integer factors only: a scan atlas is a photograph of a surface, and an
+/// integer box filter is both cheap and free of the ringing a resample would
+/// add to something a clinician reads colour from.
+fn fit_to_device(tex: &MeshTexture, limit: u32) -> Option<MeshTexture> {
+    if limit == 0 || (tex.width <= limit && tex.height <= limit) {
+        return None;
+    }
+    let mut factor = 2u32;
+    while tex.width.div_ceil(factor) > limit || tex.height.div_ceil(factor) > limit {
+        factor = factor.checked_add(1)?;
+    }
+
+    let width = tex.width.div_ceil(factor).max(1);
+    let height = tex.height.div_ceil(factor).max(1);
+    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let mut sums = [0u32; 4];
+            let mut counted = 0u32;
+            for source_y in y * factor..((y + 1) * factor).min(tex.height) {
+                for source_x in x * factor..((x + 1) * factor).min(tex.width) {
+                    let at = ((source_y as usize) * (tex.width as usize) + source_x as usize) * 4;
+                    let Some(pixel) = tex.rgba.get(at..at + 4) else {
+                        continue;
+                    };
+                    for (sum, channel) in sums.iter_mut().zip(pixel) {
+                        *sum += u32::from(*channel);
+                    }
+                    counted += 1;
+                }
+            }
+            let counted = counted.max(1);
+            for sum in sums {
+                #[allow(clippy::cast_possible_truncation)]
+                rgba.push((sum / counted) as u8);
+            }
+        }
+    }
+    tracing::warn!(
+        from = format!("{}x{}", tex.width, tex.height),
+        to = format!("{width}x{height}"),
+        limit,
+        "texture larger than the device allows; boxed down to fit"
+    );
+    Some(MeshTexture::new(width, height, rgba))
+}
+
 /// and the bind group (group 2) that binds them at bindings 0 and 1.
 pub struct GpuTexture {
     /// Owns the GPU memory; kept alive so the view and sampler stay valid.
@@ -101,6 +151,13 @@ impl GpuTexture {
         queue: &wgpu::Queue,
         tex: &MeshTexture,
     ) -> Self {
+        // A texture wider than the device allows cannot be created at all, and
+        // the readers accept up to 8192 while some devices stop at 2048. The
+        // scan is still worth drawing, so it is boxed down to fit rather than
+        // dropped -- a slightly softer atlas beats a blank window.
+        let fitted = fit_to_device(tex, device.limits().max_texture_dimension_2d);
+        let tex = fitted.as_ref().unwrap_or(tex);
+
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("occluview mesh texture"),
             size: wgpu::Extent3d {
@@ -186,6 +243,7 @@ impl GpuTexture {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
     /// The part of this file above the test module.
     ///
     /// Searching the whole of it matches the needle written in the assertion
@@ -222,6 +280,54 @@ mod tests {
         assert!(
             !sampler.contains("address_mode_u: wgpu::AddressMode::Repeat"),
             "Repeat sampling causes HPS edge/packed-UV color artifacts"
+        );
+    }
+
+    /// A texture the device cannot hold is boxed down, not dropped.
+    ///
+    /// The readers accept up to 8192 px and some devices stop at 2048, so a
+    /// scan with a 4096-pixel atlas used to decode, pay for its memory and
+    /// then render nothing at all.
+    #[test]
+    fn an_oversized_texture_is_boxed_down_to_the_device_limit() {
+        // 4x2 of two solid halves, so the average of each box is exact.
+        let mut rgba = Vec::new();
+        for _ in 0..2 {
+            for x in 0..4 {
+                let value = if x < 2 { 40 } else { 200 };
+                rgba.extend_from_slice(&[value, value, value, 255]);
+            }
+        }
+        let texture = occluview_core::MeshTexture::new(4, 2, rgba);
+
+        let fitted = super::fit_to_device(&texture, 2).expect("4 px is over a 2 px limit");
+        assert_eq!((fitted.width, fitted.height), (2, 1));
+        assert_eq!(fitted.rgba, vec![40, 40, 40, 255, 200, 200, 200, 255]);
+
+        assert!(
+            super::fit_to_device(&texture, 4).is_none(),
+            "a texture that already fits is left alone"
+        );
+        assert!(
+            super::fit_to_device(&texture, 8).is_none(),
+            "and so is one well inside the limit"
+        );
+    }
+
+    /// The factor is chosen so both sides fit, not just the wider one.
+    #[test]
+    fn boxing_down_fits_both_sides() {
+        let texture = occluview_core::MeshTexture::new(9, 5, vec![128; 9 * 5 * 4]);
+        let fitted = super::fit_to_device(&texture, 3).expect("9 px is over a 3 px limit");
+        assert!(
+            fitted.width <= 3 && fitted.height <= 3,
+            "got {}x{}",
+            fitted.width,
+            fitted.height
+        );
+        assert_eq!(
+            fitted.rgba.len(),
+            (fitted.width as usize) * (fitted.height as usize) * 4
         );
     }
 }

@@ -73,7 +73,14 @@ impl Renderer {
                 &wgpu::DeviceDescriptor {
                     label: Some("occluview headless device"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    // The conservative floor, raised to the resolution the
+                    // adapter actually supports. `downlevel_defaults` caps
+                    // `max_texture_dimension_2d` at 2048, while the format
+                    // readers accept textures up to 8192 -- so a scan with a
+                    // 4096-pixel atlas decoded, cost its memory, and then had
+                    // nowhere to go.
+                    required_limits: wgpu::Limits::downlevel_defaults()
+                        .using_resolution(adapter.limits()),
                     memory_hints: wgpu::MemoryHints::default(),
                 },
                 None,
