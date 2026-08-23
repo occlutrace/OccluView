@@ -40,6 +40,10 @@ pub(crate) struct OccluViewApp {
     pub(super) repaint_ctx: egui::Context,
     pub(super) scene: Option<Arc<Scene>>,
     pub(super) current_paths: Vec<PathBuf>,
+    /// Where the last successful export of this session landed. Save dialogs
+    /// fall back here for a layer with no file of its own before leaving the
+    /// choice to the platform.
+    pub(super) last_export_dir: Option<PathBuf>,
     pub(super) recent_files: RecentFiles,
     pub(super) camera: Option<Camera>,
     pub(super) live_viewport: Option<SharedLiveViewport>,
@@ -251,6 +255,7 @@ impl OccluViewApp {
             repaint_ctx: repaint_ctx.clone(),
             scene: None,
             current_paths: Vec::new(),
+            last_export_dir: None,
             recent_files: load_recent_files(),
             camera: None,
             live_viewport,

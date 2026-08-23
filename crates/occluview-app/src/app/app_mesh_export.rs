@@ -31,7 +31,9 @@ impl OccluViewApp {
         let mut dialog = layer_export_file_dialog(default_format).set_file_name(
             default_layer_export_name(paths, scene, request.index, default_format),
         );
-        if let Some(directory) = default_layer_export_directory(paths, request.index) {
+        if let Some(directory) =
+            default_layer_export_directory(paths, request.index, self.last_export_dir.as_deref())
+        {
             dialog = dialog.set_directory(directory);
         }
 
@@ -48,6 +50,7 @@ impl OccluViewApp {
                 if self.unsaved_edit_layer_ids.is_empty() {
                     self.has_unsaved_mesh_edits = false;
                 }
+                self.remember_export_directory(&path);
                 let warning_suffix = mesh_export_warning_summary(&report.warnings)
                     .map(|summary| format!(" (warnings: {summary})"))
                     .unwrap_or_default();
@@ -85,6 +88,14 @@ impl OccluViewApp {
                 });
                 false
             }
+        }
+    }
+
+    /// Remember where an export landed so the next save dialog for a layer
+    /// with no file of its own starts there instead of guessing.
+    pub(super) fn remember_export_directory(&mut self, written: &Path) {
+        if let Some(parent) = written.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            self.last_export_dir = Some(parent.to_path_buf());
         }
     }
 
@@ -221,13 +232,26 @@ fn exact_layer_source_path(paths: &[PathBuf], index: usize) -> Option<&Path> {
         .filter(|path| !path.as_os_str().is_empty())
 }
 
+/// The path standing in for a layer that has none of its own — a part split
+/// or cut out of another scan: the nearest sibling with a file, looking
+/// backwards first. Splits insert the new part right after its source layer,
+/// so the backwards neighbour is that source, not whichever unrelated case
+/// happens to sit first in the scene.
+fn nearest_layer_source_path(paths: &[PathBuf], index: usize) -> Option<&Path> {
+    let non_empty = |path: &&PathBuf| !path.as_os_str().is_empty();
+    paths
+        .get(..index)
+        .and_then(|before| before.iter().rev().find(non_empty))
+        .or_else(|| {
+            paths
+                .get(index.saturating_add(1)..)
+                .and_then(|after| after.iter().find(non_empty))
+        })
+        .map(PathBuf::as_path)
+}
+
 fn source_path_for_export_defaults(paths: &[PathBuf], index: usize) -> Option<&Path> {
-    exact_layer_source_path(paths, index).or_else(|| {
-        paths
-            .iter()
-            .map(PathBuf::as_path)
-            .find(|path| !path.as_os_str().is_empty())
-    })
+    exact_layer_source_path(paths, index).or_else(|| nearest_layer_source_path(paths, index))
 }
 
 fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
@@ -248,11 +272,48 @@ pub(super) fn default_layer_export_format(paths: &[PathBuf], index: usize) -> Me
         .unwrap_or(MeshWriteFormat::PlyBinaryLittleEndian)
 }
 
-fn default_layer_export_directory(paths: &[PathBuf], index: usize) -> Option<PathBuf> {
-    source_path_for_export_defaults(paths, index)
-        .and_then(Path::parent)
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
+/// The folders a save dialog may open in, best first: the layer's own
+/// folder, its nearest sibling's, then wherever the last export of this
+/// session landed. The order is a pure fact here; whether a candidate still
+/// exists on disk is judged by [`first_existing_directory`].
+fn export_directory_candidates(
+    paths: &[PathBuf],
+    index: usize,
+    last_export_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let parent_of = |path: Option<&Path>| {
+        path.and_then(Path::parent)
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+    };
+    let mut candidates: Vec<PathBuf> = [
+        parent_of(exact_layer_source_path(paths, index)),
+        parent_of(nearest_layer_source_path(paths, index)),
+        last_export_dir
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map(Path::to_path_buf),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    candidates.dedup();
+    candidates
+}
+
+/// The first candidate that is still a directory on disk. A folder that has
+/// gone away — unplugged media, a deleted export target — falls through to
+/// the next candidate, or to the platform's own dialog memory when none
+/// survive.
+fn first_existing_directory(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(|dir| dir.is_dir())
+}
+
+pub(super) fn default_layer_export_directory(
+    paths: &[PathBuf],
+    index: usize,
+    last_export_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    first_existing_directory(export_directory_candidates(paths, index, last_export_dir))
 }
 
 pub(super) fn mesh_write_extension(format: MeshWriteFormat) -> &'static str {
@@ -405,13 +466,13 @@ mod tests {
     }
 
     #[test]
-    fn derived_layer_uses_first_source_for_folder_and_format() {
+    fn derived_layer_uses_its_neighbour_for_folder_and_format() {
         let paths = vec![PathBuf::new(), PathBuf::from("/case/scans/upper.obj")];
 
         assert_eq!(default_layer_export_format(&paths, 0), MeshWriteFormat::Obj);
         assert_eq!(
-            default_layer_export_directory(&paths, 0),
-            Some(PathBuf::from("/case/scans"))
+            export_directory_candidates(&paths, 0, None),
+            vec![PathBuf::from("/case/scans")]
         );
     }
 
@@ -423,13 +484,57 @@ mod tests {
         ];
 
         assert_eq!(
-            default_layer_export_directory(&paths, 1),
-            Some(PathBuf::from("/case/lower"))
+            export_directory_candidates(&paths, 1, None),
+            vec![PathBuf::from("/case/lower"), PathBuf::from("/case/upper")]
         );
         assert_eq!(
             default_layer_export_format(&paths, 1),
             MeshWriteFormat::PlyBinaryLittleEndian
         );
+    }
+
+    #[test]
+    fn a_split_part_prefers_its_source_over_an_earlier_case() {
+        // Splits insert the new part right after its source layer, so with a
+        // second case open the backwards neighbour is the source scan, not
+        // whichever case sits first in the scene.
+        let paths = vec![
+            PathBuf::from("/other-case/scan.stl"),
+            PathBuf::from("/case/scans/bridge.stl"),
+            PathBuf::new(),
+        ];
+
+        assert_eq!(
+            export_directory_candidates(&paths, 2, None),
+            vec![PathBuf::from("/case/scans")]
+        );
+        assert_eq!(
+            default_layer_export_format(&paths, 2),
+            MeshWriteFormat::StlBinary
+        );
+    }
+
+    #[test]
+    fn the_last_export_folder_backs_up_a_layer_with_no_sources_anywhere() {
+        let paths = vec![PathBuf::new()];
+
+        assert_eq!(
+            export_directory_candidates(&paths, 0, Some(Path::new("/exports/today"))),
+            vec![PathBuf::from("/exports/today")]
+        );
+        assert!(export_directory_candidates(&paths, 0, None).is_empty());
+    }
+
+    #[test]
+    fn a_folder_that_no_longer_exists_is_passed_over() {
+        let vanished = PathBuf::from("/occluview-test-this-folder-does-not-exist");
+        let temp = std::env::temp_dir();
+
+        assert_eq!(
+            first_existing_directory(vec![vanished.clone(), temp.clone()]),
+            Some(temp)
+        );
+        assert_eq!(first_existing_directory(vec![vanished]), None);
     }
 
     #[test]

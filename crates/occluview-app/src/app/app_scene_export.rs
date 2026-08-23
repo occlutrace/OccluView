@@ -5,8 +5,9 @@
 //! geometry and writes the scene the operator is actually looking at.
 
 use super::app_mesh_export::{
-    default_layer_export_format, layer_export_file_dialog, mesh_export_format_from_path,
-    mesh_write_extension, normalize_layer_export_path, sanitize_filename_stem,
+    default_layer_export_directory, default_layer_export_format, layer_export_file_dialog,
+    mesh_export_format_from_path, mesh_write_extension, normalize_layer_export_path,
+    sanitize_filename_stem,
 };
 use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
@@ -32,10 +33,16 @@ impl OccluViewApp {
             .iter()
             .any(|entry| entry.visible && entry.mesh.texture().is_some());
 
-        let Some(selected) = layer_export_file_dialog(MeshWriteFormat::PlyBinaryLittleEndian)
-            .set_file_name("scene.ply")
-            .save_file()
-        else {
+        let mut dialog = layer_export_file_dialog(MeshWriteFormat::PlyBinaryLittleEndian)
+            .set_file_name("scene.ply");
+        // Index zero with the neighbour fallback resolves to the first layer
+        // that has a file, so a merged scene lands next to its scans.
+        if let Some(directory) =
+            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
+        {
+            dialog = dialog.set_directory(directory);
+        }
+        let Some(selected) = dialog.save_file() else {
             return;
         };
         let path = normalize_layer_export_path(selected, MeshWriteFormat::PlyBinaryLittleEndian);
@@ -62,6 +69,7 @@ impl OccluViewApp {
                     ""
                 };
                 self.forget_unsaved_edits(&written);
+                self.remember_export_directory(&path);
                 self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
             Err(error) => {
@@ -89,7 +97,13 @@ impl OccluViewApp {
             self.status_message = Some("Nothing visible to save".into());
             return;
         }
-        let Some(directory) = rfd::FileDialog::new().pick_folder() else {
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(start) =
+            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
+        {
+            dialog = dialog.set_directory(start);
+        }
+        let Some(directory) = dialog.pick_folder() else {
             return;
         };
 
@@ -115,6 +129,11 @@ impl OccluViewApp {
             }
         }
 
+        if written > 0 {
+            // Even a partial batch is a real destination choice worth
+            // remembering for the next save dialog.
+            self.last_export_dir = Some(directory.clone());
+        }
         if failed == 0 {
             // Same rule as the whole-scene save: a hidden layer was not written,
             // so its edits are still only in memory.
