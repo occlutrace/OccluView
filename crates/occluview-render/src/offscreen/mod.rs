@@ -122,9 +122,9 @@ pub struct ViewportSpec {
 /// Offscreen renderer. Wraps a headless [`Renderer`].
 pub struct Offscreen {
     renderer: Renderer,
-    /// Cached identity mesh uniform + bind group (group 1). The thumbnail path
-    /// renders one mesh at the origin, so the model matrix is identity.
-    mesh_uniform_buffer: wgpu::Buffer,
+    /// Cached identity mesh bind group (group 1). The thumbnail path renders
+    /// one mesh at the origin, so the model matrix is identity. The uniform
+    /// buffer behind it is owned by the bind group and never read back.
     mesh_bind_group: wgpu::BindGroup,
     /// Cached 1x1 white fallback texture + bind group (group 2). The thumbnail
     /// path uses vertex colors (no texture), but the pipeline requires a bound
@@ -171,7 +171,6 @@ impl Offscreen {
 
         Self {
             renderer,
-            mesh_uniform_buffer,
             mesh_bind_group,
             texture_bind_group,
         }
@@ -187,18 +186,6 @@ impl Offscreen {
     #[must_use]
     pub fn prepare_scene(&self, sources: &[PreparedSceneSource<'_>]) -> PreparedScene {
         PreparedScene::upload(&self.renderer, sources)
-    }
-
-    /// Access the cached fallback texture bind group (group 2). Useful for
-    /// multi-mesh draws where some meshes are untextured.
-    pub fn fallback_texture_bind_group(&self) -> &wgpu::BindGroup {
-        &self.texture_bind_group
-    }
-
-    /// Access the cached identity mesh uniform buffer. Useful for building
-    /// additional bind groups.
-    pub fn identity_uniform_buffer(&self) -> &wgpu::Buffer {
-        &self.mesh_uniform_buffer
     }
 
     /// The per-mesh uniform bind group layout (group 1). Exposed so callers
