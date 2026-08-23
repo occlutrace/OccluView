@@ -368,10 +368,12 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
          encodes THIS frame's camera (removes one frame of orbit latency)"
     );
     assert!(
-        central.contains(
-            "self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());"
-        ),
-        "camera input should still be collected from the main viewport panel"
+        central.contains("self.show_viewport_overlays(ui, &response, ctx);"),
+        "the main viewport panel should hand off to the shared overlay body"
+    );
+    assert!(
+        app_render_source().contains("self.handle_viewport_input(ctx, response, response.rect,"),
+        "camera input should still be collected once the overlays have had the pointer"
     );
     assert!(
         render_pending.contains("if self.needs_render {")
@@ -547,10 +549,28 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
         );
     }
     assert!(
-        app_render.contains(
-            "self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());"
-        ),
+        app_render.contains("self.handle_viewport_input(ctx, response, response.rect,"),
         "the camera path must still be reachable when no tool consumed the pointer"
+    );
+    // The live and offscreen branches used to carry two copies of this whole
+    // body, so every tool ever added had to be wired into both, and a missed
+    // wiring only showed up for operators whose driver could not give them a
+    // live viewport. One body, called twice.
+    assert_eq!(
+        count_occurrences(
+            app_render,
+            "self.show_viewport_overlays(ui, &response, ctx);"
+        ),
+        2,
+        "both viewport branches must call the one overlay body"
+    );
+    assert_eq!(
+        count_occurrences(
+            app_render,
+            "let cut_ui_consumed = self.show_cut_tool_overlay("
+        ),
+        1,
+        "the overlay orchestration must exist exactly once"
     );
 }
 

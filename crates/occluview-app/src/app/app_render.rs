@@ -529,43 +529,7 @@ impl OccluViewApp {
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
-                let mut axis_snap = None;
-                if let Some(camera) = self.camera.as_ref() {
-                    paint_scale_bar(ui, response.rect, camera);
-                }
-                if let Some(camera) = self.camera.as_ref() {
-                    // Lift the gizmo above the docked Section panel while cutting
-                    // so it never sits under the bottom-right panel.
-                    let gizmo_avoid = self.active_section_panel_rect(response.rect);
-                    axis_snap = paint_axis_gizmo(ui, response.rect, camera, &response, gizmo_avoid);
-                }
-                self.show_layers_overlay(ui, response.rect, ctx);
-                self.show_mesh_editor_overlay(response.rect, ctx);
-                self.paint_mesh_selection_drag_overlay_impl(ui);
-                self.paint_sculpt_cursor_impl(ui, response.rect);
-                self.show_status_overlay(ui, response.rect);
-                let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
-                let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
-                // A click the axis gizmo snapped on never doubles as a measure
-                // anchor.
-                let align_ui_consumed =
-                    self.show_align_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                let measure_ui_consumed =
-                    self.show_measure_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                if let Some(axis) = axis_snap {
-                    if let Some(camera) = self.camera.as_mut() {
-                        camera.snap_to_axis(axis);
-                        self.needs_render = true;
-                        ctx.request_repaint();
-                    }
-                }
-                if !bridge_ui_consumed
-                    && !cut_ui_consumed
-                    && !measure_ui_consumed
-                    && !align_ui_consumed
-                {
-                    self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
-                }
+                self.show_viewport_overlays(ui, &response, ctx);
             } else if let Some(texture) = self
                 .rendered
                 .as_ref()
@@ -578,43 +542,7 @@ impl OccluViewApp {
                     egui::Image::new((texture.id(), available))
                         .sense(egui::Sense::click_and_drag()),
                 );
-                let mut axis_snap = None;
-                if let Some(camera) = self.camera.as_ref() {
-                    paint_scale_bar(ui, response.rect, camera);
-                }
-                if let Some(camera) = self.camera.as_ref() {
-                    // Lift the gizmo above the docked Section panel while cutting
-                    // so it never sits under the bottom-right panel.
-                    let gizmo_avoid = self.active_section_panel_rect(response.rect);
-                    axis_snap = paint_axis_gizmo(ui, response.rect, camera, &response, gizmo_avoid);
-                }
-                self.show_layers_overlay(ui, response.rect, ctx);
-                self.show_mesh_editor_overlay(response.rect, ctx);
-                self.paint_mesh_selection_drag_overlay_impl(ui);
-                self.paint_sculpt_cursor_impl(ui, response.rect);
-                self.show_status_overlay(ui, response.rect);
-                let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
-                let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
-                // A click the axis gizmo snapped on never doubles as a measure
-                // anchor.
-                let align_ui_consumed =
-                    self.show_align_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                let measure_ui_consumed =
-                    self.show_measure_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                if let Some(axis) = axis_snap {
-                    if let Some(camera) = self.camera.as_mut() {
-                        camera.snap_to_axis(axis);
-                        self.needs_render = true;
-                        ctx.request_repaint();
-                    }
-                }
-                if !bridge_ui_consumed
-                    && !cut_ui_consumed
-                    && !measure_ui_consumed
-                    && !align_ui_consumed
-                {
-                    self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
-                }
+                self.show_viewport_overlays(ui, &response, ctx);
             } else if self.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
@@ -624,6 +552,57 @@ impl OccluViewApp {
                 ui.spinner();
             }
         });
+    }
+
+    /// Every overlay the viewport draws, and the input arbitration that
+    /// follows them.
+    ///
+    /// One body, called by both branches of `show_central_panel_impl`. It used
+    /// to be written twice, so every tool ever added had to be wired into both
+    /// copies with nothing to say if one was missed -- and the copy most likely
+    /// to be missed is the offscreen one, which never runs on a developer
+    /// machine. It runs for operators whose driver could not give the app a
+    /// live viewport, who are exactly the people least able to diagnose "the
+    /// Align button does nothing". The branches now differ only in how they
+    /// obtain `response`, which is the only thing that actually differs.
+    fn show_viewport_overlays(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        ctx: &egui::Context,
+    ) {
+        let mut axis_snap = None;
+        if let Some(camera) = self.camera.as_ref() {
+            paint_scale_bar(ui, response.rect, camera);
+        }
+        if let Some(camera) = self.camera.as_ref() {
+            // Lift the gizmo above the docked Section panel while cutting so it
+            // never sits under the bottom-right panel.
+            let gizmo_avoid = self.active_section_panel_rect(response.rect);
+            axis_snap = paint_axis_gizmo(ui, response.rect, camera, response, gizmo_avoid);
+        }
+        self.show_layers_overlay(ui, response.rect, ctx);
+        self.show_mesh_editor_overlay(response.rect, ctx);
+        self.paint_mesh_selection_drag_overlay_impl(ui);
+        self.paint_sculpt_cursor_impl(ui, response.rect);
+        self.show_status_overlay(ui, response.rect);
+        let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
+        let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
+        // A click the axis gizmo snapped on never doubles as a measure anchor.
+        let align_ui_consumed =
+            self.show_align_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        let measure_ui_consumed =
+            self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        if let Some(axis) = axis_snap {
+            if let Some(camera) = self.camera.as_mut() {
+                camera.snap_to_axis(axis);
+                self.needs_render = true;
+                ctx.request_repaint();
+            }
+        }
+        if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed && !align_ui_consumed {
+            self.handle_viewport_input(ctx, response, response.rect, axis_snap.is_some());
+        }
     }
 
     pub(super) fn render_pending_frame_impl(&mut self, ctx: &egui::Context) {
