@@ -65,7 +65,7 @@ pub use mesh::{
 pub use occlu_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, BrushMode, BrushSession, BrushStroke,
     BrushStrokeOutcome, FaceSelection, MeshEditOptions, MeshEditReport, MeshEditWarning,
-    RepairOptions, RepairReport,
+    RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
 };
 pub use recent_files::{RecentEntry, RecentFiles};
 pub use scale_bar::ScaleBar;

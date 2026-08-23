@@ -15,8 +15,13 @@ use occluview_core::{
 /// Generous edge ceiling for the interactive Close Holes action. With the mm
 /// perimeter slider doing the real limiting, the edge count is only a safety
 /// valve, so it must not spuriously refuse a legitimate hole on a densely
-/// triangulated scan. Bounded under the kernel ear-clip's u16 rim limit.
-const CLOSE_HOLES_EDGE_CEILING: usize = 20_000;
+/// triangulated scan.
+///
+/// The kernel owns the number. A private copy here used to defeat it: the
+/// selection gate takes `max(options.max_boundary_loop, kernel constant)`, so
+/// lowering the kernel value while this one stayed at the old figure would
+/// have changed nothing in the shipped product.
+use occluview_core::CLOSE_HOLES_EDGE_CEILING;
 
 pub(super) fn apply_layer_mesh_edit_action_with_status(
     app: &mut OccluViewApp,

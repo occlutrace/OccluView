@@ -10,31 +10,68 @@ fn mesh_shader_uses_camera_relative_inspection_lighting() {
         shader.contains("let rim_lit = pow(fresnel, 1.45)"),
         "rim cue should be view-relative instead of a fixed world-space direction"
     );
+    // Three separate assertions, not one `&&`: the golden scene is a flat
+    // triangle facing the camera, so fresnel, rim, wrap and backface are all
+    // near zero in it and this text is the only guard these terms have. A
+    // combined assert reported "studio light and side walls" without saying
+    // which of the three had moved.
     assert!(
-        shader.contains("0.50 + 0.36 * wrapped_key + 0.095 * fill_lit + 0.018 * rim_lit")
-            && shader.contains("0.48,\n        1.05,")
-            && shader.contains("let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel"),
-        "form-giving studio light should keep a lit floor (no cast shadow) yet a full key/fill/rim swing so side walls read with depth"
+        shader.contains("0.50 + 0.36 * wrapped_key + 0.095 * fill_lit + 0.018 * rim_lit"),
+        "the studio light's key/fill/rim mix should keep its lit floor and its full swing"
     );
     assert!(
-        shader.contains("let textured = mesh_uniform.has_texture != 0u")
-            && shader.contains("mesh_uniform.show_texture != 0u")
-            && shader.contains("let texture_glaze = select(0.0, 1.0, textured)")
-            && shader.contains("let glaze_highlight ="),
-        "textured scans should get a restrained glaze highlight without making untextured STL glossy, and the neutral-material toggle should suppress it too"
+        shader.contains("0.48,\n        1.05,"),
+        "the studio light's ambient floor and key gain should stay as tuned"
     );
     assert!(
-        shader.contains("@builtin(front_facing) front_facing: bool")
-            && shader.contains("BACKFACE_INSPECTION_TINT")
-            && shader.contains("let backface_mix = select(0.0, 0.14, !front_facing)"),
-        "mesh shader should give back-facing triangles only a faint cool tint (not a dark grey) so a flipped surface stays distinguishable without a half-shadow"
+        shader.contains("let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel"),
+        "form contrast should stay view-relative so side walls read with depth"
     );
-    assert!(
-        !shader.contains("back_falloff")
-            && !shader.contains("- 0.018")
-            && !shader.contains("normal_faces_away"),
-        "even dental light must not add a moving back-falloff or grazing grey-wash half-shadow over dental surfaces"
-    );
+    for (fragment, why) in [
+        (
+            "let textured = mesh_uniform.has_texture != 0u",
+            "the glaze must key off whether the mesh has a texture at all",
+        ),
+        (
+            "mesh_uniform.show_texture != 0u",
+            "the neutral-material toggle must suppress the glaze too",
+        ),
+        (
+            "let texture_glaze = select(0.0, 1.0, textured)",
+            "an untextured STL must not be made glossy by the glaze",
+        ),
+        (
+            "let glaze_highlight =",
+            "the glaze highlight itself must exist",
+        ),
+    ] {
+        assert!(shader.contains(fragment), "{why}");
+    }
+    for (fragment, why) in [
+        (
+            "@builtin(front_facing) front_facing: bool",
+            "the shader needs the facing flag to tint a back face at all",
+        ),
+        (
+            "BACKFACE_INSPECTION_TINT",
+            "the back-face tint constant must stay named",
+        ),
+        (
+            "let backface_mix = select(0.0, 0.14, !front_facing)",
+            "the back-face mix should stay a restrained inspection cue",
+        ),
+    ] {
+        assert!(shader.contains(fragment), "{why}");
+    }
+    // A back-facing triangle gets a faint cool tint, never a dark grey: a
+    // flipped surface has to stay distinguishable without looking half-shadowed.
+    for forbidden in ["back_falloff", "- 0.018", "normal_faces_away"] {
+        assert!(
+            !shader.contains(forbidden),
+            "dental light must not grow a moving back-falloff or a grazing \
+             grey-wash half-shadow: found `{forbidden}`"
+        );
+    }
 }
 
 #[test]

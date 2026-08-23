@@ -11,7 +11,7 @@ use super::holes_walk::{
     BoundaryOwnerMap,
 };
 use super::{FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions};
-use crate::holes::{FillLoopStats, SELECTION_MAX_BOUNDARY_LOOP};
+use crate::holes::{FillLoopStats, CLOSE_HOLES_EDGE_CEILING};
 
 /// Border guard: a rim must reach this fraction of the LARGEST rim's
 /// perimeter to count as scan border.
@@ -139,7 +139,7 @@ pub(super) fn rim_exceeds_size_cap(
     options: MeshEditOptions,
 ) -> bool {
     let edge_cap = if has_selection {
-        options.max_boundary_loop.max(SELECTION_MAX_BOUNDARY_LOOP)
+        options.max_boundary_loop.max(CLOSE_HOLES_EDGE_CEILING)
     } else {
         options.max_boundary_loop
     };
