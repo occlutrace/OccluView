@@ -448,7 +448,7 @@ mod tests {
         // has to be released before the in-place edit, or `Arc::make_mut`
         // deep-copies the whole case on every dab.
         assert!(
-            patch.find("drop(scene);") < patch.find("self.live_scene_mut()"),
+            crate::primary_ui_tests::appears_before(patch, "drop(scene);", "self.live_scene_mut()",),
             "the cloned scene handle must be dropped before the in-place edit"
         );
         assert!(

@@ -145,9 +145,11 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         "the layer interaction source should be readable"
     );
     assert!(
-        viewport_source
-            .find("if changes.context_request.is_none() && changes.layer_edits.is_empty()")
-            < viewport_source.find("let mut draft = scene.as_ref().clone();"),
+        appears_before(
+            &viewport_source,
+            "if changes.context_request.is_none() && changes.layer_edits.is_empty()",
+            "let mut draft = scene.as_ref().clone();",
+        ),
         "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
     );
     // The early return is only half of it. The material-only path mutates

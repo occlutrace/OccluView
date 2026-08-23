@@ -126,10 +126,11 @@ fn viewport_double_click_focuses_scene_point_not_home_reset() {
         "viewport input should pick a scene point for double-click focus"
     );
     assert!(
-        input.contains("if response.double_clicked() {")
-            && input.contains("if let Some(target) = scene_pick")
-            && input.find("if response.double_clicked() {")
-                < input.find("if let Some(target) = scene_pick"),
+        appears_before(
+            input,
+            "if response.double_clicked() {",
+            "if let Some(target) = scene_pick",
+        ),
         "double click should focus the picked scene point before any fallback"
     );
     assert!(
@@ -159,8 +160,11 @@ fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
         "face selection should use typed scene hits without the camera-focus AABB fallback"
     );
     assert!(
-        input.find("self.handle_primary_face_selection_click(ctx, response)")
-            < input.find("if response.double_clicked() {"),
+        appears_before(
+            input,
+            "self.handle_primary_face_selection_click(ctx, response)",
+            "if response.double_clicked() {",
+        ),
         "face selection should run before double-click camera focus consumes the pointer event"
     );
 }
@@ -213,8 +217,11 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
         "viewport input should dispatch mesh marquee selection through its dedicated helper"
     );
     assert!(
-        input.find("self.track_mesh_selection_drag(ctx, response, viewport_rect, pan_drag_active)")
-            < input.find("self.handle_primary_face_selection_click(ctx, response)"),
+        appears_before(
+            input,
+            "self.track_mesh_selection_drag(ctx, response, viewport_rect, pan_drag_active)",
+            "self.handle_primary_face_selection_click(ctx, response)",
+        ),
         "drag-selection commit should run before the single-click face selection branch"
     );
 }
@@ -244,9 +251,11 @@ fn armed_lasso_places_points_on_press_through_pure_state_machine() {
     // While armed, the lasso owns every primary gesture: the single-click face
     // pick must be suppressed so a lasso click cannot also select a face.
     assert!(
-        input.contains("!self.edit_mode.lasso_armed()")
-            && input.find("!self.edit_mode.lasso_armed()")
-                < input.find("self.handle_primary_face_selection_click(ctx, response)"),
+        appears_before(
+            input,
+            "!self.edit_mode.lasso_armed()",
+            "self.handle_primary_face_selection_click(ctx, response)",
+        ),
         "face pick must be gated off while the lasso owns primary clicks"
     );
 
@@ -277,9 +286,11 @@ fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
     );
     assert!(
         interaction.contains("fn discard_lasso_outline")
-            && menu.contains("discard_lasso_outline(&mut self.mesh_selection_drag)")
-            && menu.find("discard_lasso_outline(&mut self.mesh_selection_drag)")
-                < menu.find("viewport_menu_target_id"),
+            && appears_before(
+                menu,
+                "discard_lasso_outline(&mut self.mesh_selection_drag)",
+                "viewport_menu_target_id",
+            ),
         "a stationary right-click must drop an in-progress lasso outline before \
          opening the shared menu, so it can safely switch the target in one click"
     );
@@ -322,7 +333,11 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
     );
 
     assert!(
-        update.find("self.render_pending_frame(ctx);") < update.find("self.show_central_panel(ctx);"),
+        appears_before(
+            update,
+            "self.render_pending_frame(ctx);",
+            "self.show_central_panel(ctx);",
+        ),
         "the pending frame render pass should still happen before the main panel where camera input is collected"
     );
     assert!(
@@ -460,8 +475,11 @@ fn viewport_primary_secondary_drag_pans_scene_before_orbit() {
         "active pan must consume raw pointer motion so its first sub-threshold movement is not lost"
     );
     assert!(
-        input.find("viewport_pan_drag_active(ctx, response)")
-            < input.find("self.update_viewport_orbit_gesture("),
+        appears_before(
+            input,
+            "viewport_pan_drag_active(ctx, response)",
+            "self.update_viewport_orbit_gesture(",
+        ),
         "combined left+right pan must win before the secondary-button orbit branch"
     );
 }

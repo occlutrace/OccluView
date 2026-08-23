@@ -222,8 +222,11 @@ mod tests {
             "selection overlay should have its own sync path"
         );
         assert!(
-            production_source.find("scene.draw_with_clip(")
-                < production_source.find("overlay.draw_with_clip("),
+            crate::primary_ui_tests::appears_before(
+                production_source,
+                "scene.draw_with_clip(",
+                "overlay.draw_with_clip(",
+            ),
             "selection overlay should draw after the base scene"
         );
         assert!(

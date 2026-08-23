@@ -66,7 +66,7 @@ fn no_status_line_promises_an_undo_that_was_not_stored() {
         "the other branch should say plainly that it cannot be undone"
     );
     assert!(
-        sculpt.find("last_edit_undoable()") < sculpt.find(promise),
+        appears_before(&sculpt, "last_edit_undoable()", promise),
         "the check has to come before the promise"
     );
 

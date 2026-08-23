@@ -1,3 +1,7 @@
+//! Contract tests for the Explorer preview handler and its window.
+
+#![allow(clippy::panic, clippy::expect_used)]
+
 use std::path::{Path, PathBuf};
 
 fn registration_source() -> String {
@@ -22,10 +26,21 @@ fn combined_com_source() -> String {
     .join("\n")
 }
 
+/// A source file of this crate, read for a contract assertion.
+///
+/// It panics rather than returning an empty string. A path that stops
+/// resolving -- a rename, a move, a typo -- would otherwise turn every
+/// assertion about that file into an assertion about "", and the negative
+/// ones, which are the assertions worth having, all pass in a vacuum.
 fn source_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);
-    std::fs::read_to_string(path).unwrap_or_default()
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "contract test source {} is missing: {error}",
+            path.display()
+        )
+    })
 }
 
 #[test]

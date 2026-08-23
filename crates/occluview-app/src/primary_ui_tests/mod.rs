@@ -39,6 +39,19 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
+/// Whether `first` appears before `second`, with both present.
+///
+/// `str::find` returns an `Option`, and `None < Some(_)` is true in Rust, so a
+/// bare `find(a) < find(b)` passes when `a` is missing altogether -- which is
+/// exactly the deletion an ordering guard exists to catch. One of these
+/// guarded the line that keeps a brush dab from deep-copying the whole case.
+pub(crate) fn appears_before(haystack: &str, first: &str, second: &str) -> bool {
+    match (haystack.find(first), haystack.find(second)) {
+        (Some(first), Some(second)) => first < second,
+        _ => false,
+    }
+}
+
 /// The part of a source file above its own `#[cfg(test)]` module.
 ///
 /// A guard that reads its own file and searches the whole of it matches the
