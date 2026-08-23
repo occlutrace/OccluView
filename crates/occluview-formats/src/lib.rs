@@ -102,10 +102,31 @@ mod tests {
             ["stl", "ply", "obj", "glb", "hps", LEGACY_HPS_EXTENSION]
         );
 
+        // Pin the claim, not two substrings. This check used to require the
+        // exact sentence the README makes; it was quietly relaxed to "`.hps`
+        // and `.dcm` appear somewhere in the file", which a README stating the
+        // opposite would pass -- and `.dcm` appears in this README several
+        // times for other reasons, including a paragraph about NOT claiming the
+        // extension. What has to hold is the promise itself.
         let readme = include_str!("../../../README.md");
+        let promise = readme
+            .lines()
+            .find(|line| line.starts_with("- `.hps` and `.dcm`"));
         assert!(
-            readme.contains(".hps") && readme.contains(".dcm"),
-            "README must document .hps and .dcm"
+            promise.is_some(),
+            "the README's supported-format list must carry an .hps/.dcm entry"
+        );
+        let Some(promise) = promise else {
+            return;
+        };
+        assert!(
+            promise.contains("medical DICOM is not supported"),
+            "the entry must keep saying that medical DICOM is refused, since \
+             the reader refuses it: {promise}"
+        );
+        assert!(
+            promise.contains("DICM"),
+            "the entry should name the marker the reader actually tests: {promise}"
         );
     }
 }
