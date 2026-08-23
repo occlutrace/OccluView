@@ -1,28 +1,6 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-fn collect_rust_source_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(directory)
-        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("cannot read entry: {error}"))?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-        if file_type.is_symlink() || path.file_name().is_some_and(|name| name == "target") {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect_rust_source_files(&path, files)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "rs")
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn source_budget_guard_ignores_generated_target_directories() {
     let root = std::env::temp_dir().join(format!("occluview-line-budget-{}", std::process::id()));
