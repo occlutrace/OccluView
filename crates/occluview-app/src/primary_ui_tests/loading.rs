@@ -438,4 +438,35 @@ fn the_handoff_pipe_cannot_be_squatted_or_used_to_impersonate() {
         windows.contains("owner_only_security_descriptor"),
         "the security descriptor should be built in one named place"
     );
+
+    // The hardening above was reachable only when the SID lookup succeeded.
+    // When it failed the descriptor was None, the pipe was created with the
+    // DEFAULT DACL, and the name fell back to the fixed literal "default" --
+    // the squattable, world-readable pipe this test is about, arrived at by a
+    // silent downgrade rather than by an attack.
+    assert!(
+        !windows.contains("descriptor.unwrap_or_default()"),
+        "a missing descriptor must refuse the pipe, not fall back to the \
+         default DACL"
+    );
+    assert!(
+        windows.contains(
+            "bail!(\"refusing to create the single-instance pipe without an owner-only DACL\")"
+        ),
+        "the failure has to be a refusal, and it has to say so"
+    );
+
+    // FIRST_PIPE_INSTANCE makes a claimed name fail for good, so retrying it
+    // every 50 ms wrote a warning per retry into a 50-line crash ring: the
+    // whole recent-log section of the next crash report became one repeated
+    // line, in under three seconds.
+    assert!(
+        windows.contains("const MAX_CONSECUTIVE_PIPE_FAILURES: u32"),
+        "the listener must give up on a permanently claimed name"
+    );
+    assert!(
+        windows.contains("hand-off continues"),
+        "and it must say where hand-off went, because the disk fallback \
+         listener carries it from there"
+    );
 }

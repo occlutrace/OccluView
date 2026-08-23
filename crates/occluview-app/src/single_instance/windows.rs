@@ -160,19 +160,44 @@ pub(super) fn acquire() -> Result<SingleInstance> {
     })
 }
 
+/// How many creates in a row may fail before the listener gives up.
+///
+/// `FILE_FLAG_FIRST_PIPE_INSTANCE` makes a claimed name fail permanently
+/// rather than yielding a second instance, so a squatted name is not a
+/// transient condition: the loop retried every 50 ms and wrote a warning each
+/// time, which overwrote the whole 50-line crash-report ring in under three
+/// seconds -- the process turned its own diagnostics into one repeated line.
+/// A handful of retries covers a genuinely transient failure; past that the
+/// disk fallback listener, which runs beside this one, carries the hand-off.
+const MAX_CONSECUTIVE_PIPE_FAILURES: u32 = 5;
+
 pub(super) fn spawn_pipe_listener(sender: mpsc::Sender<OpenRequest>, repaint_ctx: egui::Context) {
-    thread::spawn(move || loop {
-        match read_pipe_open_request() {
-            Ok(Some(request)) => {
-                if sender.send(request).is_err() {
-                    return;
+    thread::spawn(move || {
+        let mut failures = 0_u32;
+        loop {
+            match read_pipe_open_request() {
+                Ok(Some(request)) => {
+                    failures = 0;
+                    if sender.send(request).is_err() {
+                        return;
+                    }
+                    super::request_open_handoff_repaint(&repaint_ctx);
                 }
-                super::request_open_handoff_repaint(&repaint_ctx);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(?error, "single-instance pipe receive failed");
-                thread::sleep(FALLBACK_POLL_INTERVAL);
+                Ok(None) => failures = 0,
+                Err(error) => {
+                    failures += 1;
+                    if failures >= MAX_CONSECUTIVE_PIPE_FAILURES {
+                        tracing::warn!(
+                            ?error,
+                            failures,
+                            "single-instance pipe listener stopping; hand-off continues \
+                             over the disk fallback"
+                        );
+                        return;
+                    }
+                    tracing::warn!(?error, "single-instance pipe receive failed");
+                    thread::sleep(FALLBACK_POLL_INTERVAL);
+                }
             }
         }
     });
@@ -248,13 +273,21 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
     // there first. The DACL grants the current user and nobody else, so on a
     // shared workstation another signed-in account cannot read the scan paths
     // that travel over this pipe.
-    let descriptor = owner_only_security_descriptor();
+    // No descriptor, no pipe. Falling through to `None` here would have created
+    // the pipe with the DEFAULT DACL under a name that is equally predictable
+    // -- `user_sid_suffix` answers "default" in the same failure -- which is
+    // precisely the shared-workstation squat this function exists to prevent,
+    // reached by a silent downgrade. Hand-off is not load-bearing: the disk
+    // fallback listener runs beside this one and carries the request.
+    let Some(descriptor) = owner_only_security_descriptor() else {
+        bail!("refusing to create the single-instance pipe without an owner-only DACL");
+    };
     let attributes = SECURITY_ATTRIBUTES {
         nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
-        lpSecurityDescriptor: descriptor.unwrap_or_default().0,
+        lpSecurityDescriptor: descriptor.0,
         bInheritHandle: false.into(),
     };
-    let attributes_ptr = descriptor.map(|_| std::ptr::addr_of!(attributes));
+    let attributes_ptr = Some(std::ptr::addr_of!(attributes));
 
     // SAFETY: `pipe_name` is a NUL-terminated wide string, and `attributes`
     // (when present) points at a live SECURITY_ATTRIBUTES whose descriptor
@@ -271,13 +304,11 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
             attributes_ptr,
         )
     };
-    if let Some(descriptor) = descriptor {
-        // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
-        // which allocates with LocalAlloc, and CreateNamedPipeW has copied what it needs.
-        let _ = unsafe {
-            windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(descriptor.0))
-        };
-    }
+    // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
+    // which allocates with LocalAlloc, and CreateNamedPipeW has copied what it needs.
+    let _ = unsafe {
+        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(descriptor.0))
+    };
     if pipe.is_invalid() {
         // Either a transient failure or, more interestingly, someone already
         // holds this name. Both are worth reporting rather than working around.
