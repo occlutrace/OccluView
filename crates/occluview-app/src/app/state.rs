@@ -414,10 +414,16 @@ impl OccluViewApp {
         self.show_toolbar_impl(ctx);
     }
 
+    /// Edit hotkeys, refused while a dialog is up.
+    ///
+    /// This is the only `_impl` pair in the crate that is not a pass-through,
+    /// and the callee is named accordingly. The other twenty-nine teach a
+    /// reader that `foo` and `foo_impl` are interchangeable, which would make
+    /// `handle_edit_shortcuts_impl` a live trapdoor: one plausible call from a
+    /// neighbouring module deletes faces or replays an undo while the
+    /// unsaved-changes prompt is open, silently changing what "Save" then
+    /// writes. `handle_edit_shortcuts_unguarded` cannot be called by habit.
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
-        // Edit hotkeys must never act "behind" an open dialog: undoing a mesh
-        // edit while the unsaved-changes or open-guard prompt is up would
-        // silently change what "Save" then exports (or which scene is at stake).
         if self.close_guard_open
             || self.pending_replace_open.is_some()
             || self.app_error.is_some()
@@ -427,7 +433,7 @@ impl OccluViewApp {
         {
             return;
         }
-        self.handle_edit_shortcuts_impl(ctx);
+        self.handle_edit_shortcuts_unguarded(ctx);
     }
 
     pub(super) fn show_layers_overlay(

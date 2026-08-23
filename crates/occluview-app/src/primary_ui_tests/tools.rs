@@ -110,3 +110,42 @@ fn both_disc_tools_ask_one_question_about_the_pointer() {
         "the bridge tool must not compute its own avoid-rect for the gizmo"
     );
 }
+
+#[test]
+fn the_one_guarded_forwarder_is_not_named_like_the_others() {
+    // Twenty-nine `foo` / `foo_impl` pairs in this crate are pure
+    // pass-throughs, which teaches a reader that the two are interchangeable.
+    // One is not: `handle_edit_shortcuts` refuses to run while a dialog is
+    // open, because undoing a mesh edit behind the unsaved-changes prompt
+    // silently changes what "Save" then writes. Under the shared naming that
+    // callee was a trapdoor one plausible call wide.
+    let state = repo_source_file("src/app/state.rs");
+    let editor = repo_source_file("src/app/app_mesh_editor.rs");
+
+    assert!(
+        state.contains("self.handle_edit_shortcuts_unguarded(ctx);"),
+        "the guard should call a callee whose name says it is unguarded"
+    );
+    assert!(
+        editor.contains("pub(super) fn handle_edit_shortcuts_unguarded("),
+        "the hotkey body should carry the unguarded name"
+    );
+    let by_habit = format!("handle_edit_shortcuts{}", "_impl");
+    assert!(
+        !editor.contains(&by_habit) && !state.contains(&format!("self.{by_habit}")),
+        "the pass-through name invites a call that skips the dialog check"
+    );
+    // And the guard itself must still refuse every dialog.
+    for dialog in [
+        "self.close_guard_open",
+        "self.pending_replace_open.is_some()",
+        "self.app_error.is_some()",
+        "self.about_window == AboutWindowState::Open",
+        "self.third_party_window_open",
+    ] {
+        assert!(
+            state.contains(dialog),
+            "edit hotkeys must stay refused while {dialog} is up"
+        );
+    }
+}
