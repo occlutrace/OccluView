@@ -95,7 +95,7 @@ fn an_uncached_sculpt_snapshot_holds_the_same_geometry_without_the_caches() {
 /// and 11.4 ms.
 #[test]
 fn a_huge_coincident_vertex_group_stays_linear() {
-    let group = 4_000usize;
+    let group = 20_000usize;
     let mut vertices = Vec::with_capacity(group * 3);
     let mut indices = Vec::with_capacity(group * 3);
     for i in 0..group {
@@ -118,11 +118,16 @@ fn a_huge_coincident_vertex_group_stays_linear() {
     let elapsed = started.elapsed();
 
     assert_eq!(mesh.vertices().len(), group * 3);
-    // The quadratic form took 19 ms at k=2000 in release and far more in a
-    // debug test build; the ceiling is generous enough that only a return to
-    // quadratic can reach it.
+    // The ceiling has to sit between the two forms, so both were measured here
+    // in the test profile at this k: linear 8.6 ms, quadratic 1.14 s -- 130x
+    // apart. 300 ms leaves the linear form 35x of headroom, which survives a
+    // runner far slower than this one, and still catches the quadratic form on
+    // a machine four times faster.
+    //
+    // The ceiling was 10 s against a fixture of k=4000, where the quadratic
+    // form costs 53 ms. It could not have failed.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
+        elapsed < std::time::Duration::from_millis(300),
         "coincident-group normal smoothing took {elapsed:?}; it has gone quadratic again"
     );
     // The coherent group agrees, so every member keeps a usable normal.
