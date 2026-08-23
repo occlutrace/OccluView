@@ -86,6 +86,12 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
         return LayerContextApply::default();
     }
     entry.mesh = restored.mesh;
+    // The restored mesh comes from the cold snapshot the sculpt session keeps,
+    // so its bounding box is not cached. `Scene::bbox` is read twice a frame
+    // and falls back to walking every vertex -- 2.1 ms a call on a
+    // million-vertex layer, indefinitely. Undo is a click, not a frame, so the
+    // walk is paid once here instead.
+    let _ = entry.mesh.bbox();
     app.mark_mesh_edits_unsaved(layer_id);
     app.status_message = Some(format!("Redid mesh edit: {layer_label}"));
     structural_scene_apply()
@@ -167,5 +173,11 @@ pub(super) fn apply_layer_mesh_undo_action(
     }
 
     entry.mesh = restored.mesh;
+    // The restored mesh comes from the cold snapshot the sculpt session keeps,
+    // so its bounding box is not cached. `Scene::bbox` is read twice a frame
+    // and falls back to walking every vertex -- 2.1 ms a call on a
+    // million-vertex layer, indefinitely. Undo is a click, not a frame, so the
+    // walk is paid once here instead.
+    let _ = entry.mesh.bbox();
     structural_scene_apply()
 }

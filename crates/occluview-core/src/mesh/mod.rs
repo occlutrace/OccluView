@@ -443,10 +443,18 @@ impl Mesh {
     ///
     /// Measured on a one-million-vertex layer: the full form costs 48 ms, of
     /// which 24 ms is the vertex copy the snapshot genuinely needs and the rest
-    /// is caches for a mesh that will most likely be dropped. Every one of them
-    /// is recomputed on demand -- `bbox_cached` falls back, the principal frame
-    /// is optional, and the BVH is a `OnceLock` that the sculpt session's own
-    /// preparation warms off the UI thread whenever a layer changes.
+    /// is caches for a mesh that will most likely be dropped.
+    ///
+    /// Two of the three are genuinely recoverable: `bbox_cached` falls back to
+    /// a walk, and the BVH is a `OnceLock` the sculpt preparation warms off the
+    /// UI thread. The principal frame is not. `principal_frame_cached` is a
+    /// plain getter with no fallback and nothing recomputes it, so a mesh that
+    /// arrives here without one never gets one -- and the cut view and bridge
+    /// split, which both orient from that frame, silently drop to the
+    /// view-coupled fallback for that layer. It is carried forward instead: the
+    /// frame is documented as a per-mesh-constant global-shape signal,
+    /// unaffected by local surface bumps, which is exactly what a sculpt
+    /// stroke is.
     #[must_use]
     pub fn with_sculpted_vertices_uncached(&self, vertices: Vec<Vertex>) -> Option<Self> {
         if vertices.len() != self.vertices.len() {
@@ -461,11 +469,22 @@ impl Mesh {
             kind: self.kind,
             texture: self.texture.clone(),
             cached_bbox: None,
-            cached_principal_frame: None,
+            cached_principal_frame: self.cached_principal_frame,
             topology_id: self.topology_id,
             geometry_id: next_mesh_geometry_id(),
             bvh: Arc::new(OnceLock::new()),
         })
+    }
+
+    /// Whether the bounding box is cached, or a read would walk the vertices.
+    ///
+    /// Non-blocking, like [`Mesh::bvh_is_ready`]: `Scene::bbox` is called twice
+    /// a frame, and on a million-vertex layer a walk is 2.1 ms against 40 ns
+    /// cached, so whoever installs a mesh with a cold box wants to know.
+    #[inline]
+    #[must_use]
+    pub fn bbox_is_cached(&self) -> bool {
+        self.cached_bbox.is_some()
     }
 
     /// The mesh's own principal-axis frame (PCA centroid + orthonormal

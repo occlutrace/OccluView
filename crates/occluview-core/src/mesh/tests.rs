@@ -694,3 +694,65 @@ fn every_facet_degeneracy_copy_holds_the_same_number() {
         "occluview-formats should share core's accumulation, not repeat it"
     );
 }
+
+/// A mesh with enough spread for a principal frame to exist: a flat strip
+/// longer than it is wide, which is the shape a dental arch reduces to.
+fn arch_like_mesh() -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for step in 0..16u32 {
+        let x = f32::from(u16::try_from(step).expect("small")) * 2.0;
+        vertices.push(v(x, 0.0, 0.0));
+        vertices.push(v(x, 1.0, 0.0));
+        if step > 0 {
+            let base = (step - 1) * 2;
+            indices.extend_from_slice(&[base, base + 1, base + 2]);
+            indices.extend_from_slice(&[base + 1, base + 3, base + 2]);
+        }
+    }
+    Mesh::new(Some("arch".into()), vertices, indices).expect("valid mesh")
+}
+
+#[test]
+fn the_cold_snapshot_keeps_the_principal_frame_and_loses_only_the_box() {
+    // The undo baseline is built cold to keep 24 ms off the first dab of a
+    // stroke. Two of the three caches it drops can be recovered on demand; the
+    // principal frame cannot, because `principal_frame_cached` is a plain
+    // getter and nothing recomputes it. A layer restored without one places
+    // cuts and bridge splits by the view-coupled fallback instead of its own
+    // arch axis, silently and for as long as the layer lives.
+    let mesh = arch_like_mesh();
+    let frame = mesh
+        .principal_frame_cached()
+        .expect("the fixture should have a frame");
+
+    let vertices = mesh.vertices().to_vec();
+    let cold = mesh
+        .with_sculpted_vertices_uncached(vertices)
+        .expect("same vertex count");
+
+    let restored = cold
+        .principal_frame_cached()
+        .expect("the cold snapshot must keep the frame it cannot recompute");
+    assert!(
+        (restored.centroid - frame.centroid).length() < 1e-6,
+        "the frame should be the one the layer already had"
+    );
+    assert!(
+        !cold.bbox_is_cached(),
+        "the bounding box is the cache this form exists to skip"
+    );
+}
+
+#[test]
+fn reading_the_box_caches_it() {
+    // The counterweight to the test above: the box is recoverable, and the
+    // undo path warms it once so a restored layer does not walk a million
+    // vertices twice a frame forever.
+    let mut cold = arch_like_mesh()
+        .with_sculpted_vertices_uncached(arch_like_mesh().vertices().to_vec())
+        .expect("same vertex count");
+    assert!(!cold.bbox_is_cached());
+    let _ = cold.bbox();
+    assert!(cold.bbox_is_cached(), "bbox() should fill the cache");
+}
