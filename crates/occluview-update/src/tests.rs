@@ -315,9 +315,39 @@ fn any_trusted_key_verifies_and_an_untrusted_one_does_not() {
 }
 
 #[test]
-fn the_shipped_key_list_contains_the_key_releases_are_signed_with() {
-    // CI verifies every release signature against UPDATE_PUBKEY. If that key
-    // ever fell out of the accepted list, releases would be green and no
-    // installed copy would accept them.
-    assert!(UPDATE_PUBKEYS.contains(&UPDATE_PUBKEY));
+fn every_shipped_key_is_usable_and_the_release_key_is_among_them() {
+    // The assertion here was `UPDATE_PUBKEYS.contains(&UPDATE_PUBKEY)` against
+    // a list defined as `&[UPDATE_PUBKEY]`: it restated its own definition and
+    // could not fail.
+    //
+    // What can fail is a key that is not a key. `verify_signature` skips an
+    // entry it cannot parse and moves on, so a truncated constant or a stray
+    // character from an edit does not raise anything here -- it makes every
+    // installed copy refuse every update, silently, and the release that
+    // shipped it looks green.
+    for key in UPDATE_PUBKEYS {
+        assert!(
+            minisign::PublicKey::from_base64(key).is_ok(),
+            "a shipped key does not parse, so nothing signed with it can ever \
+             be accepted: {key}"
+        );
+    }
+    assert!(
+        UPDATE_PUBKEYS.contains(&UPDATE_PUBKEY),
+        "releases are signed with UPDATE_PUBKEY; dropping it from the accepted \
+         list leaves CI green and every installed copy refusing the update"
+    );
+
+    // And the list is consulted rather than assumed: a signature from a key
+    // nobody trusts has to be refused by exactly this list.
+    let (keypair, _) = test_keypair();
+    let message = b"manifest payload";
+    let stranger = sign(&keypair, message);
+    assert!(
+        matches!(
+            verify_signature(UPDATE_PUBKEYS, message, stranger.as_bytes()),
+            Err(UpdateError::BadSignature)
+        ),
+        "the shipped list must reject a signature it has no key for"
+    );
 }
