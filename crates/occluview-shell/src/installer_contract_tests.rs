@@ -97,6 +97,28 @@ fn dcm_is_offered_to_the_user_and_never_taken_from_medical_dicom() {
             "{pattern} is ours alone and needs no weight"
         );
     }
+
+    // Holding the .dcm glob below DICOM keeps medical imaging alone, but on its
+    // own it also leaves 3Shape's own export -- the commonest scan file a
+    // dental workstation holds -- with no thumbnail and no association at all.
+    // Content settles it: `<HPS` in the leading window is an XML HPS container
+    // and 128 reserved bytes plus `DICM` is a study, so the two never collide.
+    assert!(
+        mime.contains("<magic priority=\"60\">")
+            && mime.contains("<match type=\"string\" value=\"&lt;HPS\" offset=\"0:256\"/>"),
+        "an XML HPS container written as .dcm must be identified by its content"
+    );
+
+    // The shared database gives *.obj to application/x-tgif and to model/obj at
+    // the same weight, so the verdict is whatever sorts first -- on the
+    // distributions tested, the drawing format, which has no thumbnailer of
+    // ours and no association with the viewer.
+    for pattern in ["*.obj", "*.OBJ"] {
+        assert!(
+            mime.contains(&format!("<glob pattern=\"{pattern}\" weight=\"60\" />")),
+            "{pattern} must outweigh application/x-tgif's claim on the extension"
+        );
+    }
 }
 
 #[test]

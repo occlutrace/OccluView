@@ -7,6 +7,18 @@
   </mime-type>
   <mime-type type="application/x-occluview-hps">
     <comment>HPS mesh package</comment>
+    <!-- Content decides what the .dcm glob below deliberately will not. An XML
+         HPS container opens with `<HPS`, optionally behind a BOM, leading
+         whitespace or an XML declaration, which is the same window
+         `occluview_formats::probe` reads; a real DICOM study opens with 128
+         reserved bytes and `DICM`, so it never matches. Priority 60 puts this
+         above the shared database's glob-based verdict, so a 3Shape scan
+         exported as .dcm is identified as a scan while medical imaging on the
+         same machine stays DICOM. A binary HPS container has no such marker
+         and is still identified by its extension alone. -->
+    <magic priority="60">
+      <match type="string" value="&lt;HPS" offset="0:256"/>
+    </magic>
     <glob pattern="*.hps" />
     <glob pattern="*.HPS" />
     <!-- Below the shared database's own `50:application/dicom:*.dcm`. 3Shape
@@ -17,5 +29,16 @@
          wins deterministically and OccluView stays in the "Open With" list. -->
     <glob pattern="*.dcm" weight="40" />
     <glob pattern="*.DCM" weight="40" />
+  </mime-type>
+  <!-- The shared database gives *.obj to both `application/x-tgif` (a 1990s
+       X11 drawing format) and `model/obj`, each at weight 50, so the winner is
+       whichever the database happens to sort first -- on the distributions
+       tested, the drawing format. Every Wavefront scan then has a drawing
+       icon, no thumbnail and no association with the viewer. Weight 60 settles the
+       tie for a workstation that holds dental scans. -->
+  <mime-type type="model/obj">
+    <comment>Wavefront OBJ mesh</comment>
+    <glob pattern="*.obj" weight="60" />
+    <glob pattern="*.OBJ" weight="60" />
   </mime-type>
 </mime-info>
