@@ -205,3 +205,96 @@ fn the_orphan_guard_recognises_both_module_layouts() {
     // guard reports it while still crediting the `#[path]` child it adopts.
     assert_eq!(orphans, vec!["host.rs", "unnamed.rs"]);
 }
+
+/// Home-directory names that appear in this workspace on purpose.
+///
+/// Every one of them is a fixture standing in for "somebody's home", written
+/// so a reader can tell at a glance that no real machine is involved. A name
+/// outside this list in an absolute path is a path that only resolves on the
+/// machine it was written on.
+const FIXTURE_HOME_NAMES: &[&str] = &["clinic", "me", "operator", "user"];
+
+/// The absolute-path prefixes a home directory can follow, per platform.
+const HOME_PREFIXES: &[&str] = &["/home/", "/Users/", "C:\\Users\\", "C:\\\\Users\\\\"];
+
+/// The first path segment after `prefix` at `offset`, if there is one.
+fn segment_after(text: &str, offset: usize, prefix: &str) -> Option<String> {
+    let rest = text.get(offset + prefix.len()..)?;
+    let segment: String = rest
+        .chars()
+        .take_while(|character| {
+            character.is_alphanumeric()
+                || *character == '_'
+                || *character == '-'
+                || *character == '.'
+        })
+        .collect();
+    (!segment.is_empty()).then_some(segment)
+}
+
+/// True for a `/tmp` segment that looks like one tool run's scratch directory
+/// rather than a fixture: those carry both a dash and a digit
+/// (`/tmp/<tool>-1101`), while `/tmp/a.stl` and `/tmp/xdg-state` do not.
+fn looks_like_a_session_scratchpad(segment: &str) -> bool {
+    segment.contains('-') && segment.chars().any(|character| character.is_ascii_digit())
+}
+
+#[test]
+fn no_source_file_carries_a_path_from_one_machine() {
+    // Seven diagnostic dumps once wrote their PNGs into an absolute path from
+    // one tool session, so the tests were unrunnable for everyone including
+    // their author. A test fixture later carried a real home directory into a
+    // public repository the same way. Both are the same mistake: an absolute
+    // path that resolves on exactly one machine.
+    //
+    // This file is the one place the offending shapes may be written out, so
+    // the guard skips itself instead of disguising its own literals.
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().and_then(Path::parent);
+    assert!(
+        workspace_root.is_some(),
+        "app crate should live under the workspace crates directory"
+    );
+    let Some(workspace_root) = workspace_root else {
+        return;
+    };
+    let mut source_files = Vec::new();
+    let collected = collect_rust_source_files(&workspace_root.join("crates"), &mut source_files);
+    assert!(collected.is_ok(), "source audit failed: {collected:?}");
+
+    let mut offenders = Vec::new();
+    for path in source_files {
+        if path.ends_with("primary_ui_tests/source_tree.rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for prefix in HOME_PREFIXES {
+            for (offset, _) in text.match_indices(prefix) {
+                let Some(segment) = segment_after(&text, offset, prefix) else {
+                    continue;
+                };
+                if !FIXTURE_HOME_NAMES.contains(&segment.as_str()) {
+                    offenders.push(format!("{}: {prefix}{segment}", path.display()));
+                }
+            }
+        }
+        for (offset, _) in text.match_indices("/tmp/") {
+            let Some(segment) = segment_after(&text, offset, "/tmp/") else {
+                continue;
+            };
+            if looks_like_a_session_scratchpad(&segment) {
+                offenders.push(format!("{}: /tmp/{segment}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "source files must not hard-code a path that resolves on one machine; \
+         use a fixture home from FIXTURE_HOME_NAMES, CARGO_TARGET_TMPDIR or \
+         std::env::temp_dir():\n{}",
+        offenders.join("\n")
+    );
+}

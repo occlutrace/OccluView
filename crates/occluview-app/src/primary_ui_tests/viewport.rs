@@ -56,42 +56,6 @@ fn rust_source_files_stay_within_the_physical_line_budget() {
 }
 
 #[test]
-fn no_source_file_carries_a_tool_session_scratchpad_path() {
-    // Seven diagnostic dumps once wrote their PNGs into an absolute path from
-    // one machine's coding-agent session. Those paths exist nowhere else, so
-    // the tests were unrunnable for everyone including their author, and the
-    // literal is exactly what an outside reader greps for. The needle is
-    // assembled rather than written out so this guard does not trip over its
-    // own source.
-    let needle = format!("/tmp/{}-", "claude");
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent);
-    assert!(
-        workspace_root.is_some(),
-        "app crate should live under the workspace crates directory"
-    );
-    let Some(workspace_root) = workspace_root else {
-        return;
-    };
-    let mut source_files = Vec::new();
-    let collected = collect_rust_source_files(&workspace_root.join("crates"), &mut source_files);
-    assert!(collected.is_ok(), "source audit failed: {collected:?}");
-
-    let offenders: Vec<String> = source_files
-        .into_iter()
-        .filter(|path| std::fs::read_to_string(path).is_ok_and(|source| source.contains(&needle)))
-        .map(|path| path.display().to_string())
-        .collect();
-
-    assert!(
-        offenders.is_empty(),
-        "source files must not hard-code a tool session directory; \
-         write diagnostics to CARGO_TARGET_TMPDIR or std::env::temp_dir():\n{}",
-        offenders.join("\n")
-    );
-}
-
-#[test]
 fn mesh_editor_panel_has_no_single_target_selector() {
     let overlay = repo_source_file("src/mesh_editor_overlay.rs");
     let groups = repo_source_file("src/mesh_editor_groups.rs");

@@ -156,7 +156,7 @@ mod tests {
     const MOUNTINFO: &str = "\
 25 29 0:23 / /proc rw,nosuid shared:12 - proc proc rw
 29 1 254:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw
-36 29 0:31 / /home/wow/scans rw,relatime shared:9 - nfs4 nas:/scans rw
+36 29 0:31 / /home/clinic/scans rw,relatime shared:9 - nfs4 nas:/scans rw
 48 29 0:44 / /media/usb\\040stick rw,nosuid shared:2 - vfat /dev/sdb1 rw
 52 29 0:52 / /mnt/clinic rw,relatime shared:3 - cifs //fileserver/clinic rw
 60 29 0:60 / /tmp rw,nosuid shared:4 - tmpfs tmpfs rw
@@ -165,12 +165,12 @@ mod tests {
     #[test]
     fn the_deepest_mount_point_wins() {
         assert_eq!(
-            filesystem_type_for(MOUNTINFO, Path::new("/home/wow/scans/upper.stl")),
+            filesystem_type_for(MOUNTINFO, Path::new("/home/clinic/scans/upper.stl")),
             Some("nfs4"),
             "a share mounted below / must not be read as the root filesystem"
         );
         assert_eq!(
-            filesystem_type_for(MOUNTINFO, Path::new("/home/wow/local.stl")),
+            filesystem_type_for(MOUNTINFO, Path::new("/home/clinic/local.stl")),
             Some("ext4")
         );
     }
@@ -189,7 +189,7 @@ mod tests {
         // These are exactly the mounts a dental workstation reads scans from,
         // and exactly the ones that can be withdrawn mid-parse.
         for (path, expected) in [
-            ("/home/wow/scans/upper.stl", "nfs4"),
+            ("/home/clinic/scans/upper.stl", "nfs4"),
             ("/mnt/clinic/case.stl", "cifs"),
             ("/media/usb stick/scan.stl", "vfat"),
         ] {

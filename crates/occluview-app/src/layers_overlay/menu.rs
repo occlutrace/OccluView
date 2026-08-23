@@ -432,7 +432,7 @@ mod tests {
             menu_title_name(r"C:\cases\lower_scan.stl"),
             "lower_scan.stl"
         );
-        assert_eq!(menu_title_name("/home/wow/upper.ply"), "upper.ply");
+        assert_eq!(menu_title_name("/home/clinic/upper.ply"), "upper.ply");
         // A plain mesh name (no separators) is left untouched.
         assert_eq!(menu_title_name("Upper arch"), "Upper arch");
         // A trailing separator falls back to the whole label, not an empty title.
