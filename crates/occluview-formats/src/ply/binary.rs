@@ -219,7 +219,7 @@ fn read_vertices(
     element: &Element,
     builder: &mut MeshBuilder,
 ) -> Result<(), FormatError> {
-    let plan = FieldPlan::plan_for(element);
+    let plan = FieldPlan::plan_for_vertices(element, "PLY (binary)")?;
     for _ in 0..element.count {
         let mut position = [0.0_f32; 3];
         let mut normal = [0.0_f32; 3];

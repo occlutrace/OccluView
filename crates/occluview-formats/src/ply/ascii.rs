@@ -33,6 +33,33 @@ pub(crate) enum FieldPlan {
 }
 
 impl FieldPlan {
+    /// Build a plan for a vertex element, refusing one that reads nothing.
+    ///
+    /// A row whose plan is empty consumes no input, so the reader would loop
+    /// `element.count` times without ever reaching the end of the file: a
+    /// header declaring `element vertex 18446744073709551615` and nothing else
+    /// is 68 bytes that ask for 660 GB of vertices, one allocation failure --
+    /// which aborts, uncatchably -- at a time. A vertex element with no scalar
+    /// property carries no coordinates either, so there is nothing to lose by
+    /// rejecting it outright.
+    pub(crate) fn plan_for_vertices(
+        element: &Element,
+        format: &'static str,
+    ) -> Result<Vec<(FieldPlan, ScalarType)>, FormatError> {
+        let plan = Self::plan_for(element);
+        if plan.is_empty() && element.count > 0 {
+            return Err(FormatError::Malformed {
+                format,
+                offset: 0,
+                reason: format!(
+                    "vertex element declares {} rows and no scalar property to read them from",
+                    element.count
+                ),
+            });
+        }
+        Ok(plan)
+    }
+
     /// Build a plan from a vertex element's property list.
     pub(crate) fn plan_for(element: &Element) -> Vec<(FieldPlan, ScalarType)> {
         element
@@ -116,7 +143,7 @@ fn read_vertices<'a, I>(
 where
     I: Iterator<Item = &'a str>,
 {
-    let plan = FieldPlan::plan_for(element);
+    let plan = FieldPlan::plan_for_vertices(element, "PLY (ascii)")?;
     for _ in 0..element.count {
         let mut fields = VertexFields::default();
         for (route, ty) in &plan {
@@ -543,5 +570,40 @@ end_header
         assert_eq!(vs[0].uv, [0.0, 0.0]);
         assert_eq!(vs[1].uv, [1.0, 0.0]);
         assert_eq!(vs[2].uv, [0.0, 1.0]);
+    }
+
+    /// 68 bytes, and before the guard they asked for 660 GB of vertices.
+    ///
+    /// The row plan was empty, so the reader consumed no input and the
+    /// truncation backstop -- the only thing standing between a declared count
+    /// and the allocator -- was never reached. An allocation failure aborts the
+    /// process; inside the shell surrogate that takes every other thumbnail in
+    /// the folder with it.
+    #[test]
+    fn a_vertex_element_with_no_properties_is_refused_not_allocated() {
+        for header in [
+            b"ply\nformat ascii 1.0\nelement vertex 18446744073709551615\nend_header\n".to_vec(),
+            b"ply\nformat binary_little_endian 1.0\nelement vertex 18446744073709551615\nend_header\n"
+                .to_vec(),
+        ] {
+            let started = std::time::Instant::now();
+            let error = crate::ply::read(&header).expect_err("a row that reads nothing is malformed");
+            assert!(
+                started.elapsed() < std::time::Duration::from_millis(250),
+                "the count must be refused, never walked: {error}"
+            );
+            assert!(
+                format!("{error}").contains("no scalar property"),
+                "unexpected refusal: {error}"
+            );
+        }
+    }
+
+    /// The guard must not reject a file that simply has no vertices.
+    #[test]
+    fn an_empty_vertex_element_still_reads() {
+        let ply = b"ply\nformat ascii 1.0\nelement vertex 0\nend_header\n";
+        let mesh = crate::ply::read(ply).expect("an empty scan is empty, not malformed");
+        assert_eq!(mesh.vertices().len(), 0);
     }
 }
