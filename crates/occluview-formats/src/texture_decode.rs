@@ -82,6 +82,55 @@ fn texture_error(format: &'static str, reason: impl Into<String>) -> FormatError
 mod tests {
     use super::*;
 
+    /// A structurally valid PNG whose header declares `width` x 1 grayscale.
+    ///
+    /// Tiny on disk (a run of identical bytes compresses to almost nothing),
+    /// which is the whole point of a decompression bomb.
+    fn over_wide_png(width: u32) -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let mut bytes = Vec::new();
+        let row = vec![0_u8; width as usize];
+        let encoded = image::codecs::png::PngEncoder::new(&mut bytes).write_image(
+            &row,
+            width,
+            1,
+            image::ExtendedColorType::L8,
+        );
+        assert!(encoded.is_ok(), "fixture encode failed: {encoded:?}");
+        bytes
+    }
+
+    #[test]
+    fn a_header_claiming_more_than_the_pixel_limit_is_refused_before_decoding() {
+        // `validate_texture_dimensions` runs on an image that has already been
+        // decoded, so by the time it can complain the allocation has happened.
+        // The line that actually prevents the bomb is `reader.limits(limits)`,
+        // and deleting it broke no test. This one fails without it.
+        let bomb = over_wide_png(MAX_TEXTURE_DIMENSION_PX + 808);
+        assert!(
+            bomb.len() < 4096,
+            "the fixture must stay small to be a bomb at all: {} bytes",
+            bomb.len()
+        );
+
+        let decoded = decode_embedded_raster(&bomb, "test");
+        let Err(FormatError::Malformed { reason, .. }) = decoded else {
+            unreachable!("an over-wide texture must be rejected, got {decoded:?}");
+        };
+        assert!(
+            reason.contains("decode failed"),
+            "rejection should come from the bounded decoder, not from a \
+             post-decode dimension check: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_texture_inside_the_limits_still_decodes() {
+        let ordinary = over_wide_png(64);
+        let decoded = decode_embedded_raster(&ordinary, "test");
+        assert!(decoded.is_ok(), "a 64x1 texture should decode: {decoded:?}");
+    }
+
     #[test]
     fn dimensions_accept_a_4k_square_but_reject_larger_rgba_surfaces() {
         assert!(validate_texture_dimensions(4_096, 4_096, "test").is_ok());

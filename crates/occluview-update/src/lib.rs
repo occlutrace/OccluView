@@ -220,11 +220,18 @@ pub fn download_with(
         .call()
         .map_err(|error| UpdateError::Http(error.to_string()))?;
 
+    // The file name comes out of a downloaded manifest, so it is attacker-shaped
+    // input even after the signature check: whoever can publish a manifest can
+    // choose it. Only the last URL segment is used, and it has to be a plain
+    // name -- no separators, no drive letters, and not `.` or `..`, which would
+    // resolve to the destination directory itself.
     let file_name = artifact
         .url
         .rsplit('/')
         .next()
-        .filter(|name| !name.is_empty() && !name.contains(['\\', ':']))
+        .filter(|name| {
+            !name.is_empty() && *name != "." && *name != ".." && !name.contains(['\\', ':'])
+        })
         .ok_or_else(|| UpdateError::BadManifest("artifact URL has no file name".to_string()))?;
     std::fs::create_dir_all(dest_dir)?;
     let final_path = dest_dir.join(file_name);

@@ -186,3 +186,84 @@ fn download_rejects_bad_signature_and_removes_partial() {
     assert!(!dir.join("OccluView-9.9.9.msi.partial").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn check_refuses_to_offer_the_running_version_or_an_older_one() {
+    // This comparison is the entire rollback protection. Inverting it would make
+    // the app offer, download, verify and hand msiexec an OLDER signed
+    // installer -- and every signature and hash along the way would agree,
+    // because that build really was signed by this key. Nothing else in the
+    // module can catch that, so it is checked directly.
+    let (keypair, pubkey) = test_keypair();
+    for (manifest_version, current) in [("1.2.3", "1.2.3"), ("1.2.3", "1.2.4"), ("1.2.3", "2.0.0")]
+    {
+        let manifest =
+            format!(r#"{{"version": "{manifest_version}", "platforms": {{}}}}"#).into_bytes();
+        let signature = sign(&keypair, &manifest).into_bytes();
+        let manifest_url = serve_once(manifest, "/latest.json");
+        let sig_url = serve_once(signature, "/latest.json.minisig");
+
+        let outcome =
+            check_with(&manifest_url, &sig_url, &pubkey, current).expect("check succeeds");
+        assert!(
+            outcome.is_none(),
+            "manifest {manifest_version} must not be offered to a {current} install"
+        );
+    }
+}
+
+#[test]
+fn check_still_offers_a_genuinely_newer_version() {
+    // The other half of the gate: proof the comparison is not simply refusing
+    // everything, which would make the test above pass for the wrong reason.
+    let (keypair, pubkey) = test_keypair();
+    let manifest = br#"{"version": "1.2.4", "platforms": {}}"#.to_vec();
+    let signature = sign(&keypair, &manifest).into_bytes();
+    let manifest_url = serve_once(manifest, "/latest.json");
+    let sig_url = serve_once(signature, "/latest.json.minisig");
+
+    let update = check_with(&manifest_url, &sig_url, &pubkey, "1.2.3")
+        .expect("check succeeds")
+        .expect("1.2.4 is newer than 1.2.3");
+    assert_eq!(update.version, semver::Version::new(1, 2, 4));
+}
+
+#[test]
+fn download_refuses_an_artifact_url_that_is_not_a_plain_file_name() {
+    // The manifest chooses this string and it becomes a path under dest_dir.
+    let (keypair, pubkey) = test_keypair();
+    let payload = b"fake installer bytes".to_vec();
+    let dir = std::env::temp_dir().join(format!("occluview-update-badname-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    for path in ["/", "/..", "/.", "/a:b.msi", "/a\\b.msi"] {
+        let update = AvailableUpdate {
+            version: semver::Version::new(9, 9, 9),
+            notes: None,
+            artifact: Some(PlatformArtifact {
+                url: serve_once(payload.clone(), path),
+                signature: sign(&keypair, &payload),
+                sha256: sha256_hex(&payload),
+            }),
+        };
+        let result = download_with(&update, &pubkey, &dir, &mut |_, _| {});
+        assert!(
+            matches!(result, Err(UpdateError::BadManifest(_))),
+            "artifact path {path:?} should be rejected, got {result:?}"
+        );
+    }
+
+    let leftovers: Vec<String> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path().display().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        leftovers.is_empty(),
+        "a rejected artifact name must leave nothing behind: {leftovers:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

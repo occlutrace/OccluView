@@ -41,9 +41,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Barrier, Mutex};
     use std::thread;
-    use std::time::Instant;
 
     #[test]
     fn returns_worker_value_before_deadline() {
@@ -52,15 +52,29 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_after_deadline() {
-        let started = Instant::now();
-        let result = run_with_timeout(Duration::from_millis(10), || {
-            thread::sleep(Duration::from_millis(200));
+    fn returns_none_after_deadline_without_waiting_for_the_worker() {
+        // This used to sleep 200 ms in the worker and assert that the call
+        // returned within 120 ms of wall clock, which is a coin flip on a
+        // loaded runner. The invariant has nothing to do with wall clock: the
+        // deadline must fire while the worker is still working. So the worker
+        // blocks until this test lets go, and the proof is that it had not
+        // finished when the call returned.
+        let (release, blocked) = mpsc::channel::<()>();
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_finished = Arc::clone(&finished);
+
+        let result = run_with_timeout(Duration::from_millis(50), move || {
+            let _ = blocked.recv();
+            worker_finished.store(true, Ordering::SeqCst);
             42
         });
+
         assert_eq!(result, None);
-        assert!(started.elapsed() < Duration::from_millis(120));
-        thread::sleep(Duration::from_millis(250));
+        assert!(
+            !finished.load(Ordering::SeqCst),
+            "the timeout must return while the worker is still running"
+        );
+        drop(release);
     }
 
     #[test]
