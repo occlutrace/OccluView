@@ -683,6 +683,24 @@ fn every_facet_degeneracy_copy_holds_the_same_number() {
             "{crate_name} holds a different facet-degeneracy threshold"
         );
     }
+    // The duplicate-group bound is the same story: core bounded its loader
+    // path first, occlu-mesh-edit stayed pairwise for a while, and the two
+    // paths disagreed about how much work one pile of coincident vertices is
+    // worth. Both hold 256; neither can import the other.
+    let bound = format!("{}: usize = 256;", "const MAX_PAIRWISE_DUPLICATE_GROUP");
+    for (crate_name, source) in [
+        ("occluview-core", include_str!("normals.rs")),
+        (
+            "occlu-mesh-edit",
+            include_str!("../../../occlu-mesh-edit/src/normals.rs"),
+        ),
+    ] {
+        assert!(
+            source.contains(&bound),
+            "{crate_name} holds a different coincident-group bound"
+        );
+    }
+
     // And the one crate that CAN import it must not carry a copy.
     let formats = include_str!("../../../occluview-formats/src/hps/mesh.rs");
     assert!(

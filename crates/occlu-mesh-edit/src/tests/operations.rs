@@ -426,3 +426,55 @@ fn fill_holes_respects_selection_scoped_loop_gating() {
     assert_eq!(full.report.filled_holes, 1);
     assert_eq!(full.report.output_triangles, 6);
 }
+
+/// A pile of coincident vertices must not make the duplicate-normal pass
+/// quadratic.
+///
+/// The loader path in `occluview-core` was bounded and this one was not, which
+/// made the situation worse rather than better: the file now opens in
+/// milliseconds, so the pile reaches the scene, and the first Repair, Close
+/// holes or Invert normals runs this on the UI thread with no repaint, no
+/// progress and no cancel.
+#[test]
+fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
+    let group = 20_000usize;
+    let mut vertices = Vec::with_capacity(group * 3);
+    let mut indices = Vec::with_capacity(group * 3);
+    for i in 0..group {
+        let angle = i as f32 * 0.0001;
+        let spread = i as f32 * 0.001;
+        let mut shared = v([0.0, 0.0, 0.0]);
+        shared.normal = [angle.cos(), angle.sin(), 0.0];
+        for (corner, position) in [[0.0, 0.0, 0.0], [1.0, spread, 0.0], [2.0, spread, 0.0]]
+            .into_iter()
+            .enumerate()
+        {
+            let mut vertex = v(position);
+            if corner == 0 {
+                vertex = shared;
+            }
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(vertex);
+        }
+    }
+
+    let started = std::time::Instant::now();
+    recompute_all_normals(&mut vertices, &indices).expect("valid mesh");
+    let elapsed = started.elapsed();
+
+    // Measured here in the test profile at this k: 820 ms pairwise against
+    // 16 ms bounded. 300 ms sits between them with room on either side for a
+    // runner that is not this machine.
+    assert!(
+        elapsed < std::time::Duration::from_millis(300),
+        "coincident-group normal smoothing took {elapsed:?} on the edit path; \
+         it is quadratic again"
+    );
+    for vertex in &vertices {
+        let normal = glam::Vec3::from_array(vertex.normal);
+        assert!(
+            normal.is_finite(),
+            "every vertex should keep a finite normal, got {normal:?}"
+        );
+    }
+}

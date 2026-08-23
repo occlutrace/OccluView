@@ -20,6 +20,20 @@ use std::collections::HashMap;
 use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
 
 const DUPLICATE_NORMAL_DOT: f32 = 0.5;
+
+/// Past this many vertices at one position, agreement is judged against the
+/// group's mean normal instead of against every other member.
+///
+/// A fourth copy of a number `occluview-core` also holds, for the same reason
+/// the degeneracy threshold above is duplicated: this crate is a leaf and must
+/// not depend on core. Core bounded its loader path and this one was left
+/// pairwise, which made the situation worse rather than better -- the file now
+/// opens in milliseconds, so the pile reaches the scene, and the first Repair,
+/// Close holes or Invert normals runs it on the UI thread with no repaint, no
+/// progress and no cancel. Measured here in the test profile: 20000 coincident
+/// vertices cost 820 ms pairwise against 16 ms bounded, and the pairwise form
+/// grows as the square.
+const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
 /// Two positions within this distance are the same point for shading.
 ///
 /// This is the number that decides which vertices share a normal, and both
@@ -119,6 +133,31 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     let mut smoothed = source_normals.clone();
 
     for indices in groups.values().filter(|indices| indices.len() > 1) {
+        // Past the threshold, one pass to sum and one to accept or reject.
+        // Same answer wherever the group is coherent, which is every case a
+        // real scan produces, and linear everywhere.
+        if indices.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
+            let mut mean = Vec3::ZERO;
+            for &index in indices {
+                let candidate = source_normals[index];
+                if candidate.length_squared() > f32::EPSILON {
+                    mean += candidate;
+                }
+            }
+            if mean.length_squared() > f32::EPSILON {
+                let mean = mean.normalize();
+                for &index in indices {
+                    let current = source_normals[index];
+                    if current.length_squared() > f32::EPSILON
+                        && mean.dot(current) >= DUPLICATE_NORMAL_DOT
+                    {
+                        smoothed[index] = mean;
+                    }
+                }
+            }
+            continue;
+        }
+
         for &index in indices {
             let current = source_normals[index];
             if current.length_squared() <= f32::EPSILON {
