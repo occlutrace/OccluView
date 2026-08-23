@@ -235,6 +235,11 @@ pub(super) fn unique_layer_export_paths(
 /// fail on its own and say so, and refusing to name any destination here would
 /// turn a permissions problem into a batch that writes nothing and explains
 /// nothing.
+///
+/// One `read_dir` of the destination, on the thread that is about to write
+/// into it. On a lab archive share with tens of thousands of entries that is a
+/// pause before the first byte, which is the price of not overwriting what is
+/// already there.
 fn existing_file_names(directory: &Path) -> HashSet<String> {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return HashSet::new();

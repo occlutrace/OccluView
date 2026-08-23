@@ -455,6 +455,16 @@ impl Mesh {
     /// frame is documented as a per-mesh-constant global-shape signal,
     /// unaffected by local surface bumps, which is exactly what a sculpt
     /// stroke is.
+    ///
+    /// It is carried, not recomputed, so it is the frame of the mesh this was
+    /// called on. Measured on a 20k-vertex arch: a localised dab moves the
+    /// principal axis by 0.02 degrees and a broad one by 0.87, against a
+    /// view-coupled fallback that can be tens of degrees out. Two cases are
+    /// worth knowing about: a caller that hands over a mirrored or rigidly
+    /// re-oriented vertex set gets a frame that is wrong by that transform
+    /// where it used to get `None`, and a sculpt that drives the geometry
+    /// degenerate keeps a frame where a recompute would have refused one.
+    /// Neither is reachable from the sculpt session, which is the only caller.
     #[must_use]
     pub fn with_sculpted_vertices_uncached(&self, vertices: Vec<Vertex>) -> Option<Self> {
         if vertices.len() != self.vertices.len() {
