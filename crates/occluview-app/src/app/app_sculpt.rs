@@ -308,7 +308,9 @@ impl OccluViewApp {
                 .camera
                 .as_ref()
                 .map_or(Vec3::NEG_Z, |camera| camera.view_direction()),
-            radius_world: mesh_editor_overlay::sculpt_radius_mm(ctx),
+            radius_world: input
+                .kind
+                .dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ctx), input.shift),
             strength: input
                 .kind
                 .dab_strength(mesh_editor_overlay::sculpt_intensity01(ctx), input.shift),
@@ -535,9 +537,12 @@ impl OccluViewApp {
         if !viewport_rect.contains(pointer) {
             return;
         }
-        let radius_world = mesh_editor_overlay::sculpt_radius_mm(ui.ctx());
-        let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
         let shift = ui.ctx().input(|input| input.modifiers.shift);
+        // The ring shows the footprint a dab would actually cover, so the
+        // Shift-widened Smooth reads on screen before the first stroke lands.
+        let radius_world =
+            kind.dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ui.ctx()), shift);
+        let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
         let color = sculpt_cursor_color(kind, shift);
 
         let ortho_height = camera.orthographic_height.max(f32::EPSILON);

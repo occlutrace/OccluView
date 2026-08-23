@@ -32,6 +32,13 @@ pub(crate) const SCULPT_INTENSITY_MAX: f32 = 100.0;
 /// Mm radius the size slider maps to at its ends.
 const SCULPT_RADIUS_MIN_MM: f32 = 0.4;
 const SCULPT_RADIUS_MAX_MM: f32 = 12.0;
+/// How much Shift widens the Smooth footprint. Per-dab force cannot climb
+/// past the kernel's pass ceiling — a dab converges toward the relaxed patch
+/// its own boundary pins — so the honest way to smooth harder is to push that
+/// boundary outward and iron a wider patch per dab. Wider dabs also space
+/// further apart along the drag, so a Shift stroke queues fewer, larger jobs
+/// instead of flooding the worker's bounded apply queue.
+pub(crate) const SHIFT_SMOOTH_RADIUS_BOOST: f32 = 1.75;
 /// One notch of the mouse wheel changes a slider by this many units.
 pub(crate) const SCULPT_WHEEL_STEP: f32 = 6.0;
 /// Dab spacing along the drag path, as a fraction of the brush radius: dabs are
@@ -76,11 +83,25 @@ impl SculptToolKind {
     }
 
     /// The kernel per-dab strength for this tool: the intensity slider for
-    /// Add/Remove and Smooth; Shift doubles Smooth force, capped at 100%.
+    /// Add/Remove and Smooth; Shift forces Smooth straight to maximum, the
+    /// forced mode the kernel documents. Doubling the slider instead sounded
+    /// gentler but saturated: at 50% it was already near the pass ceiling and
+    /// at 100% it changed nothing.
     pub(crate) fn dab_strength(self, intensity01: f32, shift: bool) -> f32 {
         match self {
-            Self::Smooth if shift => (intensity01.clamp(0.0, 1.0) * 2.0).min(1.0),
+            Self::Smooth if shift => 1.0,
             _ => intensity01.clamp(0.0, 1.0),
+        }
+    }
+
+    /// The world-space dab radius for this tool: the size slider's mm value,
+    /// widened for a Shift-forced Smooth. [`SHIFT_SMOOTH_RADIUS_BOOST`]
+    /// explains why the footprint is the lever that actually strengthens
+    /// smoothing.
+    pub(crate) fn dab_radius_mm(self, base_mm: f32, shift: bool) -> f32 {
+        match self {
+            Self::Smooth if shift => base_mm * SHIFT_SMOOTH_RADIUS_BOOST,
+            _ => base_mm,
         }
     }
 }
@@ -456,10 +477,23 @@ mod tests {
             BrushMode::Remove
         );
         assert_eq!(SculptToolKind::Smooth.brush_mode(true), BrushMode::Smooth);
-        // Shift doubles Smooth force; a light Add/Remove uses the intensity
-        // slider unchanged.
-        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 0.6);
+        // Shift forces Smooth to maximum regardless of the slider; Add/Remove
+        // follows the intensity slider with or without Shift.
+        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 1.0);
+        assert_eq!(SculptToolKind::Smooth.dab_strength(1.0, false), 1.0);
         assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, false), 0.3);
+        assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, true), 0.3);
+    }
+
+    #[test]
+    fn shift_widens_only_the_smooth_footprint() {
+        let base = size_to_radius_mm(SCULPT_SIZE_DEFAULT);
+        assert_eq!(
+            SculptToolKind::Smooth.dab_radius_mm(base, true),
+            base * SHIFT_SMOOTH_RADIUS_BOOST
+        );
+        assert_eq!(SculptToolKind::Smooth.dab_radius_mm(base, false), base);
+        assert_eq!(SculptToolKind::AddRemove.dab_radius_mm(base, true), base);
     }
 
     #[test]
