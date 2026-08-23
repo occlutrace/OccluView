@@ -39,15 +39,27 @@ pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
 /// their extension rather than guessed at with a pattern.
 fn failure_without_paths(error: &anyhow::Error, paths: &[PathBuf]) -> String {
     let mut text = format!("{error:#}");
-    for path in paths {
-        let rendered = path.display().to_string();
-        if rendered.is_empty() {
-            continue;
-        }
+
+    // Longest first. Replacing in request order lets a path that is a prefix
+    // of another leave the rest of it behind: "/cases/Ivanov" replaced inside
+    // "/cases/Ivanov/upper.stl" leaves "<file>/upper.stl".
+    let mut rendered: Vec<(String, &PathBuf)> = paths
+        .iter()
+        .map(|path| (path.display().to_string(), path))
+        .filter(|(rendered, _)| !rendered.is_empty())
+        .collect();
+    rendered.sort_by_key(|(rendered, _)| std::cmp::Reverse(rendered.len()));
+
+    for (rendered, path) in rendered {
+        // The extension stands in for the name only when it is one this build
+        // reads. Otherwise it is part of the name -- "scan.Ivanov" would put
+        // the case back into the line the redaction just took it out of.
         let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .map_or_else(|| "file".to_owned(), str::to_ascii_lowercase);
+            .map(str::to_ascii_lowercase)
+            .filter(|extension| occluview_formats::V1_OPEN_EXTENSIONS.contains(&extension.as_str()))
+            .unwrap_or_else(|| "file".to_owned());
         text = text.replace(&rendered, &format!("<{extension}>"));
     }
     text
@@ -475,6 +487,32 @@ mod tests {
             logged.contains("<stl>"),
             "the format is what a reader needs instead of the name: {logged}"
         );
+    }
+
+    #[test]
+    fn a_path_that_prefixes_another_does_not_leave_its_tail_behind() {
+        // Replacing in request order left the basename of the longer path in
+        // the line, which is the half that names the case.
+        let folder = PathBuf::from("/mnt/cases/Ivanov 2026");
+        let scan = folder.join("upper.stl");
+        let error = anyhow::anyhow!("{}: {}", scan.display(), "unexpected end of file");
+
+        let logged = failure_without_paths(&error, &[folder, scan]);
+
+        assert!(!logged.contains("Ivanov"), "{logged}");
+        assert!(!logged.contains("upper"), "{logged}");
+        assert!(logged.contains("unexpected end of file"), "{logged}");
+    }
+
+    #[test]
+    fn an_extension_that_is_really_part_of_the_name_is_not_echoed_back() {
+        let path = PathBuf::from("/mnt/cases/scan.Ivanov");
+        let error = anyhow::anyhow!("{}: {}", path.display(), "unsupported format");
+
+        let logged = failure_without_paths(&error, std::slice::from_ref(&path));
+
+        assert!(!logged.to_lowercase().contains("ivanov"), "{logged}");
+        assert!(logged.contains("<file>"), "{logged}");
     }
 
     #[test]

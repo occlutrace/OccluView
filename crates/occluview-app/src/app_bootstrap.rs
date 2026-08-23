@@ -220,9 +220,8 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
     )
 }
 
-/// The distinct lowercase extensions of `files`, for a log line that says what
-/// kind of session this is without saying whose.
-/// The distinct file extensions in `files`, lowercased and sorted.
+/// The distinct lowercase extensions of `files`, sorted: a log line that says
+/// what kind of session this is without saying whose.
 ///
 /// This is what the logs are allowed to say about a set of scans: how many and
 /// of which kinds. The paths themselves name the case, and the crash report
@@ -359,7 +358,14 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 
     #[cfg(not(windows))]
     {
-        tracing::error!(?report_path, details, "OccluView could not continue");
+        // The report's own name, not its path: the directory is under the
+        // operator's home and this line goes into the ring that the NEXT
+        // report carries.
+        let report = report_path
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("none");
+        tracing::error!(report, details, "OccluView could not continue");
     }
 }
 

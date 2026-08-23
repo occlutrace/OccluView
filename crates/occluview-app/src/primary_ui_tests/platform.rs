@@ -423,32 +423,28 @@ fn no_scan_path_reaches_the_crash_report() {
     );
 }
 
-/// Field names that would put a path into an event, and so into the crash
-/// report.
-///
-/// `_count` and `formats` are the shapes that are allowed to describe a set of
-/// files, and `extension` is what the thumbnail crate logs instead of a name.
-const PATH_SHAPED_FIELDS: &[&str] = &[
-    "path",
-    "paths",
-    "file",
-    "files",
-    "filename",
-    "file_name",
-    "scan",
-    "scans",
-    "directory",
-    "folder",
-    "source_path",
-    "target_path",
+/// Words that make a field name say it holds a path.
+const PATH_WORDS: &[&str] = &["path", "file", "scan", "directory", "folder"];
+
+/// Field names built from those words that describe a set rather than name it.
+const FIELDS_THAT_DESCRIBE_A_SET: &[&str] = &[
+    "file_count",
+    "path_count",
+    "files_count",
+    "formats",
+    "extension",
+    "extensions",
+    "file_extensions",
 ];
 
-/// Every `tracing::` event in the viewer that names a path-shaped field.
+/// Every `tracing::` event in the viewer that names a path-shaped field, or
+/// renders a path into its message.
 ///
-/// Deliberately a text scan rather than a macro-expansion check: the point is
-/// that a reviewer can see what it looks for. It reads the field names between
-/// the macro's opening parenthesis and its message string, so `file_count` and
-/// `formats` pass while `file = ?path` does not.
+/// Deliberately a text scan rather than a macro-expansion check: what it looks
+/// for should be readable by whoever has to satisfy it. Field names are read
+/// out of the macro call -- `name = value`, or the `?name` / `%name` shorthand
+/// -- so `error = %failure_without_paths(..)` is judged by the name `error`,
+/// while `?report_path` is judged by `report_path` and fails.
 fn tracing_events_naming_a_path() -> Vec<String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) else {
@@ -480,19 +476,44 @@ fn tracing_events_naming_a_path() -> Vec<String> {
             let Some(rest) = production.get(offset..) else {
                 continue;
             };
-            let Some(open) = rest.find('(') else { continue };
-            // The fields run up to the message literal, which every event in
-            // this workspace ends with.
-            let head = match rest[open..].find('"') {
-                Some(quote) => &rest[open..open + quote],
-                None => continue,
+            let event: String = rest.chars().take(600).collect();
+            let Some(open) = event.find('(') else {
+                continue;
             };
-            for field in PATH_SHAPED_FIELDS {
-                let assigned = format!("{field} =");
-                if head.contains(&assigned) || head.contains(&format!("?{field},")) {
-                    let line = production[..offset].matches('\n').count() + 1;
-                    offenders.push(format!("{}:{line}: {field}", path.display()));
+            let Some(close) = event[open..].find(");") else {
+                continue;
+            };
+            let arguments = &event[open + 1..open + close];
+            let line = production[..offset].matches('\n').count() + 1;
+
+            // Everything before the message literal is fields.
+            let (fields, message_and_after) = arguments
+                .split_once('"')
+                .map_or((arguments, ""), |(fields, after)| (fields, after));
+
+            for part in fields.split(',') {
+                let name = part
+                    .split_once('=')
+                    .map_or_else(
+                        || part.trim().trim_start_matches(['?', '%']),
+                        |(name, _)| name.trim(),
+                    )
+                    .trim();
+                let name = name.split(['.', '(', ' ']).next().unwrap_or(name);
+                if name.is_empty() || FIELDS_THAT_DESCRIBE_A_SET.contains(&name) {
+                    continue;
                 }
+                if PATH_WORDS.iter().any(|word| name.contains(word)) {
+                    offenders.push(format!("{}:{line}: field {name}", path.display()));
+                }
+            }
+
+            // A path rendered into the message instead of passed as a field.
+            if fields.trim().is_empty() && message_and_after.contains(".display()") {
+                offenders.push(format!(
+                    "{}:{line}: a path rendered into the message",
+                    path.display()
+                ));
             }
         }
     }

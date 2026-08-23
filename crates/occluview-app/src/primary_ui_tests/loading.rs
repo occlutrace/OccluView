@@ -464,6 +464,23 @@ fn the_handoff_pipe_cannot_be_squatted_or_used_to_impersonate() {
         windows.contains("const MAX_CONSECUTIVE_PIPE_FAILURES: u32"),
         "the listener must give up on a permanently claimed name"
     );
+    // The listener refused a pipe it could not protect, and the sender kept
+    // writing the request -- the scan paths -- to a name derived from the same
+    // failed lookup, which was the fixed literal "default": predictable,
+    // shared, and exactly what a squatter would be holding.
+    assert!(
+        !windows.contains("String::from(\"default\")"),
+        "a name that is not per-user must not be constructed at all"
+    );
+    for refusal in [
+        "refusing to send an open request to a pipe name that is not per-user",
+        "refusing to listen on a pipe name that is not per-user",
+    ] {
+        assert!(
+            windows.contains(refusal),
+            "both ends of the hand-off must refuse a shared name: {refusal}"
+        );
+    }
     assert!(
         windows.contains("hand-off continues"),
         "and it must say where hand-off went, because the disk fallback \

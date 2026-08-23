@@ -91,10 +91,16 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
 }
 
 /// A short, stable per-user suffix for the pipe and mutex names.
-fn user_sid_suffix() -> String {
-    let Some(sid) = current_user_sid_string() else {
-        return String::from("default");
-    };
+///
+/// `None` when the SID cannot be read. The suffix used to fall back to the
+/// literal "default", which made both object names predictable and shared: the
+/// listener refuses to create a pipe it cannot protect, but the SENDER would
+/// still have written the request -- the full list of scan paths -- to whoever
+/// held that name, and a squatted mutex under it makes every launch believe it
+/// is the second instance, forward its paths and exit. Without a SID there is
+/// no per-user name to use, so there is no hand-off.
+fn user_sid_suffix() -> Option<String> {
+    let sid = current_user_sid_string()?;
     // FNV-1a, only to keep the object names short and free of SID punctuation.
     // It is not a security boundary -- the DACL is.
     let mut hash: u64 = 14_695_981_039_346_656_037;
@@ -102,7 +108,7 @@ fn user_sid_suffix() -> String {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(1_099_511_628_211);
     }
-    format!("{hash:016x}")
+    Some(format!("{hash:016x}"))
 }
 
 /// A security descriptor granting full access to the current user and nobody
@@ -135,20 +141,29 @@ fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
     converted.ok().map(|()| descriptor)
 }
 
-fn mutex_name() -> HSTRING {
-    HSTRING::from(format!(
+fn mutex_name() -> Option<HSTRING> {
+    Some(HSTRING::from(format!(
         "Local\\OccluTrace.OccluView.SingleInstance.{}",
-        user_sid_suffix()
-    ))
+        user_sid_suffix()?
+    )))
 }
 
-fn pipe_name_wide() -> Vec<u16> {
-    let name = format!("\\\\.\\pipe\\{PIPE_NAME}.{}", user_sid_suffix());
-    name.encode_utf16().chain(std::iter::once(0)).collect()
+fn pipe_name_wide() -> Option<Vec<u16>> {
+    let name = format!("\\\\.\\pipe\\{PIPE_NAME}.{}", user_sid_suffix()?);
+    Some(name.encode_utf16().chain(std::iter::once(0)).collect())
 }
 
 pub(super) fn acquire() -> Result<SingleInstance> {
-    let name = mutex_name();
+    // Without a SID the name cannot be made per-user, and a shared name is
+    // worse than no single-instance check: a squatter holding it makes every
+    // launch believe it is the second instance, hand its paths over and exit.
+    // Behaving as the first instance is the safe answer.
+    let Some(name) = mutex_name() else {
+        return Ok(SingleInstance {
+            handle: None,
+            secondary: false,
+        });
+    };
     // SAFETY: Passing no custom security attributes and a valid named mutex string.
     let handle = unsafe { CreateMutexW(None, false, &name) }
         .context("creating OccluView single-instance mutex")?;
@@ -208,7 +223,12 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
         return Ok(());
     }
 
-    let pipe_wide = pipe_name_wide();
+    // The request carries the paths of the scans being opened. Without a SID
+    // there is no per-user name to send them to, and the shared fallback name
+    // is exactly the one an unrelated process can be holding.
+    let Some(pipe_wide) = pipe_name_wide() else {
+        bail!("refusing to send an open request to a pipe name that is not per-user");
+    };
     let pipe_name = PCWSTR(pipe_wide.as_ptr());
     // SAFETY: pipe_name is a valid NUL-terminated wide string.
     if unsafe { WaitNamedPipeW(pipe_name, PIPE_WAIT_TIMEOUT_MS) }.0 == 0 {
@@ -262,7 +282,9 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
 }
 
 fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
-    let pipe_wide = pipe_name_wide();
+    let Some(pipe_wide) = pipe_name_wide() else {
+        bail!("refusing to listen on a pipe name that is not per-user");
+    };
     let pipe_name = PCWSTR(pipe_wide.as_ptr());
 
     // Two things this listener must not do: share its name with a squatter, and
