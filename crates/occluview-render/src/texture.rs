@@ -111,7 +111,23 @@ impl GpuTexture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            // `Rgba8Unorm`, NOT `Rgba8UnormSrgb`.
+            //
+            // The whole pipeline writes into an `Rgba8Unorm` target and encodes
+            // nothing on the way out, so whatever the shader returns is what
+            // the display treats as sRGB. Vertex colours reach the shader as
+            // `byte / 255`, i.e. already in that space. An sRGB-typed texture
+            // would make `textureSample` decode to linear, and that value would
+            // then be written out as if it were sRGB -- the same nominal colour
+            // arriving darker through a texture than through a vertex.
+            //
+            // Measured before this line changed, same triangle, same light:
+            // sRGB 128 rendered as 70 from a texture and 129 from a vertex
+            // colour; sRGB 200 as 159 against 198. That put the flagship
+            // formats (HPS and GLB, colour in a texture) and the open ones
+            // (PLY and OBJ, colour in vertices) on two different scales, in a
+            // viewer whose job includes judging colour.
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

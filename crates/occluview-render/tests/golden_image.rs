@@ -678,3 +678,102 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
         "the mapped pass must differ from the ordinary lit one, or this proves nothing"
     );
 }
+
+/// The same triangle, coloured through the vertex path instead of a texture.
+fn render_uniform_vertex_colored(rgba: [u8; 4]) -> Vec<u8> {
+    let _gpu = gpu_test_lock();
+    let mut builder = MeshBuilder::new();
+    let a = builder.push_vertex(
+        Vertex::at(Vec3::new(-0.5, -0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_color(rgba),
+    );
+    let c = builder.push_vertex(
+        Vertex::at(Vec3::new(0.5, -0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_color(rgba),
+    );
+    let d = builder.push_vertex(
+        Vertex::at(Vec3::new(0.0, 0.5, 0.0))
+            .with_normal(Vec3::Z)
+            .with_color(rgba),
+    );
+    builder.push_triangle(a, c, d);
+    let mesh = builder.build().expect("valid vertex-coloured mesh");
+    let cam = camera_looking_at_origin();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let uniform = GpuMeshUniform {
+        model: [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ],
+        tint: [1.0, 1.0, 1.0, 1.0],
+        opacity: 1.0,
+        has_texture: 0,
+        show_orientation: 0,
+        show_vertex_colors: 1,
+        show_texture: 0,
+        measured_map: 0,
+        padding: [0; 2],
+    };
+    let entries = [occluview_render::SceneDrawEntry {
+        mesh: &mesh,
+        uniform: &uniform,
+        texture: None,
+    }];
+    pollster::block_on(offscreen.render_scene(&entries, &cam, dark_thumbnail_spec()))
+        .expect("render scene")
+}
+
+fn brightest_lit_pixel(pixels: &[u8]) -> Option<[u8; 4]> {
+    pixels
+        .chunks_exact(4)
+        .filter(|px| px[0] >= 12 || px[1] >= 12 || px[2] >= 12)
+        .max_by_key(|px| u32::from(px[0]) + u32::from(px[1]) + u32::from(px[2]))
+        .map(|px| [px[0], px[1], px[2], px[3]])
+}
+
+/// The same nominal colour must reach the screen the same way whether it
+/// arrives in a texture or in a vertex.
+///
+/// The render target is `Rgba8Unorm` and nothing encodes on the way out, so
+/// whatever the shader returns is treated as sRGB. Vertex colours arrive as
+/// `byte / 255`, already in that space. Typing the texture as sRGB made
+/// `textureSample` decode to linear, and that value was then written out as if
+/// it were sRGB: measured on this exact triangle, sRGB 128 came out as 70
+/// through a texture against 129 through a vertex, and sRGB 200 as 159 against
+/// 198. That is the flagship formats (HPS, GLB -- colour in a texture) and the
+/// open ones (PLY, OBJ -- colour in vertices) disagreeing about the same
+/// physical colour, in a viewer that is used to judge colour.
+///
+/// The tolerance is wide enough to ignore the lighting model's own difference
+/// between the two branches (about a dozen levels) and far too tight for a
+/// colour-space error, which is forty to eighty.
+#[test]
+fn a_colour_reaches_the_screen_the_same_way_through_a_texture_or_a_vertex() {
+    const TOLERANCE: i32 = 20;
+    for value in [200_u8, 128, 250] {
+        let textured = render_uniform_textured(&uniform_texture([value, value, value, 255]));
+        let vertex = render_uniform_vertex_colored([value, value, value, 255]);
+        let textured = brightest_lit_pixel(&textured);
+        let vertex = brightest_lit_pixel(&vertex);
+        assert!(
+            textured.is_some() && vertex.is_some(),
+            "both paths should render something for {value}"
+        );
+        let (Some(textured), Some(vertex)) = (textured, vertex) else {
+            return;
+        };
+        for channel in 0..3 {
+            let difference = i32::from(textured[channel]) - i32::from(vertex[channel]);
+            assert!(
+                difference.abs() <= TOLERANCE,
+                "nominal {value} rendered as {textured:?} through a texture and \
+                 {vertex:?} through a vertex colour: the two paths are not in \
+                 the same colour space"
+            );
+        }
+    }
+}

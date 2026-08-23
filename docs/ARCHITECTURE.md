@@ -46,7 +46,7 @@ Cycles are P0. `publish = false` — not on crates.io.
 
 ## Rendering
 
-One `occluview-render` pipeline: one shader, one camera. A given mesh therefore rasterizes identically in Explorer and in the app. Above the per-format fidelity cutoffs in `render_thumb/loading.rs` the tile is drawn from a decimated preview mesh through that same pipeline, so it matches the shading but not the geometry. Orthographic camera, `GpuCamera` / `GpuMeshUniform` per mesh.
+One `occluview-render` pipeline: one shader, one camera. Colour lives in gamma space end to end -- the render target is `Rgba8Unorm` and nothing encodes on the way out, so textures are uploaded untyped (`Rgba8Unorm`, not `Rgba8UnormSrgb`) and reach the shader on the same scale as vertex colours. A texture typed sRGB would be decoded to linear and then written out as if it were sRGB, which is how the same nominal colour came out darker from a texture than from a vertex. A given mesh therefore rasterizes identically in Explorer and in the app. Above the per-format fidelity cutoffs in `render_thumb/loading.rs` the tile is drawn from a decimated preview mesh through that same pipeline, so it matches the shading but not the geometry. Orthographic camera, `GpuCamera` / `GpuMeshUniform` per mesh.
 
 ## Build and release
 

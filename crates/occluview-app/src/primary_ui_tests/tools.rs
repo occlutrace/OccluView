@@ -149,3 +149,22 @@ fn the_one_guarded_forwarder_is_not_named_like_the_others() {
         );
     }
 }
+
+#[test]
+fn the_two_cut_cap_colours_are_one_colour() {
+    // The app and the renderer each name the cap's colour. They have to agree,
+    // and both have to be in the space the render target actually is: a linear
+    // conversion of #E84C4B reached the screen as (198, 46, 45) under a comment
+    // that said (232, 76, 75).
+    let app = repo_source_file("src/cut_tool.rs");
+    let renderer = include_str!("../../../occluview-render/src/clipping.rs");
+    let value = "[0.910, 0.298, 0.294, 1.0]";
+    assert!(
+        app.contains(value),
+        "the app's cap colour should be the sRGB fractions of #E84C4B"
+    );
+    assert!(
+        renderer.contains(value),
+        "the renderer's default cap colour should be the same value"
+    );
+}
