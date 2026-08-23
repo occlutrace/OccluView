@@ -32,3 +32,9 @@ docs/specs/
 # OS junk
 ehthumbs.db
 desktop.ini
+
+# Fuzzing working state: the accumulated corpus and crash artifacts are
+# machine-generated. The hand-made seeds live in fuzz/seeds/ and are tracked.
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/target/

@@ -221,18 +221,26 @@ jobs:
           toolchain: nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
+      # cargo-fuzz resolves `<cwd>/fuzz/Cargo.toml`, so it must run from the
+      # repository root. Running it inside `fuzz/` looks for `fuzz/fuzz/`.
+      - name: List fuzz targets
+        run: cargo fuzz list
+      - name: Restore fuzz corpus
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-smoke-${{ github.run_id }}
+          restore-keys: fuzz-corpus-smoke-
       - name: Fuzz dispatch 60s
-        run: cargo fuzz run dispatch -- -max_total_time=60 -max_len=65536
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh dispatch 60 65536
       - name: Fuzz HPS parser 60s
-        run: cargo fuzz run hps_parser -- -max_total_time=60 -max_len=65536
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh hps_parser 60 65536
       - name: Fuzz STL 60s
-        run: cargo fuzz run stl -- -max_total_time=60 -max_len=65536
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh stl 60 65536
       - name: Fuzz PLY 60s
-        run: cargo fuzz run ply -- -max_total_time=60 -max_len=65536
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh ply 60 65536
+      - name: Fuzz GLB 60s
+        run: ./scripts/run-fuzz.sh glb 60 65536
 
   fuzz-weekly:
     # Named for its cadence, not its toolchain: the schedule is Mondays at
@@ -250,18 +258,24 @@ jobs:
           toolchain: nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
+      - name: Restore fuzz corpus
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-deep-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-deep-
+            fuzz-corpus-smoke-
       - name: Fuzz dispatch 300s
-        run: cargo fuzz run dispatch -- -max_total_time=300 -max_len=131072
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh dispatch 300 131072
       - name: Fuzz HPS parser 300s
-        run: cargo fuzz run hps_parser -- -max_total_time=300 -max_len=131072
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh hps_parser 300 131072
       - name: Fuzz STL 300s
-        run: cargo fuzz run stl -- -max_total_time=300 -max_len=131072
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh stl 300 131072
       - name: Fuzz PLY 300s
-        run: cargo fuzz run ply -- -max_total_time=300 -max_len=131072
-        working-directory: fuzz
+        run: ./scripts/run-fuzz.sh ply 300 131072
+      - name: Fuzz GLB 300s
+        run: ./scripts/run-fuzz.sh glb 300 131072
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:

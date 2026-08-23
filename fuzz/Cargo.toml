@@ -7,7 +7,50 @@ edition = "2021"
 license = "Apache-2.0"
 publish = false
 
+# cargo-fuzz refuses a manifest without this marker: `cargo fuzz list` exits
+# with "does not look like a cargo-fuzz manifest" and no target ever builds.
+[package.metadata]
+cargo-fuzz = true
+
 [dependencies]
 occluview-formats = { path = "../crates/occluview-formats" }
 occluview-hps = { path = "../crates/occluview-hps" }
 libfuzzer-sys = "0.4"
+
+# Every target is declared. cargo does NOT auto-discover binaries under
+# `fuzz_targets/` -- only `src/bin/` -- so without these stanzas `cargo fuzz
+# run <target>` fails with "no bin target named ...".
+[[bin]]
+name = "dispatch"
+path = "fuzz_targets/dispatch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hps_parser"
+path = "fuzz_targets/hps_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stl"
+path = "fuzz_targets/stl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ply"
+path = "fuzz_targets/ply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "glb"
+path = "fuzz_targets/glb.rs"
+test = false
+doc = false
+bench = false

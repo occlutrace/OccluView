@@ -273,3 +273,53 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
         "CI must build the private-hps-key combination that actually ships"
     );
 }
+
+#[test]
+fn the_fuzz_targets_are_actually_buildable_and_ci_actually_runs_them() {
+    // Every fuzz step in CI had been failing since it was written, in three
+    // independent ways, and the badge never showed it because nobody read the
+    // job. The manifest lacked the `cargo-fuzz = true` marker, so `cargo fuzz`
+    // refused it outright; the `[[bin]]` stanzas had been deleted on the
+    // premise that cargo auto-discovers `fuzz_targets/` (it discovers only
+    // `src/bin/`); and the steps ran with `working-directory: fuzz`, which
+    // makes cargo-fuzz look for `fuzz/fuzz/Cargo.toml`.
+    let manifest = include_str!("../../../../fuzz/Cargo.toml");
+    let ci = ci_workflow_source();
+    let runner = include_str!("../../../../scripts/run-fuzz.sh");
+
+    assert!(
+        manifest.contains("cargo-fuzz = true"),
+        "cargo-fuzz refuses a manifest without its metadata marker"
+    );
+    for target in ["dispatch", "hps_parser", "stl", "ply", "glb"] {
+        assert!(
+            manifest.contains(&format!("name = \"{target}\"")),
+            "fuzz target {target} needs a [[bin]] stanza to build at all"
+        );
+        assert!(
+            manifest.contains(&format!("path = \"fuzz_targets/{target}.rs\"")),
+            "fuzz target {target} needs its source path declared"
+        );
+        assert!(
+            ci.contains(&format!("run-fuzz.sh {target} 60")),
+            "the smoke job should fuzz {target}"
+        );
+        assert!(
+            ci.contains(&format!("run-fuzz.sh {target} 300")),
+            "the weekly deep job should fuzz {target}"
+        );
+    }
+    assert!(
+        !ci.contains("working-directory: fuzz"),
+        "cargo-fuzz resolves <cwd>/fuzz/Cargo.toml and must run from the repo root"
+    );
+    // The seeds are the point: without them the budget goes on rediscovering
+    // magic numbers, and the writable corpus must never be the tracked one.
+    assert!(runner.contains("fuzz/seeds/$target"));
+    assert!(runner.contains("fuzz/corpus/$target"));
+    assert!(runner.contains("-dict=$dictionary"));
+    assert!(
+        ci.contains("path: fuzz/corpus"),
+        "the corpus should carry between runs or every run starts from zero"
+    );
+}

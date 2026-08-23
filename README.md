@@ -150,7 +150,12 @@ cargo test --workspace --all-targets
 cargo run -p occluview-app --release -- path/to/scan.stl
 ```
 
-Fuzz targets: `cargo fuzz run <target> -- -max_total_time=60` in `fuzz/` (requires `cargo install cargo-fuzz`); weekly deep fuzz 300s on schedule (Mondays, 02:00 UTC).
+Fuzzing: `./scripts/run-fuzz.sh <target> 60 65536` from the repository root
+(requires `cargo install cargo-fuzz` and a nightly toolchain). Targets are
+`dispatch`, `stl`, `ply`, `glb`, and `hps_parser`; the script feeds each one the
+tracked seeds in `fuzz/seeds/` and the format dictionary. CI runs a 60-second
+smoke on every push and a 300-second deep run weekly (Mondays, 02:00 UTC),
+carrying the corpus between runs.
 
 ## Security
 

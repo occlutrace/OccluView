@@ -58,4 +58,4 @@ One `occluview-render` pipeline: one shader, one camera. A given mesh therefore 
 
 ## Fuzzing
 
-`fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `hps_parser`, `stl`, `ply`. CI runs a 60s smoke over the 4 targets on every push, and a 300s deep fuzz weekly on `schedule: 0 2 * * 1` (Mondays, 02:00 UTC). For deeper runs: `cargo fuzz run <target> -- -max_total_time=300` in `fuzz/`.
+`fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `stl`, `ply`, `glb`, `hps_parser`. `glb` is separate because it is the one supported format carrying an attacker-chosen offset table, and mutations sharing a budget with eleven other readers rarely reach it. Each run starts from the tracked seeds in `fuzz/seeds/` plus `fuzz/dictionaries/formats.dict`, and writes into `fuzz/corpus/`, which CI caches so a deep run feeds the next. CI runs a 60s smoke on every push and a 300s deep fuzz weekly on `schedule: 0 2 * * 1`. Locally: `./scripts/run-fuzz.sh <target> 300 131072` from the repository root.

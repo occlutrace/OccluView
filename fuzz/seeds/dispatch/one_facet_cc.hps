@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<HPS>
+  <Packed_geometry>
+    <Schema>CC</Schema>
+    <Binary_data>
+      <CC version="1.0">
+        <Facets facet_count="1" base64_encoded_bytes="1">BA==</Facets>
+        <Vertices vertex_count="3" base64_encoded_bytes="36">AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAQAAAAAAAAAAA</Vertices>
+      </CC>
+    </Binary_data>
+  </Packed_geometry>
+</HPS>
