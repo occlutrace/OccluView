@@ -683,3 +683,44 @@ fn live_window_requests_one_frame_of_swapchain_latency() {
         "the interactive viewport must not queue multiple already-stale camera frames"
     );
 }
+
+#[test]
+fn closing_the_align_tool_leaves_no_setting_behind() {
+    // Seventeen of the eighteen align-session fields were reset by hand and one
+    // was not. An axis lock — "Z only" — set on one case survived into the next
+    // pair of scans, where the scan refuses to move sideways and reads as stuck
+    // rather than as a setting that is still on. The field is listed here by
+    // name so the next field added to the session has to be listed too.
+    let source = repo_source_file("src/app/app_align.rs");
+    let start = source.find("pub(super) fn disarm_align_tool(");
+    assert!(start.is_some(), "the align teardown should exist");
+    let Some(start) = start else {
+        return;
+    };
+    let body = &source[start..];
+    let end = body
+        .find("\n    }\n")
+        .map_or(body.len(), |offset| offset + 6);
+    let disarm = &body[..end];
+
+    for reset in [
+        "self.finish_align_drag();",
+        "self.align_drag = None;",
+        "self.clear_deviation_overlay();",
+        "self.clear_align_mask();",
+        "self.align_geometry.clear();",
+        "self.align.disarm();",
+        "self.align_status = None;",
+        "self.align_stats = None;",
+        "self.align_rejected.clear();",
+        "self.align_session_poses.clear();",
+        "self.align_brush.set_armed(false);",
+        "self.align_tab = crate::align_panel::AlignTab::default();",
+        "self.align_constraint = crate::align_drag::DragConstraint::default();",
+    ] {
+        assert!(
+            disarm.contains(reset),
+            "closing the align tool must reset the session: missing `{reset}`"
+        );
+    }
+}

@@ -175,8 +175,13 @@ impl OccluViewApp {
         self.align_session_poses.clear();
         self.align_brush.set_armed(false);
         // A session that ended on Manually used to re-open there, with the tab
-        // the operator last left rather than the one the tool starts in.
+        // the operator last left rather than the one the tool starts in. The
+        // drag constraint is the same class of leak and worse to diagnose: an
+        // axis lock set on one case survived into the next pair of scans, where
+        // it reads as "the scan is stuck" rather than as a setting that is
+        // still on.
         self.align_tab = crate::align_panel::AlignTab::default();
+        self.align_constraint = crate::align_drag::DragConstraint::default();
         ctx.request_repaint();
     }
 

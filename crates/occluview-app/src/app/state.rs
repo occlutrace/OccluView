@@ -249,6 +249,20 @@ impl OccluViewApp {
     /// Status text is a transient interaction hint, not a second permanent
     /// toolbar. Track direct legacy assignments centrally so every caller gets
     /// the same expiry behavior without duplicating timer code across tools.
+    ///
+    /// KNOWN BEHAVIOUR, not a bug to rediscover: the timer restarts when the
+    /// TEXT changes, not when a message is set. Repeat an action at t = 3.9 s
+    /// and the confirmation it prints is identical to the one already showing,
+    /// so the snapshot comparison sees no change, the clock keeps running from
+    /// the first one, and the toast vanishes a tenth of a second later --
+    /// looking like it was never shown.
+    ///
+    /// The honest shape is one field, `Option<StatusMessage { text, since }>`
+    /// behind a setter that restarts the clock on every call. That is 91
+    /// mechanical call-site edits across the crate, and it belongs in a commit
+    /// that contains those 91 edits and nothing else. Until then, this is
+    /// written down rather than left for the next person debugging a
+    /// disappearing toast.
     fn expire_status_message(&mut self, ctx: &egui::Context) {
         const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(4);
         let now = Instant::now();
