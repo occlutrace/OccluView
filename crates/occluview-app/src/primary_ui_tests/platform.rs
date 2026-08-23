@@ -499,3 +499,122 @@ fn the_usage_guide_documents_the_shortcuts_the_build_implements() {
         "the CLI subcommands should be listed where a user can find them"
     );
 }
+
+/// Every key the viewer consumes, written the way the guide writes it.
+///
+/// The guide is checked in both directions against this table: a key the build
+/// reads and the guide never names leaves an operator guessing, and a key the
+/// guide names that nothing reads is an invention.
+const VIEWER_KEY_BINDINGS: &[(&str, &str)] = &[
+    ("A", "**Ctrl+A**"),
+    ("Backspace", "**Backspace**"),
+    ("Delete", "**Delete**"),
+    ("Enter", "**Enter**"),
+    ("Escape", "**Esc**"),
+    ("F", "**F**"),
+    ("Num1", "**1**"),
+    ("Num2", "**2**"),
+    ("O", "**Ctrl+O**"),
+    ("Y", "**Ctrl+Y**"),
+    ("Z", "**Ctrl+Z**"),
+];
+
+/// The `egui::Key::NAME` variants this crate reads outside its test modules.
+fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
+    let mut sources = Vec::new();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    collect_rust_source_files(&root, &mut sources)
+        .unwrap_or_else(|error| panic!("cannot walk the viewer sources: {error}"));
+
+    let mut keys = std::collections::BTreeSet::new();
+    for path in sources {
+        // Test modules name keys they never bind, which is the point of them.
+        if path
+            .components()
+            .any(|part| part.as_os_str().to_string_lossy().contains("tests"))
+        {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        for (offset, _) in text.match_indices("egui::Key::") {
+            let name: String = text[offset + "egui::Key::".len()..]
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect();
+            if !name.is_empty() {
+                keys.insert(name);
+            }
+        }
+    }
+    keys
+}
+
+#[test]
+fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
+    // The guide used to promise a key the build does not have (`F` framing a
+    // measurement) and skip one it does (Shift+Middle-click). Both are the same
+    // failure: the guide and the code drifted with nothing comparing them.
+    //
+    // What this cannot check is meaning. `F` really is bound, and the guide
+    // really did say it framed the cut when it flips which half is kept; no
+    // assertion over text catches that. It catches the keys, so the prose is
+    // the only part a reviewer has to re-read.
+    let usage = include_str!("../../../../docs/USAGE.md");
+    let bound = keys_the_viewer_binds();
+
+    for name in &bound {
+        let documented = VIEWER_KEY_BINDINGS
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, spelling)| *spelling);
+        let Some(spelling) = documented else {
+            panic!(
+                "the viewer binds egui::Key::{name} and the guide has no entry for it;                  add it to docs/USAGE.md and to VIEWER_KEY_BINDINGS"
+            );
+        };
+        assert!(
+            usage.contains(spelling),
+            "the viewer binds egui::Key::{name}, so docs/USAGE.md should say {spelling}"
+        );
+    }
+
+    for (name, spelling) in VIEWER_KEY_BINDINGS {
+        assert!(
+            bound.contains(*name),
+            "docs/USAGE.md documents {spelling} but nothing in the viewer reads              egui::Key::{name} any more"
+        );
+    }
+}
+
+#[test]
+fn the_guide_mentions_f_only_where_something_binds_f() {
+    // `F` is bound exactly once in the viewer -- flipping the planted cut --
+    // and once in the Explorer preview window, where it frames the model. The
+    // guide claimed it in a third place, under Measuring, where no key F
+    // exists. Sections are the finest grain a text guard can work at, so pin
+    // the sections.
+    let usage = include_str!("../../../../docs/USAGE.md");
+    let sections_naming_f: Vec<&str> = usage
+        .split("\n## ")
+        .skip(1)
+        .filter(|section| section.contains("**F**"))
+        .filter_map(|section| section.lines().next())
+        .collect();
+    assert_eq!(
+        sections_naming_f,
+        vec!["The cut view", "Windows Explorer"],
+        "F belongs to the planted cut and to the Explorer preview; anywhere else          it is a shortcut the build does not have"
+    );
+
+    let cut = repo_source_file("src/app/app_cut_measure.rs");
+    assert!(
+        cut.contains("self.cut_view.is_planted()") && cut.contains("egui::Key::F"),
+        "the cut view is where F is read, and only while the disc is planted"
+    );
+    let preview = repo_source_file("../occluview-shell/src/com/preview/window.rs");
+    assert!(
+        preview.contains("const VK_F: u32 = 0x46;"),
+        "the Explorer preview is the other place the guide may name F"
+    );
+}

@@ -26,9 +26,12 @@ The viewport is orthographic, so a measurement on screen is a measurement.
 | Orbit | Right-drag |
 | Pan | Middle-drag, or left+right drag together |
 | Zoom | Wheel |
-| Frame the scene | Double-click empty space, or middle-click |
-| Focus a point | Double-click on the surface |
+| Re-centre what you orbit around | Double-click, or middle-click, a point on the surface |
 | Snap to an axis | Click a marker on the axis gizmo (bottom-right) |
+
+Re-centring moves the orbit pivot to the point under the cursor and leaves the
+zoom alone, so the scan does not jump. On empty space it does nothing, because
+there is no surface point to centre on.
 
 The scale bar in the corner is drawn from the camera, so it is correct at
 every zoom level.
@@ -39,10 +42,11 @@ Each opened scan is a layer. The Layers panel controls visibility, opacity,
 tint, wireframe, vertex colours and texture per layer, and the right-click menu
 adds the mesh operations below.
 
-Two shortcuts live outside the panel:
+Three shortcuts live outside the panel, all on the middle button over a layer:
 
-- **Ctrl+Middle-click** on a layer hides it.
-- **Shift+Ctrl+Middle-click** restores the most recently hidden one.
+- **Ctrl+Middle-click** hides it.
+- **Ctrl+Shift+Middle-click** restores the most recently hidden one.
+- **Shift+Middle-click** toggles its translucency.
 
 Tints come in two groups. *Model* shades are neighbours on one warm band, for
 scans that should look like scans. *Overlay* colours are strong oppositions —
@@ -59,7 +63,13 @@ Right-click a layer and choose *Edit mesh* to open a scene-wide edit session.
 | Select everything visible | **Ctrl+A** |
 | Delete the selection | **Delete** or **Backspace** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Y** (or **Ctrl+Shift+Z**) |
-| Leave the tool | **Esc** |
+| Close the outline you are drawing | **Enter**, double-click, or click the first point |
+| Abandon the outline you are drawing | **Esc** |
+
+**Esc** cancels the outline in progress and nothing else: it does not leave the
+tool, and with no outline on screen it keeps its ordinary meaning for whatever
+is in front. The lasso and Object pick are turned off the same way they were
+turned on, from the Mesh Editor's toolbar.
 
 Whole-mesh operations — crop to selection, cut the selection to a new layer,
 separate connected components, close holes, repair, invert normals — are in the
@@ -93,7 +103,8 @@ The ruler measures along the surface, not through it. The thickness probe
 reports the distance between the surface under the cursor and the far side of
 the same scan.
 
-**Esc** closes the active measuring tool. **F** frames the current measurement.
+**Esc** closes the active measuring tool and drops its overlays, including a
+cut view the thickness probe opened.
 
 ## The cut view
 
@@ -101,7 +112,9 @@ Plant the cutting disc on the surface, then drag it to move the section. The
 Section panel shows the slice, with its own wheel: plain wheel zooms the panel,
 **Ctrl+wheel** resizes the disc.
 
-**Esc** puts the disc away. **F** frames the cut.
+**Esc** steps back one rung: it unplants a planted disc, and closes the cut
+view when nothing is planted. **F** flips the section over — it keeps the half
+that was being cut away — and only does anything while the disc is planted.
 
 When the thickness probe is driving the cut, the disc follows it and stays
 passive — the probe owns the pointer, so **Esc** closes both together.
