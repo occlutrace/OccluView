@@ -3,6 +3,14 @@ use glam::Vec3;
 use rayon::prelude::*;
 
 const SMOOTH_DUPLICATE_NORMAL_DOT: f32 = 0.5;
+
+/// Above this many vertices sharing one position, normal agreement is judged
+/// against the group mean rather than pairwise.
+///
+/// Well past any real vertex valence -- a fan around one point is tens of
+/// triangles, not hundreds -- so no scan reaches it, and a crafted file cannot
+/// spend minutes here.
+const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
 const SMOOTH_POSITION_EPS_MM: f32 = 0.002;
 const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
@@ -162,6 +170,43 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
         .flat_map_iter(|&(start, end)| {
             let members = &keyed[start..end];
             let mut group_updates = Vec::new();
+
+            // The exact form below compares every member against every other,
+            // which is fine at real valences and quadratic at absurd ones. A
+            // pile of coincident vertices is not hypothetical -- a fan
+            // collapsed by bad decimation, a scanner artefact, or a file
+            // written to be one. Measured: k=2000 costs 19 ms, k=8000 costs
+            // 214 ms, k=20000 costs 1.3 s, and it runs on the loading thread
+            // with no cancellation, or inside `dllhost` holding one of twelve
+            // thumbnail lanes long after Explorer has been told the request
+            // timed out.
+            //
+            // Past the threshold, agreement is judged against the group's mean
+            // normal instead of pairwise: one pass to sum, one to accept or
+            // reject. Same answer wherever the group is coherent, which is
+            // every case a real scan produces, and linear everywhere.
+            if members.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
+                let mut mean = Vec3::ZERO;
+                for &(_, index) in members {
+                    let candidate = source_normals[index];
+                    if candidate.length_squared() > f32::EPSILON {
+                        mean += candidate;
+                    }
+                }
+                if mean.length_squared() > f32::EPSILON {
+                    let mean = mean.normalize();
+                    for &(_, index) in members {
+                        let current = source_normals[index];
+                        if current.length_squared() > f32::EPSILON
+                            && mean.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
+                        {
+                            group_updates.push((index, mean));
+                        }
+                    }
+                }
+                return group_updates;
+            }
+
             for &(_, index) in members {
                 let current = source_normals[index];
                 if current.length_squared() <= f32::EPSILON {

@@ -85,6 +85,61 @@ fn an_uncached_sculpt_snapshot_holds_the_same_geometry_without_the_caches() {
     assert!(mesh.with_sculpted_vertices_uncached(Vec::new()).is_none());
 }
 
+/// A pile of coincident vertices used to cost k^2 dot products on the loading
+/// thread, with no cancellation and no ceiling: measured 19 ms at k=2000,
+/// 214 ms at k=8000 and 1.30 s at k=20000, which extrapolates to minutes at
+/// k=200000 -- inside `dllhost`, holding a thumbnail lane long after Explorer
+/// has given up on the request. Judging agreement against the group mean above
+/// a threshold makes it linear: the same three sizes now cost 2.3 ms, 4.9 ms
+/// and 11.4 ms.
+#[test]
+fn a_huge_coincident_vertex_group_stays_linear() {
+    let group = 4_000usize;
+    let mut vertices = Vec::with_capacity(group * 3);
+    let mut indices = Vec::with_capacity(group * 3);
+    for i in 0..group {
+        let angle = i as f32 * 0.0001;
+        for corner in 0..3 {
+            let mut vertex = Vertex::at(Vec3::ZERO);
+            vertex.position = if corner == 0 {
+                [0.0, 0.0, 0.0]
+            } else {
+                [corner as f32, i as f32 * 0.001, 0.0]
+            };
+            vertex.normal = [angle.cos(), angle.sin(), 0.0];
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(vertex);
+        }
+    }
+
+    let started = std::time::Instant::now();
+    let mesh = Mesh::new(Some("fan".into()), vertices, indices).expect("valid mesh");
+    let elapsed = started.elapsed();
+
+    assert_eq!(mesh.vertices().len(), group * 3);
+    // The quadratic form took 19 ms at k=2000 in release and far more in a
+    // debug test build; the ceiling is generous enough that only a return to
+    // quadratic can reach it.
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "coincident-group normal smoothing took {elapsed:?}; it has gone quadratic again"
+    );
+    // The coherent group agrees, so every member keeps a usable normal.
+    let shared = mesh
+        .vertices()
+        .iter()
+        .filter(|vertex| vertex.position == [0.0, 0.0, 0.0])
+        .count();
+    assert_eq!(shared, group, "the fixture should share one position");
+    for vertex in mesh.vertices() {
+        let normal = Vec3::from_array(vertex.normal);
+        assert!(
+            normal.is_finite() && normal.length_squared() > 0.5,
+            "a coherent group must still produce unit normals, got {normal:?}"
+        );
+    }
+}
+
 #[test]
 fn triangle_mesh_computes_normals_when_source_has_none() {
     let mesh = Mesh::new(
