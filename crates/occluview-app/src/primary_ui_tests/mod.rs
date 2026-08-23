@@ -6,6 +6,7 @@ pub(super) use super::*;
 use std::path::Path;
 
 mod chrome;
+mod documents;
 mod loading;
 mod platform;
 mod source_tree;

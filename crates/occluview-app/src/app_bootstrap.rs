@@ -246,11 +246,18 @@ fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     let path = dir.join(format!("occluview-{kind}-{stamp}.txt"));
+    // The file's own name, not its path. The directory sits under the
+    // operator's profile and carries their account name, and this is the file
+    // the viewer asks them to attach to a public issue -- whoever opens it
+    // already knows where it came from.
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("occluview-crash.txt");
     let report = format!(
-        "{details}\n{}\nBuild: {}\nReport path: {}\n",
+        "{details}\n{}\nBuild: {}\nReport: {file_name}\n",
         recent_log_lines(),
         env!("CARGO_PKG_VERSION"),
-        path.display()
     );
     std::fs::write(&path, report).ok()?;
     Some(path)
