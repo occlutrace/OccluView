@@ -37,7 +37,22 @@ mod public_contract_tests {
     use super::PARSER_VERSION;
 
     #[test]
-    fn parser_version_matches_package_metadata() {
-        assert_eq!(PARSER_VERSION, env!("CARGO_PKG_VERSION"));
+    fn parser_version_is_a_usable_semver_triple() {
+        // Comparing PARSER_VERSION with env!("CARGO_PKG_VERSION") only restated
+        // its own definition. What a consumer needs is that the constant is
+        // shaped like a version they can compare against, which a workspace
+        // version bump could break without anyone reading this crate.
+        let parts: Vec<&str> = PARSER_VERSION.split('.').collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "PARSER_VERSION should be major.minor.patch, got {PARSER_VERSION}"
+        );
+        for part in parts {
+            assert!(
+                !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()),
+                "PARSER_VERSION component {part:?} is not numeric in {PARSER_VERSION}"
+            );
+        }
     }
 }

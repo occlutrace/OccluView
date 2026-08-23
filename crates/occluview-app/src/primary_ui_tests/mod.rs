@@ -1,3 +1,7 @@
+// A contract test that cannot find its subject must say so. See
+// `repo_source_file` below for why that needs a panic rather than a default.
+#![allow(clippy::panic)]
+
 pub(super) use super::*;
 use std::path::Path;
 
@@ -89,10 +93,23 @@ pub(super) fn app_viewport_source() -> &'static str {
     )
 }
 
+/// Read a source file this crate makes assertions about.
+///
+/// The sibling mechanism, `include_str!`, is checked by the compiler: rename
+/// the file and the build breaks. This one is not, so it has to break itself.
+/// Returning `""` on a missing file turns every assertion about that file into
+/// an assertion about the empty string -- silently, with CI green. The negative
+/// assertions go first, and those are the ones worth having; a line budget
+/// passes in a vacuum too, since `"".lines().count()` is zero.
 pub(super) fn repo_source_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);
-    std::fs::read_to_string(path).unwrap_or_default()
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "contract test source {} is missing: {error}",
+            path.display()
+        )
+    })
 }
 
 pub(super) fn viewer_interaction_source() -> &'static str {

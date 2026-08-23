@@ -2,16 +2,23 @@ use super::*;
 
 #[test]
 fn primary_camera_action_labels_stay_generic() {
-    let labels = primary_camera_action_labels();
+    // This used to call a `#[cfg(test)]` stub in main.rs that returned an empty
+    // array, so it asserted that `[]` is empty and would have stayed green
+    // through any change to the real toolbar. The requirement behind it is
+    // real: the always-visible chrome stays generic, and named dental views
+    // belong in a surface the operator opens deliberately.
+    let chrome = app_chrome_source();
+    let dialogs = app_dialogs_source();
+    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar_impl");
 
-    assert!(
-        labels.is_empty(),
-        "primary toolbar should not expose persistent camera action buttons"
-    );
     for dental_label in ["Occlusal", "Buccal", "Lingual", "Mesial", "Distal"] {
         assert!(
-            !labels.contains(&dental_label),
-            "primary camera controls should not expose {dental_label}"
+            !toolbar.contains(dental_label),
+            "the primary toolbar should not expose a persistent {dental_label} button"
+        );
+        assert!(
+            !chrome.contains(dental_label),
+            "the persistent chrome should not expose a {dental_label} button"
         );
     }
 }

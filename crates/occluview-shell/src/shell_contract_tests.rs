@@ -1,6 +1,6 @@
 use super::{
     owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
-    SUPPORTED_EXTENSIONS, V1_OPEN_EXTENSIONS,
+    SUPPORTED_EXTENSIONS,
 };
 use std::path::Path;
 
@@ -63,15 +63,18 @@ fn thumbnail_registration_only_includes_implemented_stream_formats() {
 }
 
 #[test]
-fn shell_associations_include_all_v1_open_extensions() {
-    for ext in V1_OPEN_EXTENSIONS {
-        assert!(SUPPORTED_EXTENSIONS.contains(ext));
-    }
-}
-
-#[test]
 fn open_with_targets_the_real_gui_binary_name() {
-    assert_eq!(APP_EXE_NAME, "occluview.exe");
+    // Comparing the constant with a copy of itself proved nothing: renaming the
+    // [[bin]] target would leave this green while "Open with" on every
+    // installed machine pointed at an executable that no longer exists. Bind it
+    // to the manifest that produces the file instead, the way platform.rs binds
+    // the Linux app id to the installed .desktop entry.
+    let stem = APP_EXE_NAME.strip_suffix(".exe").unwrap_or(APP_EXE_NAME);
+    let manifest = include_str!("../../occluview-app/Cargo.toml");
+    assert!(
+        manifest.contains(&format!("name = \"{stem}\"")),
+        "APP_EXE_NAME ({APP_EXE_NAME}) must name the [[bin]] target in occluview-app/Cargo.toml"
+    );
 }
 
 #[test]

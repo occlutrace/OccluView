@@ -92,22 +92,6 @@ fn no_source_file_carries_a_tool_session_scratchpad_path() {
 }
 
 #[test]
-fn viewport_modules_stay_within_the_physical_line_budget() {
-    for path in [
-        "src/app/app_viewport.rs",
-        "src/app/app_mesh_editor.rs",
-        "src/app/app_cut_measure.rs",
-        "src/app/app_layer_interaction.rs",
-    ] {
-        let lines = repo_source_file(path).lines().count();
-        assert!(
-            lines <= 800,
-            "physical {path} must stay <= 800 lines, got {lines}"
-        );
-    }
-}
-
-#[test]
 fn mesh_editor_panel_has_no_single_target_selector() {
     let overlay = repo_source_file("src/mesh_editor_overlay.rs");
     let groups = repo_source_file("src/mesh_editor_groups.rs");
@@ -154,32 +138,16 @@ fn edit_mesh_entry_opens_one_scene_wide_session() {
 }
 
 #[test]
-fn mesh_editor_split_modules_stay_under_line_budget() {
+fn multi_layer_session_state_lives_in_its_own_module() {
+    // The line budgets these paths used to repeat are enforced for every crate
+    // by `rust_source_files_stay_within_the_physical_line_budget` above, which
+    // walks the tree instead of naming sixteen files that can be renamed out
+    // from under it. What that walk cannot see is the split itself.
     let edit_mode = repo_source_file("src/edit_mode/mod.rs");
     assert!(
         edit_mode.contains("mod selection_set;"),
         "multi-layer session state should live in a focused selection_set module"
     );
-    for path in [
-        "src/edit_mode/selection_set.rs",
-        "src/edit_mode/multi_layer_selection_tests.rs",
-        "src/edit_mode/session.rs",
-        "src/edit_mode/session_tests.rs",
-        "src/edit_mode/session_multi_layer_tests.rs",
-        "src/edit_mode/scene_sync.rs",
-        "src/edit_mode/selection_ops.rs",
-        "src/edit_mode/sync_tests.rs",
-        "src/edit_mode/tests.rs",
-        "src/app/app_mesh_editor.rs",
-        "src/mesh_editor_overlay.rs",
-        "src/mesh_editor_groups.rs",
-    ] {
-        let lines = repo_source_file(path).lines().count();
-        assert!(
-            lines <= 800,
-            "focused mesh-editor module {path} must stay <= 800 lines, got {lines}"
-        );
-    }
 }
 
 #[test]
