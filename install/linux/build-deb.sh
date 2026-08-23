@@ -81,6 +81,10 @@ install -m 0644 install/linux/copyright "$pkg_root/usr/share/doc/occluview/copyr
 install -m 0644 NOTICE "$pkg_root/usr/share/doc/occluview/NOTICE"
 install -m 0644 THIRD-PARTY-NOTICES.md \
   "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
+# The C++ geometry kernel and its own dependencies are statically linked and
+# invisible to every Cargo tool, so their notices are carried by hand.
+install -m 0644 THIRD-PARTY-NOTICES-NATIVE.md \
+  "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"
 gzip -9 -n -c CHANGELOG.md > "$pkg_root/usr/share/doc/occluview/changelog.gz"
 
 installed_size="$(du -sk "$pkg_root/usr" | awk '{ print $1 }')"

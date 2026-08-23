@@ -142,12 +142,22 @@ fn every_windows_artifact_ships_the_license_set() {
 
     // Distributing the statically linked dependencies obliges shipping their
     // notices; both Windows artifacts must carry the same three files.
-    for file_id in ["filLicenseFile", "filNoticeFile", "filThirdPartyNotices"] {
+    for file_id in [
+        "filLicenseFile",
+        "filNoticeFile",
+        "filThirdPartyNotices",
+        "filThirdPartyNoticesNative",
+    ] {
         assert!(wxs.contains(file_id), "MSI must install {file_id}");
     }
     assert!(
-        package.contains("Copy-Item ./THIRD-PARTY-NOTICES.md"),
-        "the portable ZIP must ship the third-party notices"
+        package.contains("Copy-Item ./THIRD-PARTY-NOTICES.md")
+            && package.contains("Copy-Item ./THIRD-PARTY-NOTICES-NATIVE.md"),
+        "the portable ZIP must ship the third-party notices, native ones included"
+    );
+    assert!(
+        wxs.contains("<ComponentRef Id=\"cmpThirdPartyNoticesNative\" />"),
+        "a component that is declared but never referenced installs nothing"
     );
     assert!(
         lifecycle.contains("THIRD-PARTY-NOTICES.md"),
@@ -163,8 +173,9 @@ fn the_deb_ships_and_gates_the_license_set() {
 
     assert!(
         build.contains("usr/share/doc/occluview/NOTICE")
-            && build.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"),
-        "the deb must install the Apache NOTICE and the generated attributions"
+            && build.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES.md")
+            && build.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"),
+        "the deb must install the Apache NOTICE and both attribution files"
     );
     assert!(
         check.contains("usr/share/doc/occluview/NOTICE")
@@ -351,5 +362,41 @@ fn no_scan_path_reaches_the_crash_report() {
     assert!(
         !thumbnail.contains("path = %path.display()"),
         "the thumbnail path must not be logged; the extension is enough to diagnose"
+    );
+}
+
+#[test]
+fn the_statically_linked_cpp_components_are_attributed() {
+    // `THIRD-PARTY-NOTICES.md` is generated from `Cargo.lock` and therefore
+    // covers the Rust graph only. The shipped binaries also statically link a
+    // C++ geometry kernel that `manifold-csg-sys` fetches and builds, plus the
+    // two libraries Manifold's own CMake fetches. Apache-2.0 section 4 obliges
+    // anyone redistributing those to carry their notices, and this is a product
+    // that is sold.
+    let native = include_str!("../../../../THIRD-PARTY-NOTICES-NATIVE.md");
+    for component in ["Manifold", "oneTBB", "Clipper2"] {
+        assert!(
+            native.contains(component),
+            "{component} is linked into the binaries and must be attributed"
+        );
+    }
+    assert!(
+        native.contains("Apache License") && native.contains("Boost Software License"),
+        "the notices must carry the license texts, not only the names"
+    );
+    // The two gaps a reader should not have to discover.
+    assert!(
+        native.contains("tag, not a commit"),
+        "the upstream reference is mutable and that has to be stated"
+    );
+    assert!(
+        native.contains("cargo deny") && native.contains("SBOM"),
+        "neither the advisory scan nor the SBOM sees this code; say so"
+    );
+
+    let check = linux_check_deb_source();
+    assert!(
+        check.contains("THIRD-PARTY-NOTICES-NATIVE.md"),
+        "the deb gate must fail a package that dropped the native notices"
     );
 }

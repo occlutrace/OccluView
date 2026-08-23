@@ -192,7 +192,11 @@ See [SECURITY.md](SECURITY.md). Report vulnerabilities privately to **security@o
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party crates
 and bundled fonts are listed with their license texts in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which every installer and
-package also ships.
+package also ships. That file is generated from `Cargo.lock`; the statically
+linked C++ geometry kernel and its dependencies -- Manifold, oneTBB and
+Clipper2 -- are listed with their notices in
+[THIRD-PARTY-NOTICES-NATIVE.md](THIRD-PARTY-NOTICES-NATIVE.md), which ships
+alongside it.
 
 ---
 

@@ -8,3 +8,8 @@ Third-party components are distributed under their own licenses. See
 THIRD-PARTY-NOTICES.md, shipped alongside this file, for the complete list
 of crates, copyright notices, and license texts, including the bundled
 Hack, Ubuntu, and Noto Emoji fonts.
+
+That file is generated from Cargo metadata and therefore covers the Rust
+dependency graph only. The statically linked C++ geometry kernel and its own
+dependencies -- Manifold, oneTBB and Clipper2 -- are listed with their
+notices in THIRD-PARTY-NOTICES-NATIVE.md, shipped in the same place.

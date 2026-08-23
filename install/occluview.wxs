@@ -112,6 +112,15 @@
               Source="$(sys.SOURCEFILEDIR)..\THIRD-PARTY-NOTICES.md"
               KeyPath="yes" />
           </Component>
+          <!-- The C++ geometry kernel and its own dependencies are statically
+               linked into occluview.exe and are invisible to every Cargo tool,
+               so their notices are a separate, hand-maintained file. -->
+          <Component Id="cmpThirdPartyNoticesNative" Guid="{3A1F6E2D-9C74-4B58-8E0A-16D7C4B9F5E2}" Win64="yes">
+            <File
+              Id="filThirdPartyNoticesNative"
+              Source="$(sys.SOURCEFILEDIR)..\THIRD-PARTY-NOTICES-NATIVE.md"
+              KeyPath="yes" />
+          </Component>
           <Component Id="cmpShellRegistration" Guid="{2B247A1D-C712-4B12-A4CE-E0AAD092966D}" Win64="yes">
             <RegistryKey Root="HKLM" Key="Software\Classes\CLSID\$(var.ShellClsid)">
               <RegistryValue Type="string" Value="OccluView Thumbnail Provider" KeyPath="yes" />
@@ -490,6 +499,7 @@
       <ComponentRef Id="cmpLicenseFile" />
       <ComponentRef Id="cmpNoticeFile" />
       <ComponentRef Id="cmpThirdPartyNotices" />
+      <ComponentRef Id="cmpThirdPartyNoticesNative" />
       <ComponentRef Id="cmpShellRegistration" />
       <ComponentRef Id="cmpStartMenuShortcut" />
     </Feature>

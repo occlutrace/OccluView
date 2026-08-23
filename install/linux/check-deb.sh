@@ -93,12 +93,18 @@ for deb in "$@"; do
   require_path "$root" "usr/share/doc/occluview/changelog.gz"
   require_path "$root" "usr/share/doc/occluview/NOTICE"
   require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
+  require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"
 
   gzip -t "$root/usr/share/doc/occluview/changelog.gz"
   grep -F "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/" "$root/usr/share/doc/occluview/copyright" >/dev/null
   grep -F "/usr/share/common-licenses/Apache-2.0" "$root/usr/share/doc/occluview/copyright" >/dev/null
   grep -F "THIRD-PARTY-NOTICES.md" "$root/usr/share/doc/occluview/copyright" >/dev/null
   grep -F "SIL OPEN FONT LICENSE" "$root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md" >/dev/null
+  # The statically linked C++ components: Apache-2.0 section 4 obliges us to
+  # ship their notices, and no Cargo-derived file contains them.
+  for native in Manifold oneTBB Clipper2; do
+    grep -F "$native" "$root/usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md" >/dev/null
+  done
 
   grep -F "Exec=occluview %F" "$root/usr/share/applications/ai.occlutrace.OccluView.desktop" >/dev/null
   grep -F "MimeType=model/stl;model/obj;model/gltf-binary;" "$root/usr/share/applications/ai.occlutrace.OccluView.desktop" >/dev/null
