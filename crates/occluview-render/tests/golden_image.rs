@@ -5,9 +5,11 @@
 //! runner, both selected in `.github/workflows/ci.yml` -- and compares the
 //! RGBA8 output to a stored PNG baseline within a tolerance.
 //!
-//! Baselines live in `tests/golden/baselines/<name>.png`. To regenerate after
-//! an intentional shader change, delete the baseline and re-run; commit the
-//! new PNG with a clear visual justification.
+//! Baselines live in `tests/golden/baselines/<name>.png`. A missing baseline
+//! is a failure, not an invitation to write one: deleting it makes the test
+//! panic. To regenerate after an intentional shader change, run the ignored
+//! `regenerate_golden_triangle` below, then commit the new PNG with a clear
+//! visual justification.
 
 #![allow(clippy::expect_used)]
 

@@ -742,3 +742,33 @@ fn the_workflows_name_the_package_they_built_instead_of_globbing_for_it() {
          workflows depend on"
     );
 }
+
+#[test]
+fn the_commit_message_hook_ships_with_the_repository() {
+    // CONTRIBUTING documented a hook that lived only in one clone's .git
+    // directory. Telling a contributor which messages will be rejected while
+    // shipping neither the check nor its reasons is worse than saying nothing.
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) else {
+        panic!("app crate should live under the workspace crates directory");
+    };
+    let hook_path = workspace_root.join(".githooks/commit-msg");
+    let hook = std::fs::read_to_string(&hook_path)
+        .unwrap_or_else(|error| panic!("the hook should be tracked: {error}"));
+
+    assert!(
+        hook.starts_with("#!/bin/sh"),
+        "the hook has to be runnable by git, not merely present"
+    );
+    assert!(
+        hook.contains("git config core.hooksPath .githooks"),
+        "the hook should say how to enable it"
+    );
+
+    let contributing = std::fs::read_to_string(workspace_root.join("CONTRIBUTING.md"))
+        .unwrap_or_else(|error| panic!("CONTRIBUTING should be readable: {error}"));
+    assert!(
+        contributing.contains("git config core.hooksPath .githooks"),
+        "the one instruction a contributor needs should be in CONTRIBUTING"
+    );
+}

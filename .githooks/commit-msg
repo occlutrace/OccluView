@@ -1,0 +1,55 @@
+#!/bin/sh
+# Keep the public commit history readable and free of things that do not
+# belong in it. Enable with:
+#
+#     git config core.hooksPath .githooks
+#
+# Every rule below exists for one reason: a commit subject is quoted out of
+# context -- in release notes, in blame, in a search result years later -- and
+# it should still say something true about the software then.
+#
+#   * No people. "Fixed what the owner asked for" tells a future reader
+#     nothing about the defect, and names someone who did not sign up to be
+#     named.
+#   * No tools. Which editor, assistant or generator produced a change is not
+#     a property of the change; the diff is.
+#   * No other companies' product names. This repository names them in its
+#     documentation where they are technically relevant; a commit subject is
+#     not that place.
+#   * No process narration. "Round 2", "audit found" and similar describe how
+#     the work was scheduled, not what it did.
+#   * ASCII only, because the history is read in terminals, mail archives and
+#     web views that do not agree about anything else.
+#
+# Bypass consciously, never by habit: git commit --no-verify.
+msg_file="$1"
+
+# Strip comment lines before checking.
+content=$(grep -v '^#' "$msg_file")
+
+fail() {
+    echo "commit-msg: $1" >&2
+    echo "  The message is public. State the engineering fact; name no people," >&2
+    echo "  no assistants, no other products. (git commit --no-verify overrides.)" >&2
+    exit 1
+}
+
+if printf '%s' "$content" | grep -qiE '\bowner\b|\bthe user\b|\bthe boss\b'; then
+    fail "narrates a project principal ('owner' / 'the user')"
+fi
+if printf '%s' "$content" | grep -qiE 'claude|anthropic|copilot|chatgpt|openai|co-authored-by|generated with|\bsubagent|\bai[- ]slop'; then
+    fail "mentions an AI assistant or carries an AI trailer"
+fi
+if printf '%s' "$content" | grep -qiE 'exocad|blender|zbrush|3shape|meshlab|meshmixer|itero|medit\b|sculptris|geomagic|fusion 360'; then
+    fail "names a third-party product"
+fi
+if printf '%s' "$content" | grep -qiE "(operator|user|owner)('s)? (asked|reported|requested|complained|said|wants)"; then
+    fail "narrates a request instead of stating the change"
+fi
+if printf '%s' "$content" | grep -qE '[А-Яа-яЁё]'; then
+    fail "contains Cyrillic text"
+fi
+if printf '%s' "$content" | grep -qiE 'pre-release review|from the same session|audit(s)? (found|over)|wave [0-9]|round [0-9]|phase [0-9]'; then
+    fail "narrates the development process"
+fi
+exit 0

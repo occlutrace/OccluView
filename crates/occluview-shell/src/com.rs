@@ -1,7 +1,7 @@
 //! The COM `IThumbnailProvider` class.
 //!
 //! Windows Explorer activates this class out-of-process in a `dllhost.exe`
-//! surrogate. Per the addendum, the class is a **thin stub**: it stores the
+//! surrogate. The class is deliberately a thin stub: it stores the
 //! file/stream the shell hands it at initialize time, and on `GetThumbnail` it
 //! detects the format, renders the mesh, and calls the same
 //! `render_thumbnail` code path the CLI uses.

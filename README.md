@@ -32,7 +32,7 @@ The viewer is tailored to the daily work of CAD designers. It supports multiple 
 - Linux desktop integration with MIME registration and a thumbnailer.
 
 <p align="center">
-  <video src="assets/animation.webm" autoplay loop muted playsinline width="820" poster="assets/screenshot1.png"></video>
+  <a href="assets/animation.webm">A short capture of the viewer in use (WebM, 220 KB)</a>
 </p>
 
 ## Supported formats

@@ -59,10 +59,20 @@ was being measured, written where the constant lives.
 ## Commits
 
 Conventional commits (`fix(scope): …`), imperative subject, and a body that
-says what was wrong rather than what was changed. A `commit-msg` hook rejects
-messages that name people or products, narrate a request or the process of
-writing the change, or carry Cyrillic text. `git commit --no-verify` overrides
-it; the hook exists to keep the public history readable, not to fight you.
+says what was wrong rather than what was changed.
+
+The repository ships a `commit-msg` hook. Enable it once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It rejects messages that name people or other companies' products, credit a
+tool, narrate a request or the scheduling of the work, or carry non-ASCII
+text. The reasons are written at the top of `.githooks/commit-msg`; the short
+version is that a subject line gets quoted out of context for years and should
+still say something true about the software. `git commit --no-verify`
+overrides it.
 
 For visible changes, add a note to `CHANGELOG.md` under the version being
 prepared. Do not open a new version section: the release job publishes the
