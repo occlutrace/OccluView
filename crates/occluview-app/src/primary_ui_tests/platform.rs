@@ -110,3 +110,26 @@ fn public_linux_copy_is_not_left_as_windows_only() {
     assert!(!about.contains("Native Windows viewer for fast scan inspection"));
     assert!(!ci.contains("Build the Windows-only crates (shell, app)"));
 }
+
+#[test]
+fn third_party_notices_stay_generated_and_gated() {
+    let ci = ci_workflow_source();
+    let script = include_str!("../../../../scripts/gen-third-party.sh");
+
+    // The attribution file is generated, so the only honest state is
+    // "regenerates identically in CI": pin the generator, fail on drift.
+    assert!(
+        ci.contains("cargo install cargo-about --version 0.9.2 --locked"),
+        "CI should install the pinned cargo-about"
+    );
+    assert!(
+        ci.contains("git diff --exit-code -- THIRD-PARTY-NOTICES.md"),
+        "CI should fail when the committed notices drift from the lockfile"
+    );
+    // The generator polices its own output: the font licenses whose
+    // notice-retention terms forced this file into existence must be
+    // present, and no first-party crate may attribute itself.
+    assert!(script.contains("SIL OPEN FONT LICENSE"));
+    assert!(script.contains("UBUNTU FONT LICENCE"));
+    assert!(script.contains("first-party crate leaked"));
+}
