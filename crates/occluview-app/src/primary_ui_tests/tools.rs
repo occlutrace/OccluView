@@ -168,3 +168,43 @@ fn the_two_cut_cap_colours_are_one_colour() {
         "the renderer's default cap colour should be the same value"
     );
 }
+
+#[test]
+fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
+    // Five hand-written copies of "is a dialog open" had drifted to three,
+    // four and six terms. The cut and align tools did not count the
+    // replace-open guard, and none counted the third-party licences window --
+    // so with either up, Escape tore the tool down behind the dialog, and for
+    // align it also ran `cancel_align_session`, putting every scan back where
+    // it started.
+    let state = repo_source_file("src/app/state.rs");
+    assert!(
+        state.contains("pub(super) fn modal_dialog_open(&self) -> bool"),
+        "the predicate should exist once"
+    );
+    for dialog in [
+        "self.close_guard_open",
+        "self.pending_replace_open.is_some()",
+        "self.app_error.is_some()",
+        "self.about_window == AboutWindowState::Open",
+        "self.third_party_window_open",
+    ] {
+        assert!(state.contains(dialog), "the predicate must count {dialog}");
+    }
+
+    for module in [
+        "src/app/app_bridge_split.rs",
+        "src/app/app_cut_measure.rs",
+        "src/app/app_align.rs",
+    ] {
+        let source = repo_source_file(module);
+        assert!(
+            source.contains("self.modal_dialog_open()"),
+            "{module} should ask the shared predicate"
+        );
+        assert!(
+            !source.contains("let dialogs_open = self.close_guard_open"),
+            "{module} must not keep its own copy, which is how they drifted"
+        );
+    }
+}

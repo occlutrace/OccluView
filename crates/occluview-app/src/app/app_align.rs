@@ -34,10 +34,7 @@ impl OccluViewApp {
         self.forget_removed_align_layers();
 
         // Escape leaves the tool, but never steals the key from a dialog.
-        let dialogs_open = self.close_guard_open
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
-        if !dialogs_open
+        if !self.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             // Escape is a close, and a close puts the scans back. Silently

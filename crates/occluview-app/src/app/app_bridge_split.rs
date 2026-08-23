@@ -322,11 +322,7 @@ impl OccluViewApp {
     }
 
     fn consume_bridge_split_escape(&self, ctx: &egui::Context) -> bool {
-        let dialogs_open = self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
-        !dialogs_open
+        !self.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     }
 

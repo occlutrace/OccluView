@@ -414,6 +414,25 @@ impl OccluViewApp {
         self.show_toolbar_impl(ctx);
     }
 
+    /// Whether a modal dialog owns the keyboard.
+    ///
+    /// Escape belongs to the dialog in front of the operator, never to a tool
+    /// behind it. Five places used to decide that by hand and three of them had
+    /// drifted: the cut and align tools did not count the replace-open guard,
+    /// and none counted the third-party licences window. With either of those
+    /// up, Escape tore the tool down behind the dialog -- and for align it also
+    /// ran `cancel_align_session`, putting every scan back where it started.
+    ///
+    /// One predicate, so the next dialog is remembered in one place instead of
+    /// five.
+    pub(super) fn modal_dialog_open(&self) -> bool {
+        self.close_guard_open
+            || self.pending_replace_open.is_some()
+            || self.app_error.is_some()
+            || self.about_window == AboutWindowState::Open
+            || self.third_party_window_open
+    }
+
     /// Edit hotkeys, refused while a dialog is up.
     ///
     /// This is the only `_impl` pair in the crate that is not a pass-through,
@@ -424,13 +443,9 @@ impl OccluViewApp {
     /// unsaved-changes prompt is open, silently changing what "Save" then
     /// writes. `handle_edit_shortcuts_unguarded` cannot be called by habit.
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.about_window == AboutWindowState::Open
-            || self.third_party_window_open
-            || self.bridge_split_active()
-        {
+        // The bridge tool owns the scene while it is armed, which is not a
+        // dialog and so is not part of the shared predicate.
+        if self.modal_dialog_open() || self.bridge_split_active() {
             return;
         }
         self.handle_edit_shortcuts_unguarded(ctx);

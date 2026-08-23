@@ -371,10 +371,7 @@ impl OccluViewApp {
         // Esc exits the tool (and drops its overlays, incl. the probe-linked cut
         // view it opened) — but never steal Escape from an open dialog (same rule
         // as the cut ladder).
-        let dialogs_open = self.close_guard_open
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
-        if !dialogs_open
+        if !self.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.disarm_measure_and_probe_cut();
@@ -682,11 +679,8 @@ impl OccluViewApp {
 
         // Never steal Escape from an open dialog: the cut ladder only consumes
         // it when the operator is actually looking at the viewport.
-        let dialogs_open = self.close_guard_open
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
         let escape = !probe_linked
-            && !dialogs_open
+            && !self.modal_dialog_open()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let flip = !probe_linked
             && self.cut_view.is_planted()
