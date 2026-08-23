@@ -458,6 +458,13 @@ pub fn launch_installer(installer: &Path) -> Result<(), UpdateError> {
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(HTTP_TIMEOUT)
+        // Everything here is signature-checked, so this is not what keeps a
+        // bad artifact out. It keeps the promise SECURITY.md makes -- two
+        // ordinary HTTPS GETs -- from depending on nobody ever publishing a
+        // manifest with an http URL, or a host answering with a redirect to
+        // one. ureq follows five redirects by default and would follow that
+        // one.
+        .https_only(true)
         .user_agent(concat!("occluview-update/", env!("CARGO_PKG_VERSION")))
         .build()
 }

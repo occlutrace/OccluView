@@ -10,7 +10,9 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 unmaintained = "workspace"
-yanked = "warn"
+# A yank is the fastest signal the ecosystem has that a release is bad. Warning
+# about one and building anyway wastes it.
+yanked = "deny"
 ignore = []
 
 [licenses]

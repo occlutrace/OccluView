@@ -32,15 +32,12 @@ targets = [
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
 ignore-transitive-dependencies = false
-# ring (the rustls backend of the updater's HTTPS) packages its ISC/MIT/
-# OpenSSL terms in a form cargo-about carries a built-in clarification for.
+# ring (the rustls backend of the updater's HTTPS) packages its terms in a form
+# cargo-about carries a built-in clarification for.
 workarounds = ["ring"]
 # The first-party workspace crates are publish = false and must not
 # attribute themselves.
 private = { ignore = true }
-
-[ring]
-accepted = ["OpenSSL"]
 
 # eframe's "default_fonts" ships Hack (MIT), Ubuntu-Light (UFL-1.0), and
 # Noto Emoji (OFL-1.1); the font licenses require notice retention in
