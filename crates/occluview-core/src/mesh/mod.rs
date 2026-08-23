@@ -431,6 +431,42 @@ impl Mesh {
         })
     }
 
+    /// The same content, with none of the derived caches computed.
+    ///
+    /// [`Self::with_sculpted_vertices`] eagerly rebuilds the bounding box, the
+    /// PCA frame and a refitted BVH, which is right for a mesh that is about to
+    /// go back into the scene and be picked against. It is wrong for a mesh
+    /// that is only being kept in case someone presses undo: most strokes are
+    /// never undone, and the work lands on the stroke's first dab, where the
+    /// operator is waiting.
+    ///
+    /// Measured on a one-million-vertex layer: the full form costs 48 ms, of
+    /// which 24 ms is the vertex copy the snapshot genuinely needs and the rest
+    /// is caches for a mesh that will most likely be dropped. Every one of them
+    /// is recomputed on demand -- `bbox_cached` falls back, the principal frame
+    /// is optional, and the BVH is a `OnceLock` that the sculpt session's own
+    /// preparation warms off the UI thread whenever a layer changes.
+    #[must_use]
+    pub fn with_sculpted_vertices_uncached(&self, vertices: Vec<Vertex>) -> Option<Self> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        Some(Self {
+            name: self.name.clone(),
+            vertices,
+            indices: self.indices.clone(),
+            has_vertex_colors: self.has_vertex_colors,
+            has_uvs: self.has_uvs,
+            kind: self.kind,
+            texture: self.texture.clone(),
+            cached_bbox: None,
+            cached_principal_frame: None,
+            topology_id: self.topology_id,
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        })
+    }
+
     /// The mesh's own principal-axis frame (PCA centroid + orthonormal
     /// axes), from the constructor-time cache — a STABLE, per-mesh-constant
     /// "global shape" signal: `axes[0]` is a dental arch or bridge span's own

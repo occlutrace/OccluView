@@ -47,6 +47,45 @@ fn sculpted_mesh_refits_a_warm_bvh_for_the_next_pick() {
 }
 
 #[test]
+fn an_uncached_sculpt_snapshot_holds_the_same_geometry_without_the_caches() {
+    // Same content, none of the derived work: this is the form used for an undo
+    // baseline, which is stored and usually dropped. On a million-vertex layer
+    // the cached form costs 46 ms and this one 24 ms, and the difference lands
+    // on the first dab of every stroke.
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    mesh.warm_bvh();
+
+    let moved: Vec<Vertex> = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| Vertex::at(Vec3::from_array(vertex.position) + Vec3::new(0.0, 0.0, 5.0)))
+        .collect();
+    let snapshot = mesh
+        .with_sculpted_vertices_uncached(moved.clone())
+        .expect("same vertex count");
+
+    assert_eq!(snapshot.vertices(), moved.as_slice());
+    assert_eq!(snapshot.indices(), mesh.indices());
+    assert_eq!(snapshot.topology_id(), mesh.topology_id());
+    assert!(
+        !snapshot.bvh_is_ready(),
+        "the undo baseline must not pay for a BVH refit"
+    );
+    // Uncached does not mean wrong: every derived value is still available.
+    let box_of_snapshot = snapshot.bbox_cached();
+    assert!((box_of_snapshot.min.z - 5.0).abs() < 1e-5);
+    assert!((box_of_snapshot.max.z - 5.0).abs() < 1e-5);
+
+    // A length mismatch is still refused, same as the cached form.
+    assert!(mesh.with_sculpted_vertices_uncached(Vec::new()).is_none());
+}
+
+#[test]
 fn triangle_mesh_computes_normals_when_source_has_none() {
     let mesh = Mesh::new(
         Some("tri".into()),

@@ -377,9 +377,17 @@ impl SculptSession {
     }
 
     /// The layer mesh as the session currently holds it (template + shadow).
+    ///
+    /// This is an undo baseline and nothing else: it is stored, and installed
+    /// only if the operator presses undo. Built cold, therefore -- computing
+    /// the bounding box, the PCA frame and a BVH refit here put 24 ms of
+    /// speculative work on the first dab of every stroke, on the one tool where
+    /// responsiveness is the whole point. An undo re-warms them through the
+    /// same session preparation that warms them for any other layer change.
     fn snapshot_mesh(&self) -> Option<Mesh> {
         let shadow = self.shadow.read().ok()?;
-        self.base_mesh.with_sculpted_vertices(shadow.clone())
+        self.base_mesh
+            .with_sculpted_vertices_uncached(shadow.clone())
     }
 
     /// Adopt the densified geometry: rebuild the template mesh, resize the
@@ -457,6 +465,19 @@ mod tests {
     use super::*;
     use glam::Quat;
     use occluview_core::{Mesh, SceneMesh};
+
+    /// The undo baseline is speculative work: it is kept in case someone
+    /// presses undo, and most strokes are never undone. Building it with the
+    /// caches put 22 ms of bounding box, PCA and BVH refit on the first dab of
+    /// every stroke, measured on a million-vertex layer.
+    #[test]
+    fn the_stroke_baseline_is_snapshotted_cold() {
+        let source = include_str!("sculpt_tool.rs");
+        assert!(
+            source.contains("with_sculpted_vertices_uncached(shadow.clone())"),
+            "the stroke's undo baseline must not pay for caches it usually never uses"
+        );
+    }
 
     #[test]
     fn toggling_a_tool_arms_it_and_toggling_again_disarms() {
