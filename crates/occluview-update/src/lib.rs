@@ -35,9 +35,23 @@ pub const MANIFEST_URL: &str =
 /// Detached minisign signature of [`MANIFEST_URL`].
 pub const MANIFEST_SIG_URL: &str =
     "https://github.com/occlutrace/OccluView/releases/latest/download/latest.json.minisig";
-/// Minisign public key every update is verified against. The matching private
-/// key lives ONLY in the maintainer's offline backup + CI secret.
+/// Minisign public key releases are signed with today. The matching private
+/// key lives ONLY in the maintainer's offline backup + CI secret, and the
+/// publish job re-verifies every signature against exactly this constant
+/// before uploading, so the two can never drift apart unnoticed.
 pub const UPDATE_PUBKEY: &str = "RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq";
+
+/// Every key an installed copy will accept.
+///
+/// This is the difference between a rotation and an outage. The trust anchor is
+/// compiled into binaries already sitting on clinic workstations, so a single
+/// accepted key means a lost or leaked private key ends the update channel for
+/// the entire installed base, with no path back that the product controls.
+///
+/// With a list, rotation is two ordinary releases: ship a build that accepts
+/// both the current and the next key, wait for it to spread, then start signing
+/// with the next one and drop the old entry. See `docs/RUNBOOK-keys.md`.
+pub const UPDATE_PUBKEYS: &[&str] = &[UPDATE_PUBKEY];
 
 /// Manifest platform key for the running build.
 #[cfg(target_os = "windows")]
@@ -140,7 +154,7 @@ pub fn check_for_update(current_version: &str) -> Result<Option<AvailableUpdate>
     check_with(
         MANIFEST_URL,
         MANIFEST_SIG_URL,
-        UPDATE_PUBKEY,
+        UPDATE_PUBKEYS,
         current_version,
     )
 }
@@ -152,13 +166,13 @@ pub fn check_for_update(current_version: &str) -> Result<Option<AvailableUpdate>
 pub fn check_with(
     manifest_url: &str,
     manifest_sig_url: &str,
-    pubkey: &str,
+    pubkeys: &[&str],
     current_version: &str,
 ) -> Result<Option<AvailableUpdate>, UpdateError> {
     let agent = agent();
     let manifest_bytes = fetch_bytes(&agent, manifest_url, 1024 * 1024)?;
     let signature = fetch_bytes(&agent, manifest_sig_url, 64 * 1024)?;
-    verify_signature(pubkey, &manifest_bytes, &signature)?;
+    verify_signature(pubkeys, &manifest_bytes, &signature)?;
 
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| UpdateError::BadManifest(error.to_string()))?;
@@ -197,7 +211,7 @@ pub fn download_update(
     dest_dir: &Path,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<PathBuf, UpdateError> {
-    download_with(update, UPDATE_PUBKEY, dest_dir, progress)
+    download_with(update, UPDATE_PUBKEYS, dest_dir, progress)
 }
 
 /// [`download_update`] with an injectable public key (tests).
@@ -206,7 +220,7 @@ pub fn download_update(
 /// See [`download_update`].
 pub fn download_with(
     update: &AvailableUpdate,
-    pubkey: &str,
+    pubkeys: &[&str],
     dest_dir: &Path,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<PathBuf, UpdateError> {
@@ -241,7 +255,7 @@ pub fn download_with(
     // a hash/signature mismatch, a failed rename) must not leave a half-written
     // `.partial` behind — a stale partial would masquerade as a resumable
     // download and never be retried cleanly. Clean up on every error path.
-    match stream_and_verify(response, &temp_path, artifact, pubkey, progress)
+    match stream_and_verify(response, &temp_path, artifact, pubkeys, progress)
         .and_then(|()| std::fs::rename(&temp_path, &final_path).map_err(UpdateError::Io))
     {
         Ok(()) => Ok(final_path),
@@ -260,7 +274,7 @@ fn stream_and_verify(
     response: ureq::Response,
     temp_path: &Path,
     artifact: &PlatformArtifact,
-    pubkey: &str,
+    pubkeys: &[&str],
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<(), UpdateError> {
     let total = response
@@ -297,7 +311,7 @@ fn stream_and_verify(
         return Err(UpdateError::BadHash);
     }
     let payload = std::fs::read(temp_path)?;
-    verify_signature(pubkey, &payload, artifact.signature.as_bytes())
+    verify_signature(pubkeys, &payload, artifact.signature.as_bytes())
 }
 
 /// Hand the verified installer to the OS and let the app exit.
@@ -357,13 +371,24 @@ fn fetch_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, Up
     Ok(bytes)
 }
 
-fn verify_signature(pubkey: &str, message: &[u8], signature: &[u8]) -> Result<(), UpdateError> {
-    let key = PublicKey::from_base64(pubkey).map_err(|_| UpdateError::BadSignature)?;
+/// Accept the signature if ANY trusted key verifies it.
+///
+/// Trying each key rather than picking one by id keeps the caller free of key
+/// bookkeeping, and the cost is a handful of Ed25519 verifications on a
+/// kilobyte manifest.
+fn verify_signature(pubkeys: &[&str], message: &[u8], signature: &[u8]) -> Result<(), UpdateError> {
     let signature_text = std::str::from_utf8(signature).map_err(|_| UpdateError::BadSignature)?;
     let signature =
         Signature::decode(signature_text.trim()).map_err(|_| UpdateError::BadSignature)?;
-    key.verify(message, &signature, false)
-        .map_err(|_| UpdateError::BadSignature)
+    for pubkey in pubkeys {
+        let Ok(key) = PublicKey::from_base64(pubkey) else {
+            continue;
+        };
+        if key.verify(message, &signature, false).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(UpdateError::BadSignature)
 }
 
 fn parse_version(raw: &str) -> Result<semver::Version, UpdateError> {

@@ -22,14 +22,18 @@ fn signature_roundtrip_accepts_signed_and_rejects_tampered() {
     let message = b"manifest payload";
     let signature = sign(&keypair, message);
 
-    assert!(verify_signature(&pubkey, message, signature.as_bytes()).is_ok());
+    assert!(verify_signature(&[pubkey.as_str()], message, signature.as_bytes()).is_ok());
     assert!(matches!(
-        verify_signature(&pubkey, b"tampered payload", signature.as_bytes()),
+        verify_signature(
+            &[pubkey.as_str()],
+            b"tampered payload",
+            signature.as_bytes()
+        ),
         Err(UpdateError::BadSignature)
     ));
     let (_, other_pubkey) = test_keypair();
     assert!(matches!(
-        verify_signature(&other_pubkey, message, signature.as_bytes()),
+        verify_signature(&[other_pubkey.as_str()], message, signature.as_bytes()),
         Err(UpdateError::BadSignature)
     ));
 }
@@ -79,13 +83,18 @@ fn check_announces_release_without_platform_artifact() {
     let manifest_url = serve_once(manifest, "/latest.json");
     let sig_url = serve_once(signature, "/latest.json.minisig");
 
-    let update = check_with(&manifest_url, &sig_url, &pubkey, "0.1.0")
+    let update = check_with(&manifest_url, &sig_url, &[pubkey.as_str()], "0.1.0")
         .expect("check succeeds")
         .expect("newer version must be announced even without a platform asset");
     assert!(!update.downloadable());
     assert!(update.url().is_none());
     assert!(matches!(
-        download_with(&update, &pubkey, &std::env::temp_dir(), &mut |_, _| {}),
+        download_with(
+            &update,
+            &[pubkey.as_str()],
+            &std::env::temp_dir(),
+            &mut |_, _| {}
+        ),
         Err(UpdateError::NoPlatformAsset)
     ));
 }
@@ -133,8 +142,10 @@ fn download_verifies_hash_and_signature_end_to_end() {
     let dir = std::env::temp_dir().join(format!("occluview-update-test-{}", std::process::id()));
 
     let mut last_progress = 0;
-    let installer = download_with(&update, &pubkey, &dir, &mut |done, _| last_progress = done)
-        .expect("verified download succeeds");
+    let installer = download_with(&update, &[pubkey.as_str()], &dir, &mut |done, _| {
+        last_progress = done;
+    })
+    .expect("verified download succeeds");
     assert!(installer.ends_with("OccluView-9.9.9.msi"));
     assert_eq!(last_progress, payload.len() as u64);
     assert_eq!(std::fs::read(&installer).expect("read artifact"), payload);
@@ -156,7 +167,7 @@ fn download_rejects_hash_mismatch_and_removes_partial() {
     };
     let dir = std::env::temp_dir().join(format!("occluview-update-badhash-{}", std::process::id()));
 
-    let result = download_with(&update, &pubkey, &dir, &mut |_, _| {});
+    let result = download_with(&update, &[pubkey.as_str()], &dir, &mut |_, _| {});
     assert!(matches!(result, Err(UpdateError::BadHash)));
     assert!(!dir.join("OccluView-9.9.9.msi.partial").exists());
     let _ = std::fs::remove_dir_all(&dir);
@@ -181,7 +192,7 @@ fn download_rejects_bad_signature_and_removes_partial() {
     };
     let dir = std::env::temp_dir().join(format!("occluview-update-badsig-{}", std::process::id()));
 
-    let result = download_with(&update, &pubkey, &dir, &mut |_, _| {});
+    let result = download_with(&update, &[pubkey.as_str()], &dir, &mut |_, _| {});
     assert!(matches!(result, Err(UpdateError::BadSignature)));
     assert!(!dir.join("OccluView-9.9.9.msi.partial").exists());
     let _ = std::fs::remove_dir_all(&dir);
@@ -203,8 +214,8 @@ fn check_refuses_to_offer_the_running_version_or_an_older_one() {
         let manifest_url = serve_once(manifest, "/latest.json");
         let sig_url = serve_once(signature, "/latest.json.minisig");
 
-        let outcome =
-            check_with(&manifest_url, &sig_url, &pubkey, current).expect("check succeeds");
+        let outcome = check_with(&manifest_url, &sig_url, &[pubkey.as_str()], current)
+            .expect("check succeeds");
         assert!(
             outcome.is_none(),
             "manifest {manifest_version} must not be offered to a {current} install"
@@ -222,7 +233,7 @@ fn check_still_offers_a_genuinely_newer_version() {
     let manifest_url = serve_once(manifest, "/latest.json");
     let sig_url = serve_once(signature, "/latest.json.minisig");
 
-    let update = check_with(&manifest_url, &sig_url, &pubkey, "1.2.3")
+    let update = check_with(&manifest_url, &sig_url, &[pubkey.as_str()], "1.2.3")
         .expect("check succeeds")
         .expect("1.2.4 is newer than 1.2.3");
     assert_eq!(update.version, semver::Version::new(1, 2, 4));
@@ -246,7 +257,7 @@ fn download_refuses_an_artifact_url_that_is_not_a_plain_file_name() {
                 sha256: sha256_hex(&payload),
             }),
         };
-        let result = download_with(&update, &pubkey, &dir, &mut |_, _| {});
+        let result = download_with(&update, &[pubkey.as_str()], &dir, &mut |_, _| {});
         assert!(
             matches!(result, Err(UpdateError::BadManifest(_))),
             "artifact path {path:?} should be rejected, got {result:?}"
@@ -266,4 +277,47 @@ fn download_refuses_an_artifact_url_that_is_not_a_plain_file_name() {
         "a rejected artifact name must leave nothing behind: {leftovers:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn any_trusted_key_verifies_and_an_untrusted_one_does_not() {
+    // Rotation depends on this: a build that accepts both the current and the
+    // next key can be shipped and spread BEFORE signing moves, which turns a
+    // key change from an outage into two ordinary releases. Without it, a lost
+    // or leaked private key ends updates for every installed copy, because the
+    // trust anchor is compiled into binaries already on clinic workstations.
+    let (current, current_pubkey) = test_keypair();
+    let (next, next_pubkey) = test_keypair();
+    let (_stranger_key, stranger_pubkey) = test_keypair();
+    let message = b"manifest bytes";
+    let signature = sign(&current, message);
+
+    let trusted = [current_pubkey.as_str(), next_pubkey.as_str()];
+    assert!(verify_signature(&trusted, message, signature.as_bytes()).is_ok());
+
+    // Signed by the incoming key, verified by the same two-key build.
+    let signature_from_next = sign(&next, message);
+    assert!(verify_signature(&trusted, message, signature_from_next.as_bytes()).is_ok());
+
+    // A key nobody trusts stays rejected, and so does a tampered payload.
+    assert!(matches!(
+        verify_signature(&[stranger_pubkey.as_str()], message, signature.as_bytes()),
+        Err(UpdateError::BadSignature)
+    ));
+    assert!(matches!(
+        verify_signature(&trusted, b"tampered", signature.as_bytes()),
+        Err(UpdateError::BadSignature)
+    ));
+    assert!(matches!(
+        verify_signature(&[], message, signature.as_bytes()),
+        Err(UpdateError::BadSignature)
+    ));
+}
+
+#[test]
+fn the_shipped_key_list_contains_the_key_releases_are_signed_with() {
+    // CI verifies every release signature against UPDATE_PUBKEY. If that key
+    // ever fell out of the accepted list, releases would be green and no
+    // installed copy would accept them.
+    assert!(UPDATE_PUBKEYS.contains(&UPDATE_PUBKEY));
 }

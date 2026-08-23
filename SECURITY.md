@@ -42,6 +42,13 @@ and roams; crash reports deliberately do not — the startup log records how man
 files and of which formats, never which. The README section *What OccluView
 stores on this machine* has the full inventory and how to clear it.
 
+## Signing keys
+
+Release signing, Authenticode and the embedded container key are documented in
+[docs/RUNBOOK-keys.md](docs/RUNBOOK-keys.md): where each secret lives, what
+happens if one is lost or leaks, and the two-release procedure for rotating the
+update key without cutting off installed copies.
+
 ## Verifying a release
 
 Every asset carries a SHA-256 file and a minisign signature, releases carry a
