@@ -10,7 +10,8 @@
 //!   - `info <file> [file...]` - print format, vertex/triangle counts, bbox,
 //!     colors, UVs, texture. Multiple files print per-file stats + an
 //!     aggregate scene bbox (upper+lower arch case).
-//!   - `help` - show usage.
+//!   - `help` - show usage. `-h` / `--help` in place of a subcommand's
+//!     file prints the same text; it is never taken as a filename.
 
 // CLI tool: stdout/stderr is the entire point.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
@@ -85,12 +86,48 @@ fn run() -> Result<()> {
     }
 }
 
+/// The leading positional argument of a subcommand: the file to work on, or a
+/// request for the usage text.
+#[derive(Debug)]
+enum FileArgument {
+    Path(PathBuf),
+    Help,
+}
+
+/// Take the file that every subcommand expects first, refusing to read a flag
+/// as a filename.
+///
+/// The first argument used to be taken verbatim, so `thumbnail --help`
+/// rendered a placeholder cube into `./--help.png` and exited 0, and
+/// `thumbnail -o out.png scan.stl` tried to open a file called `-o`. A path
+/// never starts with `-`, so a leading `-` is a misplaced flag: say so instead
+/// of writing a file nobody asked for. A file genuinely named `-x` is still
+/// reachable as `./-x`.
+fn take_file_argument(
+    args: &mut impl Iterator<Item = String>,
+    subcommand: &str,
+) -> Result<FileArgument> {
+    let first = args
+        .next()
+        .ok_or_else(|| anyhow!("{subcommand}: missing <file> argument"))?;
+    match first.as_str() {
+        "-h" | "--help" => Ok(FileArgument::Help),
+        flag if flag.starts_with('-') => Err(anyhow!(
+            "{subcommand}: expected a file path, got the flag {flag}; the file comes first"
+        )),
+        _ => Ok(FileArgument::Path(PathBuf::from(first))),
+    }
+}
+
 /// `thumbnail <file> [-o out.png] [--size N]`
 fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let file: PathBuf = args
-        .next()
-        .ok_or_else(|| anyhow!("thumbnail: missing <file> argument"))?
-        .into();
+    let file: PathBuf = match take_file_argument(args, "thumbnail")? {
+        FileArgument::Help => {
+            print_usage();
+            return Ok(());
+        }
+        FileArgument::Path(path) => path,
+    };
     let mut output: Option<PathBuf> = None;
     let mut size: u16 = 256;
     while let Some(arg) = args.next() {
@@ -147,10 +184,13 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// `convert <file> -o output.{stl|ply|obj}`
 fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let input: PathBuf = args
-        .next()
-        .ok_or_else(|| anyhow!("convert: missing <file> argument"))?
-        .into();
+    let input: PathBuf = match take_file_argument(args, "convert")? {
+        FileArgument::Help => {
+            print_usage();
+            return Ok(());
+        }
+        FileArgument::Path(path) => path,
+    };
     let mut output: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -177,10 +217,13 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
 /// Holes pipeline headlessly (STL loads as soup) and write the closed result.
 /// Prints the honest edit report so a soup input can be verified end to end.
 fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let input: PathBuf = args
-        .next()
-        .ok_or_else(|| anyhow!("close-holes: missing <file> argument"))?
-        .into();
+    let input: PathBuf = match take_file_argument(args, "close-holes")? {
+        FileArgument::Help => {
+            print_usage();
+            return Ok(());
+        }
+        FileArgument::Path(path) => path,
+    };
     let mut output: Option<PathBuf> = None;
     let mut limit_mm: Option<f32> = None;
     while let Some(arg) = args.next() {
@@ -225,7 +268,17 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
 /// `info <file> [file...]` - print mesh statistics. When multiple files are
 /// given, prints per-file stats plus an aggregate scene bbox.
 fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let files: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    let raw: Vec<String> = args.collect();
+    if raw.iter().any(|arg| arg == "-h" || arg == "--help") {
+        print_usage();
+        return Ok(());
+    }
+    if let Some(flag) = raw.iter().find(|arg| arg.starts_with('-')) {
+        return Err(anyhow!(
+            "info: expected file paths, got the flag {flag}; the files come first"
+        ));
+    }
+    let files: Vec<PathBuf> = raw.into_iter().map(PathBuf::from).collect();
     if files.is_empty() {
         return Err(anyhow!("info: missing <file> argument"));
     }
@@ -340,12 +393,60 @@ fn print_usage() {
          close-holes <file> -o out.stl [--limit-mm N] Close holes (whole-mesh) and write the result\n    \
          info      <file>                          Print format / counts / bbox\n    \
          help                                       Show this message\n    \
-         --version | -V                             Print the version and exit"
+         --version | -V                             Print the version and exit\n\
+         \n\
+         Every subcommand takes its file first; -h or --help in that position\n\
+         prints this message instead of naming a file."
     );
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use super::{take_file_argument, FileArgument};
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_flag_where_the_file_belongs_is_refused_instead_of_opened() {
+        let mut args = ["-o", "out.png"].into_iter().map(String::from);
+        let error = take_file_argument(&mut args, "thumbnail")
+            .expect_err("a flag must not be accepted as the file to render");
+        let message = error.to_string();
+        assert!(message.contains("-o"), "{message}");
+        assert!(message.contains("thumbnail"), "{message}");
+    }
+
+    #[test]
+    fn asking_a_subcommand_for_help_prints_help_and_renders_nothing() {
+        for flag in ["-h", "--help"] {
+            let mut args = std::iter::once(flag.to_string());
+            let taken =
+                take_file_argument(&mut args, "thumbnail").expect("--help must not be an error");
+            assert!(
+                matches!(taken, FileArgument::Help),
+                "{flag} must ask for usage, not name a file to render"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_path_is_still_taken_verbatim() {
+        let mut args = std::iter::once("scan.stl".to_string());
+        match take_file_argument(&mut args, "info").expect("a plain path is valid") {
+            FileArgument::Path(path) => assert_eq!(path, PathBuf::from("scan.stl")),
+            FileArgument::Help => panic!("a plain path is not a help request"),
+        }
+    }
+
+    #[test]
+    fn a_missing_file_is_reported_against_the_subcommand_that_wanted_it() {
+        let mut args = std::iter::empty();
+        let error =
+            take_file_argument(&mut args, "close-holes").expect_err("close-holes needs a file");
+        assert!(error.to_string().contains("close-holes"));
+    }
+
     #[test]
     fn version_flag_is_recognised_and_advertised() {
         let source = include_str!("main.rs");
