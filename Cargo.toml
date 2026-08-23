@@ -150,11 +150,6 @@ target-our-windows = { version = "0", package = "windows", features = [
     "Win32_Graphics_Gdi",
 ] }
 
-# Format loaders.
-# cgltf is a single-file C header; we build it via the `cc` crate in
-# occluview-formats/build.rs.
-cc = "1.1"
-
 # Testing.
 proptest = "1.5"
 criterion = { version = "0.5", features = ["html_reports"] }
