@@ -286,10 +286,12 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
 }
 
 #[test]
-fn the_fuzz_targets_are_actually_buildable_and_ci_actually_runs_them() {
-    // Every fuzz step in CI had been failing since it was written, in three
-    // independent ways, and the badge never showed it because nobody read the
-    // job. The manifest lacked the `cargo-fuzz = true` marker, so `cargo fuzz`
+fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
+    // What this can check is the wiring, and the wiring is what broke: the
+    // build itself needs a nightly toolchain and a linker pass, which belongs
+    // in the fuzz job, not here. Every fuzz step in CI had been failing since
+    // it was written, in three independent ways, and the badge never showed it
+    // because nobody read the job. The manifest lacked the `cargo-fuzz = true` marker, so `cargo fuzz`
     // refused it outright; the `[[bin]]` stanzas had been deleted on the
     // premise that cargo auto-discovers `fuzz_targets/` (it discovers only
     // `src/bin/`); and the steps ran with `working-directory: fuzz`, which
@@ -332,6 +334,14 @@ fn the_fuzz_targets_are_actually_buildable_and_ci_actually_runs_them() {
     assert!(
         ci.contains("path: fuzz/corpus"),
         "the corpus should carry between runs or every run starts from zero"
+    );
+
+    // The crate is excluded from the workspace, so no gate in this repository
+    // resolves its lockfile: it had already fallen a dependency behind, and
+    // `cargo fuzz` does not pass --locked, so nothing said so.
+    assert!(
+        ci.contains("cargo check --manifest-path fuzz/Cargo.toml --locked"),
+        "the fuzz job should resolve the fuzz lockfile before it fuzzes"
     );
 }
 

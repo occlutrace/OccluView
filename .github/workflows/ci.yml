@@ -278,6 +278,12 @@ jobs:
       - name: Install cargo-fuzz
         if: steps.cache-cargo-fuzz.outputs.cache-hit != 'true'
         run: cargo install cargo-fuzz --version 0.12.0 --locked
+      # The fuzz crate is excluded from the workspace, so nothing in the main
+      # gates resolves its lockfile and it rots unnoticed: it was already a
+      # dependency behind, which every other step in this file would have
+      # failed on. `cargo fuzz` does not pass --locked, so this asks directly.
+      - name: Check the fuzz lockfile
+        run: cargo check --manifest-path fuzz/Cargo.toml --locked
       # cargo-fuzz resolves `<cwd>/fuzz/Cargo.toml`, so it must run from the
       # repository root. Running it inside `fuzz/` looks for `fuzz/fuzz/`.
       - name: List fuzz targets
