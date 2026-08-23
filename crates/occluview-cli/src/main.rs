@@ -62,7 +62,7 @@ fn install_tracing() {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let subcommand = args.next().unwrap_or_else(|| {
-        print_usage();
+        print_usage_with_error();
         "help".to_string()
     });
 
@@ -80,7 +80,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         other => {
-            print_usage();
+            print_usage_with_error();
             Err(anyhow!("unknown subcommand: {other}"))
         }
     }
@@ -380,8 +380,25 @@ fn cmd_info_one(file: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The usage text, on stdout, because it was asked for.
+///
+/// A `--help` that answers on stderr cannot be piped into a pager or a file
+/// without redirecting the error stream, which is the one thing nobody expects
+/// to have to do for help.
 fn print_usage() {
-    eprintln!(
+    println!("{}", usage_text());
+}
+
+/// The same text on stderr, where it accompanies an error.
+///
+/// stdout belongs to whatever the command was going to produce; an error and
+/// the usage that explains it belong beside the error message.
+fn print_usage_with_error() {
+    eprintln!("{}", usage_text());
+}
+
+fn usage_text() -> &'static str {
+    concat!(
         "occluview-cli - headless OccluView\n\
          \n\
          USAGE:\n    \
@@ -397,7 +414,7 @@ fn print_usage() {
          \n\
          Every subcommand takes its file first; -h or --help in that position\n\
          prints this message instead of naming a file."
-    );
+    )
 }
 
 #[cfg(test)]

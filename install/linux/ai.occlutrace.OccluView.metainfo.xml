@@ -34,6 +34,9 @@
     <binary>occluview</binary>
     <binary>occluview-cli</binary>
   </provides>
+  <releases>
+    <release version="1.0.9" date="2026-08-23"/>
+  </releases>
   <url type="homepage">https://occlutrace.ai</url>
   <url type="vcs-browser">https://github.com/occlutrace/OccluView</url>
   <content_rating type="oars-1.1" />

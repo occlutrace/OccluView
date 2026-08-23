@@ -76,6 +76,24 @@ fn linux_window_identity_matches_desktop_metadata() {
     assert!(desktop.contains("StartupNotify=true"));
     assert!(bootstrap_source.contains("capture_activation_token"));
     assert!(include_str!("../single_instance/activation.rs").contains("xdg_activation"));
+
+    // A metainfo with no <releases> makes every software centre show the app
+    // with no version history at all, and appstreamcli says so. The entry has
+    // to be the version being prepared, or the centre advertises a release
+    // that is not the one in the package.
+    let manifest = include_str!("../../../../Cargo.toml");
+    let version = manifest
+        .split("[workspace.package]")
+        .nth(1)
+        .and_then(|section| section.split("version = \"").nth(1))
+        .and_then(|rest| rest.split('"').next());
+    let Some(version) = version else {
+        panic!("the workspace version should be readable");
+    };
+    assert!(
+        metainfo.contains(&format!("<release version=\"{version}\"")),
+        "the metainfo should name {version}, the version this package carries"
+    );
 }
 
 #[test]
