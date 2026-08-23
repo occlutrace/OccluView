@@ -4,6 +4,7 @@ use super::{egui, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::SculptRebuild;
 use crate::sculpt_worker::{SculptCompletion, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
+use std::sync::Arc;
 
 impl OccluViewApp {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
@@ -112,7 +113,7 @@ impl OccluViewApp {
                 self.scene = Some(scene_arc);
                 return false;
             }
-            entry.mesh = rebuild.mesh;
+            entry.mesh = Arc::new(rebuild.mesh);
         }
         self.edit_mode.sync_to_scene(&scene_arc);
         self.scene = Some(scene_arc);
@@ -191,7 +192,12 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    fn commit_sculpt_result(&mut self, before: Mesh, sculpted: Mesh, ctx: &egui::Context) -> bool {
+    fn commit_sculpt_result(
+        &mut self,
+        before: Arc<Mesh>,
+        sculpted: Mesh,
+        ctx: &egui::Context,
+    ) -> bool {
         let Some(worker) = self.sculpt.worker.as_ref() else {
             return false;
         };
@@ -259,7 +265,7 @@ impl OccluViewApp {
                 self.scene = Some(scene_arc);
                 return false;
             };
-            entry.mesh = mesh;
+            entry.mesh = Arc::new(mesh);
         }
         self.edit_mode.sync_to_scene(&scene_arc);
         self.scene = Some(scene_arc);

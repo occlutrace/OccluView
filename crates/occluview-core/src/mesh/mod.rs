@@ -90,8 +90,13 @@ pub struct Mesh {
     /// Decoded texture image, if the source file provided one (glTF
     /// `image`/`texture`). `None` for plain STL / untextured meshes.
     texture: Option<MeshTexture>,
-    /// Cached bounding box, lazily computed.
-    cached_bbox: Option<Aabb>,
+    /// Bounding box, computed at most once and shared with every clone.
+    ///
+    /// A cell rather than a field, so filling it takes `&self`. Geometry is
+    /// immutable and the mesh itself is shared behind an `Arc`, so a caller
+    /// that only wants the box must not have to be the sole owner to fill it.
+    /// Geometry-changing constructors mint a fresh empty cell.
+    cached_bbox: Arc<OnceLock<Aabb>>,
     /// Cached principal-axis frame (centroid + orthonormal axes), computed
     /// once at construction time — see [`Mesh::principal_frame_cached`].
     cached_principal_frame: Option<PrincipalFrame>,
@@ -127,7 +132,7 @@ impl Mesh {
             has_uvs: false,
             kind: MeshKind::default(),
             texture: None,
-            cached_bbox: Some(Aabb::EMPTY),
+            cached_bbox: Arc::new(OnceLock::from(Aabb::EMPTY)),
             cached_principal_frame: None,
             topology_id: next_mesh_topology_id(),
             geometry_id: next_mesh_geometry_id(),
@@ -141,9 +146,9 @@ impl Mesh {
     pub fn point_cloud(name: Option<String>, vertices: Vec<Vertex>) -> Self {
         let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);
         let has_uvs = vertices.iter().any(|v| v.uv != [0.0, 0.0]);
-        let cached_bbox = Some(Aabb::enclose_points(
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
-        ));
+        )));
         let cached_principal_frame =
             principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
         Self {
@@ -190,9 +195,9 @@ impl Mesh {
         }
         let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);
         let has_uvs = vertices.iter().any(|v| v.uv != [0.0, 0.0]);
-        let cached_bbox = Some(Aabb::enclose_points(
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
-        ));
+        )));
         let cached_principal_frame =
             principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
         Ok(Self {
@@ -359,19 +364,19 @@ impl Mesh {
     /// is immutable after construction, so the cached box remains valid.
     #[must_use]
     pub fn bbox_cached(&self) -> Aabb {
-        self.cached_bbox.unwrap_or_else(|| self.bbox_uncached())
+        self.bbox()
     }
 
-    /// Axis-aligned bounding box, computed once and cached.
+    /// Axis-aligned bounding box, computed at most once.
+    ///
+    /// Takes `&self`: the cell is shared with every clone, so whoever asks
+    /// first pays the walk and everyone after that reads it -- including
+    /// callers holding the mesh behind an `Arc`, which cannot take it
+    /// mutably without copying the geometry.
     #[inline]
     #[must_use]
-    pub fn bbox(&mut self) -> Aabb {
-        if let Some(b) = self.cached_bbox {
-            return b;
-        }
-        let b = self.bbox_uncached();
-        self.cached_bbox = Some(b);
-        b
+    pub fn bbox(&self) -> Aabb {
+        *self.cached_bbox.get_or_init(|| self.bbox_uncached())
     }
 
     /// True if this mesh carries scan color or texture data (a decoded
@@ -401,9 +406,9 @@ impl Mesh {
         if vertices.len() != self.vertices.len() {
             return None;
         }
-        let cached_bbox = Some(Aabb::enclose_points(
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
             vertices.iter().map(|v| Vec3::from_array(v.position)),
-        ));
+        )));
         let cached_principal_frame =
             principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
         // Sculpt keeps triangle topology fixed. If the old mesh was already
@@ -476,7 +481,7 @@ impl Mesh {
             has_uvs: self.has_uvs,
             kind: self.kind,
             texture: self.texture.clone(),
-            cached_bbox: None,
+            cached_bbox: Arc::new(OnceLock::new()),
             cached_principal_frame: self.cached_principal_frame,
             topology_id: self.topology_id,
             geometry_id: next_mesh_geometry_id(),
@@ -492,7 +497,7 @@ impl Mesh {
     #[inline]
     #[must_use]
     pub fn bbox_is_cached(&self) -> bool {
-        self.cached_bbox.is_some()
+        self.cached_bbox.get().is_some()
     }
 
     /// The mesh's own principal-axis frame (PCA centroid + orthonormal

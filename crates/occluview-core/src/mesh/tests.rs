@@ -255,7 +255,7 @@ fn out_of_range_index_is_rejected() {
 
 #[test]
 fn bbox_is_computed_and_cached() {
-    let mut mesh = Mesh::new(
+    let mesh = Mesh::new(
         None,
         vec![v(-1.0, -2.0, 0.0), v(3.0, 4.0, 0.0), v(0.0, 0.0, 0.0)],
         vec![0, 1, 2],
@@ -363,7 +363,7 @@ fn set_texture_attaches() {
 
 #[test]
 fn bbox_uncached_matches_cached() {
-    let mut mesh = Mesh::new(
+    let mesh = Mesh::new(
         None,
         vec![v(-1.0, -2.0, 0.0), v(3.0, 4.0, 0.0), v(0.0, 0.0, 0.0)],
         vec![0, 1, 2],
@@ -767,7 +767,7 @@ fn reading_the_box_caches_it() {
     // The counterweight to the test above: the box is recoverable, and the
     // undo path warms it once so a restored layer does not walk a million
     // vertices twice a frame forever.
-    let mut cold = arch_like_mesh()
+    let cold = arch_like_mesh()
         .with_sculpted_vertices_uncached(arch_like_mesh().vertices().to_vec())
         .expect("same vertex count");
     assert!(!cold.bbox_is_cached());

@@ -13,7 +13,7 @@ fn thumbnail_camera_keeps_occlusal_orientation_but_frames_projected_bounds_tight
         ],
         vec![0, 1, 2],
     );
-    let Ok(mut mesh) = mesh else {
+    let Ok(mesh) = mesh else {
         return;
     };
     let app_camera = Camera::default().frame_occlusal(mesh.bbox(), 45.0_f32.to_radians());

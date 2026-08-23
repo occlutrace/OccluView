@@ -327,7 +327,7 @@ fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// Single-file info (the original output format).
 fn cmd_info_one(file: &Path) -> Result<()> {
-    let mut mesh = read_file_with_key_provider(file, &RuntimeHpsKeyProvider)
+    let mesh = read_file_with_key_provider(file, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", file.display()))?;
 
     let bbox = mesh.bbox();

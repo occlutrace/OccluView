@@ -46,7 +46,7 @@ fn stl_far_outlier_fast_surrogate_stays_a_solid_reduced_surface() {
     // the clustered surrogate must keep real triangles and a bounded, finite
     // bbox (no 1e6 mm vertex parked in the mesh).
     let bytes = fixtures::dense_binary_stl_sphere_with_far_outlier(4 * 1024 * 1024);
-    let mut mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
+    let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
         .expect("outlier STL should cluster into a surface, not collapse");
     assert!(!mesh.is_point_cloud());
     assert!(

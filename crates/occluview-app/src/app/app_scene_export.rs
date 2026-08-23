@@ -263,7 +263,7 @@ fn existing_file_names(directory: &Path) -> HashSet<String> {
 /// there.
 pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
     if entry.transform == Affine3A::IDENTITY {
-        return entry.mesh.clone();
+        return (*entry.mesh).clone();
     }
     let affine = double_affine(entry.transform);
     // Normals transform by the inverse transpose. For a rigid pose that is

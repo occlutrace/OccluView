@@ -305,7 +305,7 @@ pub(crate) struct SculptSession {
     pub(crate) session: BrushSession,
     /// Immutable mesh template used to build completed meshes. It is cloned
     /// on the preparation thread, never in the UI commit path.
-    pub(crate) base_mesh: Mesh,
+    pub(crate) base_mesh: Arc<Mesh>,
     /// Display copy of the layer's vertex array, patched per dab from the
     /// kernel and streamed into the prepared GPU vertex buffer for live
     /// feedback; also the source of the final committed mesh.
@@ -325,7 +325,7 @@ pub(crate) struct SculptSession {
     /// baseline, built off the UI thread. It is a whole MESH, not just
     /// positions: a densifying stroke changes the triangle list too, and undo
     /// has to put the coarse topology back, not just the old coordinates.
-    pub(crate) stroke_start_mesh: Option<Mesh>,
+    pub(crate) stroke_start_mesh: Option<Arc<Mesh>>,
 }
 
 /// A mid-stroke topology change: Smooth densified the surface, so the layer's
@@ -391,10 +391,11 @@ impl SculptSession {
     /// speculative work on the first dab of every stroke, on the one tool where
     /// responsiveness is the whole point. An undo re-warms them through the
     /// same session preparation that warms them for any other layer change.
-    fn snapshot_mesh(&self) -> Option<Mesh> {
+    fn snapshot_mesh(&self) -> Option<Arc<Mesh>> {
         let shadow = self.shadow.read().ok()?;
         self.base_mesh
             .with_sculpted_vertices_uncached(shadow.clone())
+            .map(Arc::new)
     }
 
     /// Adopt the densified geometry: rebuild the template mesh, resize the
@@ -418,7 +419,7 @@ impl SculptSession {
             *shadow = mesh.vertices().to_vec();
         }
         let topology = PreparedSceneTopology::from_mesh(&mesh);
-        self.base_mesh = mesh.clone();
+        self.base_mesh = Arc::new(mesh.clone());
         self.topology = topology;
         self.dirty_stroke = true;
         Some(SculptRebuild { mesh, topology })
@@ -566,7 +567,7 @@ mod tests {
             layer_id,
             topology_id: mesh.topology_id(),
             session: brush,
-            base_mesh: mesh.clone(),
+            base_mesh: Arc::new(mesh.clone()),
             shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
             topology: PreparedSceneTopology::from_mesh(&mesh),
             world_to_local: Affine3A::IDENTITY,

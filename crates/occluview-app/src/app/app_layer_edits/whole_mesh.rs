@@ -11,6 +11,7 @@ use occluview_core::{
     fill_selected_holes_in_mesh, invert_mesh_orientation, CoreError, CoreMeshEditResult,
     FaceSelection, Mesh, MeshEditOptions, MeshEditReport,
 };
+use std::sync::Arc;
 
 /// Generous edge ceiling for the interactive Close Holes action. With the mm
 /// perimeter slider doing the real limiting, the edge count is only a safety
@@ -175,7 +176,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
         return Ok((LayerContextApply::default(), Some(edited.report)));
     }
 
-    entry.mesh = edited.mesh;
+    entry.mesh = Arc::new(edited.mesh);
     Ok((structural_scene_apply(), Some(edited.report)))
 }
 

@@ -102,7 +102,7 @@ fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
         return;
     };
     assert!(!cold.bbox_is_cached(), "the fixture should start cold");
-    scene.meshes_mut()[0].mesh = cold;
+    scene.meshes_mut()[0].mesh = std::sync::Arc::new(cold);
 
     let request = request(&scene, 0, LayerContextAction::InvertNormals);
     let mut edit_mode = EditModeController::new(4, 1_000_000);

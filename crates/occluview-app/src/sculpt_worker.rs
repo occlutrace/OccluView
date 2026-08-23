@@ -225,7 +225,7 @@ impl WorkerState {
 /// A completed stroke that is ready to become one undoable scene edit.
 pub(crate) struct SculptCompletion {
     /// Mesh state before this stroke, prepared off the UI thread for undo.
-    pub(crate) before: Mesh,
+    pub(crate) before: Arc<Mesh>,
     /// Mesh state after this stroke, ready for scene commit.
     pub(crate) mesh: Mesh,
 }
@@ -473,7 +473,7 @@ mod tests {
             layer_id,
             topology_id: mesh.topology_id(),
             session: brush,
-            base_mesh: mesh.clone(),
+            base_mesh: Arc::new(mesh.clone()),
             shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
             topology: PreparedSceneTopology::from_mesh(mesh),
             world_to_local: Affine3A::IDENTITY,
@@ -653,7 +653,7 @@ mod tests {
                 .iter_mut()
                 .find(|entry| entry.id() == layer_id)
                 .expect("scene layer")
-                .mesh = mesh;
+                .mesh = Arc::new(mesh);
             edit_mode.sync_to_scene(&scene);
             assert_eq!(
                 edit_mode.finish_layer_edit_success(token),

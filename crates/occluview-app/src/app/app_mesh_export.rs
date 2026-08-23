@@ -601,7 +601,7 @@ mod tests {
             &selection,
             MeshEditOptions::default(),
         )?;
-        scene.meshes_mut()[0].mesh = edit.mesh;
+        scene.meshes_mut()[0].mesh = std::sync::Arc::new(edit.mesh);
 
         let path = temp_file("stl");
         let request = LayerContextRequest {
