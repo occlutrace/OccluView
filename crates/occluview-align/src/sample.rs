@@ -108,16 +108,10 @@ pub fn bounds_of(soup: Soup<'_>) -> Option<(DVec3, f64)> {
     seen.then(|| ((min + max) * 0.5, (max - min).length()))
 }
 
-/// Bounding-box diagonal of the soup, in millimetres. Zero when nothing is
-/// usable — callers treat that as "no plausible motion".
-#[must_use]
-pub fn extent_of(soup: Soup<'_>) -> f64 {
-    bounds_of(soup).map_or(0.0, |(_, diagonal)| diagonal)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{extent_of, sample_vertices, vertex_normals};
+    #![allow(clippy::panic)]
+    use super::{bounds_of, sample_vertices, vertex_normals};
     use crate::Soup;
     use glam::DVec3;
 
@@ -177,14 +171,17 @@ mod tests {
     }
 
     #[test]
-    fn the_extent_is_the_bounding_box_diagonal() {
+    fn the_bounds_diagonal_spans_the_soup() {
         let (positions, indices) = quad();
         let soup = Soup {
             positions: &positions,
             indices: &indices,
             mask: None,
         };
-        assert!((extent_of(soup) - 2.0f64.sqrt()).abs() < 1e-9);
+        let Some((_, diagonal)) = bounds_of(soup) else {
+            panic!("a quad has bounds");
+        };
+        assert!((diagonal - 2.0f64.sqrt()).abs() < 1e-9);
     }
 
     #[test]
@@ -194,7 +191,7 @@ mod tests {
             indices: &[],
             mask: None,
         };
-        assert_eq!(extent_of(soup), 0.0);
+        assert!(bounds_of(soup).is_none(), "an empty soup has no bounds");
         assert!(sample_vertices(soup, 8).is_empty());
     }
 }

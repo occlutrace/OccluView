@@ -117,10 +117,6 @@ pub(crate) struct SculptTool {
     pub(crate) worker: Option<SculptWorker>,
     /// Bookkeeping for the drag currently in flight (button held).
     pub(crate) stroke: Option<StrokeState>,
-    /// Primary was pressed over the viewport while BVH/brush preparation was
-    /// still completing. The current pointer is retried on the next frame; a
-    /// quick press-and-release is discarded rather than applied late.
-    pub(crate) press_pending: bool,
     /// A mesh-edit Done action waits for the background commit before closing
     /// the edit session, so a fast click cannot discard a valid stroke.
     pub(crate) finish_requested: bool,
@@ -144,7 +140,6 @@ impl SculptTool {
     /// drag so a half-applied stroke does not leak between tools.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
-        self.press_pending = false;
         self.armed = if self.armed == Some(kind) {
             None
         } else {
@@ -155,7 +150,6 @@ impl SculptTool {
     pub(crate) fn disarm(&mut self) {
         self.armed = None;
         self.stroke = None;
-        self.press_pending = false;
         self.finish_requested = false;
         self.pending_history = None;
         self.worker = None;
@@ -171,7 +165,6 @@ impl SculptTool {
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
         self.worker = None;
-        self.press_pending = false;
         self.finish_requested = false;
         self.pending_history = None;
         self.cancel_pending_preparation();

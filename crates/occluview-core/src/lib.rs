@@ -38,7 +38,6 @@
 pub mod bbox;
 pub mod camera;
 pub mod error;
-pub mod frame;
 pub mod jump_list;
 pub mod mesh;
 pub mod recent_files;

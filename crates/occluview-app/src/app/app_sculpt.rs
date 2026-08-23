@@ -221,7 +221,6 @@ impl OccluViewApp {
         if pan_drag_active {
             // LMB+RMB pan takes the primary away; end the drag cleanly.
             self.commit_sculpt_stroke(ctx);
-            self.sculpt.press_pending = false;
             return false;
         }
 
@@ -241,16 +240,13 @@ impl OccluViewApp {
         // hold timer can make the second drag look dead.
         if pressed && self.sculpt.stroke.is_some() {
             self.commit_sculpt_stroke(ctx);
-            self.sculpt.press_pending = false;
         }
 
         if !down {
             if self.sculpt.stroke.is_some() {
                 self.commit_sculpt_stroke(ctx);
-                self.sculpt.press_pending = false;
                 return true;
             }
-            self.sculpt.press_pending = false;
             return false;
         }
 
@@ -260,18 +256,15 @@ impl OccluViewApp {
             return true;
         };
         if self.sculpt.stroke.is_none() && !response.contains_pointer() {
-            self.sculpt.press_pending = false;
             return false;
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
             // Keep owning this held gesture while the background BVH/brush
             // preparation finishes. The next frame retries the current point,
             // so the first press is never silently lost.
-            self.sculpt.press_pending = true;
             ctx.request_repaint();
             return true;
         };
-        self.sculpt.press_pending = false;
         self.paint_sculpt_dabs(ctx, &hit, DabInput { kind, shift, dt });
         true
     }
@@ -290,7 +283,6 @@ impl OccluViewApp {
             Some(_) => {}
             None => {
                 if !self.ensure_sculpt_session(hit) {
-                    self.sculpt.press_pending = true;
                     ctx.request_repaint();
                     return;
                 }

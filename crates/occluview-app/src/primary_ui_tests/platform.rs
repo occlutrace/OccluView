@@ -627,3 +627,28 @@ fn the_commit_message_hook_ships_with_the_repository() {
         "the one instruction a contributor needs should be in CONTRIBUTING"
     );
 }
+
+#[test]
+fn the_updater_speaks_only_https_outside_its_own_tests() {
+    // SECURITY.md tells a reader the product makes two ordinary HTTPS GETs and
+    // nothing else. ureq follows five redirects, so without this an https host
+    // answering with an http Location would be followed down -- inside the
+    // signature boundary, but not inside the promise.
+    let updater = repo_source_file("../occluview-update/src/lib.rs");
+    assert!(
+        updater.contains(".https_only(!cfg!(test))"),
+        "the update agent must refuse plain HTTP in a shipped build"
+    );
+    let security = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .map(|root| root.join("SECURITY.md"))
+            .unwrap_or_default(),
+    )
+    .unwrap_or_default();
+    assert!(
+        security.contains("HTTPS"),
+        "and SECURITY.md is where that promise is made"
+    );
+}

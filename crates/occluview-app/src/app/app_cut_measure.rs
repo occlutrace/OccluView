@@ -19,7 +19,7 @@ use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
 use crate::probe_section;
 use crate::section_view::SectionMainView;
 use glam::{Vec3, Vec3A};
-use occluview_core::scene::{SceneSection, VisibilityFilter};
+use occluview_core::scene::SceneSection;
 use occluview_core::ScenePickHit;
 use std::sync::Arc;
 
@@ -331,10 +331,7 @@ impl OccluViewApp {
         scene: &Scene,
         plane: Option<occluview_core::scene::SectionPlane>,
     ) -> Option<Arc<SceneSection>> {
-        plane.map(|plane| {
-            self.section_cache
-                .get_or_compute(scene, plane, &VisibilityFilter::SceneVisibility)
-        })
+        plane.map(|plane| self.section_cache.get_or_compute(scene, plane))
     }
 
     /// Advance the armed measurement tool one frame: keep the tool-exclusivity

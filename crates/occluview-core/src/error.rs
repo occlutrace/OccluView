@@ -28,10 +28,6 @@ pub enum CoreError {
         index_count: usize,
     },
 
-    /// A numeric conversion failed (e.g. a size overflowed `u32`).
-    #[error("numeric conversion failed: {0}")]
-    NumericOverflow(#[from] std::num::TryFromIntError),
-
     /// A geometry invariant was violated (degenerate triangle, NaN, etc.).
     #[error("geometry invariant violated: {0}")]
     Geometry(String),

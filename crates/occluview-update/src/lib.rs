@@ -464,7 +464,10 @@ fn agent() -> ureq::Agent {
         // manifest with an http URL, or a host answering with a redirect to
         // one. ureq follows five redirects by default and would follow that
         // one.
-        .https_only(true)
+        //
+        // Relaxed only for this crate's own tests, whose fixture server is a
+        // loopback listener with no certificate.
+        .https_only(!cfg!(test))
         .user_agent(concat!("occluview-update/", env!("CARGO_PKG_VERSION")))
         .build()
 }

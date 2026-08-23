@@ -18,7 +18,6 @@ pub use input::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, CAD_ORBIT_DRAG_GAIN,
     CAD_ZOOM_SCROLL_SENSITIVITY,
 };
-pub use orientation::occlusal_orientation;
 pub use presets::{CameraAxisView, CameraPreset};
 
 /// Smallest orthographic height anything will fit to.

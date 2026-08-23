@@ -92,10 +92,3 @@ fn yaw_pitch_from_direction_near(dir: Vec3, reference_pitch: f32) -> (f32, f32) 
 fn angular_distance(a: f32, b: f32) -> f32 {
     wrap_angle_rad(a - b).abs()
 }
-
-/// Default occlusal-bias orientation quaternion (for direct GL placement if a
-/// caller doesn't use the orbital camera).
-#[must_use]
-pub fn occlusal_orientation() -> Quat {
-    Quat::from_rotation_y(0.0)
-}

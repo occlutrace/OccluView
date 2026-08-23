@@ -410,20 +410,14 @@ fn append_scene_keeps_existing_order_and_appends_new_entries() {
 fn append_scene_preserves_existing_scene_settings() {
     let mut s = Scene::new();
     s.background = [0.1, 0.2, 0.3, 1.0];
-    s.ambient = 0.6;
-    s.key_light_dir = Vec3::new(1.0, 0.0, 0.0);
 
     let mut other = Scene::new();
     other.background = [0.9, 0.8, 0.7, 1.0];
-    other.ambient = 0.1;
-    other.key_light_dir = Vec3::new(0.0, 1.0, 0.0);
     other.add(SceneMesh::new(tri()));
 
     s.append_scene(other);
 
     assert_eq!(s.background, [0.1, 0.2, 0.3, 1.0]);
-    assert_eq!(s.ambient, 0.6);
-    assert_eq!(s.key_light_dir, Vec3::new(1.0, 0.0, 0.0));
 }
 
 #[test]
