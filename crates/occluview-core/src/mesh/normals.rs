@@ -30,6 +30,23 @@ fn normal_is_usable(normal: [f32; 3]) -> bool {
     n.is_finite() && n.length_squared() > f32::EPSILON
 }
 
+/// Give every vertex a normal, without reconstructing the ones already there.
+///
+/// The accumulate-and-normalise pass alone: one add per triangle corner and
+/// one normalise per vertex, no welding sort and no comparison against what
+/// the file wrote. A mesh that arrived with normals keeps them exactly.
+/// [`Mesh::new_for_preview`](super::Mesh::new_for_preview) says why an image
+/// at that size does not need more.
+pub(super) fn fill_absent_normals(vertices: &mut [Vertex], indices: &[u32]) {
+    if vertices
+        .iter()
+        .any(|vertex| normal_is_usable(vertex.normal))
+    {
+        return;
+    }
+    compute_smooth_normals(vertices, indices);
+}
+
 pub(super) fn repair_missing_normals(vertices: &mut [Vertex], indices: &[u32]) {
     if vertices
         .iter()

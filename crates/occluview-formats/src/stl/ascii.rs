@@ -57,6 +57,14 @@ pub fn looks_like_ascii(bytes: &[u8]) -> bool {
 /// - [`FormatError::BadSignature`] if `bytes` does not start with `solid`.
 /// - [`FormatError::Malformed`] on a syntactically broken token sequence.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    read_shaded(bytes, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
     let text = std::str::from_utf8(bytes).map_err(|_| FormatError::Malformed {
         format: "STL (ascii)",
         offset: 0,
@@ -134,7 +142,7 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
         });
     }
 
-    builder.build().map_err(FormatError::Core)
+    shading.build(builder).map_err(FormatError::Core)
 }
 
 fn expect_keyword<'a, I>(

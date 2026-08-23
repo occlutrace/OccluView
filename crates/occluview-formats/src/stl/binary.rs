@@ -30,6 +30,14 @@ const FIRST_TRIANGLE_OFFSET: usize = HEADER_SIZE + COUNT_SIZE;
 /// - [`FormatError::Truncated`] if `bytes` is shorter than the 84-byte header.
 /// - [`FormatError::Truncated`] if a triangle record is cut off mid-way.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    read_shaded(bytes, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
     if bytes.len() < FIRST_TRIANGLE_OFFSET {
         return Err(FormatError::Truncated {
             format: "STL (binary)",
@@ -72,10 +80,10 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
             });
         }
         // Fall through with the smaller count; tolerate the mismatch.
-        return read_triangles(bytes, available);
+        return read_triangles(bytes, available, shading);
     }
 
-    read_triangles(bytes, triangle_count)
+    read_triangles(bytes, triangle_count, shading)
 }
 
 /// Decode one 50-byte triangle record (starting at absolute offset `start`
@@ -118,7 +126,11 @@ fn decode_triangle_record(bytes: &[u8], start: usize) -> Result<(Vec3, [Vec3; 3]
 /// writes into its own deterministic `[3*i, 3*i+3)` vertex slot and matching
 /// index slot, so output order is bit-identical to the equivalent serial
 /// loop regardless of thread scheduling.
-fn read_triangles(bytes: &[u8], count: usize) -> Result<Mesh, FormatError> {
+fn read_triangles(
+    bytes: &[u8],
+    count: usize,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     let mut vertices = vec![Vertex::default(); count * 3];
     let mut indices = vec![0u32; count * 3];
 
@@ -149,7 +161,13 @@ fn read_triangles(bytes: &[u8], count: usize) -> Result<Mesh, FormatError> {
             },
         )?;
 
-    Mesh::new(Some("STL".to_string()), vertices, indices).map_err(FormatError::Core)
+    match shading {
+        crate::MeshShading::Reconstructed => Mesh::new(Some("STL".to_string()), vertices, indices),
+        crate::MeshShading::AsWritten => {
+            Mesh::new_for_preview(Some("STL".to_string()), vertices, indices)
+        }
+    }
+    .map_err(FormatError::Core)
 }
 
 #[cfg(test)]

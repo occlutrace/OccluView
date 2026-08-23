@@ -177,19 +177,7 @@ impl Mesh {
         mut vertices: Vec<Vertex>,
         indices: Vec<u32>,
     ) -> Result<Self, CoreError> {
-        if indices.len() % 3 != 0 {
-            return Err(CoreError::IndexCountNotMultipleOfThree {
-                index_count: indices.len(),
-            });
-        }
-        let vertex_count = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
-        if let Some((i, bad)) = indices.iter().enumerate().find(|(_, &v)| v >= vertex_count) {
-            return Err(CoreError::IndexOutOfRange {
-                at_index: i,
-                value: *bad,
-                vertex_count,
-            });
-        }
+        Self::validate_shape(&vertices, &indices)?;
         if !indices.is_empty() {
             normals::repair_missing_normals(&mut vertices, &indices);
         }
@@ -214,6 +202,73 @@ impl Mesh {
             geometry_id: next_mesh_geometry_id(),
             bvh: Arc::new(OnceLock::new()),
         })
+    }
+
+    /// Build a mesh for an image, not for work on it.
+    ///
+    /// [`Mesh::new`] reconstructs normals: it welds vertices that share a
+    /// position and averages across the run, so a scan that arrived with one
+    /// flat normal per facet shades smoothly and a scan that arrived with none
+    /// shades at all. That reconstruction is most of the cost of reading a
+    /// file -- measured across a folder of real scans it is roughly half of
+    /// all parse time, and for binary STL, whose facet normals it replaces,
+    /// three quarters -- and at the size a thumbnail or a preview pane is
+    /// drawn it is worth about a quarter of one channel step out of 255,
+    /// because a full arch of 430 000 triangles puts a tenth of a pixel under
+    /// each one.
+    ///
+    /// So: keep the normals the file wrote, fill them in cheaply when it wrote
+    /// none, and derive no principal frame (nothing that draws an image asks
+    /// for one; the cut tools do, and they work on meshes built the other
+    /// way).
+    ///
+    /// # Errors
+    /// The same shape errors as [`Mesh::new`].
+    pub fn new_for_preview(
+        name: Option<String>,
+        mut vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Self, CoreError> {
+        Self::validate_shape(&vertices, &indices)?;
+        if !indices.is_empty() {
+            normals::fill_absent_normals(&mut vertices, &indices);
+        }
+        let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);
+        let has_uvs = vertices.iter().any(|v| v.uv != [0.0, 0.0]);
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        )));
+        Ok(Self {
+            name,
+            vertices,
+            indices,
+            has_vertex_colors,
+            has_uvs,
+            kind: MeshKind::TriangleMesh,
+            texture: None,
+            cached_bbox,
+            cached_principal_frame: None,
+            topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        })
+    }
+
+    fn validate_shape(vertices: &[Vertex], indices: &[u32]) -> Result<(), CoreError> {
+        if indices.len() % 3 != 0 {
+            return Err(CoreError::IndexCountNotMultipleOfThree {
+                index_count: indices.len(),
+            });
+        }
+        let vertex_count = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
+        if let Some((i, bad)) = indices.iter().enumerate().find(|(_, &v)| v >= vertex_count) {
+            return Err(CoreError::IndexOutOfRange {
+                at_index: i,
+                value: *bad,
+                vertex_count,
+            });
+        }
+        Ok(())
     }
 
     /// Optional human-readable name (e.g. file stem, "upper arch").

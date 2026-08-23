@@ -81,10 +81,28 @@ pub fn dispatch_by_kind_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
+    dispatch_by_kind_shaded(kind, bytes, key_provider, crate::MeshShading::Reconstructed)
+}
+
+/// As [`dispatch_by_kind_with_key_provider`], choosing how vertex normals are
+/// produced.
+///
+/// Only the three formats a scanner writes take the policy; the rest are read
+/// the one way they have always been read, because they are rare enough on the
+/// thumbnail path that the plumbing would cost more than the milliseconds.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn dispatch_by_kind_shaded(
+    kind: FormatKind,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     match kind {
-        FormatKind::Stl => crate::stl::read(bytes),
-        FormatKind::Ply => crate::ply::read(bytes),
-        FormatKind::Obj => crate::obj::read(bytes),
+        FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
+        FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
+        FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
         FormatKind::Gltf => crate::gltf::read(bytes),
         FormatKind::Off => crate::off::read(bytes),
         // Implement natively when demand appears.
@@ -124,6 +142,25 @@ pub fn dispatch_by_extension_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
+    dispatch_by_extension_shaded(
+        extension,
+        bytes,
+        key_provider,
+        crate::MeshShading::Reconstructed,
+    )
+}
+
+/// As [`dispatch_by_extension_with_key_provider`], choosing how vertex normals
+/// are produced.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn dispatch_by_extension_shaded(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
@@ -141,7 +178,7 @@ pub fn dispatch_by_extension_with_key_provider(
             other => return Err(other),
         },
     };
-    dispatch_by_kind_with_key_provider(kind, bytes, key_provider)
+    dispatch_by_kind_shaded(kind, bytes, key_provider, shading)
 }
 
 fn normalized_extension(path: &Path) -> Result<String, FormatError> {
@@ -221,7 +258,21 @@ pub fn read_file_with_key_provider(
     path: &Path,
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
-    read_file_bytes(path)?.dispatch_with_key_provider(key_provider)
+    read_file_shaded(path, key_provider, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_file_with_key_provider`], choosing how vertex normals are
+/// produced.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn read_file_shaded(
+    path: &Path,
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    let bytes = read_file_bytes(path)?;
+    dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)
 }
 
 /// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a

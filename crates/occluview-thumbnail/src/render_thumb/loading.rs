@@ -9,9 +9,7 @@ use crate::fast_thumb::{
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
 use occluview_core::Mesh;
-use occluview_formats::dispatch::{
-    dispatch_by_kind_with_key_provider, read_file_with_key_provider,
-};
+use occluview_formats::dispatch::{dispatch_by_kind_shaded, read_file_shaded};
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::{FormatError, FormatKind};
 
@@ -28,6 +26,17 @@ use occluview_formats::{FormatError, FormatKind};
 // grid (contiguous decimation), so even those thumbnails render as a solid
 // surface, never the see-through triangle-stride sieve. One constant per format
 // so each can be tuned independently as the readers evolve.
+/// A thumbnail keeps the normals the file wrote.
+///
+/// Welding vertices by position and averaging normals across each run is what
+/// makes a faceted scan shade smoothly in the viewport, and it is most of the
+/// cost of reading one: 135 ms of a 172 ms read for a 326 000 triangle arch,
+/// measured here. At 256 pixels that arch puts a tenth of a pixel under each
+/// triangle, so the reconstruction cannot be seen -- the two renders differ by
+/// a quarter of one step out of 255. The app still reconstructs; only the
+/// picture skips it.
+const THUMBNAIL_SHADING: occluview_formats::MeshShading = occluview_formats::MeshShading::AsWritten;
+
 const FULL_FIDELITY_STL_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
 const FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES: u64 = 24 * 1024 * 1024;
 const FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -55,7 +64,7 @@ pub(super) fn load_thumbnail_mesh_from_bytes_kind(
     select_thumbnail_mesh(
         kind,
         prefers_full_fidelity_thumbnail_kind(kind, bytes.len() as u64),
-        || dispatch_by_kind_with_key_provider(kind, bytes, &RuntimeHpsKeyProvider),
+        || dispatch_by_kind_shaded(kind, bytes, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
         || try_read_fast_thumbnail_mesh_for_kind(kind, bytes),
     )
 }
@@ -75,7 +84,7 @@ pub(super) fn load_thumbnail_mesh_from_file(
     select_thumbnail_mesh(
         thumbnail_kind_from_extension(path),
         prefers_full_fidelity_thumbnail_parse(path, &metadata),
-        || read_file_with_key_provider(path, &RuntimeHpsKeyProvider),
+        || read_file_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
         || try_read_fast_thumbnail_mesh_from_file(path),
     )
 }

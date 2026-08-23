@@ -70,4 +70,17 @@ impl MeshBuilder {
         }
         Mesh::new(self.name, self.vertices, self.indices)
     }
+
+    /// Finalize into a mesh meant for an image rather than for work on it.
+    ///
+    /// See [`Mesh::new_for_preview`] for what is skipped and what it costs.
+    ///
+    /// # Errors
+    /// See [`Mesh::new`].
+    pub fn build_for_preview(self) -> Result<Mesh, CoreError> {
+        if self.force_point_cloud {
+            return Ok(Mesh::point_cloud(self.name, self.vertices));
+        }
+        Mesh::new_for_preview(self.name, self.vertices, self.indices)
+    }
 }

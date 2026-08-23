@@ -84,6 +84,39 @@ pub trait FormatReader {
     fn read(&self, bytes: &[u8]) -> Result<occluview_core::Mesh, FormatError>;
 }
 
+/// Whether a reader reconstructs vertex normals or keeps what the file wrote.
+///
+/// Reading a scan is mostly not parsing: it is
+/// [`Mesh::new`](occluview_core::Mesh::new) welding vertices that share a
+/// position and averaging normals across each run, so that a scan carrying one
+/// flat normal per facet shades smoothly in the viewport. On a 326 000
+/// triangle arch that reconstruction is 135 ms of a 172 ms read.
+///
+/// Nothing drawn at thumbnail or preview-pane size can show the difference --
+/// a full arch puts about a tenth of a pixel under each triangle -- so those
+/// callers ask for [`MeshShading::AsWritten`] and get the file's own normals,
+/// filled in cheaply only where it wrote none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MeshShading {
+    /// Weld and average, for a mesh that will be looked at closely or edited.
+    #[default]
+    Reconstructed,
+    /// Keep the normals in the file; fill in absent ones with one pass.
+    AsWritten,
+}
+
+impl MeshShading {
+    pub(crate) fn build(
+        self,
+        builder: occluview_core::MeshBuilder,
+    ) -> Result<occluview_core::Mesh, occluview_core::CoreError> {
+        match self {
+            Self::Reconstructed => builder.build(),
+            Self::AsWritten => builder.build_for_preview(),
+        }
+    }
+}
+
 pub use dispatch::{dispatch_by_extension, read_file, read_files, read_files_with_key_provider};
 pub use error::FormatError;
 pub use glb_writer::write_textured_glb;

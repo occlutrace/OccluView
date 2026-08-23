@@ -41,6 +41,14 @@ mod parse;
 /// - [`FormatError::Core`] (`IndexOutOfRange`) for a face referencing an
 ///   out-of-range vertex (e.g. fuzz corpus `f 1 4 3` with 3 vertices).
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    read_shaded(bytes, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
     // OBJ is text; reject non-UTF-8 early with a clean error.
     let text = std::str::from_utf8(bytes).map_err(|_| FormatError::Malformed {
         format: "OBJ",
@@ -113,5 +121,5 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
     }
 
     let _ = has_any_color; // builder records colors per-vertex; nothing to do here.
-    builder.build().map_err(FormatError::Core)
+    shading.build(builder).map_err(FormatError::Core)
 }

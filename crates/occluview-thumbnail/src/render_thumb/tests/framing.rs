@@ -90,3 +90,35 @@ fn thumbnail_uniform_keeps_textured_mesh_colors_neutral() {
     assert_tint_eq(uniform.tint, [1.0, 1.0, 1.0, 1.0]);
     assert_eq!(uniform.has_texture, 1);
 }
+
+/// A thumbnail keeps the normals the file wrote.
+///
+/// Reconstructing them -- welding by position, averaging across the run -- is
+/// what makes a faceted scan shade smoothly in the viewport, and it is most of
+/// the cost of reading the file. A cube's facet normals are exactly the case
+/// the reconstruction would replace, so if the loader still hands back
+/// axis-aligned normals, it did not pay for it.
+#[test]
+fn the_thumbnail_loader_keeps_the_normals_the_file_wrote() {
+    let bytes = fixtures::binary_stl_cube();
+    let mesh = load_thumbnail_mesh_from_bytes(Some("stl"), &bytes).expect("a cube is a mesh");
+
+    for vertex in mesh.vertices() {
+        let normal = Vec3::from_array(vertex.normal);
+        let axis_aligned = normal
+            .abs()
+            .to_array()
+            .iter()
+            .filter(|component| (**component - 1.0).abs() < 1e-4)
+            .count()
+            == 1;
+        assert!(
+            axis_aligned,
+            "a facet normal became a welded average: {normal:?}"
+        );
+    }
+    assert!(
+        mesh.principal_frame_cached().is_none(),
+        "nothing that draws a thumbnail asks for a principal frame"
+    );
+}

@@ -103,6 +103,17 @@ fn route(name: &str) -> FieldPlan {
 /// [`FormatError::Truncated`] if the data section ends before all declared
 /// rows are read.
 pub fn read(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
+    read_shaded(parsed, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(
+    parsed: &ParsedHeader<'_>,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     let data_text = std::str::from_utf8(parsed.data).map_err(|_| FormatError::Malformed {
         format: "PLY (ascii)",
         offset: 0,
@@ -132,7 +143,7 @@ pub fn read(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
         }
     }
 
-    builder.build().map_err(FormatError::Core)
+    shading.build(builder).map_err(FormatError::Core)
 }
 
 fn read_vertices<'a, I>(
