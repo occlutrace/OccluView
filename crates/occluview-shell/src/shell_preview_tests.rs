@@ -511,6 +511,12 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
         .expect("desktop file should be readable");
     assert!(desktop.contains("Exec=occluview %F"));
     assert!(desktop.contains("MimeType=model/stl;model/obj;model/gltf-binary;"));
+    // The launcher searches Name, GenericName and Keywords. Without keywords a
+    // technician who types the file format, or the work, finds nothing.
+    assert!(
+        desktop.contains("Keywords=") && desktop.contains("STL;"),
+        "the desktop entry must be findable by what the user is looking for"
+    );
 
     let thumbnailer = std::fs::read_to_string(linux.join("ai.occlutrace.OccluView.thumbnailer"))
         .expect("thumbnailer file should be readable");
