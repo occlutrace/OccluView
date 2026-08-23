@@ -25,7 +25,17 @@ pub(super) fn looks_like_hps_xml(text: &str) -> bool {
     if rest.starts_with("<HPS") {
         return true;
     }
-    let scan = &text[..text.len().min(512)];
+    // Slice on a character boundary, not on byte 512. `read_package` runs this
+    // over every valid-UTF-8 entry of a package, so a sidecar carrying a
+    // patient name in Cyrillic or CJK routinely puts a multi-byte character
+    // across that byte — and slicing a `str` there is a panic, which under the
+    // shipped `panic = "abort"` profile takes the whole viewer down on open.
+    let cap = text.len().min(512);
+    let end = (0..=cap)
+        .rev()
+        .find(|&index| text.is_char_boundary(index))
+        .unwrap_or(0);
+    let scan = &text[..end];
     scan.contains("<HPS") && scan.contains("<Schema>")
 }
 
@@ -193,4 +203,38 @@ fn is_tag_name_boundary(ch: u8) -> bool {
 
 fn is_attr_name_boundary(ch: u8) -> bool {
     ch == b'<' || ch == b'/' || ch.is_ascii_whitespace()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_hps_xml;
+
+    #[test]
+    fn a_non_ascii_document_longer_than_the_scan_window_is_rejected_not_a_panic() {
+        // The 512-byte scan window used to be a raw `str` slice. Pad with a
+        // two-byte character so that byte 512 lands inside one: the old code
+        // panicked here, and under `panic = "abort"` that ended the process
+        // while opening a file.
+        // One ASCII byte then two-byte characters: every boundary after it is
+        // odd, so byte 512 falls inside a character.
+        let padded = format!("a{}", "й".repeat(400));
+        assert!(padded.len() > 512, "fixture must exceed the scan window");
+        assert!(!padded.is_char_boundary(512), "byte 512 must split a char");
+
+        assert!(!looks_like_hps_xml(&padded));
+    }
+
+    #[test]
+    fn a_marker_inside_the_scan_window_still_matches_after_multi_byte_padding() {
+        let mut text = "й".repeat(20);
+        text.push_str("<HPS><Schema>");
+        assert!(looks_like_hps_xml(&text));
+    }
+
+    #[test]
+    fn a_marker_past_the_scan_window_is_not_matched() {
+        let mut text = "a".repeat(600);
+        text.push_str("<HPS><Schema>");
+        assert!(!looks_like_hps_xml(&text));
+    }
 }
