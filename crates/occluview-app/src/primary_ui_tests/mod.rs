@@ -90,6 +90,10 @@ pub(super) fn linux_build_deb_source() -> &'static str {
     include_str!("../../../../install/linux/build-deb.sh")
 }
 
+pub(super) fn linux_check_deb_source() -> &'static str {
+    include_str!("../../../../install/linux/check-deb.sh")
+}
+
 pub(super) fn linux_metainfo_source() -> &'static str {
     include_str!("../../../../install/linux/ai.occlutrace.OccluView.metainfo.xml")
 }

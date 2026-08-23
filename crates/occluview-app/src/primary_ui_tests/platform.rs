@@ -154,3 +154,26 @@ fn every_windows_artifact_ships_the_license_set() {
         "the MSI lifecycle smoke should verify the notices land on disk"
     );
 }
+
+#[test]
+fn the_deb_ships_and_gates_the_license_set() {
+    let build = linux_build_deb_source();
+    let check = linux_check_deb_source();
+    let copyright = include_str!("../../../../install/linux/copyright");
+
+    assert!(
+        build.contains("usr/share/doc/occluview/NOTICE")
+            && build.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"),
+        "the deb must install the Apache NOTICE and the generated attributions"
+    );
+    assert!(
+        check.contains("usr/share/doc/occluview/NOTICE")
+            && check.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES.md")
+            && check.contains("SIL OPEN FONT LICENSE"),
+        "check-deb.sh must fail a package that lost the license set"
+    );
+    assert!(
+        copyright.contains("THIRD-PARTY-NOTICES.md"),
+        "the DEP-5 copyright should point at the shipped attribution file"
+    );
+}

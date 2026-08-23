@@ -91,10 +91,14 @@ for deb in "$@"; do
   require_path "$root" "usr/share/doc/occluview/README.md"
   require_path "$root" "usr/share/doc/occluview/copyright"
   require_path "$root" "usr/share/doc/occluview/changelog.gz"
+  require_path "$root" "usr/share/doc/occluview/NOTICE"
+  require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
 
   gzip -t "$root/usr/share/doc/occluview/changelog.gz"
   grep -F "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/" "$root/usr/share/doc/occluview/copyright" >/dev/null
   grep -F "/usr/share/common-licenses/Apache-2.0" "$root/usr/share/doc/occluview/copyright" >/dev/null
+  grep -F "THIRD-PARTY-NOTICES.md" "$root/usr/share/doc/occluview/copyright" >/dev/null
+  grep -F "SIL OPEN FONT LICENSE" "$root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md" >/dev/null
 
   grep -F "Exec=occluview %F" "$root/usr/share/applications/ai.occlutrace.OccluView.desktop" >/dev/null
   grep -F "MimeType=model/stl;model/obj;model/gltf-binary;" "$root/usr/share/applications/ai.occlutrace.OccluView.desktop" >/dev/null

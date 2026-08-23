@@ -1,6 +1,11 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: OccluView
 Source: https://github.com/occlutrace/OccluView
+Comment: Statically linked third-party Rust crates and bundled fonts are
+ distributed under their own licenses; the complete list with copyright
+ notices and license texts is installed at
+ /usr/share/doc/occluview/THIRD-PARTY-NOTICES.md, next to the Apache
+ NOTICE file for this product.
 
 Files: *
 Copyright: 2026 Dental Cloud Technologies and contributors

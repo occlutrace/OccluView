@@ -76,6 +76,11 @@ install -m 0644 install/linux/ai.occlutrace.OccluView.thumbnailer \
   "$pkg_root/usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"
 install -m 0644 README.md "$pkg_root/usr/share/doc/occluview/README.md"
 install -m 0644 install/linux/copyright "$pkg_root/usr/share/doc/occluview/copyright"
+# The Apache NOTICE and the generated third-party attributions travel with
+# the statically linked binary; the copyright file points at them.
+install -m 0644 NOTICE "$pkg_root/usr/share/doc/occluview/NOTICE"
+install -m 0644 THIRD-PARTY-NOTICES.md \
+  "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
 gzip -9 -n -c CHANGELOG.md > "$pkg_root/usr/share/doc/occluview/changelog.gz"
 
 installed_size="$(du -sk "$pkg_root/usr" | awk '{ print $1 }')"
