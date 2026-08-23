@@ -41,6 +41,11 @@ The viewer is tailored to the daily work of CAD designers. It supports multiple 
 - `.glb` - meshes with embedded textures
 - `.hps` and `.dcm` - 3Shape/HPS dental containers that use the `.dcm` extension (medical DICOM is not supported; files with a `DICM` marker at offset 128 are rejected)
 
+`.dcm` is shared with medical DICOM, so neither installer claims it. OccluView
+is offered for `.dcm` in *Open with* and in the system's default-application
+list, and the extension keeps whichever viewer already owns it — on a
+workstation that also holds CBCT data, nothing changes hands.
+
 ## Download and verification
 
 [Download the latest release](https://github.com/occlutrace/OccluView/releases/latest)

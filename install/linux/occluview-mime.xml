@@ -9,7 +9,13 @@
     <comment>HPS mesh package</comment>
     <glob pattern="*.hps" />
     <glob pattern="*.HPS" />
-    <glob pattern="*.dcm" />
-    <glob pattern="*.DCM" />
+    <!-- Below the shared database's own `50:application/dicom:*.dcm`. 3Shape
+         writes HPS containers with a .dcm extension, so OccluView must still
+         recognise them, but at the default weight of 50 OccluView wins the tie
+         and takes the icon, the default application and the thumbnailer for
+         every medical DICOM on the machine. At weight 40 application/dicom
+         wins deterministically and OccluView stays in the "Open With" list. -->
+    <glob pattern="*.dcm" weight="40" />
+    <glob pattern="*.DCM" weight="40" />
   </mime-type>
 </mime-info>

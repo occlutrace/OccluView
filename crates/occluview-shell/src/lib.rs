@@ -123,8 +123,8 @@ pub use occluview_formats::{LEGACY_HPS_EXTENSION, V1_OPEN_EXTENSIONS};
 pub use placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind, PlaceholderKind};
 pub use render_thumb::{render_thumbnail, render_thumbnail_bytes, render_thumbnail_or_placeholder};
 pub use shell_contract::{
-    APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS,
-    THUMBNAIL_PROVIDER_CATEGORY,
+    owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
+    PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS, THUMBNAIL_PROVIDER_CATEGORY,
 };
 
 #[cfg(windows)]

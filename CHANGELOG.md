@@ -36,6 +36,21 @@
   Explorer shell DLL and the CLI tools now carry Windows version resources,
   so their Properties pages finally name the product and version.
 
+- Neither installer claims the `.dcm` association any more. `.dcm` is the
+  extension 3Shape writes its HPS containers under and the one medical DICOM
+  has used for decades, and OccluView rejects DICOM by design — so on a
+  workstation that holds both, installing OccluView used to give every CBCT
+  file an OccluView icon, a preview handler that failed, and a double-click
+  that opened an error instead of the study. On Windows the MSI, the manual
+  `.reg` and `regsvr32` no longer write the machine-wide `.dcm` ProgID, its
+  icon, or the thumbnail and preview handlers under either the bare key or
+  `SystemFileAssociations`; on Linux the `.dcm` glob dropped below
+  `application/dicom` in the shared MIME database, which it had been winning.
+  OccluView is still offered for `.dcm` in *Open with*, in Default Apps and on
+  the right-click menu, and a user who picks it gets the icon, thumbnail and
+  preview as before. Uninstalling a build that did claim `.dcm` still cleans
+  its entries up.
+
 - Dependency license and advisory scanning now covers the Linux target,
   which previously sat outside every check. It immediately surfaced two
   real advisories, both fixed by upgrades rather than exceptions: quick-xml

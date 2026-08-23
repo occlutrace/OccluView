@@ -1,5 +1,6 @@
 use super::{
-    APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, SUPPORTED_EXTENSIONS, V1_OPEN_EXTENSIONS,
+    owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
+    SUPPORTED_EXTENSIONS, V1_OPEN_EXTENSIONS,
 };
 use std::path::Path;
 
@@ -20,6 +21,37 @@ fn registration_source() -> String {
         include_str!("registration/registry.rs"),
     ]
     .join("\n")
+}
+
+/// Assert that neither installer surface claims `dot_ext` machine-wide.
+///
+/// These are the values a foreign handler owns: the unnamed `ProgID` under the
+/// bare extension key, its `DefaultIcon`, and the `ShellEx` providers under
+/// both the bare key and `SystemFileAssociations`, which Explorer falls back
+/// to when the owning `ProgID` supplies none.
+fn assert_extension_is_offered_not_owned(wxs: &str, reg: &str, dot_ext: &str) {
+    for forbidden in [
+        format!("Software\\Classes\\{dot_ext}\">"),
+        format!("Software\\Classes\\{dot_ext}\\DefaultIcon"),
+        format!("Software\\Classes\\{dot_ext}\\ShellEx"),
+        format!("Software\\Classes\\SystemFileAssociations\\{dot_ext}\\ShellEx"),
+    ] {
+        assert!(
+            !wxs.contains(&forbidden),
+            "the MSI must not claim {dot_ext} machine-wide: found {forbidden}"
+        );
+    }
+    for forbidden in [
+        format!("[HKEY_CLASSES_ROOT\\{dot_ext}]"),
+        format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\DefaultIcon]"),
+        format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx"),
+        format!("[HKEY_CLASSES_ROOT\\SystemFileAssociations\\{dot_ext}\\ShellEx"),
+    ] {
+        assert!(
+            !reg.contains(&forbidden),
+            "the manual .reg must not claim {dot_ext} machine-wide: found {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -222,17 +254,21 @@ fn installer_metadata_tracks_supported_shell_extensions() {
         let dot_ext = format!(".{ext}");
         let upper = canonical_extension(ext).to_ascii_uppercase();
         let progid = format!("MeshFile.{upper}");
-        assert!(wxs.contains(&format!(
+        if owns_extension(ext) {
+            assert!(wxs.contains(&format!(
                 "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\""
             )));
-        assert!(wxs.contains(&format!(
+            assert!(wxs.contains(&format!(
                 "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\" />\n              <RegistryValue Name=\"ThumbnailCutoff\""
             )));
-        assert!(wxs.contains(&format!(
+            assert!(wxs.contains(&format!(
                 "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\" />\n              <RegistryValue Name=\"ThumbnailCutoff\" Type=\"integer\" Value=\"1\" />\n              <RegistryValue Name=\"TypeOverlay\""
             )));
-        assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\DefaultIcon")));
-        assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\ShellEx")));
+            assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\DefaultIcon")));
+            assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\ShellEx")));
+        } else {
+            assert_extension_is_offered_not_owned(wxs, reg, &dot_ext);
+        }
         assert!(wxs.contains(&format!("Software\\Classes\\{progid}\\ShellEx")));
         assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\OpenWithProgids")));
         assert!(wxs.contains(&format!(
@@ -243,15 +279,17 @@ fn installer_metadata_tracks_supported_shell_extensions() {
         )));
         assert!(wxs.contains(&format!("Name=\"{progid}\" Type=\"string\" Value=\"\"")));
         assert!(wxs.contains(&format!("Software\\Classes\\{progid}\\DefaultIcon")));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"")));
-        assert!(reg.contains(&format!(
-            "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001"
-        )));
-        assert!(reg.contains(&format!(
+        if owns_extension(ext) {
+            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"")));
+            assert!(reg.contains(&format!(
+                "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001"
+            )));
+            assert!(reg.contains(&format!(
                 "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001\n\"TypeOverlay\"=\"\""
             )));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\DefaultIcon]")));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx")));
+            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\DefaultIcon]")));
+            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx")));
+        }
         assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{progid}\\ShellEx")));
         assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\OpenWithProgids]")));
         assert!(reg.contains(&format!(
@@ -681,4 +719,64 @@ fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
         return rest.get(..rest.find('"')?);
     }
     None
+}
+
+#[test]
+fn dcm_is_offered_to_the_user_and_never_taken_from_medical_dicom() {
+    // .dcm is 3Shape's HPS container extension and medical DICOM's at the same
+    // time, on the same dental workstation, and this reader rejects DICOM by
+    // design. Claiming the extension would hand every CBCT file an icon, a
+    // preview and a double-click that all end in an error. Every surface that
+    // fires without the user asking for it must therefore stay clear, and every
+    // surface the user reaches deliberately must stay present.
+    assert_eq!(
+        OFFERED_ONLY_EXTENSIONS,
+        [occluview_formats::LEGACY_HPS_EXTENSION]
+    );
+    assert!(!owns_extension("dcm"));
+    for owned in ["stl", "ply", "obj", "glb", "hps"] {
+        assert!(owns_extension(owned), "{owned} should still be owned");
+    }
+
+    let wxs = include_str!("../../../install/occluview.wxs");
+    let reg = include_str!("../../../install/occluview-shell-registration.reg");
+    assert_extension_is_offered_not_owned(wxs, reg, ".dcm");
+
+    // Still offered: "Open with", Default Apps, and the right-click verb.
+    assert!(wxs.contains("Software\\Classes\\.dcm\\OpenWithProgids"));
+    assert!(wxs.contains("Software\\Classes\\.dcm\\OpenWithList\\occluview.exe"));
+    assert!(wxs.contains("Name=\".dcm\" Type=\"string\" Value=\"MeshFile.HPS\""));
+    assert!(wxs.contains("SystemFileAssociations\\.dcm\\shell\\OccluView.Edit\\command"));
+    assert!(reg.contains("[HKEY_CLASSES_ROOT\\.dcm\\OpenWithProgids]"));
+    assert!(reg.contains("[HKEY_CLASSES_ROOT\\.dcm\\OpenWithList\\occluview.exe]"));
+    assert!(reg.contains("\".dcm\"=\"MeshFile.HPS\""));
+
+    // DllRegisterServer applies the same rule, and DllUnregisterServer
+    // deliberately does not: a build that shipped before this policy still has
+    // to have its .dcm entries cleaned up on uninstall.
+    let registration = registration_source();
+    assert!(registration.contains("if !owns_extension(ext) {\n            continue;"));
+    assert!(registration.contains(
+        "if owns_extension(ext) {\n                register_extension_fallback(ext, &app_path)?;"
+    ));
+    assert!(
+        !registration.contains("if owns_extension(ext) {\n        let _ = unregister_extension")
+    );
+
+    // Linux: the shared MIME database ships `50:application/dicom:*.dcm`. An
+    // unweighted glob defaults to 50 too, and OccluView wins that tie, taking
+    // the icon, the default application and the thumbnailer for every DICOM.
+    let mime = include_str!("../../../install/linux/occluview-mime.xml");
+    for pattern in ["*.dcm", "*.DCM"] {
+        assert!(
+            mime.contains(&format!("<glob pattern=\"{pattern}\" weight=\"40\" />")),
+            "{pattern} must sit below application/dicom's weight of 50"
+        );
+    }
+    for pattern in ["*.hps", "*.HPS", "*.ply", "*.PLY"] {
+        assert!(
+            mime.contains(&format!("<glob pattern=\"{pattern}\" />")),
+            "{pattern} is ours alone and needs no weight"
+        );
+    }
 }

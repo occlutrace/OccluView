@@ -272,12 +272,12 @@
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.HPS\shell\open\command">
               <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
             </RegistryKey>
-            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.dcm\ShellEx\$(var.ThumbnailProviderCategory)">
-              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
-            </RegistryKey>
-            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.dcm\ShellEx\$(var.PreviewHandlerCategory)">
-              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
-            </RegistryKey>
+            <!-- No ShellEx handlers under SystemFileAssociations\.dcm: that key is
+                 the machine-wide fallback Explorer uses when the owning ProgId has
+                 no provider of its own, which is the common case for DICOM viewers.
+                 Registering there would put OccluView's thumbnailer on every CBCT
+                 file on the workstation. See the .dcm note further down. The Edit
+                 verb below is additive and stays. -->
             <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.dcm\shell\OccluView.Edit">
               <RegistryValue Type="string" Value="Edit in OccluView" />
               <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
@@ -369,20 +369,25 @@
             <RegistryKey Root="HKLM" Key="Software\Classes\.glb\ShellEx\$(var.PreviewHandlerCategory)">
               <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
             </RegistryKey>
-            <RegistryKey Root="HKLM" Key="Software\Classes\.dcm">
-              <RegistryValue Type="string" Value="MeshFile.HPS" />
-              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
-              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
-            </RegistryKey>
-            <RegistryKey Root="HKLM" Key="Software\Classes\.dcm\DefaultIcon">
-              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
-            </RegistryKey>
-            <RegistryKey Root="HKLM" Key="Software\Classes\.dcm\ShellEx\$(var.ThumbnailProviderCategory)">
-              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
-            </RegistryKey>
-            <RegistryKey Root="HKLM" Key="Software\Classes\.dcm\ShellEx\$(var.PreviewHandlerCategory)">
-              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
-            </RegistryKey>
+            <!-- .dcm is offered, never owned.
+
+                 3Shape writes HPS containers under the .dcm extension, which is
+                 why OccluView reads it at all, but on a dental workstation that
+                 same extension belongs to medical DICOM, and this reader rejects
+                 DICOM by design (HpsError::MedicalDicom). The unnamed value under
+                 HKLM\Software\Classes\.dcm is the machine-wide default ProgId:
+                 writing it takes .dcm away from the CBCT viewer for every user on
+                 the machine, unconditionally and with no opt-out, and the ShellEx
+                 handlers beneath it would then draw a failing thumbnail and a
+                 failing preview for every real DICOM in the folder.
+
+                 So there is no HKLM\Software\Classes\.dcm key here, no
+                 DefaultIcon and no ShellEx. OccluView still reaches .dcm through
+                 the OpenWithProgids, OpenWithList, SupportedTypes and
+                 Capabilities\FileAssociations entries below: it shows up in "Open
+                 with" and in Default Apps, and a user who deliberately picks it
+                 gets the icon, thumbnail, preview and open verb from the
+                 MeshFile.HPS ProgId, which carries all four already. -->
             <RegistryKey Root="HKLM" Key="Software\Classes\.hps">
               <RegistryValue Type="string" Value="MeshFile.HPS" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
