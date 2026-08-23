@@ -39,6 +39,10 @@ fn real_main() -> Result<()> {
     set_process_app_user_model_id();
 
     let args = app::parse_args();
+    if args.version {
+        print_version_line();
+        return Ok(());
+    }
     if args.shell_refresh {
         #[cfg(windows)]
         {
@@ -141,6 +145,18 @@ fn root_viewport_builder() -> egui::ViewportBuilder {
     {
         builder
     }
+}
+
+/// `--version` for scripts and packaging checks, printed before the
+/// single-instance handshake so it never focuses a running viewer. On
+/// Windows this is a GUI-subsystem binary: with no console attached the
+/// line goes to a null stdout and the process simply exits cleanly; it
+/// prints whenever stdout is piped or redirected, and always on Linux.
+/// Attaching a parent console would drag in Win32 console plumbing for one
+/// line.
+#[allow(clippy::print_stdout)]
+fn print_version_line() {
+    println!("occluview {}", env!("CARGO_PKG_VERSION"));
 }
 
 fn install_panic_hook() {

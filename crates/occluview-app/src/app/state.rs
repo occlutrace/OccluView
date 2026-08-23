@@ -16,21 +16,24 @@ pub(crate) struct StartupHandles {
 
 pub(crate) struct Args {
     pub shell_refresh: bool,
+    pub version: bool,
     pub files: Vec<PathBuf>,
 }
 
 pub(crate) fn parse_args() -> Args {
     let mut shell_refresh = false;
+    let mut version = false;
     let mut files = Vec::new();
     for arg in std::env::args().skip(1) {
-        if arg == "--shell-refresh" {
-            shell_refresh = true;
-        } else {
-            files.push(PathBuf::from(arg));
+        match arg.as_str() {
+            "--shell-refresh" => shell_refresh = true,
+            "--version" | "-V" => version = true,
+            _ => files.push(PathBuf::from(arg)),
         }
     }
     Args {
         shell_refresh,
+        version,
         files,
     }
 }

@@ -49,6 +49,10 @@ fn run() -> Result<()> {
             print_usage();
             Ok(())
         }
+        "--version" | "-V" => {
+            println!("occluview-cli {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         other => {
             print_usage();
             Err(anyhow!("unknown subcommand: {other}"))
@@ -309,12 +313,26 @@ fn print_usage() {
          convert   <file> -o output.{{stl|ply|obj}}   Convert a mesh into STL / PLY / OBJ\n    \
          close-holes <file> -o out.stl [--limit-mm N] Close holes (whole-mesh) and write the result\n    \
          info      <file>                          Print format / counts / bbox\n    \
-         help                                       Show this message"
+         help                                       Show this message\n    \
+         --version | -V                             Print the version and exit"
     );
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn version_flag_is_recognised_and_advertised() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.contains("\"--version\" | \"-V\""),
+            "--version must dispatch instead of falling into the unknown-subcommand error"
+        );
+        assert!(
+            source.contains("--version | -V"),
+            "the usage text should advertise the flag"
+        );
+    }
+
     #[test]
     fn thumbnail_cli_uses_file_backed_render_path() {
         let source = include_str!("main.rs");

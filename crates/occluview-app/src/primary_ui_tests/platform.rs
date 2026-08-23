@@ -177,3 +177,19 @@ fn the_deb_ships_and_gates_the_license_set() {
         "the DEP-5 copyright should point at the shipped attribution file"
     );
 }
+
+#[test]
+fn the_viewer_answers_version_before_any_windowing() {
+    let bootstrap = app_bootstrap_source();
+
+    let version_exit = bootstrap.find("if args.version {");
+    let single_instance = bootstrap.find("SingleInstance::acquire");
+    assert!(
+        version_exit.is_some() && single_instance.is_some(),
+        "both the version early-exit and the single-instance handshake should exist"
+    );
+    // --version must never focus a running instance or open a window; the
+    // early exit has to sit before the single-instance handshake.
+    assert!(version_exit < single_instance);
+    assert!(app_module_source().contains("\"--version\" | \"-V\""));
+}
