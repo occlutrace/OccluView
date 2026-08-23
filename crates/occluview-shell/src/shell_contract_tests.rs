@@ -414,7 +414,9 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux"));
     assert!(workflow.contains("cargo test -p occluview-hps --features private-hps-key"));
     assert!(workflow.contains("install/linux/build-deb.sh"));
-    assert!(workflow.contains("install/linux/check-deb.sh target/deb/*.deb"));
+    // The package to validate is the one build-deb.sh just named; globbing
+    // target/deb hands dpkg-deb a second path as a control-file name.
+    assert!(workflow.contains("install/linux/check-deb.sh \"$DEB\""));
     assert!(workflow.contains("appstreamcli validate --no-net"));
     assert!(workflow.contains("xmllint --noout"));
     assert!(workflow.contains("lintian"));
