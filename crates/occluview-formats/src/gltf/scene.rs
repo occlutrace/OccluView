@@ -19,6 +19,21 @@ use occluview_core::MeshBuilder;
 ///
 /// Refusing a second entry also bounds the diamond case, where no cycle exists
 /// but shared children multiply the traversal exponentially with depth.
+/// How deep the node hierarchy may nest.
+///
+/// [`VisitedNodes`] bounds revisits, not depth. `0 -> 1 -> 2 -> ...` is a
+/// strict tree, passes that check, and recurses once per link: a 1.2 MB file
+/// of 60000 chained nodes aborts the CLI on its main thread, and the viewer
+/// parses on a spawned thread with the 2 MiB default, where a 139 KB file is
+/// enough. A stack overflow is a guard-page fault rather than a panic, so no
+/// `catch_unwind` sees it, and in `dllhost` it takes every thumbnail in the
+/// folder with it.
+///
+/// Real exports nest a handful of levels; a scanner writing 256 is already
+/// beyond anything seen. At this depth the recursion costs well under a
+/// megabyte of stack even in a debug build.
+pub(super) const MAX_NODE_DEPTH: u32 = 256;
+
 pub(super) struct VisitedNodes(Vec<bool>);
 
 impl VisitedNodes {
@@ -45,19 +60,35 @@ impl VisitedNodes {
 /// Return the material index of the first primitive of the mesh referenced by
 /// `node_idx`, if any.
 ///
-/// Walks the same hierarchy as [`walk_node`] and is bounded the same way, with
+/// Walks the same hierarchy as [`SceneWalk`] and is bounded the same way, with
 /// its own visit set: the two traversals are independent, and a graph that
-/// [`walk_node`] already rejected never reaches this one.
-pub(super) fn first_primitive_material(doc: &json::GltfDoc, node_idx: usize) -> Option<usize> {
-    let mut visited = VisitedNodes::for_document(doc);
-    first_primitive_material_from(doc, node_idx, &mut visited)
+/// the walk already rejected never reaches this one.
+///
+/// `visited` spans every root of one read rather than one call. Allocating it
+/// per call made the search cost one zeroed byte per node per root: a document
+/// of 500000 rootless nodes -- 4.9 MB, no material anywhere, so every root is
+/// searched -- took 2.56 s where the same file now takes 0.09 s. The thumbnail
+/// deadline is six seconds, and the lane is held for the whole of it.
+pub(super) fn first_primitive_material(
+    doc: &json::GltfDoc,
+    node_idx: usize,
+    visited: &mut VisitedNodes,
+) -> Option<usize> {
+    first_primitive_material_from(doc, node_idx, visited, 0)
 }
 
 fn first_primitive_material_from(
     doc: &json::GltfDoc,
     node_idx: usize,
     visited: &mut VisitedNodes,
+    depth: u32,
 ) -> Option<usize> {
+    // Past the depth bound there is no material to report. The walk rejects
+    // such a document outright; this traversal is independent of it and has to
+    // stop on its own rather than trust the order the two are called in.
+    if depth > MAX_NODE_DEPTH {
+        return None;
+    }
     visited.enter(node_idx).ok()?;
     let node = doc.nodes.get(node_idx)?;
     if let Some(mesh_idx) = node.mesh {
@@ -67,7 +98,7 @@ fn first_primitive_material_from(
         }
     }
     for &child_idx in &node.children {
-        if let Some(material) = first_primitive_material_from(doc, child_idx, visited) {
+        if let Some(material) = first_primitive_material_from(doc, child_idx, visited, depth + 1) {
             return Some(material);
         }
     }
@@ -107,6 +138,18 @@ impl<'a> SceneWalk<'a> {
         node_idx: usize,
         parent_transform: Mat4,
     ) -> Result<(), FormatError> {
+        self.node_at_depth(node_idx, parent_transform, 0)
+    }
+
+    fn node_at_depth(
+        &mut self,
+        node_idx: usize,
+        parent_transform: Mat4,
+        depth: u32,
+    ) -> Result<(), FormatError> {
+        if depth > MAX_NODE_DEPTH {
+            return Err(malformed("node hierarchy is nested too deeply"));
+        }
         self.visited.enter(node_idx)?;
         let node = self
             .doc
@@ -131,7 +174,7 @@ impl<'a> SceneWalk<'a> {
             }
         }
         for &child_idx in &node.children {
-            self.node(child_idx, world_transform)?;
+            self.node_at_depth(child_idx, world_transform, depth + 1)?;
         }
         Ok(())
     }

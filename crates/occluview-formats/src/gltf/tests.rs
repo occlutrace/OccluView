@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::Write as _;
 
 fn assert_vec3_close(actual: [f32; 3], expected: [f32; 3]) {
     for (a, e) in actual.into_iter().zip(expected) {
@@ -485,4 +486,59 @@ fn accepts_a_parent_with_two_distinct_children() {
 
     let mesh = read(&glb::build_glb(json, &bin)).expect("a tree is valid");
     assert_eq!(mesh.triangle_count(), 2);
+}
+
+/// A chain of nodes, each the single child of the one before it.
+///
+/// Legal glTF: no node is entered twice, so the visit set that stops cycles
+/// has nothing to say about it. Only the depth bound does.
+fn chain_glb(depth: usize) -> Vec<u8> {
+    let mut nodes = String::new();
+    for index in 0..depth {
+        if index > 0 {
+            nodes.push(',');
+        }
+        if index + 1 < depth {
+            let _ = write!(nodes, "{{\"children\":[{}]}}", index + 1);
+        } else {
+            nodes.push_str("{}");
+        }
+    }
+    let json = format!(
+        "{{\"asset\":{{\"version\":\"2.0\"}},\"scenes\":[{{\"nodes\":[0]}}],\"nodes\":[{nodes}]}}"
+    );
+    glb::build_glb(json.as_bytes(), &[])
+}
+
+#[test]
+fn rejects_a_node_chain_deeper_than_the_bound() {
+    // 60000 chained nodes is a 1.2 MB file that aborted the process outright:
+    // a stack overflow is a guard-page fault, so neither the catch_unwind in
+    // the Explorer host nor the one around the load thread could see it.
+    let error = read(&chain_glb(60_000)).expect_err("a chain this deep is malformed");
+    assert!(
+        format!("{error}").contains("nested too deeply"),
+        "the error should name the depth: {error}"
+    );
+}
+
+#[test]
+fn rejects_a_chain_one_node_past_the_bound() {
+    // The boundary itself, so the bound cannot be quietly raised to a depth
+    // that overflows again.
+    let past = usize::try_from(scene::MAX_NODE_DEPTH).expect("bound fits") + 2;
+    let error = read(&chain_glb(past)).expect_err("one node past the bound is malformed");
+    assert!(format!("{error}").contains("nested too deeply"), "{error}");
+}
+
+#[test]
+fn accepts_a_chain_within_the_bound() {
+    // The other half: a bound that rejects everything is safe and useless.
+    let depth = usize::try_from(scene::MAX_NODE_DEPTH).expect("bound fits");
+    let mesh = read(&chain_glb(depth)).expect("a chain within the bound is legal glTF");
+    assert_eq!(
+        mesh.vertices().len(),
+        0,
+        "the fixture carries no primitives; what matters is that it was read"
+    );
 }
