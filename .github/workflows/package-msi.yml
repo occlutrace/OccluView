@@ -301,6 +301,10 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      # The release notes quote CHANGELOG.md, which only the checkout has.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
@@ -315,8 +319,16 @@ jobs:
           - Portable ZIP: manual Windows launch only; it does not install Explorer thumbnails or file associations.
           - Debian package: installs the native Linux viewer, freedesktop launcher, MIME registration, icon, and thumbnailer.
 
-          Refer to the changelog and repository history for included changes.
+          All packages install LICENSE, NOTICE, and THIRD-PARTY-NOTICES.md.
           NOTES
+          # The changelog section for this version, verbatim, so the release
+          # page states what changed without a second hop.
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo
+            echo "Changes:"
+            awk -v ver="$version" '$0 ~ "^## "ver" " {flag=1; next} /^## /{flag=0} flag' CHANGELOG.md
+          } >> dist/release-notes.md
       - name: Sign update artifacts and write latest.json
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -384,7 +396,16 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: "dist/*.{msi,zip,deb}"
+          # One explicit pattern per artifact: the action splits this list on
+          # commas and globs with brace expansion disabled, so a compact
+          # dist/*.{msi,zip,deb} matches nothing at all. The SBOM pattern is
+          # deliberately narrower than dist/*.json, which would also sweep
+          # latest.json, whose provenance is the minisign signature.
+          subject-path: |
+            dist/*.msi
+            dist/*.zip
+            dist/*.deb
+            dist/sbom-*.json
       - name: Publish GitHub Release
         run: |
           tag="$GITHUB_REF_NAME"

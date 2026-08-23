@@ -193,3 +193,17 @@ fn the_viewer_answers_version_before_any_windowing() {
     assert!(version_exit < single_instance);
     assert!(app_module_source().contains("\"--version\" | \"-V\""));
 }
+
+#[test]
+fn the_release_page_quotes_the_changelog_and_attests_the_sboms() {
+    let package = package_workflow_source();
+
+    assert!(
+        package.contains(r#"awk -v ver="$version""#) && package.contains("CHANGELOG.md"),
+        "release notes should carry this version's changelog section verbatim"
+    );
+    assert!(
+        package.contains("dist/sbom-*.json"),
+        "the SBOMs should be provenance-attested alongside the installers"
+    );
+}
