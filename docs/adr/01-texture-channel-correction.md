@@ -1,4 +1,4 @@
-# ADR 03: Dental texture channel correction
+# ADR 01: Dental texture channel correction
 
 Date: 2026-07-25
 Status: accepted

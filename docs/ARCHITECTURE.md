@@ -59,7 +59,7 @@ One `occluview-render` pipeline: one shader, one camera. Colour lives in gamma s
 
 ## Decision records
 
-- [`docs/adr/03-texture-channel-correction.md`](adr/03-texture-channel-correction.md) — why a
+- [`docs/adr/01-texture-channel-correction.md`](adr/01-texture-channel-correction.md) — why a
   format-less raw HPS texture is decoded as BGRA, with the measured channel values that settled it.
 
 ## Fuzzing
