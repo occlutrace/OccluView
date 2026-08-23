@@ -474,7 +474,11 @@ impl OccluViewApp {
             return;
         }
         let logo = self.app_logo_texture(ctx).cloned();
-        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        // While the Third-party licenses window is stacked on top, Escape
+        // belongs to it; the next Escape closes About.
+        let mut close = !self.third_party_window_open
+            && ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        let mut open_third_party = false;
 
         let vp3 = ctx.screen_rect();
         egui::Window::new("About OccluView")
@@ -537,6 +541,12 @@ impl OccluViewApp {
                     );
                 });
                 ui.add_space(4.0);
+                ui.vertical_centered(|ui| {
+                    if ui.link("Third-party licenses").clicked() {
+                        open_third_party = true;
+                    }
+                });
+                ui.add_space(4.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         close = true;
@@ -544,6 +554,9 @@ impl OccluViewApp {
                 });
             });
 
+        if open_third_party {
+            self.third_party_window_open = true;
+        }
         if close {
             self.about_window = AboutWindowState::Closed;
         }

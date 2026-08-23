@@ -90,6 +90,8 @@ pub(crate) struct OccluViewApp {
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
     pub(super) pending_raise_token: Option<String>,
     pub(super) about_window: AboutWindowState,
+    /// The Third-party licenses window, opened from About.
+    pub(super) third_party_window_open: bool,
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `update()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
@@ -287,6 +289,7 @@ impl OccluViewApp {
             raise_target: startup.raise_target,
             pending_raise_token: startup.activation_token,
             about_window: AboutWindowState::Closed,
+            third_party_window_open: false,
             repair_report: crate::repair_report::RepairReportDialog::default(),
             app_logo: None,
             foreground_pulse_until: None,
@@ -386,6 +389,7 @@ impl OccluViewApp {
             || self.pending_replace_open.is_some()
             || self.app_error.is_some()
             || self.about_window == AboutWindowState::Open
+            || self.third_party_window_open
             || self.bridge_split_active()
         {
             return;
@@ -612,6 +616,7 @@ impl eframe::App for OccluViewApp {
         self.poll_gpu_errors();
         self.show_error_dialog(ctx);
         self.show_about_window(ctx);
+        self.show_third_party_window(ctx);
         self.repair_report.ui(ctx);
         self.update_notice.show(ctx);
         self.guard_unsaved_close(ctx);

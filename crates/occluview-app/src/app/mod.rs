@@ -62,6 +62,7 @@ mod app_scene_export;
 mod app_scene_menu;
 mod app_sculpt;
 mod app_sculpt_worker;
+mod app_third_party;
 mod app_viewport;
 mod selection_overlay;
 mod state;

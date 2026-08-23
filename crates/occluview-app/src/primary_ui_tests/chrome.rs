@@ -288,3 +288,23 @@ fn unsaved_mesh_edits_guard_the_window_close() {
         );
     }
 }
+
+#[test]
+fn about_opens_the_embedded_third_party_notices() {
+    let dialogs = app_dialogs_source();
+    let notices = repo_source_file("src/app/app_third_party.rs");
+
+    assert!(
+        function_source(dialogs, "pub(super) fn show_about_window")
+            .contains("Third-party licenses"),
+        "About should offer the third-party licenses view"
+    );
+    assert!(
+        notices.contains("include_str!(\"../../../../THIRD-PARTY-NOTICES.md\")"),
+        "the window must show the very file the artifacts ship"
+    );
+    assert!(
+        notices.contains("show_rows"),
+        "a quarter-megabyte of licenses must render lazily, not as one label"
+    );
+}
