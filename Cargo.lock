@@ -2439,6 +2439,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
+ "windows 0.58.0",
  "zip",
 ]
 

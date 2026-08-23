@@ -35,6 +35,12 @@ zip            = { workspace = true }
 # PNG + JPEG decode for glTF texture images (GLB embeds them in bufferViews).
 image          = { workspace = true }
 
+# `GetDriveTypeW`, to refuse memory-mapping a network share or removable drive
+# whose disappearance would raise EXCEPTION_IN_PAGE_ERROR instead of an error.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = ["Win32_Foundation", "Win32_Storage_FileSystem"]
+
 [dev-dependencies]
 proptest = { workspace = true }
 tempfile = "3"

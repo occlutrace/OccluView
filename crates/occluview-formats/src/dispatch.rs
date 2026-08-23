@@ -154,12 +154,25 @@ fn normalized_extension(path: &Path) -> Result<String, FormatError> {
 }
 
 #[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
-fn read_file_bytes_storage(mut file: std::fs::File) -> Result<FileBytesStorage, FormatError> {
-    // mmap is best-effort: fall back to a regular read when it fails.
-    // SAFETY: the file is opened read-only and we keep the File handle alive
-    // for the lifetime of the Mmap stored inside FileBytes.
-    if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
-        return Ok(FileBytesStorage::Mapped(mmap));
+fn read_file_bytes_storage(
+    mut file: std::fs::File,
+    path: &Path,
+) -> Result<FileBytesStorage, FormatError> {
+    // mmap is best-effort in two ways: the storage has to be safe to map at
+    // all, and the call itself may still fail.
+    //
+    // SAFETY: memmap2 requires that the mapped file not be modified or
+    // truncated while the mapping lives; violating that raises
+    // EXCEPTION_IN_PAGE_ERROR or SIGBUS, neither of which unwinds, so no
+    // `catch_unwind` above this point can turn it back into an error. The
+    // guarantee is obtained by refusing to map anything that can be withdrawn
+    // mid-parse -- see `crate::mappable` -- which leaves local, non-removable
+    // storage, where a concurrent writer is the only remaining hazard and is
+    // out of scope for a read-only viewer.
+    if crate::mappable::is_mappable_storage(path) {
+        if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
+            return Ok(FileBytesStorage::Mapped(mmap));
+        }
     }
 
     let mut bytes = Vec::new();
@@ -180,7 +193,7 @@ fn read_file_bytes_storage(mut file: std::fs::File) -> Result<FileBytesStorage, 
 pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
     let extension = normalized_extension(path)?;
     let file = std::fs::File::open(path).map_err(FormatError::Io)?;
-    let storage = read_file_bytes_storage(file)?;
+    let storage = read_file_bytes_storage(file, path)?;
     Ok(FileBytes { extension, storage })
 }
 

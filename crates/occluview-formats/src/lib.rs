@@ -21,8 +21,9 @@
 
 // `deny(unsafe_code)` (not `forbid`): the mmap streaming path
 // (dispatch::read_file) needs one `unsafe` block for memmap2::Mmap::map,
-// which is the audited kernel-FFI for memory-mapping. All format PARSERS
-// remain safe; the lone unsafe lives behind the read_file helper.
+// which is the audited kernel-FFI for memory-mapping, and on Windows one more
+// for the drive-type query that decides whether mapping is safe at all
+// (`mappable`). All format PARSERS remain safe.
 #![deny(unsafe_code)]
 // Test-only relaxation of strict lints; production parser code stays stricter.
 #![cfg_attr(
@@ -44,6 +45,7 @@ pub mod error;
 pub mod glb_writer;
 pub mod gltf;
 pub mod hps;
+mod mappable;
 pub mod obj;
 pub mod off;
 pub mod ply;
