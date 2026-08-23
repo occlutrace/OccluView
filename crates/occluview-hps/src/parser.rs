@@ -216,6 +216,13 @@ fn build_surface(
         .with_normals(normals)
 }
 
+/// A facet is degenerate when its area falls below this fraction of its own
+/// longest edge squared.
+///
+/// Deliberately a copy: this crate depends on no OccluView crate by design, so
+/// it cannot import `occluview_core::DEGENERATE_AREA_SIN` or the one in
+/// `occlu-mesh-edit`. All three hold the same number and must move together.
+/// They did not once: the 2026-07-25 fix reached the others four weeks later.
 const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
 fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {

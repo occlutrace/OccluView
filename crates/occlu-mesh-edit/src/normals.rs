@@ -4,6 +4,16 @@ use glam::Vec3;
 /// normal. Scale-free: the test compares twice the facet's area against its own
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a
 /// 10 um sliver.
+/// A facet is degenerate when its area falls below this fraction of its own
+/// longest edge squared.
+///
+/// Deliberately a third copy of the same rule. This crate is a leaf and must
+/// not depend on `occluview-core`, which holds the same constant as
+/// `occluview_core::DEGENERATE_AREA_SIN`, and `occluview-hps` keeps a fourth
+/// for the same reason. Change one, change all three: the fix of 2026-07-25
+/// landed in one crate and reached the others four weeks later, and for those
+/// four weeks every scan opened through the other paths lost shading on facets
+/// under 20 um.
 const DEGENERATE_AREA_SIN: f32 = 1e-10;
 use std::collections::HashMap;
 

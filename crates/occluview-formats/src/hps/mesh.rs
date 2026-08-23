@@ -170,35 +170,21 @@ fn invalid_surface(attribute: &'static str) -> FormatError {
     }
 }
 
-const DEGENERATE_AREA_SIN: f32 = 1e-10;
-
+/// Area-weighted vertex normals for a decoded HPS surface.
+///
+/// The accumulation and the degeneracy rule come from `occluview-core`. This
+/// crate held its own copy of both until the facet-degeneracy fix of
+/// 2026-07-25 landed in one crate and reached the other three on 2026-08-22:
+/// for four weeks every scan opened through this path lost shading on facets
+/// under 20 um, which is the visible symptom the product is judged on. This
+/// crate already depends on core, so there is no reason for a second copy;
+/// `occlu-mesh-edit` and `occluview-hps` keep theirs because the layering
+/// forbids them from depending on anything.
 fn smooth_normals(positions: &[Vec3], indices: &[u32]) -> Vec<Vec3> {
-    let mut normals = vec![Vec3::ZERO; positions.len()];
-    for triangle in indices.chunks_exact(3) {
-        let index_a = triangle[0] as usize;
-        let index_b = triangle[1] as usize;
-        let index_c = triangle[2] as usize;
-        let (Some(&a), Some(&b), Some(&c)) = (
-            positions.get(index_a),
-            positions.get(index_b),
-            positions.get(index_c),
-        ) else {
-            continue;
-        };
-        let face_normal = (b - a).cross(c - a);
-        let longest_edge_sq = (b - a)
-            .length_squared()
-            .max((c - b).length_squared())
-            .max((a - c).length_squared());
-        if face_normal.is_finite()
-            && face_normal.length_squared()
-                > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
-        {
-            normals[index_a] += face_normal;
-            normals[index_b] += face_normal;
-            normals[index_c] += face_normal;
-        }
-    }
+    let mut normals =
+        occluview_core::accumulate_smooth_normals(positions.len(), indices, |index| {
+            positions.get(index).copied()
+        });
     for normal in &mut normals {
         *normal = if normal.length_squared() > f32::EPSILON {
             normal.normalize()

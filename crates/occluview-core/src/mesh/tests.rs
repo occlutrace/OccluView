@@ -643,3 +643,39 @@ fn core_repair_cleans_defective_mesh_and_preserves_name() {
     assert_eq!(output.mesh.name(), Some("dirty scan"));
     assert_eq!(output.mesh.triangle_count(), 4);
 }
+
+#[test]
+fn every_facet_degeneracy_copy_holds_the_same_number() {
+    // Four crates carry this rule and two of them cannot import it: the
+    // layering forbids `occlu-mesh-edit` and `occluview-hps` from depending on
+    // anything. So the copies stay and the test is what keeps them equal --
+    // the fix of 2026-07-25 landed in one crate and reached the other three on
+    // 2026-08-22, and for those four weeks every scan opened through the other
+    // paths lost shading on facets under 20 um.
+    let expected = format!("{}: f32 = 1e-10;", "const DEGENERATE_AREA_SIN");
+    for (crate_name, source) in [
+        (
+            "occlu-mesh-edit",
+            include_str!("../../../occlu-mesh-edit/src/normals.rs"),
+        ),
+        (
+            "occluview-hps",
+            include_str!("../../../occluview-hps/src/parser.rs"),
+        ),
+    ] {
+        assert!(
+            source.contains(&expected),
+            "{crate_name} holds a different facet-degeneracy threshold"
+        );
+    }
+    // And the one crate that CAN import it must not carry a copy.
+    let formats = include_str!("../../../occluview-formats/src/hps/mesh.rs");
+    assert!(
+        !formats.contains("DEGENERATE_AREA_SIN"),
+        "occluview-formats depends on core and should use its definition"
+    );
+    assert!(
+        formats.contains("occluview_core::accumulate_smooth_normals"),
+        "occluview-formats should share core's accumulation, not repeat it"
+    );
+}

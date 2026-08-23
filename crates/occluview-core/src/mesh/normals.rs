@@ -16,7 +16,15 @@ const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
 // normal at load and after every edit, or a scan changes shading the first
 // time it is touched. See `occlu_mesh_edit::COINCIDENT_POSITION_EPS_MM`.
 use occlu_mesh_edit::coincident_position_key as position_key;
-const DEGENERATE_AREA_SIN: f32 = 1e-10;
+/// A facet is degenerate when its area falls below this fraction of its own
+/// longest edge squared -- a scale-invariant test, so a 7 um lab-scanner facet
+/// is judged by its shape rather than by an absolute epsilon.
+///
+/// Four crates carry this rule. `occlu-mesh-edit` and `occluview-hps` cannot
+/// depend on this one (the layering forbids it, deliberately), so they keep
+/// their own and say so; `occluview-formats` uses this definition, because it
+/// already depends on this crate and had no reason to hold a copy.
+pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
 fn normal_is_usable(normal: [f32; 3]) -> bool {
     let n = Vec3::from_array(normal);
@@ -92,14 +100,35 @@ fn compute_smooth_normals(vertices: &mut [Vertex], indices: &[u32]) {
 }
 
 fn smooth_normals(vertices: &[Vertex], indices: &[u32]) -> Vec<Vec3> {
-    let mut normals = vec![Vec3::ZERO; vertices.len()];
+    accumulate_smooth_normals(vertices.len(), indices, |index| {
+        vertices
+            .get(index)
+            .map(|vertex| Vec3::from_array(vertex.position))
+    })
+}
+
+/// Area-weighted vertex normals, from a triangle list and a position lookup.
+///
+/// The lookup is a closure rather than a `&[Vec3]` so a caller holding
+/// interleaved vertices does not have to copy every position out first -- on a
+/// six-million-vertex scan that copy would be seventy megabytes to avoid one
+/// duplicated loop.
+///
+/// A triangle with an out-of-range corner is skipped rather than trusted.
+#[must_use]
+pub fn accumulate_smooth_normals(
+    vertex_count: usize,
+    indices: &[u32],
+    position: impl Fn(usize) -> Option<Vec3>,
+) -> Vec<Vec3> {
+    let mut normals = vec![Vec3::ZERO; vertex_count];
     for triangle in indices.chunks_exact(3) {
         let ia = triangle[0] as usize;
         let ib = triangle[1] as usize;
         let ic = triangle[2] as usize;
-        let a = Vec3::from_array(vertices[ia].position);
-        let b = Vec3::from_array(vertices[ib].position);
-        let c = Vec3::from_array(vertices[ic].position);
+        let (Some(a), Some(b), Some(c)) = (position(ia), position(ib), position(ic)) else {
+            continue;
+        };
         let face_normal = (b - a).cross(c - a);
         let longest_edge_sq = (b - a)
             .length_squared()
