@@ -121,3 +121,73 @@ fn gpu_error_latch_poison_is_ignored_not_fatal() {
         "poisoned latch drains to None instead of panicking"
     );
 }
+
+/// A GPU fault must not come back as pixels.
+///
+/// The device's error handler records rather than panics, because a panic
+/// inside the shell surrogate is a crash. Nothing on the offscreen path used
+/// to ask what it recorded, so a refused buffer allocation -- a scan of three
+/// million triangles against the 256 MiB floor the limits used to request --
+/// produced a frame of zeroes that travelled on as a valid transparent
+/// thumbnail, and Explorer cached it against the file's timestamp.
+#[test]
+#[allow(clippy::expect_used)]
+fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() {
+    use crate::{GpuCamera, Offscreen, ThumbnailSpec};
+    use glam::{Mat4, Vec3};
+    use occluview_core::{MeshBuilder, Vertex};
+
+    // Like the crate's other GPU suites, this one needs an adapter -- the
+    // software fallback counts, and CI provides one.
+    let offscreen = pollster::block_on(Offscreen::new()).expect("an offscreen adapter");
+
+    let mut builder = MeshBuilder::new();
+    let a = builder.push_vertex(Vertex::at(Vec3::new(-0.5, -0.5, 0.0)).with_normal(Vec3::Z));
+    let b = builder.push_vertex(Vertex::at(Vec3::new(0.5, -0.5, 0.0)).with_normal(Vec3::Z));
+    let c = builder.push_vertex(Vertex::at(Vec3::new(0.0, 0.5, 0.0)).with_normal(Vec3::Z));
+    builder.push_triangle(a, b, c);
+    let mesh = builder.build().expect("a triangle is a mesh");
+    let camera = GpuCamera::new(
+        Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
+        Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(0.0, 0.0, 3.0),
+    );
+    let spec = ThumbnailSpec {
+        size_px: 32,
+        ..ThumbnailSpec::default()
+    };
+
+    let clean = pollster::block_on(offscreen.render(&mesh, &camera, spec));
+    assert!(clean.is_ok(), "a triangle renders: {clean:?}");
+
+    super::record_gpu_error(
+        &offscreen.renderer().gpu_error,
+        "buffer allocation refused".to_string(),
+    );
+    // Map the pixels away before asserting: a failure here must print the
+    // reason, not thirty-two rows of RGBA.
+    let faulted = pollster::block_on(offscreen.render(&mesh, &camera, spec))
+        .map(|pixels| format!("{} pixels", pixels.len()));
+    let error = faulted.expect_err("a recorded fault must not return pixels");
+    assert!(
+        format!("{error}").contains("buffer allocation refused"),
+        "the fault the driver reported must be the one the caller sees: {error}"
+    );
+}
+
+/// The buffer ceiling has to come from the adapter, not from the floor.
+///
+/// `using_resolution` copies the three texture dimensions and nothing else, so
+/// a request built from `downlevel_defaults` keeps that profile's 256 MiB
+/// `max_buffer_size` however capable the adapter is. Three million triangles
+/// need 309 MiB of vertex buffer -- an ordinary full-arch export with texture
+/// coordinates -- and the allocation was refused.
+#[test]
+fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
+    let source = include_str!("pipeline_init.rs");
+    assert!(
+        source.contains("max_buffer_size: adapter.limits().max_buffer_size,"),
+        "the headless device must ask for the adapter's buffer ceiling"
+    );
+}

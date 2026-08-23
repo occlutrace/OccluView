@@ -171,6 +171,17 @@ impl Offscreen {
             let _ = map_tx.send(result.map_err(|error| error.to_string()));
         });
         let _ = self.renderer.device().poll(wgpu::Maintain::Wait);
+        // Every offscreen frame -- thumbnail, preview, cut view -- lands here
+        // after its submit, and the wait above is the point by which the
+        // driver has reported anything it refused. The device's error handler
+        // records rather than panics (a panic in the shell surrogate is a
+        // crash), so nothing else asks. Unasked, a refused buffer allocation
+        // or a lost device produced a frame of zeroes that the caller returned
+        // as a perfectly good transparent thumbnail -- which Explorer then
+        // caches against the file's timestamp and never recomputes.
+        if let Some(error) = self.renderer.take_gpu_error() {
+            return Err(RenderError::Surface(error));
+        }
         map_rx
             .recv()
             .map_err(|error| {

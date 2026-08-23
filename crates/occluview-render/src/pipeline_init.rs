@@ -73,14 +73,20 @@ impl Renderer {
                 &wgpu::DeviceDescriptor {
                     label: Some("occluview headless device"),
                     required_features: wgpu::Features::empty(),
-                    // The conservative floor, raised to the resolution the
-                    // adapter actually supports. `downlevel_defaults` caps
+                    // The conservative floor, raised to what the adapter
+                    // actually offers. `downlevel_defaults` caps
                     // `max_texture_dimension_2d` at 2048, while the format
                     // readers accept textures up to 8192 -- so a scan with a
                     // 4096-pixel atlas decoded, cost its memory, and then had
-                    // nowhere to go.
-                    required_limits: wgpu::Limits::downlevel_defaults()
-                        .using_resolution(adapter.limits()),
+                    // nowhere to go. `using_resolution` copies the three
+                    // texture dimensions and nothing else, so the 256 MiB
+                    // buffer floor stayed: a scan of three million triangles
+                    // needs a 309 MiB vertex buffer, the allocation was
+                    // refused, and the frame came back empty.
+                    required_limits: wgpu::Limits {
+                        max_buffer_size: adapter.limits().max_buffer_size,
+                        ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
+                    },
                     memory_hints: wgpu::MemoryHints::default(),
                 },
                 None,
