@@ -36,6 +36,32 @@
   Explorer shell DLL and the CLI tools now carry Windows version resources,
   so their Properties pages finally name the product and version.
 
+- Fixed a batch export that could write two layers into one file. Saving
+  several layers at once built each destination from the layer's name, so two
+  layers called `Upper` left one file on disk and silently lost the other —
+  including when the names differed only in case, which Windows and macOS
+  resolve to the same file. Colliding names now get ` (2)`, ` (3)` and so on,
+  and a name that already ends that way is still counted as taken.
+
+- A refused export no longer destroys the file it was refusing to write.
+  Opening the destination truncated it to zero bytes before the writer
+  discovered it could not represent the mesh — so exporting a point cloud as
+  binary STL over an existing scan left an empty file and an error message.
+  The format check now runs before anything is opened.
+
+- Opening a package whose name or metadata is not plain ASCII no longer kills
+  the viewer. A scan header was sampled by cutting the first 512 bytes, and a
+  cut that lands inside a multi-byte character is an immediate panic, which
+  the shipped build turns into an abort rather than an error dialog. The
+  sample now ends on a character boundary.
+
+- A malformed `.glb` can no longer crash the viewer, the Explorer thumbnail
+  host or the preview pane. glTF requires the node graph to be a tree, but
+  nothing in the file stops a node from listing itself or an ancestor as a
+  child, and the reader followed it until the thread ran out of stack — a
+  fault no error handler can catch. Cyclic node graphs are now rejected as
+  malformed.
+
 - Neither installer claims the `.dcm` association any more. `.dcm` is the
   extension 3Shape writes its HPS containers under and the one medical DICOM
   has used for decades, and OccluView rejects DICOM by design — so on a
