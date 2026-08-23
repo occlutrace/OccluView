@@ -19,7 +19,9 @@ use occluview_core::MeshBuilder;
 ///
 /// Refusing a second entry also bounds the diamond case, where no cycle exists
 /// but shared children multiply the traversal exponentially with depth.
-/// How deep the node hierarchy may nest.
+pub(super) struct VisitedNodes(Vec<bool>);
+
+/// How many levels of node hierarchy may nest.
 ///
 /// [`VisitedNodes`] bounds revisits, not depth. `0 -> 1 -> 2 -> ...` is a
 /// strict tree, passes that check, and recurses once per link: a 1.2 MB file
@@ -29,12 +31,14 @@ use occluview_core::MeshBuilder;
 /// `catch_unwind` sees it, and in `dllhost` it takes every thumbnail in the
 /// folder with it.
 ///
+/// The root sits at level 0, so this many nodes may sit on one chain and the
+/// next one is refused -- 256 levels, not 257, which is what the name says.
+///
 /// Real exports nest a handful of levels; a scanner writing 256 is already
-/// beyond anything seen. At this depth the recursion costs well under a
-/// megabyte of stack even in a debug build.
+/// beyond anything seen. Measured from the function prologues, the recursive
+/// frame is 1600 bytes unoptimised, so the worst case is around 400 KiB
+/// against the 2 MiB every thread in this workspace gets.
 pub(super) const MAX_NODE_DEPTH: u32 = 256;
-
-pub(super) struct VisitedNodes(Vec<bool>);
 
 impl VisitedNodes {
     pub(super) fn for_document(doc: &json::GltfDoc) -> Self {
@@ -86,16 +90,23 @@ fn first_primitive_material_from(
     // Past the depth bound there is no material to report. The walk rejects
     // such a document outright; this traversal is independent of it and has to
     // stop on its own rather than trust the order the two are called in.
-    if depth > MAX_NODE_DEPTH {
+    if depth >= MAX_NODE_DEPTH {
         return None;
     }
     visited.enter(node_idx).ok()?;
     let node = doc.nodes.get(node_idx)?;
-    if let Some(mesh_idx) = node.mesh {
-        let mesh = doc.meshes.get(mesh_idx)?;
-        if let Some(material) = mesh.primitives.first()?.material {
-            return Some(material);
-        }
+    // Every `?` here used to return from the function rather than from the
+    // lookup, so a node whose mesh has no primitives -- or an out-of-range
+    // mesh index -- ended the search instead of continuing into its children,
+    // and the scan came out silently untextured. This node not having a
+    // material is not the same as there being none.
+    if let Some(material) = node
+        .mesh
+        .and_then(|mesh_idx| doc.meshes.get(mesh_idx))
+        .and_then(|mesh| mesh.primitives.first())
+        .and_then(|primitive| primitive.material)
+    {
+        return Some(material);
     }
     for &child_idx in &node.children {
         if let Some(material) = first_primitive_material_from(doc, child_idx, visited, depth + 1) {
@@ -147,7 +158,7 @@ impl<'a> SceneWalk<'a> {
         parent_transform: Mat4,
         depth: u32,
     ) -> Result<(), FormatError> {
-        if depth > MAX_NODE_DEPTH {
+        if depth >= MAX_NODE_DEPTH {
             return Err(malformed("node hierarchy is nested too deeply"));
         }
         self.visited.enter(node_idx)?;

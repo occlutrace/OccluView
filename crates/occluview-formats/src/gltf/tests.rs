@@ -217,6 +217,80 @@ fn textured_glb_round_trips_uvs_and_texture() {
     assert!(tex.rgba.chunks_exact(4).all(|p| p == [255, 0, 0, 255]));
 }
 
+/// A parent whose own mesh carries no primitives must not hide the material of
+/// the child below it.
+///
+/// The search returned from the whole function when a node's mesh had an empty
+/// primitive list, so a scan exported with an empty group node above the
+/// geometry -- which exporters write -- came out silently untextured.
+#[test]
+fn an_empty_parent_mesh_does_not_hide_the_child_material() {
+    let png_bytes: Vec<u8> = {
+        let img = image::RgbaImage::from_raw(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+            ],
+        )
+        .expect("image dims");
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .expect("encode png");
+        buf.into_inner()
+    };
+    let png_len = png_bytes.len();
+    let uv_start = 72usize;
+    let idx_start = uv_start + 48;
+    let img_start = idx_start + 12;
+    let total = img_start + png_len;
+
+    // Node 0 is a group whose mesh (index 1) has no primitives; node 1 below
+    // it carries the textured geometry.
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},
+"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":1,"children":[1]}},{{"mesh":0}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"TEXCOORD_0":1}},"indices":2,"material":0}}]}},
+          {{"primitives":[]}}],
+"materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}}],
+"textures":[{{"source":0}}],
+"images":[{{"bufferView":3,"mimeType":"image/png"}}],
+"accessors":[{{"bufferView":0,"count":6,"type":"VEC3","componentType":5126}},
+             {{"bufferView":1,"count":6,"type":"VEC2","componentType":5126}},
+             {{"bufferView":2,"count":6,"type":"SCALAR","componentType":5123}}],
+"bufferViews":[{{"buffer":0,"byteLength":72}},
+               {{"buffer":0,"byteOffset":{uv_start},"byteLength":48}},
+               {{"buffer":0,"byteOffset":{idx_start},"byteLength":12}},
+               {{"buffer":0,"byteOffset":{img_start},"byteLength":{png_len}}}],
+"buffers":[{{"byteLength":{total}}}]}}"#
+    );
+
+    let mut bin = Vec::with_capacity(total);
+    bin.extend(std::iter::repeat_n(0u8, 72));
+    for &(u, v) in &[
+        (0.0f32, 0.0f32),
+        (1.0, 0.0),
+        (0.5, 1.0),
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (0.5, 1.0),
+    ] {
+        bin.extend_from_slice(&u.to_le_bytes());
+        bin.extend_from_slice(&v.to_le_bytes());
+    }
+    for i in [0u16, 1, 2, 3, 4, 5] {
+        bin.extend_from_slice(&i.to_le_bytes());
+    }
+    bin.extend_from_slice(&png_bytes);
+
+    let mesh = read(&glb::build_glb(json.as_bytes(), &bin)).expect("valid GLB");
+    let texture = mesh
+        .texture()
+        .expect("the child's material must still be found");
+    assert_eq!((texture.width, texture.height), (2, 2));
+}
+
 /// A GLB with no texture (plain geometry) must not attach a texture.
 #[test]
 fn untextured_glb_has_no_texture() {
@@ -526,7 +600,7 @@ fn rejects_a_node_chain_deeper_than_the_bound() {
 fn rejects_a_chain_one_node_past_the_bound() {
     // The boundary itself, so the bound cannot be quietly raised to a depth
     // that overflows again.
-    let past = usize::try_from(scene::MAX_NODE_DEPTH).expect("bound fits") + 2;
+    let past = usize::try_from(scene::MAX_NODE_DEPTH).expect("bound fits") + 1;
     let error = read(&chain_glb(past)).expect_err("one node past the bound is malformed");
     assert!(format!("{error}").contains("nested too deeply"), "{error}");
 }
