@@ -9,6 +9,7 @@ Cargo.lock.bak
 /.idea/
 /.vscode/
 /.commandcode/
+/.claude/
 *.iml
 .DS_Store
 Thumbs.db

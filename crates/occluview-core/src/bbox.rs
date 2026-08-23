@@ -17,6 +17,52 @@ pub struct Aabb {
 }
 
 impl Aabb {
+    /// Where a ray first meets this box, if it does.
+    ///
+    /// Slab test. Answers "the operator clicked past the model, so what did
+    /// they mean" -- the fallback both the main viewport and the Explorer
+    /// preview use when a click misses every triangle. It lived in both of
+    /// them, byte for byte, and the preview's own header promises that the two
+    /// feel the same; the preview is Windows-only, so a change made to the
+    /// app's copy would have reached a customer before it reached CI.
+    ///
+    /// A ray starting inside the box returns its exit point, so a click from
+    /// within the model still resolves to a point on it.
+    #[must_use]
+    pub fn ray_entry(&self, origin: Vec3, direction: Vec3) -> Option<Vec3> {
+        let mut t_min = 0.0_f32;
+        let mut t_max = f32::INFINITY;
+        for axis in 0..3 {
+            let o = origin[axis];
+            let d = direction[axis];
+            let min = self.min[axis];
+            let max = self.max[axis];
+            if d.abs() <= f32::EPSILON {
+                if o < min || o > max {
+                    return None;
+                }
+                continue;
+            }
+            let inv = 1.0 / d;
+            let mut t0 = (min - o) * inv;
+            let mut t1 = (max - o) * inv;
+            if t0 > t1 {
+                std::mem::swap(&mut t0, &mut t1);
+            }
+            t_min = t_min.max(t0);
+            t_max = t_max.min(t1);
+            if t_max < t_min {
+                return None;
+            }
+        }
+        let t = if t_min >= 0.0 { t_min } else { t_max };
+        if t.is_finite() && t >= 0.0 {
+            Some(origin + direction * t)
+        } else {
+            None
+        }
+    }
+
     /// An empty bounding box - the identity for [`Aabb::enclose_point`].
     pub const EMPTY: Self = Self {
         min: Vec3::splat(f32::INFINITY),
@@ -144,5 +190,70 @@ mod tests {
             "got {} expected {expected}",
             b.half_diagonal()
         );
+    }
+}
+
+#[cfg(test)]
+mod ray_entry_tests {
+    use super::Aabb;
+    use glam::Vec3;
+
+    #[test]
+    fn a_ray_from_outside_enters_at_the_near_face() {
+        let box_ = Aabb {
+            min: Vec3::new(-1.0, -1.0, -1.0),
+            max: Vec3::new(1.0, 1.0, 1.0),
+        };
+        let hit = box_.ray_entry(Vec3::new(0.0, 0.0, 5.0), -Vec3::Z);
+        assert!(hit.is_some(), "a ray aimed at the box should enter it");
+        let Some(hit) = hit else { return };
+        assert!((hit.z - 1.0).abs() < 1e-5, "entered at {hit:?}");
+    }
+
+    #[test]
+    fn a_ray_starting_inside_resolves_to_its_own_origin() {
+        // `t_min` starts at zero, so a ray already inside the box answers with
+        // the point it started from rather than the far face. That is what
+        // both viewports have always done -- a click inside the model resolves
+        // to where the click was -- and it is pinned here rather than changed.
+        let box_ = Aabb {
+            min: Vec3::splat(-1.0),
+            max: Vec3::splat(1.0),
+        };
+        let hit = box_.ray_entry(Vec3::ZERO, Vec3::X);
+        assert_eq!(hit, Some(Vec3::ZERO));
+    }
+
+    #[test]
+    fn a_ray_that_misses_answers_nothing() {
+        let box_ = Aabb {
+            min: Vec3::splat(-1.0),
+            max: Vec3::splat(1.0),
+        };
+        assert!(box_.ray_entry(Vec3::new(5.0, 5.0, 5.0), Vec3::X).is_none());
+        // Parallel to a slab and outside it.
+        assert!(box_.ray_entry(Vec3::new(0.0, 9.0, 0.0), Vec3::X).is_none());
+    }
+
+    #[test]
+    fn neither_viewport_keeps_its_own_copy() {
+        // Both the main viewport and the Explorer preview fall back to this
+        // when a click misses every triangle, and the preview's own header
+        // promises the two feel the same. The preview is Windows-only, so a
+        // change made to one copy would have reached a customer before it
+        // reached a Linux CI job.
+        for source in [
+            include_str!("../../occluview-app/src/viewer/interaction.rs"),
+            include_str!("../../occluview-shell/src/preview_scene/interaction.rs"),
+        ] {
+            assert!(
+                source.contains(".ray_entry(origin, direction)"),
+                "both pick fallbacks should call the shared method"
+            );
+            assert!(
+                !source.contains("fn ray_aabb_entry("),
+                "a private copy is how the two drifted apart"
+            );
+        }
     }
 }
