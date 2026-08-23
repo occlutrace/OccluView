@@ -61,12 +61,21 @@ impl OccluViewApp {
         self.bridge_split_disc.arm_with_radius(object_radius);
         // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
         // first hover/plant doesn't freeze the UI building it on a big scan.
-        if let Some(scene_arc) = self.scene.clone() {
-            std::thread::spawn(move || {
-                if let Some(entry) = scene_arc.meshes().iter().find(|e| e.id() == layer_id) {
-                    entry.mesh.warm_bvh();
-                }
-            });
+        //
+        // The thread takes the one mesh it warms, not the case it came from.
+        // Holding an `Arc<Scene>` here made every in-place scene edit on the UI
+        // thread copy the whole case through `Arc::make_mut` for as long as the
+        // warm ran -- 52 ms a frame on two 945k-vertex arches, against a warm
+        // that takes the better part of a second, so an opacity slider dragged
+        // meanwhile ran at about 19 fps. The BVH cell is an `Arc` shared across
+        // mesh clones, which is what makes warming a clone worth anything.
+        let target_mesh = self
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.meshes().iter().find(|e| e.id() == layer_id))
+            .map(|entry| entry.mesh.clone());
+        if let Some(mesh) = target_mesh {
+            std::thread::spawn(move || mesh.warm_bvh());
         }
         self.bridge_split_section.reset();
         self.needs_render = true;

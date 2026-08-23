@@ -95,6 +95,12 @@ impl OccluViewApp {
                     .transform
                     .transform_point3(entry.mesh.bbox_cached().center()),
             });
+            // Nothing below reads the scene, and what follows edits it in
+            // place: `forget_align_fit` reaches `live_scene_mut` through the
+            // deviation overlay, and a second handle alive there copies the
+            // whole case. It survives today only because of an early return
+            // three modules away, which is not a guarantee this function makes.
+            drop(scene);
             // The map describes the pose the scan is leaving. Dropped once, at
             // the start of the gesture, rather than at the end: for the whole
             // duration of a hand-drag the colours stayed welded to the surface

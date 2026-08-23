@@ -229,21 +229,24 @@ impl OccluViewApp {
         // Both layers are taken out of the scene first and the handle dropped
         // with the block: repainting a preview edits the scene in place, and
         // a handle still alive there copies the whole case per side.
-        let sides: Vec<(AlignSide, SceneMeshId, SceneMesh)> = {
-            let Some(scene) = self.scene.clone() else {
-                return;
-            };
-            AlignSide::BOTH
-                .into_iter()
-                .filter_map(|side| {
-                    let layer = self.side_layer(side)?;
-                    let entry = layer_of(&scene, layer)?.clone();
-                    Some((side, layer, entry))
-                })
-                .collect()
-        };
         let mut reached = false;
-        for (side, layer, entry) in sides {
+        for side in AlignSide::BOTH {
+            // One side at a time, each inside its own block. The entry has to
+            // come out of the scene as a value, because repainting the preview
+            // edits the scene in place and a handle still alive there copies
+            // the whole case -- but a `SceneMesh` clone is a whole vertex
+            // array, so taking both sides up front doubled peak transient
+            // memory to save nothing.
+            let taken = {
+                let Some(scene) = self.scene.clone() else {
+                    return;
+                };
+                self.side_layer(side)
+                    .and_then(|layer| layer_of(&scene, layer).map(|entry| (layer, entry.clone())))
+            };
+            let Some((layer, entry)) = taken else {
+                continue;
+            };
             if self.apply_mask_command_to(command, side, &entry) {
                 reached = true;
                 self.repaint_region_preview(layer, side);

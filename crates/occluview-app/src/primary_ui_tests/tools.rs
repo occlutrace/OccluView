@@ -213,58 +213,111 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
     }
 }
 
+/// The scene-editing calls that require `self.scene` to be the only handle.
+const IN_PLACE_SCENE_EDITS: &[&str] = &[
+    "self.live_scene_mut()",
+    "self.attach_overlay_colors(",
+    "self.patch_overlay_colors(",
+    "self.repaint_region_preview(",
+];
+
+/// Every place a scene handle is still alive when an in-place edit runs.
+///
+/// A handle is alive from the `self.scene.clone()` that made it until the
+/// scan leaves the brace depth it was made at, or until an explicit `drop`.
+/// Anything in between that edits the scene in place will find a second
+/// handle, and `Arc::make_mut` will copy the whole case.
+///
+/// This is a structural property rather than a snapshot of the current
+/// wording: renaming a binding, reflowing an argument list or restructuring
+/// a loop leaves it intact, and moving a clone out of its block does not.
+fn scene_handles_alive_across_an_edit(source: &str) -> Vec<String> {
+    let bytes: Vec<char> = source.chars().collect();
+    let mut depth_at = vec![0i32; bytes.len() + 1];
+    let mut depth = 0i32;
+    for (index, character) in bytes.iter().enumerate() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ => {}
+        }
+        depth_at[index] = depth;
+    }
+
+    let mut offenders = Vec::new();
+    for (clone_at, _) in source.match_indices("self.scene.clone()") {
+        let clone_index = source[..clone_at].chars().count();
+        let held_at = depth_at[clone_index];
+        // The handle dies with its block, or where the code says so.
+        let released = depth_at
+            .iter()
+            .enumerate()
+            .skip(clone_index)
+            .find(|(_, depth)| **depth < held_at)
+            .map_or(bytes.len(), |(index, _)| index);
+        let tail: String = bytes[clone_index..released].iter().collect();
+        let tail = tail
+            .split_once("drop(scene)")
+            .map_or(tail.as_str(), |(a, _)| a);
+        for edit in IN_PLACE_SCENE_EDITS {
+            if tail.contains(edit) {
+                let line = source[..clone_at].matches('\n').count() + 1;
+                offenders.push(format!("line {line}: handle still alive at {edit}"));
+            }
+        }
+    }
+    offenders
+}
+
 #[test]
 fn nothing_holds_a_second_scene_handle_across_an_in_place_edit() {
     // `live_scene_mut` asserts in debug that it holds the only Arc<Scene>,
-    // because Arc::make_mut copies the whole case when it does not -- 45 ms
-    // per frame on paths that run per frame. The assertion is the real
-    // detector and fires on the first brush dab of any debug build. What it
-    // cannot do is describe the four shapes that tripped it, so those are
-    // pinned here.
-    //
-    // A source guard cannot prove the general rule; a handle can be held
-    // anywhere. It can keep these four from coming back.
+    // because Arc::make_mut copies the whole case when it does not -- 52 ms
+    // per frame, measured on two 945k-vertex arches, on paths that run every
+    // frame. That assertion is the detector; this is what stops the shape
+    // coming back, and it checks the property rather than the wording.
+    for module in [
+        "src/app/app_align_brush.rs",
+        "src/app/app_align_display.rs",
+        "src/app/app_align_drag.rs",
+        "src/app/app_layer_interaction.rs",
+        "src/app/app_bridge_split.rs",
+        "src/app/app_sculpt.rs",
+    ] {
+        let source = repo_source_file(module);
+        let offenders = scene_handles_alive_across_an_edit(&source);
+        assert!(
+            offenders.is_empty(),
+            "{module} edits the scene in place while a second handle is \
+             alive:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    // The two shapes that made the handle inevitable rather than incidental.
     let brush = repo_source_file("src/app/app_align_brush.rs");
-    assert!(
-        brush.contains("let (layer_id, painting, changed) = {"),
-        "the dab must read the scene inside a block that closes before it \
-         patches the preview"
-    );
     assert!(
         brush.contains("fn region_colors_for("),
         "the region colours must be computed as values; a closure over the \
          vertices keeps a handle alive by construction"
     );
-    assert!(
-        !brush.contains("let recolor = |vertex: usize|"),
-        "the closure form is what held the handle"
-    );
-    assert!(
-        brush.contains("let sides: Vec<(AlignSide, SceneMeshId, SceneMesh)> = {"),
-        "a whole-mesh mask command must take both layers out of the scene \
-         before it repaints either preview"
-    );
-
     let display = repo_source_file("src/app/app_align_display.rs");
     assert!(
         display.contains("patched: &[[u8; 4]],"),
         "the patch writer takes colours, not a closure that can read the scene"
     );
 
-    let sculpt = repo_source_file("src/sculpt_tool.rs");
-    assert!(
-        sculpt.contains("let mesh = entry.mesh.clone();") && sculpt.contains("drop(scene);"),
-        "the sculpt worker takes the one mesh it prepares; an Arc<Scene> in a \
-         background thread makes every scene edit on the UI thread copy the case"
-    );
-    let Some((_, worker)) = sculpt.split_once(".spawn(move || {") else {
-        panic!("the preparation worker should still be spawned here");
-    };
-    let Some((worker, _)) = worker.split_once("\n            });") else {
-        panic!("the preparation worker body should be delimited");
-    };
-    assert!(
-        !worker.contains("scene"),
-        "the preparation worker must not hold the scene:\n{worker}"
-    );
+    // A background thread outlives every block, so the rule above cannot see
+    // it: what it takes has to be the mesh, not the case.
+    for (module, taken) in [
+        ("src/sculpt_tool.rs", "let mesh = entry.mesh.clone();"),
+        ("src/app/app_bridge_split.rs", "let target_mesh = self"),
+    ] {
+        let source = repo_source_file(module);
+        assert!(
+            source.contains(taken),
+            "{module} spawns a worker; it must take the mesh it needs, not \
+             an Arc<Scene> that makes every scene edit copy the case"
+        );
+    }
 }

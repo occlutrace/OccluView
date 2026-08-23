@@ -4,7 +4,6 @@ use super::{egui, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::SculptRebuild;
 use crate::sculpt_worker::{SculptCompletion, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
-use std::sync::Arc;
 
 impl OccluViewApp {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
@@ -100,7 +99,7 @@ impl OccluViewApp {
             return false;
         };
         {
-            let scene = Arc::make_mut(&mut scene_arc);
+            let scene = super::state::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
@@ -251,7 +250,7 @@ impl OccluViewApp {
             return false;
         };
         {
-            let scene = Arc::make_mut(&mut scene_arc);
+            let scene = super::state::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()

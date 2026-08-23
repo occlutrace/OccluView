@@ -244,6 +244,24 @@ pub(super) struct RenderedFrame {
     pub(super) size_px: [u16; 2],
 }
 
+/// Edit a scene that has been taken out of `self.scene` for the duration.
+///
+/// `Option::take` moves the field's handle without changing the strong count,
+/// so the rule is the one [`OccluViewApp::live_scene_mut`] asserts: if anything
+/// else still holds a handle, `Arc::make_mut` copies the whole case. Two sculpt
+/// paths take the scene out because they put a rebuilt one back, and they were
+/// calling `Arc::make_mut` directly -- outside the one place the rule is
+/// stated, and invisible to the guard that looks for it.
+pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
+    debug_assert_eq!(
+        Arc::strong_count(scene),
+        1,
+        "in-place scene edit while another Arc<Scene> is alive: this \
+         silently deep-copies every vertex, index and texture of the case"
+    );
+    Arc::make_mut(scene)
+}
+
 impl OccluViewApp {
     /// Status text is a transient interaction hint, not a second permanent
     /// toolbar. Track direct legacy assignments centrally so every caller gets
