@@ -8,7 +8,7 @@ use crate::bridge_split_overlay::{
 use crate::cut_manipulator::{CutCursor, CutFrameInput, SurfaceSample};
 use crate::edit_mode::state::{BusyFinish, EditModeCommand};
 use crate::section_view::{SectionMainView, SectionViewFrame};
-use crate::viewer::{project_world_to_viewport, viewport_ray};
+use crate::viewer::viewport_ray;
 use occluview_core::{Camera, SceneMesh, SceneMeshId};
 
 struct BridgeFrameContext<'a> {
@@ -352,28 +352,18 @@ impl OccluViewApp {
             self.bridge_split_section.slice_visible(),
         );
         let ctrl = ctx.input(|input| input.modifiers.command);
-        let raw_scroll = ctx.input(|input| input.raw_scroll_delta.y);
-        let (wheel_notches, panel_zoom_notches) = if over_section_panel && raw_scroll != 0.0 {
-            ctx.input_mut(|input| {
-                input.raw_scroll_delta = egui::Vec2::ZERO;
-                input.smooth_scroll_delta = egui::Vec2::ZERO;
-            });
-            let notches = raw_scroll / super::app_cut_measure::CUT_WHEEL_PX_PER_NOTCH;
-            if ctrl {
-                (notches, 0.0)
-            } else {
-                (0.0, notches)
-            }
-        } else {
-            (0.0, 0.0)
-        };
-        let eye = camera.eye();
-        let view_dir = camera.view_direction();
-        let camera_up = camera.view_up();
-        let camera_right = view_dir.cross(camera_up).normalize_or_zero();
-        let ray_origin = pointer
-            .and_then(|point| viewport_ray(camera, *viewport_rect, point))
-            .map_or(eye, |(origin, _)| origin);
+        // The wheel scoping and the camera basis are the cut tool's, not a
+        // second copy of them: an operator meets one wheel gesture over one
+        // Section panel, whichever disc tool put it there.
+        let (wheel_notches, panel_zoom_notches) =
+            super::disc_frame::section_panel_wheel(ctx, over_section_panel, ctrl);
+        let super::disc_frame::DiscViewGeometry {
+            eye,
+            view_dir,
+            camera_up,
+            camera_right,
+            ray_origin,
+        } = super::disc_frame::disc_view_geometry(camera, *viewport_rect, pointer);
         let surface_hit = (!self.bridge_split_disc.is_planted() && over_viewport)
             .then(|| {
                 pointer.and_then(|point| {
@@ -381,14 +371,11 @@ impl OccluViewApp {
                 })
             })
             .flatten();
-        let pose = self.bridge_split_disc.pose();
-        let disc_center_screen = pose.and_then(|disc| {
-            project_world_to_viewport(camera, *viewport_rect, disc.center).map(|(screen, _)| screen)
-        });
-        let disc_radius_screen = pose.map_or(0.0, |disc| {
-            disc.radius_mm * viewport_rect.height().max(1.0)
-                / camera.orthographic_height.max(1.0e-3)
-        });
+        let (disc_center_screen, disc_radius_screen) = super::disc_frame::disc_screen_placement(
+            camera,
+            *viewport_rect,
+            self.bridge_split_disc.pose(),
+        );
         let frame = CutFrameInput {
             pointer,
             over_viewport,

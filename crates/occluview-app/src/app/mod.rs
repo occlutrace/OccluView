@@ -64,6 +64,7 @@ mod app_sculpt;
 mod app_sculpt_worker;
 mod app_third_party;
 mod app_viewport;
+mod disc_frame;
 mod open_dialogs;
 mod selection_overlay;
 mod state;

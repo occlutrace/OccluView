@@ -18,7 +18,6 @@ use crate::measure_overlay;
 use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
 use crate::probe_section;
 use crate::section_view::SectionMainView;
-use crate::viewer::{project_world_to_viewport, viewport_ray};
 use glam::{Vec3, Vec3A};
 use occluview_core::scene::{SceneSection, VisibilityFilter};
 use occluview_core::ScenePickHit;
@@ -691,29 +690,16 @@ impl OccluViewApp {
         // Ctrl+wheel resizes the disc (manipulator radius) and a plain wheel
         // zooms the slice to the cursor. Drain the scroll in both cases so it
         // never leaks to the camera in `handle_viewport_input`.
-        let raw_scroll = ctx.input(|i| i.raw_scroll_delta.y);
-        let (wheel_notches, panel_zoom_notches) = if over_section_panel && raw_scroll != 0.0 {
-            ctx.input_mut(|i| {
-                i.raw_scroll_delta = egui::Vec2::ZERO;
-                i.smooth_scroll_delta = egui::Vec2::ZERO;
-            });
-            let notches = raw_scroll / CUT_WHEEL_PX_PER_NOTCH;
-            if ctrl {
-                (notches, 0.0)
-            } else {
-                (0.0, notches)
-            }
-        } else {
-            (0.0, 0.0)
-        };
+        let (wheel_notches, panel_zoom_notches) =
+            super::disc_frame::section_panel_wheel(ctx, over_section_panel, ctrl);
 
-        let eye = camera.eye();
-        let view_dir = camera.view_direction();
-        let camera_up = camera.view_up();
-        let camera_right = view_dir.cross(camera_up).normalize_or_zero();
-        let ray_origin = pointer
-            .and_then(|p| viewport_ray(camera, viewport_rect, p))
-            .map_or(eye, |(origin, _)| origin);
+        let super::disc_frame::DiscViewGeometry {
+            eye,
+            view_dir,
+            camera_up,
+            camera_right,
+            ray_origin,
+        } = super::disc_frame::disc_view_geometry(camera, viewport_rect, pointer);
 
         let surface_hit = if self.cut_view.is_planted() || !over_viewport {
             None
@@ -721,13 +707,8 @@ impl OccluViewApp {
             pointer.and_then(|p| surface_sample(camera, viewport_rect, p, scene))
         };
 
-        let pose = self.cut_view.pose();
-        let disc_center_screen = pose.and_then(|p| {
-            project_world_to_viewport(camera, viewport_rect, p.center).map(|(screen, _)| screen)
-        });
-        let disc_radius_screen = pose.map_or(0.0, |p| {
-            p.radius_mm * viewport_rect.height().max(1.0) / camera.orthographic_height.max(1.0e-3)
-        });
+        let (disc_center_screen, disc_radius_screen) =
+            super::disc_frame::disc_screen_placement(camera, viewport_rect, self.cut_view.pose());
 
         let frame = CutFrameInput {
             pointer,
