@@ -84,6 +84,22 @@ impl OccluViewApp {
         };
         if self.active_load.is_some() {
             if mode == SceneLoadMode::Replace {
+                // The evicted loader thread is abandoned, not cancelled. Its
+                // receiver is dropped, so its `send` fails and it exits -- but
+                // only after finishing the parse it was already doing. Open a
+                // large scan, realise it is the wrong one, open another: two
+                // full decodes run at once and both scenes exist in memory
+                // until the first is discarded. Repeat it four times on a slow
+                // share and the peak is a multiple of the largest scan, which
+                // presents as an OOM kill with no message.
+                //
+                // Cancelling properly means threading a flag through
+                // `read_files_with_key_provider`, which parses files in
+                // parallel -- a formats API change that would not help the
+                // common single-file case anyway, since the check can only sit
+                // between files. Left as it is deliberately: it needs
+                // deliberate impatience, it clears itself, and the honest fix
+                // is a bigger change than the defect.
                 self.queued_loads.clear();
                 self.active_load = None;
                 self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
