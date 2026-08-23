@@ -222,7 +222,13 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
 
 /// The distinct lowercase extensions of `files`, for a log line that says what
 /// kind of session this is without saying whose.
-fn file_extensions(files: &[PathBuf]) -> Vec<String> {
+/// The distinct file extensions in `files`, lowercased and sorted.
+///
+/// This is what the logs are allowed to say about a set of scans: how many and
+/// of which kinds. The paths themselves name the case, and the crash report
+/// they would end up in is a file operators are asked to attach to a public
+/// issue.
+pub(crate) fn file_extensions(files: &[PathBuf]) -> Vec<String> {
     let mut extensions: Vec<String> = files
         .iter()
         .filter_map(|path| path.extension().and_then(|extension| extension.to_str()))

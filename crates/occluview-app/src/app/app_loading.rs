@@ -25,6 +25,34 @@ pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
         .map_err(|(path, e)| anyhow::anyhow!("{}: {}", path.display(), e))
 }
 
+/// The failure text with every path of the request removed.
+///
+/// `load_scene` names the file that failed inside its error so the dialog and
+/// the status line can say which one it was. Both are on screen, in front of
+/// the operator who chose the file. The crash log ring is different: every
+/// field of every event lands in it, `write_crash_report` writes the ring to
+/// a file, and README and docs/USAGE.md both promise that file carries no
+/// scan paths -- which is what makes it safe to attach to a public issue. A
+/// scan path is the case, and the case is a patient.
+///
+/// The paths of the request are known here exactly, so they are replaced by
+/// their extension rather than guessed at with a pattern.
+fn failure_without_paths(error: &anyhow::Error, paths: &[PathBuf]) -> String {
+    let mut text = format!("{error:#}");
+    for path in paths {
+        let rendered = path.display().to_string();
+        if rendered.is_empty() {
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map_or_else(|| "file".to_owned(), str::to_ascii_lowercase);
+        text = text.replace(&rendered, &format!("<{extension}>"));
+    }
+    text
+}
+
 impl OccluViewApp {
     /// Guarded entry for every REPLACE open (menu Open, recent, drop/handoff
     /// classified as replace). If a live session is dirty or unsaved edits
@@ -280,8 +308,9 @@ impl OccluViewApp {
                 self.status_message = Some(format!("{action} failed: {e:#}"));
                 self.app_error = Some(load_error_dialog(action, &e, &pending.paths));
                 tracing::error!(
-                    error = ?e,
-                    paths = ?pending.paths,
+                    error = %failure_without_paths(&e, &pending.paths),
+                    path_count = pending.paths.len(),
+                    formats = ?crate::app_bootstrap::file_extensions(&pending.paths),
                     source = pending.source,
                     load_ms = pending.started_at.elapsed().as_millis(),
                     "scene load failed"
@@ -417,6 +446,48 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
+    use super::failure_without_paths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_failed_load_reaches_the_log_without_the_path_it_failed_on() {
+        // The event this text goes into is recorded field by field into the
+        // crash log ring, and the ring is written to a file operators are
+        // asked to attach to a public issue. A scan path names the case.
+        let path = PathBuf::from("/mnt/cases/Ivanov 2026-08-23/upper.stl");
+        let error = anyhow::anyhow!("{}: {}", path.display(), "unexpected end of file");
+
+        let logged = failure_without_paths(&error, std::slice::from_ref(&path));
+
+        assert!(
+            !logged.contains("Ivanov"),
+            "the case name must not survive into the log: {logged}"
+        );
+        assert!(
+            !logged.contains("/mnt/cases"),
+            "no part of the path may survive: {logged}"
+        );
+        assert!(
+            logged.contains("unexpected end of file"),
+            "the reason is the whole point of the line: {logged}"
+        );
+        assert!(
+            logged.contains("<stl>"),
+            "the format is what a reader needs instead of the name: {logged}"
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_extension_is_still_redacted() {
+        let path = PathBuf::from("/mnt/cases/Ivanov/scan");
+        let error = anyhow::anyhow!("{}: {}", path.display(), "unsupported format");
+
+        let logged = failure_without_paths(&error, std::slice::from_ref(&path));
+
+        assert!(!logged.contains("Ivanov"), "{logged}");
+        assert!(logged.contains("<file>"), "{logged}");
+    }
+
     #[test]
     fn incoming_open_state_prefers_append_when_scene_or_load_exists() {
         assert!(

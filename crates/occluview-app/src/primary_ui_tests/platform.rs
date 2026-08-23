@@ -363,6 +363,40 @@ fn no_scan_path_reaches_the_crash_report() {
         !thumbnail.contains("path = %path.display()"),
         "the thumbnail path must not be logged; the extension is enough to diagnose"
     );
+
+    // The guard used to look at startup and the thumbnail only, and missed the
+    // one site that actually leaked: a failed open logged the whole request,
+    // and the error it logged beside it carried the path a second time.
+    let loading = repo_source_file("src/app/app_loading.rs");
+    assert!(
+        !loading.contains("paths = ?pending.paths"),
+        "a failed load must log how many files and of which kinds, not which"
+    );
+    assert!(
+        !loading.contains("error = ?e,"),
+        "the load error names the file inside its own text; it has to be \
+         redacted before it reaches the ring"
+    );
+    assert!(
+        loading.contains("error = %failure_without_paths(&e, &pending.paths)"),
+        "the redacted form is what belongs in the log"
+    );
+
+    // Whatever the sites are, the rule is one rule: no source in the viewer
+    // may hand tracing a path as a field.
+    for module in [
+        "src/app/app_loading.rs",
+        "src/app_bootstrap.rs",
+        "src/app/app_scene_export.rs",
+    ] {
+        let source = repo_source_file(module);
+        for leak in ["paths = ?", "path = ?path", "path = %path.display()"] {
+            assert!(
+                !source.contains(leak),
+                "{module} logs a path as a field ({leak})"
+            );
+        }
+    }
 }
 
 #[test]
