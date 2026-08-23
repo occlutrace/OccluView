@@ -144,7 +144,12 @@ occluview-cli convert   <file> -o output.{stl|ply|obj}
 occluview-cli close-holes <file> -o out.stl [--limit-mm N]
 occluview-cli info      <file> [file...]
 occluview-cli --version
+occluview-cli --help
 ```
+
+The file comes first in every subcommand. `-h` or `--help` in that position
+prints the usage instead, on stdout; a flag there is refused rather than opened
+as a filename.
 
 `thumbnail` is the same path the Windows shell extension and the Linux
 thumbnailer use, so a correct PNG here means correct previews in the file
