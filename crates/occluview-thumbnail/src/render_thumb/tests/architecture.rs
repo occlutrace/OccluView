@@ -17,8 +17,12 @@ fn thumbnail_render_path_uses_parallel_renderer_pool_for_shell_bursts() {
     let legacy_single_renderer_gate = ["Mutex", "<Option<Offscreen>>"].concat();
     assert!(!render_path.contains(&legacy_single_renderer_gate));
     let factory = offscreen_factory_source();
-    assert!(factory.contains("cfg!(all(windows, not(test)))"));
+    // Hardware where there is hardware, the software rasteriser where there is
+    // not -- and a device that accepts commands while drawing nothing counts as
+    // the second case, which is why the preference is checked and not assumed.
+    assert!(factory.contains("!cfg!(test)"));
     assert!(factory.contains("Offscreen::new_prefer_hardware()"));
+    assert!(factory.contains("pollster::block_on(offscreen.can_draw())"));
     assert!(factory.contains("Offscreen::new()"));
     assert!(concurrency_source().contains("impl Drop for ThumbnailRendererPool"));
     assert!(concurrency_source().contains("std::mem::forget(offscreen)"));

@@ -712,7 +712,7 @@ fn both_offscreen_factories_choose_the_adapter_the_same_way() {
     let thumbnail = include_str!("../../occluview-thumbnail/src/offscreen_factory.rs");
     let rule = concat!(
         "pub(crate) const fn should_prefer_hardware_offscreen() -> bool {\n",
-        "    cfg!(all(windows, not(test)))\n",
+        "    !cfg!(test)\n",
         "}"
     );
     for (crate_name, source) in [
