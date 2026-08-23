@@ -85,7 +85,7 @@ impl OccluViewApp {
         self.bridge_split.session().mode() != BridgeSplitMode::Off
     }
 
-    pub(super) fn show_bridge_split_overlay_impl(
+    pub(super) fn show_bridge_split_overlay(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,

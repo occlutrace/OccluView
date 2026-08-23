@@ -364,7 +364,7 @@ impl OccluViewApp {
         });
     }
 
-    pub(super) fn handle_open_requests_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn handle_open_requests(&mut self, ctx: &egui::Context) {
         let mut handled_request = false;
         for request in self.incoming_open_requests.take_requests() {
             handled_request = true;
@@ -404,7 +404,7 @@ impl OccluViewApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
-    pub(super) fn raise_window_for_incoming_open_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn raise_window_for_incoming_open(&mut self, ctx: &egui::Context) {
         // Always make sure the window is mapped and un-minimized first; these
         // are not "activation" and are honored by every WM.
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -434,7 +434,7 @@ impl OccluViewApp {
         ctx.request_repaint_after(FOREGROUND_PULSE_DURATION);
     }
 
-    pub(super) fn finish_foreground_pulse_if_due_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn finish_foreground_pulse_if_due(&mut self, ctx: &egui::Context) {
         let Some(until) = self.foreground_pulse_until else {
             return;
         };

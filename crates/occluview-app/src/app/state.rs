@@ -18,9 +18,9 @@
 use super::open_dialogs::OpenDialogs;
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
-    Camera, CutTool, Duration, EditModeController, Instant, LayerOverlayChanges,
-    LoadQueueCameraReset, Offscreen, PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Result,
-    Scene, SceneLoadRequest, SharedLiveViewport, ViewportSpec, DEFAULT_RENDER_EXTENT_PX,
+    Camera, CutTool, Duration, EditModeController, Instant, LoadQueueCameraReset, Offscreen,
+    PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Scene, SceneLoadRequest,
+    SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
 
 /// Everything the bootstrap hands the app about how this process was started:
@@ -400,55 +400,6 @@ impl OccluViewApp {
         app
     }
 
-    pub(super) fn render_now(&mut self, ctx: &egui::Context) {
-        self.render_now_impl(ctx);
-    }
-
-    pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
-        self.render_scene_pixels_impl()
-    }
-
-    pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
-        self.render_cut_now_impl(ctx);
-    }
-
-    pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
-        self.ensure_offscreen_impl()
-    }
-
-    pub(super) fn sync_live_viewport(&mut self) {
-        self.sync_live_viewport_impl();
-    }
-
-    pub(super) fn clear_live_viewport(&self) {
-        self.clear_live_viewport_impl();
-    }
-
-    pub(super) fn poll_gpu_errors(&mut self) {
-        self.poll_gpu_errors_impl();
-    }
-
-    pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
-        self.set_scene_impl(scene, reset_camera);
-    }
-
-    pub(super) fn mark_scene_materials_changed(&mut self) {
-        self.mark_scene_materials_changed_impl();
-    }
-
-    pub(super) fn update_scene_materials(&mut self, scene: Scene) {
-        self.update_scene_materials_impl(scene);
-    }
-
-    pub(super) fn clear_scene(&mut self) {
-        self.clear_scene_impl();
-    }
-
-    #[allow(clippy::too_many_lines)]
-    pub(super) fn show_toolbar(&mut self, ctx: &egui::Context) {
-        self.show_toolbar_impl(ctx);
-    }
-
     /// Whether a modal dialog owns the keyboard.
     ///
     /// Escape belongs to the dialog in front of the operator, never to a tool
@@ -471,11 +422,11 @@ impl OccluViewApp {
 
     /// Edit hotkeys, refused while a dialog is up.
     ///
-    /// The other twenty-nine `_impl` pairs in the crate are pass-throughs, so
-    /// the suffix reads as "same thing". An `_impl` here would be a trapdoor:
-    /// one plausible call from a neighbouring module deletes faces or replays
-    /// an undo while the unsaved-changes prompt is open, quietly changing what
-    /// "Save" then writes. `_unguarded` cannot be called by habit.
+    /// The callee is named `_unguarded` rather than `_impl` because it is not
+    /// the same thing: one plausible call from a neighbouring module deletes
+    /// faces or replays an undo while the unsaved-changes prompt is open,
+    /// quietly changing what "Save" then writes. A name nobody reaches for out
+    /// of habit is the guard.
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
         // The bridge tool owns the scene while it is armed, which is not a
         // dialog and so is not part of the shared predicate.
@@ -483,15 +434,6 @@ impl OccluViewApp {
             return;
         }
         self.handle_edit_shortcuts_unguarded(ctx);
-    }
-
-    pub(super) fn show_layers_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport_rect: egui::Rect,
-        ctx: &egui::Context,
-    ) {
-        self.show_layers_overlay_impl(ui, viewport_rect, ctx);
     }
 
     /// The live scene, mutable in place.
@@ -516,54 +458,6 @@ impl OccluViewApp {
             report_shared_scene_edit(handles);
         }
         Some(Arc::make_mut(scene))
-    }
-
-    pub(super) fn apply_layer_overlay_changes(
-        &mut self,
-        scene: Arc<Scene>,
-        paths: &[PathBuf],
-        changes: LayerOverlayChanges,
-        ctx: &egui::Context,
-    ) {
-        self.apply_layer_overlay_changes_impl(scene, paths, changes, ctx);
-    }
-
-    pub(super) fn show_cut_tool_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport_rect: egui::Rect,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_cut_tool_overlay_impl(ui, viewport_rect, ctx)
-    }
-
-    pub(super) fn show_bridge_split_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_bridge_split_overlay_impl(ui, response, ctx)
-    }
-
-    pub(super) fn show_align_tool_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        suppress_click: bool,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_align_tool_overlay_impl(ui, response, suppress_click, ctx)
-    }
-
-    pub(super) fn show_measure_tool_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        suppress_click: bool,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_measure_tool_overlay_impl(ui, response, suppress_click, ctx)
     }
 
     pub(super) fn reset_camera_to_home(&mut self) {
@@ -620,44 +514,6 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    pub(super) fn handle_viewport_input(
-        &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-        viewport_rect: egui::Rect,
-        gizmo_click: bool,
-    ) {
-        self.handle_viewport_input_impl(ctx, response, viewport_rect, gizmo_click);
-    }
-
-    pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        self.grab_viewport_orbit_cursor_impl(ctx);
-    }
-
-    pub(super) fn release_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        self.release_viewport_orbit_cursor_impl(ctx);
-    }
-
-    pub(super) fn release_viewport_orbit_cursor_if_inactive(&mut self, ctx: &egui::Context) {
-        self.release_viewport_orbit_cursor_if_inactive_impl(ctx);
-    }
-
-    pub(super) fn maybe_render_cut_view(&mut self, ctx: &egui::Context) {
-        self.maybe_render_cut_view_impl(ctx);
-    }
-
-    pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {
-        self.show_central_panel_impl(ctx);
-    }
-
-    pub(super) fn sync_render_extent(
-        &mut self,
-        viewport_points: egui::Vec2,
-        pixels_per_point: f32,
-    ) {
-        self.sync_render_extent_impl(viewport_points, pixels_per_point);
-    }
-
     pub(super) fn push_recent_scene(&mut self, paths: &[PathBuf]) {
         self.recent_files.push_paths(paths);
     }
@@ -676,22 +532,6 @@ impl OccluViewApp {
                 .iter()
                 .any(|entry| entry.visible && !entry.mesh.is_point_cloud())
         })
-    }
-
-    pub(super) fn handle_open_requests(&mut self, ctx: &egui::Context) {
-        self.handle_open_requests_impl(ctx);
-    }
-
-    pub(super) fn raise_window_for_incoming_open(&mut self, ctx: &egui::Context) {
-        self.raise_window_for_incoming_open_impl(ctx);
-    }
-
-    pub(super) fn finish_foreground_pulse_if_due(&mut self, ctx: &egui::Context) {
-        self.finish_foreground_pulse_if_due_impl(ctx);
-    }
-
-    pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
-        self.render_pending_frame_impl(ctx);
     }
 
     #[cfg(not(windows))]

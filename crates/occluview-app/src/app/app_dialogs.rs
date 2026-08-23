@@ -14,7 +14,7 @@ impl OccluViewApp {
     /// dropdown next to Open, the cut-view toggle inline, and version + About
     /// tucked on the right. Every action keeps its tooltip and shortcut.
     #[allow(clippy::too_many_lines)]
-    pub(super) fn show_toolbar_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_toolbar(&mut self, ctx: &egui::Context) {
         // The only wired shortcut; its tooltip hint is therefore real.
         let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
         let mut do_open = ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));

@@ -16,7 +16,7 @@ fn discard_lasso_outline(drag: &mut Option<MeshSelectionDrag>) -> bool {
 const TRANSLUCENT_OPACITY: f32 = 0.35;
 
 impl OccluViewApp {
-    pub(super) fn show_layers_overlay_impl(
+    pub(super) fn show_layers_overlay(
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
@@ -36,7 +36,7 @@ impl OccluViewApp {
         self.apply_layer_overlay_changes(scene, &paths, changes, ctx);
     }
 
-    pub(super) fn apply_layer_overlay_changes_impl(
+    pub(super) fn apply_layer_overlay_changes(
         &mut self,
         scene: Arc<Scene>,
         paths: &[PathBuf],

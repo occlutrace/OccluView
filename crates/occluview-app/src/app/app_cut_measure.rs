@@ -169,7 +169,7 @@ impl OccluViewApp {
 }
 
 impl OccluViewApp {
-    pub(super) fn show_cut_tool_overlay_impl(
+    pub(super) fn show_cut_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
@@ -339,7 +339,7 @@ impl OccluViewApp {
     /// Returns whether the pointer was consumed (mirrors the cut overlay's
     /// contract in `show_central_panel`); drags always fall through so the
     /// camera keeps orbit/pan/zoom while a measure tool is armed.
-    pub(super) fn show_measure_tool_overlay_impl(
+    pub(super) fn show_measure_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,

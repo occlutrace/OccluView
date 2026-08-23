@@ -117,7 +117,7 @@ fn multi_layer_session_state_lives_in_its_own_module() {
 #[test]
 fn viewport_double_click_focuses_scene_point_not_home_reset() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
 
     assert!(
         source.contains(
@@ -148,7 +148,7 @@ fn viewport_double_click_focuses_scene_point_not_home_reset() {
 #[test]
 fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
     let click = function_source(source, "fn handle_primary_face_selection_click(");
 
     assert!(
@@ -172,7 +172,7 @@ fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
 #[test]
 fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
     let drag = function_source(source, "fn begin_mesh_selection_drag(");
     let track = function_source(source, "fn track_mesh_selection_drag(");
 
@@ -230,7 +230,7 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
 fn armed_lasso_places_points_on_press_through_pure_state_machine() {
     let source = app_viewport_source();
     let lasso = function_source(source, "fn track_polygon_lasso(");
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
 
     // Root cause of the "clicks do nothing, only stray angular segments" bug:
     // egui only fires `clicked` when the pointer moved < max_click_dist (6px)
@@ -274,7 +274,7 @@ fn armed_lasso_places_points_on_press_through_pure_state_machine() {
 #[test]
 fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
     let secondary_context = function_source(source, "fn handle_viewport_secondary_context_menu(");
     let orbit = function_source(source, "fn update_viewport_orbit_gesture(");
     let menu = function_source(source, "fn handle_viewport_context_menu(");
@@ -325,11 +325,11 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
     );
     let central = function_source(
         app_render_source(),
-        "pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {",
     );
     let render_pending = function_source(
         app_render_source(),
-        "pub(super) fn render_pending_frame_impl(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {",
     );
 
     assert!(
@@ -366,7 +366,7 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
 fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
     let input = function_source(
         app_viewport_source(),
-        "pub(super) fn handle_viewport_input_impl(",
+        "pub(super) fn handle_viewport_input(",
     );
     let repaint_helper = function_source(
         app_module_source(),
@@ -447,7 +447,7 @@ fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
 fn viewport_primary_secondary_drag_pans_scene_before_orbit() {
     let input = function_source(
         app_viewport_source(),
-        "pub(super) fn handle_viewport_input_impl(",
+        "pub(super) fn handle_viewport_input(",
     );
     let interaction_source = viewer_interaction_source();
 
@@ -560,7 +560,7 @@ fn layer_material_edits_do_not_reset_prepared_scene() {
     let app_render = app_render_source();
 
     assert!(
-        app_render.contains("pub(super) fn update_scene_materials_impl(&mut self, scene: Scene)"),
+        app_render.contains("pub(super) fn update_scene_materials(&mut self, scene: Scene)"),
         "opacity/tint/visibility edits need a lightweight scene-material update path"
     );
     assert!(

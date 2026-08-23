@@ -113,10 +113,10 @@ fn both_disc_tools_ask_one_question_about_the_pointer() {
 
 #[test]
 fn the_one_guarded_forwarder_is_not_named_like_the_others() {
-    // `handle_edit_shortcuts` is the one `foo` / `foo_impl` pair in this crate
-    // that is not a pass-through; its doc in state.rs says what a call past the
-    // guard costs. This holds the callee to a name nobody reaches for out of
-    // habit.
+    // The hotkeys are the one place in this crate where a wrapper and its
+    // callee are not the same thing: calling past the guard deletes faces or
+    // replays an undo while a dialog is up. This holds the callee to a name
+    // nobody reaches for out of habit.
     let state = repo_source_file("src/app/state.rs");
     let editor = repo_source_file("src/app/app_mesh_editor.rs");
 

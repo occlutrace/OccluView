@@ -20,7 +20,7 @@ impl OccluViewApp {
     /// One frame of the tool: drain the worker, take the click, paint the
     /// pairs, and run whatever the panel asked for. Returns whether the tool
     /// consumed this frame's viewport input.
-    pub(super) fn show_align_tool_overlay_impl(
+    pub(super) fn show_align_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,

@@ -8,7 +8,7 @@ fn primary_camera_action_labels_stay_generic() {
     // named dental views belong in a surface the operator opens.
     let chrome = app_chrome_source();
     let dialogs = app_dialogs_source();
-    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar_impl");
+    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar");
 
     for dental_label in ["Occlusal", "Buccal", "Lingual", "Mesial", "Distal"] {
         assert!(
@@ -61,7 +61,7 @@ fn successful_appends_do_not_leave_status_overlay_copy() {
 #[test]
 fn toolbar_and_about_are_operator_focused() {
     let dialogs = app_dialogs_source();
-    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar_impl");
+    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar");
 
     assert!(
         dialogs.contains("egui::TopBottomPanel::top(\"toolbar\")")
@@ -250,7 +250,7 @@ fn edit_shortcut_stays_with_viewport_input_not_layer_mutation() {
 fn empty_state_is_blank_instead_of_showing_drop_copy() {
     let central = function_source(
         app_render_source(),
-        "pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {",
     );
 
     assert!(

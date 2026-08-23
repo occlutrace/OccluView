@@ -21,7 +21,7 @@ use super::{
 };
 
 impl OccluViewApp {
-    pub(super) fn render_now_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn render_now(&mut self, ctx: &egui::Context) {
         let render_started_at = Instant::now();
         let (spec, pixels) = match self.render_scene_pixels() {
             Ok(frame) => frame,
@@ -73,7 +73,7 @@ impl OccluViewApp {
         );
     }
 
-    pub(super) fn render_cut_now_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
         let Some(scene) = self.scene.clone() else {
             self.cut_view.disable();
             return;
@@ -213,7 +213,7 @@ impl OccluViewApp {
         visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
     }
 
-    pub(super) fn ensure_offscreen_impl(&mut self) -> Result<()> {
+    pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if self.offscreen.is_none() {
             self.offscreen = Some(
                 pollster::block_on(Offscreen::new_prefer_hardware())
@@ -223,7 +223,7 @@ impl OccluViewApp {
         Ok(())
     }
 
-    pub(super) fn render_scene_pixels_impl(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
+    pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
         if self.camera.is_none() {
             self.reset_camera_to_home();
         }
@@ -300,7 +300,7 @@ impl OccluViewApp {
         Ok((spec, pixels))
     }
 
-    pub(super) fn sync_live_viewport_impl(&mut self) {
+    pub(super) fn sync_live_viewport(&mut self) {
         // A rebuild uploads the scan's own colours, so a live deviation map
         // has to be pushed again or it silently vanishes on the next scene
         // change.
@@ -369,7 +369,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn clear_live_viewport_impl(&self) {
+    pub(super) fn clear_live_viewport(&self) {
         let Some(live_viewport) = self.live_viewport.as_ref() else {
             return;
         };
@@ -383,7 +383,7 @@ impl OccluViewApp {
     /// we installed instead of panicking; surface any message honestly (status
     /// line always, copyable dialog only when no other error is showing, so a
     /// GPU that faults every frame cannot spam modal dialogs).
-    pub(super) fn poll_gpu_errors_impl(&mut self) {
+    pub(super) fn poll_gpu_errors(&mut self) {
         let Some(live_viewport) = self.live_viewport.as_ref() else {
             return;
         };
@@ -411,7 +411,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn set_scene_impl(&mut self, scene: Scene, reset_camera: bool) {
+    pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
@@ -467,14 +467,14 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn update_scene_materials_impl(&mut self, scene: Scene) {
+    pub(super) fn update_scene_materials(&mut self, scene: Scene) {
         self.scene = Some(Arc::new(scene));
-        self.mark_scene_materials_changed_impl();
+        self.mark_scene_materials_changed();
     }
 
     /// The bookkeeping a material change needs, for a caller that already owns
     /// the live scene and mutated it in place.
-    pub(super) fn mark_scene_materials_changed_impl(&mut self) {
+    pub(super) fn mark_scene_materials_changed(&mut self) {
         if let Some(scene) = self.scene.clone() {
             self.edit_mode.sync_to_scene(&scene);
         }
@@ -490,7 +490,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn clear_scene_impl(&mut self) {
+    pub(super) fn clear_scene(&mut self) {
         self.clear_unsaved_mesh_edits();
         self.hidden_layer_stack.clear();
         self.translucent_layer_restore.clear();
@@ -517,7 +517,7 @@ impl OccluViewApp {
         self.section_cache.clear();
     }
 
-    pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(226, 230, 234));
@@ -604,7 +604,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn render_pending_frame_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
         if self.needs_render {
             if self.live_viewport.is_some() {
                 self.sync_live_viewport();

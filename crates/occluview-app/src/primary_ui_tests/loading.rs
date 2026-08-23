@@ -122,7 +122,7 @@ fn incoming_files_raise_existing_window_temporarily() {
     let loading_source = app_loading_source();
 
     assert!(
-        loading_source.contains("fn raise_window_for_incoming_open_impl"),
+        loading_source.contains("fn raise_window_for_incoming_open"),
         "single-instance handoff should explicitly raise the existing viewer window"
     );
     assert!(
