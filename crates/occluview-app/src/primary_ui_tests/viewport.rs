@@ -724,3 +724,35 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
         );
     }
 }
+
+#[test]
+fn no_status_line_promises_an_undo_that_was_not_stored() {
+    // `begin_layer_edit_with_snapshot` skips an oversized pre-op snapshot: the
+    // edit applies and Ctrl+Z will not undo it. Every mesh-edit status routes
+    // through `with_undoable_note` for that reason; the sculpt path printed
+    // "(Ctrl+Z undoes)" unconditionally, so an operator learned the promise was
+    // empty by pressing it, on work they had already moved past.
+    let sculpt = repo_source_file("src/app/app_sculpt_worker.rs");
+    let promise = "(Ctrl+Z undoes)";
+    assert!(
+        sculpt.contains(promise),
+        "the sculpt status should still say how to undo when it can be undone"
+    );
+    assert!(
+        sculpt.contains("last_edit_undoable()"),
+        "the promise must be conditional on the snapshot actually being stored"
+    );
+    assert!(
+        sculpt.contains("not undoable: snapshot too large"),
+        "the other branch should say plainly that it cannot be undone"
+    );
+    assert!(
+        sculpt.find("last_edit_undoable()") < sculpt.find(promise),
+        "the check has to come before the promise"
+    );
+
+    // The shared helper stays the single wording for every other path.
+    let layer_edits = repo_source_file("src/app/app_layer_edits/mod.rs");
+    assert!(layer_edits.contains("fn with_undoable_note("));
+    assert!(layer_edits.contains("not undoable: snapshot too large"));
+}

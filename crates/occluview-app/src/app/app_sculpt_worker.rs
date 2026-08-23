@@ -218,7 +218,20 @@ impl OccluViewApp {
         if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
             let _ = self.edit_mode.finish_layer_edit_success(token);
             self.mark_mesh_edits_unsaved(layer_id);
-            self.status_message = Some("Sculpt applied (Ctrl+Z undoes)".to_string());
+            // Only promise the undo that exists. `begin_layer_edit_with_snapshot`
+            // skips an oversized pre-op snapshot -- the edit still applies, but
+            // Ctrl+Z will not bring the layer back. Telling the operator
+            // otherwise is worse than saying nothing: they find out by pressing
+            // it, on work they have already moved on from. Every other mesh-edit
+            // status goes through `with_undoable_note` for the same reason.
+            self.status_message = Some(
+                if self.edit_mode.last_edit_undoable() {
+                    "Sculpt applied (Ctrl+Z undoes)"
+                } else {
+                    "Sculpt applied (not undoable: snapshot too large)"
+                }
+                .to_string(),
+            );
             true
         } else {
             let _ = self
