@@ -17,6 +17,7 @@
 //! not marked, which is invisible in whichever path the author happened to be
 //! testing.
 
+use super::open_dialogs::OpenDialogs;
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
     Camera, CutTool, Duration, EditModeController, Instant, LayerOverlayChanges,
@@ -426,11 +427,14 @@ impl OccluViewApp {
     /// One predicate, so the next dialog is remembered in one place instead of
     /// five.
     pub(super) fn modal_dialog_open(&self) -> bool {
-        self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.about_window == AboutWindowState::Open
-            || self.third_party_window_open
+        OpenDialogs {
+            close_guard: self.close_guard_open,
+            pending_replace: self.pending_replace_open.is_some(),
+            error: self.app_error.is_some(),
+            about: self.about_window == AboutWindowState::Open,
+            third_party: self.third_party_window_open,
+        }
+        .any()
     }
 
     /// Edit hotkeys, refused while a dialog is up.

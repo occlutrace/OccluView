@@ -177,6 +177,10 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
     // so with either up, Escape tore the tool down behind the dialog, and for
     // align it also ran `cancel_align_session`, putting every scan back where
     // it started.
+    // The predicate itself is tested for behaviour next to its definition, in
+    // app::open_dialogs. What only a source guard can check is that the five
+    // call sites still ask it instead of counting dialogs again themselves,
+    // which is the shape the drift took.
     let state = repo_source_file("src/app/state.rs");
     assert!(
         state.contains("pub(super) fn modal_dialog_open(&self) -> bool"),
