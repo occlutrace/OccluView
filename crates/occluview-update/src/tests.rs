@@ -368,3 +368,104 @@ fn every_shipped_key_is_usable_and_the_release_key_is_among_them() {
         "the shipped list must reject a signature it has no key for"
     );
 }
+
+/// A directory another account can write to is refused, not used.
+///
+/// The verified installer waits there for a click, and on a shared machine a
+/// world-writable directory means the file that was checked and the file that
+/// reaches a privileged installer need not be the same one.
+#[cfg(unix)]
+#[test]
+fn a_group_or_world_writable_download_directory_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("occluview-update-dir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).expect("create the test directory");
+
+    for mode in [0o777, 0o757, 0o727] {
+        let shared = base.join(format!("shared-{mode:o}"));
+        std::fs::create_dir_all(&shared).expect("create the shared directory");
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(mode))
+            .expect("set the shared mode");
+
+        let error = prepare_download_dir(&shared)
+            .expect_err("a directory other accounts can write to must be refused");
+        assert!(
+            matches!(error, UpdateError::UnsafeDownloadDir(_)),
+            "expected a refusal, got {error}"
+        );
+    }
+
+    let private = base.join("private");
+    prepare_download_dir(&private).expect("a fresh directory is created private");
+    let mode = std::fs::metadata(&private)
+        .expect("the directory exists")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "a directory created here must exclude everyone else"
+    );
+    prepare_download_dir(&private).expect("and is accepted on the next run");
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A symlink standing in for the download directory is refused.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_download_directory_is_refused() {
+    let base = std::env::temp_dir().join(format!("occluview-update-link-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("real")).expect("create the target");
+
+    let link = base.join("link");
+    std::os::unix::fs::symlink(base.join("real"), &link).expect("create the symlink");
+
+    let error = prepare_download_dir(&link)
+        .expect_err("a symlink can point anywhere, including somewhere writable");
+    assert!(
+        matches!(error, UpdateError::UnsafeDownloadDir(_)),
+        "{error}"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The installer is verified again immediately before it is handed over.
+#[test]
+fn an_installer_swapped_after_download_is_caught_before_launch() {
+    let (keypair, pubkey) = test_keypair();
+    let payload = b"the installer that was verified";
+    let signature = sign(&keypair, payload);
+    let update = AvailableUpdate {
+        version: semver::Version::new(9, 9, 9),
+        notes: None,
+        artifact: Some(PlatformArtifact {
+            url: "https://example.invalid/occluview.deb".to_string(),
+            signature,
+            sha256: sha256_hex(payload),
+        }),
+    };
+
+    let dir = std::env::temp_dir().join(format!("occluview-update-swap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the test directory");
+    let installer = dir.join("occluview.deb");
+
+    std::fs::write(&installer, payload).expect("write the verified installer");
+    verify_installer_with(&update, &[pubkey.as_str()], &installer)
+        .expect("the file that was downloaded verifies");
+
+    std::fs::write(&installer, b"something else entirely").expect("swap the installer");
+    let error = verify_installer_with(&update, &[pubkey.as_str()], &installer)
+        .expect_err("a swapped installer must not reach the package installer");
+    assert!(
+        matches!(error, UpdateError::BadHash | UpdateError::BadSignature),
+        "expected the swap to be caught, got {error}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

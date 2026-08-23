@@ -115,7 +115,7 @@ fn user_sid_suffix() -> Option<String> {
 /// over the pipe, which is a list of scan paths, which in dental work names the
 /// patient.
 ///
-/// The returned descriptor is a LocalAlloc'd buffer the caller must free.
+/// The returned descriptor is a `LocalAlloc`'d buffer the caller must free.
 fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
     let sid = current_user_sid_string()?;
     // D: a DACL. P: protected, so no inherited ACE widens it.

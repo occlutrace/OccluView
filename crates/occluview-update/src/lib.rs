@@ -85,6 +85,10 @@ pub enum UpdateError {
     /// Filesystem failure while storing the download.
     #[error("update download I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// The directory the installer would be written into is not private to
+    /// this account.
+    #[error("refusing to download an installer into a shared directory: {0}")]
+    UnsafeDownloadDir(String),
     /// Installer handoff is only implemented for Windows MSI builds.
     #[error("in-app install is not supported on this platform")]
     Unsupported,
@@ -247,7 +251,7 @@ pub fn download_with(
             !name.is_empty() && *name != "." && *name != ".." && !name.contains(['\\', ':'])
         })
         .ok_or_else(|| UpdateError::BadManifest("artifact URL has no file name".to_string()))?;
-    std::fs::create_dir_all(dest_dir)?;
+    prepare_download_dir(dest_dir)?;
     let final_path = dest_dir.join(file_name);
     let temp_path = dest_dir.join(format!("{file_name}.partial"));
 
@@ -312,6 +316,107 @@ fn stream_and_verify(
     }
     let payload = std::fs::read(temp_path)?;
     verify_signature(pubkeys, &payload, artifact.signature.as_bytes())
+}
+
+/// Create the download directory, or refuse one anybody else can write to.
+///
+/// The verified installer sits here between the signature check and the
+/// operator's click on "Install", which is an unbounded window. A directory
+/// another local account can write to turns that window into a swap: the app
+/// verifies one file and hands a different one to a package installer that
+/// elevates. Refusing is the only safe answer -- there is nothing to fall back
+/// to that is not the same problem.
+fn prepare_download_dir(dest_dir: &Path) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        if let Ok(existing) = std::fs::symlink_metadata(dest_dir) {
+            if existing.file_type().is_symlink() {
+                return Err(UpdateError::UnsafeDownloadDir(
+                    "it is a symbolic link".to_string(),
+                ));
+            }
+            if !existing.is_dir() {
+                return Err(UpdateError::UnsafeDownloadDir(
+                    "it is not a directory".to_string(),
+                ));
+            }
+            let mode = existing.permissions().mode() & 0o777;
+            if mode & 0o022 != 0 {
+                return Err(UpdateError::UnsafeDownloadDir(format!(
+                    "mode {mode:04o} lets other accounts write into it"
+                )));
+            }
+            return Ok(());
+        }
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dest_dir)
+            .map_err(UpdateError::Io)
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: the caller places this under the per-user profile, whose ACL
+        // already excludes other accounts.
+        std::fs::create_dir_all(dest_dir).map_err(UpdateError::Io)
+    }
+}
+
+/// Verify an installer already on disk against the signed manifest.
+///
+/// The check at download time proves what was written. This proves what is
+/// about to be handed to a privileged installer, and the two are separated by
+/// an operator's click.
+///
+/// # Errors
+/// [`UpdateError::NoPlatformAsset`] when the release has no artifact for this
+/// platform, [`UpdateError::Io`] when the file cannot be read, and
+/// [`UpdateError::BadHash`] or [`UpdateError::BadSignature`] when it is not the
+/// file that was verified.
+pub fn verify_installer(update: &AvailableUpdate, installer: &Path) -> Result<(), UpdateError> {
+    verify_installer_with(update, UPDATE_PUBKEYS, installer)
+}
+
+/// [`verify_installer`] with an injectable public key (tests).
+///
+/// # Errors
+/// See [`verify_installer`].
+pub fn verify_installer_with(
+    update: &AvailableUpdate,
+    pubkeys: &[&str],
+    installer: &Path,
+) -> Result<(), UpdateError> {
+    let artifact = update
+        .artifact
+        .as_ref()
+        .ok_or(UpdateError::NoPlatformAsset)?;
+    let payload = std::fs::read(installer)?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&payload);
+    let mut actual = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        use std::fmt::Write as _;
+        let _ = write!(actual, "{byte:02x}");
+    }
+    if actual != artifact.sha256 {
+        return Err(UpdateError::BadHash);
+    }
+    verify_signature(pubkeys, &payload, artifact.signature.as_bytes())
+}
+
+/// Verify the installer again, then hand it to the OS.
+///
+/// # Errors
+/// See [`verify_installer`] and [`launch_installer`].
+pub fn verify_and_launch_installer(
+    update: &AvailableUpdate,
+    installer: &Path,
+) -> Result<(), UpdateError> {
+    verify_installer(update, installer)?;
+    launch_installer(installer)
 }
 
 /// Hand the verified installer to the OS and let the app exit.
