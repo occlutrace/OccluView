@@ -267,7 +267,15 @@ foreach ($path in $required) {
     }
 }
 
-$isTaggedRelease = Test-HasText $env:GITHUB_REF -and ($env:GITHUB_REF -like "refs/tags/v*")
+# Parenthesised deliberately. Without them PowerShell parses this in command
+# mode: `Test-HasText` is invoked with `$env:GITHUB_REF`, the literal `-and`
+# and the comparison's result as three positional arguments, of which the
+# function declares one and silently discards the rest. The whole expression
+# then meant nothing more than "GITHUB_REF is set" -- so any CI run, on any
+# branch, counted as a tagged release and demanded a signing certificate.
+# That bites exactly where there is none: a fork, or the dispatch rehearsal
+# of the packaging job before secrets exist.
+$isTaggedRelease = (Test-HasText $env:GITHUB_REF) -and ($env:GITHUB_REF -like "refs/tags/v*")
 $resolvedSignMode = Resolve-SigningMode $SignMode
 if ($resolvedSignMode -eq "none" -and $isTaggedRelease) {
     throw "Authenticode signing is required for tagged releases: no signing certificate configured (SignMode=$SignMode)."

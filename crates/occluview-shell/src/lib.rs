@@ -30,6 +30,8 @@
 #[cfg(any(windows, test))]
 mod deferred_source;
 pub mod error;
+#[cfg(test)]
+mod installer_contract_tests;
 mod offscreen_factory;
 #[cfg(any(windows, test))]
 mod preview_menu;
