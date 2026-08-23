@@ -122,7 +122,7 @@ fn a_huge_coincident_vertex_group_stays_linear() {
     // in the test profile at this k: linear 8.6 ms, quadratic 1.14 s -- 130x
     // apart. 300 ms leaves the linear form 35x of headroom, which survives a
     // runner far slower than this one, and still catches the quadratic form on
-    // a machine four times faster.
+    // a machine three times faster -- 1.14 s over three is still past it.
     //
     // The ceiling was 10 s against a fixture of k=4000, where the quadratic
     // form costs 53 ms. It could not have failed.

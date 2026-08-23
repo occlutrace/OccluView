@@ -128,6 +128,19 @@ impl OccluViewApp {
             })
             .collect();
         let destinations = unique_layer_export_paths(&directory, &specs);
+        // A destination whose stem is not the layer's own was renamed to keep
+        // something already in the folder. Saying so is the difference between
+        // "your last export is still there" and an operator handing a mill the
+        // file they exported an hour ago.
+        let renamed = destinations
+            .iter()
+            .zip(&specs)
+            .filter(|(path, (stem, _))| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name != stem)
+            })
+            .count();
 
         let mut written = 0usize;
         let mut failed = 0usize;
@@ -160,14 +173,23 @@ impl OccluViewApp {
                 .collect();
             self.forget_unsaved_edits(&written);
         }
-        self.status_message = Some(if failed == 0 {
+        let mut status = if failed == 0 {
             format!("Saved {written} layers to {}", directory.display())
         } else {
             format!(
                 "Saved {written} layers to {}; {failed} could not be written",
                 directory.display()
             )
-        });
+        };
+        if renamed > 0 {
+            use std::fmt::Write as _;
+            let files = if renamed == 1 { "file" } else { "files" };
+            let _ = write!(
+                status,
+                "; {renamed} {files} renamed to keep what was already there"
+            );
+        }
+        self.status_message = Some(status);
     }
 }
 

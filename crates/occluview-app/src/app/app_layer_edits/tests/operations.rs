@@ -82,6 +82,56 @@ fn mesh_edit_layer_action_ignores_stale_layer_identity_without_mutating_scene() 
 }
 
 #[test]
+fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
+    // The mesh the sculpt session keeps as its undo baseline is built cold, to
+    // keep 24 ms off the first dab of a stroke. `Scene::bbox` is read twice a
+    // frame and falls back to walking every vertex when the box is not cached
+    // -- 2.1 ms a call on a million-vertex layer, for as long as that layer
+    // lives. Undo is a click, so the walk is paid there instead.
+    let Some(mut scene) = scene_with_islands() else {
+        return;
+    };
+
+    // Make the layer cold BEFORE the edit, so the snapshot the history keeps
+    // is the cold one and the undo restores it.
+    let vertices = scene.meshes()[0].mesh.vertices().to_vec();
+    let Some(cold) = scene.meshes()[0]
+        .mesh
+        .with_sculpted_vertices_uncached(vertices)
+    else {
+        return;
+    };
+    assert!(!cold.bbox_is_cached(), "the fixture should start cold");
+    scene.meshes_mut()[0].mesh = cold;
+
+    let request = request(&scene, 0, LayerContextAction::InvertNormals);
+    let mut edit_mode = EditModeController::new(4, 1_000_000);
+    let Some(token) =
+        edit_mode.begin_layer_edit(&scene.meshes()[0], EditModeCommand::InvertNormals)
+    else {
+        return;
+    };
+    let apply = apply_layer_mesh_edit_action(&mut scene, request, None);
+    assert!(apply.is_ok(), "mesh edit should succeed");
+    let _ = edit_mode.finish_layer_edit_success(token);
+
+    let apply = apply_layer_mesh_undo_action(
+        &mut scene,
+        LayerContextRequest {
+            action: LayerContextAction::UndoLastMeshEdit,
+            ..request
+        },
+        &mut edit_mode,
+    );
+
+    assert!(apply.scene_changed, "the undo should have applied");
+    assert!(
+        scene.meshes()[0].mesh.bbox_is_cached(),
+        "the undo path must warm the box of the mesh it installs"
+    );
+}
+
+#[test]
 fn undo_layer_mesh_edit_restores_geometry_and_keeps_current_display_state() {
     let Some(mut scene) = scene_with_islands() else {
         return;
