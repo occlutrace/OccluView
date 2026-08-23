@@ -13,6 +13,8 @@ use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 impl OccluViewApp {
     /// Write every visible layer, in its current pose, as one file.
@@ -108,20 +110,33 @@ impl OccluViewApp {
         };
 
         let paths = self.current_paths.clone();
+        let visible: Vec<(usize, &SceneMesh)> = scene
+            .meshes()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.visible)
+            .collect();
+        let specs: Vec<(String, MeshWriteFormat)> = visible
+            .iter()
+            .map(|(index, entry)| {
+                (
+                    sanitize_filename_stem(&crate::layers_overlay::layer_label(
+                        &paths, entry, *index,
+                    )),
+                    default_layer_export_format(&paths, *index),
+                )
+            })
+            .collect();
+        let destinations = unique_layer_export_paths(&directory, &specs);
+
         let mut written = 0usize;
         let mut failed = 0usize;
-        for (index, entry) in scene.meshes().iter().enumerate() {
-            if !entry.visible {
-                continue;
-            }
-            let format = default_layer_export_format(&paths, index);
-            let stem =
-                sanitize_filename_stem(&crate::layers_overlay::layer_label(&paths, entry, index));
-            let path = directory.join(format!("{stem}.{}", mesh_write_extension(format)));
+        for ((_, entry), (path, (_, format))) in visible.iter().zip(destinations.iter().zip(&specs))
+        {
             match write_mesh_overwrite(
-                &path,
+                path,
                 &posed_mesh(entry),
-                format,
+                *format,
                 MeshWriteOptions::default(),
             ) {
                 Ok(_) => written += 1,
@@ -154,6 +169,37 @@ impl OccluViewApp {
             )
         });
     }
+}
+
+/// One destination per visible layer, guaranteed distinct.
+///
+/// The stem comes from the layer label, which is the source file's name. Two
+/// layers opened from different folders under the same file name — the norm
+/// when a case folder holds `upper.stl` beside another case's `upper.stl` —
+/// therefore used to resolve to one path: the second write truncated the
+/// first, nothing reported a failure, and the batch cleared the unsaved-edit
+/// flag for both, after which the close guard let the app exit without asking.
+/// A colliding name gains a ` (2)`, ` (3)` suffix instead.
+///
+/// Comparison is case-insensitive because the platforms this ships on treat
+/// `Upper.stl` and `upper.stl` as the same file.
+pub(super) fn unique_layer_export_paths(
+    directory: &Path,
+    layers: &[(String, MeshWriteFormat)],
+) -> Vec<PathBuf> {
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut destinations = Vec::with_capacity(layers.len());
+    for (stem, format) in layers {
+        let extension = mesh_write_extension(*format);
+        let mut candidate = format!("{stem}.{extension}");
+        let mut ordinal = 2usize;
+        while !taken.insert(candidate.to_lowercase()) {
+            candidate = format!("{stem} ({ordinal}).{extension}");
+            ordinal += 1;
+        }
+        destinations.push(directory.join(candidate));
+    }
+    destinations
 }
 
 /// The layer's mesh with its scene transform baked into positions and normals.
@@ -265,10 +311,12 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::{merged_scene_mesh, posed_mesh};
+    use super::{merged_scene_mesh, posed_mesh, unique_layer_export_paths};
     use anyhow::Result;
     use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+    use occluview_formats::write::MeshWriteFormat;
+    use std::path::Path;
 
     fn v(x: f32, y: f32, z: f32) -> Vertex {
         Vertex::at(Vec3::new(x, y, z))
@@ -395,5 +443,71 @@ mod tests {
         assert!(merged_scene_mesh(&scene).is_none());
         assert!(merged_scene_mesh(&Scene::new()).is_none());
         Ok(())
+    }
+
+    #[test]
+    fn two_layers_with_the_same_file_name_get_two_files() {
+        // caseA/upper.stl and caseB/upper.stl are one batch; before the
+        // de-duplication the second write truncated the first and the batch
+        // still reported both as saved.
+        let layers = vec![
+            ("upper".to_owned(), MeshWriteFormat::StlBinary),
+            ("upper".to_owned(), MeshWriteFormat::StlBinary),
+            ("lower".to_owned(), MeshWriteFormat::StlBinary),
+        ];
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        assert_eq!(destinations.len(), 3);
+        assert_eq!(destinations[0], Path::new("/case/upper.stl"));
+        assert_eq!(destinations[1], Path::new("/case/upper (2).stl"));
+        assert_eq!(destinations[2], Path::new("/case/lower.stl"));
+    }
+
+    #[test]
+    fn every_destination_in_a_batch_is_distinct() {
+        let layers: Vec<(String, MeshWriteFormat)> = (0..6)
+            .map(|_| ("scan".to_owned(), MeshWriteFormat::PlyBinaryLittleEndian))
+            .collect();
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        let mut seen = std::collections::HashSet::new();
+        for path in &destinations {
+            assert!(
+                seen.insert(path.clone()),
+                "batch export produced a duplicate destination: {}",
+                path.display()
+            );
+        }
+        assert_eq!(destinations.len(), layers.len());
+    }
+
+    #[test]
+    fn a_name_that_differs_only_in_case_still_counts_as_taken() {
+        // Windows and macOS resolve these to one file; treating them as
+        // distinct would put the collision back on the filesystem.
+        let layers = vec![
+            ("Upper".to_owned(), MeshWriteFormat::StlBinary),
+            ("upper".to_owned(), MeshWriteFormat::StlBinary),
+        ];
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        assert_eq!(destinations[0], Path::new("/case/Upper.stl"));
+        assert_eq!(destinations[1], Path::new("/case/upper (2).stl"));
+    }
+
+    #[test]
+    fn the_same_stem_in_two_formats_needs_no_suffix() {
+        let layers = vec![
+            ("scan".to_owned(), MeshWriteFormat::StlBinary),
+            ("scan".to_owned(), MeshWriteFormat::PlyBinaryLittleEndian),
+        ];
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        assert_eq!(destinations[0], Path::new("/case/scan.stl"));
+        assert_eq!(destinations[1], Path::new("/case/scan.ply"));
     }
 }
