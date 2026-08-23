@@ -176,7 +176,6 @@ impl Offscreen {
         }
     }
 
-    /// Access the underlying renderer (for callers that need device/queue).
     /// Draw one known triangle and report whether any of it arrived.
     ///
     /// An adapter can accept every command and then produce an empty target:
@@ -213,6 +212,7 @@ impl Offscreen {
             .is_ok_and(|pixels| pixels.chunks_exact(4).any(|pixel| pixel[3] != 0))
     }
 
+    /// Access the underlying renderer (for callers that need device/queue).
     pub fn renderer(&self) -> &Renderer {
         &self.renderer
     }
