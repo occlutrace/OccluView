@@ -75,6 +75,19 @@ fn unrecognized_stream_bytes_are_a_deterministic_placeholder_verdict() {
 }
 
 #[test]
+fn io_error_mid_decode_is_transient_not_a_cacheable_placeholder() {
+    // The file passed preflight but vanished or got locked before the worker
+    // could read it — on Windows, typically a sharing violation while the
+    // scanner is still writing. Same policy as the metadata preflight arm.
+    let outcome = ThumbnailJobOutcome::Finished(Err(ThumbnailError::Format(FormatError::Io(
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+    ))));
+    let attempt =
+        thumbnail_attempt_for_job_outcome(outcome, spec_64(), Duration::from_secs(1), "file");
+    assert_eq!(attempt, ThumbnailAttempt::TransientFailure);
+}
+
+#[test]
 fn contended_deadline_is_transient_for_the_shell_but_placeholder_for_the_cli() {
     // Same pipeline, two callers: under a hopeless deadline the try_* entry
     // point must report the failure (the shell answers Explorer with an error

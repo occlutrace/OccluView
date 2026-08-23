@@ -388,7 +388,10 @@ fn render_file_thumbnail_job(
 /// A render/GPU error is deliberately on the transient side even though the
 /// old behavior painted a plain placeholder: a lost device or a driver reset
 /// says nothing about the file, and the retry path is cheap because the pool
-/// discards the sick renderer and the next attempt gets a fresh one.
+/// discards the sick renderer and the next attempt gets a fresh one. An I/O
+/// error mid-decode is transient for the same reason the metadata preflight
+/// is: on Windows the common cause is a sharing violation while the scanner
+/// is still writing the file, which the next browse will not reproduce.
 fn thumbnail_attempt_for_job_outcome(
     outcome: ThumbnailJobOutcome<Result<Vec<u8>, ThumbnailError>>,
     spec: ThumbnailSpec,
@@ -398,6 +401,14 @@ fn thumbnail_attempt_for_job_outcome(
     match outcome {
         ThumbnailJobOutcome::Finished(Ok(pixels)) => ThumbnailAttempt::Bitmap(pixels),
         ThumbnailJobOutcome::Finished(Err(error)) => match &error {
+            ThumbnailError::Format(FormatError::Io(_)) => {
+                tracing::warn!(
+                    ?error,
+                    source,
+                    "thumbnail source I/O failed mid-decode; reporting transient failure"
+                );
+                ThumbnailAttempt::TransientFailure
+            }
             ThumbnailError::Format(_) => {
                 let kind = placeholder_kind_for_error(&error);
                 tracing::warn!(
