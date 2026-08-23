@@ -316,15 +316,13 @@ fn any_trusted_key_verifies_and_an_untrusted_one_does_not() {
 
 #[test]
 fn every_shipped_key_is_usable_and_the_release_key_is_among_them() {
-    // The assertion here was `UPDATE_PUBKEYS.contains(&UPDATE_PUBKEY)` against
-    // a list defined as `&[UPDATE_PUBKEY]`: it restated its own definition and
-    // could not fail.
+    // `UPDATE_PUBKEYS.contains(&UPDATE_PUBKEY)` against a list defined as
+    // `&[UPDATE_PUBKEY]` restates its own definition and cannot fail.
     //
     // What can fail is a key that is not a key. `verify_signature` skips an
     // entry it cannot parse and moves on, so a truncated constant or a stray
-    // character from an edit does not raise anything here -- it makes every
-    // installed copy refuse every update, silently, and the release that
-    // shipped it looks green.
+    // character raises nothing here: every installed copy refuses every update,
+    // silently, and the release that shipped it looks green.
     for key in UPDATE_PUBKEYS {
         assert!(
             minisign::PublicKey::from_base64(key).is_ok(),

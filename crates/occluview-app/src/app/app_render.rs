@@ -557,14 +557,13 @@ impl OccluViewApp {
     /// Every overlay the viewport draws, and the input arbitration that
     /// follows them.
     ///
-    /// One body, called by both branches of `show_central_panel_impl`. It used
-    /// to be written twice, so every tool ever added had to be wired into both
-    /// copies with nothing to say if one was missed -- and the copy most likely
-    /// to be missed is the offscreen one, which never runs on a developer
-    /// machine. It runs for operators whose driver could not give the app a
-    /// live viewport, who are exactly the people least able to diagnose "the
-    /// Align button does nothing". The branches now differ only in how they
-    /// obtain `response`, which is the only thing that actually differs.
+    /// One body, called by both branches of `show_central_panel_impl`. Written
+    /// twice, every new tool has to be wired into both copies with nothing to
+    /// say when one is missed, and the one that gets missed is the offscreen
+    /// copy: it never runs on a developer machine, only for operators whose
+    /// driver could not give the app a live viewport, who are the people least
+    /// able to diagnose "the Align button does nothing". The branches differ
+    /// only in how they obtain `response`.
     fn show_viewport_overlays(
         &mut self,
         ui: &mut egui::Ui,

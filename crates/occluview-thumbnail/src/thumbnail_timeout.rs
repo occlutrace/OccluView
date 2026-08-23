@@ -53,12 +53,12 @@ mod tests {
 
     #[test]
     fn returns_none_after_deadline_without_waiting_for_the_worker() {
-        // This used to sleep 200 ms in the worker and assert that the call
-        // returned within 120 ms of wall clock, which is a coin flip on a
-        // loaded runner. The invariant has nothing to do with wall clock: the
-        // deadline must fire while the worker is still working. So the worker
-        // blocks until this test lets go, and the proof is that it had not
-        // finished when the call returned.
+        // The invariant has nothing to do with wall clock -- sleeping 200 ms
+        // in the worker and asserting the call returns inside 120 ms is a coin
+        // flip on a loaded runner. What must hold is that the deadline fires
+        // while the worker is still working, so the worker blocks until this
+        // test lets go and the proof is that it had not finished when the call
+        // returned.
         let (release, blocked) = mpsc::channel::<()>();
         let finished = Arc::new(AtomicBool::new(false));
         let worker_finished = Arc::clone(&finished);

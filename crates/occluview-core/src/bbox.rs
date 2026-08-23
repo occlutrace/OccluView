@@ -213,9 +213,8 @@ mod ray_entry_tests {
     #[test]
     fn a_ray_starting_inside_resolves_to_its_own_origin() {
         // `t_min` starts at zero, so a ray already inside the box answers with
-        // the point it started from rather than the far face. That is what
-        // both viewports have always done -- a click inside the model resolves
-        // to where the click was -- and it is pinned here rather than changed.
+        // the point it started from rather than the far face: a click inside
+        // the model resolves to where the click was.
         let box_ = Aabb {
             min: Vec3::splat(-1.0),
             max: Vec3::splat(1.0),
@@ -237,11 +236,8 @@ mod ray_entry_tests {
 
     #[test]
     fn neither_viewport_keeps_its_own_copy() {
-        // Both the main viewport and the Explorer preview fall back to this
-        // when a click misses every triangle, and the preview's own header
-        // promises the two feel the same. The preview is Windows-only, so a
-        // change made to one copy would have reached a customer before it
-        // reached a Linux CI job.
+        // Both viewports fall back to this when a click misses every triangle,
+        // and only one of them builds on Linux.
         for source in [
             include_str!("../../occluview-app/src/viewer/interaction.rs"),
             include_str!("../../occluview-shell/src/preview_scene/interaction.rs"),

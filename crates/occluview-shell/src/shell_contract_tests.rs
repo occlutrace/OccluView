@@ -22,11 +22,11 @@ pub(super) fn registration_source() -> String {
 
 #[test]
 fn thumbnail_registration_only_includes_implemented_stream_formats() {
-    // This used to compare the constant with a copy of itself written out
-    // longhand, which is true whatever the list holds -- including an
-    // extension Explorer would then hand to a reader that does not exist.
-    // Registering a format is a promise to the shell that a stream of those
-    // bytes produces a thumbnail; the promise is kept by the dispatcher.
+    // Comparing the constant with a longhand copy of itself holds whatever the
+    // list says, including an extension Explorer would then hand to a reader
+    // that does not exist. Registering a format promises the shell that a
+    // stream of those bytes produces a thumbnail, and the dispatcher is what
+    // keeps the promise.
     // An empty list would pass the loop below vacuously; it cannot be empty,
     // and the compiler says so -- clippy rejects the check as always false.
     for extension in SUPPORTED_EXTENSIONS {
@@ -39,11 +39,10 @@ fn thumbnail_registration_only_includes_implemented_stream_formats() {
 
 #[test]
 fn open_with_targets_the_real_gui_binary_name() {
-    // Comparing the constant with a copy of itself proved nothing: renaming the
-    // [[bin]] target would leave this green while "Open with" on every
-    // installed machine pointed at an executable that no longer exists. Bind it
-    // to the manifest that produces the file instead, the way platform.rs binds
-    // the Linux app id to the installed .desktop entry.
+    // Bound to the manifest that produces the file, the way platform.rs binds
+    // the Linux app id to the installed .desktop entry. Against a copy of the
+    // constant, renaming the [[bin]] target stays green while "Open with" on
+    // every installed machine points at an executable that is gone.
     let stem = APP_EXE_NAME.strip_suffix(".exe").unwrap_or(APP_EXE_NAME);
     let manifest = include_str!("../../occluview-app/Cargo.toml");
     assert!(
@@ -706,9 +705,9 @@ fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 #[test]
 fn both_offscreen_factories_choose_the_adapter_the_same_way() {
     // The rule is duplicated because `cfg!(test)` is per crate: a shared
-    // definition would answer "not under test" while this crate's own tests
-    // run, and they are exactly the ones that must not touch a hardware
-    // adapter. A copy is the right answer; a copy that drifts is not.
+    // definition answers "not under test" while this crate's own tests run, and
+    // those are exactly the ones that must not touch a hardware adapter. Hence
+    // a copy, and hence this check that the copy still matches.
     let shell = include_str!("offscreen_factory.rs");
     let thumbnail = include_str!("../../occluview-thumbnail/src/offscreen_factory.rs");
     let rule = concat!(

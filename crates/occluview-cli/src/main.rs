@@ -39,11 +39,10 @@ fn main() {
 ///
 /// This binary is the freedesktop thumbnailer the Debian package installs, so
 /// when a clinic's file manager shows placeholder cubes instead of scans, this
-/// is where the reason comes out. The crate declared `tracing-subscriber` and
-/// never installed one, which meant every `tracing::warn!` from the format,
-/// thumbnail and render crates went nowhere and `RUST_LOG` did nothing --
-/// while the subscriber's whole dependency tree still shipped in the binary
-/// and in its attribution.
+/// is where the reason comes out. Without it every `tracing::warn!` from the
+/// format, thumbnail and render crates goes nowhere and `RUST_LOG` does
+/// nothing, while the subscriber's dependency tree ships in the binary and in
+/// its attribution regardless.
 ///
 /// Default is `warn`, so ordinary runs stay quiet; `RUST_LOG=debug` turns the
 /// diagnosis on. stderr, because that is already this tool's progress channel
@@ -97,12 +96,11 @@ enum FileArgument {
 /// Take the file that every subcommand expects first, refusing to read a flag
 /// as a filename.
 ///
-/// The first argument used to be taken verbatim, so `thumbnail --help`
-/// rendered a placeholder cube into `./--help.png` and exited 0, and
-/// `thumbnail -o out.png scan.stl` tried to open a file called `-o`. A path
-/// never starts with `-`, so a leading `-` is a misplaced flag: say so instead
-/// of writing a file nobody asked for. A file genuinely named `-x` is still
-/// reachable as `./-x`.
+/// Taken verbatim, `thumbnail --help` renders a placeholder cube into
+/// `./--help.png` and exits 0, and `thumbnail -o out.png scan.stl` opens a
+/// file called `-o`. A path never starts with `-`, so a leading `-` is a
+/// misplaced flag; say so rather than write a file nobody asked for. A file
+/// genuinely named `-x` is still reachable as `./-x`.
 fn take_file_argument(
     args: &mut impl Iterator<Item = String>,
     subcommand: &str,

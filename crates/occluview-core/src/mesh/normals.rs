@@ -11,19 +11,18 @@ const SMOOTH_DUPLICATE_NORMAL_DOT: f32 = 0.5;
 /// triangles, not hundreds -- so no scan reaches it, and a crafted file cannot
 /// spend minutes here.
 const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
-// The welding tolerance and its key function are owned by `occlu-mesh-edit`
-// and used from here: the same number has to decide which vertices share a
-// normal at load and after every edit, or a scan changes shading the first
-// time it is touched. See `occlu_mesh_edit::COINCIDENT_POSITION_EPS_MM`.
+// The welding tolerance and its key function live in `occlu-mesh-edit`. One
+// number has to decide which vertices share a normal at load and after every
+// edit, or a scan changes shading the first time it is touched. See
+// `occlu_mesh_edit::COINCIDENT_POSITION_EPS_MM`.
 use occlu_mesh_edit::coincident_position_key as position_key;
 /// A facet is degenerate when its area falls below this fraction of its own
 /// longest edge squared -- a scale-invariant test, so a 7 um lab-scanner facet
 /// is judged by its shape rather than by an absolute epsilon.
 ///
-/// Four crates carry this rule. `occlu-mesh-edit` and `occluview-hps` cannot
-/// depend on this one (the layering forbids it, deliberately), so they keep
-/// their own and say so; `occluview-formats` uses this definition, because it
-/// already depends on this crate and had no reason to hold a copy.
+/// Four crates need the rule. `occlu-mesh-edit` and `occluview-hps` sit below
+/// this one in the layering and cannot depend on it, so they keep their own
+/// copy and say so. `occluview-formats` uses this definition.
 pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
 fn normal_is_usable(normal: [f32; 3]) -> bool {
@@ -197,20 +196,16 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     // Each run touches a disjoint set of vertex indices, so runs can be
     // averaged independently in parallel.
     //
-    // The result goes into one slot per keyed entry rather than into a
-    // collected `Vec<(usize, Vec3)>` of updates. That vector was the largest
-    // temporary in the whole loader -- 24 bytes per duplicated vertex, and an
-    // STL soup duplicates nearly all of them -- and rayon's collect built it
-    // per thread before concatenating, so the peak was a multiple of that
-    // again. A pre-sized `Vec<Vec3>` carved into disjoint run slices costs 12
-    // bytes per vertex, exactly once, with no unsafe and no concurrent write.
-    // `Vec3::ZERO` means "this member kept its own normal", which no real
-    // update can be: every update below is normalized.
+    // One slot per keyed entry, not a collected `Vec<(usize, Vec3)>` of
+    // updates. That tuple vector was the largest temporary in the loader: 24
+    // bytes per duplicated vertex, and an STL soup duplicates nearly all of
+    // them, and rayon's collect builds it per thread before concatenating, so
+    // the peak is a multiple again. Slots are sized by total run length, so a
+    // welded mesh allocates almost nothing and a soup pays 12 bytes per vertex
+    // once, with no unsafe and no concurrent write.
     //
-    // Sized by the total length of the runs, not by the vertex count: a welded
-    // mesh has almost no duplicates and allocates almost nothing, while an STL
-    // soup -- where nearly every vertex is duplicated -- pays 12 bytes each
-    // instead of the 24 the old tuple cost, once.
+    // `Vec3::ZERO` means "kept its own normal". Unambiguous, because every
+    // value written below is normalized.
     let duplicated: usize = runs.iter().map(|&(start, end)| end - start).sum();
     let mut slots: Vec<Vec3> = vec![Vec3::ZERO; duplicated];
     let mut run_slices: Vec<(usize, &mut [Vec3])> = Vec::with_capacity(runs.len());
@@ -248,31 +243,25 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     }
 }
 
-/// Average one run of coincident vertices into `out`, one slot per member.
-///
-/// `Vec3::ZERO` is left where a member keeps its own normal; every value
-/// written is normalized, so zero is unambiguous.
 /// How many directions one coincident group may hold before it is left alone.
 ///
 /// A pile that genuinely points sixteen ways is not a surface any averaging can
-/// help, and the cost of the pass is one dot product per member per cluster.
+/// help, and the pass costs one dot product per member per cluster.
 const MAX_DUPLICATE_CLUSTERS: usize = 16;
 
 /// Average a large coincident group by clustering it, not by one global mean.
 ///
-/// The first bounded form judged every member against the mean of the whole
-/// group. That is right while the group points one way and wrong the moment it
-/// does not: K coincident vertices at a hard crease in a triangle soup form two
-/// clusters ninety degrees apart, their mean sits on the bisector, both
-/// clusters agree with it to within sixty degrees, and every one of them is
-/// welded to the bisector -- the crease is gone. Measured on a 400-member pile
-/// split in two: 45 degrees of error on all 400. Exactly opposed clusters were
-/// worse still: the mean cancels and the group was skipped entirely.
+/// A single mean is right while the group points one way and wrong the moment
+/// it does not. K coincident vertices at a hard crease in a triangle soup form
+/// two clusters ninety degrees apart; the mean lands on the bisector, both
+/// clusters agree with it to within sixty degrees, and every member is welded
+/// to the bisector. The crease is gone. Measured on a 400-member pile split in
+/// two: 45 degrees of error on all 400. Exactly opposed clusters are worse
+/// still -- the mean cancels and the group is skipped entirely.
 ///
-/// Members are assigned greedily to the first cluster they agree with, so a
-/// coherent group forms one cluster and gets exactly what the mean form gave
-/// it, while a crease keeps its two. The cost is linear in the group for any
-/// bounded number of clusters, which is the property the threshold exists for.
+/// Members join the first cluster they agree with, so a coherent group forms
+/// one cluster and gets what the mean would have given it while a crease keeps
+/// its two. Cost stays linear in the group for any bounded cluster count.
 fn average_by_cluster(members: &[([i32; 3], usize)], source_normals: &[Vec3], out: &mut [Vec3]) {
     let mut sums: Vec<Vec3> = Vec::new();
     let mut assigned: Vec<Option<usize>> = vec![None; members.len()];
@@ -290,9 +279,8 @@ fn average_by_cluster(members: &[([i32; 3], usize)], source_normals: &[Vec3], ou
             assigned[slot] = Some(cluster);
         } else {
             if sums.len() == MAX_DUPLICATE_CLUSTERS {
-                // Too many directions to be a surface. Leaving the normals as
-                // they arrived is the honest answer; inventing an average here
-                // is how a crease becomes a smear.
+                // Too many directions to be a surface. Leave them as they
+                // arrived; an invented average here smears the crease.
                 return;
             }
             sums.push(current);
@@ -309,17 +297,20 @@ fn average_by_cluster(members: &[([i32; 3], usize)], source_normals: &[Vec3], ou
     }
 }
 
+/// Average one run of coincident vertices into `out`, one slot per member.
+///
+/// `Vec3::ZERO` is left where a member keeps its own normal; every value
+/// written is normalized, so zero is unambiguous.
 fn average_duplicate_run(members: &[([i32; 3], usize)], source_normals: &[Vec3], out: &mut [Vec3]) {
-    // The exact form below compares every member against every other, which is
-    // fine at real valences and quadratic at absurd ones. A pile of coincident
-    // vertices is not hypothetical -- a fan collapsed by bad decimation, a
-    // scanner artefact, or a file written to be one. Measured: k=2000 costs
-    // 19 ms, k=8000 costs 214 ms, k=20000 costs 1.3 s, and it runs on the
-    // loading thread with no cancellation, or inside `dllhost` holding one of
-    // twelve thumbnail lanes long after Explorer has been told the request
-    // timed out.
+    // The exact form below compares every member against every other: fine at
+    // real valences, quadratic at absurd ones. Piles of coincident vertices
+    // are not hypothetical -- a fan collapsed by bad decimation, a scanner
+    // artefact, or a file written to be one. k=2000 costs 19 ms, k=8000 costs
+    // 214 ms, k=20000 costs 1.3 s, on the loading thread with no cancellation,
+    // or inside `dllhost` holding one of twelve thumbnail lanes long after
+    // Explorer has been told the request timed out.
     //
-    // Past the threshold the group is clustered instead, in one greedy pass.
+    // Past the threshold, cluster the group in one greedy pass instead.
     if members.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
         average_by_cluster(members, source_normals, out);
         return;

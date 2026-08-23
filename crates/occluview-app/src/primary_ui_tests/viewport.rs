@@ -103,10 +103,10 @@ fn edit_mesh_entry_opens_one_scene_wide_session() {
 
 #[test]
 fn multi_layer_session_state_lives_in_its_own_module() {
-    // The line budgets these paths used to repeat are enforced for every crate
-    // by `rust_source_files_stay_within_the_physical_line_budget` above, which
+    // Line budgets are enforced for every crate by
+    // `rust_source_files_stay_within_the_physical_line_budget` above, which
     // walks the tree instead of naming sixteen files that can be renamed out
-    // from under it. What that walk cannot see is the split itself.
+    // from under it. What the walk cannot see is the split itself.
     let edit_mode = repo_source_file("src/edit_mode/mod.rs");
     assert!(
         edit_mode.contains("mod selection_set;"),
@@ -534,10 +534,8 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
         app_render.contains("self.handle_viewport_input(ctx, response, response.rect,"),
         "the camera path must still be reachable when no tool consumed the pointer"
     );
-    // The live and offscreen branches used to carry two copies of this whole
-    // body, so every tool ever added had to be wired into both, and a missed
-    // wiring only showed up for operators whose driver could not give them a
-    // live viewport. One body, called twice.
+    // One body, called twice. `show_viewport_overlays` has what two copies of
+    // it cost.
     assert_eq!(
         count_occurrences(
             app_render,

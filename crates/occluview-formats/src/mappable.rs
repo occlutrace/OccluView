@@ -13,10 +13,9 @@
 //! session drops, someone pulls the stick, a scanner rewrites the file while it
 //! is being read.
 //!
-//! So mapping is restricted to storage that cannot go away underneath it.
-//! Everything else copies once through `read_to_end` and is then immune. The
-//! decision errs toward copying: a wrong "no" costs one copy, a wrong "yes"
-//! kills the process.
+//! So mapping is restricted to storage that cannot go away underneath it;
+//! everything else copies once through `read_to_end`. A wrong "no" costs one
+//! copy, a wrong "yes" kills the process.
 
 use std::path::Path;
 
@@ -61,14 +60,13 @@ mod platform {
 /// Filesystems whose pages are backed by this machine and cannot be withdrawn
 /// while the process holds a mapping.
 ///
-/// An allow list rather than a deny list on purpose: forgetting a local
-/// filesystem costs one extra copy, forgetting a network one costs the process.
+/// An allow list, not a deny list: forgetting a local filesystem costs one
+/// extra copy, forgetting a network one costs the process.
 ///
-/// `overlay` is deliberately absent. An overlay mount reports its own type and
-/// says nothing about the layers underneath it, which may be an NFS or CIFS
-/// export -- the two cases this module exists to refuse. A container reading
-/// scans through overlayfs therefore pays one copy, which is the side to be
-/// wrong on.
+/// `overlay` is absent. An overlay mount reports its own type and says nothing
+/// about the layers underneath, which may be an NFS or CIFS export -- the two
+/// cases this module exists to refuse. A container reading scans through
+/// overlayfs pays the copy.
 #[cfg(any(unix, test))]
 const MAPPABLE_FILESYSTEMS: &[&str] = &[
     "bcachefs", "btrfs", "ext2", "ext3", "ext4", "f2fs", "jfs", "ramfs", "reiserfs", "tmpfs",
@@ -77,8 +75,8 @@ const MAPPABLE_FILESYSTEMS: &[&str] = &[
 
 /// Whether a mount of type `kind` may be mapped.
 ///
-/// Separate from the mount-table lookup so the policy itself is testable: the
-/// parsing tests below could pass in full while the list said "yes" to nfs4.
+/// Kept apart from the mount-table lookup: the parsing tests can all pass
+/// while the list says "yes" to nfs4.
 #[cfg(any(unix, test))]
 fn is_mappable_filesystem(kind: &str) -> bool {
     MAPPABLE_FILESYSTEMS.contains(&kind)
@@ -200,10 +198,10 @@ mod tests {
 
     #[test]
     fn network_and_removable_filesystems_are_not_mappable() {
-        // These are exactly the mounts a dental workstation reads scans from,
-        // and exactly the ones that can be withdrawn mid-parse. Both halves
-        // matter: reading the type right, and then refusing it. Asserting only
-        // the type let the allow list gain "nfs4" without a test going red.
+        // Exactly the mounts a dental workstation reads scans from, and
+        // exactly the ones that can be withdrawn mid-parse. Both halves are
+        // asserted: the type is read right, and then refused. Check only the
+        // type and the allow list can gain "nfs4" with nothing going red.
         for (path, expected) in [
             ("/home/clinic/scans/upper.stl", "nfs4"),
             ("/mnt/clinic/case.stl", "cifs"),

@@ -11,11 +11,9 @@ use super::arrowhead;
 /// editor toolbar vocabulary: these name layer-level operator actions.
 /// The glyphs the layer and scene menus draw.
 ///
-/// Every variant is drawn by some menu; nothing here is speculative. Four
-/// glyphs used to sit in this list for actions no menu could raise -- the two
-/// eyes and the droplet belonged to visibility and opacity, which the layer row
-/// owns directly, and the spotlight belonged to a Solo action that was never
-/// wired up.
+/// Every variant is drawn by some menu; nothing here is speculative. Four once
+/// were not -- two eyes and a droplet for visibility and opacity, which the
+/// layer row owns directly, and a spotlight for a Solo action nothing wired up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayerMenuIcon {
     /// Every sheet lit (Show all layers).

@@ -275,8 +275,8 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
         "both SBOM steps must check which component they describe"
     );
 
-    // The old guard read a variable scoped to another step, so it failed a
-    // release whose artifacts were correctly signed.
+    // A guard reading a variable scoped to another step fails a release whose
+    // artifacts were signed perfectly well.
     assert!(!package.contains("Authenticode signing is required for tagged releases"));
     assert!(package.contains("No signing material resolved for tagged release."));
 
@@ -305,15 +305,15 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
 
 #[test]
 fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
-    // What this can check is the wiring, and the wiring is what broke: the
-    // build itself needs a nightly toolchain and a linker pass, which belongs
-    // in the fuzz job, not here. Every fuzz step in CI had been failing since
-    // it was written, in three independent ways, and the badge never showed it
-    // because nobody read the job. The manifest lacked the `cargo-fuzz = true` marker, so `cargo fuzz`
-    // refused it outright; the `[[bin]]` stanzas had been deleted on the
-    // premise that cargo auto-discovers `fuzz_targets/` (it discovers only
-    // `src/bin/`); and the steps ran with `working-directory: fuzz`, which
-    // makes cargo-fuzz look for `fuzz/fuzz/Cargo.toml`.
+    // The wiring is what breaks, and nothing else here can check it: building
+    // the targets needs a nightly toolchain and a linker pass, which belong in
+    // the fuzz job. Every fuzz step in CI failed from the day it was written,
+    // three ways at once, and the badge never showed it because nobody read
+    // the job. No `cargo-fuzz = true` marker, so `cargo fuzz` refused the
+    // manifest; no `[[bin]]` stanzas, on the premise that cargo auto-discovers
+    // `fuzz_targets/` (it discovers only `src/bin/`); and
+    // `working-directory: fuzz`, which sends cargo-fuzz looking for
+    // `fuzz/fuzz/Cargo.toml`.
     let manifest = include_str!("../../../../fuzz/Cargo.toml");
     let ci = ci_workflow_source();
     let runner = include_str!("../../../../scripts/run-fuzz.sh");
@@ -354,9 +354,9 @@ fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
         "the corpus should carry between runs or every run starts from zero"
     );
 
-    // The crate is excluded from the workspace, so no gate in this repository
-    // resolves its lockfile: it had already fallen a dependency behind, and
-    // `cargo fuzz` does not pass --locked, so nothing said so.
+    // The crate is outside the workspace, so no gate here resolves its
+    // lockfile, and `cargo fuzz` does not pass --locked. It had fallen a
+    // dependency behind with nothing to say so.
     assert!(
         ci.contains("cargo check --manifest-path fuzz/Cargo.toml --locked"),
         "the fuzz job should resolve the fuzz lockfile before it fuzzes"
@@ -392,9 +392,8 @@ fn no_scan_path_reaches_the_crash_report() {
         "the thumbnail path must not be logged; the extension is enough to diagnose"
     );
 
-    // The guard used to look at startup and the thumbnail only, and missed the
-    // one site that actually leaked: a failed open logged the whole request,
-    // and the error it logged beside it carried the path a second time.
+    // Startup and the thumbnail are not the only sites. A failed open logged
+    // the whole request, and the error beside it carried the path again.
     let loading = repo_source_file("src/app/app_loading.rs");
     assert!(
         !loading.contains("paths = ?pending.paths"),
@@ -440,11 +439,11 @@ const FIELDS_THAT_DESCRIBE_A_SET: &[&str] = &[
 /// Every `tracing::` event in the viewer that names a path-shaped field, or
 /// renders a path into its message.
 ///
-/// Deliberately a text scan rather than a macro-expansion check: what it looks
-/// for should be readable by whoever has to satisfy it. Field names are read
-/// out of the macro call -- `name = value`, or the `?name` / `%name` shorthand
-/// -- so `error = %failure_without_paths(..)` is judged by the name `error`,
-/// while `?report_path` is judged by `report_path` and fails.
+/// A text scan, not a macro-expansion check, so what it looks for is readable
+/// by whoever has to satisfy it. Field names come out of the macro call as
+/// `name = value` or the `?name` / `%name` shorthand, so
+/// `error = %failure_without_paths(..)` is judged by the name `error` while
+/// `?report_path` is judged by `report_path` and fails.
 fn tracing_events_naming_a_path() -> Vec<String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) else {

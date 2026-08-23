@@ -9,10 +9,10 @@ use super::*;
 #[test]
 fn the_changelog_only_names_versions_that_can_be_released() {
     // The release job publishes the section matching the tag and nothing else.
-    // With one section per local version bump -- 1.0.7, 1.0.8, 1.0.9, none of
-    // them tagged -- a single v1.0.9 release would have silently dropped two
-    // versions' worth of changes from its notes, while the changelog advertised
-    // three versions nobody could download.
+    // One section per local version bump -- 1.0.7, 1.0.8, 1.0.9, none of them
+    // tagged -- and a v1.0.9 release drops two versions' worth of changes from
+    // its notes while the changelog advertises three downloads that do not
+    // exist.
     let changelog = include_str!("../../../../CHANGELOG.md");
     let manifest = include_str!("../../../../Cargo.toml");
     let version = manifest
@@ -48,11 +48,9 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         "the newest section should be the version about to ship, got {:?}",
         sections.first()
     );
-    // The rest are history, and history only goes one way. Two sections at
-    // the same version, or an older one above a newer one, means a local bump
-    // grew its own section instead of folding into the release being
-    // prepared -- which is how 1.0.7 and 1.0.8 came to advertise changes
-    // nobody could download.
+    // The rest are history, and history goes one way. A repeat, or an older
+    // section above a newer one, means a local bump grew its own section
+    // instead of folding into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
     for line in &sections {
         let Some(number) = line.split_whitespace().nth(1) else {
@@ -78,17 +76,15 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         seen.push(parsed);
     }
 
-    // Descending order is not the rule the name promises. A section below the
-    // newest describes something that was released, so a tag has to exist for
-    // it -- which is what makes untagged local bumps into a merge rather than
-    // three sections nobody can download. Tags are read from git; a source
-    // tarball has none, and there the ordering above is all there is.
+    // Ordering is not yet the rule the test name promises. A section below the
+    // newest claims something was released, so a tag has to exist for it. Tags
+    // come from git; a source tarball has none, and there the ordering above is
+    // all there is.
     let Some(tags) = repository_tags() else {
         return;
     };
-    // Only from the first tagged version onward. Sections older than the day
-    // tagging started describe releases this repository has no record of, and
-    // rewriting history to satisfy a test would be the wrong way round.
+    // Only from the first tagged version onward: sections older than the day
+    // tagging started describe releases this repository has no record of.
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
@@ -145,10 +141,10 @@ fn repository_tags() -> Option<Vec<String>> {
 
 #[test]
 fn the_usage_guide_documents_the_shortcuts_the_build_implements() {
-    // Every "how do I measure thickness" question used to have nowhere to
-    // point: the manifest homepage 404s and the README linked nothing. A guide
-    // that invents bindings would be worse than none, so this checks that the
-    // ones it lists are the ones the code reads.
+    // The manifest homepage 404s, so the guide is the only place a "how do I
+    // measure thickness" question can be pointed at. A guide that invents
+    // bindings is worse than no guide, hence the cross-check against the keys
+    // the code reads.
     let usage = include_str!("../../../../docs/USAGE.md");
     let readme = include_str!("../../../../README.md");
     assert!(
@@ -240,14 +236,13 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 
 #[test]
 fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
-    // The guide used to promise a key the build does not have (`F` framing a
-    // measurement) and skip one it does (Shift+Middle-click). Both are the same
-    // failure: the guide and the code drifted with nothing comparing them.
+    // Guide and code drift both ways with nothing comparing them: `F` framing
+    // a measurement, which the build does not do, and Shift+Middle-click,
+    // which it does and the guide skipped.
     //
-    // What this cannot check is meaning. `F` really is bound, and the guide
-    // really did say it framed the cut when it flips which half is kept; no
-    // assertion over text catches that. It catches the keys, so the prose is
-    // the only part a reviewer has to re-read.
+    // Meaning is out of reach here. `F` really is bound, and the guide really
+    // did say it framed the cut when it flips which half is kept. Keys are
+    // covered, so the prose is the only part a reviewer has to re-read.
     let usage = include_str!("../../../../docs/USAGE.md");
     let bound = keys_the_viewer_binds();
 

@@ -243,11 +243,9 @@ mod tests {
         assert!(s.cap_color[0] > s.cap_color[1]);
         assert!(s.cap_color[0] > s.cap_color[2]);
         // The constant against the hex its name promises, in the space the
-        // target actually is -- this compares numbers and renders nothing;
-        // what the render path does with a colour is pinned in
-        // occluview-render/tests/colour_space.rs. A linear conversion of
-        // #E84C4B put (198, 46, 45) on screen under a hex that says
-        // (232, 76, 75).
+        // target actually is. This compares numbers and renders nothing; what
+        // the render path does with a colour is pinned in
+        // occluview-render/tests/colour_space.rs.
         for (channel, expected) in s.cap_color[..3].iter().zip([0xE8, 0x4C, 0x4B]) {
             let byte = (channel * 255.0).round() as i32;
             assert!(

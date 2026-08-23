@@ -150,12 +150,11 @@ impl OccluViewApp {
         }
         let shared = Arc::clone(&slot.1);
 
-        // Everything that reads through `entry` happens first, because `entry`
-        // borrows the scene handle cloned at the top of this function, and that
-        // handle has to be gone before the scene is edited in place. Holding it
-        // across the edit is what a comment here used to describe as "the app
-        // holds the only reference" -- it did not, so every dab deep-copied the
-        // entire case, on the path whose whole purpose is to avoid that.
+        // Everything that reads through `entry` happens first: `entry` borrows
+        // the scene handle cloned at the top of this function, and that handle
+        // has to be gone before the scene is edited in place. Held across the
+        // edit, every dab deep-copies the entire case -- on the path whose
+        // whole purpose is to avoid that.
         let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
         let painted = self
             .align_painted
@@ -444,9 +443,8 @@ mod tests {
             .expect("a sparse patch path");
         assert!(patch.contains(".align_painted") && patch.contains(".patch("));
         assert!(patch.contains("write_scene_vertices_sparse("));
-        // The dab reads through a handle cloned from `self.scene`; that handle
-        // has to be released before the in-place edit, or `Arc::make_mut`
-        // deep-copies the whole case on every dab.
+        // Same rule as above: release the cloned handle before the in-place
+        // edit.
         assert!(
             crate::primary_ui_tests::appears_before(patch, "drop(scene);", "self.live_scene_mut()",),
             "the cloned scene handle must be dropped before the in-place edit"

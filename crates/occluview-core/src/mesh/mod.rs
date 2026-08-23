@@ -445,26 +445,24 @@ impl Mesh {
     /// which 24 ms is the vertex copy the snapshot genuinely needs and the rest
     /// is caches for a mesh that will most likely be dropped.
     ///
-    /// Two of the three are genuinely recoverable: `bbox_cached` falls back to
-    /// a walk, and the BVH is a `OnceLock` the sculpt preparation warms off the
-    /// UI thread. The principal frame is not. `principal_frame_cached` is a
+    /// Two of the three recover on their own: `bbox_cached` falls back to a
+    /// walk, and the BVH is a `OnceLock` the sculpt preparation warms off the
+    /// UI thread. The principal frame does not. `principal_frame_cached` is a
     /// plain getter with no fallback and nothing recomputes it, so a mesh that
-    /// arrives here without one never gets one -- and the cut view and bridge
-    /// split, which both orient from that frame, silently drop to the
-    /// view-coupled fallback for that layer. It is carried forward instead: the
-    /// frame is documented as a per-mesh-constant global-shape signal,
-    /// unaffected by local surface bumps, which is exactly what a sculpt
-    /// stroke is.
+    /// arrives here without one never gets one, and the cut view and bridge
+    /// split both drop to the view-coupled fallback for that layer with nothing
+    /// said.
     ///
-    /// It is carried, not recomputed, so it is the frame of the mesh this was
-    /// called on. Measured on a 20k-vertex arch: a localised dab moves the
+    /// So the frame is carried, not recomputed: it is a per-mesh-constant
+    /// global-shape signal, unaffected by local surface bumps, which is what a
+    /// sculpt stroke is. On a 20k-vertex arch a localised dab moves the
     /// principal axis by 0.02 degrees and a broad one by 0.87, against a
-    /// view-coupled fallback that can be tens of degrees out. Two cases are
-    /// worth knowing about: a caller that hands over a mirrored or rigidly
-    /// re-oriented vertex set gets a frame that is wrong by that transform
-    /// where it used to get `None`, and a sculpt that drives the geometry
-    /// degenerate keeps a frame where a recompute would have refused one.
-    /// Neither is reachable from the sculpt session, which is the only caller.
+    /// view-coupled fallback that can be tens of degrees out. Two edges to
+    /// know: a caller handing over a mirrored or rigidly re-oriented vertex set
+    /// gets a frame wrong by that transform where it would otherwise get
+    /// `None`, and a sculpt that drives the geometry degenerate keeps a frame a
+    /// recompute would have refused. Neither is reachable from the sculpt
+    /// session, the only caller.
     #[must_use]
     pub fn with_sculpted_vertices_uncached(&self, vertices: Vec<Vertex>) -> Option<Self> {
         if vertices.len() != self.vertices.len() {

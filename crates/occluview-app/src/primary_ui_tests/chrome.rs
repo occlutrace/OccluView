@@ -2,11 +2,10 @@ use super::*;
 
 #[test]
 fn primary_camera_action_labels_stay_generic() {
-    // This used to call a `#[cfg(test)]` stub in main.rs that returned an empty
-    // array, so it asserted that `[]` is empty and would have stayed green
-    // through any change to the real toolbar. The requirement behind it is
-    // real: the always-visible chrome stays generic, and named dental views
-    // belong in a surface the operator opens deliberately.
+    // Read against the real toolbar, not a `#[cfg(test)]` stub returning an
+    // empty array -- that asserts `[]` is empty and survives any change to the
+    // chrome. The requirement is real: always-visible chrome stays generic, and
+    // named dental views belong in a surface the operator opens.
     let chrome = app_chrome_source();
     let dialogs = app_dialogs_source();
     let toolbar = function_source(dialogs, "pub(super) fn show_toolbar_impl");
@@ -152,11 +151,10 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         ),
         "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
     );
-    // The early return is only half of it. The material-only path mutates
-    // through `Arc::make_mut`, which deep-copies the whole case while any other
-    // handle is alive -- measured at 45.75 ms per frame against 40 ns when the
-    // scene has a single owner. So the overlay must HAND OVER its handle rather
-    // than lend it, and drop it before touching the live scene.
+    // The early return is only half of it. The material-only path goes through
+    // `Arc::make_mut`, 45.75 ms per frame against 40 ns when the scene has a
+    // single owner, so the overlay must HAND OVER its handle rather than lend
+    // it and drop it before touching the live scene.
     assert!(
         viewport_source.contains("scene: Arc<Scene>,"),
         "the overlay handler must take ownership of the scene handle"
@@ -340,11 +338,9 @@ fn about_opens_the_embedded_third_party_notices() {
 
 #[test]
 fn the_unsaved_edits_flag_stays_derived() {
-    // It used to be a `bool` kept in step with the layer set by four separate
-    // assignments, one of which -- in the export path -- bypassed the helper
-    // that maintained both. When they disagreed, the close guard was told a
-    // hidden layer's edits were already on disk and the application shut
-    // without asking. Deriving it removes the state that can disagree.
+    // Derived from the layer set, not kept beside it: a parallel `bool` takes
+    // four assignments to maintain, the export path skipped one, and the close
+    // guard was told a hidden layer's edits were already on disk.
     let state = repo_source_file("src/app/state.rs");
     assert!(
         state.contains("pub(super) fn has_unsaved_mesh_edits(&self) -> bool"),

@@ -18,9 +18,9 @@ pub(super) fn read_doc(doc: &json::GltfDoc, bin_chunk: &[u8]) -> Result<Mesh, Fo
     let mut first_material: Option<usize> = None;
     {
         let mut walk = SceneWalk::new(doc, bin_chunk, &mut builder);
-        // One visit set for the whole search, not one per root: it used to be
-        // allocated and zeroed inside the loop, which made a document with no
-        // material anywhere cost a byte per node per root.
+        // One visit set for the whole search, not one per root: allocating and
+        // zeroing it inside the loop costs a byte per node per root on a
+        // document with no material anywhere.
         let mut material_visited = VisitedNodes::for_document(doc);
         for &node_idx in &scene.nodes {
             walk.node(node_idx, Mat4::IDENTITY)?;

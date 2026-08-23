@@ -13,10 +13,10 @@ use glam::Vec3;
 /// Split a wheel event over the Section panel into disc-resize and slice-zoom
 /// notches, draining it so it never reaches the camera.
 ///
-/// Both disc tools scope the wheel the same way, and both used to write this
-/// out: the same drain, the same division by [`CUT_WHEEL_PX_PER_NOTCH`], the
-/// same ctrl branch. Changing the gesture in one place and not the other gives
-/// an operator two tools whose wheels behave differently over the same panel.
+/// Both disc tools scope the wheel the same way: the same drain, the same
+/// division by [`CUT_WHEEL_PX_PER_NOTCH`], the same ctrl branch. Change the
+/// gesture in one copy and an operator gets two tools whose wheels behave
+/// differently over one panel.
 pub(super) fn section_panel_wheel(
     ctx: &egui::Context,
     over_section_panel: bool,
@@ -49,8 +49,8 @@ pub(super) struct DiscViewGeometry {
 
 /// Where the pointer's ray starts and which way the camera is facing.
 ///
-/// The second block both disc tools carried verbatim. With no pointer the ray
-/// starts at the eye, which is what a disc that is not being aimed wants.
+/// With no pointer the ray starts at the eye, which is what a disc nobody is
+/// aiming wants.
 pub(super) fn disc_view_geometry(
     camera: &occluview_core::Camera,
     viewport_rect: egui::Rect,

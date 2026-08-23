@@ -29,20 +29,16 @@ use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenPro
 const PIPE_BUFFER_BYTES: u32 = 256 * 1024;
 const PIPE_WAIT_TIMEOUT_MS: u32 = 150;
 
-/// The pipe's base name. The runtime name appends a per-user suffix, so two
-/// signed-in users never share one; see `pipe_name_wide`.
+/// Base name only. `pipe_name_wide` appends a per-user suffix so two
+/// signed-in users never land on the same pipe.
 const PIPE_NAME: &str = "OccluTrace.OccluView.OpenRequests";
 
 /// The current user's SID in string form, e.g. `S-1-5-21-...-1001`.
 ///
-/// This is the one place the process token is read. Both the per-user pipe name
-/// and the pipe's DACL derive from it, and they must agree: a name is only a
-/// convention -- anything in the session can create that name first -- while
-/// the DACL is what actually keeps another user out.
+/// Both the per-user pipe name and the pipe's DACL derive from this, and they
+/// have to agree. The name is only a convention; anything in the session can
+/// claim it first. The DACL is what keeps another user out.
 fn current_user_sid_string() -> Option<String> {
-    // `TOKEN_USER` is 8-aligned and a `Vec<u8>` is not, so the buffer is
-    // allocated as `u64` and sized up to the next whole element. Casting a
-    // byte vector here would be a misaligned read of a Win32 struct.
     let mut token = HANDLE::default();
     // SAFETY: `token` is an out-parameter this function owns and closes below.
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
@@ -61,6 +57,8 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
     if needed == 0 {
         return None;
     }
+    // `TOKEN_USER` is 8-aligned and a `Vec<u8>` is not, so allocate as `u64`
+    // and round up. A byte vector here would be a misaligned struct read.
     let mut buffer = vec![0_u64; (needed as usize).div_ceil(size_of::<u64>())];
     // SAFETY: `buffer` is at least `needed` bytes, 8-aligned, and writable for
     // the duration of the call.
@@ -92,17 +90,15 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
 
 /// A short, stable per-user suffix for the pipe and mutex names.
 ///
-/// `None` when the SID cannot be read. The suffix used to fall back to the
-/// literal "default", which made both object names predictable and shared: the
-/// listener refuses to create a pipe it cannot protect, but the SENDER would
-/// still have written the request -- the full list of scan paths -- to whoever
-/// held that name, and a squatted mutex under it makes every launch believe it
-/// is the second instance, forward its paths and exit. Without a SID there is
-/// no per-user name to use, so there is no hand-off.
+/// `None` when the SID cannot be read, and callers must decline rather than
+/// substitute a fixed string. A predictable shared name is worse than no
+/// single-instance check at all: a squatter holding the mutex makes every
+/// launch believe it is the second instance and write its scan paths to him
+/// before exiting.
 fn user_sid_suffix() -> Option<String> {
     let sid = current_user_sid_string()?;
     // FNV-1a, only to keep the object names short and free of SID punctuation.
-    // It is not a security boundary -- the DACL is.
+    // Not a security boundary; the DACL is.
     let mut hash: u64 = 14_695_981_039_346_656_037;
     for byte in sid.as_bytes() {
         hash ^= u64::from(*byte);
@@ -111,21 +107,19 @@ fn user_sid_suffix() -> Option<String> {
     Some(format!("{hash:016x}"))
 }
 
-/// A security descriptor granting full access to the current user and nobody
-/// else, for the listening end of the hand-off pipe.
+/// A security descriptor granting the current user full access and nobody else
+/// anything, for the listening end of the hand-off pipe.
 ///
-/// Without it the pipe carries the default DACL, and on a shared workstation --
-/// a clinic reception machine is exactly that -- another signed-in user can
-/// connect to it. What arrives over that pipe is a list of scan paths, which in
-/// dental work name the patient.
+/// The default DACL would let any signed-in user on a shared workstation --
+/// a clinic reception machine is exactly that -- connect and read what travels
+/// over the pipe, which is a list of scan paths, which in dental work names the
+/// patient.
 ///
-/// Returns the descriptor together with the allocation backing it; the caller
-/// must keep the allocation alive for as long as the descriptor is used and
-/// free it afterwards.
+/// The returned descriptor is a LocalAlloc'd buffer the caller must free.
 fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
     let sid = current_user_sid_string()?;
-    // D: this is a DACL. P: protected, so no inherited ACE widens it.
-    // (A;;GA;;;<sid>): allow generic-all to that SID, and to nothing else.
+    // D: a DACL. P: protected, so no inherited ACE widens it.
+    // (A;;GA;;;<sid>): generic-all to that SID, and to nothing else.
     let sddl = HSTRING::from(format!("D:P(A;;GA;;;{sid})"));
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     // SAFETY: `sddl` is a NUL-terminated wide string alive across the call, and
@@ -154,10 +148,8 @@ fn pipe_name_wide() -> Option<Vec<u16>> {
 }
 
 pub(super) fn acquire() -> Result<SingleInstance> {
-    // Without a SID the name cannot be made per-user, and a shared name is
-    // worse than no single-instance check: a squatter holding it makes every
-    // launch believe it is the second instance, hand its paths over and exit.
-    // Behaving as the first instance is the safe answer.
+    // No SID, no per-user name (see `user_sid_suffix`). Behave as the first
+    // instance instead.
     let Some(name) = mutex_name() else {
         return Ok(SingleInstance {
             handle: None,
@@ -177,13 +169,12 @@ pub(super) fn acquire() -> Result<SingleInstance> {
 
 /// How many creates in a row may fail before the listener gives up.
 ///
-/// `FILE_FLAG_FIRST_PIPE_INSTANCE` makes a claimed name fail permanently
-/// rather than yielding a second instance, so a squatted name is not a
-/// transient condition: the loop retried every 50 ms and wrote a warning each
-/// time, which overwrote the whole 50-line crash-report ring in under three
-/// seconds -- the process turned its own diagnostics into one repeated line.
-/// A handful of retries covers a genuinely transient failure; past that the
-/// disk fallback listener, which runs beside this one, carries the hand-off.
+/// `FILE_FLAG_FIRST_PIPE_INSTANCE` makes a claimed name fail permanently, so a
+/// squatted name never clears. Retrying it every 50 ms writes a warning each
+/// time and overwrites the whole 50-line crash-report ring in under three
+/// seconds, leaving the process with one repeated line for diagnostics. Five
+/// covers a genuinely transient failure; past that the disk fallback listener
+/// beside this one carries the hand-off.
 const MAX_CONSECUTIVE_PIPE_FAILURES: u32 = 5;
 
 pub(super) fn spawn_pipe_listener(sender: mpsc::Sender<OpenRequest>, repaint_ctx: egui::Context) {
@@ -223,9 +214,8 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
         return Ok(());
     }
 
-    // The request carries the paths of the scans being opened. Without a SID
-    // there is no per-user name to send them to, and the shared fallback name
-    // is exactly the one an unrelated process can be holding.
+    // The request carries the paths of the scans being opened. With no
+    // per-user name to send them to, send them nowhere.
     let Some(pipe_wide) = pipe_name_wide() else {
         bail!("refusing to send an open request to a pipe name that is not per-user");
     };
@@ -236,12 +226,10 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
     }
 
     // SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION caps what the server end
-    // may do with this connection. Without it the connection defaults to
-    // impersonation level, so whoever owns the other end of the pipe can call
-    // `ImpersonateNamedPipeClient` and act as this user. At identification
-    // level it can learn who we are and nothing more -- which is all a
-    // legitimate listener ever needs, and the textbook mitigation for the
-    // named-pipe elevation pattern.
+    // may do with this connection. The default is impersonation level, which
+    // lets whoever owns the other end call `ImpersonateNamedPipeClient` and act
+    // as this user. At identification level it learns who we are and no more,
+    // which is all a legitimate listener needs.
     //
     // SAFETY: Opening an existing named pipe with a valid constant path.
     let pipe = unsafe {
@@ -287,20 +275,19 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
     };
     let pipe_name = PCWSTR(pipe_wide.as_ptr());
 
-    // Two things this listener must not do: share its name with a squatter, and
-    // accept a connection from another user.
+    // Two things this listener must not do: share its name with a squatter,
+    // and accept a connection from another user.
     //
-    // FILE_FLAG_FIRST_PIPE_INSTANCE makes the create FAIL if the name already
-    // exists, instead of silently becoming a second instance beside whoever got
+    // FILE_FLAG_FIRST_PIPE_INSTANCE makes the create fail if the name already
+    // exists, rather than quietly becoming a second instance beside whoever got
     // there first. The DACL grants the current user and nobody else, so on a
     // shared workstation another signed-in account cannot read the scan paths
     // that travel over this pipe.
-    // No descriptor, no pipe. Falling through to `None` here would have created
-    // the pipe with the DEFAULT DACL under a name that is equally predictable
-    // -- `user_sid_suffix` answers "default" in the same failure -- which is
-    // precisely the shared-workstation squat this function exists to prevent,
-    // reached by a silent downgrade. Hand-off is not load-bearing: the disk
-    // fallback listener runs beside this one and carries the request.
+    //
+    // No descriptor, no pipe: creating it with the default DACL would be the
+    // shared-workstation squat this function exists to prevent, reached by a
+    // silent downgrade. Hand-off is not load-bearing -- the disk fallback
+    // listener runs beside this one and carries the request.
     let Some(descriptor) = owner_only_security_descriptor() else {
         bail!("refusing to create the single-instance pipe without an owner-only DACL");
     };
@@ -332,8 +319,8 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
         windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(descriptor.0))
     };
     if pipe.is_invalid() {
-        // Either a transient failure or, more interestingly, someone already
-        // holds this name. Both are worth reporting rather than working around.
+        // Transient, or someone already holds the name. Report either; do not
+        // work around either.
         bail!("creating single-instance pipe failed (name already claimed?)");
     }
 

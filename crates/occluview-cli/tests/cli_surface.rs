@@ -40,9 +40,9 @@ fn entries(directory: &Path) -> Vec<String> {
 
 #[test]
 fn help_is_answered_on_stdout_and_writes_nothing() {
-    // `--help` used to be answered on stderr, which cannot be piped into a
-    // pager or a file without redirecting the error stream. And in the
-    // subcommand position it was read as a filename: `thumbnail --help`
+    // Two failures at once: help answered on stderr cannot be piped into a
+    // pager or a file without redirecting the error stream, and in the
+    // subcommand position it was read as a filename -- `thumbnail --help`
     // rendered a placeholder cube into ./--help.png and exited 0.
     let directory = scratch("help");
     for args in [

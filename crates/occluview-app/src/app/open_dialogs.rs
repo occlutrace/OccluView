@@ -2,11 +2,10 @@
 
 /// Which modal dialogs are up this frame.
 ///
-/// The five terms used to be written out by hand at each of five call sites
-/// and had drifted to three, four and six of them, which is how Escape came to
-/// tear down the tool behind an open dialog. Naming them once makes the set
-/// enumerable -- and testable without an egui context, which the call sites
-/// are not.
+/// Written out by hand at each of five call sites, the set drifted to three,
+/// four and six terms, which is how Escape came to tear down the tool behind
+/// an open dialog. Named once, it is enumerable -- and testable without an
+/// egui context, which the call sites are not.
 // Five independent bools rather than a state enum because the dialogs are
 // independent: an error can arrive while the unsaved-changes prompt is up,
 // and the licences window can sit over either. Collapsing them would lose

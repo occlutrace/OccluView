@@ -469,9 +469,9 @@ fn rejects_index_count_not_divisible_by_three() {
     assert!(matches!(err, FormatError::Malformed { .. }));
 }
 
-/// A node that lists itself as a child. Before the visit set this
-/// recursed until the stack was exhausted — a guard-page fault, not a
-/// panic, so nothing in the process could catch it.
+/// A node that lists itself as a child. Without the visit set this recurses
+/// until the stack is exhausted — a guard-page fault, not a panic, so nothing
+/// in the process can catch it.
 #[test]
 fn rejects_a_node_that_is_its_own_child() {
     let json = br#"{"asset":{"version":"2.0"},

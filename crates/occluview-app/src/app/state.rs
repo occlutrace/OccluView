@@ -1,8 +1,8 @@
 //! `OccluViewApp` itself: the fields the whole binary shares, and the small
 //! set of methods that keep them consistent.
 //!
-//! The render caches are invalidated through four booleans, and the rule for
-//! setting them is the one thing worth knowing before touching this file:
+//! Four booleans invalidate the render caches, and the rule for setting them
+//! is the one thing worth knowing before touching this file:
 //!
 //! - `needs_render` — draw again this frame. A camera move sets this and
 //!   nothing else, because the prepared geometry did not change.
@@ -11,11 +11,9 @@
 //! - `offscreen_scene_dirty` — the offscreen path must rebuild its own.
 //! - `selection_overlay_dirty` — the selection overlay mesh must be rebuilt.
 //!
-//! Anything that changes geometry, materials or the scene itself sets all
-//! four; anything that only moves the camera sets the first. Skipping one of
-//! the last three leaves a stale cache on screen for exactly the path that was
-//! not marked, which is invisible in whichever path the author happened to be
-//! testing.
+//! Geometry, materials or the scene itself: set all four. Camera only: set the
+//! first. Miss one of the last three and that path keeps a stale cache on
+//! screen, invisible from whichever path the author happened to be testing.
 
 use super::open_dialogs::OpenDialogs;
 use super::{
@@ -246,12 +244,11 @@ pub(super) struct RenderedFrame {
 
 /// Edit a scene that has been taken out of `self.scene` for the duration.
 ///
-/// `Option::take` moves the field's handle without changing the strong count,
-/// so the rule is the one [`OccluViewApp::live_scene_mut`] asserts: if anything
-/// else still holds a handle, `Arc::make_mut` copies the whole case. Two sculpt
-/// paths take the scene out because they put a rebuilt one back, and they were
-/// calling `Arc::make_mut` directly -- outside the one place the rule is
-/// stated, and invisible to the guard that looks for it.
+/// `Option::take` moves the handle without touching the strong count, so the
+/// rule [`OccluViewApp::live_scene_mut`] asserts still applies: a second live
+/// handle turns `Arc::make_mut` into a copy of the whole case. The two sculpt
+/// paths that take the scene out, because they put a rebuilt one back, assert
+/// it here instead of reaching for `Arc::make_mut` where no guard looks.
 pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
     debug_assert_eq!(
         Arc::strong_count(scene),
@@ -264,22 +261,18 @@ pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
 
 impl OccluViewApp {
     /// Status text is a transient interaction hint, not a second permanent
-    /// toolbar. Track direct legacy assignments centrally so every caller gets
-    /// the same expiry behavior without duplicating timer code across tools.
+    /// toolbar. Expiring it in one place keeps every caller on the same clock
+    /// without a timer per tool.
     ///
-    /// KNOWN BEHAVIOUR, not a bug to rediscover: the timer restarts when the
-    /// TEXT changes, not when a message is set. Repeat an action at t = 3.9 s
-    /// and the confirmation it prints is identical to the one already showing,
-    /// so the snapshot comparison sees no change, the clock keeps running from
-    /// the first one, and the toast vanishes a tenth of a second later --
-    /// looking like it was never shown.
+    /// KNOWN BEHAVIOUR, not a bug to rediscover: the clock restarts on a change
+    /// of TEXT, not on a call. Repeat an action at t = 3.9 s and the
+    /// confirmation is byte-identical to the one already showing, the snapshot
+    /// comparison sees nothing change, and the toast disappears a tenth of a
+    /// second later as though it had never been shown.
     ///
-    /// The honest shape is one field, `Option<StatusMessage { text, since }>`
-    /// behind a setter that restarts the clock on every call. That is 91
-    /// mechanical call-site edits across the crate, and it belongs in a commit
-    /// that contains those 91 edits and nothing else. Until then, this is
-    /// written down rather than left for the next person debugging a
-    /// disappearing toast.
+    /// The shape that fixes it is one `Option<StatusMessage { text, since }>`
+    /// behind a setter that restarts the clock on every call: 91 mechanical
+    /// call-site edits, and a commit containing those and nothing else.
     fn expire_status_message(&mut self, ctx: &egui::Context) {
         const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(4);
         let now = Instant::now();
@@ -436,14 +429,12 @@ impl OccluViewApp {
     /// Whether a modal dialog owns the keyboard.
     ///
     /// Escape belongs to the dialog in front of the operator, never to a tool
-    /// behind it. Five places used to decide that by hand and three of them had
-    /// drifted: the cut and align tools did not count the replace-open guard,
-    /// and none counted the third-party licences window. With either of those
-    /// up, Escape tore the tool down behind the dialog -- and for align it also
-    /// ran `cancel_align_session`, putting every scan back where it started.
-    ///
-    /// One predicate, so the next dialog is remembered in one place instead of
-    /// five.
+    /// behind it. Decided inline, that list drifts: the cut and align tools
+    /// missed the replace-open guard and nobody counted the third-party
+    /// licences window, so with either up Escape tore the tool down behind the
+    /// dialog -- and for align also ran `cancel_align_session`, putting every
+    /// scan back where it started. One predicate, so the next dialog gets
+    /// remembered once.
     pub(super) fn modal_dialog_open(&self) -> bool {
         OpenDialogs {
             close_guard: self.close_guard_open,
@@ -457,13 +448,11 @@ impl OccluViewApp {
 
     /// Edit hotkeys, refused while a dialog is up.
     ///
-    /// This is the only `_impl` pair in the crate that is not a pass-through,
-    /// and the callee is named accordingly. The other twenty-nine teach a
-    /// reader that `foo` and `foo_impl` are interchangeable, which would make
-    /// `handle_edit_shortcuts_impl` a live trapdoor: one plausible call from a
-    /// neighbouring module deletes faces or replays an undo while the
-    /// unsaved-changes prompt is open, silently changing what "Save" then
-    /// writes. `handle_edit_shortcuts_unguarded` cannot be called by habit.
+    /// The other twenty-nine `_impl` pairs in the crate are pass-throughs, so
+    /// the suffix reads as "same thing". An `_impl` here would be a trapdoor:
+    /// one plausible call from a neighbouring module deletes faces or replays
+    /// an undo while the unsaved-changes prompt is open, quietly changing what
+    /// "Save" then writes. `_unguarded` cannot be called by habit.
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
         // The bridge tool owns the scene while it is armed, which is not a
         // dialog and so is not part of the shared predicate.
@@ -484,15 +473,13 @@ impl OccluViewApp {
 
     /// The live scene, mutable in place.
     ///
-    /// `Arc::make_mut` copies the whole scene whenever a second handle to it
-    /// exists, and the callers below all run per frame: a slider drag, a brush
-    /// dab, a nudge of an aligned layer. Measured on two 945k-vertex arches,
-    /// that is 40 ns when this is the sole handle against 45.75 ms when it is
-    /// not -- a fifty-millisecond copy of the entire case, every frame, to
-    /// change a few numbers.
+    /// `Arc::make_mut` copies the whole scene whenever a second handle exists,
+    /// and the callers below all run per frame: a slider drag, a brush dab, a
+    /// nudge of an aligned layer. On two 945k-vertex arches that is 40 ns as
+    /// sole handle against 45.75 ms otherwise -- the entire case copied every
+    /// frame to change a few numbers.
     ///
-    /// Every in-place scene edit goes through here so the condition is asserted
-    /// once rather than assumed in six places, and a future caller that keeps a
+    /// Every in-place scene edit comes through here, so a caller that keeps a
     /// handle alive across the edit fails a test instead of costing frames.
     pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
         let scene = self.scene.as_mut()?;
@@ -571,13 +558,9 @@ impl OccluViewApp {
 
     /// Whether anything in the scene differs from what is on disk.
     ///
-    /// Derived rather than tracked. This used to be a `bool` maintained
-    /// alongside the set by four separate assignments, one of which -- in the
-    /// export path -- bypassed the helper that kept them in step. The doc on
-    /// [`Self::forget_unsaved_edits`] records how that ended the last time the
-    /// two disagreed: the close guard was told a hidden layer's edits were on
-    /// disk when they were only in memory, and the application shut without
-    /// asking. A state that cannot be reached cannot be reached wrongly.
+    /// Derived, not tracked. A parallel `bool` needs four assignments to stay
+    /// in step with the set, and the export path skipped one; see
+    /// [`Self::forget_unsaved_edits`] for what the disagreement cost.
     pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
         !self.unsaved_edit_layer_ids.is_empty()
     }

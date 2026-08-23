@@ -122,12 +122,11 @@ impl OccluViewApp {
     /// Decide who owns the pointer, for a tool whose section slice is
     /// `slice_visible`.
     ///
-    /// Both disc tools need this and both used to compute it themselves, so
-    /// adding one overlay -- a new floating window, a changed gizmo footprint --
-    /// meant editing two functions, and missing one made clicks on that panel
-    /// plant or drag a disc underneath it for exactly one of the two tools. No
-    /// compile error, no failing test, and a bug report that reads "sometimes
-    /// clicking the panel moves the cut".
+    /// Both disc tools need this. Computed in each of them, a new floating
+    /// window or a changed gizmo footprint is two edits, and missing one lets
+    /// clicks on that panel plant or drag a disc underneath it for exactly one
+    /// tool: no compile error, no failing test, and a bug report that reads
+    /// "sometimes clicking the panel moves the cut".
     ///
     /// The gizmo footprint comes from `active_section_panel_rect`, the same
     /// call the painter uses. A hand-rolled equivalent is how the hit box ends
@@ -647,9 +646,8 @@ impl OccluViewApp {
         let raw_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let primary_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
         let ctrl = ctx.input(|i| i.modifiers.command);
-        // The disc only owns the *bare* viewport: never plant, slice or size it
-        // through an egui surface sitting over the scene. Both disc tools ask
-        // the same question, so they ask it in the same place.
+        // The disc only owns the *bare* viewport: never plant, slice or size
+        // it through an egui surface sitting over the scene.
         //
         // The docked Section panel owns its own pointer (measuring plus the
         // disc-radius wheel) while it is on screen, and the axis gizmo needs an

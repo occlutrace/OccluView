@@ -211,10 +211,9 @@ mod tests {
 
     #[test]
     fn a_non_ascii_document_longer_than_the_scan_window_is_rejected_not_a_panic() {
-        // The 512-byte scan window used to be a raw `str` slice. Pad with a
-        // two-byte character so that byte 512 lands inside one: the old code
-        // panicked here, and under `panic = "abort"` that ended the process
-        // while opening a file.
+        // Pad with two-byte characters so byte 512 lands inside one. A raw
+        // `str` slice panics here, and under `panic = "abort"` that ends the
+        // process while opening a file.
         // One ASCII byte then two-byte characters: every boundary after it is
         // odd, so byte 512 falls inside a character.
         let padded = format!("a{}", "й".repeat(400));

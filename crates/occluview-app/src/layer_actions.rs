@@ -45,12 +45,10 @@ pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
 
 /// Every action the layer context menu can raise.
 ///
-/// The list is exhaustive on purpose and checked by
-/// `every_layer_action_is_reachable_from_the_menu`: a variant no menu can
-/// produce is a handler nobody can run, a test that proves nothing, and a
-/// reader counting features the product does not have. `Solo`, `ShowAll`,
-/// `ResetOpacity` and `ToggleVisibility` were exactly that -- the layer row
-/// owns visibility directly and never went through this enum.
+/// Exhaustive, and held that way by
+/// `every_layer_action_is_offered_by_a_surface_that_raises_it`. A variant no
+/// menu can produce is a handler nobody can run, a test that proves nothing,
+/// and a reader counting features the product does not have.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayerContextAction {
     NextTint,
@@ -460,15 +458,14 @@ mod tests {
     /// Every action the enum declares must be offered by something the
     /// operator can click.
     ///
-    /// The layer menu had drifted to four variants no menu could produce, each
-    /// with a handler, a passing test, and in two cases a drawn glyph: a
-    /// reader counted twenty actions in a menu that offered sixteen.
+    /// Four variants once drifted out of reach, each with a handler, a passing
+    /// test and in two cases a drawn glyph: a reader counted twenty actions in
+    /// a menu that offered sixteen.
     ///
-    /// The first form of this guard searched the handler files as well as the
-    /// menus, so "has a handler" satisfied "can be raised" -- the drift itself
-    /// would have passed. Each action now names the surface that offers it, so
-    /// a new variant has to say where it is raised, and deleting a button
-    /// fails the line that claims it.
+    /// Searching the handler files too would let "has a handler" satisfy "can
+    /// be raised", which the drift itself would have passed. Each action names
+    /// the surface that offers it instead, so a new variant has to say where it
+    /// is raised and deleting a button fails the line that claims it.
     #[test]
     fn every_layer_action_is_offered_by_a_surface_that_raises_it() {
         // Where an action is offered. `MeshEditorPanel` carries the
@@ -485,9 +482,9 @@ mod tests {
         let panel = include_str!("mesh_editor_groups.rs");
         let router = include_str!("app/app_mesh_editor.rs");
 
-        // Crop, cut, separate, delete and close-holes are deliberately NOT in
-        // the layer menu -- menu.rs asserts their absence -- because they act
-        // on a selection that only the Mesh Editor can make.
+        // Crop, cut, separate, delete and close-holes are NOT in the layer
+        // menu -- menu.rs asserts their absence -- because they act on a
+        // selection only the Mesh Editor can make.
         let surfaces: [(LayerContextAction, &[Surface]); 16] = [
             (LayerContextAction::NextTint, &[Surface::LayerMenu]),
             (LayerContextAction::ToggleWireframe, &[Surface::LayerMenu]),

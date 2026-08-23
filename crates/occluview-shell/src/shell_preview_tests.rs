@@ -645,12 +645,12 @@ fn the_preview_window_and_the_com_object_die_together() {
         "a window destroyed with its parent must clear the handler's stale HWND"
     );
 
-    // The second route above was named here and asserted nowhere. Destroying
-    // the window narrows it -- the common case then returns 0 from the modal
-    // call -- but it cannot close it: the frame that opened the menu is still
-    // on the stack when Drop runs, and running the selected command from there
-    // reads the preview scene and the source stream of a freed object. What
-    // closes it is refusing to touch `self` once the window no longer names it.
+    // Destroying the window narrows the second route -- the common case then
+    // returns 0 from the modal call -- but cannot close it: the frame that
+    // opened the menu is still on the stack when Drop runs, and running the
+    // selected command from there reads the preview scene and the source
+    // stream of a freed object. What closes it is refusing to touch `self`
+    // once the window no longer names it.
     let menu = include_str!("com/preview/context_menu.rs");
     let after_tracking = menu
         .split_once("TrackPopupMenuEx(menu,")

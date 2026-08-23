@@ -289,10 +289,9 @@ mod tests {
 
     #[test]
     fn a_rejected_export_leaves_the_destination_untouched() {
-        // A PLY point cloud is a loadable layer, so "export this layer as
-        // .stl over an existing scan" is an ordinary action. The rejection
-        // used to arrive after `File::create` had already truncated the
-        // destination, which destroyed the scan that was there.
+        // A PLY point cloud is a loadable layer, so "export this layer as .stl
+        // over an existing scan" is an ordinary action, and the rejection has
+        // to land before `File::create` truncates.
         let file = NamedTempFile::new().expect("temp file");
         let seed = b"an existing scan the operator still needs";
         std::fs::write(file.path(), seed).expect("seed destination");

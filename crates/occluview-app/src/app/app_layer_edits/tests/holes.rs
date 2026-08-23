@@ -192,7 +192,7 @@ fn non_face_edit_action_errors_instead_of_aborting() {
     };
     let selection = FaceSelection::new(vec![true]);
 
-    // NextTint is not a face edit. The adapter must degrade to an honest error
+    // NextTint is not a face edit. The adapter must degrade to a typed error
     // (which callers surface as a failed edit), never `unreachable!` — release
     // ships `panic = "abort"`, so that would be a hard process crash.
     let result = selected_face_edit_result(&mesh, &selection, LayerContextAction::NextTint);

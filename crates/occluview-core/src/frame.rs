@@ -12,9 +12,8 @@ pub const UP: Vec3 = Vec3::Y;
 
 /// OccluView's canonical forward axis (into the screen, away from camera).
 ///
-/// No caller uses it directly, and that is deliberate: this module's job is to
-/// state the convention, and a triple missing its middle term states it worse.
-/// Keeping it is cheaper than answering the same audit question again.
+/// No caller uses it directly. This module's job is to state the convention,
+/// and a triple missing its middle term states it worse.
 pub const FORWARD: Vec3 = Vec3::NEG_Z;
 
 /// OccluView's canonical right axis.

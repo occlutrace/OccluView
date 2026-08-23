@@ -222,12 +222,11 @@ impl SculptTool {
 
         // The worker gets the one mesh it prepares, not the case it came from.
         // An `Arc<Scene>` alive in a background thread makes every in-place
-        // scene edit on the UI thread copy the whole case through
-        // `Arc::make_mut`, for as long as the preparation runs -- seconds on a
-        // full arch, which is exactly why the preparation is off-thread. In
-        // that window an opacity slider, a tint, an align nudge or a ghost
-        // toggle each paid 45 ms and, in a debug build, tripped the assertion
-        // in `live_scene_mut`.
+        // scene edit on the UI thread copy the whole case for as long as the
+        // preparation runs -- seconds on a full arch, which is why it is
+        // off-thread at all. In that window an opacity slider, a tint, an align
+        // nudge or a ghost toggle each paid 45 ms, and a debug build tripped
+        // the assertion in `live_scene_mut`.
         //
         // Cloning the mesh copies its vertex and index arrays once. The BVH
         // cell is an `Arc` shared across clones, so `warm_bvh` below is still
@@ -481,16 +480,13 @@ mod tests {
     use glam::Quat;
     use occluview_core::{Mesh, SceneMesh};
 
-    /// The undo baseline is speculative work: it is kept in case someone
-    /// presses undo, and most strokes are never undone. Building it with the
-    /// caches put 22 ms of bounding box, PCA and BVH refit on the first dab of
-    /// every stroke, measured on a million-vertex layer.
+    /// The undo baseline is speculative work: most strokes are never undone.
+    /// `snapshot_mesh` records what building it with the caches costs the first
+    /// dab of every stroke.
     #[test]
     fn the_stroke_baseline_is_snapshotted_cold() {
-        // Only the part of the file above this module counts. Searching the
-        // whole of it matched the needle written in this assertion, so the
-        // guard passed on its own text: the production call could be changed
-        // back to the caching form and nothing would go red.
+        // Only the part above this module counts, or the guard matches the
+        // needle in its own assertion and passes on its own text.
         let source = include_str!("sculpt_tool.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or(source);
         assert!(

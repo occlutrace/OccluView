@@ -110,21 +110,19 @@ fn real_main() -> Result<()> {
             // the compositor's native activation protocol on Linux.
             let raise_target = single_instance::RaiseTarget::from_handles(cc, cc);
             // What actually reaches the offscreen fallback, traced rather than
-            // assumed: this closure runs only after eframe has already built a
-            // device, because `WgpuWinitApp::init_run_state` calls
-            // `set_window(..)?` before `painter.render_state()`. An adapter or
-            // device failure therefore aborts `run_native` and never gets here.
-            // The single remaining trigger is `with_shared_device_sample_count`
-            // failing on a device that already works -- a pipeline, shader or
-            // bind-group failure -- and the fallback's cure for that is a
-            // second wgpu device building the same pipelines from the same
-            // shaders.
+            // assumed: this closure runs only after eframe has built a device,
+            // because `WgpuWinitApp::init_run_state` calls `set_window(..)?`
+            // before `painter.render_state()`. An adapter or device failure
+            // aborts `run_native` and never gets here. That leaves one trigger,
+            // `with_shared_device_sample_count` failing on a device that
+            // already works -- a pipeline, shader or bind-group failure -- for
+            // which the fallback's cure is a second wgpu device building the
+            // same pipelines from the same shaders.
             //
-            // So the branch is kept, but nobody should mistake it for "this
-            // machine has no GPU" coverage: that case never arrives here. It is
-            // exercised by the same overlay body as the live path (see
-            // `show_viewport_overlays`), which is what stops it rotting
-            // unnoticed for the operators it does serve.
+            // The branch stays, but it is not "this machine has no GPU"
+            // coverage; that case never arrives here. The same overlay body as
+            // the live path runs it (see `show_viewport_overlays`), which is
+            // what stops it rotting for the operators it does serve.
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
                 match live_viewport::LiveViewport::from_render_state(state) {
                     Ok(viewport) => Some(viewport),
@@ -245,10 +243,9 @@ fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     let path = dir.join(format!("occluview-{kind}-{stamp}.txt"));
-    // The file's own name, not its path. The directory sits under the
-    // operator's profile and carries their account name, and this is the file
-    // the viewer asks them to attach to a public issue -- whoever opens it
-    // already knows where it came from.
+    // The file's own name, not its path: the directory sits under the
+    // operator's profile and carries their account name. Whoever opens the
+    // report already knows where it came from.
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -358,9 +355,8 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 
     #[cfg(not(windows))]
     {
-        // The report's own name, not its path: the directory is under the
-        // operator's home and this line goes into the ring that the NEXT
-        // report carries.
+        // Name, not path, as above -- and this line goes into the ring the
+        // NEXT report carries.
         let report = report_path
             .and_then(|path| path.file_name())
             .and_then(|name| name.to_str())

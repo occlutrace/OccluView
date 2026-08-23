@@ -8,10 +8,10 @@ use occluview_render::Offscreen;
 /// an empty headless render target. Installed code prefers hardware and lets
 /// the renderer fall back when no suitable adapter exists.
 ///
-/// Deliberately a copy of the same function in `occluview-shell`. `cfg!(test)` is
-/// evaluated per crate: a shared definition would report "not under test"
-/// while this crate's own tests run, which is the case the fallback exists
-/// for. The two bodies must stay identical, and a contract test says so.
+/// The same function exists in `occluview-shell`, and has to: `cfg!(test)` is
+/// evaluated per crate, so a shared definition reports "not under test" while
+/// this crate's own tests run -- the case the fallback exists for. The two
+/// bodies must stay identical, and a contract test says so.
 pub(crate) const fn should_prefer_hardware_offscreen() -> bool {
     cfg!(all(windows, not(test)))
 }

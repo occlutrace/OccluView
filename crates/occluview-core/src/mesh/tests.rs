@@ -653,11 +653,11 @@ fn core_repair_cleans_defective_mesh_and_preserves_name() {
 #[test]
 fn every_facet_degeneracy_copy_holds_the_same_number() {
     // Four crates carry this rule and two of them cannot import it: the
-    // layering forbids `occlu-mesh-edit` and `occluview-hps` from depending on
-    // anything. So the copies stay and the test is what keeps them equal --
-    // the fix of 2026-07-25 landed in one crate and reached the other three on
-    // 2026-08-22, and for those four weeks every scan opened through the other
-    // paths lost shading on facets under 20 um.
+    // layering keeps `occlu-mesh-edit` and `occluview-hps` off every other
+    // OccluView crate. So the copies stay and this test is what keeps them
+    // equal -- the fix of 2026-07-25 landed in one crate and reached the
+    // others on 2026-08-22, and for those four weeks every scan opened through
+    // the other paths lost shading on facets under 20 um.
     // Core owns the definition, so pin its value rather than its spelling:
     // this is the copy the other three are compared against, and the one a
     // future change would edit first.

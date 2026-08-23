@@ -91,12 +91,12 @@ fn separate_directly(
 /// Fail a perf harness that has regressed by an order of magnitude.
 ///
 /// These four cases run in 150 ms to 750 ms on a developer machine at the
-/// workspace's `opt-level = 1` dev profile. The ceiling is deliberately far
-/// above that: it is not a benchmark, and CI timing noise must never turn it
-/// red. It exists because the regression these tests were written for -- a
-/// soup mesh separating into one layer per triangle -- took the operation from
-/// under a second to minutes, and the harness printed that number without ever
-/// looking at it.
+/// workspace's `opt-level = 1` dev profile. The ceiling sits far above that;
+/// this is not a benchmark and CI timing noise must never turn it red. It
+/// exists because the regression these tests were written for -- a soup mesh
+/// separating into one layer per triangle -- took the operation from under a
+/// second to minutes, and the harness printed that number without ever looking
+/// at it.
 fn assert_perf_ceiling(elapsed: std::time::Duration, case: &str) {
     let ceiling = std::time::Duration::from_secs(10);
     assert!(
@@ -384,7 +384,7 @@ fn perf_separate_soup_500k() {
         "SEPARATE-SOUP-500K {tri_count} tris, {vtx_count} soup verts, \
          {components} selected strips -> {layers} layers in {elapsed:?}"
     );
-    // The regression this guards against produced one layer per triangle.
+    // The one-layer-per-triangle case again, from the other side.
     assert_eq!(layers, components + 1);
     assert_perf_ceiling(elapsed, "perf_separate_soup_500k");
 }

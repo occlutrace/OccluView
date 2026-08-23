@@ -39,12 +39,11 @@ mod public_contract_tests {
 
     #[test]
     fn the_embedded_key_layout_is_derived_only_from_committed_inputs() {
-        // The build script used to mix `SystemTime::now()` and
-        // `std::process::id()` into the seed for the obfuscated key layout, so
-        // the same source, key and toolchain produced a different binary every
-        // time. Everything else in the supply chain answers "this came from our
-        // pipeline"; that made "this matches this source" unanswerable, even
-        // for a rebuild of an old tag.
+        // Mix `SystemTime::now()` or `std::process::id()` into the seed for
+        // the obfuscated key layout and the same source, key and toolchain
+        // produce a different binary every time -- see the build script. The
+        // rest of the supply chain answers "this came from our pipeline"; only
+        // this answers "this matches this source".
         let build_script = include_str!("../build.rs");
         for nondeterminism in ["SystemTime::now", "process::id", "UNIX_EPOCH"] {
             assert!(

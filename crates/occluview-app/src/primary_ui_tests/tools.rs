@@ -79,11 +79,11 @@ fn no_status_line_promises_an_undo_that_was_not_stored() {
 #[test]
 fn both_disc_tools_ask_one_question_about_the_pointer() {
     // The bridge tool and the cut tool each decide whether a click landed on
-    // chrome or on bare scene, and each used to decide it in its own copy.
-    // Adding one overlay meant editing two functions; missing one made clicks
-    // on that panel plant or drag a disc underneath it for exactly one of the
-    // two tools -- no compile error, no failing test, and a bug report that
-    // reads "sometimes clicking the panel moves the cut".
+    // chrome or on bare scene. Two copies of that means a new overlay is two
+    // edits, and missing one lets clicks on that panel plant or drag a disc
+    // underneath it for exactly one of the tools -- no compile error, no
+    // failing test, and a bug report that reads "sometimes clicking the panel
+    // moves the cut".
     let cut = repo_source_file("src/app/app_cut_measure.rs");
     let bridge = repo_source_file("src/app/app_bridge_split.rs");
 
@@ -113,12 +113,10 @@ fn both_disc_tools_ask_one_question_about_the_pointer() {
 
 #[test]
 fn the_one_guarded_forwarder_is_not_named_like_the_others() {
-    // Twenty-nine `foo` / `foo_impl` pairs in this crate are pure
-    // pass-throughs, which teaches a reader that the two are interchangeable.
-    // One is not: `handle_edit_shortcuts` refuses to run while a dialog is
-    // open, because undoing a mesh edit behind the unsaved-changes prompt
-    // silently changes what "Save" then writes. Under the shared naming that
-    // callee was a trapdoor one plausible call wide.
+    // `handle_edit_shortcuts` is the one `foo` / `foo_impl` pair in this crate
+    // that is not a pass-through; its doc in state.rs says what a call past the
+    // guard costs. This holds the callee to a name nobody reaches for out of
+    // habit.
     let state = repo_source_file("src/app/state.rs");
     let editor = repo_source_file("src/app/app_mesh_editor.rs");
 
@@ -171,16 +169,11 @@ fn the_two_cut_cap_colours_are_one_colour() {
 
 #[test]
 fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
-    // Five hand-written copies of "is a dialog open" had drifted to three,
-    // four and six terms. The cut and align tools did not count the
-    // replace-open guard, and none counted the third-party licences window --
-    // so with either up, Escape tore the tool down behind the dialog, and for
-    // align it also ran `cancel_align_session`, putting every scan back where
-    // it started.
-    // The predicate itself is tested for behaviour next to its definition, in
-    // app::open_dialogs. What only a source guard can check is that the five
-    // call sites still ask it instead of counting dialogs again themselves,
-    // which is the shape the drift took.
+    // Hand-written copies of "is a dialog open" drift; `modal_dialog_open`
+    // records what that cost. Behaviour is tested next to the predicate, in
+    // app::open_dialogs. Only a source guard can check the other half: that
+    // the five call sites still ask it instead of counting dialogs again
+    // themselves, which is the shape the drift took.
     let state = repo_source_file("src/app/state.rs");
     assert!(
         state.contains("pub(super) fn modal_dialog_open(&self) -> bool"),
@@ -271,11 +264,10 @@ fn scene_handles_alive_across_an_edit(source: &str) -> Vec<String> {
 
 #[test]
 fn nothing_holds_a_second_scene_handle_across_an_in_place_edit() {
-    // `live_scene_mut` asserts in debug that it holds the only Arc<Scene>,
-    // because Arc::make_mut copies the whole case when it does not -- 52 ms
-    // per frame, measured on two 945k-vertex arches, on paths that run every
-    // frame. That assertion is the detector; this is what stops the shape
-    // coming back, and it checks the property rather than the wording.
+    // `live_scene_mut` asserts in debug that it holds the only Arc<Scene>; its
+    // doc has the per-frame cost of a second handle. That assertion is the
+    // detector, this is what stops the shape coming back, and it checks the
+    // property rather than the wording.
     for module in [
         "src/app/app_align_brush.rs",
         "src/app/app_align_display.rs",

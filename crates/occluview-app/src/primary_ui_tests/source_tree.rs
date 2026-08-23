@@ -241,11 +241,11 @@ fn looks_like_a_session_scratchpad(segment: &str) -> bool {
 
 #[test]
 fn no_source_file_carries_a_path_from_one_machine() {
-    // Seven diagnostic dumps once wrote their PNGs into an absolute path from
-    // one tool session, so the tests were unrunnable for everyone including
-    // their author. A test fixture later carried a real home directory into a
-    // public repository the same way. Both are the same mistake: an absolute
-    // path that resolves on exactly one machine.
+    // Seven diagnostic dumps wrote their PNGs into one tool session's scratch
+    // directory, which made those tests unrunnable for everyone including
+    // their author; a fixture later carried a real home directory into a
+    // public repository. Same mistake twice: a path that resolves on exactly
+    // one machine.
     //
     // This file is the one place the offending shapes may be written out, so
     // the guard skips itself instead of disguising its own literals.

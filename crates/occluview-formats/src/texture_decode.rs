@@ -148,18 +148,15 @@ mod tests {
 
     #[test]
     fn both_readers_share_one_texture_budget() {
-        // This crate used to carry its own copy of these numbers with a 64 MiB
-        // ceiling against the HPS crate's 256 MiB, so the same image was
-        // accepted from a dental container and refused from a `.glb`, in the
-        // same process, with nothing explaining why. Re-exporting rather than
-        // redefining is what keeps that from coming back, so that is what is
-        // checked -- an equality assertion would pass either way once the two
-        // numbers happened to agree.
-        // Only the part of the file above this module counts: searching the
-        // whole of it matched the needle written in this very assertion, so
-        // the import could be split into two brace-less `use` lines and the
-        // guard would still pass. The negative assertions below were already
-        // defused with assembled needles; this one was not.
+        // A second copy of these numbers here once read 64 MiB against the HPS
+        // crate's 256 MiB, so the same image was accepted from a dental
+        // container and refused from a `.glb`, in one process, with nothing
+        // explaining why. The check is that this crate re-exports rather than
+        // redefines; an equality assertion passes either way the moment the two
+        // numbers happen to agree.
+        // Only the part above this module counts. Search the whole file and
+        // the needle in this very assertion answers it, so the import could be
+        // split into two brace-less `use` lines and the guard would still pass.
         let source = include_str!("texture_decode.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or(source);
         assert!(

@@ -26,18 +26,13 @@ pub(super) struct VisitedNodes(Vec<bool>);
 /// [`VisitedNodes`] bounds revisits, not depth. `0 -> 1 -> 2 -> ...` is a
 /// strict tree, passes that check, and recurses once per link: a 1.2 MB file
 /// of 60000 chained nodes aborts the CLI on its main thread, and the viewer
-/// parses on a spawned thread with the 2 MiB default, where a 139 KB file is
-/// enough. A stack overflow is a guard-page fault rather than a panic, so no
-/// `catch_unwind` sees it, and in `dllhost` it takes every thumbnail in the
-/// folder with it.
+/// parses on a spawned thread with the 2 MiB default, where 139 KB is enough.
+/// The overflow arrives the same way as above, uncatchable.
 ///
-/// The root sits at level 0, so this many nodes may sit on one chain and the
-/// next one is refused -- 256 levels, not 257, which is what the name says.
-///
-/// Real exports nest a handful of levels; a scanner writing 256 is already
-/// beyond anything seen. Measured from the function prologues, the recursive
-/// frame is 1600 bytes unoptimised, so the worst case is around 400 KiB
-/// against the 2 MiB every thread in this workspace gets.
+/// The root sits at level 0, so 256 nodes may sit on one chain and the 257th
+/// is refused. Real exports nest a handful of levels. Measured from the
+/// function prologues the recursive frame is 1600 bytes unoptimised, so the
+/// worst case is around 400 KiB against the 2 MiB every thread here gets.
 pub(super) const MAX_NODE_DEPTH: u32 = 256;
 
 impl VisitedNodes {
@@ -95,11 +90,10 @@ fn first_primitive_material_from(
     }
     visited.enter(node_idx).ok()?;
     let node = doc.nodes.get(node_idx)?;
-    // Every `?` here used to return from the function rather than from the
-    // lookup, so a node whose mesh has no primitives -- or an out-of-range
-    // mesh index -- ended the search instead of continuing into its children,
-    // and the scan came out silently untextured. This node not having a
-    // material is not the same as there being none.
+    // Every `?` here has to fall out of the lookup, not out of the function:
+    // this node having no material is not the same as there being none. Ending
+    // the search on a mesh with no primitives, or an out-of-range mesh index,
+    // leaves the scan untextured with nothing said.
     if let Some(material) = node
         .mesh
         .and_then(|mesh_idx| doc.meshes.get(mesh_idx))

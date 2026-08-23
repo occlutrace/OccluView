@@ -134,12 +134,11 @@ impl OccluViewApp {
                 // presents as an OOM kill with no message.
                 //
                 // Cancelling properly means threading a flag through
-                // `read_files_with_key_provider`, which parses files in
-                // parallel -- a formats API change that would not help the
-                // common single-file case anyway, since the check can only sit
-                // between files. Left as it is deliberately: it needs
-                // deliberate impatience, it clears itself, and the honest fix
-                // is a bigger change than the defect.
+                // `read_files_with_key_provider`, which parses in parallel: a
+                // formats API change that would not help the common
+                // single-file case anyway, since the check can only sit
+                // between files. Left as it is. It takes sustained impatience
+                // to reach, and it clears itself.
                 self.queued_loads.clear();
                 self.active_load = None;
                 self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
@@ -463,9 +462,8 @@ mod tests {
 
     #[test]
     fn a_failed_load_reaches_the_log_without_the_path_it_failed_on() {
-        // The event this text goes into is recorded field by field into the
-        // crash log ring, and the ring is written to a file operators are
-        // asked to attach to a public issue. A scan path names the case.
+        // This text lands in the crash log ring, and the ring is written to a
+        // file operators are asked to attach to public issues.
         let path = PathBuf::from("/mnt/cases/Ivanov 2026-08-23/upper.stl");
         let error = anyhow::anyhow!("{}: {}", path.display(), "unexpected end of file");
 
@@ -491,8 +489,9 @@ mod tests {
 
     #[test]
     fn a_path_that_prefixes_another_does_not_leave_its_tail_behind() {
-        // Replacing in request order left the basename of the longer path in
-        // the line, which is the half that names the case.
+        // The prefix case from `failure_without_paths`: replace in request
+        // order and the basename of the longer path survives, which is the
+        // half that names the case.
         let folder = PathBuf::from("/mnt/cases/Ivanov 2026");
         let scan = folder.join("upper.stl");
         let error = anyhow::anyhow!("{}: {}", scan.display(), "unexpected end of file");

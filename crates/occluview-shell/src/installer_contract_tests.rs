@@ -69,9 +69,9 @@ fn dcm_is_offered_to_the_user_and_never_taken_from_medical_dicom() {
     assert!(reg.contains("[HKEY_CLASSES_ROOT\\.dcm\\OpenWithList\\occluview.exe]"));
     assert!(reg.contains("\".dcm\"=\"MeshFile.HPS\""));
 
-    // DllRegisterServer applies the same rule, and DllUnregisterServer
-    // deliberately does not: a build that shipped before this policy still has
-    // to have its .dcm entries cleaned up on uninstall.
+    // DllRegisterServer applies the same rule; DllUnregisterServer must not,
+    // or a build that shipped before this policy keeps its .dcm entries
+    // through an uninstall.
     let registration = super::shell_contract_tests::registration_source();
     assert!(registration.contains("if !owns_extension(ext) {\n            continue;"));
     assert!(registration.contains(

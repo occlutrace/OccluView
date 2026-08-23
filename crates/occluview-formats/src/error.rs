@@ -57,12 +57,11 @@ pub enum FormatError {
 
     /// The format was recognized, but this reader declined to produce a mesh.
     ///
-    /// Three different situations arrive here and the message has to fit all
-    /// of them: a reader that is deliberately deferred (3MF), a fast thumbnail
-    /// path handing back to the full reader, and an encrypted container with
-    /// no key configured. The old wording claimed the format was "not enabled
-    /// yet", which told someone opening an encrypted dental container that
-    /// their file type is unsupported -- the opposite of the truth.
+    /// Three situations arrive here and one message has to fit all of them: a
+    /// deferred reader (3MF), a fast thumbnail path handing back to the full
+    /// reader, and an encrypted container with no key configured. "Not enabled
+    /// yet" fits the first and tells the third that their file type is
+    /// unsupported, which is the opposite of the truth.
     #[error("{format} was recognized but not read: {reason}")]
     Deferred {
         /// The recognized format family.

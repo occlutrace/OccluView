@@ -2,17 +2,12 @@
 //!
 //! The render target is `Rgba8Unorm` and nothing encodes on the way out of the
 //! shader, so whatever the shader returns is treated as sRGB. Every source of
-//! colour -- a texture, a vertex, a layer tint -- therefore has to arrive in
-//! that same space, and the two tests here are what say so: the same nominal
-//! value must reach the screen the same way through a texture and through a
-//! vertex, and a layer tint must reach it as the number it holds.
+//! colour -- a texture, a vertex, a layer tint -- has to arrive in that same
+//! space. The two tests here say so: one nominal value must reach the screen
+//! the same way through a texture and through a vertex, and a layer tint must
+//! reach it as the number it holds.
 //!
-//! Both were written against defects. A texture typed `Rgba8UnormSrgb`
-//! decoded to linear and was written out as if it were sRGB (200 came out as
-//! 159 against 198 through a vertex), and the layer list drew its swatch
-//! through a linear-to-sRGB transfer the renderer does not apply, which put
-//! seventy levels between the colour beside the name and the colour in the
-//! viewport.
+//! Both were written against defects. Each test's own doc carries the numbers.
 
 #![allow(clippy::expect_used)]
 

@@ -34,8 +34,8 @@ pub const MIN_ORTHOGRAPHIC_HEIGHT_MM: f32 = 0.01;
 /// derivations around it differ on purpose and stay separate; the fill factor
 /// does not differ and now has one name.
 ///
-/// Thumbnails deliberately use a tighter 0.90 instead, because a tile is
-/// square; they are not a fourth copy of this.
+/// Thumbnails use a tighter 0.90 because a tile is square. Not a fourth copy
+/// of this one.
 pub const BBOX_FRAME_FILL: f32 = 0.7;
 /// Zoom-out ceiling: generous (a 1 km tall viewport for mm-scale dental
 /// scenes) yet far below f32 overflow, keeping the projection matrix finite.

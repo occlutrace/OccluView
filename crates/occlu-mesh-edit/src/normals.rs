@@ -4,16 +4,13 @@ use glam::Vec3;
 /// normal. Scale-free: the test compares twice the facet's area against its own
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a
 /// 10 um sliver.
-/// A facet is degenerate when its area falls below this fraction of its own
-/// longest edge squared.
 ///
-/// Deliberately a third copy of the same rule. This crate is a leaf and must
-/// not depend on `occluview-core`, which holds the same constant as
-/// `occluview_core::DEGENERATE_AREA_SIN`, and `occluview-hps` keeps a fourth
-/// for the same reason. Change one, change all three: the fix of 2026-07-25
-/// landed in one crate and reached the others four weeks later, and for those
-/// four weeks every scan opened through the other paths lost shading on facets
-/// under 20 um.
+/// One of three copies. This crate is a leaf and must not depend on
+/// `occluview-core`, which holds `occluview_core::DEGENERATE_AREA_SIN`;
+/// `occluview-hps` keeps the third for the same reason. Change one, change all
+/// three: the fix of 2026-07-25 landed in one crate and reached the others four
+/// weeks later, and for those four weeks every scan opened through the other
+/// paths lost shading on facets under 20 um.
 const DEGENERATE_AREA_SIN: f32 = 1e-10;
 use std::collections::HashMap;
 
@@ -24,25 +21,21 @@ const DUPLICATE_NORMAL_DOT: f32 = 0.5;
 /// Past this many vertices at one position, agreement is judged against the
 /// group's mean normal instead of against every other member.
 ///
-/// A fourth copy of a number `occluview-core` also holds, for the same reason
-/// the degeneracy threshold above is duplicated: this crate is a leaf and must
-/// not depend on core. Core bounded its loader path and this one was left
-/// pairwise, which made the situation worse rather than better -- the file now
-/// opens in milliseconds, so the pile reaches the scene, and the first Repair,
-/// Close holes or Invert normals runs it on the UI thread with no repaint, no
-/// progress and no cancel. Measured here in the test profile: 20000 coincident
-/// vertices cost 820 ms pairwise against 16 ms bounded, and the pairwise form
-/// grows as the square.
+/// Copied from `occluview-core` for the reason above. Bounding core's loader
+/// path and leaving this one pairwise made things worse, not better: the file
+/// now opens in milliseconds, so the pile reaches the scene, and the first
+/// Repair, Close holes or Invert normals runs the pairwise form on the UI
+/// thread with no repaint, no progress and no cancel. In the test profile
+/// 20000 coincident vertices cost 820 ms pairwise against 16 ms bounded, and
+/// pairwise grows as the square.
 const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
 /// Two positions within this distance are the same point for shading.
 ///
-/// This is the number that decides which vertices share a normal, and both
-/// this crate and `occluview-core` need it: core welds at load, this crate
-/// welds after every brush stroke and hole fill. It used to be written twice,
-/// under two names, with two byte-identical key functions maintained
-/// separately -- change one and the same scan is shaded one way on open and
-/// another way after any edit, a seam that appears mid-session with nothing to
-/// blame.
+/// One number decides which vertices share a normal, and both crates need it:
+/// core welds at load, this crate welds after every brush stroke and hole fill.
+/// Written twice, under two names, with two byte-identical key functions, the
+/// same scan shades one way on open and another way after any edit -- a seam
+/// that appears mid-session with nothing to blame.
 pub const COINCIDENT_POSITION_EPS_MM: f32 = 0.002;
 
 /// Recompute every vertex normal from triangle winding.
@@ -112,20 +105,18 @@ pub fn recompute_all_normals(
 
 /// How many directions one coincident group may hold before it is left alone.
 ///
-/// A fourth copy of the reasoning in `occluview-core`, for the same reason the
-/// numbers beside it are copied: this crate is a leaf and cannot depend on core.
+/// Copied from `occluview-core` alongside the bound above.
 const MAX_DUPLICATE_CLUSTERS: usize = 16;
 
 /// Average a large coincident group by clustering it, not by one global mean.
 ///
-/// Judging every member against the mean of the whole group is right while the
-/// group points one way and wrong the moment it does not: K coincident vertices
-/// at a hard crease form two clusters ninety degrees apart, their mean sits on
-/// the bisector, both clusters agree with it to within sixty degrees, and every
-/// member is welded to the bisector -- the crease is gone. Members are assigned
-/// greedily to the first cluster they agree with instead, so a coherent group
-/// forms one cluster and gets what the mean form gave it, and a crease keeps
-/// its two. Linear in the group for any bounded number of clusters.
+/// A single mean is right while the group points one way and wrong the moment
+/// it does not: K coincident vertices at a hard crease form two clusters ninety
+/// degrees apart, the mean lands on the bisector, both clusters agree with it
+/// to within sixty degrees, and the crease is welded flat. Members join the
+/// first cluster they agree with instead, so a coherent group forms one cluster
+/// and a crease keeps its two. Linear in the group for any bounded cluster
+/// count.
 fn average_by_cluster(indices: &[usize], source_normals: &[Vec3], smoothed: &mut [Vec3]) {
     let mut sums: Vec<Vec3> = Vec::new();
     let mut assigned: Vec<(usize, usize)> = Vec::with_capacity(indices.len());
@@ -143,8 +134,8 @@ fn average_by_cluster(indices: &[usize], source_normals: &[Vec3], smoothed: &mut
             assigned.push((index, cluster));
         } else {
             if sums.len() == MAX_DUPLICATE_CLUSTERS {
-                // Too many directions to be a surface. Leaving the normals as
-                // they arrived is the honest answer.
+                // Too many directions to be a surface. Leave them as they
+                // arrived.
                 return;
             }
             sums.push(current);
@@ -261,10 +252,9 @@ mod shared_tolerance_tests {
 
     #[test]
     fn one_tolerance_decides_which_vertices_share_a_normal() {
-        // Core welds at load, this crate welds after every brush stroke and
-        // hole fill. Two copies of this number meant the same scan could shade
-        // one way on open and another way after any edit -- a seam that appears
-        // mid-session with nothing to blame it on.
+        // The seam described on `COINCIDENT_POSITION_EPS_MM`: two copies of
+        // the number and the same scan shades one way on open, another after
+        // any edit.
         let origin = [0.0_f32, 0.0, 0.0];
         let inside = [COINCIDENT_POSITION_EPS_MM * 0.4, 0.0, 0.0];
         let outside = [COINCIDENT_POSITION_EPS_MM * 4.0, 0.0, 0.0];

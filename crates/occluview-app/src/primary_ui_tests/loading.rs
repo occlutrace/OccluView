@@ -439,9 +439,8 @@ fn the_handoff_pipe_cannot_be_squatted_or_used_to_impersonate() {
         "the security descriptor should be built in one named place"
     );
 
-    // The hardening above was reachable only when the SID lookup succeeded.
-    // When it failed the descriptor was None, the pipe was created with the
-    // DEFAULT DACL, and the name fell back to the fixed literal "default" --
+    // All of the above is reachable only when the SID lookup succeeds. Fall
+    // back on failure and the pipe gets the default DACL under a fixed name:
     // the squattable, world-readable pipe this test is about, arrived at by a
     // silent downgrade rather than by an attack.
     assert!(
@@ -464,10 +463,8 @@ fn the_handoff_pipe_cannot_be_squatted_or_used_to_impersonate() {
         windows.contains("const MAX_CONSECUTIVE_PIPE_FAILURES: u32"),
         "the listener must give up on a permanently claimed name"
     );
-    // The listener refused a pipe it could not protect, and the sender kept
-    // writing the request -- the scan paths -- to a name derived from the same
-    // failed lookup, which was the fixed literal "default": predictable,
-    // shared, and exactly what a squatter would be holding.
+    // A listener that refuses the pipe is only half of it: the sender still
+    // writes the scan paths to a name built from the same failed lookup.
     assert!(
         !windows.contains("String::from(\"default\")"),
         "a name that is not per-user must not be constructed at all"

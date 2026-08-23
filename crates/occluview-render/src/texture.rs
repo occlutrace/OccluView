@@ -121,12 +121,12 @@ impl GpuTexture {
             // then be written out as if it were sRGB -- the same nominal colour
             // arriving darker through a texture than through a vertex.
             //
-            // Measured before this line changed, same triangle, same light:
-            // sRGB 128 rendered as 70 from a texture and 129 from a vertex
-            // colour; sRGB 200 as 159 against 198. That put the flagship
-            // formats (HPS and GLB, colour in a texture) and the open ones
-            // (PLY and OBJ, colour in vertices) on two different scales, in a
-            // viewer whose job includes judging colour.
+            // Same triangle, same light: sRGB 128 rendered as 70 from a
+            // texture against 129 from a vertex colour, and sRGB 200 as 159
+            // against 198. That is the flagship formats (HPS and GLB, colour in
+            // a texture) and the open ones (PLY and OBJ, colour in vertices) on
+            // two different scales, in a viewer whose job includes judging
+            // colour.
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],

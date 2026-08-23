@@ -226,17 +226,13 @@ impl OccluViewApp {
     /// who has marked a region on each does not expect Fit everywhere to clear
     /// only one of them.
     pub(super) fn apply_align_mask_command(&mut self, command: MaskCommand) {
-        // Both layers are taken out of the scene first and the handle dropped
-        // with the block: repainting a preview edits the scene in place, and
-        // a handle still alive there copies the whole case per side.
+        // Each side comes out of the scene as a value and the handle dies with
+        // its block; repainting a preview edits the scene in place.
         let mut reached = false;
         for side in AlignSide::BOTH {
-            // One side at a time, each inside its own block. The entry has to
-            // come out of the scene as a value, because repainting the preview
-            // edits the scene in place and a handle still alive there copies
-            // the whole case -- but a `SceneMesh` clone is a whole vertex
-            // array, so taking both sides up front doubled peak transient
-            // memory to save nothing.
+            // One side at a time: a `SceneMesh` clone is a whole vertex array,
+            // so taking both up front doubles peak transient memory to save
+            // nothing.
             let taken = {
                 let Some(scene) = self.scene.clone() else {
                     return;

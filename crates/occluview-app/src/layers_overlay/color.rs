@@ -7,11 +7,11 @@ use eframe::egui;
 /// carries is the number that reaches the screen. Measured on a white
 /// triangle: the tint [0.03, 0.15, 0.79] renders as (12, 42, 200).
 ///
-/// This used to run the value through a linear-to-sRGB transfer first and drew
-/// the same tint as (48, 108, 230) -- a seventy-level disagreement between the
-/// colour beside the name and the colour in the viewport, on the one preset
-/// the palette leads with. The swatch is the only place the colour is ever
-/// labelled, so it shows what the viewport draws.
+/// Run through a linear-to-sRGB transfer first, that tint draws as
+/// (48, 108, 230): seventy levels between the colour beside the name and the
+/// colour in the viewport, on the preset the palette leads with. The swatch is
+/// the only place the colour is ever labelled, so it shows what the viewport
+/// draws.
 pub(super) fn color32_from_tint(color: [f32; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         unit_float_to_u8(color[0]),
@@ -33,8 +33,7 @@ mod tests {
     #[test]
     fn the_swatch_shows_the_number_the_renderer_receives() {
         // The renderer's own test pins the other end: the same tint reaches
-        // the screen as (12, 42, 200). A transfer function here is what made
-        // the label and the viewport disagree.
+        // the screen as (12, 42, 200).
         let swatch = color32_from_tint([0.03, 0.15, 0.79, 1.0]);
         assert_eq!(
             [swatch.r(), swatch.g(), swatch.b()],

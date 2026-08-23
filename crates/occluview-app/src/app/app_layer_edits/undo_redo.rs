@@ -173,11 +173,8 @@ pub(super) fn apply_layer_mesh_undo_action(
     }
 
     entry.mesh = restored.mesh;
-    // The restored mesh comes from the cold snapshot the sculpt session keeps,
-    // so its bounding box is not cached. `Scene::bbox` is read twice a frame
-    // and falls back to walking every vertex -- 2.1 ms a call on a
-    // million-vertex layer, indefinitely. Undo is a click, not a frame, so the
-    // walk is paid once here instead.
+    // Cold snapshot again: pay the bbox walk here rather than twice a frame
+    // for the rest of the session.
     let _ = entry.mesh.bbox();
     structural_scene_apply()
 }

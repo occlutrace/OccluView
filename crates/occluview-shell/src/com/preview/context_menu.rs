@@ -166,13 +166,12 @@ impl PreviewHandler {
         // so asking whether it still names this handler is both safe and
         // decisive.
         //
-        // This is a mitigation and not the textbook answer, which is to hold a
-        // reference across the modal pump so the object cannot be freed at
-        // all. The window proc reaches this handler through a raw back-pointer
-        // rather than an interface pointer, so there is nothing here to add a
-        // reference to without changing how the window and the COM object
-        // refer to each other. Until that changes, this is what stops the
-        // command from running.
+        // A mitigation, not the cure. The cure is a reference held across the
+        // modal pump so the object cannot be freed at all, and the window proc
+        // reaches this handler through a raw back-pointer, not an interface
+        // pointer, so there is nothing here to add a reference to without
+        // changing how the two refer to each other. Until then, this is what
+        // stops the command from running.
         if !window_owns_handler(hwnd, std::ptr::from_ref(self)) {
             return;
         }

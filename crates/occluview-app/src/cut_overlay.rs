@@ -202,9 +202,8 @@ mod tests {
 
     #[test]
     fn the_contour_is_the_tint_it_outlines_and_not_a_brighter_one() {
-        // The stroke is drawn beside the surface the renderer paints from the
-        // same numbers. Applying a transfer here and not there put the two
-        // roughly a factor of two apart.
+        // Drawn beside a surface the renderer paints from the same numbers, so
+        // no transfer here either.
         let cobalt = [0.03_f32, 0.15, 0.79, 1.0];
         let contour = contour_color(cobalt);
         for (channel, drawn) in [(0_usize, contour.r()), (1, contour.g()), (2, contour.b())] {
@@ -220,8 +219,8 @@ mod tests {
 
     #[test]
     fn two_neighbouring_stone_shades_still_get_different_contours() {
-        // The whole purpose: telling layers apart. The transfer this function
-        // used to apply flattened the warm band to within three levels.
+        // The whole purpose: telling layers apart, including across the warm
+        // stone shades a transfer would flatten together.
         let stone = contour_color([0.82, 0.68, 0.42, 1.0]);
         let plaster = contour_color([0.86, 0.83, 0.76, 1.0]);
         let spread = i32::from(stone.b()).abs_diff(i32::from(plaster.b()));

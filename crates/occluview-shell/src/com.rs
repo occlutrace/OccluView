@@ -1,10 +1,10 @@
 //! The COM `IThumbnailProvider` class.
 //!
 //! Windows Explorer activates this class out-of-process in a `dllhost.exe`
-//! surrogate. The class is deliberately a thin stub: it stores the
-//! file/stream the shell hands it at initialize time, and on `GetThumbnail` it
-//! detects the format, renders the mesh, and calls the same
-//! `render_thumbnail` code path the CLI uses.
+//! surrogate. The class is a thin stub: it stores the file/stream the shell
+//! hands it at initialize time, and on `GetThumbnail` it detects the format,
+//! renders the mesh, and calls the same `render_thumbnail` code path the CLI
+//! uses.
 //!
 //! Verdict policy at the COM boundary: a broken or unsupported file returns an
 //! OccluView placeholder bitmap (a stable verdict Explorer may cache), while a
@@ -239,14 +239,13 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
 
 /// Allocate a 32bpp top-down BGRA DIB and fill it with `bgra`.
 ///
-/// The one place this crate calls `CreateDIBSection`. It used to be written
-/// twice -- once here and once for the context-menu glyphs -- and the two
-/// copies carried the same hand-written GDI leak guard for the null-bits path,
-/// inside a DLL that lives in `explorer.exe` for the length of a session.
-/// Fixing a leak or a header field in one copy would have left the other
-/// wrong, and the whole crate is `cfg(windows)`, so no Linux gate would ever
-/// notice. The callers differ only in how they produce the bytes: this one
-/// swizzles RGBA, the glyph path premultiplies.
+/// The one place this crate calls `CreateDIBSection`. Written twice -- here
+/// and for the context-menu glyphs -- both copies carry the same hand-written
+/// GDI leak guard for the null-bits path, inside a DLL that lives in
+/// `explorer.exe` for a whole session; fix a leak or a header field in one and
+/// the other stays wrong, in a `cfg(windows)` crate no Linux gate compiles.
+/// The callers differ only in how they produce the bytes: this one swizzles
+/// RGBA, the glyph path premultiplies.
 ///
 /// The caller owns the returned handle.
 fn create_top_down_bgra_dib(

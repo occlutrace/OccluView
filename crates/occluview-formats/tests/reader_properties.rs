@@ -32,7 +32,7 @@ fn binary_stl(coordinates: &[f32]) -> Vec<u8> {
 }
 
 /// An OBJ with `vertices` positions and faces built from `face_indices`, which
-/// are deliberately allowed to point anywhere.
+/// are allowed to point anywhere.
 fn obj(vertices: &[f32], face_indices: &[u32]) -> String {
     use std::fmt::Write as _;
     let mut text = String::new();

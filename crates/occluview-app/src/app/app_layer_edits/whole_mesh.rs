@@ -17,10 +17,10 @@ use occluview_core::{
 /// valve, so it must not spuriously refuse a legitimate hole on a densely
 /// triangulated scan.
 ///
-/// The kernel owns the number. A private copy here used to defeat it: the
+/// The kernel owns the number, and a private copy here defeats it: the
 /// selection gate takes `max(options.max_boundary_loop, kernel constant)`, so
-/// lowering the kernel value while this one stayed at the old figure would
-/// have changed nothing in the shipped product.
+/// lowering the kernel value against a stale local copy changes nothing in the
+/// shipped product.
 use occluview_core::CLOSE_HOLES_EDGE_CEILING;
 
 pub(super) fn apply_layer_mesh_edit_action_with_status(

@@ -198,15 +198,15 @@ impl OccluViewApp {
 /// The stem comes from the layer label, which is the source file's name. Two
 /// layers opened from different folders under the same file name — the norm
 /// when a case folder holds `upper.stl` beside another case's `upper.stl` —
-/// therefore used to resolve to one path: the second write truncated the
-/// first, nothing reported a failure, and the batch cleared the unsaved-edit
-/// flag for both, after which the close guard let the app exit without asking.
-/// A colliding name gains a ` (2)`, ` (3)` suffix instead.
+/// resolve to one path. The second write truncates the first, nothing reports
+/// a failure, the batch clears the unsaved-edit flag for both, and the close
+/// guard then lets the app exit without asking. A colliding name gains a
+/// ` (2)`, ` (3)` suffix instead.
 ///
 /// Names already in the directory count as taken for the same reason. The
-/// operator chose a folder, not filenames, so nothing ever asked about
-/// overwriting -- and the obvious folder to choose twice is the one the last
-/// export went to. A second batch used to truncate the first silently.
+/// operator chose a folder, not filenames, so nothing ever asks about
+/// overwriting, and the obvious folder to choose twice is the one the last
+/// export went to.
 ///
 /// Comparison is case-insensitive because the platforms this ships on treat
 /// `Upper.stl` and `upper.stl` as the same file.
@@ -496,9 +496,8 @@ mod tests {
 
     #[test]
     fn two_layers_with_the_same_file_name_get_two_files() {
-        // caseA/upper.stl and caseB/upper.stl are one batch; before the
-        // de-duplication the second write truncated the first and the batch
-        // still reported both as saved.
+        // caseA/upper.stl and caseB/upper.stl in one batch: two labels, one
+        // stem.
         let layers = vec![
             ("upper".to_owned(), MeshWriteFormat::StlBinary),
             ("upper".to_owned(), MeshWriteFormat::StlBinary),
@@ -549,9 +548,8 @@ mod tests {
 
     #[test]
     fn a_file_already_in_the_directory_is_not_overwritten() {
-        // The operator picked a folder, so no overwrite prompt was ever shown.
-        // Exporting the same case twice into the same folder used to truncate
-        // the first export and report both batches as saved.
+        // The operator picked a folder, so no overwrite prompt was ever shown
+        // and the same case exported twice lands on the same name.
         let directory =
             std::env::temp_dir().join(format!("occluview-export-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create the test directory");

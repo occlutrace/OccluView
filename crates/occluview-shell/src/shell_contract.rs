@@ -42,8 +42,8 @@ pub const OFFERED_ONLY_EXTENSIONS: &[&str] = &[occluview_formats::LEGACY_HPS_EXT
 
 /// Whether OccluView may write the machine-wide handler entries for `ext`.
 ///
-/// Unregistration deliberately ignores this: entries written by an older
-/// build that did claim `.dcm` still have to be cleaned up.
+/// Unregistration ignores this, and must: entries written by an older build
+/// that did claim `.dcm` still have to be cleaned up.
 #[must_use]
 pub fn owns_extension(extension: &str) -> bool {
     !OFFERED_ONLY_EXTENSIONS.contains(&extension)

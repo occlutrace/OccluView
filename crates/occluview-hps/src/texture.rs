@@ -10,21 +10,19 @@ use zeroize::Zeroizing;
 
 /// Longest edge accepted for an embedded texture, in pixels.
 ///
-/// One definition for every format this workspace reads. The glTF reader used
-/// to carry its own copy -- same 8192 px edge but a 64 MiB byte ceiling
-/// against this crate's 256 MiB -- so the same image was accepted from a
-/// dental container and refused from a `.glb`, in the same `dllhost` process,
-/// with nothing anywhere explaining the asymmetry. It was a copied module, not
-/// a decision.
+/// One definition for every format this workspace reads. A second copy in the
+/// glTF reader carried the same 8192 px edge against a 64 MiB byte ceiling
+/// rather than this crate's 256 MiB, so the same image was accepted from a
+/// dental container and refused from a `.glb` inside one `dllhost` process,
+/// with nothing to explain the asymmetry.
 pub const MAX_TEXTURE_DIMENSION_PX: u32 = 8_192;
 /// Ceiling on the decoded RGBA surface, in bytes.
 ///
 /// 8192 x 8192 x 4 is exactly this, so the pair bounds one decoded image at a
-/// quarter of a gigabyte and the byte ceiling is what catches the lopsided
-/// shapes -- a 8192 x 4096 atlas is inside the edge limit and half this. The
-/// number is the looser of the two that used to exist, on purpose: tightening
-/// it would start refusing scans that open today, and both readers already
-/// share the process this protects.
+/// quarter of a gigabyte, and the byte ceiling is what catches lopsided shapes:
+/// an 8192 x 4096 atlas is inside the edge limit and half of this. It is the
+/// looser of the two ceilings that used to exist, because the tighter one would
+/// start refusing scans that open today.
 pub const MAX_TEXTURE_RGBA_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Default)]

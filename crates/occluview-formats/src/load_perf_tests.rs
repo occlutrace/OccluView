@@ -6,10 +6,9 @@
 //! four-hundred-megabyte scan thirty percent slower, because none of them look
 //! at time.
 //!
-//! Deliberately `#[ignore]` and deliberately not in CI: shared runners vary by
-//! more than any regression worth catching, and a gate that cries wolf is worse
-//! than no gate. Run it by hand before and after anything that touches the load
-//! path:
+//! `#[ignore]`, and not in CI: shared runners vary by more than any regression
+//! worth catching, and a gate that cries wolf is worse than no gate. Run it by
+//! hand before and after anything that touches the load path:
 //!
 //! ```text
 //! cargo test -p occluview-formats --release -- --ignored --nocapture load_
@@ -66,11 +65,11 @@ fn time_parse(triangles: usize) -> Duration {
 
 /// Compare against the recorded baseline, in the build the harness is for.
 ///
-/// The ceilings used to be 20 s and 60 s against baselines of 0.24 s and
-/// 0.89 s -- 83x and 67x, so the "regressed by an order of magnitude" the
-/// message promised would sail through. They are five times the baseline now,
-/// which tolerates a machine several times slower than the one the numbers
-/// come from and still fails on a tenfold regression.
+/// Five times the baseline. At 20 s and 60 s against baselines of 0.24 s and
+/// 0.89 s the ceilings sat 83x and 67x clear, so the "regressed by an order of
+/// magnitude" the message promises sailed through. Five tolerates a machine
+/// several times slower than the one these numbers come from and still fails a
+/// tenfold regression.
 ///
 /// A debug build is three to five times slower here for reasons that have
 /// nothing to do with the load path, so it prints the number and judges

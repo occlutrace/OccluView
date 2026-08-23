@@ -347,9 +347,8 @@ impl OccluViewApp {
             viewport_rect,
         } = frame_context;
         // Same question, same answer: see `OccluViewApp::viewport_pointer`.
-        // This used to be a second copy, including its own expression for the
-        // gizmo's avoid-rect -- the one thing the cut tool's own comment warns
-        // must match what painted the gizmo.
+        // Not a second copy: the gizmo's avoid-rect has to come from the call
+        // that painted the gizmo, as the cut tool's own comment warns.
         let super::app_cut_measure::ViewportPointer {
             pointer,
             over_section_panel,

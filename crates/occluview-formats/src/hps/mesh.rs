@@ -172,14 +172,13 @@ fn invalid_surface(attribute: &'static str) -> FormatError {
 
 /// Area-weighted vertex normals for a decoded HPS surface.
 ///
-/// The accumulation and the degeneracy rule come from `occluview-core`. This
-/// crate held its own copy of both until the facet-degeneracy fix of
-/// 2026-07-25 landed in one crate and reached the other three on 2026-08-22:
-/// for four weeks every scan opened through this path lost shading on facets
-/// under 20 um, which is the visible symptom the product is judged on. This
-/// crate already depends on core, so there is no reason for a second copy;
-/// `occlu-mesh-edit` and `occluview-hps` keep theirs because the layering
-/// forbids them from depending on anything.
+/// The accumulation and the degeneracy rule come from `occluview-core`. A copy
+/// here went four weeks out of step after the facet-degeneracy fix of
+/// 2026-07-25, and every scan opened through this path lost shading on facets
+/// under 20 um -- the visible symptom the product is judged on. This crate
+/// already depends on core, so there is no reason for a copy; `occlu-mesh-edit`
+/// and `occluview-hps` keep theirs because the layering keeps them off every
+/// other OccluView crate.
 fn smooth_normals(positions: &[Vec3], indices: &[u32]) -> Vec<Vec3> {
     let mut normals =
         occluview_core::accumulate_smooth_normals(positions.len(), indices, |index| {

@@ -125,11 +125,10 @@ mod behavior;
 
 #[test]
 fn the_frame_fill_factor_has_one_definition() {
-    // The bare 0.7 was written three times -- twice in this module, once in the
-    // Explorer preview -- with nothing naming what it meant, and the preview
-    // also carried its own copy of the orthographic floor under a comment
-    // asking for it to be exported. The three radius derivations around it
-    // differ on purpose; the fill factor does not.
+    // The bare 0.7 was written three times, twice here and once in the Explorer
+    // preview, with nothing naming what it meant -- and the preview kept its
+    // own orthographic floor under a comment asking for the real one to be
+    // exported.
     assert!((BBOX_FRAME_FILL - 0.7).abs() < f32::EPSILON);
     assert!((MIN_ORTHOGRAPHIC_HEIGHT_MM - 0.01).abs() < f32::EPSILON);
 

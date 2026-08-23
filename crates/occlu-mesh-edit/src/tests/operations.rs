@@ -431,10 +431,9 @@ fn fill_holes_respects_selection_scoped_loop_gating() {
 /// A pile of coincident vertices must not make the duplicate-normal pass
 /// quadratic.
 ///
-/// The loader path in `occluview-core` was bounded and this one was not, which
-/// made the situation worse rather than better: the file now opens in
-/// milliseconds, so the pile reaches the scene, and the first Repair, Close
-/// holes or Invert normals runs this on the UI thread with no repaint, no
+/// Bounding core's loader path alone makes it worse, not better: the file then
+/// opens in milliseconds, the pile reaches the scene, and the first Repair,
+/// Close holes or Invert normals runs this on the UI thread with no repaint, no
 /// progress and no cancel.
 #[test]
 fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {

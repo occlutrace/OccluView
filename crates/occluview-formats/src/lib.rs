@@ -104,12 +104,10 @@ mod tests {
             ["stl", "ply", "obj", "glb", "hps", LEGACY_HPS_EXTENSION]
         );
 
-        // Pin the claim, not two substrings. This check used to require the
-        // exact sentence the README makes; it was quietly relaxed to "`.hps`
-        // and `.dcm` appear somewhere in the file", which a README stating the
-        // opposite would pass -- and `.dcm` appears in this README several
-        // times for other reasons, including a paragraph about NOT claiming the
-        // extension. What has to hold is the promise itself.
+        // Pin the claim, not two substrings. "`.hps` and `.dcm` appear
+        // somewhere in the file" passes on a README stating the opposite, and
+        // `.dcm` appears here several times for other reasons -- including a
+        // paragraph about NOT claiming the extension.
         let readme = include_str!("../../../README.md");
         let promise = readme
             .lines()

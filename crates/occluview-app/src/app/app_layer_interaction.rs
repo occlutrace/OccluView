@@ -46,36 +46,33 @@ impl OccluViewApp {
         if changes.context_request.is_none() && changes.layer_edits.is_empty() {
             return;
         }
-        // A material-only change — which is what a slider drag emits, one per
-        // frame — mutates the live scene in place, through `Arc::make_mut`.
-        // That only works while `self.scene` is the sole handle: with a second
-        // one alive, `make_mut` deep-copies every vertex, index and texture of
-        // every layer to change four numbers. Measured on two 945k-vertex
-        // arches: 40 ns when sole, 45.75 ms when shared -- per frame of a
-        // slider drag. So the handle is dropped here rather than held across
-        // the call.
+        // A material-only change — what a slider drag emits, one per frame —
+        // edits the live scene in place through `Arc::make_mut`, which needs
+        // `self.scene` to be the sole handle. This one would be the second:
+        // 40 ns becomes 45.75 ms on two 945k-vertex arches, every frame of the
+        // drag, to change four numbers (see `live_scene_mut`). So drop it here
+        // rather than hold it across the call.
         if changes.context_request.is_none() {
             drop(scene);
             self.apply_layer_material_edits(&changes.layer_edits, ctx);
             return;
         }
 
-        // MEASURED, and deliberately still synchronous.
+        // MEASURED, and still synchronous.
         //
         // A structural edit on a full arch costs, in release: a scene deep copy
         // (45 ms for two 945k-vertex layers), the edit kernel over ~2 million
         // triangles, and `Mesh::new` on the result -- 662 ms on its own at that
         // size, 178 ms at 500k triangles. Well over a second of a window that
-        // does not repaint, with no progress and no cancel, and the editor's
-        // `Busy` state can never be drawn because nothing yields to draw it.
+        // does not repaint, with no progress and no cancel; the editor's `Busy`
+        // state can never be drawn because nothing yields to draw it.
         //
-        // Moving this onto the worker pattern `sculpt_tool::queue_preparation`
-        // already uses is the right answer and is not a small change: it is the
-        // undo pipeline, the save-guard bookkeeping and the edit state machine
-        // at once, on the path where a mistake silently loses an operator's
-        // work. It is not being attempted blind, in a release where the
-        // interactive behaviour cannot be exercised. The numbers are here so
-        // the next person starts from a measurement rather than an impression.
+        // The fix is the worker pattern `sculpt_tool::queue_preparation`
+        // already uses, and it is not small: the undo pipeline, the save-guard
+        // bookkeeping and the edit state machine at once, on the path where a
+        // mistake loses an operator's work. Not a change to make in a release
+        // where the interactive behaviour cannot be exercised. The numbers are
+        // here so the next attempt starts from a measurement.
         let mut draft = scene.as_ref().clone();
         let mut scene_changed = false;
         let mut structural_scene_change = false;
