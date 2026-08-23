@@ -252,6 +252,63 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
 ///
 /// `Vec3::ZERO` is left where a member keeps its own normal; every value
 /// written is normalized, so zero is unambiguous.
+/// How many directions one coincident group may hold before it is left alone.
+///
+/// A pile that genuinely points sixteen ways is not a surface any averaging can
+/// help, and the cost of the pass is one dot product per member per cluster.
+const MAX_DUPLICATE_CLUSTERS: usize = 16;
+
+/// Average a large coincident group by clustering it, not by one global mean.
+///
+/// The first bounded form judged every member against the mean of the whole
+/// group. That is right while the group points one way and wrong the moment it
+/// does not: K coincident vertices at a hard crease in a triangle soup form two
+/// clusters ninety degrees apart, their mean sits on the bisector, both
+/// clusters agree with it to within sixty degrees, and every one of them is
+/// welded to the bisector -- the crease is gone. Measured on a 400-member pile
+/// split in two: 45 degrees of error on all 400. Exactly opposed clusters were
+/// worse still: the mean cancels and the group was skipped entirely.
+///
+/// Members are assigned greedily to the first cluster they agree with, so a
+/// coherent group forms one cluster and gets exactly what the mean form gave
+/// it, while a crease keeps its two. The cost is linear in the group for any
+/// bounded number of clusters, which is the property the threshold exists for.
+fn average_by_cluster(members: &[([i32; 3], usize)], source_normals: &[Vec3], out: &mut [Vec3]) {
+    let mut sums: Vec<Vec3> = Vec::new();
+    let mut assigned: Vec<Option<usize>> = vec![None; members.len()];
+
+    for (slot, &(_, index)) in members.iter().enumerate() {
+        let current = source_normals[index];
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let existing = sums
+            .iter()
+            .position(|sum| sum.normalize_or_zero().dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT);
+        if let Some(cluster) = existing {
+            sums[cluster] += current;
+            assigned[slot] = Some(cluster);
+        } else {
+            if sums.len() == MAX_DUPLICATE_CLUSTERS {
+                // Too many directions to be a surface. Leaving the normals as
+                // they arrived is the honest answer; inventing an average here
+                // is how a crease becomes a smear.
+                return;
+            }
+            sums.push(current);
+            assigned[slot] = Some(sums.len() - 1);
+        }
+    }
+
+    for (slot, cluster) in assigned.iter().enumerate() {
+        let Some(cluster) = *cluster else { continue };
+        let mean = sums[cluster].normalize_or_zero();
+        if mean.length_squared() > f32::EPSILON {
+            out[slot] = mean;
+        }
+    }
+}
+
 fn average_duplicate_run(members: &[([i32; 3], usize)], source_normals: &[Vec3], out: &mut [Vec3]) {
     // The exact form below compares every member against every other, which is
     // fine at real valences and quadratic at absurd ones. A pile of coincident
@@ -262,29 +319,9 @@ fn average_duplicate_run(members: &[([i32; 3], usize)], source_normals: &[Vec3],
     // twelve thumbnail lanes long after Explorer has been told the request
     // timed out.
     //
-    // Past the threshold, agreement is judged against the group's mean normal
-    // instead of pairwise: one pass to sum, one to accept or reject. Same
-    // answer wherever the group is coherent, which is every case a real scan
-    // produces, and linear everywhere.
+    // Past the threshold the group is clustered instead, in one greedy pass.
     if members.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
-        let mut mean = Vec3::ZERO;
-        for &(_, index) in members {
-            let candidate = source_normals[index];
-            if candidate.length_squared() > f32::EPSILON {
-                mean += candidate;
-            }
-        }
-        if mean.length_squared() > f32::EPSILON {
-            let mean = mean.normalize();
-            for (slot, &(_, index)) in members.iter().enumerate() {
-                let current = source_normals[index];
-                if current.length_squared() > f32::EPSILON
-                    && mean.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
-                {
-                    out[slot] = mean;
-                }
-            }
-        }
+        average_by_cluster(members, source_normals, out);
         return;
     }
 
@@ -314,6 +351,77 @@ fn average_duplicate_run(members: &[([i32; 3], usize)], source_normals: &[Vec3],
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn a_crease_survives_a_group_past_the_pairwise_threshold() {
+        // Two clusters ninety degrees apart at one position: a hard crease in
+        // a triangle soup, where K coincident vertices means K triangles
+        // meeting one point. Judging the whole group against its own mean put
+        // that mean on the bisector, accepted both clusters into it -- 0.707
+        // is above the 0.5 threshold -- and welded the crease flat. Measured
+        // before the fix: 45 degrees of error on every member.
+        let group = MAX_PAIRWISE_DUPLICATE_GROUP + 144;
+        let mut vertices = Vec::with_capacity(group);
+        for i in 0..group {
+            let mut vertex = Vertex::at(Vec3::ZERO);
+            vertex.normal = if i % 2 == 0 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            vertices.push(vertex);
+        }
+
+        smooth_duplicate_position_normals(&mut vertices);
+
+        for vertex in &vertices {
+            let normal = Vec3::from_array(vertex.normal);
+            assert!(
+                normal.dot(Vec3::Y) > 0.99 || normal.dot(Vec3::X) > 0.99,
+                "a member of the crease came out at {normal:?}: it should \
+                 still point the way its own cluster does, not along the \
+                 bisector"
+            );
+        }
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| Vec3::from_array(vertex.normal).dot(Vec3::Y) > 0.99),
+            "one side of the crease disappeared"
+        );
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| Vec3::from_array(vertex.normal).dot(Vec3::X) > 0.99),
+            "the other side of the crease disappeared"
+        );
+    }
+
+    #[test]
+    fn a_coherent_group_past_the_threshold_still_averages_to_one_normal() {
+        // The counterweight: clustering must not stop a genuinely coherent
+        // pile from being smoothed, which is what the bounded path is for.
+        let group = MAX_PAIRWISE_DUPLICATE_GROUP + 144;
+        let mut vertices = Vec::with_capacity(group);
+        for i in 0..group {
+            let angle = i as f32 * 0.0005;
+            let mut vertex = Vertex::at(Vec3::ZERO);
+            vertex.normal = [angle.sin(), angle.cos(), 0.0];
+            vertices.push(vertex);
+        }
+
+        smooth_duplicate_position_normals(&mut vertices);
+
+        let first = Vec3::from_array(vertices[0].normal);
+        for vertex in &vertices {
+            let normal = Vec3::from_array(vertex.normal);
+            assert!(
+                normal.dot(first) > 0.9999,
+                "a coherent group should come out as one normal, got \
+                 {normal:?} against {first:?}"
+            );
+        }
+    }
 
     /// Deterministic LCG (NOT the `rand` crate) so parity tests are
     /// reproducible without a dependency.

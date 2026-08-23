@@ -110,6 +110,63 @@ pub fn recompute_all_normals(
     Ok(())
 }
 
+/// How many directions one coincident group may hold before it is left alone.
+///
+/// A fourth copy of the reasoning in `occluview-core`, for the same reason the
+/// numbers beside it are copied: this crate is a leaf and cannot depend on core.
+const MAX_DUPLICATE_CLUSTERS: usize = 16;
+
+/// Average a large coincident group by clustering it, not by one global mean.
+///
+/// Judging every member against the mean of the whole group is right while the
+/// group points one way and wrong the moment it does not: K coincident vertices
+/// at a hard crease form two clusters ninety degrees apart, their mean sits on
+/// the bisector, both clusters agree with it to within sixty degrees, and every
+/// member is welded to the bisector -- the crease is gone. Members are assigned
+/// greedily to the first cluster they agree with instead, so a coherent group
+/// forms one cluster and gets what the mean form gave it, and a crease keeps
+/// its two. Linear in the group for any bounded number of clusters.
+fn average_by_cluster(indices: &[usize], source_normals: &[Vec3], smoothed: &mut [Vec3]) {
+    let mut sums: Vec<Vec3> = Vec::new();
+    let mut assigned: Vec<(usize, usize)> = Vec::with_capacity(indices.len());
+
+    for &index in indices {
+        let current = source_normals[index];
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let existing = sums
+            .iter()
+            .position(|sum| sum.normalize_or_zero().dot(current) >= DUPLICATE_NORMAL_DOT);
+        if let Some(cluster) = existing {
+            sums[cluster] += current;
+            assigned.push((index, cluster));
+        } else {
+            if sums.len() == MAX_DUPLICATE_CLUSTERS {
+                // Too many directions to be a surface. Leaving the normals as
+                // they arrived is the honest answer.
+                return;
+            }
+            sums.push(current);
+            assigned.push((index, sums.len() - 1));
+        }
+    }
+
+    for (index, cluster) in assigned {
+        let mean = sums[cluster].normalize_or_zero();
+        if mean.length_squared() > f32::EPSILON {
+            smoothed[index] = mean;
+        }
+    }
+}
+
+/// The duplicate-averaging pass alone, for tests that need to see it without
+/// the recompute above it replacing the normals first.
+#[cfg(test)]
+pub(crate) fn smooth_duplicate_position_normals_for_tests(vertices: &mut [EditVertex]) {
+    smooth_duplicate_position_normals(vertices);
+}
+
 fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     let mut groups: HashMap<[i32; 3], Vec<usize>> = HashMap::with_capacity(vertices.len());
     for (index, vertex) in vertices.iter().enumerate() {
@@ -133,28 +190,10 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     let mut smoothed = source_normals.clone();
 
     for indices in groups.values().filter(|indices| indices.len() > 1) {
-        // Past the threshold, one pass to sum and one to accept or reject.
-        // Same answer wherever the group is coherent, which is every case a
-        // real scan produces, and linear everywhere.
+        // Past the threshold the group is clustered instead, in one greedy
+        // pass. See `average_by_cluster` for why a single mean is wrong.
         if indices.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
-            let mut mean = Vec3::ZERO;
-            for &index in indices {
-                let candidate = source_normals[index];
-                if candidate.length_squared() > f32::EPSILON {
-                    mean += candidate;
-                }
-            }
-            if mean.length_squared() > f32::EPSILON {
-                let mean = mean.normalize();
-                for &index in indices {
-                    let current = source_normals[index];
-                    if current.length_squared() > f32::EPSILON
-                        && mean.dot(current) >= DUPLICATE_NORMAL_DOT
-                    {
-                        smoothed[index] = mean;
-                    }
-                }
-            }
+            average_by_cluster(indices, &source_normals, &mut smoothed);
             continue;
         }
 

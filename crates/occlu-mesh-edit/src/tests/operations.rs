@@ -1,4 +1,5 @@
 use super::*;
+use crate::normals::smooth_duplicate_position_normals_for_tests;
 
 #[test]
 fn point_cloud_face_edit_validation_is_typed() {
@@ -477,4 +478,54 @@ fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
             "every vertex should keep a finite normal, got {normal:?}"
         );
     }
+}
+
+/// A crease inside a coincident pile past the bounded threshold must survive.
+///
+/// The same defect as in `occluview-core`: judging the whole group against one
+/// mean puts that mean on the bisector of two clusters and welds both to it.
+#[test]
+fn a_crease_survives_a_group_past_the_threshold_on_the_edit_path() {
+    let group = 400usize;
+    let mut vertices = Vec::with_capacity(group * 3);
+    let mut indices = Vec::with_capacity(group * 3);
+    for i in 0..group {
+        let facing_up = i % 2 == 0;
+        let spread = i as f32 * 0.001;
+        for corner in 0..3 {
+            let mut vertex = v(if corner == 0 {
+                [0.0, 0.0, 0.0]
+            } else {
+                [corner as f32, spread, 0.0]
+            });
+            if corner == 0 {
+                vertex.normal = if facing_up {
+                    [0.0, 1.0, 0.0]
+                } else {
+                    [1.0, 0.0, 0.0]
+                };
+            }
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(vertex);
+        }
+    }
+
+    // Only the duplicate-averaging pass, not the recompute above it: the
+    // recompute would replace these normals with the facets' own.
+    smooth_duplicate_position_normals_for_tests(&mut vertices);
+
+    let shared: Vec<glam::Vec3> = vertices
+        .iter()
+        .filter(|vertex| vertex.position == [0.0, 0.0, 0.0])
+        .map(|vertex| glam::Vec3::from_array(vertex.normal))
+        .collect();
+    assert_eq!(shared.len(), group);
+    for normal in &shared {
+        assert!(
+            normal.dot(glam::Vec3::Y) > 0.99 || normal.dot(glam::Vec3::X) > 0.99,
+            "a member of the crease came out at {normal:?}"
+        );
+    }
+    assert!(shared.iter().any(|n| n.dot(glam::Vec3::Y) > 0.99));
+    assert!(shared.iter().any(|n| n.dot(glam::Vec3::X) > 0.99));
 }
