@@ -618,3 +618,46 @@ fn the_guide_mentions_f_only_where_something_binds_f() {
         "the Explorer preview is the other place the guide may name F"
     );
 }
+
+#[test]
+fn the_workflows_name_the_package_they_built_instead_of_globbing_for_it() {
+    // `dpkg-deb --info target/deb/*.deb` reads every argument after the first
+    // as a control-file name, so a second package in the directory turns the
+    // check into an error about a missing control file -- or, worse, checks
+    // only the oldest one. A fresh runner has exactly one package, which is
+    // why this survived; a developer machine has every version ever built.
+    //
+    // build-deb.sh prints the path it wrote as its last line, so both
+    // workflows take it from there.
+    for (name, workflow) in [
+        ("ci.yml", ci_workflow_source()),
+        ("package-msi.yml", package_workflow_source()),
+    ] {
+        for globbed in [
+            "dpkg-deb --info target/deb/*.deb",
+            "dpkg-deb --contents target/deb/*.deb",
+            "check-deb.sh target/deb/*.deb",
+        ] {
+            assert!(
+                !workflow.contains(globbed),
+                "{name} passes a glob where one package belongs: {globbed}"
+            );
+        }
+        assert!(
+            workflow.contains("package=\"$(install/linux/build-deb.sh | tail -n 1)\""),
+            "{name} should take the package path from the builder"
+        );
+        assert!(
+            workflow.contains("set -o pipefail"),
+            "{name} pipes build-deb.sh into tail, so a build failure has to \
+             survive the pipe"
+        );
+    }
+
+    let builder = linux_build_deb_source();
+    assert!(
+        builder.contains("# Contract: the last line on stdout is the path"),
+        "build-deb.sh should say that its last line is the contract the \
+         workflows depend on"
+    );
+}

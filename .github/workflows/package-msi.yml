@@ -288,17 +288,23 @@ jobs:
             exit "$test_status"
           fi
       - name: Build Debian package
+        id: deb
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: install/linux/build-deb.sh
+        run: |
+          set -o pipefail
+          package="$(install/linux/build-deb.sh | tail -n 1)"
+          echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Validate Debian package
+        env:
+          DEB: ${{ steps.deb.outputs.path }}
         run: |
           desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
           appstreamcli validate --no-net install/linux/ai.occlutrace.OccluView.metainfo.xml
           xmllint --noout install/linux/occluview-mime.xml install/linux/ai.occlutrace.OccluView.metainfo.xml
-          dpkg-deb --info target/deb/*.deb
-          dpkg-deb --contents target/deb/*.deb
-          install/linux/check-deb.sh target/deb/*.deb
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+          install/linux/check-deb.sh "$DEB"
       - name: Write Linux checksums
         run: |
           for deb in target/deb/*.deb; do

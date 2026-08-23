@@ -237,7 +237,11 @@ jobs:
       # installed. This job costs a few minutes and covers the part that
       # actually rots.
       - name: Build the Debian package
-        run: install/linux/build-deb.sh
+        id: deb
+        run: |
+          set -o pipefail
+          package="$(install/linux/build-deb.sh | tail -n 1)"
+          echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Validate desktop and AppStream metadata
         run: |
           desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
@@ -245,9 +249,11 @@ jobs:
           xmllint --noout install/linux/occluview-mime.xml \
             install/linux/ai.occlutrace.OccluView.metainfo.xml
       - name: Validate the package contents
+        env:
+          DEB: ${{ steps.deb.outputs.path }}
         run: |
-          dpkg-deb --info target/deb/*.deb
-          install/linux/check-deb.sh target/deb/*.deb
+          dpkg-deb --info "$DEB"
+          install/linux/check-deb.sh "$DEB"
 
   fuzz-smoke:
     name: fuzz smoke (parsers)
