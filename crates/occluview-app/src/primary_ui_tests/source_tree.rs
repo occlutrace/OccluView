@@ -298,3 +298,47 @@ fn no_source_file_carries_a_path_from_one_machine() {
         offenders.join("\n")
     );
 }
+
+#[test]
+fn the_architecture_note_counts_the_unsafe_in_occluview_formats() {
+    // The note said "single memmap2 unsafe site" and stayed that way when a
+    // second, unrelated Win32 call arrived. An architecture document is read
+    // precisely for claims like this one, so it has to be countable.
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().and_then(Path::parent);
+    let Some(workspace_root) = workspace_root else {
+        panic!("app crate should live under the workspace crates directory");
+    };
+
+    let mut sources = Vec::new();
+    let formats = workspace_root.join("crates/occluview-formats/src");
+    collect_rust_source_files(&formats, &mut sources)
+        .unwrap_or_else(|error| panic!("cannot walk occluview-formats: {error}"));
+
+    let mut sites = Vec::new();
+    for path in sources {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (number, line) in text.lines().enumerate() {
+            if line.contains("unsafe {") {
+                sites.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+
+    assert_eq!(
+        sites.len(),
+        2,
+        "occluview-formats should hold exactly the two unsafe blocks the \
+         architecture note describes -- the mmap and the drive-type query:\n{}",
+        sites.join("\n")
+    );
+
+    let architecture = std::fs::read_to_string(workspace_root.join("docs/ARCHITECTURE.md"))
+        .unwrap_or_else(|error| panic!("cannot read the architecture note: {error}"));
+    assert!(
+        architecture.contains("Two `unsafe` sites"),
+        "the architecture note should say how many unsafe sites the crate has"
+    );
+}

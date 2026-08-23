@@ -29,7 +29,7 @@ Cycles are P0. `publish = false` — not on crates.io.
 | `occluview-align` | Rigid ICP + deviation, slices in / values out. No IO/GPU. |
 | `occluview-core` | Scene, mesh, camera, bbox. Units mm, Y-up, RH. Owns domain model. |
 | `occluview-hps` | HPS/XML parsing, decryption, texture decode. Private `private-hps-key` feature. |
-| `occluview-formats` | Readers: STL/PLY/OBJ/glTF/HPS. Single `memmap2` unsafe site. |
+| `occluview-formats` | Readers: STL/PLY/OBJ/glTF/HPS. Two `unsafe` sites: the `memmap2` mapping and the Win32 drive-type query behind it. |
 | `occluview-render` | wgpu pipeline, `PreparedScene`. One pipeline shared by app and thumbnail. |
 | `occluview-thumbnail` | Platform-neutral thumbnail with bounded concurrency and placeholder ladder. |
 | `occluview-shell` | Windows COM: thumbnail, preview handler, file associations. `release-unwind`. |
@@ -39,7 +39,7 @@ Cycles are P0. `publish = false` — not on crates.io.
 
 ## Trust boundaries
 
-- **File parsers** (STL/PLY/OBJ/GLB/HPS/OFF) handle untrusted bytes from Explorer/thumbnail. OFF is on this boundary even though it is not a user-facing format: `probe()` matches magic before extension, so any file whose header starts with `OFF` reaches `off::read` regardless of its name. Bounded by ZIP entry 256 MiB, aggregate 512 MiB, texture 8192 px edge with a 256 MiB decoded-RGBA ceiling -- one budget shared by every reader, defined once in `occluview-hps` -- checked arithmetic.
+- **File parsers** (STL/PLY/OBJ/GLB/HPS/OFF) handle untrusted bytes from Explorer/thumbnail. OFF is on this boundary even though it is not a user-facing format: `probe()` matches magic before extension for every format but HPS, so any file whose header starts with `OFF` reaches `off::read` regardless of its name. Bounded by ZIP entry 256 MiB, aggregate 512 MiB, texture 8192 px edge with a 256 MiB decoded-RGBA ceiling -- one budget shared by every reader, defined once in `occluview-hps` -- checked arithmetic.
 - **Thumbnail** runs in `dllhost.exe`. Panics unwind via `release-unwind`; `catch_unwind` substitutes a placeholder. One renderer, 12 job slots, per-request timeout.
 - **Updater** verifies HTTPS, SHA-256, and minisign signature before installing. It is also the only outbound network call the product makes: two GETs per launch for `latest.json` and its signature, offer-only, never a silent install. `OCCLUVIEW_NO_UPDATE_CHECK` (any value) disables it; README documents this for packagers.
 - **HPS key**: embedded key is obfuscation, not a secret boundary. Documented as friction; real entitlement should be per-device.

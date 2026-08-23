@@ -1,4 +1,5 @@
 use super::*;
+use crate::mesh::normals::DEGENERATE_AREA_SIN;
 use occlu_mesh_edit::{FaceSelection, MeshEditOptions, MeshTopology};
 use std::{mem::size_of, ptr::addr_of};
 
@@ -652,6 +653,15 @@ fn every_facet_degeneracy_copy_holds_the_same_number() {
     // the fix of 2026-07-25 landed in one crate and reached the other three on
     // 2026-08-22, and for those four weeks every scan opened through the other
     // paths lost shading on facets under 20 um.
+    // Core owns the definition, so pin its value rather than its spelling:
+    // this is the copy the other three are compared against, and the one a
+    // future change would edit first.
+    assert!(
+        (DEGENERATE_AREA_SIN - 1e-10).abs() < 1e-16,
+        "core's threshold moved; the copies below are now measured against \
+         a number this test no longer knows"
+    );
+
     let expected = format!("{}: f32 = 1e-10;", "const DEGENERATE_AREA_SIN");
     for (crate_name, source) in [
         (

@@ -189,7 +189,6 @@ fn read_file_bytes_storage(
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or read.
 /// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
 pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
     let extension = normalized_extension(path)?;
     let file = std::fs::File::open(path).map_err(FormatError::Io)?;
@@ -210,7 +209,6 @@ pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or mapped.
 /// - See [`dispatch_by_extension`] for parse errors.
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
 pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
     read_file_with_key_provider(path, &crate::hps::NoHpsKeyProvider)
 }
@@ -219,7 +217,6 @@ pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
 ///
 /// # Errors
 /// See [`read_file`].
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
 pub fn read_file_with_key_provider(
     path: &Path,
     key_provider: &dyn HpsKeyProvider,
