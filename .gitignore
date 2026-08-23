@@ -8,6 +8,7 @@ Cargo.lock.bak
 # IDE / editor
 /.idea/
 /.vscode/
+/.commandcode/
 *.iml
 .DS_Store
 Thumbs.db

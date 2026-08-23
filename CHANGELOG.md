@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.0.9 - 2026-08-23
+
+- Made Shift actually strengthen the Smooth brush. Shift doubled the force
+  slider and capped it at 100% — but Smooth turns force into relaxation
+  passes that converge, so at the default slider the difference was barely
+  visible and at full slider Shift changed nothing at all. Shift now forces
+  maximum strength and widens the brush footprint by 1.75x, which is the
+  lever that genuinely smooths harder: the pinned boundary moves outward
+  and one held stroke irons a visibly wider patch. The cursor ring shows
+  the widened footprint while Shift is held.
+
+- Gave the sculpt size and force sliders the Mesh Editor window's full
+  width. The label moved onto its own line with a live value readout on the
+  right; on the narrowest window the rail gained a third more travel.
+
+- Save dialogs now start in the folder the scan came from. A layer with no
+  file of its own — a part split or cut out of another scan — starts in its
+  source scan's folder instead of whichever case happened to load first,
+  then falls back to wherever the last export landed. A folder that no
+  longer exists (unplugged media) is skipped instead of being handed to the
+  dialog.
+
+- Every package now ships its legal texts. The MSI installed no license
+  files at all; the deb had nothing for the statically linked crates. All
+  artifacts now carry LICENSE, NOTICE, and a generated
+  THIRD-PARTY-NOTICES.md with the copyright notices and license texts of
+  every linked crate and bundled font — regenerated from the lockfile and
+  gated in CI so it cannot rot like the old hand-written NOTICE did (it
+  credited libraries this program never shipped). The About dialog gained a
+  Third-party licenses view showing the same file.
+
+- Both binaries answer `--version`; the CLI used to reject the flag as an
+  unknown subcommand and the viewer would have opened it as a file. The
+  Explorer shell DLL and the CLI tools now carry Windows version resources,
+  so their Properties pages finally name the product and version.
+
+- Dependency license and advisory scanning now covers the Linux target,
+  which previously sat outside every check. It immediately surfaced two
+  real advisories, both fixed by upgrades rather than exceptions: quick-xml
+  0.41 (RUSTSEC-2026-0194/0195) and webbrowser 1.2.4 (RUSTSEC-2026-0257).
+
 ## 1.0.8 - 2026-08-22
 
 - Fixed Align Scans refusing correct fits between two scans stored in

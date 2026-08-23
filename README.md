@@ -83,7 +83,10 @@ See [SECURITY.md](SECURITY.md). Report vulnerabilities privately to **security@o
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party crates
+and bundled fonts are listed with their license texts in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which every installer and
+package also ships.
 
 ---
 
