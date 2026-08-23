@@ -11,7 +11,11 @@ const SMOOTH_DUPLICATE_NORMAL_DOT: f32 = 0.5;
 /// triangles, not hundreds -- so no scan reaches it, and a crafted file cannot
 /// spend minutes here.
 const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
-const SMOOTH_POSITION_EPS_MM: f32 = 0.002;
+// The welding tolerance and its key function are owned by `occlu-mesh-edit`
+// and used from here: the same number has to decide which vertices share a
+// normal at load and after every edit, or a scan changes shading the first
+// time it is touched. See `occlu_mesh_edit::COINCIDENT_POSITION_EPS_MM`.
+use occlu_mesh_edit::coincident_position_key as position_key;
 const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
 fn normal_is_usable(normal: [f32; 3]) -> bool {
@@ -274,30 +278,6 @@ fn average_duplicate_run(members: &[([i32; 3], usize)], source_normals: &[Vec3],
         if normal.length_squared() > f32::EPSILON {
             out[slot] = normal.normalize();
         }
-    }
-}
-
-fn position_key(position: [f32; 3]) -> [i32; 3] {
-    [
-        position_lane_key(position[0]),
-        position_lane_key(position[1]),
-        position_lane_key(position[2]),
-    ]
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn position_lane_key(value: f32) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-
-    let scaled = f64::from(value / SMOOTH_POSITION_EPS_MM).round();
-    if scaled <= f64::from(i32::MIN) {
-        i32::MIN
-    } else if scaled >= f64::from(i32::MAX) {
-        i32::MAX
-    } else {
-        scaled as i32
     }
 }
 

@@ -10,7 +10,16 @@ use std::collections::HashMap;
 use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
 
 const DUPLICATE_NORMAL_DOT: f32 = 0.5;
-const DUPLICATE_POSITION_EPS_MM: f32 = 0.002;
+/// Two positions within this distance are the same point for shading.
+///
+/// This is the number that decides which vertices share a normal, and both
+/// this crate and `occluview-core` need it: core welds at load, this crate
+/// welds after every brush stroke and hole fill. It used to be written twice,
+/// under two names, with two byte-identical key functions maintained
+/// separately -- change one and the same scan is shaded one way on open and
+/// another way after any edit, a seam that appears mid-session with nothing to
+/// blame.
+pub const COINCIDENT_POSITION_EPS_MM: f32 = 0.002;
 
 /// Recompute every vertex normal from triangle winding.
 ///
@@ -81,7 +90,7 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     let mut groups: HashMap<[i32; 3], Vec<usize>> = HashMap::with_capacity(vertices.len());
     for (index, vertex) in vertices.iter().enumerate() {
         groups
-            .entry(position_key(vertex.position))
+            .entry(coincident_position_key(vertex.position))
             .or_default()
             .push(index);
     }
@@ -129,7 +138,12 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     }
 }
 
-fn position_key(position: [f32; 3]) -> [i32; 3] {
+/// Quantize a position onto the [`COINCIDENT_POSITION_EPS_MM`] lattice.
+///
+/// Equal keys mean "the same point" for normal welding. Shared with
+/// `occluview-core` so both sides of an edit agree.
+#[must_use]
+pub fn coincident_position_key(position: [f32; 3]) -> [i32; 3] {
     [
         position_lane_key(position[0]),
         position_lane_key(position[1]),
@@ -143,12 +157,59 @@ fn position_lane_key(value: f32) -> i32 {
         return 0;
     }
 
-    let scaled = f64::from(value / DUPLICATE_POSITION_EPS_MM).round();
+    let scaled = f64::from(value / COINCIDENT_POSITION_EPS_MM).round();
     if scaled <= f64::from(i32::MIN) {
         i32::MIN
     } else if scaled >= f64::from(i32::MAX) {
         i32::MAX
     } else {
         scaled as i32
+    }
+}
+
+#[cfg(test)]
+mod shared_tolerance_tests {
+    use super::{coincident_position_key, COINCIDENT_POSITION_EPS_MM};
+
+    #[test]
+    fn one_tolerance_decides_which_vertices_share_a_normal() {
+        // Core welds at load, this crate welds after every brush stroke and
+        // hole fill. Two copies of this number meant the same scan could shade
+        // one way on open and another way after any edit -- a seam that appears
+        // mid-session with nothing to blame it on.
+        let origin = [0.0_f32, 0.0, 0.0];
+        let inside = [COINCIDENT_POSITION_EPS_MM * 0.4, 0.0, 0.0];
+        let outside = [COINCIDENT_POSITION_EPS_MM * 4.0, 0.0, 0.0];
+
+        assert_eq!(
+            coincident_position_key(origin),
+            coincident_position_key(inside),
+            "positions inside the tolerance must be one point"
+        );
+        assert_ne!(
+            coincident_position_key(origin),
+            coincident_position_key(outside),
+            "positions well outside it must not be"
+        );
+        // Non-finite input has to answer something rather than panic: it
+        // arrives from files.
+        assert_eq!(
+            coincident_position_key([f32::NAN, f32::INFINITY, 0.0]),
+            [0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn core_does_not_keep_its_own_copy() {
+        let core = include_str!("../../occluview-core/src/mesh/normals.rs");
+        assert!(
+            core.contains("use occlu_mesh_edit::coincident_position_key"),
+            "core must use the shared key rather than redefining it"
+        );
+        let redefinition = format!("const {}_EPS_MM", "SMOOTH_POSITION");
+        assert!(
+            !core.contains(&redefinition),
+            "a second tolerance is how the two shadings drifted apart"
+        );
     }
 }
