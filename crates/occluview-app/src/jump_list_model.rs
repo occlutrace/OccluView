@@ -1,9 +1,12 @@
 //! Windows Jump List item model.
 //!
-//! The platform adapter lives in `occluview-app`; this module keeps the
-//! recent-scene to shell-link contract testable without Win32.
+//! The publisher beside it is Windows-only; this module is not, so the
+//! recent-scene to shell-link contract -- the titles, the argument quoting --
+//! can be tested on any platform. Off Windows nothing calls it, which is why
+//! the dead-code lint is answered here rather than at each item.
+#![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::{RecentEntry, RecentFiles};
+use crate::recent_files::{RecentEntry, RecentFiles};
 use std::path::Path;
 
 /// A custom Jump List destination for one recent scene.
@@ -105,6 +108,7 @@ fn push_backslashes(out: &mut String, count: usize) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::path::PathBuf;
 

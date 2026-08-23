@@ -78,6 +78,10 @@ impl RecentFiles {
     }
 
     /// Add a path as the most recent entry.
+    ///
+    /// The single-path convenience over [`RecentFiles::push_paths`]. The app
+    /// opens scenes, which are lists, so only tests reach for this one.
+    #[cfg(test)]
     pub fn push<P: Into<PathBuf>>(&mut self, path: P) {
         self.push_paths(&[path.into()]);
     }
@@ -202,6 +206,7 @@ fn decode_escape(first: char, second: char) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::RecentFiles;
     use std::path::PathBuf;
 

@@ -21,10 +21,12 @@ use super::viewer::{
 use super::{
     read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
 };
+use crate::recent_files::RecentFiles;
+use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
 use glam::Mat4;
-use occluview_core::{Camera, RecentFiles, ScaleBar, Scene, SceneMesh};
+use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, Offscreen, PreparedScene, PreparedSceneSource,
     PreparedSceneTopology, PreparedSceneUpdate, ThumbnailSpec, ViewportSpec,

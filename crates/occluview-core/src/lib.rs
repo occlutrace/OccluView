@@ -38,10 +38,7 @@
 pub mod bbox;
 pub mod camera;
 pub mod error;
-pub mod jump_list;
 pub mod mesh;
-pub mod recent_files;
-pub mod scale_bar;
 pub mod scene;
 pub mod units;
 
@@ -52,7 +49,6 @@ pub use camera::{
     MIN_ORTHOGRAPHIC_HEIGHT_MM,
 };
 pub use error::CoreError;
-pub use jump_list::JumpListItem;
 pub use mesh::{
     accumulate_smooth_normals, bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world,
     component_at_triangle_in_mesh, crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
@@ -68,7 +64,5 @@ pub use occlu_mesh_edit::{
     BrushStrokeOutcome, FaceSelection, MeshEditOptions, MeshEditReport, MeshEditWarning,
     RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
 };
-pub use recent_files::{RecentEntry, RecentFiles};
-pub use scale_bar::ScaleBar;
 pub use scene::{Scene, SceneMesh, SceneMeshId, ScenePickHit, DEFAULT_UNTEXTURED_MESH_TINT};
 pub use units::Millimeters;

@@ -59,6 +59,7 @@ fn nice_length_mm(target_mm: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::float_cmp)]
     use super::*;
 
     /// Zooming changes the bar. It used to be built from the mesh's bounding box

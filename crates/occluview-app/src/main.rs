@@ -51,6 +51,7 @@ mod cut_tool;
 mod edit_mode;
 #[cfg(windows)]
 mod jump_list;
+mod jump_list_model;
 mod layer_actions;
 mod layers_overlay;
 mod live_viewport;
@@ -60,7 +61,9 @@ mod measure_tool;
 mod mesh_editor_icons;
 mod mesh_editor_overlay;
 mod probe_section;
+mod recent_files;
 mod repair_report;
+mod scale_bar;
 mod scene_loading;
 mod sculpt_tool;
 mod sculpt_worker;
