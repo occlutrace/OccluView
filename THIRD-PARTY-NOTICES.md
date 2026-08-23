@@ -7,7 +7,7 @@ edit about.toml or about.hbs and run scripts/gen-third-party.sh to update it.
 
 ## Licenses used
 
-- MIT License (282)
+- MIT License (281)
 - Unicode License v3 (19)
 - Apache License 2.0 (13)
 - ISC License (5)
@@ -2005,7 +2005,7 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 
 - wayland-backend 0.3.15 (https://github.com/smithay/wayland-rs)
-- wayland-client 0.31.14 (https://github.com/smithay/wayland-rs)
+- wayland-client 0.31.15 (https://github.com/smithay/wayland-rs)
 - wayland-cursor 0.31.14 (https://github.com/smithay/wayland-rs)
 - wayland-protocols-experimental 20250721.0.1 (https://github.com/smithay/wayland-rs)
 - wayland-protocols-misc 0.3.12 (https://github.com/smithay/wayland-rs)
@@ -3142,42 +3142,6 @@ Used by:
 
 ```
 Copyright (c) 2018-2026 The RustCrypto Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
-### MIT License
-
-Used by:
-
-- getrandom 0.4.3 (https://github.com/rust-random/getrandom)
-
-```
-Copyright (c) 2018-2026 The rust-random Project Developers
-Copyright (c) 2014 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -4565,7 +4529,7 @@ SOFTWARE.
 
 Used by:
 
-- bytemuck 1.25.0 (https://github.com/Lokathor/bytemuck)
+- bytemuck 1.25.2 (https://github.com/Lokathor/bytemuck)
 - bytemuck_derive 1.10.2 (https://github.com/Lokathor/bytemuck)
 
 ```
@@ -5134,7 +5098,7 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 
 - adler2 2.0.1 (https://github.com/oyvindln/adler2)
-- anyhow 1.0.103 (https://github.com/dtolnay/anyhow)
+- anyhow 1.0.104 (https://github.com/dtolnay/anyhow)
 - async-channel 2.5.0 (https://github.com/smol-rs/async-channel)
 - async-executor 1.14.0 (https://github.com/smol-rs/async-executor)
 - async-fs 2.2.0 (https://github.com/smol-rs/async-fs)
@@ -5173,7 +5137,7 @@ Used by:
 - serde 1.0.228 (https://github.com/serde-rs/serde)
 - serde_core 1.0.228 (https://github.com/serde-rs/serde)
 - serde_derive 1.0.228 (https://github.com/serde-rs/serde)
-- serde_json 1.0.150 (https://github.com/serde-rs/json)
+- serde_json 1.0.151 (https://github.com/serde-rs/json)
 - serde_repr 0.1.20 (https://github.com/dtolnay/serde-repr)
 - smol_str 0.2.2 (https://github.com/rust-analyzer/smol_str)
 - syn 1.0.109 (https://github.com/dtolnay/syn)
