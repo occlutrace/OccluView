@@ -9,11 +9,10 @@ use image::GenericImageView;
 use occluview_core::MeshTexture;
 use std::io::Cursor;
 
-/// A texture may be wide enough for scanner exports without letting one image
-/// dominate the viewer or the Windows thumbnail provider's address space.
-pub(crate) const MAX_TEXTURE_DIMENSION_PX: u32 = 8_192;
-/// Maximum resulting RGBA buffer (4K square is exactly 64 MiB).
-pub(crate) const MAX_TEXTURE_RGBA_BYTES: u64 = 64 * 1024 * 1024;
+// One definition of the texture budget for every reader in the workspace,
+// owned by the crate that reads the format most exposed to it. See
+// `occluview_hps::MAX_TEXTURE_DIMENSION_PX` for why there is exactly one.
+pub(crate) use occluview_hps::{MAX_TEXTURE_DIMENSION_PX, MAX_TEXTURE_RGBA_BYTES};
 
 pub(crate) fn decode_embedded_raster(
     bytes: &[u8],
@@ -132,10 +131,46 @@ mod tests {
     }
 
     #[test]
-    fn dimensions_accept_a_4k_square_but_reject_larger_rgba_surfaces() {
+    fn the_edge_and_byte_limits_bound_the_same_decoded_surface() {
+        // 8192 x 8192 x 4 is exactly MAX_TEXTURE_RGBA_BYTES, so the two limits
+        // meet at the same image: the largest square that passes the edge test
+        // is also the largest surface the byte test allows.
         assert!(validate_texture_dimensions(4_096, 4_096, "test").is_ok());
-        assert!(validate_texture_dimensions(8_192, 8_192, "test").is_err());
+        assert!(validate_texture_dimensions(8_192, 8_192, "test").is_ok());
+        assert_eq!(
+            u64::from(MAX_TEXTURE_DIMENSION_PX) * u64::from(MAX_TEXTURE_DIMENSION_PX) * 4,
+            MAX_TEXTURE_RGBA_BYTES
+        );
+        // A lopsided atlas inside the edge limit is what the byte limit is for.
+        assert!(validate_texture_dimensions(8_192, 4_096, "test").is_ok());
         assert!(validate_texture_dimensions(0, 256, "test").is_err());
+    }
+
+    #[test]
+    fn both_readers_share_one_texture_budget() {
+        // This crate used to carry its own copy of these numbers with a 64 MiB
+        // ceiling against the HPS crate's 256 MiB, so the same image was
+        // accepted from a dental container and refused from a `.glb`, in the
+        // same process, with nothing explaining why. Re-exporting rather than
+        // redefining is what keeps that from coming back, so that is what is
+        // checked -- an equality assertion would pass either way once the two
+        // numbers happened to agree.
+        let source = include_str!("texture_decode.rs");
+        assert!(
+            source.contains("pub(crate) use occluview_hps::{"),
+            "the texture budget must be imported from occluview-hps, not redefined"
+        );
+        // The needles are assembled so this guard does not match its own source.
+        for (name, ty) in [
+            ("MAX_TEXTURE_DIMENSION_PX", "u32"),
+            ("MAX_TEXTURE_RGBA_BYTES", "u64"),
+        ] {
+            let redefinition = format!("const {name}: {ty} =");
+            assert!(
+                !source.contains(&redefinition),
+                "a second definition is how the two limits drifted apart: {redefinition}"
+            );
+        }
     }
 
     #[test]

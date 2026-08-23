@@ -39,7 +39,7 @@ Cycles are P0. `publish = false` — not on crates.io.
 
 ## Trust boundaries
 
-- **File parsers** (STL/PLY/OBJ/GLB/HPS/OFF) handle untrusted bytes from Explorer/thumbnail. OFF is on this boundary even though it is not a user-facing format: `probe()` matches magic before extension, so any file whose header starts with `OFF` reaches `off::read` regardless of its name. Bounded by ZIP entry 256 MiB, aggregate 512 MiB, texture 8192 px with an RGBA ceiling of 256 MiB for HPS and 64 MiB for glTF, checked arithmetic.
+- **File parsers** (STL/PLY/OBJ/GLB/HPS/OFF) handle untrusted bytes from Explorer/thumbnail. OFF is on this boundary even though it is not a user-facing format: `probe()` matches magic before extension, so any file whose header starts with `OFF` reaches `off::read` regardless of its name. Bounded by ZIP entry 256 MiB, aggregate 512 MiB, texture 8192 px edge with a 256 MiB decoded-RGBA ceiling -- one budget shared by every reader, defined once in `occluview-hps` -- checked arithmetic.
 - **Thumbnail** runs in `dllhost.exe`. Panics unwind via `release-unwind`; `catch_unwind` substitutes a placeholder. One renderer, 12 job slots, per-request timeout.
 - **Updater** verifies HTTPS, SHA-256, and minisign signature before installing. It is also the only outbound network call the product makes: two GETs per launch for `latest.json` and its signature, offer-only, never a silent install. `OCCLUVIEW_NO_UPDATE_CHECK` (any value) disables it; README documents this for packagers.
 - **HPS key**: embedded key is obfuscation, not a secret boundary. Documented as friction; real entitlement should be per-device.

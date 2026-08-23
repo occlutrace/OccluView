@@ -22,6 +22,7 @@ pub use key::{
 };
 pub use parser::{read, read_with_key_provider};
 pub use surface::{DecodedSurface, DecodedSurfaceParts, DecodedTexture};
+pub use texture::{MAX_TEXTURE_DIMENSION_PX, MAX_TEXTURE_RGBA_BYTES};
 
 /// Semantic version of the HPS parser implementation.
 pub const PARSER_VERSION: &str = env!("CARGO_PKG_VERSION");

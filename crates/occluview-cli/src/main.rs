@@ -23,6 +23,7 @@ use occluview_formats::hps::RuntimeHpsKeyProvider;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    install_tracing();
     let exit_code = match run() {
         Ok(()) => 0,
         Err(error) => {
@@ -31,6 +32,30 @@ fn main() {
         }
     };
     std::process::exit(exit_code);
+}
+
+/// Send the workspace's `tracing` output to stderr.
+///
+/// This binary is the freedesktop thumbnailer the Debian package installs, so
+/// when a clinic's file manager shows placeholder cubes instead of scans, this
+/// is where the reason comes out. The crate declared `tracing-subscriber` and
+/// never installed one, which meant every `tracing::warn!` from the format,
+/// thumbnail and render crates went nowhere and `RUST_LOG` did nothing --
+/// while the subscriber's whole dependency tree still shipped in the binary
+/// and in its attribution.
+///
+/// Default is `warn`, so ordinary runs stay quiet; `RUST_LOG=debug` turns the
+/// diagnosis on. stderr, because that is already this tool's progress channel
+/// and the thumbnailer contract only cares about the output file.
+fn install_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .compact()
+        .try_init();
 }
 
 fn run() -> Result<()> {
@@ -100,7 +125,8 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
     // thumbnailer contract (`Exec=occluview-cli thumbnail %i -o %o`): a non-zero
     // exit or missing output makes the file manager show a broken-image glyph,
     // which is exactly the "broken thumbnails" we want to avoid. Any fallback
-    // reason is tracing-logged inside the provider, not silently masked.
+    // reason is tracing-logged inside the provider; `RUST_LOG=debug` prints it
+    // (see `install_tracing`).
     let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
         &file,
         occluview_render::ThumbnailSpec {
