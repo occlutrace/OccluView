@@ -192,10 +192,10 @@ fn non_face_edit_action_errors_instead_of_aborting() {
     };
     let selection = FaceSelection::new(vec![true]);
 
-    // ToggleVisibility is not a face edit. The adapter must degrade to an honest
-    // error (which callers surface as a failed edit), never `unreachable!` —
-    // release ships `panic = "abort"`, so that would be a hard process crash.
-    let result = selected_face_edit_result(&mesh, &selection, LayerContextAction::ToggleVisibility);
+    // NextTint is not a face edit. The adapter must degrade to an honest error
+    // (which callers surface as a failed edit), never `unreachable!` — release
+    // ships `panic = "abort"`, so that would be a hard process crash.
+    let result = selected_face_edit_result(&mesh, &selection, LayerContextAction::NextTint);
     assert!(
         matches!(result, Err(CoreError::Geometry(_))),
         "non-face-edit action should return an error, got {result:?}"

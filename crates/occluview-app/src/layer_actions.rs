@@ -41,13 +41,16 @@ pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
     ([0.10, 0.18, 0.28, 1.0], "Slate"),
 ];
 
+/// Every action the layer context menu can raise.
+///
+/// The list is exhaustive on purpose and checked by
+/// `every_layer_action_is_reachable_from_the_menu`: a variant no menu can
+/// produce is a handler nobody can run, a test that proves nothing, and a
+/// reader counting features the product does not have. `Solo`, `ShowAll`,
+/// `ResetOpacity` and `ToggleVisibility` were exactly that -- the layer row
+/// owns visibility directly and never went through this enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum LayerContextAction {
-    ToggleVisibility,
-    Solo,
-    ShowAll,
-    ResetOpacity,
     NextTint,
     ToggleWireframe,
     ToggleShowVertexColors,
@@ -97,10 +100,6 @@ pub(crate) fn apply_layer_context_action(
     }
 
     match action {
-        LayerContextAction::ToggleVisibility => toggle_layer_visibility(scene, index),
-        LayerContextAction::Solo => solo_layer(scene, index),
-        LayerContextAction::ShowAll => show_all_layers(scene),
-        LayerContextAction::ResetOpacity => reset_layer_opacity(scene, index),
         LayerContextAction::NextTint => advance_layer_tint(scene, index),
         LayerContextAction::ToggleWireframe => toggle_wireframe(scene, index),
         LayerContextAction::ToggleShowVertexColors => toggle_show_vertex_colors(scene, index),
@@ -124,60 +123,6 @@ pub(crate) fn apply_layer_context_action(
                 removed,
             }
         }
-    }
-}
-
-fn toggle_layer_visibility(scene: &mut Scene, index: usize) -> LayerContextApply {
-    let Some(entry) = scene.meshes_mut().get_mut(index) else {
-        return LayerContextApply::default();
-    };
-    entry.visible = !entry.visible;
-    LayerContextApply {
-        scene_changed: true,
-        ..LayerContextApply::default()
-    }
-}
-
-fn solo_layer(scene: &mut Scene, index: usize) -> LayerContextApply {
-    let mut scene_changed = false;
-    for (entry_index, entry) in scene.meshes_mut().iter_mut().enumerate() {
-        let next_visible = entry_index == index;
-        if entry.visible != next_visible {
-            entry.visible = next_visible;
-            scene_changed = true;
-        }
-    }
-    LayerContextApply {
-        scene_changed,
-        ..LayerContextApply::default()
-    }
-}
-
-fn show_all_layers(scene: &mut Scene) -> LayerContextApply {
-    let mut scene_changed = false;
-    for entry in scene.meshes_mut() {
-        if !entry.visible {
-            entry.visible = true;
-            scene_changed = true;
-        }
-    }
-    LayerContextApply {
-        scene_changed,
-        ..LayerContextApply::default()
-    }
-}
-
-fn reset_layer_opacity(scene: &mut Scene, index: usize) -> LayerContextApply {
-    let Some(entry) = scene.meshes_mut().get_mut(index) else {
-        return LayerContextApply::default();
-    };
-    if (entry.opacity - 1.0).abs() <= f32::EPSILON {
-        return LayerContextApply::default();
-    }
-    entry.opacity = 1.0;
-    LayerContextApply {
-        scene_changed: true,
-        ..LayerContextApply::default()
     }
 }
 
@@ -466,29 +411,6 @@ mod tests {
         scene.add(SceneMesh::new(Mesh::empty()));
         scene.meshes_mut()[2].visible = false;
 
-        let action = request(&scene, 0, LayerContextAction::ToggleVisibility);
-        let toggle = apply_layer_context_action(&mut scene, action);
-        assert!(toggle.scene_changed);
-        assert!(!scene.meshes()[0].visible);
-
-        let action = request(&scene, 0, LayerContextAction::Solo);
-        let solo = apply_layer_context_action(&mut scene, action);
-        assert!(solo.scene_changed);
-        assert!(!solo.structural_scene_change);
-        assert!(scene.meshes()[0].visible);
-        assert!(!scene.meshes()[1].visible);
-        assert!(!scene.meshes()[2].visible);
-
-        let action = request(&scene, 0, LayerContextAction::ShowAll);
-        let show_all = apply_layer_context_action(&mut scene, action);
-        assert!(show_all.scene_changed);
-        assert!(scene.meshes().iter().all(|entry| entry.visible));
-
-        let action = request(&scene, 0, LayerContextAction::ResetOpacity);
-        let reset = apply_layer_context_action(&mut scene, action);
-        assert!(reset.scene_changed);
-        assert!((scene.meshes()[0].opacity - 1.0).abs() <= f32::EPSILON);
-
         let before_tint = scene.meshes()[1].tint;
         let action = request(&scene, 1, LayerContextAction::NextTint);
         let tint = apply_layer_context_action(&mut scene, action);
@@ -534,22 +456,77 @@ mod tests {
         assert_eq!(scene.meshes().len(), 2);
     }
 
+    /// Every action the enum declares must be raisable by some menu.
+    ///
+    /// The scene menu has had this guard for a while
+    /// (`scene_menu::tests::every_scene_action_is_reachable_from_the_menu`);
+    /// the layer menu did not, and drifted to four variants no menu could
+    /// produce, each with a handler, a passing test, and in two cases a drawn
+    /// glyph. A reader counted twenty actions in a menu that offered sixteen.
+    ///
+    /// The list here is the enum, written out, so adding a variant means adding
+    /// a line here and finding out immediately whether anything offers it.
+    #[test]
+    fn every_layer_action_is_reachable_from_a_menu() {
+        let menus = [
+            include_str!("layers_overlay/menu.rs"),
+            include_str!("layers_overlay/row.rs"),
+            include_str!("app/app_mesh_editor.rs"),
+            include_str!("app/app_layer_edits/whole_mesh.rs"),
+            include_str!("app/app_layer_edits/selection_ops.rs"),
+            include_str!("app/app_layer_edits/undo_redo.rs"),
+            include_str!("app/app_mesh_export.rs"),
+        ];
+        for action in [
+            LayerContextAction::NextTint,
+            LayerContextAction::ToggleWireframe,
+            LayerContextAction::ToggleShowVertexColors,
+            LayerContextAction::ToggleShowTexture,
+            LayerContextAction::EditMesh,
+            LayerContextAction::BridgeSplit,
+            LayerContextAction::DeleteSelectedFaces,
+            LayerContextAction::CropToSelectedFaces,
+            LayerContextAction::CutSelectionToNewLayer,
+            LayerContextAction::SeparateSelectedComponents,
+            LayerContextAction::CloseHoles,
+            LayerContextAction::InvertNormals,
+            LayerContextAction::RepairMesh,
+            LayerContextAction::UndoLastMeshEdit,
+            LayerContextAction::ExportLayer,
+            LayerContextAction::Remove,
+        ] {
+            let name = format!("LayerContextAction::{action:?}");
+            assert!(
+                menus.iter().any(|source| source.contains(name.as_str())),
+                "{name} is declared but no menu can raise it"
+            );
+        }
+    }
+
     #[test]
     fn layer_context_action_ignores_stale_layer_identity() {
         let mut scene = Scene::new();
-        scene.add(SceneMesh::new(Mesh::empty()));
+        scene.add(SceneMesh::new(Mesh::empty()).with_opacity(0.4));
         let stale_layer_id = SceneMesh::new(Mesh::empty()).id();
+        let before_tint = scene.meshes()[0].tint;
 
         let apply = apply_layer_context_action(
             &mut scene,
             LayerContextRequest {
                 index: 0,
                 layer_id: stale_layer_id,
-                action: LayerContextAction::ToggleVisibility,
+                action: LayerContextAction::NextTint,
             },
         );
 
         assert!(!apply.scene_changed);
-        assert!(scene.meshes()[0].visible);
+        assert!(
+            scene.meshes()[0]
+                .tint
+                .iter()
+                .zip(before_tint.iter())
+                .all(|(left, right)| (*left - *right).abs() <= f32::EPSILON),
+            "a stale layer id must leave the tint alone"
+        );
     }
 }

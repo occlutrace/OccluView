@@ -4,24 +4,22 @@
 
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2};
 
-use super::{arc, arrowhead};
+use super::arrowhead;
 
 /// One layer context-menu glyph, drawn in the shared line style at the small
 /// (~15 px) gutter size a dropdown row uses. A vocabulary distinct from the
 /// editor toolbar vocabulary: these name layer-level operator actions.
+/// The glyphs the layer and scene menus draw.
+///
+/// Every variant is drawn by some menu; nothing here is speculative. Four
+/// glyphs used to sit in this list for actions no menu could raise -- the two
+/// eyes and the droplet belonged to visibility and opacity, which the layer row
+/// owns directly, and the spotlight belonged to a Solo action that was never
+/// wired up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum LayerMenuIcon {
-    /// An open eye — the layer is visible (the "Hide" action).
-    EyeOpen,
-    /// A slashed eye — the layer is hidden (the "Show" action).
-    EyeSlash,
-    /// Spotlight one sheet among dimmed others (Show only this layer).
-    Solo,
     /// Every sheet lit (Show all layers).
     ShowAll,
-    /// A droplet — reset opacity.
-    Opacity,
     /// An artist palette — cycle the tint.
     Tint,
     /// A pencil — open the mesh editor.
@@ -70,36 +68,15 @@ pub(crate) fn paint_layer_menu(
     let r = |v: f32| v * b.width();
 
     match icon {
-        LayerMenuIcon::EyeOpen => {
-            menu_almond(painter, b, stroke);
-            painter.circle_filled(p(0.50, 0.50), r(0.11), color);
-        }
-        LayerMenuIcon::EyeSlash => {
-            menu_almond(painter, b, stroke);
-            painter.line_segment([p(0.12, 0.80), p(0.88, 0.20)], stroke);
-        }
-        LayerMenuIcon::Solo | LayerMenuIcon::ShowAll => {
-            // Three stacked sheets. Solo lights only the middle one; Show all
-            // lights every sheet.
-            let all = icon == LayerMenuIcon::ShowAll;
-            let sheet = |painter: &egui::Painter, cy: f32, lit: bool| {
+        LayerMenuIcon::ShowAll => {
+            // Three stacked sheets, every one lit.
+            let sheet = |painter: &egui::Painter, cy: f32| {
                 let rc = Rect::from_min_max(p(0.18, cy - 0.075), p(0.82, cy + 0.075));
-                painter.rect_filled(rc, r(0.03), if lit { color } else { soft });
+                painter.rect_filled(rc, r(0.03), color);
             };
-            sheet(painter, 0.24, all);
-            sheet(painter, 0.50, true);
-            sheet(painter, 0.76, all);
-        }
-        LayerMenuIcon::Opacity => {
-            // Teardrop: apex on top, round bulb below; softly filled to read as
-            // translucency.
-            let bulb = p(0.50, 0.60);
-            let rad = r(0.30);
-            let mut drop = Vec::with_capacity(22);
-            drop.push(p(0.50, 0.12));
-            drop.extend(arc(bulb, rad, -50.0, 230.0, 20));
-            painter.add(Shape::convex_polygon(drop.clone(), soft, Stroke::NONE));
-            painter.add(Shape::closed_line(drop, stroke));
+            sheet(painter, 0.24);
+            sheet(painter, 0.50);
+            sheet(painter, 0.76);
         }
         LayerMenuIcon::Tint => {
             // Artist palette: an ellipse rim, a thumb hole, three paint dots.
@@ -228,37 +205,12 @@ pub(crate) fn paint_layer_menu(
     }
 }
 
-/// The almond eye outline shared by the open/slashed menu eyes, matching the
-/// layer-row visibility eye so the two read as one glyph.
-fn menu_almond(painter: &egui::Painter, b: Rect, stroke: Stroke) {
-    let c = Pos2::new(b.min.x + 0.50 * b.width(), b.min.y + 0.50 * b.height());
-    let hw = 0.40 * b.width();
-    let hh = 0.24 * b.height();
-    let mut outline = Vec::with_capacity(28);
-    for i in 0..=12 {
-        let t = i as f32 / 12.0;
-        let x = c.x - hw + 2.0 * hw * t;
-        let lid = (std::f32::consts::PI * t).sin();
-        outline.push(Pos2::new(x, c.y - hh * lid));
-    }
-    for i in (0..=12).rev() {
-        let t = i as f32 / 12.0;
-        let x = c.x - hw + 2.0 * hw * t;
-        let lid = (std::f32::consts::PI * t).sin();
-        outline.push(Pos2::new(x, c.y + hh * lid));
-    }
-    painter.add(Shape::closed_line(outline, stroke));
-}
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_MENU_ICONS: [LayerMenuIcon; 16] = [
-        LayerMenuIcon::EyeOpen,
-        LayerMenuIcon::EyeSlash,
-        LayerMenuIcon::Solo,
+    const ALL_MENU_ICONS: [LayerMenuIcon; 12] = [
         LayerMenuIcon::ShowAll,
-        LayerMenuIcon::Opacity,
         LayerMenuIcon::Tint,
         LayerMenuIcon::Pencil,
         LayerMenuIcon::Repair,
