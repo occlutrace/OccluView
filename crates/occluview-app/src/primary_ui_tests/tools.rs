@@ -212,3 +212,59 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
         );
     }
 }
+
+#[test]
+fn nothing_holds_a_second_scene_handle_across_an_in_place_edit() {
+    // `live_scene_mut` asserts in debug that it holds the only Arc<Scene>,
+    // because Arc::make_mut copies the whole case when it does not -- 45 ms
+    // per frame on paths that run per frame. The assertion is the real
+    // detector and fires on the first brush dab of any debug build. What it
+    // cannot do is describe the four shapes that tripped it, so those are
+    // pinned here.
+    //
+    // A source guard cannot prove the general rule; a handle can be held
+    // anywhere. It can keep these four from coming back.
+    let brush = repo_source_file("src/app/app_align_brush.rs");
+    assert!(
+        brush.contains("let (layer_id, painting, changed) = {"),
+        "the dab must read the scene inside a block that closes before it \
+         patches the preview"
+    );
+    assert!(
+        brush.contains("fn region_colors_for("),
+        "the region colours must be computed as values; a closure over the \
+         vertices keeps a handle alive by construction"
+    );
+    assert!(
+        !brush.contains("let recolor = |vertex: usize|"),
+        "the closure form is what held the handle"
+    );
+    assert!(
+        brush.contains("let sides: Vec<(AlignSide, SceneMeshId, SceneMesh)> = {"),
+        "a whole-mesh mask command must take both layers out of the scene \
+         before it repaints either preview"
+    );
+
+    let display = repo_source_file("src/app/app_align_display.rs");
+    assert!(
+        display.contains("patched: &[[u8; 4]],"),
+        "the patch writer takes colours, not a closure that can read the scene"
+    );
+
+    let sculpt = repo_source_file("src/sculpt_tool.rs");
+    assert!(
+        sculpt.contains("let mesh = entry.mesh.clone();") && sculpt.contains("drop(scene);"),
+        "the sculpt worker takes the one mesh it prepares; an Arc<Scene> in a \
+         background thread makes every scene edit on the UI thread copy the case"
+    );
+    let Some((_, worker)) = sculpt.split_once(".spawn(move || {") else {
+        panic!("the preparation worker should still be spawned here");
+    };
+    let Some((worker, _)) = worker.split_once("\n            });") else {
+        panic!("the preparation worker body should be delimited");
+    };
+    assert!(
+        !worker.contains("scene"),
+        "the preparation worker must not hold the scene:\n{worker}"
+    );
+}

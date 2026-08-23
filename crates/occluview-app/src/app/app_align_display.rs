@@ -103,10 +103,16 @@ impl OccluViewApp {
     /// which is what made painting run at three frames a second.
     /// `recolor` is asked only for the vertices that changed, so a dab never
     /// walks a million-entry array to rewrite six hundred of them.
+    /// `patched` holds one colour per entry of `touched`, in the same order.
+    /// They arrive as values rather than as a closure over the scene on
+    /// purpose: this function edits the scene in place, and a closure that
+    /// reads vertices keeps a second `Arc<Scene>` alive by construction, which
+    /// is exactly what turns the edit into a copy of the whole case.
     pub(super) fn patch_overlay_colors(
         &mut self,
         layer: SceneMeshId,
-        recolor: impl Fn(usize) -> [u8; 4],
+        touched: &[u32],
+        patched: &[[u8; 4]],
     ) -> bool {
         let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
         else {
@@ -130,16 +136,16 @@ impl OccluViewApp {
             return false;
         }
 
-        // The list belongs to the markings, which produced it. Borrowed rather
-        // than stolen: a `mem::take` here left the markings holding an empty
-        // list for the rest of the frame, so anything else that asked what the
-        // last dab touched was told "nothing".
-        let touched = self.align_markings.touched().to_vec();
+        // One colour per touched vertex, or the caller and this function
+        // disagree about what the last dab was, and the wrong vertices get
+        // recoloured.
+        if touched.len() != patched.len() {
+            return false;
+        }
         let colors = Arc::make_mut(&mut slot.1);
-        for index in &touched {
-            let at = *index as usize;
-            if let Some(entry) = colors.get_mut(at) {
-                *entry = recolor(at);
+        for (index, colour) in touched.iter().zip(patched) {
+            if let Some(entry) = colors.get_mut(*index as usize) {
+                *entry = *colour;
             }
         }
         let shared = Arc::clone(&slot.1);
@@ -153,7 +159,7 @@ impl OccluViewApp {
         let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
         let painted = self
             .align_painted
-            .patch(&entry.mesh, &shared, &touched)
+            .patch(&entry.mesh, &shared, touched)
             .map(<[_]>::to_vec);
         drop(scene);
 

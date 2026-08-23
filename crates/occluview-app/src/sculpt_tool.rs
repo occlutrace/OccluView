@@ -219,37 +219,52 @@ impl SculptTool {
         let (sender, receiver) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
+
+        // The worker gets the one mesh it prepares, not the case it came from.
+        // An `Arc<Scene>` alive in a background thread makes every in-place
+        // scene edit on the UI thread copy the whole case through
+        // `Arc::make_mut`, for as long as the preparation runs -- seconds on a
+        // full arch, which is exactly why the preparation is off-thread. In
+        // that window an opacity slider, a tint, an align nudge or a ghost
+        // toggle each paid 45 ms and, in a debug build, tripped the assertion
+        // in `live_scene_mut`.
+        //
+        // Cloning the mesh copies its vertex and index arrays once. The BVH
+        // cell is an `Arc` shared across clones, so `warm_bvh` below is still
+        // visible to the mesh sitting in the scene -- which is the point of
+        // warming it here.
+        let mesh = entry.mesh.clone();
+        let transform = entry.transform;
+        drop(scene);
+
         let spawned = thread::Builder::new()
             .name("occluview-sculpt-prepare".to_string())
             .spawn(move || {
-                let Some(entry) = scene.meshes().get(index) else {
-                    return;
-                };
                 if worker_cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                entry.mesh.warm_bvh();
-                let buffers = mesh_edit_buffers_from_mesh(&entry.mesh);
-                let result = BrushSession::prepare(&buffers)
-                    .map_err(|error| error.to_string())
-                    .map(|session| {
-                        let scale = mean_uniform_scale(&entry.transform);
-                        SculptSession {
-                            layer_id: entry.id(),
-                            topology_id: entry.mesh.topology_id(),
-                            session,
-                            // Keep only the target mesh in the worker. Holding
-                            // the whole Scene Arc made the UI clone the full
-                            // scene through Arc::make_mut on every commit.
-                            base_mesh: entry.mesh.clone(),
-                            shadow: Arc::new(RwLock::new(entry.mesh.vertices().to_vec())),
-                            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
-                            world_to_local: entry.transform.inverse(),
-                            local_per_world: 1.0 / scale,
-                            dirty_stroke: false,
-                            stroke_start_mesh: None,
-                        }
-                    });
+                mesh.warm_bvh();
+                let prepared = {
+                    let buffers = mesh_edit_buffers_from_mesh(&mesh);
+                    BrushSession::prepare(&buffers).map_err(|error| error.to_string())
+                };
+                let result = prepared.map(move |session| {
+                    let scale = mean_uniform_scale(&transform);
+                    let shadow = Arc::new(RwLock::new(mesh.vertices().to_vec()));
+                    let topology = PreparedSceneTopology::from_mesh(&mesh);
+                    SculptSession {
+                        layer_id,
+                        topology_id,
+                        session,
+                        base_mesh: mesh,
+                        shadow,
+                        topology,
+                        world_to_local: transform.inverse(),
+                        local_per_world: 1.0 / scale,
+                        dirty_stroke: false,
+                        stroke_start_mesh: None,
+                    }
+                });
                 if !worker_cancel.load(Ordering::Relaxed) {
                     let _ = sender.send(result);
                 }

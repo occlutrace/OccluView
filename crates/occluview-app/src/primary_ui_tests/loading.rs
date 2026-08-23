@@ -330,8 +330,16 @@ fn replace_guard_dialog_offers_save_discard_and_cancel() {
 fn replace_guard_suppresses_edit_shortcuts_and_runs_each_frame() {
     let app_source = app_module_source();
 
+    // The parked open is one of the five terms of the shared dialog
+    // predicate, and edit hotkeys are refused whenever that predicate is true.
+    // app::open_dialogs tests the predicate itself; what matters here is that
+    // the parked open still feeds it and that the hotkeys still ask.
     assert!(
-        app_source.contains("|| self.pending_replace_open.is_some()"),
+        app_source.contains("pending_replace: self.pending_replace_open.is_some(),"),
+        "the parked open must still count as a dialog in front"
+    );
+    assert!(
+        app_source.contains("if self.modal_dialog_open() || self.bridge_split_active()"),
         "edit hotkeys must not act behind the open-guard dialog"
     );
     assert!(

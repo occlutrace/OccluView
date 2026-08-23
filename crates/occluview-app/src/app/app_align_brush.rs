@@ -73,58 +73,65 @@ impl OccluViewApp {
         if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
             return false;
         }
-        let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
-            return false;
-        };
-        let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
-            return true;
-        };
-        // Whichever mesh is under the cursor. Both sides of a comparison can
-        // carry markings, and asking which one to paint on would be a picker
-        // this tool has spent its whole design avoiding.
-        let painting = if Some(hit.layer_id) == self.align.moving_layer() {
-            AlignSide::Moving
-        } else if Some(hit.layer_id) == self.align.fixed_layer() {
-            AlignSide::Fixed
-        } else {
-            self.align_status = Some("That mesh is not in this alignment".into());
-            return true;
-        };
-        let Some(entry) = layer_of(&scene, hit.layer_id) else {
-            return true;
-        };
-        let Some(pose) = Rigid::from_affine(&entry.transform) else {
-            return true;
-        };
+        // Everything that reads the scene happens inside this block, so the
+        // handle it clones is gone before the dab is drawn into the scene
+        // below. `Arc::make_mut` copies the whole case while a second handle
+        // is alive, and this is a per-frame path.
+        let (layer_id, painting, changed) = {
+            let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+                return false;
+            };
+            let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
+                return true;
+            };
+            // Whichever mesh is under the cursor. Both sides of a comparison can
+            // carry markings, and asking which one to paint on would be a picker
+            // this tool has spent its whole design avoiding.
+            let painting = if Some(hit.layer_id) == self.align.moving_layer() {
+                AlignSide::Moving
+            } else if Some(hit.layer_id) == self.align.fixed_layer() {
+                AlignSide::Fixed
+            } else {
+                self.align_status = Some("That mesh is not in this alignment".into());
+                return true;
+            };
+            let Some(entry) = layer_of(&scene, hit.layer_id) else {
+                return true;
+            };
+            let Some(pose) = Rigid::from_affine(&entry.transform) else {
+                return true;
+            };
 
-        let erase = self
-            .align_brush
-            .erases(ctx.input(|input| input.modifiers.shift));
-        let radius_mm = f64::from(self.align_brush.radius_mm());
-        let center = DVec3::new(
-            f64::from(hit.point.x),
-            f64::from(hit.point.y),
-            f64::from(hit.point.z),
-        );
-        // Cached: rebuilding this per dab was seven milliseconds of pure copy.
-        let positions = self.align_geometry.local_positions(entry);
-        let mesh = MarkedMesh {
-            positions: &positions,
-            pose,
-            vertex_count: entry.mesh.vertices().len(),
-            geometry: entry.mesh.geometry_id(),
+            let erase = self
+                .align_brush
+                .erases(ctx.input(|input| input.modifiers.shift));
+            let radius_mm = f64::from(self.align_brush.radius_mm());
+            let center = DVec3::new(
+                f64::from(hit.point.x),
+                f64::from(hit.point.y),
+                f64::from(hit.point.z),
+            );
+            // Cached: rebuilding this per dab was seven milliseconds of pure copy.
+            let positions = self.align_geometry.local_positions(entry);
+            let mesh = MarkedMesh {
+                positions: &positions,
+                pose,
+                vertex_count: entry.mesh.vertices().len(),
+                geometry: entry.mesh.geometry_id(),
+            };
+            let changed = self.align_markings.dab(
+                painting,
+                &mesh,
+                &MaskEdit {
+                    center,
+                    radius_mm,
+                    erase,
+                },
+            );
+            (hit.layer_id, painting, changed)
         };
-        let changed = self.align_markings.dab(
-            painting,
-            &mesh,
-            &MaskEdit {
-                center,
-                radius_mm,
-                erase,
-            },
-        );
         if changed > 0 {
-            self.patch_region_preview(hit.layer_id, painting);
+            self.patch_region_preview(layer_id, painting);
             ctx.request_repaint();
         }
         true
@@ -219,17 +226,24 @@ impl OccluViewApp {
     /// who has marked a region on each does not expect Fit everywhere to clear
     /// only one of them.
     pub(super) fn apply_align_mask_command(&mut self, command: MaskCommand) {
-        let Some(scene) = self.scene.clone() else {
-            return;
+        // Both layers are taken out of the scene first and the handle dropped
+        // with the block: repainting a preview edits the scene in place, and
+        // a handle still alive there copies the whole case per side.
+        let sides: Vec<(AlignSide, SceneMeshId, SceneMesh)> = {
+            let Some(scene) = self.scene.clone() else {
+                return;
+            };
+            AlignSide::BOTH
+                .into_iter()
+                .filter_map(|side| {
+                    let layer = self.side_layer(side)?;
+                    let entry = layer_of(&scene, layer)?.clone();
+                    Some((side, layer, entry))
+                })
+                .collect()
         };
         let mut reached = false;
-        for side in AlignSide::BOTH {
-            let Some(layer) = self.side_layer(side) else {
-                continue;
-            };
-            let Some(entry) = layer_of(&scene, layer).cloned() else {
-                continue;
-            };
+        for (side, layer, entry) in sides {
             if self.apply_mask_command_to(command, side, &entry) {
                 reached = true;
                 self.repaint_region_preview(layer, side);
@@ -390,22 +404,44 @@ impl OccluViewApp {
     /// the first dab of a session, or the frame after the markings were
     /// dropped. Every dab after that costs a few hundred vertex writes.
     fn patch_region_preview(&mut self, layer: SceneMeshId, side: AlignSide) {
-        let Some(scene) = self.scene.clone() else {
-            return;
-        };
-        let Some(entry) = layer_of(&scene, layer) else {
-            return;
-        };
-        let Some(mask) = self.align_markings.mask_for(side, marked_on(entry)) else {
+        // The list belongs to the markings, which produced it. Copied rather
+        // than stolen: a `mem::take` here left the markings holding an empty
+        // list for the rest of the frame, so anything else that asked what the
+        // last dab touched was told "nothing".
+        let touched = self.align_markings.touched().to_vec();
+        let Some(patched) = self.region_colors_for(layer, side, &touched) else {
             self.repaint_region_preview(layer, side);
             return;
         };
-        let own_colors = entry.mesh.has_vertex_colors();
-        let vertices = entry.mesh.vertices();
-        let recolor = |vertex: usize| region_color(vertices, own_colors, Some(&mask), vertex);
-        if !self.patch_overlay_colors(layer, recolor) {
+        if !self.patch_overlay_colors(layer, &touched, &patched) {
             self.repaint_region_preview(layer, side);
         }
+    }
+
+    /// The colours the region mask gives `touched`, computed as values.
+    ///
+    /// The scene handle this needs to read vertices lives and dies inside this
+    /// function. Handing the reading down as a closure instead kept that
+    /// handle alive across the in-place scene edit that follows, and
+    /// `Arc::make_mut` copies the entire case whenever a second handle exists
+    /// -- 45 ms per dab, on the path whose whole purpose is to avoid it.
+    fn region_colors_for(
+        &mut self,
+        layer: SceneMeshId,
+        side: AlignSide,
+        touched: &[u32],
+    ) -> Option<Vec<[u8; 4]>> {
+        let scene = self.scene.clone()?;
+        let entry = layer_of(&scene, layer)?;
+        let mask = self.align_markings.mask_for(side, marked_on(entry))?;
+        let own_colors = entry.mesh.has_vertex_colors();
+        let vertices = entry.mesh.vertices();
+        Some(
+            touched
+                .iter()
+                .map(|vertex| region_color(vertices, own_colors, Some(&mask), *vertex as usize))
+                .collect(),
+        )
     }
 
     /// One colour per vertex of one side: its own colour where nothing is
