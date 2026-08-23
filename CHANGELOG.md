@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.8 - 2026-08-22
 
 - Fixed Align Scans refusing correct fits between two scans stored in
   different coordinate systems, such as a DICOM-derived surface against an
