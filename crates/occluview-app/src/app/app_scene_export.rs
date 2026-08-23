@@ -181,13 +181,18 @@ impl OccluViewApp {
 /// flag for both, after which the close guard let the app exit without asking.
 /// A colliding name gains a ` (2)`, ` (3)` suffix instead.
 ///
+/// Names already in the directory count as taken for the same reason. The
+/// operator chose a folder, not filenames, so nothing ever asked about
+/// overwriting -- and the obvious folder to choose twice is the one the last
+/// export went to. A second batch used to truncate the first silently.
+///
 /// Comparison is case-insensitive because the platforms this ships on treat
 /// `Upper.stl` and `upper.stl` as the same file.
 pub(super) fn unique_layer_export_paths(
     directory: &Path,
     layers: &[(String, MeshWriteFormat)],
 ) -> Vec<PathBuf> {
-    let mut taken: HashSet<String> = HashSet::new();
+    let mut taken: HashSet<String> = existing_file_names(directory);
     let mut destinations = Vec::with_capacity(layers.len());
     for (stem, format) in layers {
         let extension = mesh_write_extension(*format);
@@ -200,6 +205,23 @@ pub(super) fn unique_layer_export_paths(
         destinations.push(directory.join(candidate));
     }
     destinations
+}
+
+/// The file names already in `directory`, lowercased.
+///
+/// An unreadable directory yields an empty set: the export that follows will
+/// fail on its own and say so, and refusing to name any destination here would
+/// turn a permissions problem into a batch that writes nothing and explains
+/// nothing.
+fn existing_file_names(directory: &Path) -> HashSet<String> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return HashSet::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .map(|name| name.to_lowercase())
+        .collect()
 }
 
 /// The layer's mesh with its scene transform baked into positions and normals.
@@ -496,6 +518,36 @@ mod tests {
 
         assert_eq!(destinations[0], Path::new("/case/Upper.stl"));
         assert_eq!(destinations[1], Path::new("/case/upper (2).stl"));
+    }
+
+    #[test]
+    fn a_file_already_in_the_directory_is_not_overwritten() {
+        // The operator picked a folder, so no overwrite prompt was ever shown.
+        // Exporting the same case twice into the same folder used to truncate
+        // the first export and report both batches as saved.
+        let directory =
+            std::env::temp_dir().join(format!("occluview-export-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create the test directory");
+        std::fs::write(directory.join("upper.stl"), b"previous export")
+            .expect("write the previous export");
+
+        let layers = vec![("upper".to_owned(), MeshWriteFormat::StlBinary)];
+        let destinations = unique_layer_export_paths(&directory, &layers);
+
+        assert_eq!(
+            destinations[0],
+            directory.join("upper (2).stl"),
+            "the export already in the folder must survive the next one"
+        );
+
+        // And the case-insensitive rule holds against the filesystem too.
+        std::fs::write(directory.join("Lower.stl"), b"previous export")
+            .expect("write the previous export");
+        let layers = vec![("lower".to_owned(), MeshWriteFormat::StlBinary)];
+        let destinations = unique_layer_export_paths(&directory, &layers);
+        assert_eq!(destinations[0], directory.join("lower (2).stl"));
+
+        std::fs::remove_dir_all(&directory).ok();
     }
 
     #[test]
