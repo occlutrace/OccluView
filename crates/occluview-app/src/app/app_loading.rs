@@ -61,7 +61,7 @@ impl OccluViewApp {
     /// a live session carrying uncommitted edits, or any layer with edits not
     /// yet written to disk, would be lost by a blind scene replace.
     fn replace_open_needs_guard(&self) -> bool {
-        self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits
+        self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()
     }
 
     pub(super) fn append_paths(&mut self, paths: &[PathBuf], source: &'static str) {

@@ -298,7 +298,7 @@ impl OccluViewApp {
     /// close with consent given.
     pub(super) fn guard_unsaved_close(&mut self, ctx: &egui::Context) {
         if ctx.input(|input| input.viewport().close_requested())
-            && self.has_unsaved_mesh_edits
+            && self.has_unsaved_mesh_edits()
             && !self.close_confirmed
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);

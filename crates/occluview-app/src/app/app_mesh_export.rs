@@ -47,9 +47,6 @@ impl OccluViewApp {
                 // The layer on disk now matches the scene: it no longer
                 // counts toward the unsaved-edits close guard.
                 self.unsaved_edit_layer_ids.remove(&request.layer_id);
-                if self.unsaved_edit_layer_ids.is_empty() {
-                    self.has_unsaved_mesh_edits = false;
-                }
                 self.remember_export_directory(&path);
                 let warning_suffix = mesh_export_warning_summary(&report.warnings)
                     .map(|summary| format!(" (warnings: {summary})"))

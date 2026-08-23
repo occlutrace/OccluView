@@ -162,13 +162,11 @@ pub(crate) struct OccluViewApp {
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
     pub(super) update_notice: crate::update_notice::UpdateNotice,
-    /// Set by every applied mesh-edit (and its undo/redo): the in-scene meshes
-    /// differ from what was loaded from disk. Cleared when the scene is
-    /// replaced or closed. Drives the close-without-saving guard.
-    pub(super) has_unsaved_mesh_edits: bool,
-    /// Layers carrying unsaved edits, so the save flow knows exactly which
-    /// meshes to offer for export. Kept in lockstep with
-    /// `has_unsaved_mesh_edits`.
+    /// Layers carrying unsaved edits: the in-scene mesh differs from what was
+    /// loaded from disk. Written by every applied mesh-edit and its undo/redo,
+    /// cleared per layer when that layer is written out, and entirely when the
+    /// scene is replaced or closed. The close-without-saving guard and the save
+    /// flow both read it, through [`Self::has_unsaved_mesh_edits`].
     pub(super) unsaved_edit_layer_ids: std::collections::BTreeSet<occluview_core::SceneMeshId>,
     /// Layers hidden via Ctrl+MiddleClick, in hide order. Shift+Ctrl+Middle
     /// restores the most recently hidden one (LIFO).
@@ -354,7 +352,6 @@ impl OccluViewApp {
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),
-            has_unsaved_mesh_edits: false,
             unsaved_edit_layer_ids: std::collections::BTreeSet::new(),
             hidden_layer_stack: Vec::new(),
             translucent_layer_restore: std::collections::HashMap::new(),
@@ -526,8 +523,20 @@ impl OccluViewApp {
     /// Every mesh-edit success path (including undo/redo) routes through here
     /// so the save flow knows exactly which layers to offer for export.
     pub(super) fn mark_mesh_edits_unsaved(&mut self, layer_id: occluview_core::SceneMeshId) {
-        self.has_unsaved_mesh_edits = true;
         self.unsaved_edit_layer_ids.insert(layer_id);
+    }
+
+    /// Whether anything in the scene differs from what is on disk.
+    ///
+    /// Derived rather than tracked. This used to be a `bool` maintained
+    /// alongside the set by four separate assignments, one of which -- in the
+    /// export path -- bypassed the helper that kept them in step. The doc on
+    /// [`Self::forget_unsaved_edits`] records how that ended the last time the
+    /// two disagreed: the close guard was told a hidden layer's edits were on
+    /// disk when they were only in memory, and the application shut without
+    /// asking. A state that cannot be reached cannot be reached wrongly.
+    pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
+        !self.unsaved_edit_layer_ids.is_empty()
     }
 
     /// Forget the unsaved-edit tracking for the layers just written to disk.
@@ -540,12 +549,10 @@ impl OccluViewApp {
         for layer in layers {
             self.unsaved_edit_layer_ids.remove(layer);
         }
-        self.has_unsaved_mesh_edits = !self.unsaved_edit_layer_ids.is_empty();
     }
 
     /// Forget all unsaved-edit tracking (scene replaced, closed, or saved).
     pub(super) fn clear_unsaved_mesh_edits(&mut self) {
-        self.has_unsaved_mesh_edits = false;
         self.unsaved_edit_layer_ids.clear();
     }
 

@@ -294,7 +294,7 @@ fn unsaved_mesh_edits_guard_the_window_close() {
     assert!(
         guard.contains("close_requested()")
             && guard.contains("ViewportCommand::CancelClose")
-            && guard.contains("self.has_unsaved_mesh_edits"),
+            && guard.contains("self.has_unsaved_mesh_edits()"),
         "closing with unsaved mesh edits must be intercepted, not silently lost"
     );
     assert!(
@@ -334,4 +334,32 @@ fn about_opens_the_embedded_third_party_notices() {
         notices.contains("show_rows"),
         "a quarter-megabyte of licenses must render lazily, not as one label"
     );
+}
+
+#[test]
+fn the_unsaved_edits_flag_stays_derived() {
+    // It used to be a `bool` kept in step with the layer set by four separate
+    // assignments, one of which -- in the export path -- bypassed the helper
+    // that maintained both. When they disagreed, the close guard was told a
+    // hidden layer's edits were already on disk and the application shut
+    // without asking. Deriving it removes the state that can disagree.
+    let state = repo_source_file("src/app/state.rs");
+    assert!(
+        state.contains("pub(super) fn has_unsaved_mesh_edits(&self) -> bool"),
+        "the unsaved-edits answer should be computed from the layer set"
+    );
+    assert!(
+        !state.contains("has_unsaved_mesh_edits: bool"),
+        "reintroducing the field reintroduces the state that can disagree"
+    );
+    for writer in [
+        "src/app/state.rs",
+        "src/app/app_mesh_export.rs",
+        "src/app/app_scene_commit.rs",
+    ] {
+        assert!(
+            !repo_source_file(writer).contains("self.has_unsaved_mesh_edits ="),
+            "{writer} must not assign the derived answer"
+        );
+    }
 }

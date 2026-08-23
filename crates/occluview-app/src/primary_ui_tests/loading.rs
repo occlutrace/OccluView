@@ -282,7 +282,7 @@ fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
 
     assert!(
         loading.contains("fn replace_open_needs_guard(&self) -> bool")
-            && loading.contains("self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits"),
+            && loading.contains("self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()"),
         "a replace open must be gated on a live dirty session OR unsaved edits, \
          not proceed straight to a scene-destroying load"
     );
