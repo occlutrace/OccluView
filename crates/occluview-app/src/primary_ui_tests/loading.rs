@@ -398,3 +398,36 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         "a final append failure should still frame the successfully loaded partial scene"
     );
 }
+
+#[test]
+fn the_handoff_pipe_cannot_be_squatted_or_used_to_impersonate() {
+    // A clinic reception machine is a shared workstation, and what travels over
+    // this pipe is a list of scan paths -- in dental work, patient identifiers.
+    // The name alone is not a boundary: anything in the session can create
+    // `\\.\pipe\<name>` first and wait for the real client to connect to it.
+    let windows = include_str!("../single_instance/windows.rs");
+
+    assert!(
+        windows.contains("SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION"),
+        "the client must cap the connection at identification level; at the \
+         default impersonation level a hijacked listener can call \
+         ImpersonateNamedPipeClient and act as this user"
+    );
+    assert!(
+        windows.contains("FILE_FLAG_FIRST_PIPE_INSTANCE"),
+        "the listener must fail when the name already exists rather than \
+         becoming a second instance beside whoever claimed it"
+    );
+    assert!(
+        windows.contains("D:P(A;;GA;;;{sid})"),
+        "the listener's DACL must grant the current user and nobody else"
+    );
+    assert!(
+        windows.contains("ConvertSidToStringSidW"),
+        "the DACL needs the real SID, not a hash of it"
+    );
+    assert!(
+        windows.contains("owner_only_security_descriptor"),
+        "the security descriptor should be built in one named place"
+    );
+}

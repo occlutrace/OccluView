@@ -8,12 +8,17 @@ use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_MORE_DATA, ERROR_PIPE_CONNECTED, HANDLE,
 };
+use windows::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
 use windows::Win32::Security::{
-    GetLengthSid, GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER,
+    GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+    TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_WRITE,
-    FILE_SHARE_MODE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+    CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_FIRST_PIPE_INSTANCE,
+    FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+    SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW, PIPE_READMODE_MESSAGE,
@@ -24,47 +29,110 @@ use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenPro
 const PIPE_BUFFER_BYTES: u32 = 256 * 1024;
 const PIPE_WAIT_TIMEOUT_MS: u32 = 150;
 
-// Keep the base name as a constant so source-contract tests can locate it via
-// string matching; the actual runtime names are per-user (see below).
-const PIPE_NAME_BASE: &str = "OccluTrace.OccluView.OpenRequests";
-const PIPE_NAME: &str = PIPE_NAME_BASE;
+/// The pipe's base name. The runtime name appends a per-user suffix, so two
+/// signed-in users never share one; see `pipe_name_wide`.
+const PIPE_NAME: &str = "OccluTrace.OccluView.OpenRequests";
 
-fn user_sid_suffix() -> String {
-    let mut suffix = String::from("default");
-    unsafe {
-        let mut token = HANDLE::default();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_ok() {
-            let mut needed = 0u32;
-            let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
-            if needed > 0 {
-                let mut buf = vec![0u8; needed as usize];
-                if GetTokenInformation(
-                    token,
-                    TokenUser,
-                    Some(buf.as_mut_ptr().cast()),
-                    needed,
-                    &mut needed,
-                )
-                .is_ok()
-                {
-                    let user = &*buf.as_ptr().cast::<TOKEN_USER>();
-                    let sid = user.User.Sid;
-                    let sid_len = GetLengthSid(sid) as usize;
-                    if sid_len > 0 && sid_len <= 256 {
-                        let sid_bytes = std::slice::from_raw_parts(sid.0 as *const u8, sid_len);
-                        let mut hash: u64 = 14695981039346656037;
-                        for &b in sid_bytes {
-                            hash ^= u64::from(b);
-                            hash = hash.wrapping_mul(1099511628211);
-                        }
-                        suffix = format!("{hash:016x}");
-                    }
-                }
-            }
-            let _ = CloseHandle(token);
-        }
+/// The current user's SID in string form, e.g. `S-1-5-21-...-1001`.
+///
+/// This is the one place the process token is read. Both the per-user pipe name
+/// and the pipe's DACL derive from it, and they must agree: a name is only a
+/// convention -- anything in the session can create that name first -- while
+/// the DACL is what actually keeps another user out.
+fn current_user_sid_string() -> Option<String> {
+    // `TOKEN_USER` is 8-aligned and a `Vec<u8>` is not, so the buffer is
+    // allocated as `u64` and sized up to the next whole element. Casting a
+    // byte vector here would be a misaligned read of a Win32 struct.
+    let mut token = HANDLE::default();
+    // SAFETY: `token` is an out-parameter this function owns and closes below.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
+        return None;
     }
-    suffix
+    let sid_text = read_token_user_sid(token);
+    // SAFETY: `token` came from OpenProcessToken and is owned here.
+    let _ = unsafe { CloseHandle(token) };
+    sid_text
+}
+
+fn read_token_user_sid(token: HANDLE) -> Option<String> {
+    let mut needed = 0u32;
+    // SAFETY: the probing call is documented to fail with the required size.
+    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
+    if needed == 0 {
+        return None;
+    }
+    let mut buffer = vec![0_u64; (needed as usize).div_ceil(size_of::<u64>())];
+    // SAFETY: `buffer` is at least `needed` bytes, 8-aligned, and writable for
+    // the duration of the call.
+    unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+    }
+    .ok()?;
+
+    // SAFETY: on success the buffer holds a TOKEN_USER, and it outlives the
+    // borrow. The SID pointer inside it stays valid for the same reason.
+    let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    let mut sid_text = windows::core::PWSTR::null();
+    // SAFETY: `sid` is a valid SID from the token; `sid_text` receives a
+    // LocalAlloc'd string that is freed below.
+    unsafe { ConvertSidToStringSidW(sid, &mut sid_text) }.ok()?;
+    let owned = unsafe { sid_text.to_string() }.ok();
+    // SAFETY: `sid_text` was allocated by ConvertSidToStringSidW.
+    let _ = unsafe {
+        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(sid_text.0.cast()))
+    };
+    owned
+}
+
+/// A short, stable per-user suffix for the pipe and mutex names.
+fn user_sid_suffix() -> String {
+    let Some(sid) = current_user_sid_string() else {
+        return String::from("default");
+    };
+    // FNV-1a, only to keep the object names short and free of SID punctuation.
+    // It is not a security boundary -- the DACL is.
+    let mut hash: u64 = 14_695_981_039_346_656_037;
+    for byte in sid.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    format!("{hash:016x}")
+}
+
+/// A security descriptor granting full access to the current user and nobody
+/// else, for the listening end of the hand-off pipe.
+///
+/// Without it the pipe carries the default DACL, and on a shared workstation --
+/// a clinic reception machine is exactly that -- another signed-in user can
+/// connect to it. What arrives over that pipe is a list of scan paths, which in
+/// dental work name the patient.
+///
+/// Returns the descriptor together with the allocation backing it; the caller
+/// must keep the allocation alive for as long as the descriptor is used and
+/// free it afterwards.
+fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
+    let sid = current_user_sid_string()?;
+    // D: this is a DACL. P: protected, so no inherited ACE widens it.
+    // (A;;GA;;;<sid>): allow generic-all to that SID, and to nothing else.
+    let sddl = HSTRING::from(format!("D:P(A;;GA;;;{sid})"));
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `sddl` is a NUL-terminated wide string alive across the call, and
+    // `descriptor` receives a LocalAlloc'd buffer the caller frees.
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            &sddl,
+            SDDL_REVISION_1,
+            &mut descriptor,
+            None,
+        )
+    };
+    converted.ok().map(|()| descriptor)
 }
 
 fn mutex_name() -> HSTRING {
@@ -75,10 +143,7 @@ fn mutex_name() -> HSTRING {
 }
 
 fn pipe_name_wide() -> Vec<u16> {
-    let name = format!(
-        "\\\\.\\pipe\\OccluTrace.OccluView.OpenRequests.{}",
-        user_sid_suffix()
-    );
+    let name = format!("\\\\.\\pipe\\{PIPE_NAME}.{}", user_sid_suffix());
     name.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
@@ -125,6 +190,14 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
         bail!("single-instance pipe was not ready");
     }
 
+    // SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION caps what the server end
+    // may do with this connection. Without it the connection defaults to
+    // impersonation level, so whoever owns the other end of the pipe can call
+    // `ImpersonateNamedPipeClient` and act as this user. At identification
+    // level it can learn who we are and nothing more -- which is all a
+    // legitimate listener ever needs, and the textbook mitigation for the
+    // named-pipe elevation pattern.
+    //
     // SAFETY: Opening an existing named pipe with a valid constant path.
     let pipe = unsafe {
         CreateFileW(
@@ -133,7 +206,7 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
             FILE_SHARE_MODE(0),
             None,
             OPEN_EXISTING,
-            FILE_FLAGS_AND_ATTRIBUTES(0),
+            SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
             HANDLE::default(),
         )
     }
@@ -166,21 +239,49 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
 fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
     let pipe_wide = pipe_name_wide();
     let pipe_name = PCWSTR(pipe_wide.as_ptr());
-    // SAFETY: Creating a named pipe with a per-user path and process-local buffers.
+
+    // Two things this listener must not do: share its name with a squatter, and
+    // accept a connection from another user.
+    //
+    // FILE_FLAG_FIRST_PIPE_INSTANCE makes the create FAIL if the name already
+    // exists, instead of silently becoming a second instance beside whoever got
+    // there first. The DACL grants the current user and nobody else, so on a
+    // shared workstation another signed-in account cannot read the scan paths
+    // that travel over this pipe.
+    let descriptor = owner_only_security_descriptor();
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
+        lpSecurityDescriptor: descriptor.unwrap_or_default().0,
+        bInheritHandle: false.into(),
+    };
+    let attributes_ptr = descriptor.map(|_| std::ptr::addr_of!(attributes));
+
+    // SAFETY: `pipe_name` is a NUL-terminated wide string, and `attributes`
+    // (when present) points at a live SECURITY_ATTRIBUTES whose descriptor
+    // outlives this call and is freed below.
     let pipe = unsafe {
         CreateNamedPipeW(
             pipe_name,
-            PIPE_ACCESS_DUPLEX,
+            PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(FILE_FLAG_FIRST_PIPE_INSTANCE.0),
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             PIPE_UNLIMITED_INSTANCES,
             PIPE_BUFFER_BYTES,
             PIPE_BUFFER_BYTES,
             0,
-            None,
+            attributes_ptr,
         )
     };
+    if let Some(descriptor) = descriptor {
+        // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        // which allocates with LocalAlloc, and CreateNamedPipeW has copied what it needs.
+        let _ = unsafe {
+            windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(descriptor.0))
+        };
+    }
     if pipe.is_invalid() {
-        bail!("creating single-instance pipe failed");
+        // Either a transient failure or, more interestingly, someone already
+        // holds this name. Both are worth reporting rather than working around.
+        bail!("creating single-instance pipe failed (name already claimed?)");
     }
 
     // SAFETY: Waiting for a client to connect on a valid named-pipe handle.
