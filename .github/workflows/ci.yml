@@ -18,7 +18,11 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a scheduled run. Both the weekly deep fuzz (5 targets x 300 s)
+  # and the weekly advisory re-evaluation run on the Monday 02:00 schedule
+  # against `main`, so any push that morning used to kill them -- and a killed
+  # run reports "cancelled", not "failed", so nobody looks.
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   fmt:
@@ -208,6 +212,43 @@ jobs:
       - name: Fail on drift
         run: git diff --exit-code -- THIRD-PARTY-NOTICES.md
 
+  linux-package-smoke:
+    name: package (linux deb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils appstream lintian
+      # The release job does far more than compile -- it authors packages,
+      # validates desktop and AppStream metadata, and checks the contents --
+      # and none of that ran until a tag existed, at which point a failure
+      # lands after the tag is public. The source-contract tests catch drift
+      # in the text of these files; they cannot catch a lost runtime
+      # dependency, a metadata schema error, or a file that stopped being
+      # installed. This job costs a few minutes and covers the part that
+      # actually rots.
+      - name: Build the Debian package
+        run: install/linux/build-deb.sh
+      - name: Validate desktop and AppStream metadata
+        run: |
+          desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
+          appstreamcli validate --no-net install/linux/ai.occlutrace.OccluView.metainfo.xml
+          xmllint --noout install/linux/occluview-mime.xml \
+            install/linux/ai.occlutrace.OccluView.metainfo.xml
+      - name: Validate the package contents
+        run: |
+          dpkg-deb --info target/deb/*.deb
+          install/linux/check-deb.sh target/deb/*.deb
+
   fuzz-smoke:
     name: fuzz smoke (parsers)
     runs-on: ubuntu-latest
@@ -219,7 +260,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: nightly
+      - name: Cache cargo-fuzz
+        id: cache-cargo-fuzz
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          # Runner identity in the key, same reason as cargo-about: during an
+          # image rollover both images answer to `ubuntu-latest`, and a binary
+          # built on the newer one fails to exec on the older.
+          key: cargo-fuzz-0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.environment }}
       - name: Install cargo-fuzz
+        if: steps.cache-cargo-fuzz.outputs.cache-hit != 'true'
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       # cargo-fuzz resolves `<cwd>/fuzz/Cargo.toml`, so it must run from the
       # repository root. Running it inside `fuzz/` looks for `fuzz/fuzz/`.
@@ -256,7 +307,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: nightly
+      - name: Cache cargo-fuzz
+        id: cache-cargo-fuzz
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.environment }}
       - name: Install cargo-fuzz
+        if: steps.cache-cargo-fuzz.outputs.cache-hit != 'true'
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       - name: Restore fuzz corpus
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

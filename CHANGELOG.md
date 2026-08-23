@@ -82,8 +82,6 @@
   real advisories, both fixed by upgrades rather than exceptions: quick-xml
   0.41 (RUSTSEC-2026-0194/0195) and webbrowser 1.2.4 (RUSTSEC-2026-0257).
 
-## 1.0.8 - 2026-08-22
-
 - Fixed Align Scans refusing correct fits between two scans stored in
   different coordinate systems, such as a DICOM-derived surface against an
   STL of the same case. The guard read the pose's translation as "how far the
@@ -112,8 +110,6 @@
   darkened — a plain scan needs no override at all — and cycling the tint walks
   the whole palette instead of dropping back to Stone IV on reaching a colour
   it did not know about.
-
-## 1.0.7 - 2026-08-22
 
 - Fixed shading on sub-20um facets: the absolute epsilon test culled every
   small triangle from lab scanners (7 um spacing), falling back to a flat

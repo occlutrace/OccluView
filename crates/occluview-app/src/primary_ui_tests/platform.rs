@@ -400,3 +400,57 @@ fn the_statically_linked_cpp_components_are_attributed() {
         "the deb gate must fail a package that dropped the native notices"
     );
 }
+
+#[test]
+fn the_changelog_only_names_versions_that_can_be_released() {
+    // The release job publishes the section matching the tag and nothing else.
+    // With one section per local version bump -- 1.0.7, 1.0.8, 1.0.9, none of
+    // them tagged -- a single v1.0.9 release would have silently dropped two
+    // versions' worth of changes from its notes, while the changelog advertised
+    // three versions nobody could download.
+    let changelog = include_str!("../../../../CHANGELOG.md");
+    let manifest = include_str!("../../../../Cargo.toml");
+    let version = manifest
+        .split("[workspace.package]")
+        .nth(1)
+        .and_then(|section| section.split("version = \"").nth(1))
+        .and_then(|rest| rest.split('"').next());
+    assert!(
+        version.is_some(),
+        "the workspace version should be readable"
+    );
+    let Some(version) = version else {
+        return;
+    };
+
+    let heading = format!("## {version} ");
+    assert!(
+        changelog.contains(&heading),
+        "the workspace version {version} needs a changelog section, or a release \
+         of it would publish empty notes"
+    );
+
+    // Every other section must be a version that was actually tagged. The
+    // newest one is the release being prepared; the rest are history.
+    let sections: Vec<&str> = changelog
+        .lines()
+        .filter(|line| line.starts_with("## "))
+        .collect();
+    assert!(
+        sections
+            .first()
+            .is_some_and(|first| first.starts_with(&heading)),
+        "the newest section should be the version about to ship, got {:?}",
+        sections.first()
+    );
+    let unreleased = sections
+        .iter()
+        .skip(1)
+        .filter(|line| line.contains(" 1.0.7 ") || line.contains(" 1.0.8 "))
+        .count();
+    assert_eq!(
+        unreleased, 0,
+        "1.0.7 and 1.0.8 were never tagged or released; their entries belong to \
+         the version that actually ships"
+    );
+}
