@@ -2,7 +2,9 @@
 set -euo pipefail
 # Regenerates THIRD-PARTY-NOTICES.md from Cargo.lock. CI regenerates and
 # fails on drift, so run this after any dependency change.
-# Requires: cargo install cargo-about --version 0.9.2 --locked
+# Requires: cargo install cargo-about --version 0.8.4 --locked
+# (0.9.x needs rustc 1.88 and gates its binary behind a `cli` feature, so it
+# cannot be installed by the toolchain this repository pins.)
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 

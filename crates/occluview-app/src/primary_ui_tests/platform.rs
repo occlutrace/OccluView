@@ -119,7 +119,7 @@ fn third_party_notices_stay_generated_and_gated() {
     // The attribution file is generated, so the only honest state is
     // "regenerates identically in CI": pin the generator, fail on drift.
     assert!(
-        ci.contains("cargo install cargo-about --version 0.9.2 --locked"),
+        ci.contains("cargo install cargo-about --version 0.8.4 --locked"),
         "CI should install the pinned cargo-about"
     );
     assert!(
