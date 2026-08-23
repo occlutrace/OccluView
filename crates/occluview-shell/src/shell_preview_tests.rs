@@ -553,6 +553,10 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
         "usr/share/mime/packages/occluview-mime.xml",
         "usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer",
         "usr/share/icons/hicolor/512x512/apps/occluview.png",
+        // One icon name per registered type: a scan with no thumbnail yet must
+        // still be drawn as a scan, the way the Windows installer draws it.
+        "usr/share/icons/hicolor/scalable/mimetypes/model-stl.svg",
+        "usr/share/icons/hicolor/scalable/mimetypes/application-x-occluview-hps.svg",
         "usr/share/doc/occluview/README.md",
         "usr/share/doc/occluview/copyright",
         "usr/share/doc/occluview/changelog.gz",

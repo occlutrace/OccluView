@@ -32,9 +32,9 @@
   </mime-type>
   <!-- The shared database gives *.obj to both `application/x-tgif` (a 1990s
        X11 drawing format) and `model/obj`, each at weight 50, so the winner is
-       whichever the database happens to sort first -- on the distributions
-       tested, the drawing format. Every Wavefront scan then has a drawing
-       icon, no thumbnail and no association with the viewer. Weight 60 settles the
+       whichever the database happens to sort first. On the distributions
+       tested that is the drawing format, so every Wavefront scan carries a
+       drawing icon, no thumbnail and no association with the viewer. Weight 60 settles the
        tie for a workstation that holds dental scans. -->
   <mime-type type="model/obj">
     <comment>Wavefront OBJ mesh</comment>

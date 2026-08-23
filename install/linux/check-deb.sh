@@ -88,6 +88,12 @@ for deb in "$@"; do
   require_path "$root" "usr/share/mime/packages/occluview-mime.xml"
   require_path "$root" "usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"
   require_path "$root" "usr/share/icons/hicolor/512x512/apps/occluview.png"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/model-stl.svg"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/model-obj.svg"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/model-gltf-binary.svg"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/application-x-ply.svg"
+  require_path "$root" \
+    "usr/share/icons/hicolor/scalable/mimetypes/application-x-occluview-hps.svg"
   require_path "$root" "usr/share/doc/occluview/README.md"
   require_path "$root" "usr/share/doc/occluview/copyright"
   require_path "$root" "usr/share/doc/occluview/changelog.gz"

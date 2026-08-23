@@ -57,6 +57,7 @@ mkdir -p \
   "$pkg_root/usr/bin" \
   "$pkg_root/usr/share/applications" \
   "$pkg_root/usr/share/icons/hicolor/512x512/apps" \
+  "$pkg_root/usr/share/icons/hicolor/scalable/mimetypes" \
   "$pkg_root/usr/share/metainfo" \
   "$pkg_root/usr/share/mime/packages" \
   "$pkg_root/usr/share/thumbnailers" \
@@ -66,6 +67,21 @@ install -m 0755 target/release/occluview "$pkg_root/usr/bin/occluview"
 install -m 0755 target/release/occluview-cli "$pkg_root/usr/bin/occluview-cli"
 install -m 0644 assets/occluview-logo.png \
   "$pkg_root/usr/share/icons/hicolor/512x512/apps/occluview.png"
+# The file-type icon the Windows installer registers per extension, installed
+# under the freedesktop icon name of each type it belongs to. Without it a scan
+# that has no thumbnail yet -- or whose thumbnailer the desktop never runs --
+# is drawn with the generic unknown-file glyph.
+for mime_icon in \
+  model-stl \
+  model-obj \
+  model-gltf-binary \
+  application-x-ply \
+  application-x-occluview-hps
+do
+  install -m 0644 install/assets/file-icons/occluview-3d.svg \
+    "$pkg_root/usr/share/icons/hicolor/scalable/mimetypes/${mime_icon}.svg"
+done
+
 install -m 0644 install/linux/ai.occlutrace.OccluView.desktop \
   "$pkg_root/usr/share/applications/ai.occlutrace.OccluView.desktop"
 install -m 0644 install/linux/ai.occlutrace.OccluView.metainfo.xml \
