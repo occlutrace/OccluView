@@ -51,6 +51,9 @@ license-files = []
 multiple-versions = "warn"
 # Deny wildcard dependencies (we want reproducible builds).
 wildcards = "deny"
+# Internal path dependencies carry no version requirement (every crate is
+# publish = false), which the wildcard ban would otherwise flag.
+allow-wildcard-paths = true
 highlight = "all"
 # Allow specific known duplicates (none by default — keep this list empty).
 allow = []
