@@ -1,6 +1,6 @@
 //! Viewport orchestration for the interactive Bridge Split separator disc.
 
-use super::{egui, layers_overlay, OccluViewApp, Scene};
+use super::{egui, OccluViewApp, Scene};
 use crate::bridge_split::{apply_preview_to_scene, BridgeSplitMode, BridgeSplitTarget};
 use crate::bridge_split_overlay::{
     paint_separator_disc, show_panel, BridgeSplitPanelAction, BridgeSplitPanelState, SeparatorDisc,
@@ -341,30 +341,20 @@ impl OccluViewApp {
             entry,
             viewport_rect,
         } = frame_context;
-        let pointer = ctx.input(|input| input.pointer.hover_pos());
-        let over_rect = pointer.is_some_and(|point| viewport_rect.contains(point));
-        let layers_rect = layers_overlay::layer_overlay_rect(*viewport_rect, scene.meshes().len());
-        let over_section_panel = self.bridge_split_section.slice_visible()
-            && pointer.is_some_and(|point| {
-                crate::cut_ruler::section_panel_contains(*viewport_rect, point)
-            });
-        let gizmo_avoid = self
-            .bridge_split_section
-            .slice_visible()
-            .then(|| crate::cut_ruler::section_panel_rect(*viewport_rect))
-            .flatten();
-        let over_gizmo = pointer.is_some_and(|point| {
-            crate::viewer::axis_gizmo::axis_gizmo_footprint(*viewport_rect, gizmo_avoid)
-                .contains(point)
-        });
-        let over_egui = pointer.is_some_and(|point| {
-            layers_rect.contains(point)
-                || ctx
-                    .layer_id_at(point)
-                    .is_some_and(|layer| layer.order != egui::Order::Background)
-        }) || over_section_panel
-            || over_gizmo;
-        let over_viewport = over_rect && !over_egui;
+        // Same question, same answer: see `OccluViewApp::viewport_pointer`.
+        // This used to be a second copy, including its own expression for the
+        // gizmo's avoid-rect -- the one thing the cut tool's own comment warns
+        // must match what painted the gizmo.
+        let super::app_cut_measure::ViewportPointer {
+            pointer,
+            over_section_panel,
+            over_viewport,
+        } = self.viewport_pointer(
+            ctx,
+            *viewport_rect,
+            scene,
+            self.bridge_split_section.slice_visible(),
+        );
         let ctrl = ctx.input(|input| input.modifiers.command);
         let raw_scroll = ctx.input(|input| input.raw_scroll_delta.y);
         let (wheel_notches, panel_zoom_notches) = if over_section_panel && raw_scroll != 0.0 {

@@ -9,6 +9,7 @@ mod chrome;
 mod loading;
 mod platform;
 mod source_tree;
+mod tools;
 mod viewport;
 
 /// Every `.rs` file under `directory`, skipping symlinks and any `target`
