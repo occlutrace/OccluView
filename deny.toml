@@ -3,11 +3,13 @@
 
 [graph]
 all-features = true
-targets = ["x86_64-pc-windows-msvc"]
+# Both shipped platforms. Scanning only Windows left the Linux-only
+# dependency trees (x11rb, wayland, the xdg-portal file dialogs) outside
+# every license and advisory check.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 unmaintained = "workspace"
-vulnerability = "deny"
 yanked = "warn"
 ignore = []
 
@@ -20,14 +22,11 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "MPL-2.0",
     "BSL-1.0",
     "Zlib",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "Unlicense",
     "CC0-1.0",
-    "OpenSSL",
     # Mozilla CA-bundle data shipped by webpki-roots (rustls trust anchors for
     # the updater's HTTPS): a permissive data license, not a code license.
     "CDLA-Permissive-2.0",
