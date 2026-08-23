@@ -154,9 +154,8 @@ fn toggle_wireframe(scene: &mut Scene, index: usize) -> LayerContextApply {
     }
 }
 
-/// Display-only, like [`toggle_layer_visibility`]: it only changes the
-/// per-mesh GPU uniform, never mesh topology, so no structural rebuild is
-/// needed.
+/// Display-only: it only changes the per-mesh GPU uniform, never mesh
+/// topology, so no structural rebuild is needed.
 fn toggle_show_vertex_colors(scene: &mut Scene, index: usize) -> LayerContextApply {
     let Some(entry) = scene.meshes_mut().get_mut(index) else {
         return LayerContextApply::default();
