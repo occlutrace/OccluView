@@ -127,7 +127,8 @@ mod tests {
 
     #[test]
     fn layer_row_controls_use_one_height_contract() {
-        let source = include_str!("layout.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("layout.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);

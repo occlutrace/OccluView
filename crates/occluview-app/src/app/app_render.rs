@@ -674,7 +674,8 @@ mod tests {
     /// the first-time-only fallback in the `None` arm.
     #[test]
     fn per_frame_render_paths_reuse_persistent_texture_ids() {
-        let source = include_str!("app_render.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"))
+            .replace("\r\n", "\n");
         assert!(
             source.contains("frame.texture.set(color_image, egui::TextureOptions::LINEAR)"),
             "render_now must update the viewport texture in place, not reallocate it"

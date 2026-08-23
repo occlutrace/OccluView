@@ -207,7 +207,8 @@ impl egui_wgpu::CallbackTrait for LiveViewportCallback {
 mod tests {
     #[test]
     fn live_viewport_keeps_selection_overlay_separate_from_base_scene() {
-        let source = include_str!("live_viewport.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("live_viewport.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);

@@ -39,6 +39,19 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
+/// The part of a source file above its own `#[cfg(test)]` module.
+///
+/// A guard that reads its own file and searches the whole of it matches the
+/// needle written in its own assertion, so it passes on its own text: the
+/// production line it names can be deleted and nothing goes red. Files whose
+/// tests live in a separate module have no marker, and the whole text is
+/// returned unchanged.
+pub(crate) fn production_source(source: &'static str) -> &'static str {
+    source
+        .split_once("#[cfg(test)]\nmod tests")
+        .map_or(source, |(production, _)| production)
+}
+
 pub(super) fn main_source() -> &'static str {
     include_str!("../main.rs")
 }

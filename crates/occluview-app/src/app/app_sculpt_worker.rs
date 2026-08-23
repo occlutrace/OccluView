@@ -287,7 +287,9 @@ mod tests {
     /// full rebuild rather than a uniform-only reconcile.
     #[test]
     fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
-        let source = include_str!("app_sculpt_worker.rs").replace("\r\n", "\n");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
+                .replace("\r\n", "\n");
         let take_rebuild = source
             .find("worker.take_rebuild()")
             .expect("the poll must drain pending layer rebuilds");

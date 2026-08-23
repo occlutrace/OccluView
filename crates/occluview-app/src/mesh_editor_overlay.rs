@@ -237,7 +237,9 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
 mod tests {
     #[test]
     fn window_groups_follow_the_dental_cad_workflow_order() {
-        let source = include_str!("mesh_editor_overlay.rs").replace("\r\n", "\n");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("mesh_editor_overlay.rs"))
+                .replace("\r\n", "\n");
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);

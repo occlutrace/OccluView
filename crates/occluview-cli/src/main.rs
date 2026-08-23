@@ -421,6 +421,18 @@ fn usage_text() -> &'static str {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
+    /// The part of this file above the test module.
+    ///
+    /// Searching the whole of it matches the needle written in the assertion
+    /// itself, so the guard would pass on its own text and the production line
+    /// it names could be deleted with nothing going red.
+    fn production_source() -> &'static str {
+        let source = include_str!("main.rs");
+        source
+            .split_once("#[cfg(test)]\nmod tests")
+            .map_or(source, |(production, _)| production)
+    }
+
     use super::{take_file_argument, FileArgument};
     use std::path::PathBuf;
 
@@ -466,7 +478,7 @@ mod tests {
 
     #[test]
     fn version_flag_is_recognised_and_advertised() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(
             source.contains("\"--version\" | \"-V\""),
             "--version must dispatch instead of falling into the unknown-subcommand error"
@@ -479,7 +491,7 @@ mod tests {
 
     #[test]
     fn thumbnail_cli_uses_file_backed_render_path() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         let start = source.find("fn cmd_thumbnail(");
         assert!(start.is_some(), "missing cmd_thumbnail");
         let Some(start) = start else {
@@ -513,7 +525,7 @@ mod tests {
 
     #[test]
     fn convert_cli_routes_through_export_module() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(source.contains("\"convert\" => cmd_convert(&mut args)"));
         assert!(source.contains("export::convert_file(&input, &output)?;"));
         assert!(source.contains("output.{stl|ply|obj}"));

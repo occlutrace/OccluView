@@ -186,9 +186,21 @@ impl GpuTexture {
 
 #[cfg(test)]
 mod tests {
+    /// The part of this file above the test module.
+    ///
+    /// Searching the whole of it matches the needle written in the assertion
+    /// itself, so the guard would pass on its own text and the production line
+    /// it names could be deleted with nothing going red.
+    fn production_source() -> &'static str {
+        let source = include_str!("texture.rs");
+        source
+            .split_once("#[cfg(test)]\nmod tests")
+            .map_or(source, |(production, _)| production)
+    }
+
     #[test]
     fn mesh_texture_sampler_clamps_uv_edges() {
-        let source = include_str!("texture.rs");
+        let source = production_source();
         let start = source.find("label: Some(\"occluview mesh sampler\")");
         assert!(start.is_some(), "missing mesh sampler");
         let Some(start) = start else {

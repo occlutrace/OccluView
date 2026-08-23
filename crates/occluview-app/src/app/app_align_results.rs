@@ -375,7 +375,8 @@ mod tests {
     /// The production half of this file. A source-contract test that scanned its
     /// own assertions would pass or fail on its own text.
     fn production() -> &'static str {
-        let source = include_str!("app_align_results.rs");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_align_results.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)

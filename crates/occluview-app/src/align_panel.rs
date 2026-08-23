@@ -667,7 +667,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     fn production() -> &'static str {
-        let source = include_str!("align_panel.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("align_panel.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)

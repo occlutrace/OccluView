@@ -311,7 +311,8 @@ fn paint_remove_glyph(painter: &egui::Painter, rect: egui::Rect, hovered: bool) 
 mod tests {
     #[test]
     fn layer_row_uses_vector_controls_not_text_toggle() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);
@@ -332,7 +333,8 @@ mod tests {
 
     #[test]
     fn tint_is_a_real_palette_choice_not_blind_cycling() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);
@@ -359,7 +361,8 @@ mod tests {
 
     #[test]
     fn layer_row_controls_share_fixed_height_constant() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);
@@ -375,7 +378,8 @@ mod tests {
 
     #[test]
     fn layer_row_exposes_context_menu_for_right_click() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);

@@ -398,7 +398,8 @@ mod tests {
 
     #[test]
     fn every_menu_entry_carries_an_icon_glyph() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -485,7 +486,8 @@ mod tests {
 
     #[test]
     fn layer_context_menu_keeps_mesh_edit_entry_without_inline_overflow() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -502,7 +504,8 @@ mod tests {
 
     #[test]
     fn layer_context_menu_exposes_common_operator_actions() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -534,7 +537,8 @@ mod tests {
 
     #[test]
     fn destructive_mesh_edit_actions_stay_out_of_layer_context_menu() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);

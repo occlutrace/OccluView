@@ -676,7 +676,9 @@ mod tests {
 
     #[test]
     fn selection_sections_follow_the_workflow_order() {
-        let source = include_str!("mesh_editor_groups.rs").replace("\r\n", "\n");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"))
+                .replace("\r\n", "\n");
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
