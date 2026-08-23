@@ -55,6 +55,7 @@ One `occluview-render` pipeline: one shader, one camera. A given mesh therefore 
 - `install/build-msi.ps1` builds `occluview-app` (release) and `occluview-shell` (release-unwind), signs via `signtool.exe` (certstore or PFX), runs WiX v3, signs MSI. Tagged releases require Authenticode.
 - `install/linux/build-deb.sh` + validation via `desktop-file-validate` / `appstreamcli` / `lintian`.
 - Publish verifies `Cargo.toml` version == tag, smoke-installs MSI, signs artifacts with minisign, writes `latest.json`, uploads to GitHub Release.
+- **Reproducibility**: the generated embedded-key module is derived from the key bytes and `OCCLUVIEW_HPS_KEY_SALT` (default: the crate version) and from nothing else, so the same source, key, salt and toolchain rebuild to the same bytes. That is the boundary this repository controls; the compiler, the linker and the C++ CSG kernel's own build are not audited for bit-for-bit reproducibility, so this is a "no deliberate entropy" guarantee rather than a full one.
 
 ## Fuzzing
 
