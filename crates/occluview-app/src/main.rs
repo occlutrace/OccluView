@@ -65,6 +65,8 @@ mod scene_loading;
 mod sculpt_tool;
 mod sculpt_worker;
 mod section_view;
+#[cfg(windows)]
+mod shell_refresh;
 mod single_instance;
 mod ui_theme;
 mod update_notice;

@@ -46,7 +46,7 @@ fn real_main() -> Result<()> {
     if args.shell_refresh {
         #[cfg(windows)]
         {
-            occluview_shell::notify_shell_associations_changed();
+            crate::shell_refresh::notify_shell_associations_changed();
             return Ok(());
         }
         #[cfg(not(windows))]

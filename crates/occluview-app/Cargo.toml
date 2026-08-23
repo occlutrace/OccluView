@@ -51,7 +51,6 @@ wayland-protocols = { workspace = true }
 
 # Windows shell and windowing integration.
 [target.'cfg(windows)'.dependencies]
-occluview-shell = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security",

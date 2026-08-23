@@ -86,12 +86,12 @@ fn primary_startup_only_refreshes_shell_associations_on_explicit_request() {
 
     assert!(
         real_main[shell_refresh_branch..]
-            .contains("occluview_shell::notify_shell_associations_changed();"),
+            .contains("crate::shell_refresh::notify_shell_associations_changed();"),
         "--shell-refresh should still notify Explorer"
     );
     assert_eq!(
         real_main
-            .matches("occluview_shell::notify_shell_associations_changed();")
+            .matches("crate::shell_refresh::notify_shell_associations_changed();")
             .count(),
         1,
         "normal app startup should not pay a shell-association refresh tax on every launch"

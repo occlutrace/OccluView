@@ -2377,7 +2377,6 @@ dependencies = [
  "occluview-core",
  "occluview-formats",
  "occluview-render",
- "occluview-shell",
  "occluview-update",
  "pollster 0.4.0",
  "raw-window-handle",
