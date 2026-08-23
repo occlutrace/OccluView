@@ -42,6 +42,31 @@ pub(super) struct ThumbnailRendererPool {
     state: Mutex<ThumbnailRendererPoolState>,
     ready: Condvar,
     max_renderers: usize,
+    /// How a renderer is built. A function pointer rather than a direct call
+    /// so the recovery paths below -- a create that fails, and a create that
+    /// panics -- can be exercised without a GPU.
+    create: fn() -> Result<Offscreen, ThumbnailError>,
+}
+
+/// Longest a request may wait for the pooled renderer before it gives up.
+///
+/// This is not the request's budget; the request has its own, and Explorer
+/// abandons the call long before this. It is the backstop that keeps a
+/// renderer lost to a wedged device from parking every decode lane forever:
+/// a worker waiting here holds its lane, so twelve of them are the whole
+/// folder. Reaching this ceiling means something is wrong, not that the
+/// machine is busy.
+const RENDERER_WAIT_CEILING: Duration = Duration::from_secs(30);
+
+/// The pool never produced a renderer inside the ceiling above.
+///
+/// Reported as a render error, which the request path already treats as
+/// transient: Explorer retries, and a retry is exactly right for a pool that
+/// is merely oversubscribed.
+fn renderer_wait_expired() -> ThumbnailError {
+    ThumbnailError::Render(occluview_render::RenderError::Surface(
+        "timed out waiting for the thumbnail renderer".to_string(),
+    ))
 }
 
 pub(super) struct ThumbnailJobGate {
@@ -142,7 +167,15 @@ impl ThumbnailRendererPool {
     }
 
     pub(super) const fn new(max_renderers: usize) -> Self {
+        Self::with_create(max_renderers, create_thumbnail_offscreen)
+    }
+
+    pub(super) const fn with_create(
+        max_renderers: usize,
+        create: fn() -> Result<Offscreen, ThumbnailError>,
+    ) -> Self {
         Self {
+            create,
             state: Mutex::new(ThumbnailRendererPoolState {
                 idle: Vec::new(),
                 total_renderers: 0,
@@ -166,19 +199,35 @@ impl ThumbnailRendererPool {
             ));
         };
 
-        match f(offscreen) {
-            Ok(value) => Ok(value),
-            Err(error) => {
+        // A panic is the same evidence as an error: whatever the renderer was
+        // doing, it did not finish, and its device may be lost or mid-command.
+        // Unwinding on its own would run the lease's `Drop`, which parks the
+        // renderer back in the pool for the next file in the folder.
+        match panic::catch_unwind(AssertUnwindSafe(|| f(offscreen))) {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => {
                 // A renderer that reported a GPU/readback error may have a
                 // lost device or stale backend state. Never hand it to the
                 // next Explorer request; release the pool capacity instead.
                 lease.discard();
                 Err(error)
             }
+            Err(payload) => {
+                lease.discard();
+                panic::resume_unwind(payload);
+            }
         }
     }
 
     pub(super) fn checkout_renderer(&self) -> Result<Offscreen, ThumbnailError> {
+        self.checkout_renderer_within(RENDERER_WAIT_CEILING)
+    }
+
+    pub(super) fn checkout_renderer_within(
+        &self,
+        budget: Duration,
+    ) -> Result<Offscreen, ThumbnailError> {
+        let deadline = Instant::now() + budget;
         loop {
             let mut state = lock_recover(&self.state);
             if let Some(offscreen) = state.idle.pop() {
@@ -187,21 +236,44 @@ impl ThumbnailRendererPool {
             if state.total_renderers < self.max_renderers {
                 state.total_renderers += 1;
                 drop(state);
-                match create_thumbnail_offscreen() {
-                    Ok(offscreen) => return Ok(offscreen),
-                    Err(error) => {
-                        let mut state = lock_recover(&self.state);
-                        state.total_renderers = state.total_renderers.saturating_sub(1);
-                        self.ready.notify_one();
+                // The slot is claimed before the device exists, so every way
+                // out of the create has to give it back. An unwind out of wgpu
+                // -- a driver reset during device creation is exactly the kind
+                // of thing a long-lived surrogate sees -- would otherwise leave
+                // the pool believing its one renderer is in use forever, and
+                // every later request waiting for a renderer that is not
+                // coming.
+                match panic::catch_unwind(AssertUnwindSafe(self.create)) {
+                    Ok(Ok(offscreen)) => return Ok(offscreen),
+                    Ok(Err(error)) => {
+                        self.release_reservation();
                         return Err(error);
+                    }
+                    Err(payload) => {
+                        self.release_reservation();
+                        panic::resume_unwind(payload);
                     }
                 }
             }
-            let _guard = self
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(renderer_wait_expired());
+            }
+            let (_guard, wait) = self
                 .ready
-                .wait(state)
+                .wait_timeout(state, remaining)
                 .unwrap_or_else(PoisonError::into_inner);
+            if wait.timed_out() && Instant::now() >= deadline {
+                return Err(renderer_wait_expired());
+            }
         }
+    }
+
+    fn release_reservation(&self) {
+        let mut state = lock_recover(&self.state);
+        state.total_renderers = state.total_renderers.saturating_sub(1);
+        drop(state);
+        self.ready.notify_one();
     }
 
     fn return_renderer(&self, offscreen: Offscreen) {
@@ -763,5 +835,113 @@ mod poison_recovery_tests {
         pool.discard_renderer();
 
         assert_eq!(lock_recover(&pool.state).total_renderers, 0);
+    }
+}
+
+#[cfg(test)]
+mod renderer_pool_recovery_tests {
+    use super::{ThumbnailError, ThumbnailRendererPool, RENDERER_WAIT_CEILING};
+    use std::time::{Duration, Instant};
+
+    fn refuses() -> Result<occluview_render::Offscreen, ThumbnailError> {
+        Err(ThumbnailError::Render(
+            occluview_render::RenderError::NoAdapter,
+        ))
+    }
+
+    fn panics() -> Result<occluview_render::Offscreen, ThumbnailError> {
+        panic!("a driver reset during device creation");
+    }
+
+    /// A create that fails gives its slot back -- the case that was already
+    /// handled, kept here so the panicking case beside it has a control.
+    #[test]
+    fn a_refused_create_leaves_the_pool_able_to_try_again() {
+        let pool = ThumbnailRendererPool::with_create(1, refuses);
+        for _ in 0..3 {
+            assert!(
+                pool.checkout_renderer_within(Duration::from_millis(50))
+                    .is_err(),
+                "the create refuses, so the checkout must too"
+            );
+        }
+    }
+
+    /// A create that panics must give its slot back as well.
+    ///
+    /// It claims the slot before the device exists. Unwinding past the
+    /// bookkeeping left the pool believing its one renderer was in use, and
+    /// every later request then waited for a renderer that was never coming --
+    /// each holding a decode lane, so twelve of them were the whole folder.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn a_panicking_create_leaves_the_pool_able_to_try_again() {
+        let pool = ThumbnailRendererPool::with_create(1, panics);
+        for attempt in 0..3 {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                pool.checkout_renderer_within(Duration::from_millis(50))
+            }));
+            assert!(
+                outcome.is_err(),
+                "attempt {attempt} must surface the panic, not a timeout: the \
+                 slot was not given back"
+            );
+        }
+    }
+
+    /// The wait is bounded, so a renderer that never returns cannot park a
+    /// request forever.
+    #[test]
+    fn waiting_for_a_renderer_gives_up_instead_of_parking_the_lane() {
+        let pool = ThumbnailRendererPool::with_create(1, refuses);
+        // Claim the only slot and never give it back.
+        {
+            let mut state = super::lock_recover(&pool.state);
+            state.total_renderers = 1;
+        }
+        let started = Instant::now();
+        let outcome = pool.checkout_renderer_within(Duration::from_millis(120));
+        assert!(outcome.is_err(), "the wait must expire, not block");
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(100) && waited < Duration::from_secs(5),
+            "expired at the budget, not early and not never: {waited:?}"
+        );
+        assert!(
+            RENDERER_WAIT_CEILING >= Duration::from_secs(10),
+            "the production ceiling is a backstop, not a request budget"
+        );
+    }
+
+    /// A render that panics must not park its device back in the pool.
+    ///
+    /// Whatever the renderer was doing, it did not finish; its device may be
+    /// lost or mid-command. Unwinding alone runs the lease's `Drop`, which
+    /// hands exactly that device to the next file in the folder.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn a_panicking_render_retires_its_device_instead_of_reusing_it() {
+        let _guard = crate::acquire_render_test_guard();
+        let pool = ThumbnailRendererPool::new(1);
+        let Ok(renderer) = pool.checkout_renderer_within(Duration::from_secs(20)) else {
+            // No adapter here; there is no device to retire.
+            return;
+        };
+        drop(super::ThumbnailRendererLease::new(&pool, renderer));
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pool.with_renderer(|_| -> Result<(), ThumbnailError> {
+                panic!("a device fault mid-render")
+            })
+        }));
+        assert!(panicked.is_err(), "the panic must reach the caller");
+
+        let state = super::lock_recover(&pool.state);
+        assert!(
+            state.idle.is_empty() && state.total_renderers == 0,
+            "the suspect device must be retired, not parked: idle={} total={}",
+            state.idle.len(),
+            state.total_renderers
+        );
     }
 }
