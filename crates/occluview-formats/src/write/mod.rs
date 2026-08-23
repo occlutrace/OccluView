@@ -155,6 +155,26 @@ pub fn write_mesh_overwrite(
     write_mesh_file(path, mesh, format, options, false)
 }
 
+/// Reject a mesh the requested format cannot represent, before any file is
+/// touched.
+///
+/// `File::create` truncates, so a rejection discovered inside the writer left
+/// the destination at zero bytes: exporting a point-cloud layer as `.stl` over
+/// an existing scan destroyed that scan and returned an error having written
+/// nothing. The only such rejection is STL's, and it depends on the mesh kind
+/// alone, so it can be answered before opening anything.
+fn ensure_format_can_represent(mesh: &Mesh, format: MeshWriteFormat) -> Result<(), FormatError> {
+    if format == MeshWriteFormat::StlBinary && mesh.kind() != MeshKind::TriangleMesh {
+        return Err(FormatError::Malformed {
+            format: MeshWriteFormat::StlBinary.label(),
+            offset: 0,
+            reason: "STL export requires a triangle mesh; point clouds are not supported"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn write_mesh_file(
     path: &Path,
     mesh: &Mesh,
@@ -162,6 +182,7 @@ fn write_mesh_file(
     options: MeshWriteOptions,
     create_new: bool,
 ) -> Result<MeshWriteReport, FormatError> {
+    ensure_format_can_represent(mesh, format)?;
     let file = if create_new {
         OpenOptions::new().write(true).create_new(true).open(path)?
     } else {
@@ -264,5 +285,54 @@ mod tests {
         assert_eq!(report.format, MeshWriteFormat::Obj);
         let bytes = std::fs::read(file.path()).expect("read back");
         assert!(!bytes.starts_with(b"stale bytes"));
+    }
+
+    #[test]
+    fn a_rejected_export_leaves_the_destination_untouched() {
+        // A PLY point cloud is a loadable layer, so "export this layer as
+        // .stl over an existing scan" is an ordinary action. The rejection
+        // used to arrive after `File::create` had already truncated the
+        // destination, which destroyed the scan that was there.
+        let file = NamedTempFile::new().expect("temp file");
+        let seed = b"an existing scan the operator still needs";
+        std::fs::write(file.path(), seed).expect("seed destination");
+
+        let cloud = Mesh::point_cloud(
+            Some("cloud".to_string()),
+            vec![Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0))],
+        );
+        let result = write_mesh_overwrite(
+            file.path(),
+            &cloud,
+            MeshWriteFormat::StlBinary,
+            MeshWriteOptions::default(),
+        );
+
+        assert!(result.is_err(), "STL cannot represent a point cloud");
+        let after = std::fs::read(file.path()).expect("read back");
+        assert_eq!(
+            after, seed,
+            "a failed export must leave the destination exactly as it found it"
+        );
+    }
+
+    #[test]
+    fn a_point_cloud_still_writes_where_the_format_supports_it() {
+        let file = NamedTempFile::new().expect("temp file");
+        let cloud = Mesh::point_cloud(
+            Some("cloud".to_string()),
+            vec![Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0))],
+        );
+
+        let report = write_mesh_overwrite(
+            file.path(),
+            &cloud,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("PLY carries point clouds");
+
+        assert_eq!(report.format, MeshWriteFormat::PlyBinaryLittleEndian);
+        assert!(!std::fs::read(file.path()).expect("read back").is_empty());
     }
 }
