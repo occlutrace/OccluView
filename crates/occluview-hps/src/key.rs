@@ -242,6 +242,9 @@ mod tests {
     #[cfg(feature = "private-hps-key")]
     #[test]
     fn runtime_provider_reads_generated_embedded_key_when_present() {
+        // Without the secret this asserts only that the provider answers, which
+        // it does with the key absent too -- the public CI job runs it that
+        // way. It has force in the packaging jobs, where the secret is set.
         let configured = env::var("OCCLUVIEW_HPS_EMBEDDED_KEY")
             .ok()
             .filter(|value| !value.trim().is_empty());

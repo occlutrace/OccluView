@@ -651,8 +651,21 @@ mod poison_recovery_tests {
 
     #[test]
     fn shell_renderer_parallelism_stays_inside_the_process_budget() {
-        assert_eq!(default_thumbnail_renderer_pool_size(), 1);
-        assert_eq!(default_thumbnail_job_capacity(), 12);
+        // Bounds, not exact values: this is named for a budget, and a tuning
+        // change from one renderer to two -- comfortably inside it -- should
+        // not have to edit a test about the budget.
+        let renderers = default_thumbnail_renderer_pool_size();
+        assert!(
+            (1..=2).contains(&renderers),
+            "one wgpu device per surrogate process is the point; {renderers} is \
+             a different design"
+        );
+        let lanes = default_thumbnail_job_capacity();
+        assert!(
+            (8..=16).contains(&lanes),
+            "Explorer asks for a folder at a time and gives up after six \
+             seconds; {lanes} lanes is outside what that balances"
+        );
     }
 
     #[test]

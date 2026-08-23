@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use super::*;
 use glam::{Mat4, Vec3};
 use occluview_core::{Aabb, Camera, Mesh, DEFAULT_UNTEXTURED_MESH_TINT};
@@ -14,7 +16,7 @@ fn thumbnail_camera_keeps_occlusal_orientation_but_frames_projected_bounds_tight
         vec![0, 1, 2],
     );
     let Ok(mesh) = mesh else {
-        return;
+        panic!("the fixture mesh must build; returning here asserts nothing");
     };
     let app_camera = Camera::default().frame_occlusal(mesh.bbox(), 45.0_f32.to_radians());
     let thumbnail_camera = rendering::thumbnail_camera_for_bbox(mesh.bbox());
@@ -46,7 +48,7 @@ fn thumbnail_camera_keeps_occlusal_orientation_but_frames_projected_bounds_tight
 fn thumbnail_mesh_frame_ignores_sparse_outliers() {
     let mesh = fixtures::point_cluster_with_outlier();
     let Ok(mesh) = mesh else {
-        return;
+        panic!("the fixture mesh must build; returning here asserts nothing");
     };
     let camera = rendering::thumbnail_camera_for_mesh(&mesh);
     let bbox_camera = rendering::thumbnail_camera_for_bbox(mesh.bbox_cached());

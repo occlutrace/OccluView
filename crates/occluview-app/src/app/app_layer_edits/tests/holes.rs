@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use super::*;
 
 fn scene_with_a_tube() -> Option<Scene> {
@@ -48,7 +50,7 @@ fn boundary_edge_count(indices: &[u32]) -> usize {
 #[test]
 fn close_holes_button_requires_selection_and_scopes_to_selected_rim() {
     let Some(mut scene) = scene_with_a_tube() else {
-        return;
+        panic!("the tube fixture must build; a test that returns here asserts nothing");
     };
     let request = request(&scene, 0, LayerContextAction::CloseHoles);
     let before = scene.meshes()[0].mesh.triangle_count();
@@ -92,7 +94,7 @@ fn close_holes_button_requires_selection_and_scopes_to_selected_rim() {
 #[test]
 fn close_holes_without_selection_is_a_noop() {
     let Some(mut scene) = scene_with_a_tube() else {
-        return;
+        panic!("the tube fixture must build; a test that returns here asserts nothing");
     };
     let request = request(&scene, 0, LayerContextAction::CloseHoles);
     let before = scene.meshes()[0].mesh.indices().to_vec();
@@ -109,7 +111,7 @@ fn close_holes_without_selection_is_a_noop() {
 #[test]
 fn mesh_editor_close_holes_requires_face_selection() {
     let Some(mut scene) = scene_with_a_tube() else {
-        return;
+        panic!("the tube fixture must build; a test that returns here asserts nothing");
     };
     scene.add(SceneMesh::new(scene.meshes()[0].mesh.clone()));
     let before = scene.clone();
@@ -141,7 +143,7 @@ fn mesh_editor_close_holes_requires_face_selection() {
 #[test]
 fn mesh_editor_close_holes_scopes_to_selected_visible_layers() {
     let Some(mut scene) = scene_with_a_tube() else {
-        return;
+        panic!("the tube fixture must build; a test that returns here asserts nothing");
     };
     let mut hidden = SceneMesh::new(scene.meshes()[0].mesh.clone());
     hidden.visible = false;

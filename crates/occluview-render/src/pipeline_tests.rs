@@ -19,8 +19,13 @@ fn mesh_shader_uses_camera_relative_inspection_lighting() {
         shader.contains("0.50 + 0.36 * wrapped_key + 0.095 * fill_lit + 0.018 * rim_lit"),
         "the studio light's key/fill/rim mix should keep its lit floor and its full swing"
     );
+    // Matched with whitespace collapsed: the previous form pinned the exact
+    // indentation of a `clamp()` argument list, so reflowing it onto one line
+    // -- byte-identical semantics, golden images unchanged -- failed this test.
+    // Nothing formats WGSL in CI.
+    let collapsed: String = shader.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        shader.contains("0.48,\n        1.05,"),
+        collapsed.contains("0.48, 1.05,"),
         "the studio light's ambient floor and key gain should stay as tuned"
     );
     assert!(
