@@ -49,7 +49,8 @@ pub mod units;
 pub use bbox::Aabb;
 pub use camera::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Camera, CameraAxisView, CameraPreset,
-    CameraProjection, CAD_ORBIT_DRAG_GAIN, CAD_ZOOM_SCROLL_SENSITIVITY,
+    CameraProjection, BBOX_FRAME_FILL, CAD_ORBIT_DRAG_GAIN, CAD_ZOOM_SCROLL_SENSITIVITY,
+    MIN_ORTHOGRAPHIC_HEIGHT_MM,
 };
 pub use error::CoreError;
 pub use jump_list::JumpListItem;

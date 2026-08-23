@@ -21,7 +21,22 @@ pub use input::{
 pub use orientation::occlusal_orientation;
 pub use presets::{CameraAxisView, CameraPreset};
 
-pub(super) const MIN_ORTHOGRAPHIC_HEIGHT_MM: f32 = 0.01;
+/// Smallest orthographic height anything will fit to.
+///
+/// Public because the Explorer preview fits its own camera and had to copy
+/// this number, with a comment asking for it to be exported.
+pub const MIN_ORTHOGRAPHIC_HEIGHT_MM: f32 = 0.01;
+
+/// How much of the framed height a fitted bounding sphere fills.
+///
+/// The bare `0.7` was written three times -- twice inside this module, once in
+/// the shell's preview -- with nothing naming what it meant. The three radius
+/// derivations around it differ on purpose and stay separate; the fill factor
+/// does not differ and now has one name.
+///
+/// Thumbnails deliberately use a tighter 0.90 instead, because a tile is
+/// square; they are not a fourth copy of this.
+pub const BBOX_FRAME_FILL: f32 = 0.7;
 /// Zoom-out ceiling: generous (a 1 km tall viewport for mm-scale dental
 /// scenes) yet far below f32 overflow, keeping the projection matrix finite.
 pub(super) const MAX_ORTHOGRAPHIC_HEIGHT_MM: f32 = 1.0e6;

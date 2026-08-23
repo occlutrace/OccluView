@@ -2,7 +2,7 @@ use crate::bbox::Aabb;
 
 use glam::Vec3;
 
-use super::{Camera, CameraProjection, MIN_ORTHOGRAPHIC_HEIGHT_MM};
+use super::{Camera, CameraProjection, BBOX_FRAME_FILL, MIN_ORTHOGRAPHIC_HEIGHT_MM};
 
 impl Default for Camera {
     fn default() -> Self {
@@ -99,11 +99,11 @@ impl Camera {
         self.set_yaw_pitch(0.0, 0.6); // ~34° from horizontal: occlusal bias, not straight down
         self.projection = CameraProjection::Orthographic;
         self.fovy = fovy;
-        self.orthographic_height = (radius * 2.0 / 0.7).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
+        self.orthographic_height = (radius * 2.0 / BBOX_FRAME_FILL).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
         // Fit so the bbox radius fills ~70% of the half-FOV.
         let half_fov = 0.5 * fovy;
         self.distance = if half_fov > 1e-5 {
-            radius / half_fov.tan() / 0.7
+            radius / half_fov.tan() / BBOX_FRAME_FILL
         } else {
             radius * 2.0
         };

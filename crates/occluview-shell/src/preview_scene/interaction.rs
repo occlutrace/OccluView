@@ -6,9 +6,7 @@ use occluview_core::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Aabb, Camera, CameraPreset,
 };
 
-/// Smallest orthographic height we will fit to, mirroring the core camera's own
-/// floor (which is `pub(super)` there and not importable here).
-const MIN_ORTHOGRAPHIC_HEIGHT_MM: f32 = 0.01;
+use occluview_core::{BBOX_FRAME_FILL, MIN_ORTHOGRAPHIC_HEIGHT_MM};
 
 /// Classic isometric elevation, `atan(1/sqrt(2))` ≈ 35.264°: the pitch that puts
 /// three cube faces at equal foreshortening.
@@ -108,9 +106,10 @@ impl PreviewSceneState {
         let radius = (0.5 * bbox.size().length()).max(1.0);
         let half_fov = 0.5 * self.camera.fovy;
         self.camera.target = bbox.center();
-        self.camera.orthographic_height = (radius * 2.0 / 0.7).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
+        self.camera.orthographic_height =
+            (radius * 2.0 / BBOX_FRAME_FILL).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
         self.camera.distance = if half_fov > 1e-5 {
-            radius / half_fov.tan() / 0.7
+            radius / half_fov.tan() / BBOX_FRAME_FILL
         } else {
             radius * 2.0
         };
