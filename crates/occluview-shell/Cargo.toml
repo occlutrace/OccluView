@@ -61,5 +61,4 @@ features = [
 version = "0.58"
 
 [dev-dependencies]
-proptest = { workspace = true }
 zip      = { workspace = true }

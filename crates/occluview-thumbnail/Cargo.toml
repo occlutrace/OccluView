@@ -24,5 +24,4 @@ glam              = { workspace = true }
 sha2              = { workspace = true }
 
 [dev-dependencies]
-proptest = { workspace = true }
 zip      = { workspace = true }

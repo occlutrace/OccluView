@@ -23,7 +23,6 @@ tracing        = { workspace = true }
 glam           = { workspace = true }
 
 [dev-dependencies]
-proptest  = { workspace = true }
 image     = { workspace = true }
 pollster  = { workspace = true }
 glam      = { workspace = true }

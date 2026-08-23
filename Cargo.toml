@@ -133,26 +133,16 @@ rfd     = { version = "0.14", default-features = false, features = ["xdg-portal"
 wayland-client   = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
-# Windows bindings (shell + windowing interop) — windows-rs only.
-# Target = x86_64-pc-windows-msvc (rust-toolchain.toml).
-target-our-windows = { version = "0", package = "windows", features = [
-    # COM plumbing
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Ole",
-    "Win32_System_Registry",
-    # Shell / thumbnail provider
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_Graphics_Imaging",
-    # GDI for HBITMAP interop
-    "Win32_Graphics_Gdi",
-] }
+# NOTE: the windows-rs dependency is declared per crate, not here. A workspace
+# entry used to carry a tidy commented feature list that neither consumer read
+# -- it pinned `version = "0"` while both real declarations pin 0.58 -- so
+# adding a feature to it changed nothing and cost an afternoon to work out. The
+# feature sets live in `crates/occluview-shell/Cargo.toml`,
+# `crates/occluview-app/Cargo.toml` and `crates/occluview-formats/Cargo.toml`,
+# next to the code that needs them.
 
 # Testing.
 proptest = "1.5"
-criterion = { version = "0.5", features = ["html_reports"] }
 
 # Workspace lints — applied to every crate via `lints.workspace = true`.
 [workspace.lints.rust]
@@ -201,9 +191,6 @@ panic = "abort"
 [profile.release-unwind]
 inherits = "release"
 panic = "unwind"
-
-[profile.bench]
-inherits = "release"
 
 [profile.dev]
 opt-level = 1                # faster dev runs for the wgpu hot path
