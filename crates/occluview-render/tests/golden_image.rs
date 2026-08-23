@@ -1,7 +1,8 @@
 //! Golden-image regression test for the offscreen renderer.
 //!
-//! Renders a fixed scene (one triangle) at 64x64 through the Offscreen path
-//! (WARP software rasterizer on Linux CI, real GPU on Windows), compares the
+//! Renders a fixed scene (one triangle) at 64x64 through the Offscreen path on
+//! a software rasterizer -- Lavapipe in the Linux CI job, WARP on the Windows
+//! runner, both selected in `.github/workflows/ci.yml` -- and compares the
 //! RGBA8 output to a stored PNG baseline within a tolerance.
 //!
 //! Baselines live in `tests/golden/baselines/<name>.png`. To regenerate after
@@ -244,7 +245,7 @@ fn point_cloud_mesh() -> Mesh {
 }
 
 /// A textured-triangle golden test: validates the full texture pipeline
-/// (Vertex.uv -> WGSL sampler -> tint -> lighting) end-to-end on WARP. Uses
+/// (Vertex.uv -> WGSL sampler -> tint -> lighting) end-to-end on the software rasterizer. Uses
 /// a synthetic 2x2 checkerboard texture so the output is deterministic.
 fn textured_triangle_mesh() -> Mesh {
     // UV-mapped triangle covering UV space [0,0]-[1,1].
@@ -437,7 +438,7 @@ fn textured_triangle_renders_checkerboard() {
     );
 }
 
-/// Validates the clip-plane discard (Approach A, "hollow cut") on WARP. A
+/// Validates the clip-plane discard (Approach A, "hollow cut") on the software rasterizer. A
 /// triangle centered at the origin is clipped by a plane at `distance = 0`
 /// with normal `+Z` pointing toward the camera — the back half is discarded,
 /// leaving fewer visible pixels than the unclipped triangle. Verifies the
@@ -494,8 +495,9 @@ fn cut_triangle_discard_removes_pixels() {
     );
 }
 
-/// Validates the full 3-pass stencil capping (Approach B, "solid cut") on
-/// WARP. The render must not crash and must produce visible output — the
+/// Validates the full 3-pass stencil capping (Approach B, "solid cut") on the
+/// software rasterizer. The render must not crash and must produce visible
+/// output — the
 /// stencil increment/decrement + cap draw sequence runs end-to-end.
 #[test]
 fn cut_triangle_capped_renders() {
@@ -523,7 +525,7 @@ fn cut_triangle_capped_renders() {
 /// Validates the convenience entry point `render_cut_view` — auto-frames an
 /// orthographic camera along the plane normal and renders the solid cut.
 /// Proves the full cut-view pipeline (camera + clip + stencil cap) runs
-/// end-to-end on WARP without crashing.
+/// end-to-end on the software rasterizer without crashing.
 #[test]
 fn render_cut_view_end_to_end() {
     let _gpu = gpu_test_lock();

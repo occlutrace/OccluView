@@ -1,3 +1,17 @@
+//! Getting files into the scene without losing work already in it.
+//!
+//! Loads run off the UI thread and report back over a channel; `queued_loads`
+//! holds the ones that arrived while another was in flight, so a multi-file
+//! drop or a burst of shell hand-offs is serialised rather than raced.
+//!
+//! A load is either REPLACE (menu Open, a recent file, a hand-off classified
+//! as replace) or APPEND (a second scan added to the current scene). Every
+//! replace goes through the guard here first: if the session has unsaved mesh
+//! edits, the open is parked behind the confirmation dialog instead of
+//! destroying them. Append needs no guard, and neither do the camera rules --
+//! a replace re-frames the scene, an append keeps the operator's camera unless
+//! they had not moved it.
+
 use super::{
     combine_loaded_scene, egui, load_error_dialog, load_status_message, mpsc,
     read_files_with_key_provider, single_instance, AppErrorDialog, Instant, LoadQueueCameraReset,

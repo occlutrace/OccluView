@@ -1,3 +1,22 @@
+//! `OccluViewApp` itself: the fields the whole binary shares, and the small
+//! set of methods that keep them consistent.
+//!
+//! The render caches are invalidated through four booleans, and the rule for
+//! setting them is the one thing worth knowing before touching this file:
+//!
+//! - `needs_render` — draw again this frame. A camera move sets this and
+//!   nothing else, because the prepared geometry did not change.
+//! - `live_viewport_scene_dirty` — the live eframe/wgpu path must rebuild its
+//!   `PreparedScene`. Only ever set when `live_viewport` is `Some`.
+//! - `offscreen_scene_dirty` — the offscreen path must rebuild its own.
+//! - `selection_overlay_dirty` — the selection overlay mesh must be rebuilt.
+//!
+//! Anything that changes geometry, materials or the scene itself sets all
+//! four; anything that only moves the camera sets the first. Skipping one of
+//! the last three leaves a stale cache on screen for exactly the path that was
+//! not marked, which is invisible in whichever path the author happened to be
+//! testing.
+
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
     Camera, CutTool, Duration, EditModeController, Instant, LayerOverlayChanges,

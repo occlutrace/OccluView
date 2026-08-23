@@ -1,5 +1,5 @@
 # occluview-formats — file format readers/writers.
-# Layering: depends on occluview-core only.
+# Layering: depends on occluview-core and occluview-hps.
 [package]
 name = "occluview-formats"
 description = "3D file format readers for OccluView: STL, PLY, OBJ, and GLB."
@@ -43,5 +43,6 @@ tempfile = "3"
 name = "smoke_real_files"
 path = "examples/smoke_real_files.rs"
 
-# NOTE: glTF loader (cgltf) and 3MF loader (lib3mf FFI) are added later
-# The v1 reader set is implemented incrementally; each loader ships with tests.
+# NOTE: glTF/GLB is implemented here in pure Rust (see src/gltf/). 3MF is
+# deliberately deferred and the code says so at the dispatch point --
+# `FormatKind::deferred` in src/dispatch.rs. Each reader ships with tests.

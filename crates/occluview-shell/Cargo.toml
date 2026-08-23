@@ -1,5 +1,6 @@
 # occluview-shell — Windows COM shell extension (thumbnail provider).
-# Depends on occluview-core, occluview-render, and occluview-formats.
+# Depends on occluview-core, occluview-render, occluview-formats, and
+# occluview-thumbnail.
 #
 # Builds as a `cdylib` (the COM DLL) AND a `rlib` (so tests + the app can call
 # into the same Rust logic). Target: x86_64-pc-windows-msvc.

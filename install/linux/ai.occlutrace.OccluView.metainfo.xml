@@ -10,9 +10,23 @@
   <summary>Fast 3D mesh viewer for dental scans</summary>
   <description>
     <p>
-      OccluView opens common dental scan and mesh files in a native desktop
-      viewport with multi-file layers, camera controls, screenshots, and
-      thumbnail rendering.
+      OccluView opens dental scans and common mesh files in a native desktop
+      viewport built for the daily work of a CAD designer: orthographic orbit
+      and pan, a cut view, a surface ruler, and a thickness analyser.
+    </p>
+    <p>
+      Scans load as layers with their own visibility, opacity, tint, and
+      wireframe. Selections are made by click, rectangle, or lasso, and the
+      mesh editor can delete, crop, cut, separate, close holes, repair, and
+      smooth, with undo and redo throughout. Two scans can be aligned against
+      each other and compared through a discrepancy heatmap. Edited layers
+      export back to STL, PLY, or OBJ.
+    </p>
+    <p>
+      STL, PLY, OBJ, GLB, and HPS dental containers are supported. The package
+      registers the file types with the desktop and installs a thumbnailer, so
+      scans get real previews in the file manager, along with occluview-cli for
+      headless thumbnails and conversion.
     </p>
   </description>
   <launchable type="desktop-id">ai.occlutrace.OccluView.desktop</launchable>

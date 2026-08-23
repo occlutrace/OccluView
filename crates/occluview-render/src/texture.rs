@@ -24,8 +24,9 @@ impl GpuTexture {
     /// Build a 1x1 white texture used when a mesh has no material texture.
     ///
     /// The mesh shader still requires a bound group-2 texture/sampler even
-    /// when `has_texture == 0`, so live and offscreen render paths share this
-    /// fallback resource.
+    /// when `has_texture == 0`. This is the live path's fallback; the
+    /// offscreen path needs only the bind group and builds an identical 1x1
+    /// white one in `offscreen::helpers::make_fallback_texture_bind_group`.
     #[must_use]
     pub fn fallback(renderer: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {

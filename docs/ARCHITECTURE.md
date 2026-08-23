@@ -13,7 +13,7 @@ formats    → core + hps
 render     → core
 thumbnail  → core + render + formats
 shell      → core + render + formats + thumbnail
-  app       → core + formats + render + align + update (+ shell on Windows)
+app        → core + formats + render + align + update (+ shell on Windows)
 cli        → core + formats + render + thumbnail
 update     → (nothing; minisign / semver / ureq)
 ```
@@ -39,14 +39,14 @@ Cycles are P0. `publish = false` — not on crates.io.
 
 ## Trust boundaries
 
-- **File parsers** (STL/PLY/OBJ/HPS/GLB) handle untrusted bytes from Explorer/thumbnail. Bounded by ZIP entry 256 MiB, aggregate 512 MiB, texture 8192 px / 256 MiB, checked arithmetic.
+- **File parsers** (STL/PLY/OBJ/GLB/HPS/OFF) handle untrusted bytes from Explorer/thumbnail. OFF is on this boundary even though it is not a user-facing format: `probe()` matches magic before extension, so any file whose header starts with `OFF` reaches `off::read` regardless of its name. Bounded by ZIP entry 256 MiB, aggregate 512 MiB, texture 8192 px with an RGBA ceiling of 256 MiB for HPS and 64 MiB for glTF, checked arithmetic.
 - **Thumbnail** runs in `dllhost.exe`. Panics unwind via `release-unwind`; `catch_unwind` substitutes a placeholder. One renderer, 12 job slots, per-request timeout.
-- **Updater** verifies HTTPS, SHA-256, and minisign signature before installing.
+- **Updater** verifies HTTPS, SHA-256, and minisign signature before installing. It is also the only outbound network call the product makes: two GETs per launch for `latest.json` and its signature, offer-only, never a silent install. `OCCLUVIEW_NO_UPDATE_CHECK` (any value) disables it; README documents this for packagers.
 - **HPS key**: embedded key is obfuscation, not a secret boundary. Documented as friction; real entitlement should be per-device.
 
 ## Rendering
 
-One `occluview-render` pipeline. Explorer thumbnails are pixel-identical to in-app frames. Orthographic camera, `GpuCamera` / `GpuMeshUniform` per mesh.
+One `occluview-render` pipeline: one shader, one camera. A given mesh therefore rasterizes identically in Explorer and in the app. Above the per-format fidelity cutoffs in `render_thumb/loading.rs` the tile is drawn from a decimated preview mesh through that same pipeline, so it matches the shading but not the geometry. Orthographic camera, `GpuCamera` / `GpuMeshUniform` per mesh.
 
 ## Build and release
 
@@ -58,4 +58,4 @@ One `occluview-render` pipeline. Explorer thumbnails are pixel-identical to in-a
 
 ## Fuzzing
 
-`fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `hps_parser`, `stl`, `ply`. CI runs 60s smoke (4 targets) and nightly 300s deep fuzz on `schedule: 0 2 * * 1`. For deeper runs: `cargo fuzz run <target> -- -max_total_time=300` in `fuzz/`.
+`fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `hps_parser`, `stl`, `ply`. CI runs a 60s smoke over the 4 targets on every push, and a 300s deep fuzz weekly on `schedule: 0 2 * * 1` (Mondays, 02:00 UTC). For deeper runs: `cargo fuzz run <target> -- -max_total_time=300` in `fuzz/`.

@@ -385,6 +385,18 @@ jobs:
           - Debian package: installs the native Linux viewer, freedesktop launcher, MIME registration, icon, and thumbnailer.
 
           All packages install LICENSE, NOTICE, and THIRD-PARTY-NOTICES.md.
+
+          Verify what you downloaded (run from the download directory):
+
+          \`\`\`
+          sha256sum -c <asset>.sha256
+          minisign -Vm <asset> -P RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq
+          gh attestation verify <asset> --repo occlutrace/OccluView
+          \`\`\`
+
+          The same key is published as occluview.pub in the repository and is
+          compiled into the updater. sbom-windows.json and sbom-linux.json list
+          every third-party component in the binaries.
           NOTES
           # The changelog section for this version, verbatim, so the release
           # page states what changed without a second hop.

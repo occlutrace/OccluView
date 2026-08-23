@@ -12,8 +12,7 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct SceneMesh {
     id: SceneMeshId,
-    /// The underlying mesh. Shared via `Arc` once we add cross-thread sharing;
-    /// owned for now to keep `core` dependency-free.
+    /// The underlying mesh, owned by this entry.
     pub mesh: Mesh,
     /// Per-instance transform (placement of this mesh in the scene).
     pub transform: Affine3A,

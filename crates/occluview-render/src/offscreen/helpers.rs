@@ -8,6 +8,10 @@ pub(super) struct RenderTargets<'a> {
     pub(super) depth: &'a TextureView,
 }
 
+/// The offscreen path's 1x1 white group-2 binding, for meshes with no material
+/// texture. Same pixel and same layout as [`crate::texture::GpuTexture::fallback`],
+/// which the live path uses; that one also keeps the texture and sampler around,
+/// which nothing here needs.
 pub(super) fn make_fallback_texture_bind_group(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

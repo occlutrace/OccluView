@@ -1,3 +1,16 @@
+//! Viewport interaction for the cut plane and the measuring tools.
+//!
+//! The pointer means different things depending on which tool owns it, and
+//! this module is where that is decided: placing and dragging the clip plane,
+//! the follow disc that rides the surface under the cursor, the caliper and
+//! thickness probes, and the section view's own picking.
+//!
+//! Everything here works in world space obtained by unprojecting the cursor
+//! through the shared viewport helpers, so a hit means the same thing to the
+//! overlay that draws it and to the geometry that answers it. Drawing lives in
+//! `cut_overlay` and `measure_overlay`; the numbers live in `measure_tool` and
+//! `probe_section`.
+
 use super::{egui, layers_overlay, pick_scene_hit, CutTool, OccluViewApp, Scene};
 use crate::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
 use crate::cut_overlay;

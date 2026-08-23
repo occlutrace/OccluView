@@ -234,8 +234,10 @@ jobs:
         run: cargo fuzz run ply -- -max_total_time=60 -max_len=65536
         working-directory: fuzz
 
-  fuzz-nightly:
-    name: fuzz nightly (300s deep)
+  fuzz-weekly:
+    # Named for its cadence, not its toolchain: the schedule is Mondays at
+    # 02:00 UTC. cargo-fuzz needs the nightly compiler either way.
+    name: fuzz weekly (300s deep)
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 40

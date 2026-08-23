@@ -2,12 +2,20 @@
 //!
 //! Native desktop app for Windows and Linux.
 //!
-//! ## Status (this commit)
+//! ## Shape of the binary
 //!
 //! Opens one or more files from the CLI args via `occluview-formats` and draws
 //! the scene through the shared `occluview-render` wgpu pipeline. The main
 //! viewport uses a live eframe/wgpu callback when available, with the offscreen
 //! path kept for thumbnails, cut-view previews, and fallback.
+//!
+//! Everything above that sits in the `mod` list below: `app` and `viewer` hold
+//! the application state and the viewport, `scene_loading` brings files in,
+//! `align_*` registers one scan onto another, `edit_mode` and `sculpt_*` change
+//! geometry, `cut_*` and `section_view` slice it, `measure_*` and
+//! `probe_section` measure it, `layer_*` and `mesh_editor_*` drive the panels,
+//! and `single_instance`, `jump_list` and `update_notice` handle the desktop
+//! integration around all of it.
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 

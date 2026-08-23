@@ -4,8 +4,11 @@
 //! hosts this DLL in `dllhost.exe`, so a bug or a malicious file cannot crash
 //! `explorer.exe`.
 //!
-//! The thumbnail reuses [`occluview_render`] offscreen path, so it is
-//! pixel-identical to the in-app frame — one shader, one camera, one loader.
+//! The thumbnail reuses [`occluview_render`] offscreen path — one shader, one
+//! camera — so a given mesh rasterizes exactly as it does in the app. Large
+//! files are the exception by design: past the fidelity cutoffs in
+//! [`occluview_thumbnail`] the tile is drawn from a decimated preview mesh
+//! through the same pipeline.
 //!
 //! ## Status
 //!

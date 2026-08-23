@@ -301,7 +301,10 @@ fn map_parser_error(error: occluview_hps::HpsError) -> FormatError {
         }
         HpsError::KeyMissing => FormatError::Deferred {
             format: "HPS",
-            reason: "encrypted CE schema needs a configured key provider".to_string(),
+            reason: "the package is encrypted and no decryption key is configured \
+                     (official builds embed one; a build from source reads \
+                     OCCLUVIEW_HPS_ENCRYPTION_KEY)"
+                .to_string(),
         },
         HpsError::BadContainer { reason }
         | HpsError::InvalidKey { reason }

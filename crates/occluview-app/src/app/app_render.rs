@@ -1,3 +1,16 @@
+//! Turning the current scene into pixels, through whichever path is available.
+//!
+//! Two paths draw the same scene with the same `occluview-render` pipeline: an
+//! eframe/wgpu paint callback into the live surface, and an offscreen render
+//! whose result is blitted as an egui texture. The live path is used when the
+//! backend gave us one; the offscreen path is the fallback and is also what
+//! produces the cut-view preview.
+//!
+//! Both consume the dirty flags documented in [`super::state`] and clear the
+//! ones they have honoured. Each path caches its own `PreparedScene`, so a
+//! scene change has to mark both or the untouched path keeps drawing the
+//! previous geometry.
+
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
