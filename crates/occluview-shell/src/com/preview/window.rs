@@ -3,8 +3,8 @@ use super::super::{
     SetCapture, SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
     HINSTANCE, HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME,
     WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
-    WNDCLASSW, WPARAM,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SIZE, WNDCLASSW, WPARAM,
 };
 
 /// Virtual-key code for the `F` (fit view) shortcut.
@@ -182,6 +182,23 @@ unsafe fn preview_window_proc_body(
                 let _ = unsafe { ReleaseCapture() };
                 return LRESULT(0);
             }
+        }
+        WM_NCDESTROY => {
+            // The other direction: Explorer destroyed the parent, so this child
+            // died with it and the handler is still holding its HWND. Left
+            // stale, a later `Unload` would call `DestroyWindow` on a handle
+            // the system has since reused. Clear both ends here -- the
+            // handler's cell, and the raw pointer this window holds -- so
+            // neither side can reach the other again.
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                if handler.preview_hwnd.get() == hwnd {
+                    handler.preview_hwnd.set(HWND::default());
+                }
+            }
+            // SAFETY: clearing the slot this wndproc set at WM_NCCREATE.
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0)
+            };
         }
         _ => {}
     }

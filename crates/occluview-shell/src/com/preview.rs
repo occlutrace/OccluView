@@ -9,8 +9,8 @@ use super::{
     IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface, MoveWindow,
     Ordering, PathBuf, PreviewSceneState, RedrawWindow, SelectObject, SetKeyboardFocus, SetParent,
     ShellError, StreamRead, ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID,
-    HBITMAP, HGDIOBJ, HINSTANCE, HMENU, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT,
-    PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT,
+    GWLP_USERDATA, HBITMAP, HGDIOBJ, HINSTANCE, HMENU, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG,
+    PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT,
     SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
@@ -287,6 +287,18 @@ impl PreviewHandler {
     fn destroy_preview_window(&self) {
         let hwnd = self.preview_hwnd.replace(HWND::default());
         if !hwnd.0.is_null() {
+            // Cut the window's link to this object BEFORE destroying it, and do
+            // it unconditionally. The window holds a raw `&PreviewHandler` in
+            // GWLP_USERDATA, and `DestroyWindow` only works from the thread
+            // that created the window -- so when it does not, the window
+            // survives with a pointer to memory that is about to be freed.
+            // Clearing the slot is legal cross-thread and turns that window
+            // into a plain `DefWindowProcW` shell instead of a use-after-free.
+            //
+            // SAFETY: `hwnd` is a child window created by this object.
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0)
+            };
             // SAFETY: `hwnd` is a child window created by this object.
             let _ = unsafe { DestroyWindow(hwnd) };
         }
@@ -430,6 +442,17 @@ impl Default for PreviewHandler {
 
 impl Drop for PreviewHandler {
     fn drop(&mut self) {
+        // `Unload` is host etiquette, not a COM requirement, and the two paths
+        // that skip it are ordinary: a host that releases after `DoPreview`
+        // returned an error, and re-entrancy with no misbehaving host at all --
+        // `show_context_menu` runs `TrackPopupMenuEx`, a modal loop that pumps
+        // the STA, so a click on another file in Explorer can deliver Unload
+        // and Release while that call is still on the stack.
+        //
+        // Whatever the route, this object must not be freed while a live window
+        // still points at it, and the last rendered bitmap -- up to 2048x2048x4
+        // of GDI memory -- must not be left behind.
+        self.destroy_preview_window();
         ACTIVE_COM_OBJECTS.fetch_sub(1, Ordering::AcqRel);
     }
 }

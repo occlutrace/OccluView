@@ -564,3 +564,77 @@ fn gui_windows_resource_is_embedded_during_cross_builds() {
     assert!(build_rs.contains("cargo:rustc-link-arg-bin=occluview="));
     assert!(!build_rs.contains("env::consts::OS != \"windows\""));
 }
+
+#[test]
+fn the_preview_window_and_the_com_object_die_together() {
+    // The child preview window holds a raw `&PreviewHandler` in GWLP_USERDATA
+    // with no AddRef, so their lifetimes have to be tied by hand. Two ordinary
+    // routes reach the mismatch:
+    //
+    //   * A host releases without calling `Unload` -- etiquette, not a COM
+    //     requirement, and especially likely after `DoPreview` returned an
+    //     error.
+    //   * Re-entrancy with a perfectly behaved host: `show_context_menu` runs
+    //     `TrackPopupMenuEx`, a modal loop that pumps the STA, so a click on
+    //     another file in Explorer can deliver Unload and Release while that
+    //     call is still on the stack.
+    //
+    // And the reverse: when Explorer destroys the parent, the child dies with
+    // it and a later Unload would call DestroyWindow on a recycled handle.
+    let preview = include_str!("com/preview.rs");
+    let window = include_str!("com/preview/window.rs");
+
+    let drop_impl = preview
+        .split_once("impl Drop for PreviewHandler {")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let drop_body = drop_impl
+        .split_once("\n}")
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    assert!(
+        drop_body.contains("self.destroy_preview_window();"),
+        "dropping the COM object must take the window with it, or a live \
+         window is left pointing at freed memory"
+    );
+    let destroys_before_count = drop_body
+        .find("destroy_preview_window")
+        .zip(drop_body.find("ACTIVE_COM_OBJECTS"))
+        .is_some_and(|(window, count)| window < count);
+    assert!(
+        destroys_before_count,
+        "the window must be torn down before the object count drops"
+    );
+
+    // Clearing the slot is legal cross-thread; DestroyWindow is not. An
+    // orphaned window must degrade to DefWindowProcW, not to a dangling read.
+    let destroy = preview
+        .split_once("fn destroy_preview_window(&self)")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let clears = destroy.find("SetWindowLongPtrW");
+    let destroys = destroy.find("DestroyWindow(hwnd)");
+    assert!(
+        clears
+            .zip(destroys)
+            .is_some_and(|(clear, destroy)| clear < destroy),
+        "GWLP_USERDATA must be cleared before DestroyWindow, and unconditionally"
+    );
+    assert!(
+        destroy.contains("DeleteObject"),
+        "the last rendered bitmap is up to 2048x2048x4 of GDI memory and must not leak"
+    );
+
+    assert!(
+        window.contains("WM_NCDESTROY"),
+        "a window destroyed with its parent must clear the handler's stale HWND"
+    );
+
+    // The Windows packaging job runs this through test-msi-lifecycle.ps1, so
+    // the rule is checked against a real host, not only against the source.
+    let smoke = include_str!("../../../install/test-preview-handler.ps1");
+    assert!(
+        smoke.contains("Release without Unload left the child preview window alive"),
+        "the preview smoke should cover a host that releases without Unload"
+    );
+}
