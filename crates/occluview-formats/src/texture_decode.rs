@@ -155,9 +155,15 @@ mod tests {
         // redefining is what keeps that from coming back, so that is what is
         // checked -- an equality assertion would pass either way once the two
         // numbers happened to agree.
+        // Only the part of the file above this module counts: searching the
+        // whole of it matched the needle written in this very assertion, so
+        // the import could be split into two brace-less `use` lines and the
+        // guard would still pass. The negative assertions below were already
+        // defused with assembled needles; this one was not.
         let source = include_str!("texture_decode.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
         assert!(
-            source.contains("pub(crate) use occluview_hps::{"),
+            production.contains("pub(crate) use occluview_hps::{"),
             "the texture budget must be imported from occluview-hps, not redefined"
         );
         // The needles are assembled so this guard does not match its own source.

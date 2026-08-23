@@ -71,10 +71,13 @@ tool, and with no outline on screen it keeps its ordinary meaning for whatever
 is in front. The lasso and Object pick are turned off the same way they were
 turned on, from the Mesh Editor's toolbar.
 
-Whole-mesh operations — crop to selection, cut the selection to a new layer,
-separate connected components, close holes, repair, invert normals — are in the
-layer's right-click menu. A large edit blocks the window while it runs; that is
-known and measured, not a hang.
+The operations that act on a selection — delete, crop to selection, cut the
+selection to a new layer, separate connected components, close holes — are
+buttons in the Mesh Editor panel, not menu items: they need a selection only
+this panel can make. The layer's right-click menu carries the ones that act on
+the whole layer — repair, invert normals, export, and the display switches. A
+large edit blocks the window while it runs; that is known and measured, not a
+hang.
 
 When an operation cannot be undone, the status line says so instead of
 promising Ctrl+Z.

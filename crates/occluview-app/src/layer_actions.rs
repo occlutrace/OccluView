@@ -457,50 +457,106 @@ mod tests {
         assert_eq!(scene.meshes().len(), 2);
     }
 
-    /// Every action the enum declares must be raisable by some menu.
+    /// Every action the enum declares must be offered by something the
+    /// operator can click.
     ///
-    /// The scene menu has had this guard for a while
-    /// (`scene_menu::tests::every_scene_action_is_reachable_from_the_menu`);
-    /// the layer menu did not, and drifted to four variants no menu could
-    /// produce, each with a handler, a passing test, and in two cases a drawn
-    /// glyph. A reader counted twenty actions in a menu that offered sixteen.
+    /// The layer menu had drifted to four variants no menu could produce, each
+    /// with a handler, a passing test, and in two cases a drawn glyph: a
+    /// reader counted twenty actions in a menu that offered sixteen.
     ///
-    /// The list here is the enum, written out, so adding a variant means adding
-    /// a line here and finding out immediately whether anything offers it.
+    /// The first form of this guard searched the handler files as well as the
+    /// menus, so "has a handler" satisfied "can be raised" -- the drift itself
+    /// would have passed. Each action now names the surface that offers it, so
+    /// a new variant has to say where it is raised, and deleting a button
+    /// fails the line that claims it.
     #[test]
-    fn every_layer_action_is_reachable_from_a_menu() {
-        let menus = [
-            include_str!("layers_overlay/menu.rs"),
-            include_str!("layers_overlay/row.rs"),
-            include_str!("app/app_mesh_editor.rs"),
-            include_str!("app/app_layer_edits/whole_mesh.rs"),
-            include_str!("app/app_layer_edits/selection_ops.rs"),
-            include_str!("app/app_layer_edits/undo_redo.rs"),
-            include_str!("app/app_mesh_export.rs"),
+    fn every_layer_action_is_offered_by_a_surface_that_raises_it() {
+        // Where an action is offered. `MeshEditorPanel` carries the
+        // `MeshEditorAction` its button raises, because the panel speaks its
+        // own vocabulary and the mapping to a layer action is a separate step.
+        enum Surface {
+            LayerMenu,
+            LayerRow,
+            MeshEditorPanel(&'static str),
+        }
+
+        let menu = include_str!("layers_overlay/menu.rs");
+        let row = include_str!("layers_overlay/row.rs");
+        let panel = include_str!("mesh_editor_groups.rs");
+        let router = include_str!("app/app_mesh_editor.rs");
+
+        // Crop, cut, separate, delete and close-holes are deliberately NOT in
+        // the layer menu -- menu.rs asserts their absence -- because they act
+        // on a selection that only the Mesh Editor can make.
+        let surfaces: [(LayerContextAction, &[Surface]); 16] = [
+            (LayerContextAction::NextTint, &[Surface::LayerMenu]),
+            (LayerContextAction::ToggleWireframe, &[Surface::LayerMenu]),
+            (
+                LayerContextAction::ToggleShowVertexColors,
+                &[Surface::LayerMenu],
+            ),
+            (LayerContextAction::ToggleShowTexture, &[Surface::LayerMenu]),
+            (LayerContextAction::EditMesh, &[Surface::LayerMenu]),
+            (LayerContextAction::BridgeSplit, &[Surface::LayerMenu]),
+            (
+                LayerContextAction::DeleteSelectedFaces,
+                &[Surface::MeshEditorPanel("Delete")],
+            ),
+            (
+                LayerContextAction::CropToSelectedFaces,
+                &[Surface::MeshEditorPanel("Crop")],
+            ),
+            (
+                LayerContextAction::CutSelectionToNewLayer,
+                &[Surface::MeshEditorPanel("Cut")],
+            ),
+            (
+                LayerContextAction::SeparateSelectedComponents,
+                &[Surface::MeshEditorPanel("Separate")],
+            ),
+            (
+                LayerContextAction::CloseHoles,
+                &[Surface::MeshEditorPanel("CloseHoles")],
+            ),
+            (LayerContextAction::InvertNormals, &[Surface::LayerMenu]),
+            (LayerContextAction::RepairMesh, &[Surface::LayerMenu]),
+            (
+                LayerContextAction::UndoLastMeshEdit,
+                &[Surface::MeshEditorPanel("Undo")],
+            ),
+            (LayerContextAction::ExportLayer, &[Surface::LayerMenu]),
+            (
+                LayerContextAction::Remove,
+                &[Surface::LayerMenu, Surface::LayerRow],
+            ),
         ];
-        for action in [
-            LayerContextAction::NextTint,
-            LayerContextAction::ToggleWireframe,
-            LayerContextAction::ToggleShowVertexColors,
-            LayerContextAction::ToggleShowTexture,
-            LayerContextAction::EditMesh,
-            LayerContextAction::BridgeSplit,
-            LayerContextAction::DeleteSelectedFaces,
-            LayerContextAction::CropToSelectedFaces,
-            LayerContextAction::CutSelectionToNewLayer,
-            LayerContextAction::SeparateSelectedComponents,
-            LayerContextAction::CloseHoles,
-            LayerContextAction::InvertNormals,
-            LayerContextAction::RepairMesh,
-            LayerContextAction::UndoLastMeshEdit,
-            LayerContextAction::ExportLayer,
-            LayerContextAction::Remove,
-        ] {
+
+        for (action, offered_by) in surfaces {
             let name = format!("LayerContextAction::{action:?}");
-            assert!(
-                menus.iter().any(|source| source.contains(name.as_str())),
-                "{name} is declared but no menu can raise it"
-            );
+            for surface in offered_by {
+                match surface {
+                    Surface::LayerMenu => assert!(
+                        menu.contains(name.as_str()),
+                        "{name} is listed as a layer-menu item and the menu does not raise it"
+                    ),
+                    Surface::LayerRow => assert!(
+                        row.contains(name.as_str()),
+                        "{name} is listed as a layer-row control and the row does not raise it"
+                    ),
+                    Surface::MeshEditorPanel(button) => {
+                        let raised = format!("MeshEditorAction::{button}");
+                        assert!(
+                            panel.contains(raised.as_str()),
+                            "{name} is offered by the editor button {raised}, which the \
+                             panel no longer draws"
+                        );
+                        assert!(
+                            router.contains(raised.as_str()),
+                            "{raised} is drawn but nothing routes it"
+                        );
+                    }
+                }
+            }
         }
     }
 

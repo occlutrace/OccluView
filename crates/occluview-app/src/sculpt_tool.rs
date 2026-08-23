@@ -487,9 +487,14 @@ mod tests {
     /// every stroke, measured on a million-vertex layer.
     #[test]
     fn the_stroke_baseline_is_snapshotted_cold() {
+        // Only the part of the file above this module counts. Searching the
+        // whole of it matched the needle written in this assertion, so the
+        // guard passed on its own text: the production call could be changed
+        // back to the caching form and nothing would go red.
         let source = include_str!("sculpt_tool.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
         assert!(
-            source.contains("with_sculpted_vertices_uncached(shadow.clone())"),
+            production.contains("with_sculpted_vertices_uncached(shadow.clone())"),
             "the stroke's undo baseline must not pay for caches it usually never uses"
         );
     }
