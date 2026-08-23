@@ -25,8 +25,7 @@ use std::path::PathBuf;
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{GlobalFree, BOOL, HANDLE, HMODULE, HWND, POINT};
 use windows::Win32::Graphics::Gdi::{
-    ClientToScreen, CreateDIBSection, DeleteObject, GetSysColor, BITMAPINFO, BITMAPINFOHEADER,
-    BI_RGB, COLOR_MENUTEXT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
+    ClientToScreen, DeleteObject, GetSysColor, COLOR_MENUTEXT, HBITMAP, HGDIOBJ,
 };
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
@@ -305,47 +304,16 @@ fn menu_icon_hbitmap(icon: PreviewMenuIcon, size_px: u32) -> HBITMAP {
 }
 
 /// Build a 32bpp top-down `HBITMAP` from premultiplied BGRA bytes.
+///
+/// The allocation, the header and the GDI leak guard live in one place; this
+/// path differs only in producing premultiplied bytes rather than swizzled
+/// ones. See `com::create_top_down_bgra_dib`.
 fn create_premultiplied_dib(
     width: u32,
     height: u32,
     bgra: &[u8],
 ) -> windows::core::Result<HBITMAP> {
-    if width == 0 || height == 0 || bgra.len() != (width * height * 4) as usize {
-        return Err(e_fail());
-    }
-    let bitmap_info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width as i32,
-            biHeight: -(height as i32), // top-down
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            biSizeImage: width * height * 4,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let mut bits = std::ptr::null_mut();
-    // SAFETY: valid 32bpp DIB descriptor; `bits` is written by GDI; caller owns the handle.
-    let hbmp = unsafe {
-        CreateDIBSection(
-            HDC::default(),
-            &bitmap_info,
-            DIB_RGB_COLORS,
-            &mut bits,
-            HANDLE::default(),
-            0,
-        )
-    }?;
-    if bits.is_null() {
-        // SAFETY: free the just-allocated bitmap on the defensive null-bits path.
-        let _ = unsafe { DeleteObject(HGDIOBJ(hbmp.0)) };
-        return Err(e_fail());
-    }
-    // SAFETY: GDI allocated width*height*4 bytes and `bgra` has exactly that many.
-    unsafe { std::ptr::copy_nonoverlapping(bgra.as_ptr(), bits.cast::<u8>(), bgra.len()) };
-    Ok(hbmp)
+    super::super::create_top_down_bgra_dib(width, height, bgra)
 }
 
 /// Copy a top-down RGBA frame to the clipboard as a `CF_DIB` bitmap.

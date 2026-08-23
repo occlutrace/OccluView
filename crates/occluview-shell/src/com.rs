@@ -234,6 +234,29 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
         dst[2] = src[0]; // R
         dst[3] = src[3]; // A
     }
+    create_top_down_bgra_dib(width, height, &bgra)
+}
+
+/// Allocate a 32bpp top-down BGRA DIB and fill it with `bgra`.
+///
+/// The one place this crate calls `CreateDIBSection`. It used to be written
+/// twice -- once here and once for the context-menu glyphs -- and the two
+/// copies carried the same hand-written GDI leak guard for the null-bits path,
+/// inside a DLL that lives in `explorer.exe` for the length of a session.
+/// Fixing a leak or a header field in one copy would have left the other
+/// wrong, and the whole crate is `cfg(windows)`, so no Linux gate would ever
+/// notice. The callers differ only in how they produce the bytes: this one
+/// swizzles RGBA, the glyph path premultiplies.
+///
+/// The caller owns the returned handle.
+fn create_top_down_bgra_dib(
+    width: u32,
+    height: u32,
+    bgra: &[u8],
+) -> windows::core::Result<HBITMAP> {
+    if width == 0 || height == 0 || bgra.len() != (width * height * 4) as usize {
+        return Err(e_fail());
+    }
     let bitmap_info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: size_of::<BITMAPINFOHEADER>() as u32,

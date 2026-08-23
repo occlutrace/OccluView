@@ -295,23 +295,41 @@ mod tests {
     #[test]
     fn blit_is_top_down_non_flipping_contract() {
         let com_src = include_str!("../com.rs");
-        let start = com_src
-            .find("fn pixels_to_hbitmap")
-            .expect("pixels_to_hbitmap should exist in com.rs");
-        let body = &com_src[start..(start + 1600).min(com_src.len())];
+        // The DIB header lives in the one function that allocates one; the
+        // swizzle that feeds it lives in `pixels_to_hbitmap`. Both halves of
+        // the contract are checked where they actually are.
+        let allocator = function_body(com_src, "fn create_top_down_bgra_dib");
         assert!(
-            body.contains("biHeight: -(height as i32)"),
+            allocator.contains("biHeight: -(height as i32)"),
             "the preview/thumbnail blit must use a NEGATIVE biHeight (top-down DIB) \
              so presented-buffer row 0 maps to the top of the window"
         );
         // A top-down DIB must NOT also reorder rows, or the two flips would cancel
         // and reintroduce the mirror. The swizzle must stay a straight row-preserving
         // zip (no `height - 1 - y` style row math).
+        let swizzle = function_body(com_src, "fn pixels_to_hbitmap");
         assert!(
-            !body.contains("height as usize - 1 -") && !body.contains("- 1 - y"),
+            !swizzle.contains("height as usize - 1 -") && !swizzle.contains("- 1 - y"),
             "pixels_to_hbitmap must not vertically flip rows; keep it a straight \
              top-down, row-preserving swizzle"
         );
+        assert!(
+            swizzle.contains("create_top_down_bgra_dib(width, height, &bgra)"),
+            "the swizzle must hand its bytes to the one allocator, not carry its \
+             own copy of the header and the GDI leak guard"
+        );
+    }
+
+    /// Everything from a function's signature to the next top-level item.
+    fn function_body<'a>(source: &'a str, signature: &str) -> &'a str {
+        let start = source.find(signature);
+        assert!(start.is_some(), "missing {signature}");
+        let Some(start) = start else {
+            return "";
+        };
+        let body = &source[start..];
+        let end = body.find("\n}\n").map_or(body.len(), |offset| offset + 3);
+        &body[..end]
     }
 
     #[test]
