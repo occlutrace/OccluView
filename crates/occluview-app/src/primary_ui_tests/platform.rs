@@ -443,16 +443,35 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         "the newest section should be the version about to ship, got {:?}",
         sections.first()
     );
-    let unreleased = sections
-        .iter()
-        .skip(1)
-        .filter(|line| line.contains(" 1.0.7 ") || line.contains(" 1.0.8 "))
-        .count();
-    assert_eq!(
-        unreleased, 0,
-        "1.0.7 and 1.0.8 were never tagged or released; their entries belong to \
-         the version that actually ships"
-    );
+    // The rest are history, and history only goes one way. Two sections at
+    // the same version, or an older one above a newer one, means a local bump
+    // grew its own section instead of folding into the release being
+    // prepared -- which is how 1.0.7 and 1.0.8 came to advertise changes
+    // nobody could download.
+    let mut seen: Vec<[u64; 3]> = Vec::new();
+    for line in &sections {
+        let Some(number) = line.split_whitespace().nth(1) else {
+            panic!("changelog section without a version: {line:?}");
+        };
+        let parts: Vec<u64> = number
+            .split('.')
+            .filter_map(|part| part.parse::<u64>().ok())
+            .collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "changelog sections are headed by a three-part version, got {number:?}"
+        );
+        let parsed = [parts[0], parts[1], parts[2]];
+        if let Some(previous) = seen.last() {
+            assert!(
+                parsed < *previous,
+                "changelog sections run newest first with no repeats; \
+                 {number} follows {previous:?}"
+            );
+        }
+        seen.push(parsed);
+    }
 }
 
 #[test]

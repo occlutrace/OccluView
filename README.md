@@ -78,14 +78,18 @@ RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq
 Run all three from the directory you downloaded into:
 
 ```bash
+# name the file you downloaded once; the release page carries a .sha256
+# beside every artifact
+deb=occluview_<version>_amd64.deb
+
 # 1. checksum
-sha256sum -c occluview_1.0.9_amd64.deb.sha256
+sha256sum -c "$deb.sha256"
 
 # 2. signature, against the key above
-minisign -Vm occluview_1.0.9_amd64.deb -P RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq
+minisign -Vm "$deb" -P RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq
 
 # 3. provenance: this artifact was built by this repository's release workflow
-gh attestation verify occluview_1.0.9_amd64.deb --repo occlutrace/OccluView
+gh attestation verify "$deb" --repo occlutrace/OccluView
 ```
 
 The same three commands work for the MSI and the portable ZIP. `sbom-windows.json`
