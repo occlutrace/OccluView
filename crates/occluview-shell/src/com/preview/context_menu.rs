@@ -15,6 +15,7 @@
 //! is factored into `crate::preview_menu`, which is unit tested on any host.
 
 use super::super::e_fail;
+use super::window::window_owns_handler;
 use super::PreviewHandler;
 use crate::preview_menu::dib::pack_clipboard_dib;
 use crate::preview_menu::icons::PreviewMenuIcon;
@@ -151,6 +152,21 @@ impl PreviewHandler {
         for bitmap in icons {
             // SAFETY: each bitmap was created by this module and is no longer in use.
             let _ = unsafe { DeleteObject(HGDIOBJ(bitmap.0)) };
+        }
+
+        // The tracking call above was modal and pumped this apartment's
+        // messages, so `Unload` and the final `Release` can have arrived inside
+        // it. `Drop` then freed this handler and destroyed the window, but it
+        // could not unwind this frame: running the selected command from here
+        // would touch freed memory, and the command reads the preview scene and
+        // the source stream. Destroying the window makes the common case return
+        // 0 -- it does not make this case go away.
+        //
+        // The window's back-pointer is cleared before the window is destroyed,
+        // so asking whether it still names this handler is both safe and
+        // decisive.
+        if !window_owns_handler(hwnd, std::ptr::from_ref(self)) {
+            return;
         }
 
         // TPM_RETURNCMD packs the selected command id into the BOOL's i32; menu

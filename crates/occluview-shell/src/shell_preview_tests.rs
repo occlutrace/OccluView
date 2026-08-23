@@ -630,6 +630,27 @@ fn the_preview_window_and_the_com_object_die_together() {
         "a window destroyed with its parent must clear the handler's stale HWND"
     );
 
+    // The second route above was named here and asserted nowhere. Destroying
+    // the window narrows it -- the common case then returns 0 from the modal
+    // call -- but it cannot close it: the frame that opened the menu is still
+    // on the stack when Drop runs, and running the selected command from there
+    // reads the preview scene and the source stream of a freed object. What
+    // closes it is refusing to touch `self` once the window no longer names it.
+    let menu = include_str!("com/preview/context_menu.rs");
+    let after_tracking = menu
+        .split_once("TrackPopupMenuEx(menu,")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let confirms = after_tracking.find("window_owns_handler(hwnd, std::ptr::from_ref(self))");
+    let runs = after_tracking.find("self.run_menu_command(hwnd, command)");
+    assert!(
+        confirms
+            .zip(runs)
+            .is_some_and(|(confirm, run)| confirm < run),
+        "the selected command must not run until the window has confirmed it \
+         still points at this handler"
+    );
+
     // The Windows packaging job runs this through test-msi-lifecycle.ps1, so
     // the rule is checked against a real host, not only against the source.
     let smoke = include_str!("../../../install/test-preview-handler.ps1");
