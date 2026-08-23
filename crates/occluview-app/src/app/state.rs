@@ -428,9 +428,32 @@ impl OccluViewApp {
         self.show_layers_overlay_impl(ui, viewport_rect, ctx);
     }
 
+    /// The live scene, mutable in place.
+    ///
+    /// `Arc::make_mut` copies the whole scene whenever a second handle to it
+    /// exists, and the callers below all run per frame: a slider drag, a brush
+    /// dab, a nudge of an aligned layer. Measured on two 945k-vertex arches,
+    /// that is 40 ns when this is the sole handle against 45.75 ms when it is
+    /// not -- a fifty-millisecond copy of the entire case, every frame, to
+    /// change a few numbers.
+    ///
+    /// Every in-place scene edit goes through here so the condition is asserted
+    /// once rather than assumed in six places, and a future caller that keeps a
+    /// handle alive across the edit fails a test instead of costing frames.
+    pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
+        let scene = self.scene.as_mut()?;
+        debug_assert_eq!(
+            Arc::strong_count(scene),
+            1,
+            "in-place scene edit while another Arc<Scene> is alive: this \
+             silently deep-copies every vertex, index and texture of the case"
+        );
+        Some(Arc::make_mut(scene))
+    }
+
     pub(super) fn apply_layer_overlay_changes(
         &mut self,
-        scene: &Scene,
+        scene: Arc<Scene>,
         paths: &[PathBuf],
         changes: LayerOverlayChanges,
         ctx: &egui::Context,

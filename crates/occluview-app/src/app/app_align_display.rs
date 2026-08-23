@@ -68,11 +68,9 @@ impl OccluViewApp {
         kind: AlignOverlay,
     ) -> bool {
         let shared = Arc::new(colors);
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return false;
         };
-        // In place: the app holds the only reference, so nothing is copied.
-        let live = Arc::make_mut(scene);
         let Some(entry) = live
             .meshes_mut()
             .iter_mut()
@@ -132,9 +130,6 @@ impl OccluViewApp {
             return false;
         }
 
-        // In place through `Arc::make_mut`: the app holds the only reference
-        // outside the scene's own, and the scene's is replaced below.
-        //
         // The list belongs to the markings, which produced it. Borrowed rather
         // than stolen: a `mem::take` here left the markings holding an empty
         // list for the rest of the frame, so anything else that asked what the
@@ -149,9 +144,21 @@ impl OccluViewApp {
         }
         let shared = Arc::clone(&slot.1);
 
+        // Everything that reads through `entry` happens first, because `entry`
+        // borrows the scene handle cloned at the top of this function, and that
+        // handle has to be gone before the scene is edited in place. Holding it
+        // across the edit is what a comment here used to describe as "the app
+        // holds the only reference" -- it did not, so every dab deep-copied the
+        // entire case, on the path whose whole purpose is to avoid that.
+        let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
+        let painted = self
+            .align_painted
+            .patch(&entry.mesh, &shared, &touched)
+            .map(<[_]>::to_vec);
+        drop(scene);
+
         // The scene keeps the whole array so a GPU rebuild can restore it.
-        if let Some(live) = self.scene.as_mut() {
-            let live = Arc::make_mut(live);
+        if let Some(live) = self.live_scene_mut() {
             if let Some(entry) = live
                 .meshes_mut()
                 .iter_mut()
@@ -161,11 +168,10 @@ impl OccluViewApp {
             }
         }
 
-        let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
-        if let Some(painted) = self.align_painted.patch(&entry.mesh, &shared, &touched) {
+        if let Some(painted) = painted {
             let indices: Vec<usize> = touched.iter().map(|index| *index as usize).collect();
             if let Ok(viewport) = live_viewport.lock() {
-                viewport.write_scene_vertices_sparse(&topology, painted, &indices);
+                viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
             }
         }
         self.needs_render = true;
@@ -238,10 +244,9 @@ impl OccluViewApp {
         // A push still standing would chase colours that no longer exist.
         self.deviation_push_pending = false;
         self.align_painted.clear();
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        let live = Arc::make_mut(scene);
         let overlaid: Vec<SceneMeshId> = live
             .meshes_mut()
             .iter_mut()
@@ -316,13 +321,12 @@ impl OccluViewApp {
         let Some(other) = self.align_other_layer() else {
             return;
         };
-        let Some(scene) = self.scene.as_mut() else {
-            return;
-        };
         // Opacity is a material, not a structure: mutate the live scene in
         // place rather than replacing it, or fading one layer would copy every
         // mesh in the scene and force a full GPU rebuild.
-        let live = Arc::make_mut(scene);
+        let Some(live) = self.live_scene_mut() else {
+            return;
+        };
         let mut remembered = Vec::new();
         for entry in live.meshes_mut() {
             if entry.id() == other {
@@ -343,10 +347,9 @@ impl OccluViewApp {
             return;
         }
         let restore = std::mem::take(&mut self.align_ghosted);
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        let live = Arc::make_mut(scene);
         for (id, opacity) in restore {
             if let Some(entry) = live.meshes_mut().iter_mut().find(|entry| entry.id() == id) {
                 entry.opacity = opacity;
@@ -396,8 +399,13 @@ mod tests {
             "an overlay must go through the material path, not set_scene"
         );
         assert!(
-            source.contains("Arc::make_mut(scene)"),
+            source.contains("self.live_scene_mut()"),
             "the live scene is mutated in place, not cloned per re-colour"
+        );
+        assert!(
+            !source.contains("Arc::make_mut(scene)"),
+            "in-place scene edits go through live_scene_mut, which asserts the \
+             handle is sole; bypassing it reintroduces a silent full copy"
         );
     }
 
@@ -427,8 +435,15 @@ mod tests {
             .and_then(|rest| rest.split_once("\n    /// Remember one layer"))
             .map(|(body, _)| body)
             .expect("a sparse patch path");
-        assert!(patch.contains("self.align_painted.patch("));
+        assert!(patch.contains(".align_painted") && patch.contains(".patch("));
         assert!(patch.contains("write_scene_vertices_sparse("));
+        // The dab reads through a handle cloned from `self.scene`; that handle
+        // has to be released before the in-place edit, or `Arc::make_mut`
+        // deep-copies the whole case on every dab.
+        assert!(
+            patch.find("drop(scene);") < patch.find("self.live_scene_mut()"),
+            "the cloned scene handle must be dropped before the in-place edit"
+        );
         assert!(
             !patch.contains("self.align_painted.repaint("),
             "the sparse path must not fall back to a full repaint silently"

@@ -125,7 +125,10 @@ fn toolbar_and_about_are_operator_focused() {
 #[test]
 fn layer_overlay_does_not_clone_full_scene_each_repaint() {
     let layer_source = repo_source_file("src/layers_overlay/mod.rs");
-    let viewport_source = app_viewport_source();
+    // Read the one file these claims are about. The concatenated viewport
+    // source also carries the mesh editor, which has its own `draft` clone, so
+    // ordering assertions over the concatenation compare the wrong lines.
+    let viewport_source = repo_source_file("src/app/app_layer_interaction.rs");
     let layer_edits = app_layer_edits_source();
 
     assert!(
@@ -138,14 +141,31 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         "full scene mutation should happen only after a real layer edit"
     );
     assert!(
-        viewport_source
-            .find("if changes.context_request.is_none() && changes.layer_edits.is_empty()")
-            < viewport_source.find("let mut draft = scene.clone();"),
-        "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
+        !viewport_source.is_empty(),
+        "the layer interaction source should be readable"
     );
     assert!(
-        !viewport_source.contains("let mut draft = (*scene).clone();"),
-        "layer overlay must not deep-clone mesh payloads before every repaint"
+        viewport_source
+            .find("if changes.context_request.is_none() && changes.layer_edits.is_empty()")
+            < viewport_source.find("let mut draft = scene.as_ref().clone();"),
+        "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
+    );
+    // The early return is only half of it. The material-only path mutates
+    // through `Arc::make_mut`, which deep-copies the whole case while any other
+    // handle is alive -- measured at 45.75 ms per frame against 40 ns when the
+    // scene has a single owner. So the overlay must HAND OVER its handle rather
+    // than lend it, and drop it before touching the live scene.
+    assert!(
+        viewport_source.contains("scene: Arc<Scene>,"),
+        "the overlay handler must take ownership of the scene handle"
+    );
+    assert!(
+        viewport_source.contains("drop(scene);"),
+        "the handle must be released before the in-place material edit"
+    );
+    assert!(
+        repo_source_file("src/app/state.rs").contains("Arc::strong_count(scene),"),
+        "an assertion should catch a future caller that holds a second handle"
     );
     assert!(
         layer_edits.contains("let entry = scene.meshes().get(request.index)?;")

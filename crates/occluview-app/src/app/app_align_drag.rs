@@ -165,10 +165,9 @@ impl OccluViewApp {
     /// copying it per mouse-move frame moved forty megabytes of mesh on a full
     /// arch to change sixteen floats that live in the layer's uniform.
     fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        let live = std::sync::Arc::make_mut(scene);
         if let Some(entry) = live
             .meshes_mut()
             .iter_mut()
