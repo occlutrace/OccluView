@@ -2,6 +2,13 @@ name: Package
 
 on:
   workflow_dispatch:
+    inputs:
+      release_dry_run:
+        description: >-
+          Run the tag-only release path (signature verification, minisign,
+          latest.json, release notes) without creating a GitHub Release.
+        type: boolean
+        default: false
   push:
     tags:
       - "v*.*.*"
@@ -20,6 +27,10 @@ jobs:
   windows-package:
     name: build msi
     runs-on: windows-latest
+    # windows-latest bills at 2x and msiexec deadlocking on the installer
+    # mutex is a routine failure; the default six-hour ceiling would burn the
+    # budget and hold the concurrency group the whole time.
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
@@ -115,12 +126,14 @@ jobs:
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
       - name: Verify Authenticode signatures (tagged release)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
         shell: pwsh
         run: |
-          if (([string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_PFX_BASE64) -and [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1))) {
-            throw "Authenticode signing is required for tagged releases but no signing certificate is configured."
-          }
+          # The check below is the whole gate. An earlier guard read
+          # OCCLUVIEW_SIGN_PFX_BASE64, which is scoped to the "Prepare signing
+          # certificate" step and is therefore always empty here: with a PFX
+          # configured but no certificate thumbprint, it failed a release whose
+          # artifacts were correctly signed -- after the tag was already public.
           $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
           $hasPfx = -not [string]::IsNullOrWhiteSpace($pfxPath) -and (Test-Path $pfxPath)
           $hasCert = -not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1)
@@ -141,8 +154,9 @@ jobs:
           }
       - name: Build upgrade smoke MSI
         shell: pwsh
+        # No OCCLUVIEW_SIGN_PFX_BASE64 here: build-msi.ps1 reads
+        # OCCLUVIEW_SIGN_PFX_PATH, which the preparation step already exported.
         env:
-          OCCLUVIEW_SIGN_PFX_BASE64: ${{ secrets.OCCLUVIEW_SIGN_PFX_BASE64 }}
           OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
           OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
         run: |
@@ -170,8 +184,24 @@ jobs:
         shell: pwsh
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
-          cargo cyclonedx --format json --override-filename sbom-windows.json
-          Move-Item sbom-windows.json ./dist/sbom-windows.json -Force
+          # This is a virtual manifest, so cargo-cyclonedx emits one SBOM per
+          # workspace member beside that member's Cargo.toml and nothing in the
+          # workspace root -- passing --manifest-path does not narrow it.
+          # --override-filename also takes a base name, not a file name: the
+          # old "sbom-windows.json" produced "sbom-windows.json.json", so the
+          # move failed and took the release down after the tag was public.
+          # occluview_shell.dll is a dependency of occluview-app on Windows, so
+          # the viewer's SBOM already covers both shipped binaries.
+          cargo cyclonedx --format json --override-filename sbom-windows
+          $sbom = "crates/occluview-app/sbom-windows.json"
+          if (-not (Test-Path $sbom)) {
+            throw "cargo-cyclonedx produced no SBOM at $sbom."
+          }
+          $described = (Get-Content $sbom -Raw | ConvertFrom-Json).metadata.component.name
+          if ($described -ne "occluview-app") {
+            throw "SBOM describes '$described', not the shipped viewer."
+          }
+          Move-Item $sbom ./dist/sbom-windows.json -Force
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -186,6 +216,7 @@ jobs:
   linux-package:
     name: build linux deb
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -275,8 +306,23 @@ jobs:
       - name: Generate SBOM (Linux)
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
-          cargo cyclonedx --format json --override-filename sbom-linux.json
-          cp sbom-linux.json target/deb/sbom-linux.json
+          # See the Windows step for why the file lands under the member crate
+          # and why the filename carries no extension. occluview-cli adds no
+          # third-party package the viewer does not already pull in, so the
+          # viewer's SBOM covers every external component in the .deb.
+          cargo cyclonedx --format json --override-filename sbom-linux
+          sbom=crates/occluview-app/sbom-linux.json
+          if [[ ! -f "$sbom" ]]; then
+            echo "cargo-cyclonedx produced no SBOM at $sbom." >&2
+            exit 1
+          fi
+          python3 - "$sbom" <<'PY'
+          import json, sys
+          described = json.load(open(sys.argv[1], encoding="utf-8"))["metadata"]["component"]["name"]
+          if described != "occluview-app":
+              raise SystemExit(f"SBOM describes {described!r}, not the shipped viewer.")
+          PY
+          cp "$sbom" target/deb/sbom-linux.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -289,7 +335,8 @@ jobs:
 
   publish:
     name: publish github release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+    timeout-minutes: 20
     needs:
       - windows-package
       - linux-package
@@ -309,10 +356,28 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Resolve release tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            # Dry run: no tag exists, so take the version the packages were
+            # actually built from. Everything downstream then behaves exactly
+            # as it will on the real tag.
+            version=$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+              | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)
+            if [[ -z "$version" ]]; then
+              echo "Could not read the workspace version from Cargo.toml." >&2
+              exit 1
+            fi
+            tag="v$version"
+            echo "Dry run: using $tag from Cargo.toml."
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Write release notes
         run: |
           cat > dist/release-notes.md <<NOTES
-          OccluView $GITHUB_REF_NAME
+          OccluView $RELEASE_TAG
 
           Assets:
           - MSI installer: installs the Windows viewer, Explorer thumbnails, live Preview Pane handler, file associations, and the shared 3D file icon.
@@ -323,11 +388,16 @@ jobs:
           NOTES
           # The changelog section for this version, verbatim, so the release
           # page states what changed without a second hop.
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
+          changes=$(awk -v ver="$version" '$0 ~ "^## "ver" " {flag=1; next} /^## /{flag=0} flag' CHANGELOG.md)
+          if [[ -z "${changes// /}" ]]; then
+            echo "CHANGELOG.md has no '## $version' section; the release page would say nothing." >&2
+            exit 1
+          fi
           {
             echo
             echo "Changes:"
-            awk -v ver="$version" '$0 ~ "^## "ver" " {flag=1; next} /^## /{flag=0} flag' CHANGELOG.md
+            printf '%s\n' "$changes"
           } >> dist/release-notes.md
       - name: Sign update artifacts and write latest.json
         env:
@@ -341,7 +411,7 @@ jobs:
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
 
-          tag="$GITHUB_REF_NAME"
+          tag="$RELEASE_TAG"
           version="${tag#v}"
           msi=$(find ./dist -type f -name '*.msi' | head -n1)
           zip=$(find ./dist -type f -name '*.zip' | head -n1)
@@ -392,8 +462,27 @@ jobs:
           minisign -S -s /tmp/minisign.key -m dist/latest.json
           rm -f /tmp/minisign.key
           echo "Update manifest:" && cat dist/latest.json
-
+      - name: Verify the signatures against the key the updater ships
+        run: |
+          # The private key is a secret; the public key is compiled into every
+          # installed copy. If they ever drift -- a rotation, a regenerated
+          # pair, a restore from the wrong backup -- the release is green,
+          # the artifacts are signed, and the entire installed base fails
+          # verification against its own constant and stops updating. Nothing
+          # on HEAD can catch that, so the release has to prove it here, using
+          # the key that actually ships rather than the one that just signed.
+          pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
+            crates/occluview-update/src/lib.rs)
+          if [[ -z "$pubkey" ]]; then
+            echo "Could not read UPDATE_PUBKEY from crates/occluview-update/src/lib.rs." >&2
+            exit 1
+          fi
+          for file in dist/latest.json $(find ./dist -type f -name '*.minisig' -not -name 'latest.json.minisig' | sed 's/\.minisig$//'); do
+            minisign -V -P "$pubkey" -m "$file"
+            echo "Verified against the shipped public key: $file"
+          done
       - name: Attest build provenance
+        if: ${{ !inputs.release_dry_run }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           # One explicit pattern per artifact: the action splits this list on
@@ -407,9 +496,9 @@ jobs:
             dist/*.deb
             dist/sbom-*.json
       - name: Publish GitHub Release
+        if: ${{ !inputs.release_dry_run }}
         run: |
-          tag="$GITHUB_REF_NAME"
-          version="${tag#v}"
+          tag="$RELEASE_TAG"
           release_flags=()
           mapfile -d '' assets < <(find ./dist -type f \( -name '*.msi' -o -name '*.zip' -o -name '*.deb' -o -name '*.sha256' -o -name '*.minisig' -o -name '*.json' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then

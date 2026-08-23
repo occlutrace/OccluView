@@ -207,3 +207,69 @@ fn the_release_page_quotes_the_changelog_and_attests_the_sboms() {
         "the SBOMs should be provenance-attested alongside the installers"
     );
 }
+
+#[test]
+fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
+    let package = package_workflow_source();
+    let ci = ci_workflow_source();
+
+    // Five single points of failure in a row, each of which fires only after
+    // the tag is public. They need a rehearsal that is not a release.
+    assert!(
+        package.contains("release_dry_run"),
+        "the packaging path must be runnable without cutting a release"
+    );
+    assert!(
+        package.contains("if: ${{ !inputs.release_dry_run }}"),
+        "a rehearsal must stop short of publishing"
+    );
+    assert!(
+        package.matches("timeout-minutes:").count() >= 3,
+        "every packaging job needs a budget; the default is six hours"
+    );
+
+    // --override-filename takes a base name. Passing a full file name produced
+    // sbom-windows.json.json, and the move that followed failed the release.
+    assert!(!package.contains("--override-filename sbom-windows.json"));
+    assert!(!package.contains("--override-filename sbom-linux.json"));
+    for sbom in [
+        "crates/occluview-app/sbom-windows.json",
+        "crates/occluview-app/sbom-linux.json",
+    ] {
+        assert!(
+            package.contains(sbom),
+            "the SBOM must be taken from the shipped viewer's crate, not the workspace root"
+        );
+    }
+    assert!(
+        package.matches("not the shipped viewer").count() == 2,
+        "both SBOM steps must check which component they describe"
+    );
+
+    // The old guard read a variable scoped to another step, so it failed a
+    // release whose artifacts were correctly signed.
+    assert!(!package.contains("Authenticode signing is required for tagged releases"));
+    assert!(package.contains("No signing material resolved for tagged release."));
+
+    // The signing key and the key compiled into the updater must agree, or
+    // every installed copy silently stops updating.
+    assert!(package.contains("UPDATE_PUBKEY"));
+    assert!(package.contains("crates/occluview-update/src/lib.rs"));
+    assert!(package.contains("minisign -V -P \"$pubkey\""));
+
+    // An empty changelog section would publish a release page that says
+    // nothing about what changed.
+    assert!(package.contains("has no '## $version' section"));
+
+    // The lockfile is an input to every gate, not a thing CI may update.
+    assert!(
+        ci.matches("--locked").count() >= 6,
+        "every cargo invocation in CI should pin the committed lockfile"
+    );
+    // The shipped feature combination has to be compiled by something.
+    assert!(
+        ci.contains("--all-features --all-targets --locked -- -D warnings")
+            && ci.contains("cargo test -p occluview-hps -p occluview-formats --all-features"),
+        "CI must build the private-hps-key combination that actually ships"
+    );
+}

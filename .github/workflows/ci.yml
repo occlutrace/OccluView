@@ -52,7 +52,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: clippy --workspace --all-targets
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   cross-compile:
     name: cross-compile (windows-gnu)
@@ -72,7 +72,7 @@ jobs:
       - name: cargo check (cross-platform crates)
         run: |
           cargo check -p occluview-core -p occluview-formats -p occluview-render \
-            --target x86_64-pc-windows-gnu
+            --locked --target x86_64-pc-windows-gnu
 
   windows-only:
     name: build (windows integration)
@@ -87,7 +87,7 @@ jobs:
           toolchain: "1.86.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo check (shell + app)
-        run: cargo check -p occluview-shell -p occluview-app
+        run: cargo check -p occluview-shell -p occluview-app --locked
 
   linux-renderer-tests:
     name: test (linux renderer)
@@ -111,7 +111,19 @@ jobs:
           echo "WGPU_BACKEND=vulkan" >> "$GITHUB_ENV"
           vulkaninfo --summary
       - name: cargo test --workspace
-        run: cargo test --workspace --all-targets --no-fail-fast
+        run: cargo test --workspace --all-targets --locked --no-fail-fast
+      - name: cargo test (shipped feature set)
+        # Every artifact is built with private-hps-key -- it is what lets the
+        # viewer and the Explorer handlers open encrypted dental containers --
+        # and nothing above compiles that code. A regression there would pass
+        # fmt, clippy, the whole suite and cargo doc, and first surface during
+        # a release. No secret is needed: with OCCLUVIEW_HPS_EMBEDDED_KEY unset
+        # the build script emits an empty key and the tests take the same
+        # no-key branch the public build takes.
+        run: |
+          cargo clippy -p occluview-hps -p occluview-formats \
+            --all-features --all-targets --locked -- -D warnings
+          cargo test -p occluview-hps -p occluview-formats --all-features --locked
 
   test:
     name: test (windows shell)
@@ -127,7 +139,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo test --workspace (without WARP pixel suites)
         run: >
-          cargo test --workspace --all-targets --no-fail-fast --
+          cargo test --workspace --all-targets --locked --no-fail-fast --
           --skip render_thumb::tests
           --skip preview_scene::
 
@@ -146,7 +158,7 @@ jobs:
       - name: cargo doc (no warnings)
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --no-deps --all-features
+        run: cargo doc --workspace --no-deps --all-features --locked
 
   deny:
     name: cargo deny (licenses + advisories)
