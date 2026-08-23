@@ -163,9 +163,14 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         viewport_source.contains("drop(scene);"),
         "the handle must be released before the in-place material edit"
     );
+    let state = repo_source_file("src/app/state.rs");
     assert!(
-        repo_source_file("src/app/state.rs").contains("Arc::strong_count(scene),"),
-        "an assertion should catch a future caller that holds a second handle"
+        state.contains("let handles = Arc::strong_count(scene);"),
+        "a future caller that holds a second handle must be caught"
+    );
+    assert!(
+        state.contains("report_shared_scene_edit(handles);"),
+        "and reported in a release build too, where the assertion is gone"
     );
     assert!(
         layer_edits.contains("let entry = scene.meshes().get(request.index)?;")

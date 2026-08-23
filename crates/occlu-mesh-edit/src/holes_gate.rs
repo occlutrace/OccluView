@@ -193,3 +193,39 @@ fn rim_perimeter_mm(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> Result<f
     }
     Ok(perimeter)
 }
+
+/// Refuse a triangle soup that the caller has not asked to weld.
+///
+/// With `heal_boundary_rims` off nothing welds, so in index space every edge
+/// of every triangle reads as a boundary: each triangle becomes its own
+/// three-edge rim, and the duplicate check each rim runs scans all triangles.
+/// That is quadratic, and it does not finish -- a 500k-triangle soup was still
+/// running after ten minutes.
+///
+/// The shipped callers all pass `heal_boundary_rims: true`, and the repair
+/// path welds before it gets here, so this only catches a caller using the
+/// default options on soup: `MeshEditOptions::default()` has healing off, which
+/// makes the obvious call the trap. A soup is recognisable for free -- every
+/// corner is its own vertex, so the vertex and index counts match.
+pub(super) fn refuse_unweldable_soup(
+    mesh: &MeshEditBuffers,
+    heal_boundary_rims: bool,
+    triangles: usize,
+) -> Result<(), MeshEditError> {
+    /// Below this a quadratic pass is merely slow, and some fixtures rely on
+    /// filling small soups directly.
+    const SOUP_REFUSAL_TRIANGLES: usize = 20_000;
+
+    if heal_boundary_rims
+        || triangles < SOUP_REFUSAL_TRIANGLES
+        || mesh.vertices.len() != mesh.indices.len()
+    {
+        return Ok(());
+    }
+    Err(MeshEditError::InvalidOptions {
+        reason: format!(
+            "hole filling on {triangles} unwelded triangles is quadratic; set \
+             heal_boundary_rims to weld the soup first"
+        ),
+    })
+}

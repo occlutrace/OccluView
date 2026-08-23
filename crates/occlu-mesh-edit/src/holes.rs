@@ -5,8 +5,8 @@ use super::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d};
 use super::cap_refine::refine_and_relax;
 use super::cap_support::{build_vertex_adjacency, gather_support_band, rim_outside_support};
 use super::holes_gate::{
-    border_perimeter_threshold, collect_boundary_loops, rim_exceeds_size_cap,
-    rim_selection_qualifies,
+    border_perimeter_threshold, collect_boundary_loops, refuse_unweldable_soup,
+    rim_exceeds_size_cap, rim_selection_qualifies,
 };
 use super::holes_walk::{build_boundary_maps, ear_clip_cap, push_cap_index, vertex_position};
 use super::{
@@ -187,6 +187,8 @@ pub(crate) fn fill_holes_with_outcome(
     if counts.triangles == 0 {
         return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));
     }
+
+    refuse_unweldable_soup(mesh, options.heal_boundary_rims, counts.triangles)?;
 
     // Weld STL-style soup to shared topology first (Close Holes path only), so
     // the boundary walk sees real rims instead of one phantom needle per

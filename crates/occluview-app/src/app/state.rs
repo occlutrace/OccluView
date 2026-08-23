@@ -249,13 +249,36 @@ pub(super) struct RenderedFrame {
 /// handle turns `Arc::make_mut` into a copy of the whole case. The two sculpt
 /// paths that take the scene out, because they put a rebuilt one back, assert
 /// it here instead of reaching for `Arc::make_mut` where no guard looks.
+/// Complain, once per run, that a scene edit found a second handle alive.
+///
+/// The `debug_assert` beside each call site fires in a test build and is gone
+/// from a release one, so in the field the same mistake is silent and merely
+/// slow: measured at 62 ms per edit on two welded arches and 253 ms on two
+/// soups, against under a microsecond when the handle is unique. Once per run,
+/// because these calls are per-frame and a line per frame would overwrite the
+/// crash-report ring with this one message.
+fn report_shared_scene_edit(handles: usize) {
+    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    tracing::warn!(
+        handles,
+        "scene edited in place while another handle was alive; this copies the \
+         whole case and will keep doing so until the handle is released"
+    );
+}
+
 pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
+    let handles = Arc::strong_count(scene);
     debug_assert_eq!(
-        Arc::strong_count(scene),
-        1,
+        handles, 1,
         "in-place scene edit while another Arc<Scene> is alive: this \
          silently deep-copies every vertex, index and texture of the case"
     );
+    if handles != 1 {
+        report_shared_scene_edit(handles);
+    }
     Arc::make_mut(scene)
 }
 
@@ -483,12 +506,15 @@ impl OccluViewApp {
     /// handle alive across the edit fails a test instead of costing frames.
     pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
         let scene = self.scene.as_mut()?;
+        let handles = Arc::strong_count(scene);
         debug_assert_eq!(
-            Arc::strong_count(scene),
-            1,
+            handles, 1,
             "in-place scene edit while another Arc<Scene> is alive: this \
              silently deep-copies every vertex, index and texture of the case"
         );
+        if handles != 1 {
+            report_shared_scene_edit(handles);
+        }
         Some(Arc::make_mut(scene))
     }
 
