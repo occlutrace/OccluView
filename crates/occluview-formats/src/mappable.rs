@@ -58,20 +58,35 @@ mod platform {
     }
 }
 
+/// Filesystems whose pages are backed by this machine and cannot be withdrawn
+/// while the process holds a mapping.
+///
+/// An allow list rather than a deny list on purpose: forgetting a local
+/// filesystem costs one extra copy, forgetting a network one costs the process.
+///
+/// `overlay` is deliberately absent. An overlay mount reports its own type and
+/// says nothing about the layers underneath it, which may be an NFS or CIFS
+/// export -- the two cases this module exists to refuse. A container reading
+/// scans through overlayfs therefore pays one copy, which is the side to be
+/// wrong on.
+#[cfg(any(unix, test))]
+const MAPPABLE_FILESYSTEMS: &[&str] = &[
+    "bcachefs", "btrfs", "ext2", "ext3", "ext4", "f2fs", "jfs", "ramfs", "reiserfs", "tmpfs",
+    "xfs", "zfs",
+];
+
+/// Whether a mount of type `kind` may be mapped.
+///
+/// Separate from the mount-table lookup so the policy itself is testable: the
+/// parsing tests below could pass in full while the list said "yes" to nfs4.
+#[cfg(any(unix, test))]
+fn is_mappable_filesystem(kind: &str) -> bool {
+    MAPPABLE_FILESYSTEMS.contains(&kind)
+}
+
 #[cfg(unix)]
 mod platform {
     use std::path::Path;
-
-    /// Filesystems whose pages are backed by this machine and cannot be
-    /// withdrawn while the process holds a mapping.
-    ///
-    /// An allow list rather than a deny list on purpose: forgetting a local
-    /// filesystem costs one extra copy, forgetting a network one costs the
-    /// process.
-    const MAPPABLE_FILESYSTEMS: &[&str] = &[
-        "bcachefs", "btrfs", "ext2", "ext3", "ext4", "f2fs", "jfs", "overlay", "ramfs", "reiserfs",
-        "tmpfs", "xfs", "zfs",
-    ];
 
     pub(super) fn is_mappable_storage(path: &Path) -> bool {
         let Ok(mountinfo) = std::fs::read_to_string("/proc/self/mountinfo") else {
@@ -80,8 +95,7 @@ mod platform {
             return false;
         };
         let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        super::filesystem_type_for(&mountinfo, &resolved)
-            .is_some_and(|kind| MAPPABLE_FILESYSTEMS.contains(&kind))
+        super::filesystem_type_for(&mountinfo, &resolved).is_some_and(super::is_mappable_filesystem)
     }
 }
 
@@ -187,7 +201,9 @@ mod tests {
     #[test]
     fn network_and_removable_filesystems_are_not_mappable() {
         // These are exactly the mounts a dental workstation reads scans from,
-        // and exactly the ones that can be withdrawn mid-parse.
+        // and exactly the ones that can be withdrawn mid-parse. Both halves
+        // matter: reading the type right, and then refusing it. Asserting only
+        // the type let the allow list gain "nfs4" without a test going red.
         for (path, expected) in [
             ("/home/clinic/scans/upper.stl", "nfs4"),
             ("/mnt/clinic/case.stl", "cifs"),
@@ -195,7 +211,34 @@ mod tests {
         ] {
             let kind = filesystem_type_for(MOUNTINFO, Path::new(path));
             assert_eq!(kind, Some(expected));
+            assert!(
+                !is_mappable_filesystem(expected),
+                "{expected} pages can be withdrawn mid-parse; mapping one takes \
+                 the process down with SIGBUS, which no catch_unwind sees"
+            );
         }
+    }
+
+    #[test]
+    fn local_filesystems_are_mappable_so_the_fast_path_still_exists() {
+        // The counterweight: a policy that refuses everything is safe and
+        // useless. These are where scans actually live on a workstation.
+        for kind in ["ext4", "btrfs", "xfs", "zfs", "tmpfs"] {
+            assert!(is_mappable_filesystem(kind), "{kind} should be mappable");
+        }
+        assert_eq!(
+            filesystem_type_for(MOUNTINFO, Path::new("/home/clinic/local.stl")),
+            Some("ext4"),
+            "the root filesystem is the common case and must reach the fast path"
+        );
+    }
+
+    #[test]
+    fn an_overlay_mount_is_not_mappable_because_its_layers_are_unknown() {
+        // overlayfs reports "overlay" whatever it is stacked on, including an
+        // NFS or CIFS export. The type carries no information about whether
+        // the pages can be withdrawn, so it cannot be trusted.
+        assert!(!is_mappable_filesystem("overlay"));
     }
 
     #[test]
@@ -209,12 +252,28 @@ mod platform_tests {
     use super::is_mappable_storage;
     use std::path::Path;
 
+    /// The filesystem this checkout sits on, as `/proc/self/mountinfo` reports
+    /// it. `None` off Linux, or wherever `/proc` is not mounted.
+    fn filesystem_under_the_checkout() -> Option<String> {
+        let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+        let here = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR"))).ok()?;
+        super::filesystem_type_for(&mountinfo, &here).map(str::to_owned)
+    }
+
     #[test]
     fn a_file_on_this_checkout_is_still_mapped() {
         // The point of the gate is to refuse storage that can vanish, not to
         // disable mapping. If this ever fails on a normal developer machine or
         // CI runner, the allow list has lost a mainstream local filesystem and
         // every read silently became a copy.
+        //
+        // Inside a container the checkout is on overlayfs, which this policy
+        // refuses on purpose because an overlay says nothing about the layers
+        // under it. There the correct answer is "copy", and this test has
+        // nothing left to prove.
+        if filesystem_under_the_checkout().as_deref() == Some("overlay") {
+            return;
+        }
         let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         assert!(
             is_mappable_storage(&here),
