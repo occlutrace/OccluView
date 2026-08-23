@@ -1,4 +1,4 @@
-use super::color::color32_from_linear;
+use super::color::color32_from_tint;
 use super::layout::{
     layer_name_width, LAYER_ROW_ACTION_GAP_PX, LAYER_ROW_CONTROL_HEIGHT_PX, LAYER_ROW_EYE_WIDTH_PX,
     LAYER_ROW_GAP_PX, LAYER_ROW_HEIGHT_PX, LAYER_ROW_REMOVE_WIDTH_PX, LAYER_ROW_SLIDER_WIDTH_PX,
@@ -209,7 +209,7 @@ fn tint_swatch(
 ) -> bool {
     let mut changed = false;
     let swatch = egui::Button::new("")
-        .fill(color32_from_linear(*tint))
+        .fill(color32_from_tint(*tint))
         .stroke(egui::Stroke::new(1.0, ui_theme::panel_stroke()));
     let response = ui
         .add_enabled_ui(enabled, |ui| {
@@ -267,7 +267,7 @@ fn tint_swatch(
                                     ui.painter().rect_filled(
                                         swatch_rect,
                                         3.0,
-                                        color32_from_linear(color),
+                                        color32_from_tint(color),
                                     );
                                     ui.painter().rect_stroke(
                                         swatch_rect,

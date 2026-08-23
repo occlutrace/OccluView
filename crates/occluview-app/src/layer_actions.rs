@@ -21,7 +21,9 @@ pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
 /// same warm band by design, and one at 50% opacity over another reads as a
 /// third shade of the same colour.
 ///
-/// Values are linear sRGB, so they look darker here than they render.
+/// Values are in the renderer's own space: a tint is multiplied into the
+/// shaded colour and nothing encodes on the way out, so what the swatch
+/// shows is what the viewport draws.
 ///
 /// Ordered as usable pairs, strongest first. Cobalt against Tangerine is the
 /// first entry because blue against orange is the one strong opposition that

@@ -16,8 +16,10 @@ pub struct SceneMesh {
     pub mesh: Mesh,
     /// Per-instance transform (placement of this mesh in the scene).
     pub transform: Affine3A,
-    /// Display tint in linear sRGB (0..1). Textured/colored meshes default to
-    /// neutral white; untextured scans default to warm dental stone.
+    /// Display tint (0..1) in the renderer's own space: it is multiplied into
+    /// the shaded colour and nothing encodes on the way out, so the number
+    /// here is the number that reaches the screen. Textured/colored meshes
+    /// default to neutral white; untextured scans default to warm dental stone.
     pub tint: [f32; 4],
     /// Opacity 0..1, used for transparency / ghost arches.
     pub opacity: f32,
