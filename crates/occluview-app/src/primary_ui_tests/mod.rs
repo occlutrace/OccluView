@@ -82,6 +82,10 @@ pub(super) fn package_workflow_source() -> &'static str {
     include_str!("../../../../.github/workflows/package-msi.yml")
 }
 
+pub(super) fn msi_wxs_source() -> &'static str {
+    include_str!("../../../../install/occluview.wxs")
+}
+
 pub(super) fn linux_build_deb_source() -> &'static str {
     include_str!("../../../../install/linux/build-deb.sh")
 }

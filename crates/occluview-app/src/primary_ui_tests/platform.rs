@@ -133,3 +133,24 @@ fn third_party_notices_stay_generated_and_gated() {
     assert!(script.contains("UBUNTU FONT LICENCE"));
     assert!(script.contains("first-party crate leaked"));
 }
+
+#[test]
+fn every_windows_artifact_ships_the_license_set() {
+    let wxs = msi_wxs_source();
+    let package = package_workflow_source();
+    let lifecycle = include_str!("../../../../install/test-msi-lifecycle.ps1");
+
+    // Distributing the statically linked dependencies obliges shipping their
+    // notices; both Windows artifacts must carry the same three files.
+    for file_id in ["filLicenseFile", "filNoticeFile", "filThirdPartyNotices"] {
+        assert!(wxs.contains(file_id), "MSI must install {file_id}");
+    }
+    assert!(
+        package.contains("Copy-Item ./THIRD-PARTY-NOTICES.md"),
+        "the portable ZIP must ship the third-party notices"
+    );
+    assert!(
+        lifecycle.contains("THIRD-PARTY-NOTICES.md"),
+        "the MSI lifecycle smoke should verify the notices land on disk"
+    );
+}

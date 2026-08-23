@@ -224,6 +224,9 @@ function Assert-InstalledRegistry {
     Assert-PathExists $appExe
     Assert-PathExists $shellDll
     Assert-PathAbsent (Join-Path $installDir "occluview-cli.exe")
+    Assert-PathExists (Join-Path $installDir "LICENSE")
+    Assert-PathExists (Join-Path $installDir "NOTICE")
+    Assert-PathExists (Join-Path $installDir "THIRD-PARTY-NOTICES.md")
     Assert-PathExists (Join-Path $startMenuDir "$productName.lnk")
 
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$shellClsid") "OccluView Thumbnail Provider" "CLSID friendly name"

@@ -111,6 +111,7 @@ jobs:
           Copy-Item (Join-Path $buildDir "occluview_shell.dll") $portableDir
           Copy-Item ./LICENSE $portableDir
           Copy-Item ./NOTICE $portableDir
+          Copy-Item ./THIRD-PARTY-NOTICES.md $portableDir
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
       - name: Verify Authenticode signatures (tagged release)
