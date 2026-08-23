@@ -77,6 +77,70 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         }
         seen.push(parsed);
     }
+
+    // Descending order is not the rule the name promises. A section below the
+    // newest describes something that was released, so a tag has to exist for
+    // it -- which is what makes untagged local bumps into a merge rather than
+    // three sections nobody can download. Tags are read from git; a source
+    // tarball has none, and there the ordering above is all there is.
+    let Some(tags) = repository_tags() else {
+        return;
+    };
+    // Only from the first tagged version onward. Sections older than the day
+    // tagging started describe releases this repository has no record of, and
+    // rewriting history to satisfy a test would be the wrong way round.
+    let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
+        return;
+    };
+    for line in sections.iter().skip(1) {
+        let Some(number) = line.split_whitespace().nth(1) else {
+            continue;
+        };
+        let Some(parsed) = parse_version(number) else {
+            continue;
+        };
+        if parsed < first_tagged {
+            continue;
+        }
+        assert!(
+            tags.iter().any(|tag| tag == &format!("v{number}")),
+            "the changelog has a section for {number}, which was never tagged; \
+             an untagged section publishes nothing and advertises a version \
+             nobody can download"
+        );
+    }
+}
+
+/// A three-part version, with or without a leading `v`.
+fn parse_version(raw: &str) -> Option<[u64; 3]> {
+    let parts: Vec<u64> = raw
+        .trim_start_matches('v')
+        .split('.')
+        .map(|part| part.parse::<u64>().ok())
+        .collect::<Option<Vec<u64>>>()?;
+    (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])
+}
+
+/// The tags of this repository, or `None` outside a git checkout.
+fn repository_tags() -> Option<Vec<String>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().and_then(Path::parent)?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_root)
+        .arg("tag")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let tags: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (!tags.is_empty()).then_some(tags)
 }
 
 #[test]
@@ -129,18 +193,18 @@ fn the_usage_guide_documents_the_shortcuts_the_build_implements() {
 /// The guide is checked in both directions against this table: a key the build
 /// reads and the guide never names leaves an operator guessing, and a key the
 /// guide names that nothing reads is an invention.
-const VIEWER_KEY_BINDINGS: &[(&str, &str)] = &[
-    ("A", "**Ctrl+A**"),
-    ("Backspace", "**Backspace**"),
-    ("Delete", "**Delete**"),
-    ("Enter", "**Enter**"),
-    ("Escape", "**Esc**"),
-    ("F", "**F**"),
-    ("Num1", "**1**"),
-    ("Num2", "**2**"),
-    ("O", "**Ctrl+O**"),
-    ("Y", "**Ctrl+Y**"),
-    ("Z", "**Ctrl+Z**"),
+const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
+    ("A", &["**Ctrl+A**"]),
+    ("Backspace", &["**Backspace**"]),
+    ("Delete", &["**Delete**"]),
+    ("Enter", &["**Enter**"]),
+    ("Escape", &["**Esc**"]),
+    ("F", &["**F**"]),
+    ("Num1", &["**1**"]),
+    ("Num2", &["**2**"]),
+    ("O", &["**Ctrl+O**"]),
+    ("Y", &["**Ctrl+Y**"]),
+    ("Z", &["**Ctrl+Z**", "**Ctrl+Shift+Z**"]),
 ];
 
 /// The `egui::Key::NAME` variants this crate reads outside its test modules.
@@ -191,7 +255,7 @@ fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
         let documented = VIEWER_KEY_BINDINGS
             .iter()
             .find(|(key, _)| key == name)
-            .map(|(_, spelling)| *spelling);
+            .and_then(|(_, spellings)| spellings.first().copied());
         let Some(spelling) = documented else {
             panic!(
                 "the viewer binds egui::Key::{name} and the guide has no entry for it;                  add it to docs/USAGE.md and to VIEWER_KEY_BINDINGS"
@@ -203,12 +267,64 @@ fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
         );
     }
 
-    for (name, spelling) in VIEWER_KEY_BINDINGS {
+    for (name, spellings) in VIEWER_KEY_BINDINGS {
         assert!(
             bound.contains(*name),
-            "docs/USAGE.md documents {spelling} but nothing in the viewer reads              egui::Key::{name} any more"
+            "docs/USAGE.md documents {spellings:?} but nothing in the viewer \
+             reads egui::Key::{name} any more"
         );
     }
+
+    // The other direction has to read the guide, not the table: checking only
+    // the spellings already listed here says nothing about a shortcut somebody
+    // invented in the prose. Every bold token in the guide that looks like a
+    // key has to be one of them.
+    for token in usage.split("**").skip(1).step_by(2) {
+        if !looks_like_a_key(token) {
+            continue;
+        }
+        let bold = format!("**{token}**");
+        let known = VIEWER_KEY_BINDINGS
+            .iter()
+            .any(|(_, spellings)| spellings.contains(&bold.as_str()))
+            || NON_KEYBOARD_BINDINGS.contains(&token);
+        assert!(
+            known,
+            "docs/USAGE.md documents {bold}, which nothing in the viewer binds; \
+             add the binding or drop the line"
+        );
+    }
+}
+
+/// Bold tokens that are real bindings the keyboard table does not cover.
+///
+/// `W` is read by the Explorer preview window rather than the viewer. The
+/// pointer chords are verified where they are implemented, in the layer
+/// interaction guard, and `Shift` on its own is a modifier held during a drag,
+/// not a shortcut.
+const NON_KEYBOARD_BINDINGS: &[&str] = &[
+    "W",
+    "Shift",
+    "Ctrl+wheel",
+    "Ctrl+Middle-click",
+    "Ctrl+Shift+Middle-click",
+    "Shift+Middle-click",
+];
+
+/// Whether a bold token in the guide is naming a key rather than emphasising a
+/// word.
+///
+/// Keys are written as a modifier chain of capitalised words or a single
+/// character: `Ctrl+A`, `Esc`, `F`, `1`. Anything containing a space, or
+/// starting lowercase, is prose.
+fn looks_like_a_key(token: &str) -> bool {
+    !token.is_empty()
+        && !token.contains(' ')
+        && token.split('+').all(|part| {
+            part.chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_uppercase() || first.is_ascii_digit())
+        })
 }
 
 #[test]

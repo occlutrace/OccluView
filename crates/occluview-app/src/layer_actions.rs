@@ -550,9 +550,15 @@ mod tests {
                             "{name} is offered by the editor button {raised}, which the \
                              panel no longer draws"
                         );
+                        // And routed to THIS action. Checking only that the
+                        // button exists let it be re-pointed at a different
+                        // layer action, leaving this one offered by nothing
+                        // while the test stayed green.
+                        let mapping = format!("{raised} => {name}");
                         assert!(
-                            router.contains(raised.as_str()),
-                            "{raised} is drawn but nothing routes it"
+                            router.contains(mapping.as_str())
+                                || router.contains(&format!("{raised} => {{")),
+                            "{raised} is drawn, but nothing routes it to {name}"
                         );
                     }
                 }

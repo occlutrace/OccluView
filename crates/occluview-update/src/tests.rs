@@ -338,6 +338,25 @@ fn every_shipped_key_is_usable_and_the_release_key_is_among_them() {
          list leaves CI green and every installed copy refusing the update"
     );
 
+    // The independent oracle. UPDATE_PUBKEYS is defined as &[UPDATE_PUBKEY],
+    // so comparing the two says nothing about whether either is the key the
+    // releases are signed with -- swapping the constant for another
+    // well-formed key passes every assertion above. `occluview.pub` is the
+    // public half that ships beside the artifacts and that the release
+    // workflow verifies against, so it is what the constant has to match.
+    let published = include_str!("../../../occluview.pub");
+    let published = published
+        .lines()
+        .find(|line| !line.starts_with("untrusted comment:") && !line.trim().is_empty())
+        .map(str::trim)
+        .unwrap_or_default();
+    assert_eq!(
+        UPDATE_PUBKEY, published,
+        "the compiled-in key and occluview.pub have drifted; whichever is \
+         wrong, installed copies and the release page now disagree about who \
+         signs releases"
+    );
+
     // And the list is consulted rather than assumed: a signature from a key
     // nobody trusts has to be refused by exactly this list.
     let (keypair, _) = test_keypair();
