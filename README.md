@@ -32,8 +32,7 @@ The viewer is tailored to the daily work of CAD designers. It supports multiple 
 - Linux desktop integration with MIME registration and a thumbnailer.
 
 <p align="center">
-  <video src="assets/animation.webm" autoplay loop muted playsinline width="820"></video>
-  <img src="assets/animation.gif" alt="OccluView live Windows Preview Pane" width="820">
+  <video src="assets/animation.webm" autoplay loop muted playsinline width="820" poster="assets/screenshot1.png"></video>
 </p>
 
 ## Supported formats
@@ -140,6 +139,12 @@ The MSI installs the viewer together with Explorer thumbnails, Preview Pane supp
 The Debian package installs the viewer, the `occluview-cli` companion, the
 desktop entry, MIME registration, icon, and thumbnailer. Both binaries land on
 `PATH`; `occluview-cli --help` lists the headless commands.
+
+## Using it
+
+[docs/USAGE.md](docs/USAGE.md) covers the viewport controls, every keyboard
+shortcut the build actually implements, the mesh editor and sculpt brushes, the
+cut view, alignment, and the `occluview-cli` subcommands.
 
 ## Architecture
 

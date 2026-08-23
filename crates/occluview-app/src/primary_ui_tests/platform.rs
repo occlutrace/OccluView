@@ -454,3 +454,48 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          the version that actually ships"
     );
 }
+
+#[test]
+fn the_usage_guide_documents_the_shortcuts_the_build_implements() {
+    // Every "how do I measure thickness" question used to have nowhere to
+    // point: the manifest homepage 404s and the README linked nothing. A guide
+    // that invents bindings would be worse than none, so this checks that the
+    // ones it lists are the ones the code reads.
+    let usage = include_str!("../../../../docs/USAGE.md");
+    let readme = include_str!("../../../../README.md");
+    assert!(
+        readme.contains("docs/USAGE.md"),
+        "the guide has to be reachable from the README"
+    );
+
+    let editor = repo_source_file("src/app/app_mesh_editor.rs");
+    let sculpt = repo_source_file("src/app/app_sculpt.rs");
+    let dialogs = repo_source_file("src/app/app_dialogs.rs");
+
+    assert!(
+        usage.contains("**Ctrl+A**") && editor.contains("egui::Key::A"),
+        "select-all is documented and implemented"
+    );
+    assert!(
+        usage.contains("**Delete** or **Backspace**")
+            && editor.contains("egui::Key::Delete")
+            && editor.contains("egui::Key::Backspace"),
+        "the delete bindings are documented and implemented"
+    );
+    assert!(
+        usage.contains("**Ctrl+Z**") && editor.contains("egui::Key::Z"),
+        "undo is documented and implemented"
+    );
+    assert!(
+        usage.contains("**Ctrl+O**") && dialogs.contains("egui::Key::O"),
+        "open is documented and implemented"
+    );
+    assert!(
+        usage.contains("Add / Remove brush | **1**") && sculpt.contains("egui::Key::Num1"),
+        "the brush selector is documented and implemented"
+    );
+    assert!(
+        usage.contains("occluview-cli close-holes"),
+        "the CLI subcommands should be listed where a user can find them"
+    );
+}

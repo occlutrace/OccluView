@@ -79,6 +79,8 @@ install -m 0644 install/linux/copyright "$pkg_root/usr/share/doc/occluview/copyr
 # The Apache NOTICE and the generated third-party attributions travel with
 # the statically linked binary; the copyright file points at them.
 install -m 0644 NOTICE "$pkg_root/usr/share/doc/occluview/NOTICE"
+install -m 0644 docs/USAGE.md \
+  "$pkg_root/usr/share/doc/occluview/USAGE.md"
 install -m 0644 THIRD-PARTY-NOTICES.md \
   "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
 # The C++ geometry kernel and its own dependencies are statically linked and

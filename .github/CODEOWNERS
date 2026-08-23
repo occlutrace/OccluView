@@ -1,6 +1,4 @@
+# One maintainer, everything. The five per-path lines that used to follow all
+# named the same owner as the line above, which reads as a review policy for a
+# team that does not exist. Paths come back when a second reviewer does.
 * @occlutrace/maintainers
-/crates/occluview-hps/ @occlutrace/maintainers
-/crates/occluview-formats/ @occlutrace/maintainers
-/crates/occluview-shell/ @occlutrace/maintainers
-/.github/workflows/ @occlutrace/maintainers
-/install/ @occlutrace/maintainers

@@ -57,6 +57,11 @@ One `occluview-render` pipeline: one shader, one camera. A given mesh therefore 
 - Publish verifies `Cargo.toml` version == tag, smoke-installs MSI, signs artifacts with minisign, writes `latest.json`, uploads to GitHub Release.
 - **Reproducibility**: the generated embedded-key module is derived from the key bytes and `OCCLUVIEW_HPS_KEY_SALT` (default: the crate version) and from nothing else, so the same source, key, salt and toolchain rebuild to the same bytes. That is the boundary this repository controls; the compiler, the linker and the C++ CSG kernel's own build are not audited for bit-for-bit reproducibility, so this is a "no deliberate entropy" guarantee rather than a full one.
 
+## Decision records
+
+- [`docs/adr/03-texture-channel-correction.md`](adr/03-texture-channel-correction.md) — why a
+  format-less raw HPS texture is decoded as BGRA, with the measured channel values that settled it.
+
 ## Fuzzing
 
 `fuzz/` crate with `cargo-fuzz` targets: `dispatch` (all formats), `stl`, `ply`, `glb`, `hps_parser`. `glb` is separate because it is the one supported format carrying an attacker-chosen offset table, and mutations sharing a budget with eleven other readers rarely reach it. Each run starts from the tracked seeds in `fuzz/seeds/` plus `fuzz/dictionaries/formats.dict`, and writes into `fuzz/corpus/`, which CI caches so a deep run feeds the next. CI runs a 60s smoke on every push and a 300s deep fuzz weekly on `schedule: 0 2 * * 1`. Locally: `./scripts/run-fuzz.sh <target> 300 131072` from the repository root.
