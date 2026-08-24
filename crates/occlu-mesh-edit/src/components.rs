@@ -5,12 +5,9 @@ use super::{
 
 /// Split the selected triangles into connected components.
 ///
-/// Connectivity is derived from shared undirected EDGES over the mesh's TRUE
-/// topology: STL and other soup formats store every triangle's corners as
-/// independent vertices, so the buffers are welded back to shared topology first
-/// (exact position/color/uv bits — see `weld_soup_topology`). Without this a
-/// soup model reads as one component per triangle — the "317k confetti parts"
-/// Separate failure. Triangles touching at only a single shared vertex remain
+/// Connectivity is derived from shared undirected edges. STL and other soup
+/// formats are welded first (exact position/color/UV bits; see
+/// `weld_soup_topology`). Triangles touching only at one vertex remain
 /// separate components. Components are returned in deterministic order by their
 /// lowest triangle index in the source mesh, and each component's member list is
 /// ascending.
@@ -20,7 +17,7 @@ use super::{
 /// stay valid for it. The weld is a no-op (no allocation of new buffers) on an
 /// already-welded mesh.
 ///
-/// Each component is a list of its member triangle indices, NOT a full-length
+/// Each component is a list of its member triangle indices, not a full-length
 /// mask: a fragmented selection can yield many components, and a per-component
 /// `vec![bool; triangle_count]` would cost O(components × `triangle_count`)
 /// memory. The consumer materializes one mask at a time.
@@ -287,9 +284,8 @@ mod tests {
 
     #[test]
     fn soup_selection_welds_to_one_component_not_confetti() {
-        // The 317k-confetti bug: an edge-connected patch, once exploded to STL
-        // soup, must NOT read as one component per triangle. It welds back to a
-        // single connected island.
+        // An edge-connected patch exploded to STL soup must weld back to one
+        // connected island.
         let welded = grid(5, 5);
         let soup = explode_to_soup(&welded);
         assert_eq!(

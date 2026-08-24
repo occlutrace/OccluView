@@ -1,22 +1,8 @@
-//! Shared topology recovery: weld an STL-style triangle SOUP back to the shared
-//! vertex topology its exporter actually authored.
+//! Recover shared topology from STL-style triangle soups.
 //!
-//! STL — the dental workhorse — stores every triangle's three corners as fresh,
-//! independent vertices, so no two triangles share a vertex index. In index
-//! space that makes EVERY edge a boundary half-edge and the whole model reads as
-//! a cloud of disconnected needles. Any operation that reasons about *shared
-//! topology* — boundary walks (hole filling), connected components (Separate) —
-//! is meaningless on soup until the shared corners are merged. This module is the
-//! one place that recovery lives, so every consumer gets identical, deterministic
-//! behavior.
-//!
-//! This is NOT the repair pipeline's weld (`repair/weld.rs`). That one is
-//! tolerance-based (an epsilon quantizer that fuses *near*-coincident vertices to
-//! heal genuine cracks). This one is EXACT-BIT: only byte-identical payloads
-//! (position bits + color + uv bits) merge, so it recovers precisely the topology
-//! the exporter welded and can never fuse two distinct points or blur anatomy.
-//! Keep the two separate — conflating them would either blur soup anatomy or fail
-//! to recover exact duplicates.
+//! Exact payload welding (position bits, color, and UV) restores exporter-authored
+//! shared corners without merging distinct points. Tolerant position welding is
+//! reserved for interactive sculpting; repair and bridge-split use exact policy.
 
 use super::{EditVertex, MeshEditBuffers, MeshEditError};
 
@@ -39,10 +25,7 @@ pub(crate) enum TopologyWeldPolicy {
 enum TopologyWeldKey {
     FullPayload(SoupWeldKey),
     PositionOnly([u32; 3]),
-    /// Sculpt-only position weld. STL writers sometimes quantize the same
-    /// corner through slightly different floating-point paths; a tiny position
-    /// tolerance keeps those corners moving together without changing the
-    /// exact topology contract used by repair/bridge-split.
+    /// Sculpt-only position weld for near-coincident scan corners.
     TolerantPosition([i64; 3]),
     /// Non-finite positions must never be merged into one artificial corner.
     TolerantNonFinite(usize),
@@ -236,25 +219,12 @@ pub(crate) fn sibling_rows_from_representatives(canonical: &CanonicalTopology) -
 
 /// Weld an STL-style triangle soup back to shared topology.
 ///
-/// STL stores each triangle's corners as independent vertices — no two triangles
-/// share a vertex index. In index space that makes every edge a boundary and the
-/// whole model a cloud of disconnected needles, so boundary walks find no real
-/// rims and connected-component analysis returns one component per triangle (the
-/// "317k confetti parts" Separate failure and the "524560 nicks healed, none
-/// closed" hole-fill failure are the same root cause). This merges the shared
-/// corners so those analyses see the true topology.
-///
-/// The merge is EXACT (position bits + color + uv): a CAD exporter writes
-/// byte-identical coordinates for a shared corner, so this recovers the real
-/// topology the exporter welded, and — because only byte-identical payloads
-/// merge — it can never fuse two distinct points or blur anatomy. Attributes are
-/// part of the key, honoring the anti-weld doctrine: a position duplicated with
-/// different colors/UVs (dental color scans) stays distinct.
+/// Exact position bits, colors, and UVs form the weld key. Attributes remain in
+/// the key so distinct color-scan corners are not merged.
 ///
 /// Triangle order and count are preserved — only vertex ids are remapped — so a
 /// face selection keyed by triangle index stays valid on the returned buffers.
-/// Every original vertex is kept; the now-unreferenced duplicates are dropped
-/// later by any caller's vertex compaction, which is where the soup shrinks.
+/// Every original vertex is kept; callers may compact unreferenced duplicates.
 ///
 /// Returns `Ok(None)` when nothing merges (an already-welded mesh), leaving the
 /// caller byte-for-byte unchanged. Deterministic: sort-based grouping with the

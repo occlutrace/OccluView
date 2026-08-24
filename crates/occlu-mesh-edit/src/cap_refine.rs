@@ -175,7 +175,7 @@ struct CapPatch {
 
 /// One bisection pass: every interior edge longer than `ALPHA` times its
 /// local target scale is split at its midpoint with a conforming 2:4 rewrite
-/// of both owner triangles (edge→owner map updated in place), then ONE
+/// of both owner triangles (edge→owner map updated in place), then one
 /// incremental Lawson repair seeded by the rewritten edges. Returns whether
 /// anything split. Rim edges (one owner) are never touched. Deterministic:
 /// the edge snapshot is processed in sorted order, and edges a split removed

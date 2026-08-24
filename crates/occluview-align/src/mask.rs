@@ -1,10 +1,8 @@
 //! The exclusion mask: which vertices stay out of matching.
 //!
-//! Every operation compares mesh vertices and brush points in the **same posed
-//! frame**, so a mark lands where the operator sees it after the scan has
-//! already been moved. Every operation is also bounds-safe against a mask that
-//! does not match the mesh: a stale mask leaves the mesh alone instead of
-//! painting the wrong vertices.
+//! Mesh vertices and brush points are compared in the same posed frame. A mask
+//! whose length does not match the mesh is handled without touching unrelated
+//! vertices.
 
 use glam::DVec3;
 use rayon::prelude::{IndexedParallelIterator, ParallelIterator, ParallelSlice};
@@ -28,24 +26,13 @@ pub struct MaskEdit {
     pub erase: bool,
 }
 
-/// Vertices per parallel chunk. Large enough that scheduling disappears, small
-/// enough that a dab on a million-vertex arch still spreads over every core.
+/// Vertices per parallel chunk.
 const CHUNK: usize = 8_192;
 
 /// Apply one dab, appending the vertices it changed to `touched`.
 ///
-/// Returns how many mask bytes actually changed, which is what lets the caller
-/// skip an upload when a dab landed on already-painted geometry.
-///
-/// `touched` is the reason this reports indices rather than a count: repainting
-/// and re-uploading a whole arch per dab is tens of megabytes of traffic for a
-/// brush the size of a cusp, and it is what made painting run at three frames a
-/// second. With the indices in hand the caller rewrites and uploads only those
-/// vertices.
-///
-/// Parallel, and deterministic with it: each chunk collects its own hits and
-/// the chunks are applied in order, so the mask and `touched` come out
-/// identical whatever the thread count.
+/// Returns the number of changed bytes and appends their indices to `touched`.
+/// Chunk-local results are applied in order, preserving deterministic output.
 pub fn apply_brush(
     mask: &mut [u8],
     positions: &[f32],

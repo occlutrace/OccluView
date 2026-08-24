@@ -1,39 +1,9 @@
-//! Freeform sculpting brushes (issue #11): an interactive Add/Remove clay knife
-//! and a Smooth relaxer, applied over a soft-falloff disc on the surface — the
-//! geometry half of freeform sculpting applied to intraoral scan meshes.
+//! Freeform add, remove, and smoothing brushes for scan meshes.
 //!
-//! # Session shape
-//!
-//! A [`BrushSession`] is prepared ONCE per layer (welds STL soup, builds
-//! adjacency/incidence/boundary/spatial-grid — amortized over many dabs) and
-//! reused across every stroke. Each dab is one [`BrushStroke`] via
-//! [`BrushSession::apply_stroke`], returning only the touched vertex ids for a
-//! PARTIAL GPU update. [`BrushSession::finish`] bakes the session into a
-//! [`MeshEditResult`] for the batch commit path.
-//!
-//! Add/Remove moves the region coherently along a camera-facing averaged normal,
-//! then auto-smooths the dab to avoid potholes, spikes, and raw-push ripples.
-//! Smooth reuses the same relaxer; boundaries and disconnected components stay
-//! protected.
-//!
-//! # Dynamic topology
-//!
-//! Smooth first DENSIFIES the surface under the dab (see the `grow` child
-//! module): a relaxer can only move vertices it has, so on a coarse edge there
-//! is nothing to relax until the stroke puts vertices there. Densification
-//! appends vertices and rewrites triangles, so a dab can change the topology —
-//! [`BrushStrokeOutcome::topology_changed`] tells the caller its GPU buffers
-//! and any cached mesh identity are stale and must be rebuilt from
-//! [`BrushSession::vertices`] and [`BrushSession::indices`].
-//!
-//! # Soup correctness
-//!
-//! STL gives each triangle corner its own vertex, so the vertex ARRAY keeps
-//! orphaned duplicates at a moved corner even after welding INDEX topology for
-//! adjacency (`weld_soup_topology` rewrites indices, not the vertex array).
-//! Every touched vertex's new position/normal propagates to every other slot
-//! that started at the same position (`position_siblings`), or a soup scan
-//! would crack at each touched corner.
+//! A [`BrushSession`] prepares topology once and reuses it across strokes.
+//! Dabs return touched vertices for partial GPU updates; topology-changing
+//! strokes request a full buffer rebuild. Position siblings keep STL triangle
+//! soups welded after edits.
 
 use glam::Vec3;
 use rayon::prelude::*;

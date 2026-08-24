@@ -1,61 +1,9 @@
-//! Dynamic-topology densification under the brush — the "the mesh gets denser
-//! where you smooth" half of freeform sculpting.
+//! Dynamic-topology refinement for smoothing brushes.
 //!
-//! # Why a brush must add vertices
-//!
-//! A relaxer can only move vertices it already has. Drag Smooth along an edge
-//! shared by two large triangles and nothing happens: there is no vertex on
-//! that edge to pull toward its ring centroid. Every sculpting tool with
-//! dynamic topology solves this the same way — the stroke retopologises
-//! the surface under the cursor, so the relaxer gets the degrees of freedom it
-//! needs and the resulting surface is clean.
-//!
-//! # What this module does
-//!
-//! One refinement pass per Smooth dab, before any displacement:
-//!
-//! * **Region**: the triangles that intersect the dab sphere, found by flooding
-//!   from the vertex nearest the dab center through accepted triangles (the
-//!   flood-fill tri-in-sphere query dynamic-topology sculpting tools use). A
-//!   vertex query is not enough — the whole point is the case where a triangle
-//!   is much larger than the brush and none of its corners are inside the disc.
-//! * **Criterion**: split a welded edge when it is longer than
-//!   `radius * DETAIL_FRACTION_OF_RADIUS * SPLIT_HYSTERESIS`. Sizing detail off
-//!   the brush radius is the same "Brush Detail" convention sculpting tools
-//!   use: the same gesture gives the same visual density at any zoom, and the
-//!   operator's existing size slider doubles as the detail slider. The 4/3
-//!   band is Botsch & Kobbelt's
-//!   incremental remesher (SGP 2004): halves of a split edge land above 2/3 of
-//!   target, so they are never immediately re-split and the density converges.
-//! * **Operation**: MIDPOINT edge split only. No collapse, no edge flip, no
-//!   tangential relaxation. A midpoint split is the one refinement that leaves
-//!   the piecewise-linear surface EXACTLY where it was (the new vertex lies on
-//!   the edge, which lies in both incident triangles' planes), so densification
-//!   can never drift the scan — the "keep the surface from moving while
-//!   retopologising" problem the literature spends projection steps on simply
-//!   does not arise. Smoothing afterwards is what moves the surface, under the
-//!   existing falloff, boundary pinning and anti-inversion guards.
-//! * **Placement**: an edge is only split when its MIDPOINT is inside the dab
-//!   sphere, so a new vertex only ever appears where the brush actually passed.
-//!
-//! # Bound
-//!
-//! Growth is bounded three ways, tightest first:
-//!
-//! 1. The 4/3 criterion is a fixed point: once every edge under the disc is at
-//!    or below target, further dabs at the same spot split nothing. A held
-//!    stroke converges instead of exploding.
-//! 2. [`MAX_SPLITS_PER_DAB`] caps one dab, so an enormous coarse facet cannot
-//!    stall the interactive worker.
-//! 3. [`super::BrushSession::added_vertex_budget`] caps the whole session, so
-//!    a long stroke over a large coarse mesh cannot grow it without limit.
-//!
-//! # Soup
-//!
-//! The session smooths over WELDED topology but owns the original STL soup
-//! index array. A split therefore works on the welded edge and rewires every
-//! incident SOUP triangle to one shared new vertex, so the split corner is
-//! welded by construction and no sibling propagation is needed for it.
+//! Edges intersecting the dab are split at their midpoint when they exceed the
+//! radius-relative detail target. Per-dab and per-session budgets bound growth.
+//! Splits update every incident triangle in welded topology and preserve the
+//! piecewise-linear surface until the smoothing pass moves it.
 
 use glam::Vec3;
 use rayon::prelude::*;

@@ -224,3 +224,24 @@ fn lone_triangle_rim_is_never_capped_with_its_reverse_twin() {
         "no duplicate face may be emitted"
     );
 }
+
+#[test]
+fn no_caller_can_pin_the_hole_ceiling_with_a_private_copy() {
+    // The selection gate takes `max(options.max_boundary_loop, the constant)`,
+    // so a caller's own copy of the constant becomes the authoritative one.
+    // The application and the CLI each held one.
+    for source in [
+        include_str!("../../occluview-app/src/app/app_layer_edits/whole_mesh.rs"),
+        include_str!("../../occluview-cli/src/export.rs"),
+    ] {
+        let redefinition = format!("const {}: usize =", "CLOSE_HOLES_EDGE_CEILING");
+        assert!(
+            !source.contains(&redefinition),
+            "a caller must not carry its own copy of the hole ceiling"
+        );
+        assert!(
+            source.contains("CLOSE_HOLES_EDGE_CEILING"),
+            "the caller should still pass the shared ceiling"
+        );
+    }
+}

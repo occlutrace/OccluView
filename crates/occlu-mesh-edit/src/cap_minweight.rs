@@ -1,20 +1,12 @@
-//! Minimum-area cap triangulation (Barequet & Sharir 1995; the base
-//! triangulation of Liepa 2003).
+//! Minimum-area cap triangulation (Barequet & Sharir 1995; Liepa 2003).
 //!
-//! The planar ear-clip needs the rim's projection onto its Newell plane to be
-//! a simple polygon. A strongly curved rim (a hole wrapping far around a
-//! tooth flank or a scan flap) violates that and used to be refused outright.
-//! This dynamic program triangulates the CYCLIC rim directly in 3D — no
-//! projection at all — by minimizing total triangle area over the classic
-//! polygon-triangulation recurrence:
+//! The dynamic program triangulates a cyclic rim directly in 3D, avoiding
+//! projection for strongly curved loops, using:
 //!
 //! `W[i][j] = min over k in (i, j) of W[i][k] + W[k][j] + area(i, k, j)`
 //!
-//! Cost is O(n^3) time / O(n^2) memory, so it is bounded to modest rims and
-//! only runs when the ear-clip has already refused. Ties break on the lowest
-//! `k` for determinism. The result is always a full, fan-consistent cover of
-//! the rim (`n - 2` triangles); geometric self-piercing on truly pathological
-//! rims is caught by the caller's cap guard.
+//! Cost is O(n^3) time / O(n^2) memory. Ties use the lowest `k`; the caller
+//! rejects self-piercing results.
 
 use glam::{DVec3, Vec3};
 
@@ -30,22 +22,12 @@ pub(super) const MIN_WEIGHT_MAX_RIM: usize = 256;
 /// boundary-loop ceiling so nothing the walk admits is silently un-cappable.
 pub(super) const MIN_WEIGHT_HIER_MAX_RIM: usize = 20_000;
 
-/// Two non-adjacent rim segments count as a crossing only when they approach
-/// within this fraction of their LOCAL edge length — a tube whose radius scales
-/// with the edges involved, so an honest wiggle stays simple while a real
-/// self-crossing (which touches at zero distance) is caught. Using the local
-/// (per-pair) scale, not a global mean, is what keeps a rim carrying a few tiny
-/// near-coincident seam edges next to long edges from being falsely damaged:
-/// a global mean sets the tube far wider than a tiny edge and refuses honest
-/// close-but-not-touching seam segments.
+/// Relative proximity threshold for non-adjacent rim segments. Scaling by the
+/// local pair avoids rejecting short seam edges near long segments.
 const RIM_PROXIMITY_FRACTION: f64 = 1e-3;
 
-/// Whether the 3D rim polyline is simple: no two non-adjacent segments touch
-/// or cross. This is the discriminator between the two ear-clip failure
-/// modes — a strongly CURVED rim (simple in 3D, self-overlapping only in
-/// projection) deserves the minimum-area fallback, while a genuinely
-/// self-crossing rim (hourglass damage) must stay refused: capping it would
-/// bake the crossing into the surface. O(n^2) segment pairs, n <= 256.
+/// Whether the 3D rim polyline is simple. Curved but simple rims use the
+/// minimum-area fallback; self-crossing rims remain rejected. O(n²), `n <= 256`.
 pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
     let n = points.len();
     if n < 4 {
