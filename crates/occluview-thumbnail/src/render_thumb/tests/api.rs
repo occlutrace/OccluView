@@ -532,3 +532,31 @@ fn malformed_stl_returns_format_error_without_panic() {
     let res = render_thumbnail("stl", &[0u8; 10], ThumbnailSpec::default());
     assert!(matches!(res, Err(ThumbnailError::Format(_))));
 }
+
+/// A request for a thumbnail of no pixels answers, rather than dividing by it.
+///
+/// The cache serves a smaller tile from a larger one when the sizes divide
+/// evenly, and asked that question of a zero. Explorer clamps the size before
+/// it ever reaches here, so this is the library's own contract rather than the
+/// shell's -- and the command-line tool aborts on a panic instead of
+/// unwinding, which turns a bad argument into a dead process.
+#[test]
+fn a_thumbnail_of_no_pixels_is_answered_not_divided_by() {
+    let bytes = fixtures::binary_stl_cube();
+    let usable = ThumbnailSpec {
+        size_px: 64,
+        ..Default::default()
+    };
+    let _ = render_thumbnail_or_placeholder(Some("stl"), &bytes, usable);
+
+    let empty = ThumbnailSpec {
+        size_px: 0,
+        ..Default::default()
+    };
+    let pixels = render_thumbnail_or_placeholder(Some("stl"), &bytes, empty);
+    assert_eq!(
+        pixels.len() % 4,
+        0,
+        "whatever comes back is whole pixels, and the call returns at all"
+    );
+}

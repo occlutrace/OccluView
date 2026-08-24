@@ -166,6 +166,7 @@ where
                 .iter()
                 .filter(|thumb| {
                     thumb.background == background
+                        && size_px > 0
                         && thumb.size_px > size_px
                         && thumb.size_px % size_px == 0
                 })
