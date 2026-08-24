@@ -1,5 +1,6 @@
 use crate::ThumbnailError;
 use occluview_render::Offscreen;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Whether this build should ask wgpu for a hardware adapter.
 ///
@@ -24,6 +25,26 @@ pub(crate) const fn should_prefer_hardware_offscreen() -> bool {
     !cfg!(test)
 }
 
+/// Set once by a process that renders a single thumbnail and exits.
+static SOFTWARE_RENDERER_ONLY: AtomicBool = AtomicBool::new(false);
+
+/// Keep this process on the software rasteriser, whatever hardware it has.
+///
+/// For a one-shot process. The proprietary NVIDIA Vulkan driver runs
+/// background threads of its own, and in a process that exits immediately
+/// after a render they can fault while the C runtime is tearing the process
+/// down: measured at two crashes in twenty runs of the command-line tool
+/// against none on the software rasteriser, with the PNG already written --
+/// so a file manager sees a thumbnailer that failed and shows nothing at all.
+/// The same binary on the software driver never faulted.
+///
+/// A host that stays alive -- the shell surrogate, the viewer -- renders many
+/// files per process, never meets that race on the way out, and keeps the
+/// faster device.
+pub fn use_software_renderer_only() {
+    SOFTWARE_RENDERER_ONLY.store(true, Ordering::Relaxed);
+}
+
 pub(crate) fn create_thumbnail_offscreen() -> Result<Offscreen, ThumbnailError> {
     if let Some(offscreen) = hardware_offscreen_that_draws() {
         return Ok(offscreen);
@@ -37,7 +58,7 @@ pub(crate) fn create_thumbnail_offscreen() -> Result<Offscreen, ThumbnailError> 
 /// every scan with a blank tile -- which Explorer caches against the file's
 /// timestamp and never asks about again.
 fn hardware_offscreen_that_draws() -> Option<Offscreen> {
-    if !should_prefer_hardware_offscreen() {
+    if !should_prefer_hardware_offscreen() || SOFTWARE_RENDERER_ONLY.load(Ordering::Relaxed) {
         return None;
     }
     let offscreen = pollster::block_on(Offscreen::new_prefer_hardware()).ok()?;

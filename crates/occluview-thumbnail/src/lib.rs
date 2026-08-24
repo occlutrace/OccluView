@@ -16,6 +16,7 @@ pub mod thumbnail_timeout;
 pub use error::ThumbnailError;
 pub use occluview_formats::V1_OPEN_EXTENSIONS as SUPPORTED_EXTENSIONS;
 pub use occluview_render::ThumbnailSpec;
+pub use offscreen_factory::use_software_renderer_only;
 pub use placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind, PlaceholderKind};
 pub use render_thumb::{
     render_thumbnail, render_thumbnail_bytes, render_thumbnail_file,
