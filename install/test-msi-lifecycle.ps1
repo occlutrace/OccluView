@@ -8,6 +8,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $supportedExtensions = @("stl", "ply", "obj", "glb", "dcm", "hps")
+# Extensions the installer may claim machine-wide: default ProgID, DefaultIcon
+# and the ShellEx handlers under both the bare key and SystemFileAssociations.
+$ownedExtensions = @("stl", "ply", "obj", "glb", "hps")
+# Read, offered in "Open with", never claimed. .dcm belongs to medical DICOM as
+# much as it does to 3Shape's HPS container, and this reader rejects DICOM, so
+# owning it would put a failing thumbnail on every CBCT file on the workstation.
+$offeredOnlyExtensions = @("dcm")
 $deferredExtensions = @("gltf", "3mf")
 $formatProgIds = @{
     stl = "MeshFile.STL"
@@ -224,6 +231,9 @@ function Assert-InstalledRegistry {
     Assert-PathExists $appExe
     Assert-PathExists $shellDll
     Assert-PathAbsent (Join-Path $installDir "occluview-cli.exe")
+    Assert-PathExists (Join-Path $installDir "LICENSE")
+    Assert-PathExists (Join-Path $installDir "NOTICE")
+    Assert-PathExists (Join-Path $installDir "THIRD-PARTY-NOTICES.md")
     Assert-PathExists (Join-Path $startMenuDir "$productName.lnk")
 
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$shellClsid") "OccluView Thumbnail Provider" "CLSID friendly name"
@@ -260,14 +270,30 @@ function Assert-InstalledRegistry {
         Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\$progid\ShellEx\$thumbnailCategory") $shellClsid "$progid thumbnail provider"
         Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\$progid\ShellEx\$previewCategory") $previewClsid "$progid preview handler"
         Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\$progid\shell\open\command") "`"$appExe`" `"%1`"" "$progid open command"
-        Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext") $progid ".$ext extension ProgID"
-        Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\.$ext" "ThumbnailCutoff") "1" ".$ext extension thumbnail cutoff"
-        Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\.$ext" "TypeOverlay") "" ".$ext extension thumbnail overlay"
-        Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\DefaultIcon") $defaultIcon ".$ext extension default icon"
-        Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\ShellEx\$thumbnailCategory") $shellClsid ".$ext thumbnail provider"
-        Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\ShellEx\$previewCategory") $previewClsid ".$ext preview handler"
-        Assert-Equals (Get-RegistryDefault "$systemFileAssociationsPath\.$ext\ShellEx\$thumbnailCategory") $shellClsid "SystemFileAssociations .$ext thumbnail provider"
-        Assert-Equals (Get-RegistryDefault "$systemFileAssociationsPath\.$ext\ShellEx\$previewCategory") $previewClsid "SystemFileAssociations .$ext preview handler"
+        if ($ownedExtensions -contains $ext) {
+            Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext") $progid ".$ext extension ProgID"
+            Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\.$ext" "ThumbnailCutoff") "1" ".$ext extension thumbnail cutoff"
+            Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\.$ext" "TypeOverlay") "" ".$ext extension thumbnail overlay"
+            Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\DefaultIcon") $defaultIcon ".$ext extension default icon"
+            Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\ShellEx\$thumbnailCategory") $shellClsid ".$ext thumbnail provider"
+            Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\ShellEx\$previewCategory") $previewClsid ".$ext preview handler"
+            Assert-Equals (Get-RegistryDefault "$systemFileAssociationsPath\.$ext\ShellEx\$thumbnailCategory") $shellClsid "SystemFileAssociations .$ext thumbnail provider"
+            Assert-Equals (Get-RegistryDefault "$systemFileAssociationsPath\.$ext\ShellEx\$previewCategory") $previewClsid "SystemFileAssociations .$ext preview handler"
+        } elseif ($offeredOnlyExtensions -contains $ext) {
+            # A fresh install must leave every machine-wide .dcm surface alone.
+            # These are the exact values a DICOM viewer owns, so asserting we
+            # are not in them is asserting we did not take the extension.
+            Assert-RegistryDefaultNotEquals "HKLM:\Software\Classes\.$ext" $progid ".$ext extension ProgID"
+            Assert-RegistryDefaultNotEquals "HKLM:\Software\Classes\.$ext\DefaultIcon" $defaultIcon ".$ext extension default icon"
+            Assert-RegistryDefaultNotEquals "HKLM:\Software\Classes\.$ext\ShellEx\$thumbnailCategory" $shellClsid ".$ext thumbnail provider"
+            Assert-RegistryDefaultNotEquals "HKLM:\Software\Classes\.$ext\ShellEx\$previewCategory" $previewClsid ".$ext preview handler"
+            Assert-RegistryDefaultNotEquals "$systemFileAssociationsPath\.$ext\ShellEx\$thumbnailCategory" $shellClsid "SystemFileAssociations .$ext thumbnail provider"
+            Assert-RegistryDefaultNotEquals "$systemFileAssociationsPath\.$ext\ShellEx\$previewCategory" $previewClsid "SystemFileAssociations .$ext preview handler"
+        } else {
+            throw "Extension .$ext is in neither the owned nor the offered-only list."
+        }
+        # Offered on every supported extension: this is how a user reaches
+        # OccluView deliberately, and it takes nothing away from anyone.
         Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\.$ext\OpenWithProgids" $progid) "" ".$ext OpenWithProgids"
         Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\.$ext\OpenWithList\occluview.exe") "" ".$ext OpenWithList"
         Assert-Equals (Get-RegistryNamedValue "$applicationsPath\SupportedTypes" ".$ext") "" ".$ext Applications SupportedTypes"

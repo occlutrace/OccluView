@@ -7,6 +7,9 @@ Exec=occluview %F
 Icon=occluview
 Terminal=false
 Categories=Graphics;3DGraphics;Viewer;
+# What a user types when they are looking for this: the work, not the product
+# name. Without it the launcher finds the viewer only by its own name.
+Keywords=dental;dentistry;scan;intraoral;occlusion;mesh;model;STL;PLY;OBJ;GLB;3D;CAD;
 # The app forwards the launch token to its existing X11/Wayland surface after
 # the window is created, so file-manager launches can activate the viewer.
 StartupNotify=true

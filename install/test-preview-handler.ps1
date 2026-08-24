@@ -454,6 +454,53 @@ public static class OccluViewShellPreviewSmoke
                     throw new InvalidOperationException("Preview handler left the child preview window alive after Unload.");
                 }
 
+                // Unload is host etiquette, not a COM requirement, and a host
+                // that skips it -- or that releases from inside a modal loop
+                // the handler itself is pumping -- must not leave a child
+                // window pointing at a freed object. Build a second handler,
+                // give it a window, release it WITHOUT Unload, and check the
+                // child is gone.
+                object orphan = Activator.CreateInstance(type);
+                try
+                {
+                    var orphanPreview = (IPreviewHandler)orphan;
+                    if (useStream)
+                    {
+                        object orphanStream;
+                        int orphanHr = SHCreateStreamOnFileEx(path, 0x00000020, 0, false, null, out orphanStream);
+                        if (orphanHr < 0 || orphanStream == null)
+                        {
+                            Marshal.ThrowExceptionForHR(orphanHr);
+                        }
+                        ((IInitializeWithStream)orphan).Initialize(orphanStream, 0);
+                    }
+                    else
+                    {
+                        ((IInitializeWithFile)orphan).Initialize(path, 0);
+                    }
+                    var orphanRect = new RECT { left = 0, top = 0, right = width, bottom = height };
+                    orphanPreview.SetWindow(parent, ref orphanRect);
+                    orphanPreview.DoPreview();
+                    var orphanChild = FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null);
+                    if (orphanChild == IntPtr.Zero)
+                    {
+                        throw new InvalidOperationException("Second preview handler created no child window.");
+                    }
+                    Marshal.FinalReleaseComObject(orphan);
+                    orphan = null;
+                    if (IsWindow(orphanChild))
+                    {
+                        throw new InvalidOperationException("Release without Unload left the child preview window alive, pointing at a freed COM object.");
+                    }
+                }
+                finally
+                {
+                    if (orphan != null && Marshal.IsComObject(orphan))
+                    {
+                        Marshal.FinalReleaseComObject(orphan);
+                    }
+                }
+
                 result = (useStream ? "stream " : "file ")
                     + width + "x" + height + " -> " + resizeWidth + "x" + resizeHeight
                     + " child " + PreviewChildClass

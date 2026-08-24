@@ -1,7 +1,7 @@
 //! Windows VERSIONINFO for `occluview_shell.dll`.
 //!
-//! The MSI installs and Authenticode-signs this DLL, so its Properties page
-//! must name the product and version like the executables do. The resource
+//! The MSI installs this DLL and can Authenticode-sign it, so its Properties
+//! page must name the product and version like the executables do. The resource
 //! plumbing is kept in sync with `crates/occluview-app/build.rs` by hand:
 //! build scripts cannot share code without a dedicated build-dependency
 //! crate, and this much duplication is the cheaper contract.
