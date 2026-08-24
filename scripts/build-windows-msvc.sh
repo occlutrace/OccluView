@@ -4,10 +4,8 @@ set -euo pipefail
 target="${OCCLUVIEW_WINDOWS_TARGET:-x86_64-pc-windows-msvc}"
 profile="${OCCLUVIEW_PROFILE:-release}"
 
-# The shell DLL must NEVER build with the release profile's panic = "abort":
-# hosted inside Explorer's dllhost.exe, an aborting panic kills the surrogate
-# and blanks every thumbnail in the folder. The MSI build (install/build-msi.ps1)
-# already uses the unwinding profile; this script must match it.
+# Explorer hosts the shell DLL in dllhost.exe, so release builds use the
+# unwinding profile to keep a panic from terminating the host process.
 case "$profile" in
   release)
     app_profile_args=(--release)
@@ -52,10 +50,8 @@ if [[ -z "$cmake_toolchain" || ! -f "$cmake_toolchain" ]]; then
 fi
 export CMAKE_TOOLCHAIN_FILE="$cmake_toolchain"
 
-# A previous cross-build without the toolchain leaves host-ELF .o archives in
-# Cargo's target tree. CMake cannot switch compilers inside that cache, so only
-# discard stale generated manifold build directories; healthy clang-cl caches
-# remain reusable.
+# Remove generated Manifold build directories whose compiler cache is not
+# configured for clang-cl; valid caches remain reusable.
 if [[ -d "$repo_root/target/$target" ]]; then
   while IFS= read -r -d '' cache; do
     if ! grep -Eq '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=.*clang-cl' "$cache"; then

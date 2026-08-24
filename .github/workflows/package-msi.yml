@@ -2,12 +2,19 @@ name: Package
 
 on:
   workflow_dispatch:
+    inputs:
+      release_dry_run:
+        description: >-
+          Run the tag-only release path (signature verification, minisign,
+          latest.json, release notes) without creating a GitHub Release.
+        type: boolean
+        default: false
   push:
     tags:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: package-${{ github.ref }}
@@ -20,15 +27,21 @@ jobs:
   windows-package:
     name: build msi
     runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
     env:
       OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
       OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
       OCCLUVIEW_SIGN_TIMESTAMP_URL: ${{ vars.OCCLUVIEW_SIGN_TIMESTAMP_URL }}
-      OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
     steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -42,7 +55,7 @@ jobs:
           }
       - name: Install WiX Toolset
         shell: pwsh
-        run: choco install wixtoolset --yes --no-progress
+        run: choco install wixtoolset --version 3.14.1 --allow-downgrade --yes --no-progress
       - name: Prepare signing certificate
         shell: pwsh
         env:
@@ -57,6 +70,8 @@ jobs:
           "OCCLUVIEW_SIGN_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Verify embedded HPS key build path
         shell: pwsh
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:OCCLUVIEW_HPS_EMBEDDED_KEY)) {
             throw "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package MSI so encrypted HPS files work in the shipped installer."
@@ -84,6 +99,8 @@ jobs:
           }
       - name: Build MSI
         shell: pwsh
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: ./install/build-msi.ps1 -SignMode auto
       - name: Build portable ZIP
         shell: pwsh
@@ -102,10 +119,37 @@ jobs:
           Copy-Item (Join-Path $buildDir "occluview_shell.dll") $portableDir
           Copy-Item ./LICENSE $portableDir
           Copy-Item ./NOTICE $portableDir
+          Copy-Item ./THIRD-PARTY-NOTICES.md $portableDir
+          Copy-Item ./THIRD-PARTY-NOTICES-NATIVE.md $portableDir
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
+      - name: Verify Authenticode signatures (tagged release)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+        shell: pwsh
+        run: |
+          $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
+          $hasPfx = -not [string]::IsNullOrWhiteSpace($pfxPath) -and (Test-Path $pfxPath)
+          $hasCert = -not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1)
+          if (-not $hasPfx -and -not $hasCert) {
+            throw "No signing material resolved for tagged release."
+          }
+          $buildDir = Join-Path $pwd "target/x86_64-pc-windows-msvc/release"
+          $artifacts = @(
+            (Join-Path $buildDir "occluview.exe"),
+            (Join-Path $buildDir "occluview_shell.dll"),
+            (Get-ChildItem ./dist -Filter *.msi | Select-Object -First 1).FullName
+          )
+          foreach ($path in $artifacts) {
+            if (-not (Test-Path $path)) { throw "Expected signed artifact missing: $path" }
+            $sig = Get-AuthenticodeSignature -FilePath $path
+            if ($sig.Status -ne "Valid") { throw "Authenticode signature for $path is $($sig.Status): $($sig.StatusMessage)" }
+            Write-Host "Authenticode valid: $path ($($sig.SignerCertificate.Subject))"
+          }
       - name: Build upgrade smoke MSI
         shell: pwsh
+        env:
+          OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
+          OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
         run: |
           $cargoText = Get-Content ./Cargo.toml -Raw
           $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
@@ -127,7 +171,22 @@ jobs:
             $hash = Get-FileHash -Algorithm SHA256 $_.FullName
             "$($hash.Hash.ToLowerInvariant())  $($_.Name)" | Set-Content -Encoding ascii "$($_.FullName).sha256"
           }
-      - uses: actions/upload-artifact@v7.0.1
+      - name: Generate SBOM (Windows)
+        shell: pwsh
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.8 --locked
+          # The virtual workspace emits one SBOM beside each member manifest.
+          cargo cyclonedx --format json --override-filename sbom-windows
+          $sbom = "crates/occluview-app/sbom-windows.json"
+          if (-not (Test-Path $sbom)) {
+            throw "cargo-cyclonedx produced no SBOM at $sbom."
+          }
+          $described = (Get-Content $sbom -Raw | ConvertFrom-Json).metadata.component.name
+          if ($described -ne "occluview-app") {
+            throw "SBOM describes '$described', not the shipped viewer."
+          }
+          Move-Item $sbom ./dist/sbom-windows.json -Force
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: occluview-windows-package
@@ -136,16 +195,22 @@ jobs:
             dist/*.msi
             dist/*.zip
             dist/*.sha256
+            dist/*.json
 
   linux-package:
     name: build linux deb
     runs-on: ubuntu-latest
-    env:
-      OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.86.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -169,6 +234,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y appstream desktop-file-utils libxml2-utils shared-mime-info lintian
       - name: Verify embedded HPS key build path
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: |
           if [[ -z "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
             echo "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux so encrypted HPS files work in the shipped package." >&2
@@ -204,21 +271,45 @@ jobs:
             exit "$test_status"
           fi
       - name: Build Debian package
-        run: install/linux/build-deb.sh
+        id: deb
+        env:
+          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
+        run: |
+          set -o pipefail
+          package="$(install/linux/build-deb.sh | tail -n 1)"
+          echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Validate Debian package
+        env:
+          DEB: ${{ steps.deb.outputs.path }}
         run: |
           desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
           appstreamcli validate --no-net install/linux/ai.occlutrace.OccluView.metainfo.xml
           xmllint --noout install/linux/occluview-mime.xml install/linux/ai.occlutrace.OccluView.metainfo.xml
-          dpkg-deb --info target/deb/*.deb
-          dpkg-deb --contents target/deb/*.deb
-          install/linux/check-deb.sh target/deb/*.deb
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+          install/linux/check-deb.sh "$DEB"
       - name: Write Linux checksums
         run: |
           for deb in target/deb/*.deb; do
             (cd "$(dirname "$deb")" && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
           done
-      - uses: actions/upload-artifact@v7.0.1
+      - name: Generate SBOM (Linux)
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.8 --locked
+          cargo cyclonedx --format json --override-filename sbom-linux
+          sbom=crates/occluview-app/sbom-linux.json
+          if [[ ! -f "$sbom" ]]; then
+            echo "cargo-cyclonedx produced no SBOM at $sbom." >&2
+            exit 1
+          fi
+          python3 - "$sbom" <<'PY'
+          import json, sys
+          described = json.load(open(sys.argv[1], encoding="utf-8"))["metadata"]["component"]["name"]
+          if described != "occluview-app":
+              raise SystemExit(f"SBOM describes {described!r}, not the shipped viewer.")
+          PY
+          cp "$sbom" target/deb/sbom-linux.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: occluview-linux-package
@@ -226,40 +317,91 @@ jobs:
           path: |
             target/deb/*.deb
             target/deb/*.sha256
+            target/deb/*.json
 
   publish:
     name: publish github release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+    timeout-minutes: 20
     needs:
       - windows-package
       - linux-package
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
+      - name: Resolve release tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            # Dry run: no tag exists, so take the version the packages were
+            # actually built from. Everything downstream then behaves exactly
+            # as it will on the real tag.
+            version=$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+              | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)
+            if [[ -z "$version" ]]; then
+              echo "Could not read the workspace version from Cargo.toml." >&2
+              exit 1
+            fi
+            tag="v$version"
+            echo "Dry run: using $tag from Cargo.toml."
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Write release notes
         run: |
           cat > dist/release-notes.md <<NOTES
-          OccluView $GITHUB_REF_NAME
+          OccluView $RELEASE_TAG
 
           Assets:
           - MSI installer: installs the Windows viewer, Explorer thumbnails, live Preview Pane handler, file associations, and the shared 3D file icon.
           - Portable ZIP: manual Windows launch only; it does not install Explorer thumbnails or file associations.
           - Debian package: installs the native Linux viewer, freedesktop launcher, MIME registration, icon, and thumbnailer.
 
-          Refer to the changelog and repository history for included changes.
+          All packages install LICENSE, NOTICE, THIRD-PARTY-NOTICES.md and
+          THIRD-PARTY-NOTICES-NATIVE.md (the statically linked C++ components,
+          which no Cargo-derived document covers).
+
+          Verify what you downloaded (run from the download directory):
+
+          \`\`\`
+          sha256sum -c <asset>.sha256
+          minisign -Vm <asset> -P RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq
+          gh attestation verify <asset> --repo occlutrace/OccluView
+          \`\`\`
+
+          The same key is published as occluview.pub in the repository and is
+          compiled into the updater. sbom-windows.json and sbom-linux.json list
+          every third-party component in the binaries.
           NOTES
+          # The changelog section for this version, verbatim, so the release
+          # page states what changed without a second hop.
+          version="${RELEASE_TAG#v}"
+          changes=$(awk -v ver="$version" '$0 ~ "^## "ver" " {flag=1; next} /^## /{flag=0} flag' CHANGELOG.md)
+          if [[ -z "${changes// /}" ]]; then
+            echo "CHANGELOG.md has no '## $version' section; the release page would say nothing." >&2
+            exit 1
+          fi
+          {
+            echo
+            echo "Changes:"
+            printf '%s\n' "$changes"
+          } >> dist/release-notes.md
       - name: Sign update artifacts and write latest.json
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
-          # The in-app updater trusts ONLY minisign-signed artifacts; a release
-          # without signatures would be invisible to installed clients, so fail
-          # loudly instead of shipping one.
           if [[ -z "$MINISIGN_SECRET_KEY" ]]; then
             echo "MINISIGN_SECRET_KEY secret is not configured." >&2
             exit 1
@@ -268,7 +410,7 @@ jobs:
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
 
-          tag="$GITHUB_REF_NAME"
+          tag="$RELEASE_TAG"
           version="${tag#v}"
           msi=$(find ./dist -type f -name '*.msi' | head -n1)
           zip=$(find ./dist -type f -name '*.zip' | head -n1)
@@ -319,17 +461,39 @@ jobs:
           minisign -S -s /tmp/minisign.key -m dist/latest.json
           rm -f /tmp/minisign.key
           echo "Update manifest:" && cat dist/latest.json
-
-      - name: Publish GitHub Release
+      - name: Verify the signatures against the key the updater ships
         run: |
-          tag="$GITHUB_REF_NAME"
-          version="${tag#v}"
+          # Verify with the public key compiled into installed copies.
+          pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
+            crates/occluview-update/src/lib.rs)
+          if [[ -z "$pubkey" ]]; then
+            echo "Could not read UPDATE_PUBKEY from crates/occluview-update/src/lib.rs." >&2
+            exit 1
+          fi
+          for file in dist/latest.json $(find ./dist -type f -name '*.minisig' -not -name 'latest.json.minisig' | sed 's/\.minisig$//'); do
+            minisign -V -P "$pubkey" -m "$file"
+            echo "Verified against the shipped public key: $file"
+          done
+      - name: Attest build provenance
+        if: ${{ !inputs.release_dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          # One explicit pattern per artifact: the action splits this list on
+          # commas and globs with brace expansion disabled, so a compact
+          # dist/*.{msi,zip,deb} matches nothing at all. The SBOM pattern is
+          # deliberately narrower than dist/*.json, which would also sweep
+          # latest.json, whose provenance is the minisign signature.
+          subject-path: |
+            dist/*.msi
+            dist/*.zip
+            dist/*.deb
+            dist/sbom-*.json
+      - name: Publish GitHub Release
+        if: ${{ !inputs.release_dry_run }}
+        run: |
+          tag="$RELEASE_TAG"
           release_flags=()
-          # 0.x releases are REAL releases, not GitHub prereleases: the in-app
-          # updater and the connector's bundled-install both resolve
-          # releases/latest/download/latest.json, and GitHub excludes
-          # prereleases from /latest (it would 404 until a 1.0 tag).
-          mapfile -d '' assets < <(find ./dist -type f \( -name '*.msi' -o -name '*.zip' -o -name '*.deb' -o -name '*.sha256' -o -name '*.minisig' -o -name 'latest.json' \) -print0 | sort -z)
+          mapfile -d '' assets < <(find ./dist -type f \( -name '*.msi' -o -name '*.zip' -o -name '*.deb' -o -name '*.sha256' -o -name '*.minisig' -o -name '*.json' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1

@@ -88,13 +88,35 @@ for deb in "$@"; do
   require_path "$root" "usr/share/mime/packages/occluview-mime.xml"
   require_path "$root" "usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"
   require_path "$root" "usr/share/icons/hicolor/512x512/apps/occluview.png"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/model-stl.svg"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/model-obj.svg"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/model-gltf-binary.svg"
+  require_path "$root" "usr/share/icons/hicolor/scalable/mimetypes/application-x-ply.svg"
+  require_path "$root" \
+    "usr/share/icons/hicolor/scalable/mimetypes/application-x-occluview-hps.svg"
   require_path "$root" "usr/share/doc/occluview/README.md"
   require_path "$root" "usr/share/doc/occluview/copyright"
+  require_path "$root" "usr/share/doc/occluview/NEWS.gz"
   require_path "$root" "usr/share/doc/occluview/changelog.gz"
+  require_path "$root" "usr/share/man/man1/occluview.1.gz"
+  require_path "$root" "usr/share/man/man1/occluview-cli.1.gz"
+  require_path "$root" "usr/share/doc/occluview/NOTICE"
+  require_path "$root" "usr/share/doc/occluview/USAGE.md"
+  require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
+  require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"
 
+  gzip -t "$root/usr/share/doc/occluview/NEWS.gz"
   gzip -t "$root/usr/share/doc/occluview/changelog.gz"
+  gzip -t "$root/usr/share/man/man1/occluview.1.gz"
+  gzip -t "$root/usr/share/man/man1/occluview-cli.1.gz"
   grep -F "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/" "$root/usr/share/doc/occluview/copyright" >/dev/null
   grep -F "/usr/share/common-licenses/Apache-2.0" "$root/usr/share/doc/occluview/copyright" >/dev/null
+  grep -F "THIRD-PARTY-NOTICES.md" "$root/usr/share/doc/occluview/copyright" >/dev/null
+  grep -F "SIL OPEN FONT LICENSE" "$root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md" >/dev/null
+  # Verify notices for statically linked native components.
+  for native in Manifold oneTBB Clipper2; do
+    grep -F "$native" "$root/usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md" >/dev/null
+  done
 
   grep -F "Exec=occluview %F" "$root/usr/share/applications/ai.occlutrace.OccluView.desktop" >/dev/null
   grep -F "MimeType=model/stl;model/obj;model/gltf-binary;" "$root/usr/share/applications/ai.occlutrace.OccluView.desktop" >/dev/null
@@ -125,7 +147,9 @@ for deb in "$@"; do
   check_ldd "$root/usr/bin/occluview-cli" "$tmp/occluview-cli.ldd"
 
   if command -v lintian >/dev/null 2>&1; then
-    lintian --fail-on error "$deb"
+    lintian --fail-on error \
+      --suppress-tags embedded-library,initial-upload-closes-no-bugs \
+      "$deb"
   else
     echo "lintian not found; skipping Debian policy validation"
   fi

@@ -208,11 +208,8 @@ if (-not $SkipBuild) {
     }
     if (Test-HasText $env:OCCLUVIEW_HPS_EMBEDDED_KEY) {
         Write-Host "Private HPS key embedding enabled for this build."
-        # BOTH the app AND the Explorer shell DLL must embed the key: the shell
-        # decodes encrypted (CE) HPS scans for thumbnails and the
-        # preview pane. Without the feature the shell cannot decrypt them and
-        # Explorer falls back to the neutral placeholder cube, even though the
-        # app opens the same file fine.
+        # The app and Explorer shell DLL both need the key to decode encrypted
+        # HPS scans for the viewer, thumbnails, and the preview pane.
         $cargoArgs += @("--features", "occluview-formats/private-hps-key")
         $shellCargoArgs += @("--features", "occluview-formats/private-hps-key")
     }
@@ -267,7 +264,19 @@ foreach ($path in $required) {
     }
 }
 
+# Parenthesised deliberately. Without them PowerShell parses this in command
+# mode: `Test-HasText` is invoked with `$env:GITHUB_REF`, the literal `-and`
+# and the comparison's result as three positional arguments, of which the
+# function declares one and silently discards the rest. The whole expression
+# then meant nothing more than "GITHUB_REF is set" -- so any CI run, on any
+# branch, counted as a tagged release and demanded a signing certificate.
+# That bites exactly where there is none: a fork, or the dispatch rehearsal
+# of the packaging job before secrets exist.
+$isTaggedRelease = (Test-HasText $env:GITHUB_REF) -and ($env:GITHUB_REF -like "refs/tags/v*")
 $resolvedSignMode = Resolve-SigningMode $SignMode
+if ($resolvedSignMode -eq "none" -and $isTaggedRelease) {
+    throw "Authenticode signing is required for tagged releases: no signing certificate configured (SignMode=$SignMode)."
+}
 if ($resolvedSignMode -eq "none") {
     Write-Host "Signing disabled: no signing certificate configured."
 } else {
