@@ -1,5 +1,6 @@
 # occluview-shell — Windows COM shell extension (thumbnail provider).
-# Depends on occluview-core, occluview-render, and occluview-formats.
+# Depends on occluview-core, occluview-render, occluview-formats, and
+# occluview-thumbnail.
 #
 # Builds as a `cdylib` (the COM DLL) AND a `rlib` (so tests + the app can call
 # into the same Rust logic). Target: x86_64-pc-windows-msvc.
@@ -42,14 +43,11 @@ features = [
     "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_System_Registry",
-    "Win32_System_Threading",
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",
     "Win32_UI_Shell_PropertiesSystem",
-    "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_Graphics_Imaging",
     "Win32_Graphics_Gdi",
 ]
 
@@ -60,5 +58,3 @@ features = [
 version = "0.58"
 
 [dev-dependencies]
-proptest = { workspace = true }
-zip      = { workspace = true }

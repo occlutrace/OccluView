@@ -29,4 +29,3 @@ occlu-mesh-edit = { workspace = true }
 occluview-robust-csg = { workspace = true, optional = true }
 
 [dev-dependencies]
-proptest = { workspace = true }

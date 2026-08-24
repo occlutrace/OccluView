@@ -4,10 +4,10 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() -> ExitCode {
     println!("cargo:rerun-if-env-changed=OCCLUVIEW_HPS_EMBEDDED_KEY");
+    println!("cargo:rerun-if-env-changed=OCCLUVIEW_HPS_KEY_SALT");
 
     let key = env::var("OCCLUVIEW_HPS_EMBEDDED_KEY")
         .ok()
@@ -19,7 +19,20 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let embedded = ObfuscatedKey::from_key(&key);
+    // The layout below is derived from the key and this salt, and from nothing
+    // else. It used to mix in the wall clock and the process id, which made the
+    // shipped binary irreproducible: same source, same key, same toolchain, two
+    // builds, two different SHA-256 sums. Everything else in the supply chain
+    // -- pinned actions, SBOMs, provenance, Authenticode, minisign -- answers
+    // "this came out of our pipeline"; that build script made "this matches
+    // this source" unanswerable, including for a rebuild of an old tag.
+    //
+    // If a release ever wants a different layout, it sets the salt explicitly
+    // and records it, which is a decision rather than a side effect of when the
+    // compiler happened to run.
+    let salt = env::var("OCCLUVIEW_HPS_KEY_SALT")
+        .unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").unwrap_or_default());
+    let embedded = ObfuscatedKey::from_key(&key, salt.as_bytes());
 
     let Some(out_dir) = env::var_os("OUT_DIR") else {
         println!("cargo:warning=OUT_DIR is not set by Cargo");
@@ -59,8 +72,8 @@ struct ObfuscatedKey {
 }
 
 impl ObfuscatedKey {
-    fn from_key(key: &[u8]) -> Self {
-        let mut prng = SplitMix64::new(seed_for_key(key));
+    fn from_key(key: &[u8], salt: &[u8]) -> Self {
+        let mut prng = SplitMix64::new(seed_for_key(key, salt));
         let Ok(key_len) = u8::try_from(key.len()) else {
             unreachable!("validated embedded HPS key length fits in u8");
         };
@@ -138,23 +151,15 @@ fn shuffle(values: &mut [u8], prng: &mut SplitMix64) {
     }
 }
 
-fn seed_for_key(key: &[u8]) -> u64 {
+/// FNV-1a over the key and the build salt. Deterministic by construction:
+/// the same two inputs always produce the same layout.
+fn seed_for_key(key: &[u8], salt: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in key {
+    for byte in key.iter().chain(b":".iter()).chain(salt.iter()) {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| low_u64_from_u128(duration.as_nanos()));
-    hash ^ now.rotate_left(17) ^ u64::from(std::process::id()).rotate_left(32)
-}
-
-fn low_u64_from_u128(value: u128) -> u64 {
-    let bytes = value.to_le_bytes();
-    let mut low = [0_u8; 8];
-    low.copy_from_slice(&bytes[..8]);
-    u64::from_le_bytes(low)
+    hash
 }
 
 struct SplitMix64 {
