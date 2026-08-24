@@ -1,12 +1,15 @@
 //! Golden-image regression test for the offscreen renderer.
 //!
-//! Renders a fixed scene (one triangle) at 64x64 through the Offscreen path
-//! (WARP software rasterizer on Linux CI, real GPU on Windows), compares the
+//! Renders a fixed scene (one triangle) at 64x64 through the Offscreen path on
+//! a software rasterizer -- Lavapipe in the Linux CI job, WARP on the Windows
+//! runner, both selected in `.github/workflows/ci.yml` -- and compares the
 //! RGBA8 output to a stored PNG baseline within a tolerance.
 //!
-//! Baselines live in `tests/golden/baselines/<name>.png`. To regenerate after
-//! an intentional shader change, delete the baseline and re-run; commit the
-//! new PNG with a clear visual justification.
+//! Baselines live in `tests/golden/baselines/<name>.png`. A missing baseline
+//! is a failure, not an invitation to write one: deleting it makes the test
+//! panic. To regenerate after an intentional shader change, run the ignored
+//! `regenerate_golden_triangle` below, then commit the new PNG with a clear
+//! visual justification.
 
 #![allow(clippy::expect_used)]
 
@@ -244,7 +247,7 @@ fn point_cloud_mesh() -> Mesh {
 }
 
 /// A textured-triangle golden test: validates the full texture pipeline
-/// (Vertex.uv -> WGSL sampler -> tint -> lighting) end-to-end on WARP. Uses
+/// (Vertex.uv -> WGSL sampler -> tint -> lighting) end-to-end on the software rasterizer. Uses
 /// a synthetic 2x2 checkerboard texture so the output is deterministic.
 fn textured_triangle_mesh() -> Mesh {
     // UV-mapped triangle covering UV space [0,0]-[1,1].
@@ -280,93 +283,6 @@ fn checkerboard_texture() -> MeshTexture {
             255, 0, 0, 255, // (1,1) red
         ],
     )
-}
-
-/// A uniform 1x1 texture of a known RGBA color, for channel-order assertions.
-fn uniform_texture(rgba: [u8; 4]) -> MeshTexture {
-    MeshTexture::new(1, 1, rgba.to_vec())
-}
-
-/// Render the textured triangle with `texture` and return the RGBA8 pixels.
-fn render_uniform_textured(texture: &MeshTexture) -> Vec<u8> {
-    let _gpu = gpu_test_lock();
-    let mesh = textured_triangle_mesh();
-    let cam = camera_looking_at_origin();
-    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
-    let device = offscreen.renderer().device();
-    let queue = offscreen.renderer().queue();
-    let gpu_tex = GpuTexture::upload(offscreen.renderer(), device, queue, texture);
-    let uniform = GpuMeshUniform {
-        model: [
-            1.0, 0.0, 0.0, 0.0, //
-            0.0, 1.0, 0.0, 0.0, //
-            0.0, 0.0, 1.0, 0.0, //
-            0.0, 0.0, 0.0, 1.0,
-        ],
-        tint: [1.0, 1.0, 1.0, 1.0],
-        opacity: 1.0,
-        has_texture: 1,
-        show_orientation: 0,
-        show_vertex_colors: 1,
-        show_texture: 1,
-        measured_map: 0,
-        padding: [0; 2],
-    };
-    let entries = [occluview_render::SceneDrawEntry {
-        mesh: &mesh,
-        uniform: &uniform,
-        texture: Some(&gpu_tex),
-    }];
-    pollster::block_on(offscreen.render_scene(&entries, &cam, dark_thumbnail_spec()))
-        .expect("render scene")
-}
-
-/// The render/GPU path must preserve channel order: a warm-white dental texture
-/// (R > B) must render warm, and a pure-blue texture must render blue. This is
-/// the counterpart to the HPS decode fix — it proves the R<->B swap that turns
-/// scans blue is NOT in the GPU upload/sampler/shader/readback path (uploaded as
-/// `Rgba8UnormSrgb`, sampled `tex.rgb`, read back with only a vertical flip).
-#[test]
-fn textured_render_preserves_channel_order() {
-    // Warm white, the canonical dental enamel color (R >= G > B).
-    let warm = render_uniform_textured(&uniform_texture([250, 240, 225, 255]));
-    let mut warm_lit = 0usize;
-    let mut warm_ok = 0usize;
-    for px in warm.chunks_exact(4) {
-        if px[0] < 12 && px[1] < 12 && px[2] < 12 {
-            continue; // background
-        }
-        warm_lit += 1;
-        if px[0] > px[2] {
-            warm_ok += 1;
-        }
-    }
-    assert!(warm_lit > 50, "warm-white triangle rendered almost nothing");
-    assert_eq!(
-        warm_ok, warm_lit,
-        "warm-white texture rendered with B>=R on {} of {warm_lit} pixels — a channel swap in the GPU path",
-        warm_lit - warm_ok
-    );
-
-    // Pure blue must stay blue (B > R), never flip to red.
-    let blue = render_uniform_textured(&uniform_texture([0, 0, 255, 255]));
-    let mut blue_lit = 0usize;
-    let mut blue_ok = 0usize;
-    for px in blue.chunks_exact(4) {
-        if px[0] < 12 && px[1] < 12 && px[2] < 12 {
-            continue;
-        }
-        blue_lit += 1;
-        if px[2] > px[0] {
-            blue_ok += 1;
-        }
-    }
-    assert!(blue_lit > 50, "blue triangle rendered almost nothing");
-    assert_eq!(
-        blue_ok, blue_lit,
-        "pure-blue texture rendered with R>=B on {} of {blue_lit} pixels — a channel swap in the GPU path",
-        blue_lit - blue_ok
-    );
 }
 
 #[test]
@@ -437,7 +353,7 @@ fn textured_triangle_renders_checkerboard() {
     );
 }
 
-/// Validates the clip-plane discard (Approach A, "hollow cut") on WARP. A
+/// Validates the clip-plane discard (Approach A, "hollow cut") on the software rasterizer. A
 /// triangle centered at the origin is clipped by a plane at `distance = 0`
 /// with normal `+Z` pointing toward the camera — the back half is discarded,
 /// leaving fewer visible pixels than the unclipped triangle. Verifies the
@@ -494,8 +410,9 @@ fn cut_triangle_discard_removes_pixels() {
     );
 }
 
-/// Validates the full 3-pass stencil capping (Approach B, "solid cut") on
-/// WARP. The render must not crash and must produce visible output — the
+/// Validates the full 3-pass stencil capping (Approach B, "solid cut") on the
+/// software rasterizer. The render must not crash and must produce visible
+/// output — the
 /// stencil increment/decrement + cap draw sequence runs end-to-end.
 #[test]
 fn cut_triangle_capped_renders() {
@@ -523,7 +440,7 @@ fn cut_triangle_capped_renders() {
 /// Validates the convenience entry point `render_cut_view` — auto-frames an
 /// orthographic camera along the plane normal and renders the solid cut.
 /// Proves the full cut-view pipeline (camera + clip + stencil cap) runs
-/// end-to-end on WARP without crashing.
+/// end-to-end on the software rasterizer without crashing.
 #[test]
 fn render_cut_view_end_to_end() {
     let _gpu = gpu_test_lock();

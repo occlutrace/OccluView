@@ -1,9 +1,10 @@
 use super::super::{
-    e_fail, DefWindowProcW, GetModuleHandleW, RegisterClassW, ReleaseCapture, SetCapture,
-    SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HINSTANCE,
-    HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME, WM_CANCELMODE,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WPARAM,
+    com_entry, e_fail, own_pinned_dll_module, DefWindowProcW, RegisterClassW, ReleaseCapture,
+    SetCapture, SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+    HINSTANCE, HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME,
+    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SIZE, WNDCLASSW, WPARAM,
 };
 
 /// Virtual-key code for the `F` (fit view) shortcut.
@@ -14,7 +15,7 @@ use super::{PreviewDragMode, PreviewHandler};
 
 pub(super) fn ensure_preview_window_class() -> windows::core::Result<()> {
     let init = PREVIEW_WINDOW_CLASS.get_or_init(|| {
-        let module = unsafe { GetModuleHandleW(None) }.map_err(|_| e_fail())?;
+        let module = own_pinned_dll_module().map_err(|_| e_fail())?;
         let class = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             lpfnWndProc: Some(preview_window_proc),
@@ -32,8 +33,28 @@ pub(super) fn ensure_preview_window_class() -> windows::core::Result<()> {
     init.map_err(windows::core::Error::from_hresult)
 }
 
-#[allow(clippy::too_many_lines)]
+/// The preview child wndproc. Every pointer, paint, and resize interaction
+/// funnels through here, so this is a COM-ABI-equivalent boundary: a panic
+/// unwinding out of this `extern "system"` fn aborts the whole `prevhost`
+/// surrogate. `com_entry` converts a panic into a no-op `LRESULT(0)` — a
+/// degraded frame beats taking down every preview the host is serving.
 unsafe extern "system" fn preview_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    com_entry(
+        "preview_window_proc",
+        || LRESULT(0),
+        // SAFETY: the closure runs on the same thread inside the same call;
+        // pointer parameters keep their validity contract.
+        || unsafe { preview_window_proc_body(hwnd, message, wparam, lparam) },
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+unsafe fn preview_window_proc_body(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
@@ -162,9 +183,45 @@ unsafe extern "system" fn preview_window_proc(
                 return LRESULT(0);
             }
         }
+        WM_NCDESTROY => {
+            // The other direction: Explorer destroyed the parent, so this child
+            // died with it and the handler is still holding its HWND. Left
+            // stale, a later `Unload` would call `DestroyWindow` on a handle
+            // the system has since reused. Clear both ends here -- the
+            // handler's cell, and the raw pointer this window holds -- so
+            // neither side can reach the other again.
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                if handler.preview_hwnd.get() == hwnd {
+                    handler.preview_hwnd.set(HWND::default());
+                }
+            }
+            // SAFETY: clearing the slot this wndproc set at WM_NCCREATE.
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0)
+            };
+        }
         _ => {}
     }
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+
+/// Whether `hwnd` still carries `handler` as its back-pointer.
+///
+/// The one question that can be answered safely after a modal message pump.
+/// `TrackPopupMenuEx` pumps this apartment, so the host can call `Unload` and
+/// release the handler while the menu is up: the object is freed and the frame
+/// that opened the menu is still on the stack, because `Drop` destroys the
+/// window rather than unwinding its caller. `destroy_preview_window` clears
+/// this slot before destroying the window, so a cleared or reassigned slot is
+/// exactly the signal that the pointer in hand is no longer the live handler.
+/// Only the pointer VALUE is compared; nothing is dereferenced.
+pub(super) fn window_owns_handler(hwnd: HWND, handler: *const PreviewHandler) -> bool {
+    // SAFETY: reads the back-pointer slot this module sets at WM_NCCREATE.
+    let stored = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
+            as *const PreviewHandler
+    };
+    !stored.is_null() && std::ptr::eq(stored, handler)
 }
 
 fn preview_handler_from_hwnd(hwnd: HWND) -> Option<&'static PreviewHandler> {

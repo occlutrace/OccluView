@@ -137,19 +137,14 @@ fn render_measured_dome(mesh: &Mesh) -> Vec<u8> {
         .expect("render scene")
 }
 
-/// The deviation ramp's two ends, as `occluview-align` defines them. Duplicated
-/// deliberately: this test asks whether the RENDERER changes a colour handed to
-/// it, so it must not read the answer from the same place the app does.
+/// Deviation ramp endpoints as defined by `occluview-align`.
 const COLD_END: [u8; 4] = [20, 50, 235, 255];
 const HOT_END: [u8; 4] = [252, 30, 18, 255];
 
 /// The colours that reach the screen are the colours that were uploaded.
 ///
-/// A measured map is a reading: an operator matches a colour on the surface
-/// against a number on the legend. The only thing the shader may do to it is
-/// scale all three channels together for form (`MEASURED_MAP_SHADE`) — any
-/// per-channel change, tint, or texture blend would silently move the reading.
-/// So every covered pixel must be the uploaded colour times ONE shared factor.
+/// The shader may scale all channels by one shade factor, but must not tint or
+/// blend the measured color.
 #[test]
 fn a_measured_map_reaches_the_screen_in_the_colour_it_was_uploaded_in() {
     let _gpu = gpu_test_lock();
@@ -187,10 +182,7 @@ fn a_measured_map_reaches_the_screen_in_the_colour_it_was_uploaded_in() {
     }
 }
 
-/// A real registration error has to READ as one. The third bug this file exists
-/// for was a ramp default that painted every good result one flat blue, which
-/// an operator reads as a broken tool rather than a clean fit. A surface whose
-/// deviation sweeps the ramp must arrive on screen sweeping it too.
+/// A surface whose deviation sweeps the ramp must retain that transition.
 #[test]
 fn a_swept_deviation_arrives_on_screen_as_a_transition() {
     let _gpu = gpu_test_lock();

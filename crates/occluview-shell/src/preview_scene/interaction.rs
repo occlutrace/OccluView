@@ -6,9 +6,7 @@ use occluview_core::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Aabb, Camera, CameraPreset,
 };
 
-/// Smallest orthographic height we will fit to, mirroring the core camera's own
-/// floor (which is `pub(super)` there and not importable here).
-const MIN_ORTHOGRAPHIC_HEIGHT_MM: f32 = 0.01;
+use occluview_core::{BBOX_FRAME_FILL, MIN_ORTHOGRAPHIC_HEIGHT_MM};
 
 /// Classic isometric elevation, `atan(1/sqrt(2))` ≈ 35.264°: the pitch that puts
 /// three cube faces at equal foreshortening.
@@ -108,9 +106,10 @@ impl PreviewSceneState {
         let radius = (0.5 * bbox.size().length()).max(1.0);
         let half_fov = 0.5 * self.camera.fovy;
         self.camera.target = bbox.center();
-        self.camera.orthographic_height = (radius * 2.0 / 0.7).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
+        self.camera.orthographic_height =
+            (radius * 2.0 / BBOX_FRAME_FILL).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
         self.camera.distance = if half_fov > 1e-5 {
-            radius / half_fov.tan() / 0.7
+            radius / half_fov.tan() / BBOX_FRAME_FILL
         } else {
             radius * 2.0
         };
@@ -127,7 +126,7 @@ impl PreviewSceneState {
         let Some(target) = self
             .scene
             .pick_ray(origin, direction)
-            .or_else(|| ray_aabb_entry(origin, direction, bbox))
+            .or_else(|| bbox.ray_entry(origin, direction))
         else {
             return false;
         };
@@ -164,40 +163,6 @@ fn viewport_ray(camera: &Camera, viewport_px: Vec2, pointer_px: Vec2) -> Option<
     let half_width = half_height * (width / height);
     let origin = eye + right * x * half_width + up * y * half_height;
     Some((origin, forward))
-}
-
-fn ray_aabb_entry(origin: Vec3, direction: Vec3, bbox: Aabb) -> Option<Vec3> {
-    let mut t_min = 0.0_f32;
-    let mut t_max = f32::INFINITY;
-    for axis in 0..3 {
-        let o = origin[axis];
-        let d = direction[axis];
-        let min = bbox.min[axis];
-        let max = bbox.max[axis];
-        if d.abs() <= f32::EPSILON {
-            if o < min || o > max {
-                return None;
-            }
-            continue;
-        }
-        let inv = 1.0 / d;
-        let mut t0 = (min - o) * inv;
-        let mut t1 = (max - o) * inv;
-        if t0 > t1 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        t_min = t_min.max(t0);
-        t_max = t_max.min(t1);
-        if t_max < t_min {
-            return None;
-        }
-    }
-    let t = if t_min >= 0.0 { t_min } else { t_max };
-    if t.is_finite() && t >= 0.0 {
-        Some(origin + direction * t)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
@@ -368,12 +333,8 @@ mod tests {
         );
     }
 
-    /// The input adapter MUST stay identity. The preview orbits correctly only
-    /// because its PRESENTED buffer is corrected to the app convention (see the
-    /// parity map on `render::present_app_convention_rows`). Reintroducing a sign
-    /// flip HERE would re-invert the pane on top of that fix — the exact
-    /// leap-frog that made this bug recur. Vertical parity is owned by the
-    /// present path, not the input; keep this raw.
+    /// Pointer motion is passed unchanged to the shared camera mapping. Vertical
+    /// orientation is corrected when the rendered buffer is presented.
     #[test]
     fn win32_preview_orbit_delta_is_not_reversed_before_shared_camera_mapping() {
         let pointer_delta = Vec2::new(48.0, 30.0);
