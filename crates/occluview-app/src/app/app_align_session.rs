@@ -1,9 +1,4 @@
-//! The Align Scans session: what Cancel and Done mean.
-//!
-//! Split from `app_align` because it answers a different question. That module
-//! routes clicks and jobs; this one owns the transaction the operator commits or
-//! throws away. Fading the un-mapped scan used to live here too, and moved to
-//! `app_align_display` — every caller was already there.
+//! Align Scans session commit and rollback behavior.
 
 use eframe::egui;
 use occluview_core::SceneMeshId;
@@ -15,13 +10,8 @@ use glam::Affine3A;
 impl OccluViewApp {
     /// Close the tool and put every scan back where the session found it.
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
-        // An open hand gesture is dropped, not committed. Escape is read before
-        // the drag handler, so the mouse button can still be down here. Restoring
-        // first and closing the gesture afterwards — which is what the teardown
-        // below does — made the release write a history step out of a pose that
-        // the restore had already replaced: a state the scene had never actually
-        // been in, recorded as the operator's own edit, and the scene marked
-        // unsaved for a Cancel that changed nothing.
+        // Drop an active drag before restoring session poses so Cancel cannot
+        // record the discarded gesture as an undo step.
         self.align_drag = None;
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
@@ -35,12 +25,8 @@ impl OccluViewApp {
     /// Close the tool and keep what it did.
     pub(super) fn finish_align_session(&mut self, ctx: &egui::Context) {
         let moved = self.align_session_moved();
-        // Read before the teardown, which cancels it. Done is deliberately never
-        // greyed out — a window whose only two exits are disabled reads as a hang
-        // — so an operator can close over a fit that is still computing, and that
-        // fit is then discarded. It used to be discarded in silence, and the
-        // result was a session that closed reporting success at the pose from
-        // before the fit they had just asked for.
+        // Read before teardown cancels the worker so the status can report a
+        // fit that was still running when the session closed.
         let running = self
             .align_worker
             .as_ref()

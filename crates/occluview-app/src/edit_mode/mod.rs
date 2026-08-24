@@ -35,9 +35,8 @@ pub(crate) struct EditModeController {
     state: EditModeState,
     undo: UndoStack<MeshEditUndoSnapshot>,
     selections: FaceSelectionSet,
-    /// Temporary compatibility target for unchanged app call sites. The
-    /// canonical selection state does not use an active target.
-    compatibility_layer_id: Option<SceneMeshId>,
+    /// Layer targeted by single-layer selection commands.
+    active_layer_id: Option<SceneMeshId>,
     next_token: u64,
     /// Which primary-gesture the selection is in (marquee / lasso / object).
     /// Mutually exclusive: the three cannot be armed at once. Default
@@ -78,7 +77,7 @@ impl EditModeController {
             state: EditModeState::default(),
             undo: UndoStack::new(max_undo_count, max_undo_bytes),
             selections: FaceSelectionSet::default(),
-            compatibility_layer_id: None,
+            active_layer_id: None,
             next_token: 1,
             gesture: SelectGesture::default(),
             through_mesh: false,

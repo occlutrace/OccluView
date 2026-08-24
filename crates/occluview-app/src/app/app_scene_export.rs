@@ -1,8 +1,4 @@
-//! Whole-scene export: posing a layer's geometry and writing the scene out.
-//!
-//! Split from `app_mesh_export` because these answer a different question. That
-//! module writes one chosen layer; this one bakes a layer's placement into its
-//! geometry and writes the scene the operator is actually looking at.
+//! Whole-scene export with each visible layer's pose baked into its geometry.
 
 use super::app_mesh_export::{
     default_layer_export_directory, default_layer_export_format, layer_export_file_dialog,

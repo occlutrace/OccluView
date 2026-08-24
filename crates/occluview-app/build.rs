@@ -1,10 +1,8 @@
 //! Windows resource embedding for the `occluview.exe` GUI binary.
 //!
-//! Two hand-kept copies of this plumbing exist, because build scripts cannot
-//! share code without a dedicated build-dependency crate:
+//! Keep the corresponding resource definitions synchronized with:
 //! `crates/occluview-cli/build.rs` (the console binaries) and
-//! `crates/occluview-shell/build.rs` (the Explorer DLL). A change here almost
-//! always belongs in both.
+//! `crates/occluview-shell/build.rs` (the Explorer DLL).
 
 #![allow(clippy::print_stdout)]
 

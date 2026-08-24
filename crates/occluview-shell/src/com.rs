@@ -37,15 +37,15 @@
 
 use crate::deferred_source::DeferredSource;
 use crate::preview_scene::{win32_preview_orbit_delta, PreviewSceneState};
-use crate::render_thumb::{
-    placeholder_for_oversize_input, reserve_thumbnail_stream_job, try_render_thumbnail_file,
-    try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, DEFAULT_THUMBNAIL_TIMEOUT,
-    MAX_THUMBNAIL_INPUT_BYTES,
-};
 use crate::stream_read::{read_capped_stream, StreamRead};
 use crate::ShellError;
 use glam::Vec2;
 use occluview_render::ThumbnailSpec;
+use occluview_thumbnail::render_thumb::{
+    placeholder_for_oversize_input, reserve_thumbnail_stream_job, try_render_thumbnail_file,
+    try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, DEFAULT_THUMBNAIL_TIMEOUT,
+    MAX_THUMBNAIL_INPUT_BYTES,
+};
 use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -173,7 +173,7 @@ fn spawn_renderer_prewarm(class: &GUID) {
         THUMBNAIL_RENDERER_PREWARM.get_or_init(|| {
             let _ = std::thread::Builder::new()
                 .name("occluview-thumbnail-prewarm".to_string())
-                .spawn(crate::render_thumb::prewarm_thumbnail_renderer);
+                .spawn(occluview_thumbnail::render_thumb::prewarm_thumbnail_renderer);
         });
     } else if *class == OCCLUVIEW_PREVIEW_GUID {
         PREVIEW_RENDERER_PREWARM.get_or_init(|| {

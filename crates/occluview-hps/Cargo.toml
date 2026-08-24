@@ -13,6 +13,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["md-5"] # imported under its Rust crate name, `md5`
+
 [features]
 default = []
 # Private/offline builds may embed an obfuscated HPS key generated only in
