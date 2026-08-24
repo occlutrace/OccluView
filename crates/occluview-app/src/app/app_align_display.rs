@@ -1,19 +1,5 @@
-//! Getting per-vertex colours onto the screen, and off it again.
-//!
-//! Split from `app_align` because it answers a different question. That module
-//! routes clicks and jobs; this one owns the display overlay — what is attached
-//! to the scene, what is uploaded, and what is put back when it goes away.
-//!
-//! Every path here is on the operator's hand. An overlay is a colour change:
-//! the mesh does not move, its topology does not change, and nothing about the
-//! scan is edited. So none of it goes through `set_scene`, which treats the
-//! scene as replaced — dropping the prepared GPU scene, clearing measurements,
-//! and copying every mesh in the process. On a 945k-vertex arch that copy alone
-//! was seventy milliseconds, and the rebuild that followed it sixty more, for a
-//! change of four bytes per vertex.
-//!
-//! Two layers can carry an overlay at once, because both meshes in an alignment
-//! can carry markings.
+//! Attach and upload per-vertex alignment colours without replacing scene
+//! geometry. Both layers may carry an overlay.
 
 use std::sync::Arc;
 
@@ -28,11 +14,7 @@ const GHOST_OPACITY: f32 = 0.16;
 
 use super::OccluViewApp;
 
-/// What the per-vertex colours currently mean.
-///
-/// One colour channel, two things that want it: the measured map and the
-/// markings. Without a name for which one is up, dropping a stale map also
-/// wiped the brush's own preview mid-stroke.
+/// Meaning of the current per-vertex colours.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AlignOverlay {
     /// The meshes show their own colours.
@@ -68,11 +50,9 @@ impl OccluViewApp {
         kind: AlignOverlay,
     ) -> bool {
         let shared = Arc::new(colors);
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return false;
         };
-        // In place: the app holds the only reference, so nothing is copied.
-        let live = Arc::make_mut(scene);
         let Some(entry) = live
             .meshes_mut()
             .iter_mut()
@@ -80,18 +60,14 @@ impl OccluViewApp {
         else {
             return false;
         };
-        // Colours of the wrong length are not this layer's. Stretching them
-        // over whatever vertices are there would be colour presented as
-        // measurement.
+        // A colour array must match the layer's vertex count.
         if entry.mesh.vertices().len() != shared.len() {
             return false;
         }
         entry.set_deviation(Some(Arc::clone(&shared)));
         self.set_overlay_colors(layer, shared);
         self.align_overlay = kind;
-        // A material change, not a scene replacement: the prepared GPU scene
-        // survives and only the per-layer uniform is rewritten, which is what
-        // turns the layer into a measured map in the shader.
+        // Change only the material data; preserve the prepared scene.
         self.mark_scene_materials_changed();
         self.deviation_push_pending = true;
         true
@@ -99,16 +75,12 @@ impl OccluViewApp {
 
     /// Rewrite only the vertices the last dab touched, and upload only those.
     ///
-    /// The hot path of the brush. A dab the size of a cusp touches a few
-    /// hundred vertices out of a million; going through the full attach above
-    /// would repaint and re-upload all of them, thirty-four megabytes each way,
-    /// which is what made painting run at three frames a second.
-    /// `recolor` is asked only for the vertices that changed, so a dab never
-    /// walks a million-entry array to rewrite six hundred of them.
+    /// Update only touched vertices and upload the sparse change.
     pub(super) fn patch_overlay_colors(
         &mut self,
         layer: SceneMeshId,
-        recolor: impl Fn(usize) -> [u8; 4],
+        touched: &[u32],
+        patched: &[[u8; 4]],
     ) -> bool {
         let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
         else {
@@ -118,9 +90,7 @@ impl OccluViewApp {
             return false;
         };
         let count = entry.mesh.vertices().len();
-        // Both the stored colours and the scratch buffer have to already hold
-        // this mesh, or there is nothing to patch INTO and the caller has to
-        // take the full path instead.
+        // The stored colours and scratch buffer must match this mesh.
         let Some(slot) = self
             .align_overlay_colors
             .iter_mut()
@@ -132,26 +102,28 @@ impl OccluViewApp {
             return false;
         }
 
-        // In place through `Arc::make_mut`: the app holds the only reference
-        // outside the scene's own, and the scene's is replaced below.
-        //
-        // The list belongs to the markings, which produced it. Borrowed rather
-        // than stolen: a `mem::take` here left the markings holding an empty
-        // list for the rest of the frame, so anything else that asked what the
-        // last dab touched was told "nothing".
-        let touched = self.align_markings.touched().to_vec();
+        // Require one replacement colour per touched vertex.
+        if touched.len() != patched.len() {
+            return false;
+        }
         let colors = Arc::make_mut(&mut slot.1);
-        for index in &touched {
-            let at = *index as usize;
-            if let Some(entry) = colors.get_mut(at) {
-                *entry = recolor(at);
+        for (index, colour) in touched.iter().zip(patched) {
+            if let Some(entry) = colors.get_mut(*index as usize) {
+                *entry = *colour;
             }
         }
         let shared = Arc::clone(&slot.1);
 
-        // The scene keeps the whole array so a GPU rebuild can restore it.
-        if let Some(live) = self.scene.as_mut() {
-            let live = Arc::make_mut(live);
+        // Finish reads through the cloned scene before editing the live scene.
+        let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
+        let painted = self
+            .align_painted
+            .patch(&entry.mesh, &shared, touched)
+            .map(<[_]>::to_vec);
+        drop(scene);
+
+        // Retain the full array so a later GPU rebuild can restore it.
+        if let Some(live) = self.live_scene_mut() {
             if let Some(entry) = live
                 .meshes_mut()
                 .iter_mut()
@@ -161,11 +133,10 @@ impl OccluViewApp {
             }
         }
 
-        let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
-        if let Some(painted) = self.align_painted.patch(&entry.mesh, &shared, &touched) {
+        if let Some(painted) = painted {
             let indices: Vec<usize> = touched.iter().map(|index| *index as usize).collect();
             if let Ok(viewport) = live_viewport.lock() {
-                viewport.write_scene_vertices_sparse(&topology, painted, &indices);
+                viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
             }
         }
         self.needs_render = true;
@@ -206,8 +177,7 @@ impl OccluViewApp {
                 continue;
             };
             let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
-            // Repainted into a buffer that is already the right shape, rather
-            // than built afresh: only the colour of each vertex changed.
+            // Reuse the existing buffer; only vertex colours changed.
             let Some(painted) = self.align_painted.repaint(&entry.mesh, &colors) else {
                 wrote = false;
                 continue;
@@ -224,12 +194,7 @@ impl OccluViewApp {
     /// Drop every overlay and restore the meshes' own colours.
     pub(super) fn clear_deviation_overlay(&mut self) {
         self.align_overlay = AlignOverlay::Nothing;
-        // Unconditionally, ahead of the early return below. Fading the other scan
-        // and colouring this one are two separate mutations, and a teardown that
-        // skipped the fade whenever the colour list happened to be empty would
-        // leave one arch sitting at sixteen per cent opacity with no tool
-        // claiming it — which reads as a scan that has been switched off. Cheap:
-        // it returns immediately when nothing is faded.
+        // Restore the other layer even when no colour array remains.
         self.unghost_layers();
         if self.align_overlay_colors.is_empty() {
             return;
@@ -238,10 +203,9 @@ impl OccluViewApp {
         // A push still standing would chase colours that no longer exist.
         self.deviation_push_pending = false;
         self.align_painted.clear();
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        let live = Arc::make_mut(scene);
         let overlaid: Vec<SceneMeshId> = live
             .meshes_mut()
             .iter_mut()
@@ -286,20 +250,13 @@ impl OccluViewApp {
         }
     }
 
-    // The four items below moved here from the session module: every caller is
-    // in this one, because they are display and not session.
-    /// Which layer carries the map: the one that moved.
-    ///
-    /// There used to be a control that put the map on the other surface
-    /// instead. It asked the operator a rendering question dressed up as a
-    /// measurement one — the distances are the same either way — so it is gone,
-    /// and the answer is now always "the scan you are placing".
+    // Display helpers.
+    /// The moving layer carries the map.
     pub(super) fn align_mapped_layer(&self) -> Option<SceneMeshId> {
         self.align.moving_layer()
     }
 
-    /// The layer the map is *not* on, which is the one that has to get out of
-    /// the way.
+    /// The fixed layer, which is ghosted while the map is shown.
     fn align_other_layer(&self) -> Option<SceneMeshId> {
         self.align.fixed_layer()
     }
@@ -316,13 +273,10 @@ impl OccluViewApp {
         let Some(other) = self.align_other_layer() else {
             return;
         };
-        let Some(scene) = self.scene.as_mut() else {
+        // Opacity is a material change; preserve the scene structure.
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        // Opacity is a material, not a structure: mutate the live scene in
-        // place rather than replacing it, or fading one layer would copy every
-        // mesh in the scene and force a full GPU rebuild.
-        let live = Arc::make_mut(scene);
         let mut remembered = Vec::new();
         for entry in live.meshes_mut() {
             if entry.id() == other {
@@ -343,10 +297,9 @@ impl OccluViewApp {
             return;
         }
         let restore = std::mem::take(&mut self.align_ghosted);
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        let live = Arc::make_mut(scene);
         for (id, opacity) in restore {
             if let Some(entry) = live.meshes_mut().iter_mut().find(|entry| entry.id() == id) {
                 entry.opacity = opacity;
@@ -360,17 +313,16 @@ impl OccluViewApp {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    /// The production half of this file: a source-contract test that scanned
-    /// its own assertions would pass or fail on its own text.
+    /// Source before the test module.
     fn production() -> &'static str {
-        let source = include_str!("app_align_display.rs");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_align_display.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)
     }
 
-    /// An overlay is a display layer. Writing it into the mesh would corrupt
-    /// the scan's own colours and leak into every export.
+    /// An overlay must not mutate CPU mesh colours or exports.
     #[test]
     fn an_overlay_never_touches_the_cpu_mesh() {
         let source = production();
@@ -384,10 +336,7 @@ mod tests {
         );
     }
 
-    /// A colour change is not a scene replacement. `set_scene` copies every
-    /// mesh, drops the prepared GPU scene, and clears the measure tool — none
-    /// of which a re-colour has any business doing, and all of which the
-    /// operator pays for on every dab.
+    /// Re-colouring must not replace the scene.
     #[test]
     fn showing_and_hiding_an_overlay_never_replaces_the_scene() {
         let source = production();
@@ -396,13 +345,17 @@ mod tests {
             "an overlay must go through the material path, not set_scene"
         );
         assert!(
-            source.contains("Arc::make_mut(scene)"),
+            source.contains("self.live_scene_mut()"),
             "the live scene is mutated in place, not cloned per re-colour"
+        );
+        assert!(
+            !source.contains("Arc::make_mut(scene)"),
+            "in-place scene edits go through live_scene_mut, which asserts the \
+             handle is sole; bypassing it reintroduces a silent full copy"
         );
     }
 
-    /// The upload buffer is kept between re-colours. Rebuilding it allocated
-    /// and copied thirty-four megabytes every time anything changed.
+    /// Re-colouring reuses the upload buffer.
     #[test]
     fn the_upload_buffer_is_repainted_not_rebuilt() {
         let source = production();
@@ -427,8 +380,14 @@ mod tests {
             .and_then(|rest| rest.split_once("\n    /// Remember one layer"))
             .map(|(body, _)| body)
             .expect("a sparse patch path");
-        assert!(patch.contains("self.align_painted.patch("));
+        assert!(patch.contains(".align_painted") && patch.contains(".patch("));
         assert!(patch.contains("write_scene_vertices_sparse("));
+        // Same rule as above: release the cloned handle before the in-place
+        // edit.
+        assert!(
+            crate::primary_ui_tests::appears_before(patch, "drop(scene);", "self.live_scene_mut()",),
+            "the cloned scene handle must be dropped before the in-place edit"
+        );
         assert!(
             !patch.contains("self.align_painted.repaint("),
             "the sparse path must not fall back to a full repaint silently"

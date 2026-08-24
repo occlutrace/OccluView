@@ -56,7 +56,7 @@ fn controller_sync_to_scene_clears_selection_when_topology_changes() {
     let Some(single_triangle) = triangle_mesh("single") else {
         return;
     };
-    scene.meshes_mut()[0].mesh = single_triangle;
+    scene.meshes_mut()[0].mesh = std::sync::Arc::new(single_triangle);
     controller.sync_to_scene(&scene);
     assert_eq!(controller.selected_layer_id(), None);
 }

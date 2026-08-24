@@ -242,7 +242,8 @@ mod tests {
     use crate::align_markings::MaskCommand;
 
     fn production() -> &'static str {
-        let source = include_str!("align_panel_brush.rs");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("align_panel_brush.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)

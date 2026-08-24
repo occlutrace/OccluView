@@ -1,28 +1,6 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-fn collect_rust_source_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(directory)
-        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("cannot read entry: {error}"))?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-        if file_type.is_symlink() || path.file_name().is_some_and(|name| name == "target") {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect_rust_source_files(&path, files)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "rs")
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn source_budget_guard_ignores_generated_target_directories() {
     let root = std::env::temp_dir().join(format!("occluview-line-budget-{}", std::process::id()));
@@ -78,22 +56,6 @@ fn rust_source_files_stay_within_the_physical_line_budget() {
 }
 
 #[test]
-fn viewport_modules_stay_within_the_physical_line_budget() {
-    for path in [
-        "src/app/app_viewport.rs",
-        "src/app/app_mesh_editor.rs",
-        "src/app/app_cut_measure.rs",
-        "src/app/app_layer_interaction.rs",
-    ] {
-        let lines = repo_source_file(path).lines().count();
-        assert!(
-            lines <= 800,
-            "physical {path} must stay <= 800 lines, got {lines}"
-        );
-    }
-}
-
-#[test]
 fn mesh_editor_panel_has_no_single_target_selector() {
     let overlay = repo_source_file("src/mesh_editor_overlay.rs");
     let groups = repo_source_file("src/mesh_editor_groups.rs");
@@ -140,38 +102,22 @@ fn edit_mesh_entry_opens_one_scene_wide_session() {
 }
 
 #[test]
-fn mesh_editor_split_modules_stay_under_line_budget() {
+fn multi_layer_session_state_lives_in_its_own_module() {
+    // Line budgets are enforced for every crate by
+    // `rust_source_files_stay_within_the_physical_line_budget` above, which
+    // walks the tree instead of naming sixteen files that can be renamed out
+    // from under it. What the walk cannot see is the split itself.
     let edit_mode = repo_source_file("src/edit_mode/mod.rs");
     assert!(
         edit_mode.contains("mod selection_set;"),
         "multi-layer session state should live in a focused selection_set module"
     );
-    for path in [
-        "src/edit_mode/selection_set.rs",
-        "src/edit_mode/multi_layer_selection_tests.rs",
-        "src/edit_mode/session.rs",
-        "src/edit_mode/session_tests.rs",
-        "src/edit_mode/session_multi_layer_tests.rs",
-        "src/edit_mode/scene_sync.rs",
-        "src/edit_mode/selection_ops.rs",
-        "src/edit_mode/sync_tests.rs",
-        "src/edit_mode/tests.rs",
-        "src/app/app_mesh_editor.rs",
-        "src/mesh_editor_overlay.rs",
-        "src/mesh_editor_groups.rs",
-    ] {
-        let lines = repo_source_file(path).lines().count();
-        assert!(
-            lines <= 800,
-            "focused mesh-editor module {path} must stay <= 800 lines, got {lines}"
-        );
-    }
 }
 
 #[test]
 fn viewport_double_click_focuses_scene_point_not_home_reset() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
 
     assert!(
         source.contains(
@@ -180,10 +126,11 @@ fn viewport_double_click_focuses_scene_point_not_home_reset() {
         "viewport input should pick a scene point for double-click focus"
     );
     assert!(
-        input.contains("if response.double_clicked() {")
-            && input.contains("if let Some(target) = scene_pick")
-            && input.find("if response.double_clicked() {")
-                < input.find("if let Some(target) = scene_pick"),
+        appears_before(
+            input,
+            "if response.double_clicked() {",
+            "if let Some(target) = scene_pick",
+        ),
         "double click should focus the picked scene point before any fallback"
     );
     assert!(
@@ -201,7 +148,7 @@ fn viewport_double_click_focuses_scene_point_not_home_reset() {
 #[test]
 fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
     let click = function_source(source, "fn handle_primary_face_selection_click(");
 
     assert!(
@@ -213,8 +160,11 @@ fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
         "face selection should use typed scene hits without the camera-focus AABB fallback"
     );
     assert!(
-        input.find("self.handle_primary_face_selection_click(ctx, response)")
-            < input.find("if response.double_clicked() {"),
+        appears_before(
+            input,
+            "self.handle_primary_face_selection_click(ctx, response)",
+            "if response.double_clicked() {",
+        ),
         "face selection should run before double-click camera focus consumes the pointer event"
     );
 }
@@ -222,7 +172,7 @@ fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
 #[test]
 fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
     let drag = function_source(source, "fn begin_mesh_selection_drag(");
     let track = function_source(source, "fn track_mesh_selection_drag(");
 
@@ -267,8 +217,11 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
         "viewport input should dispatch mesh marquee selection through its dedicated helper"
     );
     assert!(
-        input.find("self.track_mesh_selection_drag(ctx, response, viewport_rect, pan_drag_active)")
-            < input.find("self.handle_primary_face_selection_click(ctx, response)"),
+        appears_before(
+            input,
+            "self.track_mesh_selection_drag(ctx, response, viewport_rect, pan_drag_active)",
+            "self.handle_primary_face_selection_click(ctx, response)",
+        ),
         "drag-selection commit should run before the single-click face selection branch"
     );
 }
@@ -277,7 +230,7 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
 fn armed_lasso_places_points_on_press_through_pure_state_machine() {
     let source = app_viewport_source();
     let lasso = function_source(source, "fn track_polygon_lasso(");
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
 
     // Root cause of the "clicks do nothing, only stray angular segments" bug:
     // egui only fires `clicked` when the pointer moved < max_click_dist (6px)
@@ -298,9 +251,11 @@ fn armed_lasso_places_points_on_press_through_pure_state_machine() {
     // While armed, the lasso owns every primary gesture: the single-click face
     // pick must be suppressed so a lasso click cannot also select a face.
     assert!(
-        input.contains("!self.edit_mode.lasso_armed()")
-            && input.find("!self.edit_mode.lasso_armed()")
-                < input.find("self.handle_primary_face_selection_click(ctx, response)"),
+        appears_before(
+            input,
+            "!self.edit_mode.lasso_armed()",
+            "self.handle_primary_face_selection_click(ctx, response)",
+        ),
         "face pick must be gated off while the lasso owns primary clicks"
     );
 
@@ -319,7 +274,7 @@ fn armed_lasso_places_points_on_press_through_pure_state_machine() {
 #[test]
 fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
     let source = app_viewport_source();
-    let input = function_source(source, "pub(super) fn handle_viewport_input_impl(");
+    let input = function_source(source, "pub(super) fn handle_viewport_input(");
     let secondary_context = function_source(source, "fn handle_viewport_secondary_context_menu(");
     let orbit = function_source(source, "fn update_viewport_orbit_gesture(");
     let menu = function_source(source, "fn handle_viewport_context_menu(");
@@ -331,9 +286,11 @@ fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
     );
     assert!(
         interaction.contains("fn discard_lasso_outline")
-            && menu.contains("discard_lasso_outline(&mut self.mesh_selection_drag)")
-            && menu.find("discard_lasso_outline(&mut self.mesh_selection_drag)")
-                < menu.find("viewport_menu_target_id"),
+            && appears_before(
+                menu,
+                "discard_lasso_outline(&mut self.mesh_selection_drag)",
+                "viewport_menu_target_id",
+            ),
         "a stationary right-click must drop an in-progress lasso outline before \
          opening the shared menu, so it can safely switch the target in one click"
     );
@@ -368,15 +325,19 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
     );
     let central = function_source(
         app_render_source(),
-        "pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {",
     );
     let render_pending = function_source(
         app_render_source(),
-        "pub(super) fn render_pending_frame_impl(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {",
     );
 
     assert!(
-        update.find("self.render_pending_frame(ctx);") < update.find("self.show_central_panel(ctx);"),
+        appears_before(
+            update,
+            "self.render_pending_frame(ctx);",
+            "self.show_central_panel(ctx);",
+        ),
         "the pending frame render pass should still happen before the main panel where camera input is collected"
     );
     assert!(
@@ -386,10 +347,12 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
          encodes THIS frame's camera (removes one frame of orbit latency)"
     );
     assert!(
-        central.contains(
-            "self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());"
-        ),
-        "camera input should still be collected from the main viewport panel"
+        central.contains("self.show_viewport_overlays(ui, &response, ctx);"),
+        "the main viewport panel should hand off to the shared overlay body"
+    );
+    assert!(
+        app_render_source().contains("self.handle_viewport_input(ctx, response, response.rect,"),
+        "camera input should still be collected once the overlays have had the pointer"
     );
     assert!(
         render_pending.contains("if self.needs_render {")
@@ -403,7 +366,7 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
 fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
     let input = function_source(
         app_viewport_source(),
-        "pub(super) fn handle_viewport_input_impl(",
+        "pub(super) fn handle_viewport_input(",
     );
     let repaint_helper = function_source(
         app_module_source(),
@@ -484,7 +447,7 @@ fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
 fn viewport_primary_secondary_drag_pans_scene_before_orbit() {
     let input = function_source(
         app_viewport_source(),
-        "pub(super) fn handle_viewport_input_impl(",
+        "pub(super) fn handle_viewport_input(",
     );
     let interaction_source = viewer_interaction_source();
 
@@ -512,8 +475,11 @@ fn viewport_primary_secondary_drag_pans_scene_before_orbit() {
         "active pan must consume raw pointer motion so its first sub-threshold movement is not lost"
     );
     assert!(
-        input.find("viewport_pan_drag_active(ctx, response)")
-            < input.find("self.update_viewport_orbit_gesture("),
+        appears_before(
+            input,
+            "viewport_pan_drag_active(ctx, response)",
+            "self.update_viewport_orbit_gesture(",
+        ),
         "combined left+right pan must win before the secondary-button orbit branch"
     );
 }
@@ -565,10 +531,26 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
         );
     }
     assert!(
-        app_render.contains(
-            "self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());"
-        ),
+        app_render.contains("self.handle_viewport_input(ctx, response, response.rect,"),
         "the camera path must still be reachable when no tool consumed the pointer"
+    );
+    // One body, called twice. `show_viewport_overlays` has what two copies of
+    // it cost.
+    assert_eq!(
+        count_occurrences(
+            app_render,
+            "self.show_viewport_overlays(ui, &response, ctx);"
+        ),
+        2,
+        "both viewport branches must call the one overlay body"
+    );
+    assert_eq!(
+        count_occurrences(
+            app_render,
+            "let cut_ui_consumed = self.show_cut_tool_overlay("
+        ),
+        1,
+        "the overlay orchestration must exist exactly once"
     );
 }
 
@@ -578,7 +560,7 @@ fn layer_material_edits_do_not_reset_prepared_scene() {
     let app_render = app_render_source();
 
     assert!(
-        app_render.contains("pub(super) fn update_scene_materials_impl(&mut self, scene: Scene)"),
+        app_render.contains("pub(super) fn update_scene_materials(&mut self, scene: Scene)"),
         "opacity/tint/visibility edits need a lightweight scene-material update path"
     );
     assert!(

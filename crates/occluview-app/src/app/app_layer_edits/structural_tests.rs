@@ -88,6 +88,15 @@ fn separate_directly(
     scene.meshes().len()
 }
 
+/// Reject order-of-magnitude regressions while leaving room for CI variance.
+fn assert_perf_ceiling(elapsed: std::time::Duration, case: &str) {
+    let ceiling = std::time::Duration::from_secs(10);
+    assert!(
+        elapsed < ceiling,
+        "{case} took {elapsed:?}, past the {ceiling:?} regression ceiling"
+    );
+}
+
 #[test]
 #[ignore = "perf harness: run with --ignored --nocapture"]
 fn perf_separate_fragmented_half() {
@@ -105,6 +114,10 @@ fn perf_separate_fragmented_half() {
     println!(
         "SEPARATE {tri_count} tris, {components} components -> {layers} layers in {elapsed:?}"
     );
+    // Each selected component becomes its own layer and the source keeps the
+    // remainder. Getting this wrong is the failure this harness exists for.
+    assert_eq!(layers, components + 1);
+    assert_perf_ceiling(elapsed, "perf_separate_fragmented_half");
 }
 
 #[test]
@@ -120,6 +133,11 @@ fn perf_label_1m() {
     let tris = mesh.triangle_count();
     let found = labelled.len();
     println!("LABEL {tris} tris -> {found} components (expected {components}) in {elapsed:?}");
+    // The expected count was computed, printed next to the found one, and never
+    // compared -- so a labeller returning one component per triangle printed a
+    // wrong number and passed.
+    assert_eq!(found, components);
+    assert_perf_ceiling(elapsed, "perf_label_1m");
 }
 
 fn request(scene: &Scene, action: LayerContextAction) -> LayerContextRequest {
@@ -358,6 +376,9 @@ fn perf_separate_soup_500k() {
         "SEPARATE-SOUP-500K {tri_count} tris, {vtx_count} soup verts, \
          {components} selected strips -> {layers} layers in {elapsed:?}"
     );
+    // The one-layer-per-triangle case again, from the other side.
+    assert_eq!(layers, components + 1);
+    assert_perf_ceiling(elapsed, "perf_separate_soup_500k");
 }
 
 #[test]
@@ -376,6 +397,8 @@ fn perf_separate_1m() {
     println!(
         "SEPARATE-1M {tri_count} tris, {components} components -> {layers} layers in {elapsed:?}"
     );
+    assert_eq!(layers, components + 1);
+    assert_perf_ceiling(elapsed, "perf_separate_1m");
 }
 
 /// Explode a welded mesh into STL-style soup: three fresh vertices per triangle

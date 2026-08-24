@@ -1,11 +1,14 @@
-use super::color::color32_from_linear;
+use super::color::color32_from_tint;
 use super::layout::{
     layer_name_width, LAYER_ROW_ACTION_GAP_PX, LAYER_ROW_CONTROL_HEIGHT_PX, LAYER_ROW_EYE_WIDTH_PX,
     LAYER_ROW_GAP_PX, LAYER_ROW_HEIGHT_PX, LAYER_ROW_REMOVE_WIDTH_PX, LAYER_ROW_SLIDER_WIDTH_PX,
     LAYER_ROW_TINT_WIDTH_PX,
 };
 use super::menu::{attach_layer_context_menu, LayerContextMenuTarget};
-use crate::layer_actions::{LayerContextAction, LayerContextRequest, LAYER_TINT_PRESETS};
+use crate::layer_actions::{
+    tint_matches, LayerContextAction, LayerContextRequest, LAYER_OVERLAY_TINT_PRESETS,
+    LAYER_TINT_PRESETS,
+};
 use crate::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
@@ -40,6 +43,11 @@ pub(crate) struct LayerRowChange {
     pub(crate) visible: bool,
     pub(crate) opacity: f32,
     pub(crate) tint: [f32; 4],
+    /// Whether the tint value comes from a swatch CLICK this frame, rather
+    /// than riding along on an opacity drag or a visibility toggle. The
+    /// apply side keys its colour overrides on this, so re-picking the
+    /// current colour still counts as picking it.
+    pub(crate) tint_clicked: bool,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -54,6 +62,7 @@ pub(super) fn show_layer_row(
     let mut visible = state.visible;
     let mut opacity = state.opacity;
     let mut tint = state.tint;
+    let mut tint_clicked = false;
 
     let row_width = row_width.max(0.0);
     let row_size = egui::vec2(row_width, LAYER_ROW_HEIGHT_PX - 2.0);
@@ -151,6 +160,7 @@ pub(super) fn show_layer_row(
                 // the surrounding row body/label, so the swatch stays lean.
                 if tint_swatch(ui, &view, visible, &mut tint) {
                     changed = true;
+                    tint_clicked = true;
                 }
 
                 ui.add_space(LAYER_ROW_ACTION_GAP_PX);
@@ -180,8 +190,14 @@ pub(super) fn show_layer_row(
         visible,
         opacity,
         tint,
+        tint_clicked,
     })
 }
+
+/// How tall the tint palette popup may get before it scrolls. Enough for the
+/// model shades and the first overlay colours at once, so the two groups are
+/// visibly two groups without the list reaching the bottom of the window.
+const TINT_PALETTE_MAX_HEIGHT_PX: f32 = 300.0;
 
 /// A color swatch that opens a small named palette popup. Selecting a preset
 /// sets the tint directly (a real color choice), rather than blind-cycling.
@@ -193,7 +209,7 @@ fn tint_swatch(
 ) -> bool {
     let mut changed = false;
     let swatch = egui::Button::new("")
-        .fill(color32_from_linear(*tint))
+        .fill(color32_from_tint(*tint))
         .stroke(egui::Stroke::new(1.0, ui_theme::panel_stroke()));
     let response = ui
         .add_enabled_ui(enabled, |ui| {
@@ -213,45 +229,70 @@ fn tint_swatch(
         ui,
         popup_id,
         &response,
-        egui::popup::PopupCloseBehavior::CloseOnClick,
+        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
         |ui| {
-            ui.set_min_width(150.0);
-            ui.label(
-                egui::RichText::new("Tint")
-                    .color(ui_theme::TEXT_WEAK)
-                    .size(10.5),
-            );
-            for (color, name) in LAYER_TINT_PRESETS {
-                let is_current = tint_eq(color, *tint);
-                let entry = ui
-                    .horizontal(|ui| {
-                        let (swatch_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                        ui.painter()
-                            .rect_filled(swatch_rect, 3.0, color32_from_linear(color));
-                        ui.painter().rect_stroke(
-                            swatch_rect,
-                            3.0,
-                            egui::Stroke::new(1.0, ui_theme::hairline()),
+            ui.set_min_width(170.0);
+            // Bounded and scrolling: the palette is two groups long now, and a
+            // popup opening off a layer row near the bottom of the window would
+            // otherwise run past the edge and put its last colours somewhere
+            // nobody can click.
+            egui::ScrollArea::vertical()
+                .max_height(TINT_PALETTE_MAX_HEIGHT_PX)
+                .show(ui, |ui| {
+                    // Two headed groups rather than one long list. The distinction is
+                    // real work, not decoration: the model shades are neighbours on one
+                    // warm band, so two scans wearing any two of them are still hard to
+                    // tell apart where they overlap — which is the moment during an
+                    // alignment when telling them apart is the entire task.
+                    for (heading, presets) in [
+                        ("Model", LAYER_TINT_PRESETS.as_slice()),
+                        (
+                            "Overlay — two scans at once",
+                            LAYER_OVERLAY_TINT_PRESETS.as_slice(),
+                        ),
+                    ] {
+                        ui.label(
+                            egui::RichText::new(heading)
+                                .color(ui_theme::TEXT_WEAK)
+                                .size(10.5),
                         );
-                        ui.selectable_label(is_current, name)
-                    })
-                    .inner;
-                if entry.clicked() {
-                    *tint = color;
-                    changed = true;
-                }
-            }
+                        for &(color, name) in presets {
+                            let is_current = tint_matches(color, *tint);
+                            let entry = ui
+                                .horizontal(|ui| {
+                                    let (swatch_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(16.0, 16.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        swatch_rect,
+                                        3.0,
+                                        color32_from_tint(color),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        swatch_rect,
+                                        3.0,
+                                        egui::Stroke::new(1.0, ui_theme::hairline()),
+                                    );
+                                    ui.selectable_label(is_current, name)
+                                })
+                                .inner;
+                            if entry.clicked() {
+                                *tint = color;
+                                changed = true;
+                            }
+                        }
+                    }
+                });
         },
     );
     changed
 }
 
-fn tint_eq(lhs: [f32; 4], rhs: [f32; 4]) -> bool {
-    lhs.iter()
-        .zip(rhs.iter())
-        .all(|(left, right)| left.to_bits() == right.to_bits())
-}
+// The current-swatch highlight and the apply side's override gate read the
+// SAME bit-for-bit comparison (`layer_actions::tint_matches`); a second local
+// copy here once existed and the two drifting apart would make the popup
+// highlight a colour the apply refused to treat as current.
 
 /// A crisp remove "x", quiet at rest and accented on hover.
 fn paint_remove_glyph(painter: &egui::Painter, rect: egui::Rect, hovered: bool) {
@@ -270,7 +311,8 @@ fn paint_remove_glyph(painter: &egui::Painter, rect: egui::Rect, hovered: bool) 
 mod tests {
     #[test]
     fn layer_row_uses_vector_controls_not_text_toggle() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);
@@ -291,7 +333,8 @@ mod tests {
 
     #[test]
     fn tint_is_a_real_palette_choice_not_blind_cycling() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);
@@ -301,11 +344,25 @@ mod tests {
                 && production_source.contains("LAYER_TINT_PRESETS"),
             "the tint swatch should open a named palette popup with the preset colors"
         );
+        assert!(
+            production_source.contains("LAYER_OVERLAY_TINT_PRESETS"),
+            "the popup should offer the overlay group, not only the model shades"
+        );
+        assert!(
+            production_source.contains("TINT_PALETTE_MAX_HEIGHT_PX"),
+            "an eighteen-swatch palette must scroll inside a bounded height"
+        );
+        assert!(
+            production_source.contains("CloseOnClickOutside"),
+            "the palette is ordered as usable pairs; the second pick of a pair \
+             must not require reopening the popup"
+        );
     }
 
     #[test]
     fn layer_row_controls_share_fixed_height_constant() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);
@@ -321,7 +378,8 @@ mod tests {
 
     #[test]
     fn layer_row_exposes_context_menu_for_right_click() {
-        let source = include_str!("row.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("row.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\n#[cfg(test)]")
             .map_or(source.as_str(), |(source, _)| source);

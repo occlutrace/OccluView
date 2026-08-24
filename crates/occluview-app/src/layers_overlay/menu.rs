@@ -79,17 +79,6 @@ fn show_material_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Opacity,
-            "Reset opacity",
-            true,
-            LayerContextAction::ResetOpacity,
-        ),
-        context_request,
-    );
-    layer_menu_button(
-        ui,
-        target,
-        LayerMenuButton::new(
             LayerMenuIcon::Tint,
             "Next tint",
             true,
@@ -409,7 +398,8 @@ mod tests {
 
     #[test]
     fn every_menu_entry_carries_an_icon_glyph() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -417,7 +407,7 @@ mod tests {
         // The compact operator set is built through `LayerMenuButton::new`.
         let buttons = production.matches("LayerMenuButton::new(").count();
         assert!(
-            buttons >= 11,
+            buttons >= 10,
             "expected the full operator action set; found {buttons} menu buttons"
         );
         // Every button names a glyph (the eye picks open/slashed by state, so a
@@ -443,7 +433,7 @@ mod tests {
             menu_title_name(r"C:\cases\lower_scan.stl"),
             "lower_scan.stl"
         );
-        assert_eq!(menu_title_name("/home/wow/upper.ply"), "upper.ply");
+        assert_eq!(menu_title_name("/home/clinic/upper.ply"), "upper.ply");
         // A plain mesh name (no separators) is left untouched.
         assert_eq!(menu_title_name("Upper arch"), "Upper arch");
         // A trailing separator falls back to the whole label, not an empty title.
@@ -496,7 +486,8 @@ mod tests {
 
     #[test]
     fn layer_context_menu_keeps_mesh_edit_entry_without_inline_overflow() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -513,12 +504,12 @@ mod tests {
 
     #[test]
     fn layer_context_menu_exposes_common_operator_actions() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
         for label in [
-            "Reset opacity",
             "Next tint",
             "Edit mesh",
             "Split bridge...",
@@ -546,7 +537,8 @@ mod tests {
 
     #[test]
     fn destructive_mesh_edit_actions_stay_out_of_layer_context_menu() {
-        let source = include_str!("menu.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);

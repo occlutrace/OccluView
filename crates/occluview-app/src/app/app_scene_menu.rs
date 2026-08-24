@@ -91,7 +91,7 @@ mod tests {
     /// silently do nothing after the operator wiped an alignment.
     #[test]
     fn resetting_positions_is_recorded_as_one_undoable_scene_edit() {
-        let source = include_str!("app_scene_menu.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("app_scene_menu.rs"));
         assert!(
             source.contains("begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)"),
             "a reset must open a scene history step"
