@@ -3,11 +3,16 @@
 
 [graph]
 all-features = true
-targets = ["x86_64-pc-windows-msvc"]
+# Both shipped platforms. Scanning only Windows left the Linux-only
+# dependency trees (x11rb, wayland, the xdg-portal file dialogs) outside
+# every license and advisory check.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 unmaintained = "workspace"
-# Allow these specific advisories with a reason (none by default).
+# A yank is the fastest signal the ecosystem has that a release is bad. Warning
+# about one and building anyway wastes it.
+yanked = "deny"
 ignore = []
 
 [licenses]
@@ -19,14 +24,11 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "MPL-2.0",
     "BSL-1.0",
     "Zlib",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "Unlicense",
     "CC0-1.0",
-    "OpenSSL",
     # Mozilla CA-bundle data shipped by webpki-roots (rustls trust anchors for
     # the updater's HTTPS): a permissive data license, not a code license.
     "CDLA-Permissive-2.0",
@@ -50,6 +52,9 @@ license-files = []
 multiple-versions = "warn"
 # Deny wildcard dependencies (we want reproducible builds).
 wildcards = "deny"
+# Internal path dependencies carry no version requirement (every crate is
+# publish = false), which the wildcard ban would otherwise flag.
+allow-wildcard-paths = true
 highlight = "all"
 # Allow specific known duplicates (none by default — keep this list empty).
 allow = []
