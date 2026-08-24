@@ -1,6 +1,6 @@
 use super::error::malformed;
 use super::json;
-use super::scene::{first_primitive_material, walk_node};
+use super::scene::{first_primitive_material, SceneWalk, VisitedNodes};
 use super::texture::resolve_material_texture;
 use crate::error::FormatError;
 use glam::Mat4;
@@ -12,14 +12,23 @@ pub(super) fn read_doc(doc: &json::GltfDoc, bin_chunk: &[u8]) -> Result<Mesh, Fo
         .scenes
         .get(scene_idx)
         .ok_or_else(|| malformed("scene out of range"))?;
-    let mut builder = MeshBuilder::new().with_name("glTF");
+    let mut builder = MeshBuilder::new()
+        .with_name("glTF")
+        .from_input_of(bin_chunk.len());
     // Track the first primitive's material so we can resolve a texture after
     // the build (the builder only handles geometry).
     let mut first_material: Option<usize> = None;
-    for &node_idx in &scene.nodes {
-        walk_node(doc, node_idx, Mat4::IDENTITY, bin_chunk, &mut builder)?;
-        if first_material.is_none() {
-            first_material = first_primitive_material(doc, node_idx);
+    {
+        let mut walk = SceneWalk::new(doc, bin_chunk, &mut builder);
+        // One visit set for the whole search, not one per root: allocating and
+        // zeroing it inside the loop costs a byte per node per root on a
+        // document with no material anywhere.
+        let mut material_visited = VisitedNodes::for_document(doc);
+        for &node_idx in &scene.nodes {
+            walk.node(node_idx, Mat4::IDENTITY)?;
+            if first_material.is_none() {
+                first_material = first_primitive_material(doc, node_idx, &mut material_visited);
+            }
         }
     }
     let mut mesh = builder.build().map_err(FormatError::Core)?;
