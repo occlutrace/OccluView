@@ -242,8 +242,11 @@ pub(super) fn prepare_file_thumbnail_render(
         return Err(FileThumbnailPreflightError::UnsupportedExtension);
     }
 
-    let metadata =
-        cache::thumbnail_file_metadata(path).map_err(FileThumbnailPreflightError::Metadata)?;
+    let (metadata, is_regular_file) = cache::thumbnail_file_metadata_checked(path)
+        .map_err(FileThumbnailPreflightError::Metadata)?;
+    if !is_regular_file {
+        return Err(FileThumbnailPreflightError::NotAFile);
+    }
     if metadata.byte_len > MAX_THUMBNAIL_FILE_BYTES as u64 {
         return Err(FileThumbnailPreflightError::Oversize {
             byte_len: usize::try_from(metadata.byte_len).unwrap_or(usize::MAX),

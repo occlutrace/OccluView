@@ -99,7 +99,12 @@ pub(super) struct FileThumbnailRenderPlan {
 pub(super) enum FileThumbnailPreflightError {
     UnsupportedExtension,
     Metadata(ThumbnailError),
-    Oversize { byte_len: usize },
+    /// The path names something that is not a regular file: a directory, a
+    /// named pipe, a device. Opening a pipe with no writer blocks forever.
+    NotAFile,
+    Oversize {
+        byte_len: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -272,16 +277,32 @@ pub(super) fn thumbnail_stream_cache() -> &'static Mutex<ThumbnailStreamCache> {
 pub(super) fn thumbnail_file_metadata(
     path: &Path,
 ) -> Result<ThumbnailFileMetadata, ThumbnailError> {
+    thumbnail_file_metadata_checked(path).map(|(metadata, _)| metadata)
+}
+
+/// The metadata, and whether the path names a regular file.
+///
+/// The caller needs the second answer before it opens anything: a folder
+/// holding `pipe.stl` with no writer on the other end blocks the opening
+/// thread for as long as the process lives, and under the shell that thread is
+/// the one every other file in the folder is queued behind.
+pub(super) fn thumbnail_file_metadata_checked(
+    path: &Path,
+) -> Result<(ThumbnailFileMetadata, bool), ThumbnailError> {
     let metadata = std::fs::metadata(path).map_err(|e| file_io_error(path, e))?;
+    let is_regular_file = metadata.is_file();
     let modified_nanos = metadata
         .modified()
         .ok()
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
-    Ok(ThumbnailFileMetadata {
-        byte_len: metadata.len(),
-        modified_nanos,
-    })
+    Ok((
+        ThumbnailFileMetadata {
+            byte_len: metadata.len(),
+            modified_nanos,
+        },
+        is_regular_file,
+    ))
 }
 
 /// Build a bounded content key for a file-backed thumbnail.

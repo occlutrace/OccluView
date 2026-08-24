@@ -281,6 +281,17 @@ pub fn try_render_thumbnail_file(
             tracing::warn!(?error, extension = ?path.extension(), "thumbnail file metadata failed");
             return ThumbnailAttempt::TransientFailure;
         }
+        Err(FileThumbnailPreflightError::NotAFile) => {
+            // Deterministic: a directory or a named pipe does not become a
+            // scan by being asked twice. Refusing here is also what keeps the
+            // open below from blocking on a pipe with no writer -- which it
+            // would do on the caller's thread, before any deadline applies.
+            tracing::warn!(
+                extension = ?path.extension(),
+                "thumbnail path is not a regular file; returning placeholder"
+            );
+            return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
+        }
         Err(FileThumbnailPreflightError::Oversize { byte_len }) => {
             return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
         }

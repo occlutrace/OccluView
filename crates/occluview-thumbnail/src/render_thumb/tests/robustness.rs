@@ -147,3 +147,51 @@ fn all_degenerate_stl_never_returns_a_transparent_tile() {
         "a wholly degenerate recognized file should get the corrupt placeholder"
     );
 }
+
+/// A named pipe with our extension must not park the caller's thread.
+///
+/// `File::open` on a FIFO with no writer blocks until one appears. That open
+/// happens on the calling thread, before a job permit is taken and before any
+/// deadline starts, so under the shell it is the thread the whole folder's
+/// queue is waiting behind -- one `pipe.stl` and the folder never finishes.
+#[cfg(unix)]
+#[test]
+fn a_named_pipe_is_refused_rather_than_opened() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let dir = std::env::temp_dir().join(format!(
+        "occluview-fifo-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("pipe.stl");
+    let _ = fs::remove_file(&path);
+    let made = std::process::Command::new("mkfifo").arg(&path).status();
+    if !made.is_ok_and(|status| status.success()) {
+        // No mkfifo, or a filesystem that refuses one; nothing to guard here.
+        return;
+    }
+    assert!(fs::metadata(&path)
+        .expect("the pipe exists")
+        .file_type()
+        .is_fifo());
+
+    let spec = ThumbnailSpec {
+        size_px: 32,
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let attempt = try_render_thumbnail_file(&path, spec, Duration::from_secs(6));
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "the pipe was opened instead of refused: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(attempt, ThumbnailAttempt::Bitmap(_)),
+        "a pipe is not a scan and never will be, so the verdict is cacheable"
+    );
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir(&dir);
+}
