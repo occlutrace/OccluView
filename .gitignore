@@ -24,6 +24,15 @@ flamegraph.svg
 # Generated docs locally
 /target/doc
 
+# Internal planning docs
+docs/plans/
+docs/specs/
+
 # OS junk
 ehthumbs.db
 desktop.ini
+
+# Fuzzing working state
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/target/

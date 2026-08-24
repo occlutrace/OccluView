@@ -1,6 +1,8 @@
-# Normalize line endings to LF in the repo, CRLF on checkout for Windows.
-# This matters because we develop on Windows and CI runs on Windows; mixed
-# endings cause needless diffs and break shell-extension registration scripts.
+# Normalize line endings to LF everywhere -- in the repository and on checkout.
+# The header used to promise CRLF on Windows checkout, which `eol=lf` does not
+# do and never did. LF everywhere is what this repository actually wants: mixed
+# endings cause needless diffs and break the shell-extension registration
+# scripts.
 * text=auto eol=lf
 
 # Binary file types — never merge / diff as text.
@@ -18,6 +20,8 @@
 *.lib binary
 *.3mf binary
 *.glb binary
+*.webm binary
+*.mp4 binary
 
 # Markdown / source — force LF (these are edited on Windows too).
 *.md   text eol=lf
@@ -25,5 +29,6 @@
 *.toml text eol=lf
 *.wgsl text eol=lf
 
-# Linguist hints for GitHub language stats (we want Rust to dominate).
-*.wgsl linguist-language=Rust
+# No linguist overrides. WGSL was relabelled as Rust here to make the language
+# bar on the repository page read the way we wanted, which is exactly the kind
+# of dressing this project avoids everywhere else. The shaders are WGSL.
