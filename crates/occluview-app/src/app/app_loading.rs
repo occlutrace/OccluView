@@ -1,3 +1,17 @@
+//! Getting files into the scene without losing work already in it.
+//!
+//! Loads run off the UI thread and report back over a channel; `queued_loads`
+//! holds the ones that arrived while another was in flight, so a multi-file
+//! drop or a burst of shell hand-offs is serialised rather than raced.
+//!
+//! A load is either REPLACE (menu Open, a recent file, a hand-off classified
+//! as replace) or APPEND (a second scan added to the current scene). Every
+//! replace goes through the guard here first: if the session has unsaved mesh
+//! edits, the open is parked behind the confirmation dialog instead of
+//! destroying them. Append needs no guard, and neither do the camera rules --
+//! a replace re-frames the scene, an append keeps the operator's camera unless
+//! they had not moved it.
+
 use super::{
     combine_loaded_scene, egui, load_error_dialog, load_status_message, mpsc,
     read_files_with_key_provider, single_instance, AppErrorDialog, Instant, LoadQueueCameraReset,
@@ -9,6 +23,46 @@ use super::{
 pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
     read_files_with_key_provider(paths, &RuntimeHpsKeyProvider)
         .map_err(|(path, e)| anyhow::anyhow!("{}: {}", path.display(), e))
+}
+
+/// The failure text with every path of the request removed.
+///
+/// `load_scene` names the file that failed inside its error so the dialog and
+/// the status line can say which one it was. Both are on screen, in front of
+/// the operator who chose the file. The crash log ring is different: every
+/// field of every event lands in it, `write_crash_report` writes the ring to
+/// a file, and README and docs/USAGE.md both promise that file carries no
+/// scan paths -- which is what makes it safe to attach to a public issue. A
+/// scan path is the case, and the case is a patient.
+///
+/// The paths of the request are known here exactly, so they are replaced by
+/// their extension rather than guessed at with a pattern.
+fn failure_without_paths(error: &anyhow::Error, paths: &[PathBuf]) -> String {
+    let mut text = format!("{error:#}");
+
+    // Longest first. Replacing in request order lets a path that is a prefix
+    // of another leave the rest of it behind: "/cases/Ivanov" replaced inside
+    // "/cases/Ivanov/upper.stl" leaves "<file>/upper.stl".
+    let mut rendered: Vec<(String, &PathBuf)> = paths
+        .iter()
+        .map(|path| (path.display().to_string(), path))
+        .filter(|(rendered, _)| !rendered.is_empty())
+        .collect();
+    rendered.sort_by_key(|(rendered, _)| std::cmp::Reverse(rendered.len()));
+
+    for (rendered, path) in rendered {
+        // The extension stands in for the name only when it is one this build
+        // reads. Otherwise it is part of the name -- "scan.Ivanov" would put
+        // the case back into the line the redaction just took it out of.
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .filter(|extension| occluview_formats::V1_OPEN_EXTENSIONS.contains(&extension.as_str()))
+            .unwrap_or_else(|| "file".to_owned());
+        text = text.replace(&rendered, &format!("<{extension}>"));
+    }
+    text
 }
 
 impl OccluViewApp {
@@ -47,7 +101,7 @@ impl OccluViewApp {
     /// a live session carrying uncommitted edits, or any layer with edits not
     /// yet written to disk, would be lost by a blind scene replace.
     fn replace_open_needs_guard(&self) -> bool {
-        self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits
+        self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()
     }
 
     pub(super) fn append_paths(&mut self, paths: &[PathBuf], source: &'static str) {
@@ -70,6 +124,21 @@ impl OccluViewApp {
         };
         if self.active_load.is_some() {
             if mode == SceneLoadMode::Replace {
+                // The evicted loader thread is abandoned, not cancelled. Its
+                // receiver is dropped, so its `send` fails and it exits -- but
+                // only after finishing the parse it was already doing. Open a
+                // large scan, realise it is the wrong one, open another: two
+                // full decodes run at once and both scenes exist in memory
+                // until the first is discarded. Repeat it four times on a slow
+                // share and the peak is a multiple of the largest scan, which
+                // presents as an OOM kill with no message.
+                //
+                // Cancelling properly means threading a flag through
+                // `read_files_with_key_provider`, which parses in parallel: a
+                // formats API change that would not help the common
+                // single-file case anyway, since the check can only sit
+                // between files. Left as it is. It takes sustained impatience
+                // to reach, and it clears itself.
                 self.queued_loads.clear();
                 self.active_load = None;
                 self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
@@ -250,8 +319,9 @@ impl OccluViewApp {
                 self.status_message = Some(format!("{action} failed: {e:#}"));
                 self.app_error = Some(load_error_dialog(action, &e, &pending.paths));
                 tracing::error!(
-                    error = ?e,
-                    paths = ?pending.paths,
+                    error = %failure_without_paths(&e, &pending.paths),
+                    path_count = pending.paths.len(),
+                    formats = ?crate::app_bootstrap::file_extensions(&pending.paths),
                     source = pending.source,
                     load_ms = pending.started_at.elapsed().as_millis(),
                     "scene load failed"
@@ -294,7 +364,7 @@ impl OccluViewApp {
         });
     }
 
-    pub(super) fn handle_open_requests_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn handle_open_requests(&mut self, ctx: &egui::Context) {
         let mut handled_request = false;
         for request in self.incoming_open_requests.take_requests() {
             handled_request = true;
@@ -334,7 +404,7 @@ impl OccluViewApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
-    pub(super) fn raise_window_for_incoming_open_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn raise_window_for_incoming_open(&mut self, ctx: &egui::Context) {
         // Always make sure the window is mapped and un-minimized first; these
         // are not "activation" and are honored by every WM.
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -364,7 +434,7 @@ impl OccluViewApp {
         ctx.request_repaint_after(FOREGROUND_PULSE_DURATION);
     }
 
-    pub(super) fn finish_foreground_pulse_if_due_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn finish_foreground_pulse_if_due(&mut self, ctx: &egui::Context) {
         let Some(until) = self.foreground_pulse_until else {
             return;
         };
@@ -387,6 +457,74 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
+    use super::failure_without_paths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_failed_load_reaches_the_log_without_the_path_it_failed_on() {
+        // This text lands in the crash log ring, and the ring is written to a
+        // file operators are asked to attach to public issues.
+        let path = PathBuf::from("/mnt/cases/Ivanov 2026-08-23/upper.stl");
+        let error = anyhow::anyhow!("{}: {}", path.display(), "unexpected end of file");
+
+        let logged = failure_without_paths(&error, std::slice::from_ref(&path));
+
+        assert!(
+            !logged.contains("Ivanov"),
+            "the case name must not survive into the log: {logged}"
+        );
+        assert!(
+            !logged.contains("/mnt/cases"),
+            "no part of the path may survive: {logged}"
+        );
+        assert!(
+            logged.contains("unexpected end of file"),
+            "the reason is the whole point of the line: {logged}"
+        );
+        assert!(
+            logged.contains("<stl>"),
+            "the format is what a reader needs instead of the name: {logged}"
+        );
+    }
+
+    #[test]
+    fn a_path_that_prefixes_another_does_not_leave_its_tail_behind() {
+        // The prefix case from `failure_without_paths`: replace in request
+        // order and the basename of the longer path survives, which is the
+        // half that names the case.
+        let folder = PathBuf::from("/mnt/cases/Ivanov 2026");
+        let scan = folder.join("upper.stl");
+        let error = anyhow::anyhow!("{}: {}", scan.display(), "unexpected end of file");
+
+        let logged = failure_without_paths(&error, &[folder, scan]);
+
+        assert!(!logged.contains("Ivanov"), "{logged}");
+        assert!(!logged.contains("upper"), "{logged}");
+        assert!(logged.contains("unexpected end of file"), "{logged}");
+    }
+
+    #[test]
+    fn an_extension_that_is_really_part_of_the_name_is_not_echoed_back() {
+        let path = PathBuf::from("/mnt/cases/scan.Ivanov");
+        let error = anyhow::anyhow!("{}: {}", path.display(), "unsupported format");
+
+        let logged = failure_without_paths(&error, std::slice::from_ref(&path));
+
+        assert!(!logged.to_lowercase().contains("ivanov"), "{logged}");
+        assert!(logged.contains("<file>"), "{logged}");
+    }
+
+    #[test]
+    fn a_file_with_no_extension_is_still_redacted() {
+        let path = PathBuf::from("/mnt/cases/Ivanov/scan");
+        let error = anyhow::anyhow!("{}: {}", path.display(), "unsupported format");
+
+        let logged = failure_without_paths(&error, std::slice::from_ref(&path));
+
+        assert!(!logged.contains("Ivanov"), "{logged}");
+        assert!(logged.contains("<file>"), "{logged}");
+    }
+
     #[test]
     fn incoming_open_state_prefers_append_when_scene_or_load_exists() {
         assert!(

@@ -32,6 +32,13 @@ pub(crate) const SCULPT_INTENSITY_MAX: f32 = 100.0;
 /// Mm radius the size slider maps to at its ends.
 const SCULPT_RADIUS_MIN_MM: f32 = 0.4;
 const SCULPT_RADIUS_MAX_MM: f32 = 12.0;
+/// How much Shift widens the Smooth footprint. Per-dab force cannot climb
+/// past the kernel's pass ceiling — a dab converges toward the relaxed patch
+/// its own boundary pins — so the honest way to smooth harder is to push that
+/// boundary outward and iron a wider patch per dab. Wider dabs also space
+/// further apart along the drag, so a Shift stroke queues fewer, larger jobs
+/// instead of flooding the worker's bounded apply queue.
+pub(crate) const SHIFT_SMOOTH_RADIUS_BOOST: f32 = 1.75;
 /// One notch of the mouse wheel changes a slider by this many units.
 pub(crate) const SCULPT_WHEEL_STEP: f32 = 6.0;
 /// Dab spacing along the drag path, as a fraction of the brush radius: dabs are
@@ -76,11 +83,25 @@ impl SculptToolKind {
     }
 
     /// The kernel per-dab strength for this tool: the intensity slider for
-    /// Add/Remove and Smooth; Shift doubles Smooth force, capped at 100%.
+    /// Add/Remove and Smooth; Shift forces Smooth straight to maximum, the
+    /// forced mode the kernel documents. Doubling the slider instead sounded
+    /// gentler but saturated: at 50% it was already near the pass ceiling and
+    /// at 100% it changed nothing.
     pub(crate) fn dab_strength(self, intensity01: f32, shift: bool) -> f32 {
         match self {
-            Self::Smooth if shift => (intensity01.clamp(0.0, 1.0) * 2.0).min(1.0),
+            Self::Smooth if shift => 1.0,
             _ => intensity01.clamp(0.0, 1.0),
+        }
+    }
+
+    /// The world-space dab radius for this tool: the size slider's mm value,
+    /// widened for a Shift-forced Smooth. [`SHIFT_SMOOTH_RADIUS_BOOST`]
+    /// explains why the footprint is the lever that actually strengthens
+    /// smoothing.
+    pub(crate) fn dab_radius_mm(self, base_mm: f32, shift: bool) -> f32 {
+        match self {
+            Self::Smooth if shift => base_mm * SHIFT_SMOOTH_RADIUS_BOOST,
+            _ => base_mm,
         }
     }
 }
@@ -96,10 +117,6 @@ pub(crate) struct SculptTool {
     pub(crate) worker: Option<SculptWorker>,
     /// Bookkeeping for the drag currently in flight (button held).
     pub(crate) stroke: Option<StrokeState>,
-    /// Primary was pressed over the viewport while BVH/brush preparation was
-    /// still completing. The current pointer is retried on the next frame; a
-    /// quick press-and-release is discarded rather than applied late.
-    pub(crate) press_pending: bool,
     /// A mesh-edit Done action waits for the background commit before closing
     /// the edit session, so a fast click cannot discard a valid stroke.
     pub(crate) finish_requested: bool,
@@ -123,7 +140,6 @@ impl SculptTool {
     /// drag so a half-applied stroke does not leak between tools.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
-        self.press_pending = false;
         self.armed = if self.armed == Some(kind) {
             None
         } else {
@@ -134,7 +150,6 @@ impl SculptTool {
     pub(crate) fn disarm(&mut self) {
         self.armed = None;
         self.stroke = None;
-        self.press_pending = false;
         self.finish_requested = false;
         self.pending_history = None;
         self.worker = None;
@@ -150,7 +165,6 @@ impl SculptTool {
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
         self.worker = None;
-        self.press_pending = false;
         self.finish_requested = false;
         self.pending_history = None;
         self.cancel_pending_preparation();
@@ -198,37 +212,49 @@ impl SculptTool {
         let (sender, receiver) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
+
+        // The worker gets the one mesh it prepares, not the case it came from.
+        // An `Arc<Scene>` alive in a background thread makes every in-place
+        // scene edit on the UI thread copy the whole case for as long as the
+        // preparation runs -- seconds on a full arch, which is why it is
+        // off-thread at all. In that window an opacity slider, a tint, an align
+        // nudge or a ghost toggle each paid 45 ms, and a debug build tripped
+        // the assertion in `live_scene_mut`.
+        //
+        // The mesh itself is shared, so this is a pointer: the worker warms the
+        // very cell the scene will read, which is the point of warming it.
+        let mesh = entry.mesh.clone();
+        let transform = entry.transform;
+        drop(scene);
+
         let spawned = thread::Builder::new()
             .name("occluview-sculpt-prepare".to_string())
             .spawn(move || {
-                let Some(entry) = scene.meshes().get(index) else {
-                    return;
-                };
                 if worker_cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                entry.mesh.warm_bvh();
-                let buffers = mesh_edit_buffers_from_mesh(&entry.mesh);
-                let result = BrushSession::prepare(&buffers)
-                    .map_err(|error| error.to_string())
-                    .map(|session| {
-                        let scale = mean_uniform_scale(&entry.transform);
-                        SculptSession {
-                            layer_id: entry.id(),
-                            topology_id: entry.mesh.topology_id(),
-                            session,
-                            // Keep only the target mesh in the worker. Holding
-                            // the whole Scene Arc made the UI clone the full
-                            // scene through Arc::make_mut on every commit.
-                            base_mesh: entry.mesh.clone(),
-                            shadow: Arc::new(RwLock::new(entry.mesh.vertices().to_vec())),
-                            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
-                            world_to_local: entry.transform.inverse(),
-                            local_per_world: 1.0 / scale,
-                            dirty_stroke: false,
-                            stroke_start_mesh: None,
-                        }
-                    });
+                mesh.warm_bvh();
+                let prepared = {
+                    let buffers = mesh_edit_buffers_from_mesh(&mesh);
+                    BrushSession::prepare(&buffers).map_err(|error| error.to_string())
+                };
+                let result = prepared.map(move |session| {
+                    let scale = mean_uniform_scale(&transform);
+                    let shadow = Arc::new(RwLock::new(mesh.vertices().to_vec()));
+                    let topology = PreparedSceneTopology::from_mesh(&mesh);
+                    SculptSession {
+                        layer_id,
+                        topology_id,
+                        session,
+                        base_mesh: mesh,
+                        shadow,
+                        topology,
+                        world_to_local: transform.inverse(),
+                        local_per_world: 1.0 / scale,
+                        dirty_stroke: false,
+                        stroke_start_mesh: None,
+                    }
+                });
                 if !worker_cancel.load(Ordering::Relaxed) {
                     let _ = sender.send(result);
                 }
@@ -277,7 +303,7 @@ pub(crate) struct SculptSession {
     pub(crate) session: BrushSession,
     /// Immutable mesh template used to build completed meshes. It is cloned
     /// on the preparation thread, never in the UI commit path.
-    pub(crate) base_mesh: Mesh,
+    pub(crate) base_mesh: Arc<Mesh>,
     /// Display copy of the layer's vertex array, patched per dab from the
     /// kernel and streamed into the prepared GPU vertex buffer for live
     /// feedback; also the source of the final committed mesh.
@@ -297,7 +323,7 @@ pub(crate) struct SculptSession {
     /// baseline, built off the UI thread. It is a whole MESH, not just
     /// positions: a densifying stroke changes the triangle list too, and undo
     /// has to put the coarse topology back, not just the old coordinates.
-    pub(crate) stroke_start_mesh: Option<Mesh>,
+    pub(crate) stroke_start_mesh: Option<Arc<Mesh>>,
 }
 
 /// A mid-stroke topology change: Smooth densified the surface, so the layer's
@@ -356,9 +382,13 @@ impl SculptSession {
     }
 
     /// The layer mesh as the session currently holds it (template + shadow).
-    fn snapshot_mesh(&self) -> Option<Mesh> {
+    ///
+    /// This cold undo baseline defers derived-cache work until restoration.
+    fn snapshot_mesh(&self) -> Option<Arc<Mesh>> {
         let shadow = self.shadow.read().ok()?;
-        self.base_mesh.with_sculpted_vertices(shadow.clone())
+        self.base_mesh
+            .with_sculpted_vertices_uncached(shadow.clone())
+            .map(Arc::new)
     }
 
     /// Adopt the densified geometry: rebuild the template mesh, resize the
@@ -382,7 +412,7 @@ impl SculptSession {
             *shadow = mesh.vertices().to_vec();
         }
         let topology = PreparedSceneTopology::from_mesh(&mesh);
-        self.base_mesh = mesh.clone();
+        self.base_mesh = Arc::new(mesh.clone());
         self.topology = topology;
         self.dirty_stroke = true;
         Some(SculptRebuild { mesh, topology })
@@ -437,6 +467,21 @@ mod tests {
     use glam::Quat;
     use occluview_core::{Mesh, SceneMesh};
 
+    /// The undo baseline is speculative work: most strokes are never undone.
+    /// `snapshot_mesh` records what building it with the caches costs the first
+    /// dab of every stroke.
+    #[test]
+    fn the_stroke_baseline_is_snapshotted_cold() {
+        // Only the part above this module counts, or the guard matches the
+        // needle in its own assertion and passes on its own text.
+        let source = include_str!("sculpt_tool.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+        assert!(
+            production.contains("with_sculpted_vertices_uncached(shadow.clone())"),
+            "the stroke's undo baseline must not pay for caches it usually never uses"
+        );
+    }
+
     #[test]
     fn toggling_a_tool_arms_it_and_toggling_again_disarms() {
         let mut tool = SculptTool::default();
@@ -456,10 +501,23 @@ mod tests {
             BrushMode::Remove
         );
         assert_eq!(SculptToolKind::Smooth.brush_mode(true), BrushMode::Smooth);
-        // Shift doubles Smooth force; a light Add/Remove uses the intensity
-        // slider unchanged.
-        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 0.6);
+        // Shift forces Smooth to maximum regardless of the slider; Add/Remove
+        // follows the intensity slider with or without Shift.
+        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 1.0);
+        assert_eq!(SculptToolKind::Smooth.dab_strength(1.0, false), 1.0);
         assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, false), 0.3);
+        assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, true), 0.3);
+    }
+
+    #[test]
+    fn shift_widens_only_the_smooth_footprint() {
+        let base = size_to_radius_mm(SCULPT_SIZE_DEFAULT);
+        assert_eq!(
+            SculptToolKind::Smooth.dab_radius_mm(base, true),
+            base * SHIFT_SMOOTH_RADIUS_BOOST
+        );
+        assert_eq!(SculptToolKind::Smooth.dab_radius_mm(base, false), base);
+        assert_eq!(SculptToolKind::AddRemove.dab_radius_mm(base, true), base);
     }
 
     #[test]
@@ -502,7 +560,7 @@ mod tests {
             layer_id,
             topology_id: mesh.topology_id(),
             session: brush,
-            base_mesh: mesh.clone(),
+            base_mesh: Arc::new(mesh.clone()),
             shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
             topology: PreparedSceneTopology::from_mesh(&mesh),
             world_to_local: Affine3A::IDENTITY,

@@ -1,8 +1,4 @@
-//! Behaviour tests for the markings on both scans.
-//!
-//! These run the real code with plain arrays — no scene, no camera, no GPU —
-//! which is the whole point of the type existing. Every case below is a defect
-//! an operator reported by hand before there was anywhere to write it down.
+//! Behaviour tests for markings on both scans.
 
 #![allow(clippy::expect_used)]
 

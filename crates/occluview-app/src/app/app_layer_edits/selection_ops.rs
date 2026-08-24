@@ -15,6 +15,7 @@ use occluview_core::{
     crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
     selected_connected_components_in_mesh, CoreError, MeshEditOptions,
 };
+use std::sync::Arc;
 
 pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     app: &mut OccluViewApp,
@@ -225,7 +226,7 @@ fn apply_single_layer_selected_face_edit(
 
     // Delete/Crop always change content: a non-empty, non-whole-mesh selection
     // is guaranteed by the caller, so the edited mesh is always a real change.
-    entry.mesh = edited.mesh;
+    entry.mesh = Arc::new(edited.mesh);
     let _ = edit_mode.finish_layer_edit_success(context.token);
     Ok(structural_scene_apply())
 }

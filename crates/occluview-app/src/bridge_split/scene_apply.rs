@@ -5,6 +5,7 @@
 //! immediately after it with a fresh identity and the same presentation state.
 
 use occluview_core::{CoreBridgeSplitResult, Scene, SceneMesh, SceneMeshId};
+use std::sync::Arc;
 
 use super::BridgeSplitTarget;
 
@@ -46,7 +47,7 @@ pub(crate) fn apply_preview_to_scene(
         return Err(BridgeSplitSceneApplyError::TargetChanged);
     }
 
-    draft.meshes_mut()[index].mesh = preview.part_a.clone();
+    draft.meshes_mut()[index].mesh = Arc::new(preview.part_a.clone());
     let source_layer_id = source.id();
     let part_b = layer_like(&source, preview.part_b.clone());
     let part_b_layer_id = part_b.id();

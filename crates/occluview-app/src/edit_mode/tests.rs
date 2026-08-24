@@ -224,7 +224,7 @@ fn controller_undo_restores_last_snapshot_for_matching_layer() {
     };
     let layer = SceneMesh::new(before_mesh);
     let mut current = layer.clone();
-    current.mesh = after_mesh;
+    current.mesh = std::sync::Arc::new(after_mesh);
     let mut controller = EditModeController::new(4, 1_000_000);
 
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {

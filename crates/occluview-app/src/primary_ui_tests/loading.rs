@@ -86,12 +86,12 @@ fn primary_startup_only_refreshes_shell_associations_on_explicit_request() {
 
     assert!(
         real_main[shell_refresh_branch..]
-            .contains("occluview_shell::notify_shell_associations_changed();"),
+            .contains("crate::shell_refresh::notify_shell_associations_changed();"),
         "--shell-refresh should still notify Explorer"
     );
     assert_eq!(
         real_main
-            .matches("occluview_shell::notify_shell_associations_changed();")
+            .matches("crate::shell_refresh::notify_shell_associations_changed();")
             .count(),
         1,
         "normal app startup should not pay a shell-association refresh tax on every launch"
@@ -122,7 +122,7 @@ fn incoming_files_raise_existing_window_temporarily() {
     let loading_source = app_loading_source();
 
     assert!(
-        loading_source.contains("fn raise_window_for_incoming_open_impl"),
+        loading_source.contains("fn raise_window_for_incoming_open"),
         "single-instance handoff should explicitly raise the existing viewer window"
     );
     assert!(
@@ -282,7 +282,7 @@ fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
 
     assert!(
         loading.contains("fn replace_open_needs_guard(&self) -> bool")
-            && loading.contains("self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits"),
+            && loading.contains("self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()"),
         "a replace open must be gated on a live dirty session OR unsaved edits, \
          not proceed straight to a scene-destroying load"
     );
@@ -330,8 +330,16 @@ fn replace_guard_dialog_offers_save_discard_and_cancel() {
 fn replace_guard_suppresses_edit_shortcuts_and_runs_each_frame() {
     let app_source = app_module_source();
 
+    // The parked open is one of the five terms of the shared dialog
+    // predicate, and edit hotkeys are refused whenever that predicate is true.
+    // app::open_dialogs tests the predicate itself; what matters here is that
+    // the parked open still feeds it and that the hotkeys still ask.
     assert!(
-        app_source.contains("|| self.pending_replace_open.is_some()"),
+        app_source.contains("pending_replace: self.pending_replace_open.is_some(),"),
+        "the parked open must still count as a dialog in front"
+    );
+    assert!(
+        app_source.contains("if self.modal_dialog_open() || self.bridge_split_active()"),
         "edit hotkeys must not act behind the open-guard dialog"
     );
     assert!(
@@ -396,5 +404,83 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         app_source.contains("} else if self.load_queue_camera_reset")
             && app_source.contains("&& self.queued_loads.is_empty()"),
         "a final append failure should still frame the successfully loaded partial scene"
+    );
+}
+
+#[test]
+fn the_handoff_pipe_cannot_be_squatted_or_used_to_impersonate() {
+    // A clinic reception machine is a shared workstation, and what travels over
+    // this pipe is a list of scan paths -- in dental work, patient identifiers.
+    // The name alone is not a boundary: anything in the session can create
+    // `\\.\pipe\<name>` first and wait for the real client to connect to it.
+    let windows = include_str!("../single_instance/windows.rs");
+
+    assert!(
+        windows.contains("SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION"),
+        "the client must cap the connection at identification level; at the \
+         default impersonation level a hijacked listener can call \
+         ImpersonateNamedPipeClient and act as this user"
+    );
+    assert!(
+        windows.contains("FILE_FLAG_FIRST_PIPE_INSTANCE"),
+        "the listener must fail when the name already exists rather than \
+         becoming a second instance beside whoever claimed it"
+    );
+    assert!(
+        windows.contains("D:P(A;;GA;;;{sid})"),
+        "the listener's DACL must grant the current user and nobody else"
+    );
+    assert!(
+        windows.contains("ConvertSidToStringSidW"),
+        "the DACL needs the real SID, not a hash of it"
+    );
+    assert!(
+        windows.contains("owner_only_security_descriptor"),
+        "the security descriptor should be built in one named place"
+    );
+
+    // All of the above is reachable only when the SID lookup succeeds. Fall
+    // back on failure and the pipe gets the default DACL under a fixed name:
+    // the squattable, world-readable pipe this test is about, arrived at by a
+    // silent downgrade rather than by an attack.
+    assert!(
+        !windows.contains("descriptor.unwrap_or_default()"),
+        "a missing descriptor must refuse the pipe, not fall back to the \
+         default DACL"
+    );
+    assert!(
+        windows.contains(
+            "bail!(\"refusing to create the single-instance pipe without an owner-only DACL\")"
+        ),
+        "the failure has to be a refusal, and it has to say so"
+    );
+
+    // FIRST_PIPE_INSTANCE makes a claimed name fail for good, so retrying it
+    // every 50 ms wrote a warning per retry into a 50-line crash ring: the
+    // whole recent-log section of the next crash report became one repeated
+    // line, in under three seconds.
+    assert!(
+        windows.contains("const MAX_CONSECUTIVE_PIPE_FAILURES: u32"),
+        "the listener must give up on a permanently claimed name"
+    );
+    // A listener that refuses the pipe is only half of it: the sender still
+    // writes the scan paths to a name built from the same failed lookup.
+    assert!(
+        !windows.contains("String::from(\"default\")"),
+        "a name that is not per-user must not be constructed at all"
+    );
+    for refusal in [
+        "refusing to send an open request to a pipe name that is not per-user",
+        "refusing to listen on a pipe name that is not per-user",
+    ] {
+        assert!(
+            windows.contains(refusal),
+            "both ends of the hand-off must refuse a shared name: {refusal}"
+        );
+    }
+    assert!(
+        windows.contains("hand-off continues"),
+        "and it must say where hand-off went, because the disk fallback \
+         listener carries it from there"
     );
 }

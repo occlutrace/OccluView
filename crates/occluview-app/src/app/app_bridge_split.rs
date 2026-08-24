@@ -1,6 +1,6 @@
 //! Viewport orchestration for the interactive Bridge Split separator disc.
 
-use super::{egui, layers_overlay, OccluViewApp, Scene};
+use super::{egui, OccluViewApp, Scene};
 use crate::bridge_split::{apply_preview_to_scene, BridgeSplitMode, BridgeSplitTarget};
 use crate::bridge_split_overlay::{
     paint_separator_disc, show_panel, BridgeSplitPanelAction, BridgeSplitPanelState, SeparatorDisc,
@@ -8,7 +8,7 @@ use crate::bridge_split_overlay::{
 use crate::cut_manipulator::{CutCursor, CutFrameInput, SurfaceSample};
 use crate::edit_mode::state::{BusyFinish, EditModeCommand};
 use crate::section_view::{SectionMainView, SectionViewFrame};
-use crate::viewer::{project_world_to_viewport, viewport_ray};
+use crate::viewer::viewport_ray;
 use occluview_core::{Camera, SceneMesh, SceneMeshId};
 
 struct BridgeFrameContext<'a> {
@@ -61,12 +61,19 @@ impl OccluViewApp {
         self.bridge_split_disc.arm_with_radius(object_radius);
         // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
         // first hover/plant doesn't freeze the UI building it on a big scan.
-        if let Some(scene_arc) = self.scene.clone() {
-            std::thread::spawn(move || {
-                if let Some(entry) = scene_arc.meshes().iter().find(|e| e.id() == layer_id) {
-                    entry.mesh.warm_bvh();
-                }
-            });
+        //
+        // The thread takes the one mesh it warms, not the case it came from:
+        // an `Arc<Scene>` held here made every scene edit on the UI thread copy
+        // the whole case for as long as the warm ran, which is most of a
+        // second on a full arch. The mesh is shared, so this costs a pointer
+        // and the thread warms the very cell the scene will read.
+        let target_mesh = self
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.meshes().iter().find(|e| e.id() == layer_id))
+            .map(|entry| entry.mesh.clone());
+        if let Some(mesh) = target_mesh {
+            std::thread::spawn(move || mesh.warm_bvh());
         }
         self.bridge_split_section.reset();
         self.needs_render = true;
@@ -78,7 +85,7 @@ impl OccluViewApp {
         self.bridge_split.session().mode() != BridgeSplitMode::Off
     }
 
-    pub(super) fn show_bridge_split_overlay_impl(
+    pub(super) fn show_bridge_split_overlay(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,
@@ -322,11 +329,7 @@ impl OccluViewApp {
     }
 
     fn consume_bridge_split_escape(&self, ctx: &egui::Context) -> bool {
-        let dialogs_open = self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
-        !dialogs_open
+        !self.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     }
 
@@ -341,53 +344,32 @@ impl OccluViewApp {
             entry,
             viewport_rect,
         } = frame_context;
-        let pointer = ctx.input(|input| input.pointer.hover_pos());
-        let over_rect = pointer.is_some_and(|point| viewport_rect.contains(point));
-        let layers_rect = layers_overlay::layer_overlay_rect(*viewport_rect, scene.meshes().len());
-        let over_section_panel = self.bridge_split_section.slice_visible()
-            && pointer.is_some_and(|point| {
-                crate::cut_ruler::section_panel_contains(*viewport_rect, point)
-            });
-        let gizmo_avoid = self
-            .bridge_split_section
-            .slice_visible()
-            .then(|| crate::cut_ruler::section_panel_rect(*viewport_rect))
-            .flatten();
-        let over_gizmo = pointer.is_some_and(|point| {
-            crate::viewer::axis_gizmo::axis_gizmo_footprint(*viewport_rect, gizmo_avoid)
-                .contains(point)
-        });
-        let over_egui = pointer.is_some_and(|point| {
-            layers_rect.contains(point)
-                || ctx
-                    .layer_id_at(point)
-                    .is_some_and(|layer| layer.order != egui::Order::Background)
-        }) || over_section_panel
-            || over_gizmo;
-        let over_viewport = over_rect && !over_egui;
+        // Same question, same answer: see `OccluViewApp::viewport_pointer`.
+        // Not a second copy: the gizmo's avoid-rect has to come from the call
+        // that painted the gizmo, as the cut tool's own comment warns.
+        let super::app_cut_measure::ViewportPointer {
+            pointer,
+            over_section_panel,
+            over_viewport,
+        } = self.viewport_pointer(
+            ctx,
+            *viewport_rect,
+            scene,
+            self.bridge_split_section.slice_visible(),
+        );
         let ctrl = ctx.input(|input| input.modifiers.command);
-        let raw_scroll = ctx.input(|input| input.raw_scroll_delta.y);
-        let (wheel_notches, panel_zoom_notches) = if over_section_panel && raw_scroll != 0.0 {
-            ctx.input_mut(|input| {
-                input.raw_scroll_delta = egui::Vec2::ZERO;
-                input.smooth_scroll_delta = egui::Vec2::ZERO;
-            });
-            let notches = raw_scroll / super::app_cut_measure::CUT_WHEEL_PX_PER_NOTCH;
-            if ctrl {
-                (notches, 0.0)
-            } else {
-                (0.0, notches)
-            }
-        } else {
-            (0.0, 0.0)
-        };
-        let eye = camera.eye();
-        let view_dir = camera.view_direction();
-        let camera_up = camera.view_up();
-        let camera_right = view_dir.cross(camera_up).normalize_or_zero();
-        let ray_origin = pointer
-            .and_then(|point| viewport_ray(camera, *viewport_rect, point))
-            .map_or(eye, |(origin, _)| origin);
+        // The wheel scoping and the camera basis are the cut tool's, not a
+        // second copy of them: an operator meets one wheel gesture over one
+        // Section panel, whichever disc tool put it there.
+        let (wheel_notches, panel_zoom_notches) =
+            super::disc_frame::section_panel_wheel(ctx, over_section_panel, ctrl);
+        let super::disc_frame::DiscViewGeometry {
+            eye,
+            view_dir,
+            camera_up,
+            camera_right,
+            ray_origin,
+        } = super::disc_frame::disc_view_geometry(camera, *viewport_rect, pointer);
         let surface_hit = (!self.bridge_split_disc.is_planted() && over_viewport)
             .then(|| {
                 pointer.and_then(|point| {
@@ -395,14 +377,11 @@ impl OccluViewApp {
                 })
             })
             .flatten();
-        let pose = self.bridge_split_disc.pose();
-        let disc_center_screen = pose.and_then(|disc| {
-            project_world_to_viewport(camera, *viewport_rect, disc.center).map(|(screen, _)| screen)
-        });
-        let disc_radius_screen = pose.map_or(0.0, |disc| {
-            disc.radius_mm * viewport_rect.height().max(1.0)
-                / camera.orthographic_height.max(1.0e-3)
-        });
+        let (disc_center_screen, disc_radius_screen) = super::disc_frame::disc_screen_placement(
+            camera,
+            *viewport_rect,
+            self.bridge_split_disc.pose(),
+        );
         let frame = CutFrameInput {
             pointer,
             over_viewport,

@@ -1,16 +1,14 @@
 //! `occluview-cli` - headless CLI.
 //!
 //! Subcommands:
-//!   - `thumbnail <file> [-o out.png] [--size N]` - render a thumbnail via
-//!     the same file-backed offscreen path the Explorer shell extension uses,
-//!     so a correct PNG here means a correct thumbnail in Explorer.
+//!   - `thumbnail <file> [-o out.png] [--size N]` - render a thumbnail.
 //!   - `convert <file> -o out.{stl|ply|obj}` - transcode a mesh into a common
 //!     exchange format. Keeps geometry, vertex colors (PLY/OBJ), normals, and
 //!     UVs where the destination format supports them.
 //!   - `info <file> [file...]` - print format, vertex/triangle counts, bbox,
 //!     colors, UVs, texture. Multiple files print per-file stats + an
 //!     aggregate scene bbox (upper+lower arch case).
-//!   - `help` - show usage.
+//!   - `help` - show usage. `-h` / `--help` is accepted in place of a file.
 
 // CLI tool: stdout/stderr is the entire point.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
@@ -23,6 +21,7 @@ use occluview_formats::hps::RuntimeHpsKeyProvider;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    install_tracing();
     let exit_code = match run() {
         Ok(()) => 0,
         Err(error) => {
@@ -33,10 +32,33 @@ fn main() {
     std::process::exit(exit_code);
 }
 
+/// Send the workspace's `tracing` output to stderr.
+///
+/// This binary is the freedesktop thumbnailer the Debian package installs, so
+/// when a clinic's file manager shows placeholder cubes instead of scans, this
+/// is where the reason comes out. Without it every `tracing::warn!` from the
+/// format, thumbnail and render crates goes nowhere and `RUST_LOG` does
+/// nothing, while the subscriber's dependency tree ships in the binary and in
+/// its attribution regardless.
+///
+/// Default is `warn`, so ordinary runs stay quiet; `RUST_LOG=debug` turns the
+/// diagnosis on. stderr, because that is already this tool's progress channel
+/// and the thumbnailer contract only cares about the output file.
+fn install_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .compact()
+        .try_init();
+}
+
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let subcommand = args.next().unwrap_or_else(|| {
-        print_usage();
+        print_usage_with_error();
         "help".to_string()
     });
 
@@ -49,19 +71,58 @@ fn run() -> Result<()> {
             print_usage();
             Ok(())
         }
+        "--version" | "-V" => {
+            println!("occluview-cli {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         other => {
-            print_usage();
+            print_usage_with_error();
             Err(anyhow!("unknown subcommand: {other}"))
         }
     }
 }
 
+/// The leading positional argument of a subcommand: the file to work on, or a
+/// request for the usage text.
+#[derive(Debug)]
+enum FileArgument {
+    Path(PathBuf),
+    Help,
+}
+
+/// Take the file that every subcommand expects first, refusing to read a flag
+/// as a filename.
+///
+/// Taken verbatim, `thumbnail --help` renders a placeholder cube into
+/// `./--help.png` and exits 0, and `thumbnail -o out.png scan.stl` opens a
+/// file called `-o`. A path never starts with `-`, so a leading `-` is a
+/// misplaced flag; say so rather than write a file nobody asked for. A file
+/// genuinely named `-x` is still reachable as `./-x`.
+fn take_file_argument(
+    args: &mut impl Iterator<Item = String>,
+    subcommand: &str,
+) -> Result<FileArgument> {
+    let first = args
+        .next()
+        .ok_or_else(|| anyhow!("{subcommand}: missing <file> argument"))?;
+    match first.as_str() {
+        "-h" | "--help" => Ok(FileArgument::Help),
+        flag if flag.starts_with('-') => Err(anyhow!(
+            "{subcommand}: expected a file path, got the flag {flag}; the file comes first"
+        )),
+        _ => Ok(FileArgument::Path(PathBuf::from(first))),
+    }
+}
+
 /// `thumbnail <file> [-o out.png] [--size N]`
 fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let file: PathBuf = args
-        .next()
-        .ok_or_else(|| anyhow!("thumbnail: missing <file> argument"))?
-        .into();
+    let file: PathBuf = match take_file_argument(args, "thumbnail")? {
+        FileArgument::Help => {
+            print_usage();
+            return Ok(());
+        }
+        FileArgument::Path(path) => path,
+    };
     let mut output: Option<PathBuf> = None;
     let mut size: u16 = 256;
     while let Some(arg) = args.next() {
@@ -88,15 +149,8 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
         p
     });
 
+    occluview_thumbnail::use_software_renderer_only();
     eprintln!("Rendering {size}x{size} thumbnail...");
-    // Use the same infallible, placeholder-backed path Explorer's shell
-    // extension uses: a corrupt / unsupported / encrypted-without-key / over-
-    // budget file yields a neutral placeholder cube (with a "!" badge for
-    // broken files) instead of an error. This matters for the freedesktop
-    // thumbnailer contract (`Exec=occluview-cli thumbnail %i -o %o`): a non-zero
-    // exit or missing output makes the file manager show a broken-image glyph,
-    // which is exactly the "broken thumbnails" we want to avoid. Any fallback
-    // reason is tracing-logged inside the provider, not silently masked.
     let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
         &file,
         occluview_render::ThumbnailSpec {
@@ -117,10 +171,13 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// `convert <file> -o output.{stl|ply|obj}`
 fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let input: PathBuf = args
-        .next()
-        .ok_or_else(|| anyhow!("convert: missing <file> argument"))?
-        .into();
+    let input: PathBuf = match take_file_argument(args, "convert")? {
+        FileArgument::Help => {
+            print_usage();
+            return Ok(());
+        }
+        FileArgument::Path(path) => path,
+    };
     let mut output: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -147,10 +204,13 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
 /// Holes pipeline headlessly (STL loads as soup) and write the closed result.
 /// Prints the honest edit report so a soup input can be verified end to end.
 fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let input: PathBuf = args
-        .next()
-        .ok_or_else(|| anyhow!("close-holes: missing <file> argument"))?
-        .into();
+    let input: PathBuf = match take_file_argument(args, "close-holes")? {
+        FileArgument::Help => {
+            print_usage();
+            return Ok(());
+        }
+        FileArgument::Path(path) => path,
+    };
     let mut output: Option<PathBuf> = None;
     let mut limit_mm: Option<f32> = None;
     while let Some(arg) = args.next() {
@@ -195,7 +255,17 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
 /// `info <file> [file...]` - print mesh statistics. When multiple files are
 /// given, prints per-file stats plus an aggregate scene bbox.
 fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let files: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    let raw: Vec<String> = args.collect();
+    if raw.iter().any(|arg| arg == "-h" || arg == "--help") {
+        print_usage();
+        return Ok(());
+    }
+    if let Some(flag) = raw.iter().find(|arg| arg.starts_with('-')) {
+        return Err(anyhow!(
+            "info: expected file paths, got the flag {flag}; the files come first"
+        ));
+    }
+    let files: Vec<PathBuf> = raw.into_iter().map(PathBuf::from).collect();
     if files.is_empty() {
         return Err(anyhow!("info: missing <file> argument"));
     }
@@ -246,7 +316,7 @@ fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// Single-file info (the original output format).
 fn cmd_info_one(file: &Path) -> Result<()> {
-    let mut mesh = read_file_with_key_provider(file, &RuntimeHpsKeyProvider)
+    let mesh = read_file_with_key_provider(file, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", file.display()))?;
 
     let bbox = mesh.bbox();
@@ -297,8 +367,25 @@ fn cmd_info_one(file: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The usage text, on stdout, because it was asked for.
+///
+/// A `--help` that answers on stderr cannot be piped into a pager or a file
+/// without redirecting the error stream, which is the one thing nobody expects
+/// to have to do for help.
 fn print_usage() {
-    eprintln!(
+    println!("{}", usage_text());
+}
+
+/// The same text on stderr, where it accompanies an error.
+///
+/// stdout belongs to whatever the command was going to produce; an error and
+/// the usage that explains it belong beside the error message.
+fn print_usage_with_error() {
+    eprintln!("{}", usage_text());
+}
+
+fn usage_text() -> &'static str {
+    concat!(
         "occluview-cli - headless OccluView\n\
          \n\
          USAGE:\n    \
@@ -309,15 +396,89 @@ fn print_usage() {
          convert   <file> -o output.{{stl|ply|obj}}   Convert a mesh into STL / PLY / OBJ\n    \
          close-holes <file> -o out.stl [--limit-mm N] Close holes (whole-mesh) and write the result\n    \
          info      <file>                          Print format / counts / bbox\n    \
-         help                                       Show this message"
-    );
+         help                                       Show this message\n    \
+         --version | -V                             Print the version and exit\n\
+         \n\
+         Every subcommand takes its file first; -h or --help in that position\n\
+         prints this message instead of naming a file."
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    /// The part of this file above the test module.
+    ///
+    /// Searching the whole of it matches the needle written in the assertion
+    /// itself, so the guard would pass on its own text and the production line
+    /// it names could be deleted with nothing going red.
+    fn production_source() -> &'static str {
+        let source = include_str!("main.rs");
+        source
+            .split_once("#[cfg(test)]\nmod tests")
+            .map_or(source, |(production, _)| production)
+    }
+
+    use super::{take_file_argument, FileArgument};
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_flag_where_the_file_belongs_is_refused_instead_of_opened() {
+        let mut args = ["-o", "out.png"].into_iter().map(String::from);
+        let error = take_file_argument(&mut args, "thumbnail")
+            .expect_err("a flag must not be accepted as the file to render");
+        let message = error.to_string();
+        assert!(message.contains("-o"), "{message}");
+        assert!(message.contains("thumbnail"), "{message}");
+    }
+
+    #[test]
+    fn asking_a_subcommand_for_help_prints_help_and_renders_nothing() {
+        for flag in ["-h", "--help"] {
+            let mut args = std::iter::once(flag.to_string());
+            let taken =
+                take_file_argument(&mut args, "thumbnail").expect("--help must not be an error");
+            assert!(
+                matches!(taken, FileArgument::Help),
+                "{flag} must ask for usage, not name a file to render"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_path_is_still_taken_verbatim() {
+        let mut args = std::iter::once("scan.stl".to_string());
+        match take_file_argument(&mut args, "info").expect("a plain path is valid") {
+            FileArgument::Path(path) => assert_eq!(path, PathBuf::from("scan.stl")),
+            FileArgument::Help => panic!("a plain path is not a help request"),
+        }
+    }
+
+    #[test]
+    fn a_missing_file_is_reported_against_the_subcommand_that_wanted_it() {
+        let mut args = std::iter::empty();
+        let error =
+            take_file_argument(&mut args, "close-holes").expect_err("close-holes needs a file");
+        assert!(error.to_string().contains("close-holes"));
+    }
+
+    #[test]
+    fn version_flag_is_recognised_and_advertised() {
+        let source = production_source();
+        assert!(
+            source.contains("\"--version\" | \"-V\""),
+            "--version must dispatch instead of falling into the unknown-subcommand error"
+        );
+        assert!(
+            source.contains("--version | -V"),
+            "the usage text should advertise the flag"
+        );
+    }
+
     #[test]
     fn thumbnail_cli_uses_file_backed_render_path() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         let start = source.find("fn cmd_thumbnail(");
         assert!(start.is_some(), "missing cmd_thumbnail");
         let Some(start) = start else {
@@ -347,11 +508,17 @@ mod tests {
             !thumbnail.contains("read_file_with_key_provider(&file"),
             "CLI thumbnails should not parse once for console stats and again for rendering"
         );
+        assert!(
+            thumbnail.contains("occluview_thumbnail::use_software_renderer_only();"),
+            "one render and then the process ends: a discrete driver's own threads \
+             can fault while the process is torn down, and a file manager reads \
+             that as a thumbnailer that failed"
+        );
     }
 
     #[test]
     fn convert_cli_routes_through_export_module() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(source.contains("\"convert\" => cmd_convert(&mut args)"));
         assert!(source.contains("export::convert_file(&input, &output)?;"));
         assert!(source.contains("output.{stl|ply|obj}"));

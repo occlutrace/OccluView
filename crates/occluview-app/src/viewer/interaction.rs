@@ -1,6 +1,6 @@
 use eframe::egui;
 use glam::{Vec2, Vec3};
-use occluview_core::{orbit_delta_from_pointer_motion, Aabb, Camera, Scene, ScenePickHit};
+use occluview_core::{orbit_delta_from_pointer_motion, Camera, Scene, ScenePickHit};
 
 // Wheel zoom shares the CAD-tuned core mapping with the shell preview so the
 // two surfaces feel identical: no braked camera, no reversals.
@@ -57,7 +57,7 @@ pub(crate) fn pick_scene_point(
     scene
         .pick_ray_hit(origin, direction)
         .map(|hit| hit.point)
-        .or_else(|| ray_aabb_entry(origin, direction, scene.bbox()))
+        .or_else(|| scene.bbox().ray_entry(origin, direction))
 }
 
 pub(crate) fn pick_scene_hit(
@@ -171,40 +171,6 @@ pub(crate) fn viewport_ray(
     let half_width = half_height * (width / height);
     let origin = eye + right * x * half_width + up * y * half_height;
     Some((origin, forward))
-}
-
-fn ray_aabb_entry(origin: Vec3, direction: Vec3, bbox: Aabb) -> Option<Vec3> {
-    let mut t_min = 0.0_f32;
-    let mut t_max = f32::INFINITY;
-    for axis in 0..3 {
-        let o = origin[axis];
-        let d = direction[axis];
-        let min = bbox.min[axis];
-        let max = bbox.max[axis];
-        if d.abs() <= f32::EPSILON {
-            if o < min || o > max {
-                return None;
-            }
-            continue;
-        }
-        let inv = 1.0 / d;
-        let mut t0 = (min - o) * inv;
-        let mut t1 = (max - o) * inv;
-        if t0 > t1 {
-            std::mem::swap(&mut t0, &mut t1);
-        }
-        t_min = t_min.max(t0);
-        t_max = t_max.min(t1);
-        if t_max < t_min {
-            return None;
-        }
-    }
-    let t = if t_min >= 0.0 { t_min } else { t_max };
-    if t.is_finite() && t >= 0.0 {
-        Some(origin + direction * t)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
