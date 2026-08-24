@@ -25,7 +25,7 @@ use occluview_formats::FormatError;
 use occluview_render::ThumbnailSpec;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod cache;
 mod concurrency;
@@ -37,14 +37,13 @@ mod tests;
 
 use cache::{
     oversize_input_error, thumbnail_background_key, thumbnail_file_cache,
-    thumbnail_file_content_cache, thumbnail_file_content_key, thumbnail_setup_timeout,
-    thumbnail_stream_cache, FileThumbnailPreflightError, StreamThumbnailPreflightError,
-    ThumbnailFileCacheKey, ThumbnailFileContentKey, ThumbnailFileMetadata, ThumbnailRequestKey,
+    thumbnail_file_content_cache, thumbnail_file_content_key, thumbnail_stream_cache,
+    FileThumbnailPreflightError, StreamThumbnailPreflightError, ThumbnailFileCacheKey,
+    ThumbnailFileContentKey, ThumbnailFileMetadata, ThumbnailRequestKey,
 };
 use concurrency::{
-    render_coalesced_thumbnail, run_thumbnail_job_with_deadline,
-    run_thumbnail_job_with_permit_deadline, ThumbnailJobOutcome, ThumbnailJobPermit,
-    ThumbnailJobProgress, ThumbnailRendererPool,
+    render_coalesced_thumbnail, run_thumbnail_job_by, run_thumbnail_job_with_deadline,
+    ThumbnailJobOutcome, ThumbnailJobPermit, ThumbnailJobProgress, ThumbnailRendererPool,
 };
 use loading::{
     load_thumbnail_mesh_from_bytes, load_thumbnail_mesh_from_bytes_kind,
@@ -59,16 +58,6 @@ pub const MAX_THUMBNAIL_INPUT_BYTES: usize = 192 * 1024 * 1024;
 /// so this policy can be higher than the stream cap without duplicating the
 /// file into the COM surrogate's heap.
 pub const MAX_THUMBNAIL_FILE_BYTES: usize = 512 * 1024 * 1024;
-// Ceiling on how long a request may wait for a free render slot (the "setup"
-// phase) before it gives up with a transient failure. Under Explorer's
-// Apartment hosting every extraction of our CLSID serializes through one host
-// STA thread, so this bound is the longest a single `GetThumbnail` can stall
-// the entire folder's queue while merely waiting its turn internally: hold it
-// too long and the shell abandons not just this call but the calls queued
-// behind it. A timed-out render keeps going in the background and caches its
-// result (see the job workers), so a transient failure here is never the
-// final word — the real thumbnail is served from the cache on the retry.
-const MAX_THUMBNAIL_SETUP_TIMEOUT: Duration = Duration::from_secs(8);
 
 static THUMBNAIL_INFLIGHT: OnceLock<
     Mutex<std::collections::HashMap<ThumbnailRequestKey, Arc<concurrency::InflightThumbnail>>>,
@@ -123,15 +112,26 @@ impl ThumbnailAttempt {
 /// Reserving first keeps a mixed folder from materializing every large file in
 /// `dllhost` before the ordinary decode/render gate can apply.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub struct ThumbnailJobReservation(ThumbnailJobPermit);
+pub struct ThumbnailJobReservation {
+    permit: ThumbnailJobPermit,
+    /// When the request that took this reservation must be finished.
+    ///
+    /// Fixed at reservation time, so that the wait for a slot, the shell's
+    /// copy of the stream and the render itself all spend one budget. They
+    /// used to take a budget each: eight seconds for the slot, an unbounded
+    /// copy, then a fresh six for the render -- and under Apartment hosting
+    /// the whole folder queues behind that.
+    deadline: Instant,
+}
 
 #[must_use]
 #[cfg_attr(not(windows), allow(dead_code))]
 /// Reserve one bounded stream thumbnail job before copying shell bytes.
 pub fn reserve_thumbnail_stream_job(timeout: Duration) -> Option<ThumbnailJobReservation> {
+    let deadline = Instant::now() + timeout;
     concurrency::ThumbnailJobGate::shared()
-        .acquire_timeout(thumbnail_setup_timeout(timeout))
-        .map(ThumbnailJobReservation)
+        .acquire_by(deadline)
+        .map(|permit| ThumbnailJobReservation { permit, deadline })
 }
 
 /// Create the pooled offscreen renderer ahead of the first request.
@@ -621,8 +621,8 @@ fn try_render_thumbnail_shared_impl(
             let _ = progress.send(ThumbnailJobProgress::Finished(result));
         };
         let result = match reservation {
-            Some(ThumbnailJobReservation(permit)) => {
-                run_thumbnail_job_with_permit_deadline(permit, timeout, work)
+            Some(ThumbnailJobReservation { permit, deadline }) => {
+                run_thumbnail_job_by(permit, deadline, work)
             }
             None => run_thumbnail_job_with_deadline(timeout, work),
         };

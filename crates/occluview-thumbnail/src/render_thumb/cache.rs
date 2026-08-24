@@ -1,7 +1,7 @@
 use super::{
     rendering, Duration, Mutex, Path, ThumbnailError, MAX_THUMBNAIL_FILE_BYTES,
-    MAX_THUMBNAIL_INPUT_BYTES, MAX_THUMBNAIL_SETUP_TIMEOUT, THUMBNAIL_FILE_CACHE,
-    THUMBNAIL_FILE_CONTENT_CACHE, THUMBNAIL_STREAM_CACHE,
+    MAX_THUMBNAIL_INPUT_BYTES, THUMBNAIL_FILE_CACHE, THUMBNAIL_FILE_CONTENT_CACHE,
+    THUMBNAIL_STREAM_CACHE,
 };
 use occluview_formats::{FormatError, FormatKind};
 use sha2::{Digest, Sha256};
@@ -506,11 +506,4 @@ fn thumbnail_bytes_fingerprint(bytes: &[u8]) -> [u8; 32] {
         }
     }
     hasher.finalize().into()
-}
-
-pub(super) fn thumbnail_setup_timeout(render_timeout: Duration) -> Duration {
-    render_timeout
-        .checked_mul(4)
-        .unwrap_or(MAX_THUMBNAIL_SETUP_TIMEOUT)
-        .min(MAX_THUMBNAIL_SETUP_TIMEOUT)
 }

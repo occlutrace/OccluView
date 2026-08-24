@@ -135,16 +135,18 @@ fn stream_thumbnail_cache_evicts_oldest_entries_to_stay_bounded() {
 }
 
 #[test]
-fn thumbnail_job_timeout_allows_longer_setup_before_short_render_budget() {
-    // Use a private gate so this staged-deadline assertion is isolated from
-    // whatever concurrent tests are doing to the shared thumbnail job gate.
+fn a_job_that_finishes_inside_its_budget_returns_its_value() {
+    // A private gate, so the assertion does not depend on what the rest of the
+    // suite is doing to the shared one -- but the runner is the production one.
     let gate = concurrency::ThumbnailJobGate::new(1);
-    let outcome = concurrency::run_thumbnail_job_with_gate_and_timeouts(
-        &gate,
-        Duration::from_millis(200),
-        Duration::from_millis(10),
+    let permit = gate
+        .acquire_timeout(Duration::from_millis(200))
+        .expect("an idle private gate hands out its permit");
+    let outcome = run_thumbnail_job_by(
+        permit,
+        Instant::now() + Duration::from_millis(400),
         move |progress| {
-            thread::sleep(Duration::from_millis(60));
+            thread::sleep(Duration::from_millis(30));
             let _ = progress.send(ThumbnailJobProgress::Prepared);
             let _ = progress.send(ThumbnailJobProgress::Finished(7_u8));
         },
@@ -153,17 +155,17 @@ fn thumbnail_job_timeout_allows_longer_setup_before_short_render_budget() {
 }
 
 #[test]
-fn thumbnail_job_timeout_still_enforces_render_deadline_after_prepare_signal() {
-    // Private gate, as above: the render-deadline behavior must not depend on
-    // the shared gate being idle.
+fn a_job_that_outruns_its_budget_after_preparing_is_a_render_timeout() {
     let gate = concurrency::ThumbnailJobGate::new(1);
-    let outcome = concurrency::run_thumbnail_job_with_gate_and_timeouts(
-        &gate,
-        Duration::from_millis(200),
-        Duration::from_millis(10),
+    let permit = gate
+        .acquire_timeout(Duration::from_millis(200))
+        .expect("an idle private gate hands out its permit");
+    let outcome = run_thumbnail_job_by(
+        permit,
+        Instant::now() + Duration::from_millis(30),
         move |progress| {
             let _ = progress.send(ThumbnailJobProgress::Prepared);
-            thread::sleep(Duration::from_millis(60));
+            thread::sleep(Duration::from_millis(300));
             let _ = progress.send(ThumbnailJobProgress::Finished(7_u8));
         },
     );
@@ -171,13 +173,19 @@ fn thumbnail_job_timeout_still_enforces_render_deadline_after_prepare_signal() {
 }
 
 #[test]
-fn timed_out_thumbnail_job_keeps_gate_until_the_worker_really_finishes() {
+fn a_timed_out_worker_keeps_its_lane_until_it_really_finishes() {
+    // The caller gives up, but the worker still holds a decoded mesh and may be
+    // waiting on the renderer. Releasing its lane early would let a large
+    // folder build an unbounded tail of survivors behind the callers that have
+    // already returned.
     let gate = concurrency::ThumbnailJobGate::new(1);
     let (release_worker, wait_for_release) = std::sync::mpsc::channel::<()>();
-    let first = concurrency::run_thumbnail_job_with_gate_and_timeouts(
-        &gate,
-        Duration::from_secs(1),
-        Duration::from_millis(30),
+    let permit = gate
+        .acquire_timeout(Duration::from_millis(200))
+        .expect("an idle private gate hands out its permit");
+    let first: ThumbnailJobOutcome<u8> = run_thumbnail_job_by(
+        permit,
+        Instant::now() + Duration::from_millis(30),
         move |progress| {
             let _ = progress.send(ThumbnailJobProgress::Prepared);
             let _ = wait_for_release.recv_timeout(Duration::from_secs(2));
@@ -186,37 +194,26 @@ fn timed_out_thumbnail_job_keeps_gate_until_the_worker_really_finishes() {
     );
     assert!(
         matches!(first, ThumbnailJobOutcome::RenderTimedOut),
-        "prepared worker should be held past the render deadline"
+        "a prepared worker is held past the render deadline"
     );
-
-    // The caller timed out, but the worker still owns a decoded mesh and may be
-    // blocked on a GPU renderer. It must continue counting against the process
-    // budget; otherwise a large Explorer folder can spawn an unbounded tail of
-    // surviving workers after their callers have returned.
-    let second = concurrency::run_thumbnail_job_with_gate_and_timeouts(
-        &gate,
-        Duration::from_millis(30),
-        Duration::from_secs(1),
-        move |progress| {
-            let _ = progress.send(ThumbnailJobProgress::Prepared);
-            let _ = progress.send(ThumbnailJobProgress::Finished(9_u8));
-        },
+    assert!(
+        gate.acquire_timeout(Duration::from_millis(30)).is_none(),
+        "the lane is still the timed-out worker's"
     );
-    assert!(matches!(second, ThumbnailJobOutcome::SetupTimedOut));
 
     let _ = release_worker.send(());
-    let third = concurrency::run_thumbnail_job_with_gate_and_timeouts(
-        &gate,
-        Duration::from_secs(1),
-        Duration::from_secs(1),
-        move |progress| {
-            let _ = progress.send(ThumbnailJobProgress::Prepared);
-            let _ = progress.send(ThumbnailJobProgress::Finished(11_u8));
-        },
+    let mut regained = None;
+    for _ in 0..100 {
+        if let Some(permit) = gate.acquire_timeout(Duration::from_millis(30)) {
+            regained = Some(permit);
+            break;
+        }
+    }
+    assert!(
+        regained.is_some(),
+        "the lane comes back once the worker really finishes"
     );
-    assert!(matches!(third, ThumbnailJobOutcome::Finished(11_u8)));
 }
-
 #[test]
 fn file_backed_thumbnail_timeout_is_one_end_to_end_budget() {
     let timeout = Duration::from_millis(75);

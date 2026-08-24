@@ -272,3 +272,55 @@ mod renderer_pool_recovery_tests {
         );
     }
 }
+
+mod one_budget_tests {
+    use super::super::{
+        run_thumbnail_job_with_deadline, ThumbnailJobGate, ThumbnailJobOutcome,
+        ThumbnailJobProgress,
+    };
+    use std::time::{Duration, Instant};
+
+    /// Waiting for a slot and then rendering must spend one budget, not two.
+    ///
+    /// Each used to take the caller's full timeout of its own, so a request
+    /// could take twice what was asked -- and under Explorer's Apartment
+    /// hosting every extraction serialises through one thread, so those
+    /// seconds are the whole folder's.
+    #[test]
+    fn a_wait_for_a_slot_comes_out_of_the_request_budget() {
+        let budget = Duration::from_millis(600);
+        let gate = ThumbnailJobGate::shared();
+        // Fill every lane, and let them go part-way through the budget.
+        let mut held = Vec::new();
+        while let Some(permit) = gate.acquire_timeout(Duration::from_millis(50)) {
+            held.push(permit);
+            if held.len() > 64 {
+                break;
+            }
+        }
+        let release_at = Instant::now() + Duration::from_millis(400);
+        std::thread::spawn(move || {
+            while Instant::now() < release_at {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            drop(held);
+        });
+
+        let started = Instant::now();
+        let outcome: ThumbnailJobOutcome<()> =
+            run_thumbnail_job_with_deadline(budget, |progress| {
+                std::thread::sleep(Duration::from_millis(500));
+                let _ = progress.send(ThumbnailJobProgress::Finished(()));
+            });
+        let elapsed = started.elapsed();
+        assert!(
+            matches!(outcome, ThumbnailJobOutcome::SetupTimedOut)
+                || matches!(outcome, ThumbnailJobOutcome::RenderTimedOut),
+            "the work outlasts the budget, so the caller must give up"
+        );
+        assert!(
+            elapsed < budget + Duration::from_millis(250),
+            "one budget of {budget:?} was spent twice: {elapsed:?}"
+        );
+    }
+}

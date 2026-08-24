@@ -316,8 +316,14 @@ impl ThumbnailJobGate {
     /// Infallible with respect to lock poisoning: the gate counter is recovered
     /// rather than treated as fatal, so one panicking request cannot wedge the
     /// gate shut for the rest of a folder's thumbnails.
+    #[cfg(test)]
     pub(super) fn acquire_timeout(&self, timeout: Duration) -> Option<ThumbnailJobPermit> {
-        let deadline = Instant::now() + timeout;
+        self.acquire_by(Instant::now() + timeout)
+    }
+
+    /// As [`ThumbnailJobGate::acquire_timeout`], against a deadline the caller
+    /// already fixed, so that waiting here spends the request's own budget.
+    pub(super) fn acquire_by(&self, deadline: Instant) -> Option<ThumbnailJobPermit> {
         let mut state = lock_recover(&self.inner.state);
         let ticket = state.next_ticket;
         state.next_ticket = state.next_ticket.wrapping_add(1);
@@ -540,84 +546,6 @@ pub(super) fn render_coalesced_thumbnail(
     }
 }
 
-#[cfg(test)]
-pub(super) fn run_thumbnail_job_with_gate_and_timeouts<T, F>(
-    gate: &ThumbnailJobGate,
-    setup_timeout: Duration,
-    render_timeout: Duration,
-    work: F,
-) -> ThumbnailJobOutcome<T>
-where
-    T: Send + 'static,
-    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
-{
-    let Some(permit) = gate.acquire_timeout(setup_timeout) else {
-        return ThumbnailJobOutcome::SetupTimedOut;
-    };
-    run_thumbnail_job_with_permit(permit, setup_timeout, render_timeout, work)
-}
-
-#[cfg(test)]
-pub(super) fn run_thumbnail_job_with_permit<T, F>(
-    permit: ThumbnailJobPermit,
-    setup_timeout: Duration,
-    render_timeout: Duration,
-    work: F,
-) -> ThumbnailJobOutcome<T>
-where
-    T: Send + 'static,
-    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
-{
-    let (tx, rx) = mpsc::sync_channel(2);
-    let timed_out = Arc::new(AtomicBool::new(false));
-    let timed_out_worker = timed_out.clone();
-    let spawn = std::thread::Builder::new()
-        .name("occluview-thumbnail-job".to_string())
-        .spawn(move || {
-            // The worker, not its waiting caller, owns process capacity. A
-            // timeout cannot cancel Rust parsing or a submitted GPU readback;
-            // releasing this permit early would let every subsequent Explorer
-            // request create another surviving worker.
-            let _permit = permit;
-            let _ = panic::catch_unwind(AssertUnwindSafe(|| work(tx)));
-            if timed_out_worker.load(Ordering::Relaxed) {
-                tracing::debug!(
-                    "thumbnail worker completed after caller timed out; releasing its burst slot"
-                );
-            }
-        });
-    if spawn.is_err() {
-        return ThumbnailJobOutcome::Failed;
-    }
-
-    let mut prepared = false;
-    loop {
-        let timeout = if prepared {
-            render_timeout
-        } else {
-            setup_timeout
-        };
-        match rx.recv_timeout(timeout) {
-            Ok(ThumbnailJobProgress::Prepared) => prepared = true,
-            Ok(ThumbnailJobProgress::Finished(value)) => {
-                return ThumbnailJobOutcome::Finished(value)
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                timed_out.store(true, Ordering::Relaxed);
-                return if prepared {
-                    ThumbnailJobOutcome::RenderTimedOut
-                } else {
-                    ThumbnailJobOutcome::SetupTimedOut
-                };
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => return ThumbnailJobOutcome::Failed,
-        }
-    }
-}
-
-/// Run one thumbnail job against a single wall-clock budget. Queueing for the
-/// bounded decode slot, format loading, renderer checkout, and GPU readback all
-/// consume the same deadline so a mixed Explorer folder cannot multiply the
 /// request budget by waiting once for setup and again for rendering.
 pub(super) fn run_thumbnail_job_with_deadline<T, F>(
     timeout: Duration,
@@ -627,17 +555,30 @@ where
     T: Send + 'static,
     F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
 {
-    let Some(permit) = ThumbnailJobGate::shared().acquire_timeout(timeout) else {
+    // One budget for the whole request. Waiting for a slot and then rendering
+    // each took the full timeout of their own, so a file could spend twice
+    // what the caller asked for -- twelve seconds against six -- and under
+    // Explorer's Apartment hosting that is twelve seconds the rest of the
+    // folder spends queued behind it. The deadline is fixed here, once, and
+    // both halves spend the same one.
+    let deadline = Instant::now() + timeout;
+    let Some(permit) = ThumbnailJobGate::shared().acquire_by(deadline) else {
         return ThumbnailJobOutcome::SetupTimedOut;
     };
-    run_thumbnail_job_with_permit_deadline(permit, timeout, work)
+    run_thumbnail_job_by(permit, deadline, work)
 }
 
 /// Variant of [`run_thumbnail_job_with_deadline`] for the Windows shell path,
 /// which reserves a gate permit before it copies an `IStream`.
-pub(super) fn run_thumbnail_job_with_permit_deadline<T, F>(
+/// Run `work` on a worker thread against a deadline the caller already fixed,
+/// so that a wait which has already happened is spent, not forgotten.
+///
+/// The permit is the caller's: the shell reserves one before it copies an
+/// `IStream`, and a test hands one from a private gate so that its assertions
+/// do not depend on what the rest of the suite is doing.
+pub(super) fn run_thumbnail_job_by<T, F>(
     permit: ThumbnailJobPermit,
-    timeout: Duration,
+    deadline: Instant,
     work: F,
 ) -> ThumbnailJobOutcome<T>
 where
@@ -665,7 +606,6 @@ where
         return ThumbnailJobOutcome::Failed;
     }
 
-    let deadline = Instant::now() + timeout;
     let mut prepared = false;
     loop {
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
