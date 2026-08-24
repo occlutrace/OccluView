@@ -432,6 +432,22 @@ fn thumbnail_attempt_for_job_outcome(
     match outcome {
         ThumbnailJobOutcome::Finished(Ok(pixels)) => ThumbnailAttempt::Bitmap(pixels),
         ThumbnailJobOutcome::Finished(Err(error)) => match &error {
+            // Whether a key is configured is a property of this process, not
+            // of the file: an encrypted package that cannot be opened today
+            // opens tomorrow, on a build that has the key or a machine where
+            // the environment carries one. A cacheable placeholder would
+            // survive that change -- the shell keeps verdicts against the
+            // file's timestamp, which does not move when a key appears -- and
+            // every encrypted scan in every folder would keep the grey cube.
+            ThumbnailError::Format(FormatError::Deferred { .. }) => {
+                tracing::warn!(
+                    ?error,
+                    source,
+                    "thumbnail source needs a key this process does not have; \
+                     reporting transient failure"
+                );
+                ThumbnailAttempt::TransientFailure
+            }
             ThumbnailError::Format(FormatError::Io(_)) => {
                 tracing::warn!(
                     ?error,
