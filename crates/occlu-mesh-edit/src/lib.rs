@@ -1,7 +1,7 @@
 //! Product-neutral mesh edit foundations.
 //!
-//! This crate owns pure geometry data movement and validation used by future
-//! edit kernels. It intentionally knows nothing about OccluView UI, renderer,
+//! This crate owns pure geometry editing and validation. It intentionally
+//! knows nothing about OccluView UI, renderer,
 //! shell integration, HPS decoding, or product-specific CAD state.
 
 #![forbid(unsafe_code)]

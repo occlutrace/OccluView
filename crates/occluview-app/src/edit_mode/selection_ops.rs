@@ -1,4 +1,4 @@
-//! Face-selection commands and their compatibility adapters.
+//! Face-selection commands.
 
 use occluview_core::{Camera, Scene, SceneMeshId, ScenePickHit};
 
@@ -23,7 +23,7 @@ impl EditModeController {
         }
         let changed = self.selections.select_face_hit(scene, hit, unmark);
         if changed {
-            self.compatibility_layer_id = Some(hit.layer_id);
+            self.active_layer_id = Some(hit.layer_id);
         }
         changed
     }
@@ -39,21 +39,20 @@ impl EditModeController {
         }
         let changed = self.selections.select_component_hit(scene, hit, unmark);
         if changed {
-            self.compatibility_layer_id = Some(hit.layer_id);
+            self.active_layer_id = Some(hit.layer_id);
         }
         changed
     }
 
-    /// Compatibility target for the unchanged app shell. Canonical selection
-    /// queries must use [`Self::visible_selection_plan`] or the owned plan.
+    /// Most recently selected layer.
     pub(crate) fn selected_layer_id(&self) -> Option<SceneMeshId> {
-        self.compatibility_layer_id
+        self.active_layer_id
     }
 
-    /// Compatibility count for the unchanged single-layer app shell.
+    /// Selected face count for the active layer.
     #[cfg(test)]
     pub(crate) fn selected_face_count(&self) -> usize {
-        self.compatibility_layer_id
+        self.active_layer_id
             .and_then(|layer_id| self.selections.selection_for_layer(layer_id))
             .map_or(0, |selection| selection.selected_count())
     }
@@ -65,21 +64,20 @@ impl EditModeController {
         self.selections.selection_for_layer(layer_id)
     }
 
-    /// Compatibility bulk commands for the unchanged single-layer app shell.
+    /// Clear the active layer selection.
     #[cfg(test)]
     pub(crate) fn clear_face_selection(&mut self) -> bool {
-        self.selections.clear_layer(self.compatibility_layer_id)
+        self.selections.clear_layer(self.active_layer_id)
     }
 
     #[cfg(test)]
     pub(crate) fn select_all_faces(&mut self) -> bool {
-        self.selections
-            .select_all_layer(self.compatibility_layer_id)
+        self.selections.select_all_layer(self.active_layer_id)
     }
 
     #[cfg(test)]
     pub(crate) fn invert_face_selection(&mut self) -> bool {
-        self.selections.invert_layer(self.compatibility_layer_id)
+        self.selections.invert_layer(self.active_layer_id)
     }
 
     pub(crate) fn clear_visible_selections(&mut self, scene: &Scene) -> bool {

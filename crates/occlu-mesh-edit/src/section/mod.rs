@@ -142,8 +142,8 @@ pub(super) struct Segment {
 ///
 /// Returns `None` when the triangle does not straddle the plane, has an
 /// out-of-range index, or the resulting segment is degenerate. The half-open
-/// classification (`proj >= offset` is the kept side) matches
-/// `SectionSweep` (removed; git history d7cd650), so both paths agree bit-for-bit.
+/// classification (`proj >= offset` is the kept side) matches the clipping
+/// kernels used elsewhere in the editor.
 pub(super) fn triangle_segment(
     positions: &[[f32; 3]],
     tri: [u32; 3],
