@@ -11,7 +11,9 @@ use std::path::Path;
 /// (`app_layer_edits::whole_mesh`): the mm perimeter slider does the real
 /// limiting, so the edge count is only a safety valve under the ear-clip's rim
 /// limit.
-const CLOSE_HOLES_EDGE_CEILING: usize = 20_000;
+// One number, owned by the kernel: a private copy here would silently pin the
+// ceiling, because the selection gate takes the maximum of the two.
+use occluview_core::CLOSE_HOLES_EDGE_CEILING;
 
 /// Load a mesh (STL loads as a triangle soup), run the whole-mesh Close Holes
 /// pipeline — exactly the app's button path — and write the closed result.

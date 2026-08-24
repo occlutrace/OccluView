@@ -55,7 +55,7 @@ impl BridgeSplitController {
         let target = BridgeSplitTarget::capture(entry);
         self.worker.clear_queued();
         self.source = Some(BridgeSplitSourceSnapshot {
-            mesh: Arc::new(entry.mesh.clone()),
+            mesh: entry.mesh.clone(),
             transform: entry.transform,
             target,
         });
@@ -117,5 +117,7 @@ impl BridgeSplitController {
 
 #[cfg(test)]
 mod scene_apply_tests;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod tests;

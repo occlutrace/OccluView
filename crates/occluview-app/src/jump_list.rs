@@ -3,7 +3,8 @@
 #![allow(unsafe_code)]
 
 use super::APP_USER_MODEL_ID;
-use occluview_core::{JumpListItem, RecentFiles};
+use crate::jump_list_model::JumpListItem;
+use crate::recent_files::RecentFiles;
 use std::path::Path;
 use windows::core::{Interface, HSTRING};
 use windows::Win32::Storage::EnhancedStorage::PKEY_Title;

@@ -30,7 +30,6 @@ impl OccluViewApp {
             .collect();
         self.unsaved_edit_layer_ids
             .retain(|id| retained_ids.contains(id));
-        self.has_unsaved_mesh_edits = !self.unsaved_edit_layer_ids.is_empty();
     }
 
     pub(super) fn commit_structural_scene(

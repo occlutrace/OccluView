@@ -1,15 +1,7 @@
 //! What comes back from the align worker, and what it is allowed to change.
 //!
-//! Split from `app_align` because it answers a different question: that module
-//! routes clicks and hands the worker geometry, this one owns the other end —
-//! the finished pose, the finished map, and every case where a result is no
-//! longer about the scan in front of the operator.
-//!
-//! That last part is why the split is worth having. A result can outlive its
-//! own premise: the scan moves by hand, history steps back, the pair turns
-//! around, the layer leaves the scene. A refine result **commits a pose**, so
-//! one landing late is not a stale colour — it is the operator's own work being
-//! overwritten.
+//! Applies completed alignment jobs and invalidates results whose input scene
+//! has changed.
 
 use eframe::egui;
 use occluview_align::Rigid;
@@ -20,10 +12,7 @@ use crate::edit_mode::EditModeCommand;
 
 /// What the operator is told when a finished fit could not be written.
 ///
-/// It happens: the scan can leave the scene while the job runs, and another tool
-/// can hold the edit state machine. The status line used to report the fit as
-/// landed either way, so the operator read a millimetre figure for a scan that
-/// had not moved.
+/// The scan or edit state may change while the worker runs.
 const POSE_REFUSED: &str = "The fit finished, but the scan it was for is no longer available";
 
 impl OccluViewApp {
@@ -37,11 +26,8 @@ impl OccluViewApp {
             return;
         }
         for completion in completions {
-            // Re-read the generation per completion, not once for the batch:
-            // applying one can abandon the rest. A point fit drops the map and
-            // everything the worker was still computing about the pose that map
-            // described, so a measurement of that pose arriving in the same
-            // batch is no longer a reading about this scan.
+            // Re-read the generation for each completion because applying one
+            // result can invalidate the remaining jobs.
             let current = self
                 .align_worker
                 .as_ref()
@@ -66,13 +52,8 @@ impl OccluViewApp {
                     self.align_status = Some(POSE_REFUSED.into());
                     return;
                 }
-                // Deliberately no measurement here. The point fit only gets
-                // the scan close; measuring it would put a map on screen that
-                // the very next step invalidates.
-                // The scan just moved, so a map drawn before this describes a
-                // pose that no longer exists — and the viewport would happily
-                // keep re-pushing it. Ahead of adopting this fit's own outlier
-                // marks, because that is what clears the previous fit's.
+                // A point fit changes the pose and invalidates any previous
+                // map; refinement performs the next measurement.
                 self.forget_align_fit("Aligned on points");
                 self.align_rejected = rejected;
                 let dropped = if self.align_rejected.is_empty() {
@@ -95,20 +76,14 @@ impl OccluViewApp {
                     return;
                 }
                 let weak = weak_axis_note(report.weak_trans_axes, report.weak_rot_axes);
-                // "of the surface" is not true when a region is painted out: the
-                // marked vertices are dropped before the fit samples anything, so
-                // they leave the numerator AND the denominator and the coverage can
-                // read a hundred per cent over half a scan. Named for what was
-                // actually measured instead.
+                // Excluded regions are omitted from both the sample and coverage
+                // counts, so report the measured region explicitly.
                 let measured_over = if self.align_markings.any() {
                     "the unmarked surface"
                 } else {
                     "the surface"
                 };
-                // A run that hit the iteration ceiling is where the solver gave
-                // up, not where the surfaces settled. Said out loud, because the
-                // two used to read identically and the second is worth another
-                // pass at a wider reach.
+                // Distinguish convergence from reaching the iteration limit.
                 let settled = if report.converged {
                     ""
                 } else {
@@ -127,35 +102,18 @@ impl OccluViewApp {
                 seen,
                 scale_mm,
             } => {
-                // The brush owns the per-vertex colour channel while it is
-                // open, and this measurement was submitted before it opened.
-                // Applying it would repaint the moving scan with map colours
-                // while the fixed scan still showed the markings — one tool
-                // claiming the legend, two surfaces disagreeing, and the
-                // operator reading it as "it marks on one mesh and not the
-                // other".
+                // The brush owns the per-vertex colour channel while it is open.
                 if self.align_brush.is_armed() {
-                    // And say so. The status still read "Measuring…" from the
-                    // submit, and nothing replaced it until the brush closed — so
-                    // the panel claimed a measurement was running that had already
-                    // finished and been thrown away.
                     self.align_status =
                         Some("Measurement dropped — the marking brush owns the colours".into());
                     ctx.request_repaint();
                     return;
                 }
-                // Auto-scale chose the range the colours were painted at. The
-                // legend has to adopt it or it would describe a different one.
+                // Keep the legend in sync with the scale used for colouring.
                 if self.align_settings.auto_scale {
                     self.align_settings.scale_mm = scale_mm;
                 }
-                // No summary means too little surface reached the other scan to
-                // characterise. Saying "0% within 0.20 mm" there would be a
-                // reading about a measurement that did not happen — and PAINTING
-                // it is worse: every unmeasured vertex is grey, so a scan the
-                // operator had just moved out of reach came back flat grey and
-                // read as broken. A measurement that did not happen is not
-                // painted at all.
+                // Do not paint a map when no valid summary exists.
                 let Some(summary) = stats.summary else {
                     self.clear_deviation_overlay();
                     self.align_stats = Some(stats);
@@ -205,16 +163,9 @@ impl OccluViewApp {
     /// Showing a stale map is worse than showing none: the colours describe a
     /// pose that no longer exists. The operator re-measures when they are ready.
     pub(super) fn invalidate_deviation_map(&mut self, reason: &str) {
-        // The in-flight work goes first, and it goes whether or not a map was on
-        // screen. Every caller here is a moment where the pose the worker was
-        // handed stopped being the pose the scan is in — a hand drag, a Ctrl+Z,
-        // a turned-around pair. A **refine** result commits a pose, so one
-        // landing after a hand drag put the scan back where the operator had
-        // just taken it from, as a fresh history step, with nothing to say why.
+        // Cancel work based on the previous pose before clearing its map.
         self.abandon_align_jobs();
-        // Only a MAP goes stale on screen. The region tint is the operator's own
-        // paint, and dropping it here would erase the brush stroke that called
-        // this.
+        // Preserve operator markings; only the derived map is stale.
         if self.align_overlay != super::app_align_display::AlignOverlay::Map {
             return;
         }
@@ -235,12 +186,8 @@ impl OccluViewApp {
 
     /// Settle everything a tab switch leaves behind.
     ///
-    /// The distance map and the faded other scan belong to the Automatically
-    /// tab: that is where the legend, the range chips and the numbers live. They
-    /// used to survive into Manually, where the operator got a coloured arch
-    /// with nothing on screen naming the colours — and then it vanished the
-    /// moment they touched the mesh. Coming back re-measures, so the tab reads
-    /// the same on the way in as it did on the way out.
+    /// The map and ghosted layer belong to the Automatically tab; re-measure
+    /// when returning to it.
     pub(super) fn settle_align_tab_change(&mut self) {
         // Either direction: a gesture belongs to the tab it started on. The drag
         // handler closes one when it finds itself on the wrong tab, but that is a
@@ -328,12 +275,9 @@ impl OccluViewApp {
 
 /// What the deviation map could not have seen, in a sentence.
 ///
-/// The map measures the distance from each moving vertex to the nearest point
-/// on the fixed surface. Slide the two surfaces past each other along a
-/// direction the geometry is smooth in and that nearest point slides with them,
-/// so a real displacement reads as a fraction of itself — on a full arch, about
-/// half. This turns the reported RMS back into the displacement that could be
-/// behind it, which is the number a clinician thinks they are already reading.
+/// Nearest-surface distance is a lower bound when motion is tangential. The
+/// observability estimate converts the reported RMS into a possible hidden
+/// displacement.
 fn blind_note(seen: Option<&occluview_align::Observability>, rms_mm: f64) -> String {
     /// Below this the correction is not worth a sentence.
     const WORTH_SAYING: f64 = 1.15;
@@ -372,24 +316,22 @@ fn weak_axis_note(translation: [bool; 3], rotation: [bool; 3]) -> String {
 mod tests {
     use super::weak_axis_note;
 
-    /// The production half of this file. A source-contract test that scanned its
-    /// own assertions would pass or fail on its own text.
+    /// Source before the test module.
     fn production() -> &'static str {
-        let source = include_str!("app_align_results.rs");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_align_results.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)
     }
 
-    /// A well-determined fit says nothing. Anything else here would be noise on
-    /// the one line the operator actually reads.
+    /// A determined fit needs no warning.
     #[test]
     fn a_fit_that_is_pinned_down_gets_no_warning() {
         assert_eq!(weak_axis_note([false; 3], [false; 3]), String::new());
     }
 
-    /// A scan free to slide or turn is a scan whose millimetre figure means less
-    /// than it looks like it means, so the direction is named.
+    /// Undetermined directions are named in the status text.
     #[test]
     fn an_undetermined_direction_is_named_by_its_axis() {
         let sliding = weak_axis_note([false, true, false], [false; 3]);
@@ -411,15 +353,7 @@ mod tests {
         assert!(both.contains("turn about Y"), "got {both}");
     }
 
-    /// A pose change has to reach the same history Ctrl+Z reads, **and** it has
-    /// to raise the unsaved flag the close guard reads. It did the first and not
-    /// the second, so an automatic alignment was lost on close with no prompt —
-    /// the hand-drag path had been fixed for exactly this and the fit path was
-    /// missed.
-    ///
-    /// A source contract, and named as one: `commit_align_pose` needs a scene, a
-    /// live edit state machine and a real layer, none of which a test can hand
-    /// it while `OccluViewApp` cannot be constructed.
+    /// A committed pose must enter undo history and mark the layer unsaved.
     #[test]
     fn a_committed_pose_is_both_undoable_and_unsaved_work() {
         let commit = production()
@@ -440,12 +374,7 @@ mod tests {
         );
     }
 
-    /// The generation is re-read for every completion, not once for the batch.
-    /// Applying one result can abandon the rest — a point fit does exactly that
-    /// — and a refine result COMMITS a pose, so one applied late overwrites the
-    /// operator's own hand movement with a fresh history step.
-    ///
-    /// A source contract for the same reason as above.
+    /// Generation checks run for each completion in the batch.
     #[test]
     fn a_result_the_operator_has_overtaken_is_never_applied() {
         let drain = production()
@@ -465,17 +394,7 @@ mod tests {
         );
     }
 
-    /// A measurement that measured nothing is never painted.
-    ///
-    /// Every unmeasured vertex is grey, so a scan the operator had just moved out
-    /// of reach came back FLAT grey — one of the two scans looking switched off,
-    /// with no explanation. Grey over part of a scan is a reading (there is no
-    /// tooth opposite that one); grey over all of it is not a reading at all.
-    ///
-    /// A source contract: the arm needs a worker result, a scene and a live GPU
-    /// layer, none of which a test can hand it while `OccluViewApp` cannot be
-    /// constructed. The absence of a summary is itself covered by real tests in
-    /// `occluview-align`.
+    /// A measurement without a summary must not paint the scan.
     #[test]
     fn a_measurement_with_no_summary_is_not_painted_on_the_scan() {
         let measured = production()

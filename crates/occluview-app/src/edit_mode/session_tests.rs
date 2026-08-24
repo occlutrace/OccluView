@@ -66,7 +66,7 @@ fn finish_edit_session_keeps_undo_history_for_stepwise_undo() {
     };
     let layer = SceneMesh::new(before_mesh);
     let mut current = layer.clone();
-    current.mesh = after_mesh;
+    current.mesh = std::sync::Arc::new(after_mesh);
     let mut scene = Scene::new();
     scene.add(layer.clone());
     let mut controller = EditModeController::new(4, 1_000_000);
@@ -180,7 +180,7 @@ fn sync_to_scene_rearms_empty_selection_between_session_ops() {
     let Some(single_triangle) = triangle_mesh("after-op") else {
         return;
     };
-    scene.meshes_mut()[layer_index].mesh = single_triangle;
+    scene.meshes_mut()[layer_index].mesh = std::sync::Arc::new(single_triangle);
     controller.sync_to_scene(&scene);
 
     // The session panel survives the op: an EMPTY selection sized to the
@@ -215,7 +215,7 @@ fn redo_reapplies_undone_layer_edit_and_new_op_clears_redo() {
     };
     let layer = SceneMesh::new(before_mesh);
     let mut edited = layer.clone();
-    edited.mesh = after_mesh;
+    edited.mesh = std::sync::Arc::new(after_mesh);
     let mut controller = EditModeController::new(4, 1_000_000);
 
     // Op: snapshot "before", scene now holds "edited".

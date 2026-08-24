@@ -64,6 +64,17 @@ pub(crate) struct UpdateNotice {
     download_rx: Option<mpsc::Receiver<DownloadEvent>>,
 }
 
+/// Where a downloaded installer is kept until the operator installs it.
+///
+/// Under this account's own state directory, never a shared one. The verified
+/// installer waits here for a click, and on a shared workstation -- a clinic
+/// reception machine is one -- a world-writable directory means the file that
+/// was verified and the file handed to a privileged installer need not be the
+/// same file.
+fn update_download_dir() -> Option<PathBuf> {
+    crate::app_paths::app_state_dir().map(|dir| dir.join("updates"))
+}
+
 impl UpdateNotice {
     /// Start the once-per-launch background check (unless disabled by env).
     pub(crate) fn begin_check() -> Self {
@@ -193,7 +204,12 @@ impl UpdateNotice {
         std::thread::Builder::new()
             .name("occluview-update-download".to_string())
             .spawn(move || {
-                let dest = std::env::temp_dir().join("occluview-updates");
+                let Some(dest) = update_download_dir() else {
+                    let _ = tx.send(DownloadEvent::Failed(
+                        "no private directory to download into".to_string(),
+                    ));
+                    return;
+                };
                 let mut report = |received, total| {
                     let _ = tx.send(DownloadEvent::Progress(received, total));
                 };
@@ -294,7 +310,10 @@ fn draw_ready(
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         if ui.button("Install and close").clicked() {
-            match occluview_update::launch_installer(installer) {
+            // Verified again here, not only at download time: what was
+            // checked and what is about to reach a privileged installer are
+            // separated by this click.
+            match occluview_update::verify_and_launch_installer(update, installer) {
                 Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Err(error) => *next_phase = Some(Phase::Failed(error.to_string())),
             }

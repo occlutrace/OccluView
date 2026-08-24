@@ -20,7 +20,7 @@ impl OccluViewApp {
     /// One frame of the tool: drain the worker, take the click, paint the
     /// pairs, and run whatever the panel asked for. Returns whether the tool
     /// consumed this frame's viewport input.
-    pub(super) fn show_align_tool_overlay_impl(
+    pub(super) fn show_align_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,
@@ -34,10 +34,7 @@ impl OccluViewApp {
         self.forget_removed_align_layers();
 
         // Escape leaves the tool, but never steals the key from a dialog.
-        let dialogs_open = self.close_guard_open
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
-        if !dialogs_open
+        if !self.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             // Escape is a close, and a close puts the scans back. Silently
@@ -175,8 +172,13 @@ impl OccluViewApp {
         self.align_session_poses.clear();
         self.align_brush.set_armed(false);
         // A session that ended on Manually used to re-open there, with the tab
-        // the operator last left rather than the one the tool starts in.
+        // the operator last left rather than the one the tool starts in. The
+        // drag constraint is the same class of leak and worse to diagnose: an
+        // axis lock set on one case survived into the next pair of scans, where
+        // it reads as "the scan is stuck" rather than as a setting that is
+        // still on.
         self.align_tab = crate::align_panel::AlignTab::default();
+        self.align_constraint = crate::align_drag::DragConstraint::default();
         ctx.request_repaint();
     }
 
@@ -497,7 +499,7 @@ mod tests {
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.
     fn production() -> &'static str {
-        let source = include_str!("app_align.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("app_align.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)

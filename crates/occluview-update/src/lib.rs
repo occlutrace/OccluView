@@ -1,14 +1,9 @@
-//! Self-update checks for OccluView.
+//! Signed, offer-only update checks for OccluView.
 //!
-//! Trust model (the Tauri-updater scheme, minus Tauri): every release attaches
-//! a `latest.json` manifest plus detached minisign signatures. The client
-//! fetches the manifest from a STABLE release-asset URL (never the GitHub API
-//! — asset downloads are not API-rate-limited), verifies the manifest's
-//! ed25519 signature against the public key baked into the binary, compares
-//! versions, and only ever OFFERS the update. After consent it downloads the
-//! installer, verifies its SHA-256 and its own minisign signature, and hands
-//! off to `msiexec` on Windows or the desktop package installer for the
-//! verified `.deb` on Linux. Nothing is installed silently.
+//! Releases publish a `latest.json` manifest and detached minisign signatures.
+//! The client verifies the manifest, compares versions, and offers an update.
+//! After consent it verifies the installer's SHA-256 and signature before
+//! handing it to the platform installer.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(
@@ -35,9 +30,12 @@ pub const MANIFEST_URL: &str =
 /// Detached minisign signature of [`MANIFEST_URL`].
 pub const MANIFEST_SIG_URL: &str =
     "https://github.com/occlutrace/OccluView/releases/latest/download/latest.json.minisig";
-/// Minisign public key every update is verified against. The matching private
-/// key lives ONLY in the maintainer's offline backup + CI secret.
+/// Minisign public key used to sign release manifests and artifacts.
 pub const UPDATE_PUBKEY: &str = "RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq";
+
+/// Every key an installed copy accepts. The list permits staged key rotation;
+/// see `docs/RUNBOOK-keys.md`.
+pub const UPDATE_PUBKEYS: &[&str] = &[UPDATE_PUBKEY];
 
 /// Manifest platform key for the running build.
 #[cfg(target_os = "windows")]
@@ -71,6 +69,10 @@ pub enum UpdateError {
     /// Filesystem failure while storing the download.
     #[error("update download I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// The directory the installer would be written into is not private to
+    /// this account.
+    #[error("refusing to download an installer into a shared directory: {0}")]
+    UnsafeDownloadDir(String),
     /// Installer handoff is only implemented for Windows MSI builds.
     #[error("in-app install is not supported on this platform")]
     Unsupported,
@@ -140,7 +142,7 @@ pub fn check_for_update(current_version: &str) -> Result<Option<AvailableUpdate>
     check_with(
         MANIFEST_URL,
         MANIFEST_SIG_URL,
-        UPDATE_PUBKEY,
+        UPDATE_PUBKEYS,
         current_version,
     )
 }
@@ -152,13 +154,13 @@ pub fn check_for_update(current_version: &str) -> Result<Option<AvailableUpdate>
 pub fn check_with(
     manifest_url: &str,
     manifest_sig_url: &str,
-    pubkey: &str,
+    pubkeys: &[&str],
     current_version: &str,
 ) -> Result<Option<AvailableUpdate>, UpdateError> {
     let agent = agent();
     let manifest_bytes = fetch_bytes(&agent, manifest_url, 1024 * 1024)?;
     let signature = fetch_bytes(&agent, manifest_sig_url, 64 * 1024)?;
-    verify_signature(pubkey, &manifest_bytes, &signature)?;
+    verify_signature(pubkeys, &manifest_bytes, &signature)?;
 
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| UpdateError::BadManifest(error.to_string()))?;
@@ -197,7 +199,7 @@ pub fn download_update(
     dest_dir: &Path,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<PathBuf, UpdateError> {
-    download_with(update, UPDATE_PUBKEY, dest_dir, progress)
+    download_with(update, UPDATE_PUBKEYS, dest_dir, progress)
 }
 
 /// [`download_update`] with an injectable public key (tests).
@@ -206,7 +208,7 @@ pub fn download_update(
 /// See [`download_update`].
 pub fn download_with(
     update: &AvailableUpdate,
-    pubkey: &str,
+    pubkeys: &[&str],
     dest_dir: &Path,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<PathBuf, UpdateError> {
@@ -220,13 +222,20 @@ pub fn download_with(
         .call()
         .map_err(|error| UpdateError::Http(error.to_string()))?;
 
+    // The file name comes out of a downloaded manifest, so it is attacker-shaped
+    // input even after the signature check: whoever can publish a manifest can
+    // choose it. Only the last URL segment is used, and it has to be a plain
+    // name -- no separators, no drive letters, and not `.` or `..`, which would
+    // resolve to the destination directory itself.
     let file_name = artifact
         .url
         .rsplit('/')
         .next()
-        .filter(|name| !name.is_empty() && !name.contains(['\\', ':']))
+        .filter(|name| {
+            !name.is_empty() && *name != "." && *name != ".." && !name.contains(['\\', ':'])
+        })
         .ok_or_else(|| UpdateError::BadManifest("artifact URL has no file name".to_string()))?;
-    std::fs::create_dir_all(dest_dir)?;
+    prepare_download_dir(dest_dir)?;
     let final_path = dest_dir.join(file_name);
     let temp_path = dest_dir.join(format!("{file_name}.partial"));
 
@@ -234,7 +243,7 @@ pub fn download_with(
     // a hash/signature mismatch, a failed rename) must not leave a half-written
     // `.partial` behind — a stale partial would masquerade as a resumable
     // download and never be retried cleanly. Clean up on every error path.
-    match stream_and_verify(response, &temp_path, artifact, pubkey, progress)
+    match stream_and_verify(response, &temp_path, artifact, pubkeys, progress)
         .and_then(|()| std::fs::rename(&temp_path, &final_path).map_err(UpdateError::Io))
     {
         Ok(()) => Ok(final_path),
@@ -253,7 +262,7 @@ fn stream_and_verify(
     response: ureq::Response,
     temp_path: &Path,
     artifact: &PlatformArtifact,
-    pubkey: &str,
+    pubkeys: &[&str],
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<(), UpdateError> {
     let total = response
@@ -290,7 +299,108 @@ fn stream_and_verify(
         return Err(UpdateError::BadHash);
     }
     let payload = std::fs::read(temp_path)?;
-    verify_signature(pubkey, &payload, artifact.signature.as_bytes())
+    verify_signature(pubkeys, &payload, artifact.signature.as_bytes())
+}
+
+/// Create the download directory, or refuse one anybody else can write to.
+///
+/// The verified installer sits here between the signature check and the
+/// operator's click on "Install", which is an unbounded window. A directory
+/// another local account can write to turns that window into a swap: the app
+/// verifies one file and hands a different one to a package installer that
+/// elevates. Refusing is the only safe answer -- there is nothing to fall back
+/// to that is not the same problem.
+fn prepare_download_dir(dest_dir: &Path) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        if let Ok(existing) = std::fs::symlink_metadata(dest_dir) {
+            if existing.file_type().is_symlink() {
+                return Err(UpdateError::UnsafeDownloadDir(
+                    "it is a symbolic link".to_string(),
+                ));
+            }
+            if !existing.is_dir() {
+                return Err(UpdateError::UnsafeDownloadDir(
+                    "it is not a directory".to_string(),
+                ));
+            }
+            let mode = existing.permissions().mode() & 0o777;
+            if mode & 0o022 != 0 {
+                return Err(UpdateError::UnsafeDownloadDir(format!(
+                    "mode {mode:04o} lets other accounts write into it"
+                )));
+            }
+            return Ok(());
+        }
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dest_dir)
+            .map_err(UpdateError::Io)
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: the caller places this under the per-user profile, whose ACL
+        // already excludes other accounts.
+        std::fs::create_dir_all(dest_dir).map_err(UpdateError::Io)
+    }
+}
+
+/// Verify an installer already on disk against the signed manifest.
+///
+/// The check at download time proves what was written. This proves what is
+/// about to be handed to a privileged installer, and the two are separated by
+/// an operator's click.
+///
+/// # Errors
+/// [`UpdateError::NoPlatformAsset`] when the release has no artifact for this
+/// platform, [`UpdateError::Io`] when the file cannot be read, and
+/// [`UpdateError::BadHash`] or [`UpdateError::BadSignature`] when it is not the
+/// file that was verified.
+pub fn verify_installer(update: &AvailableUpdate, installer: &Path) -> Result<(), UpdateError> {
+    verify_installer_with(update, UPDATE_PUBKEYS, installer)
+}
+
+/// [`verify_installer`] with an injectable public key (tests).
+///
+/// # Errors
+/// See [`verify_installer`].
+pub fn verify_installer_with(
+    update: &AvailableUpdate,
+    pubkeys: &[&str],
+    installer: &Path,
+) -> Result<(), UpdateError> {
+    let artifact = update
+        .artifact
+        .as_ref()
+        .ok_or(UpdateError::NoPlatformAsset)?;
+    let payload = std::fs::read(installer)?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&payload);
+    let mut actual = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        use std::fmt::Write as _;
+        let _ = write!(actual, "{byte:02x}");
+    }
+    if actual != artifact.sha256 {
+        return Err(UpdateError::BadHash);
+    }
+    verify_signature(pubkeys, &payload, artifact.signature.as_bytes())
+}
+
+/// Verify the installer again, then hand it to the OS.
+///
+/// # Errors
+/// See [`verify_installer`] and [`launch_installer`].
+pub fn verify_and_launch_installer(
+    update: &AvailableUpdate,
+    installer: &Path,
+) -> Result<(), UpdateError> {
+    verify_installer(update, installer)?;
+    launch_installer(installer)
 }
 
 /// Hand the verified installer to the OS and let the app exit.
@@ -332,6 +442,16 @@ pub fn launch_installer(installer: &Path) -> Result<(), UpdateError> {
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(HTTP_TIMEOUT)
+        // Everything here is signature-checked, so this is not what keeps a
+        // bad artifact out. It keeps the promise SECURITY.md makes -- two
+        // ordinary HTTPS GETs -- from depending on nobody ever publishing a
+        // manifest with an http URL, or a host answering with a redirect to
+        // one. ureq follows five redirects by default and would follow that
+        // one.
+        //
+        // Relaxed only for this crate's own tests, whose fixture server is a
+        // loopback listener with no certificate.
+        .https_only(!cfg!(test))
         .user_agent(concat!("occluview-update/", env!("CARGO_PKG_VERSION")))
         .build()
 }
@@ -350,13 +470,24 @@ fn fetch_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, Up
     Ok(bytes)
 }
 
-fn verify_signature(pubkey: &str, message: &[u8], signature: &[u8]) -> Result<(), UpdateError> {
-    let key = PublicKey::from_base64(pubkey).map_err(|_| UpdateError::BadSignature)?;
+/// Accept the signature if ANY trusted key verifies it.
+///
+/// Trying each key rather than picking one by id keeps the caller free of key
+/// bookkeeping, and the cost is a handful of Ed25519 verifications on a
+/// kilobyte manifest.
+fn verify_signature(pubkeys: &[&str], message: &[u8], signature: &[u8]) -> Result<(), UpdateError> {
     let signature_text = std::str::from_utf8(signature).map_err(|_| UpdateError::BadSignature)?;
     let signature =
         Signature::decode(signature_text.trim()).map_err(|_| UpdateError::BadSignature)?;
-    key.verify(message, &signature, false)
-        .map_err(|_| UpdateError::BadSignature)
+    for pubkey in pubkeys {
+        let Ok(key) = PublicKey::from_base64(pubkey) else {
+            continue;
+        };
+        if key.verify(message, &signature, false).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(UpdateError::BadSignature)
 }
 
 fn parse_version(raw: &str) -> Result<semver::Version, UpdateError> {

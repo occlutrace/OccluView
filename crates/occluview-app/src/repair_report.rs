@@ -313,9 +313,12 @@ impl RepairReportDialog {
         let mut close_clicked = false;
         let mut copy_clicked = false;
 
+        let vp = ctx.screen_rect();
         egui::Window::new(title)
             .id(egui::Id::new("repair_report_card"))
             .open(&mut open)
+            .default_pos(vp.center() - egui::vec2(150.0, 80.0))
+            .constrain_to(vp)
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {

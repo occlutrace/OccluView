@@ -1,21 +1,11 @@
-//! The Align Scans window, laid out the way the operator's dental CAD
-//! software lays out its own align-meshes window.
+//! The Align Scans window.
 //!
-//! A movable window built from the same pieces as the mesh editor: no title
-//! bar, icon buttons, and a commit row that ends in Cancel and Done. Nothing
-//! here names a target, a source, or a role — the pair comes from the points
-//! the operator clicks in the viewport.
+//! The window uses the mesh-editor controls and derives scan roles from the
+//! points selected in the viewport.
 //!
-//! The two tabs carry different work, exactly as the operator's tools do:
-//!
-//! * **Automatically** is where the alignment happens. Arrows, Back, Perform
-//!   alignment, Best fit matching, the two matching sliders, the orientation
-//!   rule, and the two checkboxes that open the Brush tool window and the
-//!   distance map.
-//! * **Manually** is only hand movement: the three drag constraints and
-//!   Undo/Redo. No brush lives here — an earlier build put one here and it was
-//!   in the wrong place twice over, because the region it paints is an input to
-//!   *best-fit matching*, which is an automatic-tab action.
+//! Automatic alignment and manual movement are kept on separate tabs. The
+//! exclusion brush belongs to automatic matching because its mask is an input
+//! to the fit.
 
 use eframe::egui;
 use occluview_align::{DeviationStats, Orientation};
@@ -35,8 +25,7 @@ pub(crate) const CHIP_HEIGHT: f32 = 26.0;
 /// Corner radius shared by every control in the window.
 pub(crate) const CHIP_ROUNDING: f32 = 5.0;
 
-/// The two ways the operator's dental CAD software's align-meshes works, and
-/// the two this window offers.
+/// Alignment modes exposed by the window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AlignTab {
     /// Click matching points, then let the software fit them.
@@ -85,9 +74,7 @@ pub(crate) enum AlignPanelAction {
 }
 
 /// Everything the window needs to draw itself.
-// Four INDEPENDENT facts about the session (a job is running, something moved,
-// history can step back, history can step forward). They are not a state
-// machine an enum would simplify — every combination of them occurs.
+// These flags represent independent session facts.
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct AlignPanelView<'a> {
     /// The click model.
@@ -148,16 +135,11 @@ pub(crate) fn show(
 fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
     let enabled = !view.busy;
     tab_strip(ui, view.tab);
-    // The brush is an input to best-fit matching, which lives on the automatic
-    // tab. Left open behind the manual tab it would keep swallowing the drags
-    // that tab exists to receive.
+    // The brush is available only on the automatic tab.
     if *view.tab != AlignTab::Automatically {
         *view.excluding = false;
     }
-    // A half-placed arrow belongs to the tab that places arrows. Left behind it
-    // draws a rubber band to a cursor that is now dragging the mesh, and its
-    // other half lands on whatever the operator clicks next time they come
-    // back — a pair they never meant to make.
+    // Discard a pending point when leaving the tab that places points.
     *view.drop_pending = *view.tab != AlignTab::Automatically && view.tool.pending().is_some();
     ui.add_space(4.0);
 
@@ -166,8 +148,7 @@ fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAct
         AlignTab::Manually => manually(ui, view.constraint, view.can_undo, view.can_redo, enabled),
     };
     status(ui, view.status);
-    // Deliberately not gated on `enabled`: a refine on a full arch takes real
-    // time, and a window whose only two exits are greyed out reads as a hang.
+    // Keep Cancel and Done available while work is in flight.
     action = action.or(commit(ui, view.moved));
     action
 }
@@ -329,13 +310,7 @@ fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
     ui.add_space(2.0);
 }
 
-/// The same "Back" the operator's dental CAD software offers, and the way out
-/// to a different pair of scans.
-///
-/// **Clear** is not decoration. Once two scans are paired, a click on a third is
-/// refused — and the refusal used to tell the operator to "press Clear", which
-/// was not a control that existed. Aligning a third file in the same session
-/// meant closing the tool and opening it again.
+/// Point-pair history controls and pair reset.
 fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
     let placed = tool.pending().is_some() || !tool.pairs().is_empty();
     let paired = tool.moving_layer().is_some();
@@ -456,8 +431,7 @@ fn facing(ui: &mut egui::Ui, orientation: &mut Orientation) {
     }
 }
 
-/// The same "Matching: Exclude selected parts" the operator's dental CAD
-/// software uses: the checkbox that opens the Brush tool window.
+/// Toggle the exclusion brush used by matching.
 fn exclude(ui: &mut egui::Ui, excluding: &mut bool, enabled: bool) {
     ui.add_enabled_ui(enabled, |ui| {
         ui.checkbox(excluding, "Matching: Exclude selected parts")
@@ -667,7 +641,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     fn production() -> &'static str {
-        let source = include_str!("align_panel.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("align_panel.rs"));
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)
@@ -702,8 +676,7 @@ mod tests {
         );
     }
 
-    /// Closing a tool and silently keeping what it did is how an operator loses
-    /// work they thought they had discarded.
+    /// The window exposes explicit Cancel and Done actions.
     #[test]
     fn the_window_ends_in_cancel_and_done() {
         let commit = production()
@@ -714,10 +687,7 @@ mod tests {
         assert!(commit.contains("AlignPanelAction::Done"));
     }
 
-    /// The operator's dental CAD software's labels, verbatim. The operator
-    /// works in that dialog daily, and a control that does the same job under
-    /// a different name is a control they have to translate before they can
-    /// use it.
+    /// Preserve the established control labels.
     #[test]
     fn the_controls_carry_the_labels_operators_already_know() {
         let source = production();
@@ -736,10 +706,7 @@ mod tests {
         }
     }
 
-    /// The bug this test exists for: the brush was put on the manual tab. The
-    /// region it paints is an input to BEST-FIT MATCHING, which is an automatic
-    /// tab action, so on the manual tab it was both unreachable at the moment
-    /// it mattered and in the way of the drags that tab exists for.
+    /// The exclusion brush belongs to the automatic tab.
     #[test]
     fn the_exclusion_brush_belongs_to_the_automatic_tab() {
         let source = production();
@@ -762,9 +729,7 @@ mod tests {
         assert!(automatic.contains("exclude(ui, view.excluding, enabled)"));
     }
 
-    /// The operator's report was that the manual tab had no action on it at
-    /// all. The operator's dental CAD software has Undo and Redo, and so does
-    /// this one.
+    /// The manual tab exposes Undo and Redo.
     #[test]
     fn the_manual_tab_offers_the_history_buttons() {
         let manual = production()
@@ -775,9 +740,7 @@ mod tests {
         assert!(manual.contains("AlignPanelAction::Redo"));
     }
 
-    /// "Paint the map on the other scan instead" asked the operator which
-    /// surface should carry a colour, which is a rendering question dressed up
-    /// as a measurement one.
+    /// The map target is fixed by the measurement model.
     #[test]
     fn the_window_never_asks_which_surface_carries_the_map() {
         let source = production();

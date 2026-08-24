@@ -21,10 +21,12 @@ use super::viewer::{
 use super::{
     read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
 };
+use crate::recent_files::RecentFiles;
+use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
 use glam::Mat4;
-use occluview_core::{Camera, RecentFiles, ScaleBar, Scene, SceneMesh};
+use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, Offscreen, PreparedScene, PreparedSceneSource,
     PreparedSceneTopology, PreparedSceneUpdate, ThumbnailSpec, ViewportSpec,
@@ -62,7 +64,10 @@ mod app_scene_export;
 mod app_scene_menu;
 mod app_sculpt;
 mod app_sculpt_worker;
+mod app_third_party;
 mod app_viewport;
+mod disc_frame;
+mod open_dialogs;
 mod selection_overlay;
 mod state;
 

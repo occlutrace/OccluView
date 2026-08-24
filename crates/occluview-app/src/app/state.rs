@@ -1,8 +1,24 @@
+//! `OccluViewApp` itself: the fields the whole binary shares, and the small
+//! set of methods that keep them consistent.
+//!
+//! Render invalidation uses four flags:
+//!
+//! - `needs_render` — draw again this frame. A camera move sets this and
+//!   nothing else, because the prepared geometry did not change.
+//! - `live_viewport_scene_dirty` — the live eframe/wgpu path must rebuild its
+//!   `PreparedScene`. Only ever set when `live_viewport` is `Some`.
+//! - `offscreen_scene_dirty` — the offscreen path must rebuild its own.
+//! - `selection_overlay_dirty` — the selection overlay mesh must be rebuilt.
+//!
+//! Geometry, materials, or scene changes set all four flags; camera changes set
+//! only `needs_render`.
+
+use super::open_dialogs::OpenDialogs;
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
-    Camera, CutTool, Duration, EditModeController, Instant, LayerOverlayChanges,
-    LoadQueueCameraReset, Offscreen, PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Result,
-    Scene, SceneLoadRequest, SharedLiveViewport, ViewportSpec, DEFAULT_RENDER_EXTENT_PX,
+    Camera, CutTool, Duration, EditModeController, Instant, LoadQueueCameraReset, Offscreen,
+    PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Scene, SceneLoadRequest,
+    SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
 
 /// Everything the bootstrap hands the app about how this process was started:
@@ -16,21 +32,24 @@ pub(crate) struct StartupHandles {
 
 pub(crate) struct Args {
     pub shell_refresh: bool,
+    pub version: bool,
     pub files: Vec<PathBuf>,
 }
 
 pub(crate) fn parse_args() -> Args {
     let mut shell_refresh = false;
+    let mut version = false;
     let mut files = Vec::new();
     for arg in std::env::args().skip(1) {
-        if arg == "--shell-refresh" {
-            shell_refresh = true;
-        } else {
-            files.push(PathBuf::from(arg));
+        match arg.as_str() {
+            "--shell-refresh" => shell_refresh = true,
+            "--version" | "-V" => version = true,
+            _ => files.push(PathBuf::from(arg)),
         }
     }
     Args {
         shell_refresh,
+        version,
         files,
     }
 }
@@ -40,6 +59,10 @@ pub(crate) struct OccluViewApp {
     pub(super) repaint_ctx: egui::Context,
     pub(super) scene: Option<Arc<Scene>>,
     pub(super) current_paths: Vec<PathBuf>,
+    /// Where the last successful export of this session landed. Save dialogs
+    /// fall back here for a layer with no file of its own before leaving the
+    /// choice to the platform.
+    pub(super) last_export_dir: Option<PathBuf>,
     pub(super) recent_files: RecentFiles,
     pub(super) camera: Option<Camera>,
     pub(super) live_viewport: Option<SharedLiveViewport>,
@@ -86,6 +109,8 @@ pub(crate) struct OccluViewApp {
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
     pub(super) pending_raise_token: Option<String>,
     pub(super) about_window: AboutWindowState,
+    /// The Third-party licenses window, opened from About.
+    pub(super) third_party_window_open: bool,
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `update()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
@@ -96,9 +121,7 @@ pub(crate) struct OccluViewApp {
     /// moved the camera, including motion below egui's click/drag threshold.
     pub(super) viewport_secondary_gesture_moved_since_press: bool,
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
-    /// Interactive sculpt-brush tool (the dental CAD Freeforming workflow):
-    /// the armed brush plus the live per-drag stroke session. Only
-    /// meaningful while a mesh edit session is active.
+    /// Interactive sculpt-brush tool and active stroke state.
     pub(super) sculpt: crate::sculpt_tool::SculptTool,
     pub(super) align: crate::align_tool::AlignTool,
     pub(super) align_worker: Option<crate::align_worker::AlignWorker>,
@@ -134,13 +157,11 @@ pub(crate) struct OccluViewApp {
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
     pub(super) update_notice: crate::update_notice::UpdateNotice,
-    /// Set by every applied mesh-edit (and its undo/redo): the in-scene meshes
-    /// differ from what was loaded from disk. Cleared when the scene is
-    /// replaced or closed. Drives the close-without-saving guard.
-    pub(super) has_unsaved_mesh_edits: bool,
-    /// Layers carrying unsaved edits, so the save flow knows exactly which
-    /// meshes to offer for export. Kept in lockstep with
-    /// `has_unsaved_mesh_edits`.
+    /// Layers carrying unsaved edits: the in-scene mesh differs from what was
+    /// loaded from disk. Written by every applied mesh-edit and its undo/redo,
+    /// cleared per layer when that layer is written out, and entirely when the
+    /// scene is replaced or closed. The close-without-saving guard and the save
+    /// flow both read it, through [`Self::has_unsaved_mesh_edits`].
     pub(super) unsaved_edit_layer_ids: std::collections::BTreeSet<occluview_core::SceneMeshId>,
     /// Layers hidden via Ctrl+MiddleClick, in hide order. Shift+Ctrl+Middle
     /// restores the most recently hidden one (LIFO).
@@ -153,11 +174,7 @@ pub(crate) struct OccluViewApp {
     pub(super) close_guard_open: bool,
     /// The operator explicitly chose to close without saving.
     pub(super) close_confirmed: bool,
-    /// A REPLACE open (menu Open, recent, or a drop/handoff classified as
-    /// replace) parked behind the edit-session guard because a live session is
-    /// dirty or unsaved edits exist. Held until the operator chooses to open
-    /// (save/discard) or cancels; a newer replace supersedes an older parked
-    /// one so an open is never silently lost to the void.
+    /// A replace-scene request waiting for the unsaved-edit guard.
     pub(super) pending_replace_open: Option<PendingReplaceOpen>,
 }
 
@@ -217,10 +234,34 @@ pub(super) struct RenderedFrame {
     pub(super) size_px: [u16; 2],
 }
 
+/// Report an unexpected shared scene handle once per process.
+fn report_shared_scene_edit(handles: usize) {
+    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    tracing::warn!(
+        handles,
+        "scene edited in place while another handle was alive; this copies the \
+         whole case and will keep doing so until the handle is released"
+    );
+}
+
+pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
+    let handles = Arc::strong_count(scene);
+    debug_assert_eq!(
+        handles, 1,
+        "in-place scene edit while another Arc<Scene> is alive: this \
+         silently deep-copies every vertex, index and texture of the case"
+    );
+    if handles != 1 {
+        report_shared_scene_edit(handles);
+    }
+    Arc::make_mut(scene)
+}
+
 impl OccluViewApp {
-    /// Status text is a transient interaction hint, not a second permanent
-    /// toolbar. Track direct legacy assignments centrally so every caller gets
-    /// the same expiry behavior without duplicating timer code across tools.
+    /// Expire transient status text after the shared display interval.
     fn expire_status_message(&mut self, ctx: &egui::Context) {
         const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(4);
         let now = Instant::now();
@@ -251,6 +292,7 @@ impl OccluViewApp {
             repaint_ctx: repaint_ctx.clone(),
             scene: None,
             current_paths: Vec::new(),
+            last_export_dir: None,
             recent_files: load_recent_files(),
             camera: None,
             live_viewport,
@@ -282,6 +324,7 @@ impl OccluViewApp {
             raise_target: startup.raise_target,
             pending_raise_token: startup.activation_token,
             about_window: AboutWindowState::Closed,
+            third_party_window_open: false,
             repair_report: crate::repair_report::RepairReportDialog::default(),
             app_logo: None,
             foreground_pulse_until: None,
@@ -310,7 +353,6 @@ impl OccluViewApp {
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),
-            has_unsaved_mesh_edits: false,
             unsaved_edit_layer_ids: std::collections::BTreeSet::new(),
             hidden_layer_stack: Vec::new(),
             translucent_layer_restore: std::collections::HashMap::new(),
@@ -324,125 +366,64 @@ impl OccluViewApp {
         app
     }
 
-    pub(super) fn render_now(&mut self, ctx: &egui::Context) {
-        self.render_now_impl(ctx);
+    /// Whether a modal dialog owns the keyboard.
+    ///
+    /// Escape belongs to the dialog in front of the operator, never to a tool
+    /// behind it. Decided inline, that list drifts: the cut and align tools
+    /// missed the replace-open guard and nobody counted the third-party
+    /// licences window, so with either up Escape tore the tool down behind the
+    /// dialog -- and for align also ran `cancel_align_session`, putting every
+    /// scan back where it started. One predicate, so the next dialog gets
+    /// remembered once.
+    pub(super) fn modal_dialog_open(&self) -> bool {
+        OpenDialogs {
+            close_guard: self.close_guard_open,
+            pending_replace: self.pending_replace_open.is_some(),
+            error: self.app_error.is_some(),
+            about: self.about_window == AboutWindowState::Open,
+            third_party: self.third_party_window_open,
+        }
+        .any()
     }
 
-    pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
-        self.render_scene_pixels_impl()
-    }
-
-    pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
-        self.render_cut_now_impl(ctx);
-    }
-
-    pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
-        self.ensure_offscreen_impl()
-    }
-
-    pub(super) fn sync_live_viewport(&mut self) {
-        self.sync_live_viewport_impl();
-    }
-
-    pub(super) fn clear_live_viewport(&self) {
-        self.clear_live_viewport_impl();
-    }
-
-    pub(super) fn poll_gpu_errors(&mut self) {
-        self.poll_gpu_errors_impl();
-    }
-
-    pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
-        self.set_scene_impl(scene, reset_camera);
-    }
-
-    pub(super) fn mark_scene_materials_changed(&mut self) {
-        self.mark_scene_materials_changed_impl();
-    }
-
-    pub(super) fn update_scene_materials(&mut self, scene: Scene) {
-        self.update_scene_materials_impl(scene);
-    }
-
-    pub(super) fn clear_scene(&mut self) {
-        self.clear_scene_impl();
-    }
-
-    #[allow(clippy::too_many_lines)]
-    pub(super) fn show_toolbar(&mut self, ctx: &egui::Context) {
-        self.show_toolbar_impl(ctx);
-    }
-
+    /// Edit hotkeys, refused while a dialog is up.
+    ///
+    /// The callee is named `_unguarded` rather than `_impl` because it is not
+    /// the same thing: one plausible call from a neighbouring module deletes
+    /// faces or replays an undo while the unsaved-changes prompt is open,
+    /// quietly changing what "Save" then writes. A name nobody reaches for out
+    /// of habit is the guard.
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
-        // Edit hotkeys must never act "behind" an open dialog: undoing a mesh
-        // edit while the unsaved-changes or open-guard prompt is up would
-        // silently change what "Save" then exports (or which scene is at stake).
-        if self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.about_window == AboutWindowState::Open
-            || self.bridge_split_active()
-        {
+        // The bridge tool owns the scene while it is armed, which is not a
+        // dialog and so is not part of the shared predicate.
+        if self.modal_dialog_open() || self.bridge_split_active() {
             return;
         }
-        self.handle_edit_shortcuts_impl(ctx);
+        self.handle_edit_shortcuts_unguarded(ctx);
     }
 
-    pub(super) fn show_layers_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport_rect: egui::Rect,
-        ctx: &egui::Context,
-    ) {
-        self.show_layers_overlay_impl(ui, viewport_rect, ctx);
-    }
-
-    pub(super) fn apply_layer_overlay_changes(
-        &mut self,
-        scene: &Scene,
-        paths: &[PathBuf],
-        changes: LayerOverlayChanges,
-        ctx: &egui::Context,
-    ) {
-        self.apply_layer_overlay_changes_impl(scene, paths, changes, ctx);
-    }
-
-    pub(super) fn show_cut_tool_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport_rect: egui::Rect,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_cut_tool_overlay_impl(ui, viewport_rect, ctx)
-    }
-
-    pub(super) fn show_bridge_split_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_bridge_split_overlay_impl(ui, response, ctx)
-    }
-
-    pub(super) fn show_align_tool_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        suppress_click: bool,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_align_tool_overlay_impl(ui, response, suppress_click, ctx)
-    }
-
-    pub(super) fn show_measure_tool_overlay(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        suppress_click: bool,
-        ctx: &egui::Context,
-    ) -> bool {
-        self.show_measure_tool_overlay_impl(ui, response, suppress_click, ctx)
+    /// The live scene, mutable in place.
+    ///
+    /// `Arc::make_mut` copies the whole scene whenever a second handle exists,
+    /// and the callers below all run per frame: a slider drag, a brush dab, a
+    /// nudge of an aligned layer. On two 945k-vertex arches that is 40 ns as
+    /// sole handle against 45.75 ms otherwise -- the entire case copied every
+    /// frame to change a few numbers.
+    ///
+    /// Every in-place scene edit comes through here, so a caller that keeps a
+    /// handle alive across the edit fails a test instead of costing frames.
+    pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
+        let scene = self.scene.as_mut()?;
+        let handles = Arc::strong_count(scene);
+        debug_assert_eq!(
+            handles, 1,
+            "in-place scene edit while another Arc<Scene> is alive: this \
+             silently deep-copies every vertex, index and texture of the case"
+        );
+        if handles != 1 {
+            report_shared_scene_edit(handles);
+        }
+        Some(Arc::make_mut(scene))
     }
 
     pub(super) fn reset_camera_to_home(&mut self) {
@@ -458,26 +439,27 @@ impl OccluViewApp {
     /// Every mesh-edit success path (including undo/redo) routes through here
     /// so the save flow knows exactly which layers to offer for export.
     pub(super) fn mark_mesh_edits_unsaved(&mut self, layer_id: occluview_core::SceneMeshId) {
-        self.has_unsaved_mesh_edits = true;
         self.unsaved_edit_layer_ids.insert(layer_id);
+    }
+
+    /// Whether anything in the scene differs from what is on disk.
+    ///
+    /// Derived from the set of layers with pending edits.
+    pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
+        !self.unsaved_edit_layer_ids.is_empty()
     }
 
     /// Forget the unsaved-edit tracking for the layers just written to disk.
     ///
-    /// Scoped, because a save can skip a layer: the whole-scene and per-layer
-    /// saves write only what is VISIBLE. Clearing everything after one of those
-    /// told the close guard that a hidden layer's edits were on disk when they
-    /// were only in memory, and the app then shut without asking.
+    /// Clear only layers included in the save operation.
     pub(super) fn forget_unsaved_edits(&mut self, layers: &[occluview_core::SceneMeshId]) {
         for layer in layers {
             self.unsaved_edit_layer_ids.remove(layer);
         }
-        self.has_unsaved_mesh_edits = !self.unsaved_edit_layer_ids.is_empty();
     }
 
     /// Forget all unsaved-edit tracking (scene replaced, closed, or saved).
     pub(super) fn clear_unsaved_mesh_edits(&mut self) {
-        self.has_unsaved_mesh_edits = false;
         self.unsaved_edit_layer_ids.clear();
     }
 
@@ -491,44 +473,6 @@ impl OccluViewApp {
         self.needs_render = true;
         self.mark_camera_modified();
         ctx.request_repaint();
-    }
-
-    pub(super) fn handle_viewport_input(
-        &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-        viewport_rect: egui::Rect,
-        gizmo_click: bool,
-    ) {
-        self.handle_viewport_input_impl(ctx, response, viewport_rect, gizmo_click);
-    }
-
-    pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        self.grab_viewport_orbit_cursor_impl(ctx);
-    }
-
-    pub(super) fn release_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        self.release_viewport_orbit_cursor_impl(ctx);
-    }
-
-    pub(super) fn release_viewport_orbit_cursor_if_inactive(&mut self, ctx: &egui::Context) {
-        self.release_viewport_orbit_cursor_if_inactive_impl(ctx);
-    }
-
-    pub(super) fn maybe_render_cut_view(&mut self, ctx: &egui::Context) {
-        self.maybe_render_cut_view_impl(ctx);
-    }
-
-    pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {
-        self.show_central_panel_impl(ctx);
-    }
-
-    pub(super) fn sync_render_extent(
-        &mut self,
-        viewport_points: egui::Vec2,
-        pixels_per_point: f32,
-    ) {
-        self.sync_render_extent_impl(viewport_points, pixels_per_point);
     }
 
     pub(super) fn push_recent_scene(&mut self, paths: &[PathBuf]) {
@@ -549,22 +493,6 @@ impl OccluViewApp {
                 .iter()
                 .any(|entry| entry.visible && !entry.mesh.is_point_cloud())
         })
-    }
-
-    pub(super) fn handle_open_requests(&mut self, ctx: &egui::Context) {
-        self.handle_open_requests_impl(ctx);
-    }
-
-    pub(super) fn raise_window_for_incoming_open(&mut self, ctx: &egui::Context) {
-        self.raise_window_for_incoming_open_impl(ctx);
-    }
-
-    pub(super) fn finish_foreground_pulse_if_due(&mut self, ctx: &egui::Context) {
-        self.finish_foreground_pulse_if_due_impl(ctx);
-    }
-
-    pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
-        self.render_pending_frame_impl(ctx);
     }
 
     #[cfg(not(windows))]
@@ -597,16 +525,14 @@ impl eframe::App for OccluViewApp {
         self.show_toolbar(ctx);
         self.maybe_render_cut_view(ctx);
         self.show_central_panel(ctx);
-        // Second pending-frame pass AFTER viewport input: the live-viewport
-        // paint callback reads shared GPU state at encode time (after this
-        // update returns), so syncing the camera mutated by THIS frame's drag
-        // here removes a full frame of input latency during orbit/pan/zoom.
+        // Sync camera changes after viewport input so the live paint callback
+        // uses the current frame's pose.
         self.render_pending_frame(ctx);
-        // Surface any GPU fault the wgpu error handler caught this frame before
-        // drawing the error dialog, so it appears the same frame it happened.
+        // Surface GPU faults before drawing the error dialog.
         self.poll_gpu_errors();
         self.show_error_dialog(ctx);
         self.show_about_window(ctx);
+        self.show_third_party_window(ctx);
         self.repair_report.ui(ctx);
         self.update_notice.show(ctx);
         self.guard_unsaved_close(ctx);

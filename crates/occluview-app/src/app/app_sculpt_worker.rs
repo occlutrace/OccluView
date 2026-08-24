@@ -100,7 +100,7 @@ impl OccluViewApp {
             return false;
         };
         {
-            let scene = Arc::make_mut(&mut scene_arc);
+            let scene = super::state::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
@@ -113,7 +113,7 @@ impl OccluViewApp {
                 self.scene = Some(scene_arc);
                 return false;
             }
-            entry.mesh = rebuild.mesh;
+            entry.mesh = Arc::new(rebuild.mesh);
         }
         self.edit_mode.sync_to_scene(&scene_arc);
         self.scene = Some(scene_arc);
@@ -192,7 +192,12 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    fn commit_sculpt_result(&mut self, before: Mesh, sculpted: Mesh, ctx: &egui::Context) -> bool {
+    fn commit_sculpt_result(
+        &mut self,
+        before: Arc<Mesh>,
+        sculpted: Mesh,
+        ctx: &egui::Context,
+    ) -> bool {
         let Some(worker) = self.sculpt.worker.as_ref() else {
             return false;
         };
@@ -218,7 +223,20 @@ impl OccluViewApp {
         if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
             let _ = self.edit_mode.finish_layer_edit_success(token);
             self.mark_mesh_edits_unsaved(layer_id);
-            self.status_message = Some("Sculpt applied (Ctrl+Z undoes)".to_string());
+            // Only promise the undo that exists. `begin_layer_edit_with_snapshot`
+            // skips an oversized pre-op snapshot -- the edit still applies, but
+            // Ctrl+Z will not bring the layer back. Telling the operator
+            // otherwise is worse than saying nothing: they find out by pressing
+            // it, on work they have already moved on from. Every other mesh-edit
+            // status goes through `with_undoable_note` for the same reason.
+            self.status_message = Some(
+                if self.edit_mode.last_edit_undoable() {
+                    "Sculpt applied (Ctrl+Z undoes)"
+                } else {
+                    "Sculpt applied (not undoable: snapshot too large)"
+                }
+                .to_string(),
+            );
             true
         } else {
             let _ = self
@@ -238,7 +256,7 @@ impl OccluViewApp {
             return false;
         };
         {
-            let scene = Arc::make_mut(&mut scene_arc);
+            let scene = super::state::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
@@ -247,7 +265,7 @@ impl OccluViewApp {
                 self.scene = Some(scene_arc);
                 return false;
             };
-            entry.mesh = mesh;
+            entry.mesh = Arc::new(mesh);
         }
         self.edit_mode.sync_to_scene(&scene_arc);
         self.scene = Some(scene_arc);
@@ -274,7 +292,9 @@ mod tests {
     /// full rebuild rather than a uniform-only reconcile.
     #[test]
     fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
-        let source = include_str!("app_sculpt_worker.rs").replace("\r\n", "\n");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
+                .replace("\r\n", "\n");
         let take_rebuild = source
             .find("worker.take_rebuild()")
             .expect("the poll must drain pending layer rebuilds");

@@ -38,6 +38,7 @@ use super::SelectedFaceEditContext;
 use occluview_core::{
     selected_connected_components_in_mesh, CoreError, FaceSelection, Mesh, SceneMesh, Vertex,
 };
+use std::sync::Arc;
 
 /// Upper bound on the layers a single Separate ("Divide") may spawn. A dental
 /// user never wants hundreds of new layers; a selection that fragments past
@@ -77,7 +78,7 @@ pub(super) fn apply_cut_selection_to_new_layer(
         return Ok(LayerContextApply::default());
     }
 
-    entry.mesh = remainder;
+    entry.mesh = Arc::new(remainder);
     scene.insert(
         context.index + 1,
         clone_layer_with_mesh(&source_entry, extracted)
@@ -144,7 +145,7 @@ pub(super) fn apply_separate_selected_components(
         return Ok(LayerContextApply::default());
     }
 
-    entry.mesh = split.remainder;
+    entry.mesh = Arc::new(split.remainder);
     // The parts are geometrically coincident with where they sat in the
     // source, so with the source tint they would be invisible as a split
     // (dental CAD software shows a divide by recoloring the pieces). Walk

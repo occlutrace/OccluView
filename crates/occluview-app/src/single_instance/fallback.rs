@@ -53,18 +53,25 @@ fn take_open_requests() -> Vec<OpenRequest> {
 
     let mut requests = Vec::new();
     for path in files {
+        // The request file's own name. Its directory is under the operator's
+        // profile, and everything logged here can end up in a crash report.
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unnamed>")
+            .to_owned();
         match std::fs::read(&path) {
             Ok(bytes) => match parse_request(&bytes) {
                 Ok(request) if !request.paths.is_empty() => requests.push(request),
                 Ok(_) => {}
-                Err(error) => tracing::warn!(?error, path = ?path, "open request parse failed"),
+                Err(error) => tracing::warn!(?error, request = %name, "open request parse failed"),
             },
             Err(error) => {
-                tracing::warn!(?error, path = ?path, "open request read failed");
+                tracing::warn!(?error, request = %name, "open request read failed");
             }
         }
         if let Err(error) = std::fs::remove_file(&path) {
-            tracing::warn!(?error, path = ?path, "open request cleanup failed");
+            tracing::warn!(?error, request = %name, "open request cleanup failed");
         }
     }
     requests

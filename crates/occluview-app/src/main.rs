@@ -2,12 +2,20 @@
 //!
 //! Native desktop app for Windows and Linux.
 //!
-//! ## Status (this commit)
+//! ## Shape of the binary
 //!
 //! Opens one or more files from the CLI args via `occluview-formats` and draws
 //! the scene through the shared `occluview-render` wgpu pipeline. The main
 //! viewport uses a live eframe/wgpu callback when available, with the offscreen
 //! path kept for thumbnails, cut-view previews, and fallback.
+//!
+//! Everything above that sits in the `mod` list below: `app` and `viewer` hold
+//! the application state and the viewport, `scene_loading` brings files in,
+//! `align_*` registers one scan onto another, `edit_mode` and `sculpt_*` change
+//! geometry, `cut_*` and `section_view` slice it, `measure_*` and
+//! `probe_section` measure it, `layer_*` and `mesh_editor_*` drive the panels,
+//! and `single_instance`, `jump_list` and `update_notice` handle the desktop
+//! integration around all of it.
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -43,6 +51,7 @@ mod cut_tool;
 mod edit_mode;
 #[cfg(windows)]
 mod jump_list;
+mod jump_list_model;
 mod layer_actions;
 mod layers_overlay;
 mod live_viewport;
@@ -52,11 +61,15 @@ mod measure_tool;
 mod mesh_editor_icons;
 mod mesh_editor_overlay;
 mod probe_section;
+mod recent_files;
 mod repair_report;
+mod scale_bar;
 mod scene_loading;
 mod sculpt_tool;
 mod sculpt_worker;
 mod section_view;
+#[cfg(windows)]
+mod shell_refresh;
 mod single_instance;
 mod ui_theme;
 mod update_notice;
@@ -67,11 +80,6 @@ pub(crate) const APP_USER_MODEL_ID: &str = "OccluTrace.OccluView";
 #[cfg(target_os = "linux")]
 const LINUX_DESKTOP_APP_ID: &str = "ai.occlutrace.OccluView";
 pub(crate) const LIVE_VIEWPORT_SAMPLE_COUNT: u16 = 4;
-
-#[cfg(test)]
-fn primary_camera_action_labels() -> [&'static str; 0] {
-    []
-}
 
 fn should_append_incoming_open_state(
     has_scene: bool,

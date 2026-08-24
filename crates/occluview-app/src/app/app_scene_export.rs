@@ -5,13 +5,16 @@
 //! geometry and writes the scene the operator is actually looking at.
 
 use super::app_mesh_export::{
-    default_layer_export_format, layer_export_file_dialog, mesh_export_format_from_path,
-    mesh_write_extension, normalize_layer_export_path, sanitize_filename_stem,
+    default_layer_export_directory, default_layer_export_format, layer_export_file_dialog,
+    mesh_export_format_from_path, mesh_write_extension, normalize_layer_export_path,
+    sanitize_filename_stem,
 };
 use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 impl OccluViewApp {
     /// Write every visible layer, in its current pose, as one file.
@@ -32,10 +35,16 @@ impl OccluViewApp {
             .iter()
             .any(|entry| entry.visible && entry.mesh.texture().is_some());
 
-        let Some(selected) = layer_export_file_dialog(MeshWriteFormat::PlyBinaryLittleEndian)
-            .set_file_name("scene.ply")
-            .save_file()
-        else {
+        let mut dialog = layer_export_file_dialog(MeshWriteFormat::PlyBinaryLittleEndian)
+            .set_file_name("scene.ply");
+        // Index zero with the neighbour fallback resolves to the first layer
+        // that has a file, so a merged scene lands next to its scans.
+        if let Some(directory) =
+            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
+        {
+            dialog = dialog.set_directory(directory);
+        }
+        let Some(selected) = dialog.save_file() else {
             return;
         };
         let path = normalize_layer_export_path(selected, MeshWriteFormat::PlyBinaryLittleEndian);
@@ -62,6 +71,7 @@ impl OccluViewApp {
                     ""
                 };
                 self.forget_unsaved_edits(&written);
+                self.remember_export_directory(&path);
                 self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
             Err(error) => {
@@ -89,25 +99,57 @@ impl OccluViewApp {
             self.status_message = Some("Nothing visible to save".into());
             return;
         }
-        let Some(directory) = rfd::FileDialog::new().pick_folder() else {
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(start) =
+            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
+        {
+            dialog = dialog.set_directory(start);
+        }
+        let Some(directory) = dialog.pick_folder() else {
             return;
         };
 
         let paths = self.current_paths.clone();
+        let visible: Vec<(usize, &SceneMesh)> = scene
+            .meshes()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.visible)
+            .collect();
+        let specs: Vec<(String, MeshWriteFormat)> = visible
+            .iter()
+            .map(|(index, entry)| {
+                (
+                    sanitize_filename_stem(&crate::layers_overlay::layer_label(
+                        &paths, entry, *index,
+                    )),
+                    default_layer_export_format(&paths, *index),
+                )
+            })
+            .collect();
+        let destinations = unique_layer_export_paths(&directory, &specs);
+        // A destination whose stem is not the layer's own was renamed to keep
+        // something already in the folder. Saying so is the difference between
+        // "your last export is still there" and an operator handing a mill the
+        // file they exported an hour ago.
+        let renamed = destinations
+            .iter()
+            .zip(&specs)
+            .filter(|(path, (stem, _))| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name != stem)
+            })
+            .count();
+
         let mut written = 0usize;
         let mut failed = 0usize;
-        for (index, entry) in scene.meshes().iter().enumerate() {
-            if !entry.visible {
-                continue;
-            }
-            let format = default_layer_export_format(&paths, index);
-            let stem =
-                sanitize_filename_stem(&crate::layers_overlay::layer_label(&paths, entry, index));
-            let path = directory.join(format!("{stem}.{}", mesh_write_extension(format)));
+        for ((_, entry), (path, (_, format))) in visible.iter().zip(destinations.iter().zip(&specs))
+        {
             match write_mesh_overwrite(
-                &path,
+                path,
                 &posed_mesh(entry),
-                format,
+                *format,
                 MeshWriteOptions::default(),
             ) {
                 Ok(_) => written += 1,
@@ -115,6 +157,11 @@ impl OccluViewApp {
             }
         }
 
+        if written > 0 {
+            // Even a partial batch is a real destination choice worth
+            // remembering for the next save dialog.
+            self.last_export_dir = Some(directory.clone());
+        }
         if failed == 0 {
             // Same rule as the whole-scene save: a hidden layer was not written,
             // so its edits are still only in memory.
@@ -126,15 +173,82 @@ impl OccluViewApp {
                 .collect();
             self.forget_unsaved_edits(&written);
         }
-        self.status_message = Some(if failed == 0 {
+        let mut status = if failed == 0 {
             format!("Saved {written} layers to {}", directory.display())
         } else {
             format!(
                 "Saved {written} layers to {}; {failed} could not be written",
                 directory.display()
             )
-        });
+        };
+        if renamed > 0 {
+            use std::fmt::Write as _;
+            let files = if renamed == 1 { "file" } else { "files" };
+            let _ = write!(
+                status,
+                "; {renamed} {files} renamed to keep what was already there"
+            );
+        }
+        self.status_message = Some(status);
     }
+}
+
+/// One destination per visible layer, guaranteed distinct.
+///
+/// The stem comes from the layer label, which is the source file's name. Two
+/// layers opened from different folders under the same file name — the norm
+/// when a case folder holds `upper.stl` beside another case's `upper.stl` —
+/// resolve to one path. The second write truncates the first, nothing reports
+/// a failure, the batch clears the unsaved-edit flag for both, and the close
+/// guard then lets the app exit without asking. A colliding name gains a
+/// ` (2)`, ` (3)` suffix instead.
+///
+/// Names already in the directory count as taken for the same reason. The
+/// operator chose a folder, not filenames, so nothing ever asks about
+/// overwriting, and the obvious folder to choose twice is the one the last
+/// export went to.
+///
+/// Comparison is case-insensitive because the platforms this ships on treat
+/// `Upper.stl` and `upper.stl` as the same file.
+pub(super) fn unique_layer_export_paths(
+    directory: &Path,
+    layers: &[(String, MeshWriteFormat)],
+) -> Vec<PathBuf> {
+    let mut taken: HashSet<String> = existing_file_names(directory);
+    let mut destinations = Vec::with_capacity(layers.len());
+    for (stem, format) in layers {
+        let extension = mesh_write_extension(*format);
+        let mut candidate = format!("{stem}.{extension}");
+        let mut ordinal = 2usize;
+        while !taken.insert(candidate.to_lowercase()) {
+            candidate = format!("{stem} ({ordinal}).{extension}");
+            ordinal += 1;
+        }
+        destinations.push(directory.join(candidate));
+    }
+    destinations
+}
+
+/// The file names already in `directory`, lowercased.
+///
+/// An unreadable directory yields an empty set: the export that follows will
+/// fail on its own and say so, and refusing to name any destination here would
+/// turn a permissions problem into a batch that writes nothing and explains
+/// nothing.
+///
+/// One `read_dir` of the destination, on the thread that is about to write
+/// into it. On a lab archive share with tens of thousands of entries that is a
+/// pause before the first byte, which is the price of not overwriting what is
+/// already there.
+fn existing_file_names(directory: &Path) -> HashSet<String> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return HashSet::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .map(|name| name.to_lowercase())
+        .collect()
 }
 
 /// The layer's mesh with its scene transform baked into positions and normals.
@@ -149,7 +263,7 @@ impl OccluViewApp {
 /// there.
 pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
     if entry.transform == Affine3A::IDENTITY {
-        return entry.mesh.clone();
+        return (*entry.mesh).clone();
     }
     let affine = double_affine(entry.transform);
     // Normals transform by the inverse transpose. For a rigid pose that is
@@ -246,10 +360,12 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::{merged_scene_mesh, posed_mesh};
+    use super::{merged_scene_mesh, posed_mesh, unique_layer_export_paths};
     use anyhow::Result;
     use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+    use occluview_formats::write::MeshWriteFormat;
+    use std::path::Path;
 
     fn v(x: f32, y: f32, z: f32) -> Vertex {
         Vertex::at(Vec3::new(x, y, z))
@@ -376,5 +492,99 @@ mod tests {
         assert!(merged_scene_mesh(&scene).is_none());
         assert!(merged_scene_mesh(&Scene::new()).is_none());
         Ok(())
+    }
+
+    #[test]
+    fn two_layers_with_the_same_file_name_get_two_files() {
+        // caseA/upper.stl and caseB/upper.stl in one batch: two labels, one
+        // stem.
+        let layers = vec![
+            ("upper".to_owned(), MeshWriteFormat::StlBinary),
+            ("upper".to_owned(), MeshWriteFormat::StlBinary),
+            ("lower".to_owned(), MeshWriteFormat::StlBinary),
+        ];
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        assert_eq!(destinations.len(), 3);
+        assert_eq!(destinations[0], Path::new("/case/upper.stl"));
+        assert_eq!(destinations[1], Path::new("/case/upper (2).stl"));
+        assert_eq!(destinations[2], Path::new("/case/lower.stl"));
+    }
+
+    #[test]
+    fn every_destination_in_a_batch_is_distinct() {
+        let layers: Vec<(String, MeshWriteFormat)> = (0..6)
+            .map(|_| ("scan".to_owned(), MeshWriteFormat::PlyBinaryLittleEndian))
+            .collect();
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        let mut seen = std::collections::HashSet::new();
+        for path in &destinations {
+            assert!(
+                seen.insert(path.clone()),
+                "batch export produced a duplicate destination: {}",
+                path.display()
+            );
+        }
+        assert_eq!(destinations.len(), layers.len());
+    }
+
+    #[test]
+    fn a_name_that_differs_only_in_case_still_counts_as_taken() {
+        // Windows and macOS resolve these to one file; treating them as
+        // distinct would put the collision back on the filesystem.
+        let layers = vec![
+            ("Upper".to_owned(), MeshWriteFormat::StlBinary),
+            ("upper".to_owned(), MeshWriteFormat::StlBinary),
+        ];
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        assert_eq!(destinations[0], Path::new("/case/Upper.stl"));
+        assert_eq!(destinations[1], Path::new("/case/upper (2).stl"));
+    }
+
+    #[test]
+    fn a_file_already_in_the_directory_is_not_overwritten() {
+        // The operator picked a folder, so no overwrite prompt was ever shown
+        // and the same case exported twice lands on the same name.
+        let directory =
+            std::env::temp_dir().join(format!("occluview-export-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create the test directory");
+        std::fs::write(directory.join("upper.stl"), b"previous export")
+            .expect("write the previous export");
+
+        let layers = vec![("upper".to_owned(), MeshWriteFormat::StlBinary)];
+        let destinations = unique_layer_export_paths(&directory, &layers);
+
+        assert_eq!(
+            destinations[0],
+            directory.join("upper (2).stl"),
+            "the export already in the folder must survive the next one"
+        );
+
+        // And the case-insensitive rule holds against the filesystem too.
+        std::fs::write(directory.join("Lower.stl"), b"previous export")
+            .expect("write the previous export");
+        let layers = vec![("lower".to_owned(), MeshWriteFormat::StlBinary)];
+        let destinations = unique_layer_export_paths(&directory, &layers);
+        assert_eq!(destinations[0], directory.join("lower (2).stl"));
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn the_same_stem_in_two_formats_needs_no_suffix() {
+        let layers = vec![
+            ("scan".to_owned(), MeshWriteFormat::StlBinary),
+            ("scan".to_owned(), MeshWriteFormat::PlyBinaryLittleEndian),
+        ];
+
+        let destinations = unique_layer_export_paths(Path::new("/case"), &layers);
+
+        assert_eq!(destinations[0], Path::new("/case/scan.stl"));
+        assert_eq!(destinations[1], Path::new("/case/scan.ply"));
     }
 }

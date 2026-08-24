@@ -14,7 +14,7 @@ impl OccluViewApp {
     /// dropdown next to Open, the cut-view toggle inline, and version + About
     /// tucked on the right. Every action keeps its tooltip and shortcut.
     #[allow(clippy::too_many_lines)]
-    pub(super) fn show_toolbar_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_toolbar(&mut self, ctx: &egui::Context) {
         // The only wired shortcut; its tooltip hint is therefore real.
         let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
         let mut do_open = ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
@@ -150,6 +150,38 @@ impl OccluViewApp {
                         toggle_align = true;
                     }
 
+                    let can_edit_mesh = self.scene.is_some()
+                        && self
+                            .scene
+                            .as_ref()
+                            .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
+                    let edit_active = self.edit_mode.has_active_session();
+                    if crate::measure_overlay::toolbar_toggle(
+                        ui,
+                        MeasureIcon::EditMesh,
+                        "Edit",
+                        can_edit_mesh,
+                        edit_active,
+                        if edit_active {
+                            "Mesh editor is open"
+                        } else {
+                            "Edit mesh: selection and sculpting"
+                        },
+                    ) {
+                        // Pressing it while the editor is already open is the
+                        // toggle's business, not this button's: opening a second
+                        // session over a live one would discard the first one's
+                        // selection.
+                        if let (false, Some(scene)) = (edit_active, self.scene.clone()) {
+                            for entry in scene.meshes() {
+                                if !entry.mesh.is_point_cloud() && entry.visible {
+                                    let _ = self.edit_mode.begin_face_selection(entry, &scene);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if toolbar_action(ui, "ℹ", true, "About OccluView") {
                             self.about_window = AboutWindowState::Open;
@@ -266,7 +298,7 @@ impl OccluViewApp {
     /// close with consent given.
     pub(super) fn guard_unsaved_close(&mut self, ctx: &egui::Context) {
         if ctx.input(|input| input.viewport().close_requested())
-            && self.has_unsaved_mesh_edits
+            && self.has_unsaved_mesh_edits()
             && !self.close_confirmed
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -278,10 +310,13 @@ impl OccluViewApp {
         let edited_count = self.unsaved_edit_layer_ids.len().max(1);
         let mut open = true;
         let mut do_save = false;
+        let vp = ctx.screen_rect();
+        let unsaved_default = vp.center() - egui::vec2(200.0, 60.0);
         egui::Window::new("Unsaved mesh edits")
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .default_pos(unsaved_default)
+            .constrain_to(vp)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.label(if edited_count == 1 {
@@ -352,10 +387,13 @@ impl OccluViewApp {
         let mut do_save = false;
         let mut do_discard = false;
         let mut do_cancel = false;
+        let vp2 = ctx.screen_rect();
+        let edit_default = vp2.center() - egui::vec2(200.0, 60.0);
         egui::Window::new("Edit in progress")
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .default_pos(edit_default)
+            .constrain_to(vp2)
             .open(&mut open)
             .show(ctx, |ui| {
                 if let Some(layer) = &session_layer {
@@ -436,10 +474,16 @@ impl OccluViewApp {
             return;
         }
         let logo = self.app_logo_texture(ctx).cloned();
-        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        // While the Third-party licenses window is stacked on top, Escape
+        // belongs to it; the next Escape closes About.
+        let mut close = !self.third_party_window_open
+            && ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        let mut open_third_party = false;
 
+        let vp3 = ctx.screen_rect();
         egui::Window::new("About OccluView")
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_pos(vp3.center() - egui::vec2(174.0, 95.0))
+            .constrain_to(vp3)
             .movable(false)
             .resizable(false)
             .collapsible(false)
@@ -497,6 +541,12 @@ impl OccluViewApp {
                     );
                 });
                 ui.add_space(4.0);
+                ui.vertical_centered(|ui| {
+                    if ui.link("Third-party licenses").clicked() {
+                        open_third_party = true;
+                    }
+                });
+                ui.add_space(4.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         close = true;
@@ -504,6 +554,9 @@ impl OccluViewApp {
                 });
             });
 
+        if open_third_party {
+            self.third_party_window_open = true;
+        }
         if close {
             self.about_window = AboutWindowState::Closed;
         }

@@ -39,10 +39,14 @@ fn real_main() -> Result<()> {
     set_process_app_user_model_id();
 
     let args = app::parse_args();
+    if args.version {
+        print_version_line();
+        return Ok(());
+    }
     if args.shell_refresh {
         #[cfg(windows)]
         {
-            occluview_shell::notify_shell_associations_changed();
+            crate::shell_refresh::notify_shell_associations_changed();
             return Ok(());
         }
         #[cfg(not(windows))]
@@ -53,7 +57,15 @@ fn real_main() -> Result<()> {
         }
     }
 
-    tracing::info!(files = ?args.files, "OccluView starting");
+    // Shape, not identity. This line goes into the ring buffer that
+    // `write_crash_report` dumps to disk, and a dental scan's path is the case
+    // it belongs to. Someone asked to attach a crash report to a public issue
+    // should not be attaching patient identifiers with it.
+    tracing::info!(
+        file_count = args.files.len(),
+        formats = ?file_extensions(&args.files),
+        "OccluView starting"
+    );
     let single_instance = single_instance::SingleInstance::acquire()?;
     if single_instance.is_secondary() {
         if !args.files.is_empty() {
@@ -97,6 +109,20 @@ fn real_main() -> Result<()> {
             // Capture both raw handles now so the open-file handoff can use
             // the compositor's native activation protocol on Linux.
             let raise_target = single_instance::RaiseTarget::from_handles(cc, cc);
+            // What actually reaches the offscreen fallback, traced rather than
+            // assumed: this closure runs only after eframe has built a device,
+            // because `WgpuWinitApp::init_run_state` calls `set_window(..)?`
+            // before `painter.render_state()`. An adapter or device failure
+            // aborts `run_native` and never gets here. That leaves one trigger,
+            // `with_shared_device_sample_count` failing on a device that
+            // already works -- a pipeline, shader or bind-group failure -- for
+            // which the fallback's cure is a second wgpu device building the
+            // same pipelines from the same shaders.
+            //
+            // The branch stays, but it is not "this machine has no GPU"
+            // coverage; that case never arrives here. The same overlay body as
+            // the live path runs it (see `show_viewport_overlays`), which is
+            // what stops it rotting for the operators it does serve.
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
                 match live_viewport::LiveViewport::from_render_state(state) {
                     Ok(viewport) => Some(viewport),
@@ -143,6 +169,18 @@ fn root_viewport_builder() -> egui::ViewportBuilder {
     }
 }
 
+/// `--version` for scripts and packaging checks, printed before the
+/// single-instance handshake so it never focuses a running viewer. On
+/// Windows this is a GUI-subsystem binary: with no console attached the
+/// line goes to a null stdout and the process simply exits cleanly; it
+/// prints whenever stdout is piped or redirected, and always on Linux.
+/// Attaching a parent console would drag in Win32 console plumbing for one
+/// line.
+#[allow(clippy::print_stdout)]
+fn print_version_line() {
+    println!("occluview {}", env!("CARGO_PKG_VERSION"));
+}
+
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
         let details = format_panic_details(panic_info);
@@ -180,6 +218,24 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
     )
 }
 
+/// The distinct lowercase extensions of `files`, sorted: a log line that says
+/// what kind of session this is without saying whose.
+///
+/// This is what the logs are allowed to say about a set of scans: how many and
+/// of which kinds. The paths themselves name the case, and the crash report
+/// they would end up in is a file operators are asked to attach to a public
+/// issue.
+pub(crate) fn file_extensions(files: &[PathBuf]) -> Vec<String> {
+    let mut extensions: Vec<String> = files
+        .iter()
+        .filter_map(|path| path.extension().and_then(|extension| extension.to_str()))
+        .map(str::to_ascii_lowercase)
+        .collect();
+    extensions.sort();
+    extensions.dedup();
+    extensions
+}
+
 fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
     let dir = crash_report_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
@@ -187,11 +243,17 @@ fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     let path = dir.join(format!("occluview-{kind}-{stamp}.txt"));
+    // The file's own name, not its path: the directory sits under the
+    // operator's profile and carries their account name. Whoever opens the
+    // report already knows where it came from.
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("occluview-crash.txt");
     let report = format!(
-        "{details}\n{}\nBuild: {}\nReport path: {}\n",
+        "{details}\n{}\nBuild: {}\nReport: {file_name}\n",
         recent_log_lines(),
         env!("CARGO_PKG_VERSION"),
-        path.display()
     );
     std::fs::write(&path, report).ok()?;
     Some(path)
@@ -293,7 +355,13 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 
     #[cfg(not(windows))]
     {
-        tracing::error!(?report_path, details, "OccluView could not continue");
+        // Name, not path, as above -- and this line goes into the ring the
+        // NEXT report carries.
+        let report = report_path
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("none");
+        tracing::error!(report, details, "OccluView could not continue");
     }
 }
 

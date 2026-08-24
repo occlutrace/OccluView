@@ -1,3 +1,16 @@
+//! Viewport interaction for the cut plane and the measuring tools.
+//!
+//! The pointer means different things depending on which tool owns it, and
+//! this module is where that is decided: placing and dragging the clip plane,
+//! the follow disc that rides the surface under the cursor, the caliper and
+//! thickness probes, and the section view's own picking.
+//!
+//! Everything here works in world space obtained by unprojecting the cursor
+//! through the shared viewport helpers, so a hit means the same thing to the
+//! overlay that draws it and to the geometry that answers it. Drawing lives in
+//! `cut_overlay` and `measure_overlay`; the numbers live in `measure_tool` and
+//! `probe_section`.
+
 use super::{egui, layers_overlay, pick_scene_hit, CutTool, OccluViewApp, Scene};
 use crate::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
 use crate::cut_overlay;
@@ -5,9 +18,8 @@ use crate::measure_overlay;
 use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
 use crate::probe_section;
 use crate::section_view::SectionMainView;
-use crate::viewer::{project_world_to_viewport, viewport_ray};
 use glam::{Vec3, Vec3A};
-use occluview_core::scene::{SceneSection, VisibilityFilter};
+use occluview_core::scene::SceneSection;
 use occluview_core::ScenePickHit;
 use std::sync::Arc;
 
@@ -94,8 +106,59 @@ pub(super) fn world_arch_frame(entry: &occluview_core::SceneMesh) -> Option<Arch
     })
 }
 
+/// Who owns the pointer this frame: the bare 3D viewport, or egui chrome
+/// sitting over it.
+pub(super) struct ViewportPointer {
+    /// The hover position, if the pointer is on screen at all.
+    pub(super) pointer: Option<egui::Pos2>,
+    /// Over the docked Section panel, which owns its own pointer: the wheel
+    /// there sizes the disc or zooms the panel rather than reaching the scene.
+    pub(super) over_section_panel: bool,
+    /// Over bare scene: the only case a disc may be planted, sized or dragged.
+    pub(super) over_viewport: bool,
+}
+
 impl OccluViewApp {
-    pub(super) fn show_cut_tool_overlay_impl(
+    /// Resolve pointer ownership shared by both disc tools.
+    pub(super) fn viewport_pointer(
+        &self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+        scene: &Scene,
+        slice_visible: bool,
+    ) -> ViewportPointer {
+        let pointer = ctx.input(|input| input.pointer.hover_pos());
+        let over_rect = pointer.is_some_and(|point| viewport_rect.contains(point));
+        // The layers panel is a same-layer (Background) scope, so it needs an
+        // explicit rect test; floating areas are caught by their non-Background
+        // layer order.
+        let layers_rect = layers_overlay::layer_overlay_rect(viewport_rect, scene.meshes().len());
+        let over_section_panel = slice_visible
+            && pointer.is_some_and(|point| {
+                crate::cut_ruler::section_panel_contains(viewport_rect, point)
+            });
+        let gizmo_avoid = self.active_section_panel_rect(viewport_rect);
+        let over_gizmo = pointer.is_some_and(|point| {
+            crate::viewer::axis_gizmo::axis_gizmo_footprint(viewport_rect, gizmo_avoid)
+                .contains(point)
+        });
+        let over_egui = pointer.is_some_and(|point| {
+            layers_rect.contains(point)
+                || ctx
+                    .layer_id_at(point)
+                    .is_some_and(|layer| layer.order != egui::Order::Background)
+        }) || over_section_panel
+            || over_gizmo;
+        ViewportPointer {
+            pointer,
+            over_section_panel,
+            over_viewport: over_rect && !over_egui,
+        }
+    }
+}
+
+impl OccluViewApp {
+    pub(super) fn show_cut_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
@@ -257,10 +320,7 @@ impl OccluViewApp {
         scene: &Scene,
         plane: Option<occluview_core::scene::SectionPlane>,
     ) -> Option<Arc<SceneSection>> {
-        plane.map(|plane| {
-            self.section_cache
-                .get_or_compute(scene, plane, &VisibilityFilter::SceneVisibility)
-        })
+        plane.map(|plane| self.section_cache.get_or_compute(scene, plane))
     }
 
     /// Advance the armed measurement tool one frame: keep the tool-exclusivity
@@ -268,7 +328,7 @@ impl OccluViewApp {
     /// Returns whether the pointer was consumed (mirrors the cut overlay's
     /// contract in `show_central_panel`); drags always fall through so the
     /// camera keeps orbit/pan/zoom while a measure tool is armed.
-    pub(super) fn show_measure_tool_overlay_impl(
+    pub(super) fn show_measure_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,
@@ -295,10 +355,7 @@ impl OccluViewApp {
         // Esc exits the tool (and drops its overlays, incl. the probe-linked cut
         // view it opened) — but never steal Escape from an open dialog (same rule
         // as the cut ladder).
-        let dialogs_open = self.close_guard_open
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
-        if !dialogs_open
+        if !self.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.disarm_measure_and_probe_cut();
@@ -572,41 +629,22 @@ impl OccluViewApp {
         scene: &Scene,
         viewport_rect: egui::Rect,
     ) -> (CutFrameInput, f32) {
-        let pointer = ctx.input(|i| i.pointer.hover_pos());
         let raw_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         let primary_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
         let ctrl = ctx.input(|i| i.modifiers.command);
-        let over_rect = pointer.is_some_and(|p| viewport_rect.contains(p));
-        // The disc only owns the *bare* viewport: never plant/slice/size the disc
-        // through an egui surface sitting over the scene. The layers panel is a
-        // same-layer (Background) scope, so it needs an explicit rect test;
-        // floating areas are caught by their non-Background layer order.
-        let layers_rect = layers_overlay::layer_overlay_rect(viewport_rect, scene.meshes().len());
-        // The docked Section panel owns its pointer (measuring + disc-radius
-        // wheel), so it is treated as egui chrome, not bare viewport — but only
-        // while it is actually on screen (a slice has rendered).
-        let over_section_panel = self.cut_view.slice_visible()
-            && pointer.is_some_and(|p| crate::cut_ruler::section_panel_contains(viewport_rect, p));
-        // The axis gizmo paints on the Background layer, so it needs an explicit
-        // footprint test too — otherwise a follow-disc click on an axis marker
-        // plants a disc AND snaps the camera in the same gesture.
-        // Must match what actually painted the gizmo: `active_section_panel_rect`
-        // lifts it only when the section panel is really on screen. Testing a
-        // different condition put the hit box 400 px from the glyph, so one
-        // click both snapped the camera and planted a disc — or a patch of bare
-        // model silently refused clicks.
-        let gizmo_avoid = self.active_section_panel_rect(viewport_rect);
-        let over_gizmo = pointer.is_some_and(|p| {
-            crate::viewer::axis_gizmo::axis_gizmo_footprint(viewport_rect, gizmo_avoid).contains(p)
-        });
-        let over_egui = pointer.is_some_and(|p| {
-            layers_rect.contains(p)
-                || ctx
-                    .layer_id_at(p)
-                    .is_some_and(|layer| layer.order != egui::Order::Background)
-        }) || over_section_panel
-            || over_gizmo;
-        let over_viewport = over_rect && !over_egui;
+        // The disc only owns the *bare* viewport: never plant, slice or size
+        // it through an egui surface sitting over the scene.
+        //
+        // The docked Section panel owns its own pointer (measuring plus the
+        // disc-radius wheel) while it is on screen, and the axis gizmo needs an
+        // explicit footprint test because it paints on the Background layer --
+        // otherwise a follow-disc click on an axis marker both snaps the camera
+        // and plants a disc.
+        let ViewportPointer {
+            pointer,
+            over_section_panel,
+            over_viewport,
+        } = self.viewport_pointer(ctx, viewport_rect, scene, self.cut_view.slice_visible());
 
         // A probe-linked cut is PASSIVE: the measure tool owns the main-viewport
         // pointer and the Esc/F keys, so the disc is not draggable, does not
@@ -624,11 +662,8 @@ impl OccluViewApp {
 
         // Never steal Escape from an open dialog: the cut ladder only consumes
         // it when the operator is actually looking at the viewport.
-        let dialogs_open = self.close_guard_open
-            || self.app_error.is_some()
-            || self.about_window == super::AboutWindowState::Open;
         let escape = !probe_linked
-            && !dialogs_open
+            && !self.modal_dialog_open()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let flip = !probe_linked
             && self.cut_view.is_planted()
@@ -639,29 +674,16 @@ impl OccluViewApp {
         // Ctrl+wheel resizes the disc (manipulator radius) and a plain wheel
         // zooms the slice to the cursor. Drain the scroll in both cases so it
         // never leaks to the camera in `handle_viewport_input`.
-        let raw_scroll = ctx.input(|i| i.raw_scroll_delta.y);
-        let (wheel_notches, panel_zoom_notches) = if over_section_panel && raw_scroll != 0.0 {
-            ctx.input_mut(|i| {
-                i.raw_scroll_delta = egui::Vec2::ZERO;
-                i.smooth_scroll_delta = egui::Vec2::ZERO;
-            });
-            let notches = raw_scroll / CUT_WHEEL_PX_PER_NOTCH;
-            if ctrl {
-                (notches, 0.0)
-            } else {
-                (0.0, notches)
-            }
-        } else {
-            (0.0, 0.0)
-        };
+        let (wheel_notches, panel_zoom_notches) =
+            super::disc_frame::section_panel_wheel(ctx, over_section_panel, ctrl);
 
-        let eye = camera.eye();
-        let view_dir = camera.view_direction();
-        let camera_up = camera.view_up();
-        let camera_right = view_dir.cross(camera_up).normalize_or_zero();
-        let ray_origin = pointer
-            .and_then(|p| viewport_ray(camera, viewport_rect, p))
-            .map_or(eye, |(origin, _)| origin);
+        let super::disc_frame::DiscViewGeometry {
+            eye,
+            view_dir,
+            camera_up,
+            camera_right,
+            ray_origin,
+        } = super::disc_frame::disc_view_geometry(camera, viewport_rect, pointer);
 
         let surface_hit = if self.cut_view.is_planted() || !over_viewport {
             None
@@ -669,13 +691,8 @@ impl OccluViewApp {
             pointer.and_then(|p| surface_sample(camera, viewport_rect, p, scene))
         };
 
-        let pose = self.cut_view.pose();
-        let disc_center_screen = pose.and_then(|p| {
-            project_world_to_viewport(camera, viewport_rect, p.center).map(|(screen, _)| screen)
-        });
-        let disc_radius_screen = pose.map_or(0.0, |p| {
-            p.radius_mm * viewport_rect.height().max(1.0) / camera.orthographic_height.max(1.0e-3)
-        });
+        let (disc_center_screen, disc_radius_screen) =
+            super::disc_frame::disc_screen_placement(camera, viewport_rect, self.cut_view.pose());
 
         let frame = CutFrameInput {
             pointer,

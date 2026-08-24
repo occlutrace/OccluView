@@ -101,7 +101,7 @@ pub(crate) fn paint_visibility_eye(painter: &egui::Painter, rect: egui::Rect, vi
 mod tests {
     #[test]
     fn theme_uses_vector_eye_not_emoji_glyph() {
-        let source = include_str!("ui_theme.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("ui_theme.rs"));
         assert!(
             source.contains("fn paint_visibility_eye("),
             "visibility toggle should be a drawn vector glyph"

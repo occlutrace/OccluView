@@ -10,6 +10,7 @@ use super::super::{
 use super::structural::structural_scene_apply;
 use super::{resolve_layer, with_undoable_note};
 use occluview_core::{repair_mesh_in_mesh, CoreError, RepairOptions, RepairReport};
+use std::sync::Arc;
 
 /// What one repair run did to the requested layer.
 pub(super) enum LayerRepairOutcome {
@@ -100,7 +101,7 @@ pub(super) fn apply_layer_repair_action(
     if !result.report.changed_content() {
         return Ok(LayerRepairOutcome::Clean(result.report));
     }
-    entry.mesh = result.mesh;
+    entry.mesh = Arc::new(result.mesh);
     Ok(LayerRepairOutcome::Repaired(result.report))
 }
 

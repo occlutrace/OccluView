@@ -402,6 +402,7 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
             tooltip: "Brush size (Shift + mouse wheel)",
         },
     );
+    ui.add_space(2.0);
     sculpt_slider_row(
         ui,
         enabled,
@@ -425,29 +426,32 @@ struct SculptSliderControl<'a> {
 }
 
 fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
-    let label_width = 36.0;
     let row_height = ui.spacing().interact_size.y;
+    // The caption rides its own line so the rail below takes the window's
+    // full width — on the narrowest window that is a third more travel than
+    // sharing the line with a label column. The right-aligned readout shows
+    // the value the hidden-label slider otherwise keeps to itself.
     ui.horizontal(|ui| {
-        ui.add_sized(
-            [label_width, row_height],
-            egui::Label::new(egui::RichText::new(control.label).size(11.0).weak()),
-        );
-        // Measure after the label so the rail consumes the whole remaining
-        // row. Measuring before entering `horizontal` leaves egui's spacing
-        // and child layout to shorten the slider again in narrow windows.
-        let slider_width = (ui.available_width() - ui.spacing().item_spacing.x).max(1.0);
-        let response = ui
-            .add_enabled_ui(enabled, |ui| {
-                ui.add_sized(
-                    [slider_width, row_height],
-                    egui::Slider::new(control.value, control.range)
-                        .show_value(false)
-                        .trailing_fill(true),
-                )
-            })
-            .inner;
-        response.on_hover_text(control.tooltip);
+        ui.label(egui::RichText::new(control.label).size(11.0).weak());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(format!("{:.0}", *control.value))
+                    .size(11.0)
+                    .weak(),
+            );
+        });
     });
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.add_sized(
+                [ui.available_width(), row_height],
+                egui::Slider::new(control.value, control.range)
+                    .show_value(false)
+                    .trailing_fill(true),
+            )
+        })
+        .inner;
+    response.on_hover_text(control.tooltip);
 }
 
 fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
@@ -658,10 +662,20 @@ mod tests {
         assert!((width - 48.5).abs() < 0.01, "unexpected cell width {width}");
         // Four cells plus three gaps exactly refill the row (aligned grid).
         assert!((4.0 * width + 3.0 * 6.0 - 212.0).abs() < 0.01);
-        // Uniform and deterministic: same inputs give a bit-identical width.
-        assert_eq!(
-            cell_width(212.0, 3, 6.0).to_bits(),
-            cell_width(212.0, 3, 6.0).to_bits()
+        // The width has to answer to all three inputs. Calling the same pure
+        // function twice with the same arguments says nothing -- a body that
+        // ignored the count and the gap passed that.
+        assert!(
+            cell_width(212.0, 3, 6.0) > cell_width(212.0, 4, 6.0),
+            "fewer controls in the same row means wider cells"
+        );
+        assert!(
+            cell_width(212.0, 4, 6.0) > cell_width(212.0, 4, 12.0),
+            "a wider gap leaves less for each cell"
+        );
+        assert!(
+            cell_width(300.0, 4, 6.0) > cell_width(212.0, 4, 6.0),
+            "a wider row means wider cells"
         );
     }
 
@@ -672,7 +686,9 @@ mod tests {
 
     #[test]
     fn selection_sections_follow_the_workflow_order() {
-        let source = include_str!("mesh_editor_groups.rs").replace("\r\n", "\n");
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"))
+                .replace("\r\n", "\n");
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);

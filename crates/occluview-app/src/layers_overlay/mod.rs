@@ -90,8 +90,12 @@ pub(crate) fn show(
     }
 }
 
-/// A quiet title row (name + layer count) closed by a hairline separator.
 fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
+    let count_text = if layer_count == 1 {
+        "1 layer".to_string()
+    } else {
+        format!("{layer_count} layers")
+    };
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Layers")
@@ -101,7 +105,7 @@ fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(layer_count.to_string())
+                egui::RichText::new(count_text)
                     .color(ui_theme::TEXT_WEAK)
                     .size(11.0),
             );
@@ -122,7 +126,8 @@ fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
 mod tests {
     #[test]
     fn layer_overlay_facade_stays_split_by_responsibility() {
-        let facade = include_str!("mod.rs").replace("\r\n", "\n");
+        let facade = crate::primary_ui_tests::production_source(include_str!("mod.rs"))
+            .replace("\r\n", "\n");
         let production_source = facade
             .split_once("\nmod tests {")
             .map_or(facade.as_str(), |(source, _)| source);
@@ -152,7 +157,8 @@ mod tests {
 
     #[test]
     fn layer_rows_use_a_shared_overlay_width_instead_of_per_row_available_width() {
-        let source = include_str!("mod.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("mod.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -174,7 +180,8 @@ mod tests {
 
     #[test]
     fn layer_rows_route_hover_text_through_the_shared_label_helper() {
-        let source = include_str!("mod.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("mod.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);

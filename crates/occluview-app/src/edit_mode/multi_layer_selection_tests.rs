@@ -169,7 +169,7 @@ fn topology_sync_invalidates_only_the_affected_layer() {
 
     assert!(controller.select_face_hit(&scene, hit(index_a, id_a, 0)));
     assert!(controller.select_face_hit(&scene, hit(index_b, id_b, 1)));
-    scene.meshes_mut()[index_a].mesh = rebuilt_a;
+    scene.meshes_mut()[index_a].mesh = std::sync::Arc::new(rebuilt_a);
     controller.sync_to_scene(&scene);
 
     let plan = controller.visible_selection_plan(&scene);
