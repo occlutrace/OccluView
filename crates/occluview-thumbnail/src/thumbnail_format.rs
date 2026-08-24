@@ -35,20 +35,32 @@ pub fn infer_thumbnail_format(
         }
         return deferred("3mf");
     }
-    if looks_like_obj_text(bytes) {
-        return Ok(FormatKind::Obj);
-    }
-
     if matches!(extension.as_deref(), Some("3mf")) {
         return deferred("3mf");
     }
     if matches!(extension.as_deref(), Some("gltf")) {
         return deferred("gltf");
     }
-    match probe(extension.as_deref(), bytes)? {
-        FormatKind::Threemf => deferred("3mf"),
-        FormatKind::Gltf if !bytes.starts_with(b"glTF") => deferred("gltf"),
-        kind => Ok(kind),
+    match probe(extension.as_deref(), bytes) {
+        Ok(FormatKind::Threemf) => deferred("3mf"),
+        Ok(FormatKind::Gltf) if !bytes.starts_with(b"glTF") => deferred("gltf"),
+        Ok(kind) => Ok(kind),
+        // The shared probe knows every format that declares itself and every
+        // extension the viewer opens. Only when it knows neither does the text
+        // probe below get a say -- which is the case it exists for: a stream
+        // carries bytes and no name, and OBJ has no magic of its own.
+        //
+        // It used to get the first word instead, and a binary STL's 80-byte
+        // header is free-form text: an exporter that wrote "g 1 arch upper"
+        // there had its scan read as an OBJ, fail, and wear a corrupt-file
+        // badge the shell caches, while the viewer opened the same file
+        // without complaint.
+        Err(error) => {
+            if looks_like_obj_text(bytes) {
+                return Ok(FormatKind::Obj);
+            }
+            Err(error)
+        }
     }
 }
 
@@ -277,6 +289,49 @@ mod tests {
         assert!(matches!(
             infer_thumbnail_format(None, b"not a mesh"),
             Err(FormatError::Unsupported { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod agreement_tests {
+    use super::infer_thumbnail_format;
+    use occluview_formats::{probe, FormatKind};
+
+    /// A binary STL's 80-byte header is free-form text, and exporters put
+    /// words in it. If those words happen to read like an OBJ record, the
+    /// thumbnail inference used to call the file an OBJ -- while the viewer,
+    /// which asks the shared probe, called it what it is. The thumbnail then
+    /// wore a corrupt-file badge that the shell caches against the file's
+    /// timestamp, on a scan that opens perfectly.
+    #[test]
+    fn a_binary_stl_whose_header_reads_like_obj_is_still_an_stl() {
+        let mut bytes = b"g 1 arch upper".to_vec();
+        bytes.resize(80, 0);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for value in [
+            0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0, 0]);
+
+        assert!(matches!(probe(Some("stl"), &bytes), Ok(FormatKind::Stl)));
+        let inferred = infer_thumbnail_format(Some("stl"), &bytes);
+        assert!(
+            matches!(inferred, Ok(FormatKind::Stl)),
+            "the picture and the viewer must read the same file the same way: {inferred:?}"
+        );
+    }
+
+    /// The text probe still earns its place: a stream carries bytes and no
+    /// name, and OBJ has no magic of its own.
+    #[test]
+    fn an_unnamed_stream_of_obj_text_is_still_recognised() {
+        let obj = b"# exported\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        assert!(matches!(
+            infer_thumbnail_format(None, obj),
+            Ok(FormatKind::Obj)
         ));
     }
 }
