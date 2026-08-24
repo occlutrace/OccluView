@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.0.7 - 2026-08-24
+
+### Added
+
+- Added scan alignment with point-pair fitting, trimmed point-to-plane ICP,
+  exclusion masks, signed deviation maps, and observability metrics.
+- Added overlay tint presets designed for high-contrast scan comparison.
+- Added generated third-party notices, an in-app license viewer, SBOMs, release
+  provenance attestations, and parser fuzz targets.
+- Added version metadata to both binaries and Windows shell components.
+
+### Changed
+
+- Shift now applies maximum Smooth strength and a wider brush footprint.
+- Mesh Editor controls use the available panel width and remain constrained to
+  the viewport.
+- Export dialogs start from the source scan directory when available.
+- Explorer thumbnails use a shared renderer, bounded concurrency, retryable
+  transient failures, and high-DPI output up to 2048 px.
+- Linux and Windows installers no longer claim the medical DICOM association
+  for `.dcm`; the format remains available through explicit Open With actions.
+- Release workflows use pinned toolchains and actions, scoped credentials,
+  package validation, signing verification, and dependency policy checks.
+
+### Fixed
+
+- Prevented batch exports from overwriting files when layer names collide.
+- Validated output compatibility before opening an export destination, avoiding
+  truncation when a format cannot represent the mesh.
+- Made metadata probing safe at UTF-8 boundaries and rejected cyclic or
+  excessively deep glTF node graphs.
+- Made alignment acceptance independent of source-coordinate origin.
+- Preserved viewport aspect ratio when render targets exceed GPU limits.
+- Replaced absolute normal thresholds with a scale-relative test for
+  microscopic scanner facets.
+- Rebuilt sculpt picking data after topology-changing strokes.
+- Prevented timed-out or failed Explorer thumbnail requests from becoming
+  permanently cached placeholders.
+- Accepted streams without a declared size while retaining the configured byte
+  limit, and isolated shell failures to the active request.
+
+### Security
+
+- Hardened Windows single-instance IPC with per-user names and access control.
+- Updated vulnerable dependencies and extended advisory checks to Linux targets.
+
 ## 1.0.6 - 2026-07-29
 
 - Sculpt: the brush survives its first densifying Smooth stroke. The rebuilt,
