@@ -216,7 +216,9 @@ fn read_with(
 ) -> Result<Mesh, FormatError> {
     let mut cursor = Cursor::new(parsed.data, endian);
     let has_face = parsed.elements.iter().any(|e| e.name == "face");
-    let builder_init = MeshBuilder::new().with_name("PLY");
+    let builder_init = MeshBuilder::new()
+        .with_name("PLY")
+        .from_input_of(parsed.data.len());
     let mut builder = if has_face {
         builder_init
     } else {

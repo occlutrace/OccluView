@@ -12,7 +12,9 @@ pub(super) fn read_doc(doc: &json::GltfDoc, bin_chunk: &[u8]) -> Result<Mesh, Fo
         .scenes
         .get(scene_idx)
         .ok_or_else(|| malformed("scene out of range"))?;
-    let mut builder = MeshBuilder::new().with_name("glTF");
+    let mut builder = MeshBuilder::new()
+        .with_name("glTF")
+        .from_input_of(bin_chunk.len());
     // Track the first primitive's material so we can resolve a texture after
     // the build (the builder only handles geometry).
     let mut first_material: Option<usize> = None;

@@ -63,7 +63,9 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     let mut has_any_color = false;
     // Texture coordinates (vt lines).
     let mut texcoords: Vec<[f32; 2]> = Vec::new();
-    let mut builder = MeshBuilder::new().with_name("OBJ");
+    let mut builder = MeshBuilder::new()
+        .with_name("OBJ")
+        .from_input_of(bytes.len());
 
     for (line_no, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
         // Strip comments: everything after the first '#' that is not in a

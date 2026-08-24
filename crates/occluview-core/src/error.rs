@@ -31,6 +31,17 @@ pub enum CoreError {
     /// A geometry invariant was violated (degenerate triangle, NaN, etc.).
     #[error("geometry invariant violated: {0}")]
     Geometry(String),
+
+    /// The mesh grew past anything the file it came from could describe.
+    #[error(
+        "mesh outgrew its source: {mesh_bytes} bytes of geometry from {input_bytes} bytes of file"
+    )]
+    MeshOutgrewItsSource {
+        /// Bytes of vertices and indices built so far.
+        mesh_bytes: u64,
+        /// Bytes of file the reader was given.
+        input_bytes: u64,
+    },
 }
 
 #[cfg(test)]

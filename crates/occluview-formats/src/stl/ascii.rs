@@ -80,7 +80,9 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
         });
     }
 
-    let mut builder = MeshBuilder::new().with_name("STL");
+    let mut builder = MeshBuilder::new()
+        .with_name("STL")
+        .from_input_of(bytes.len());
     let mut tokens = text.split_ascii_whitespace().peekable();
     let mut facets = 0_usize;
 

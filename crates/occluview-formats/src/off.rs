@@ -96,7 +96,9 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
         positions.push(Vec3::new(x as f32, y as f32, z as f32));
     }
 
-    let mut builder = MeshBuilder::new().with_name("OFF");
+    let mut builder = MeshBuilder::new()
+        .with_name("OFF")
+        .from_input_of(bytes.len());
     // Pre-push all vertices so face indices reference them by 0-based handle.
     for p in &positions {
         builder.push_vertex(Vertex::at(*p));
@@ -184,7 +186,9 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         positions.push(Vec3::new(x, y, z));
     }
 
-    let mut builder = MeshBuilder::new().with_name("OFF");
+    let mut builder = MeshBuilder::new()
+        .with_name("OFF")
+        .from_input_of(bytes.len());
     for p in &positions {
         builder.push_vertex(Vertex::at(*p));
     }
