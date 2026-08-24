@@ -55,10 +55,21 @@ fn spread_multi_object_bbox() -> Aabb {
     )
 }
 
+/// A source file of this crate, read for a contract assertion.
+///
+/// It panics rather than returning an empty string. A path that stops
+/// resolving -- a rename, a move, a typo -- would otherwise turn every
+/// assertion about that file into an assertion about "", and the negative
+/// ones, which are the assertions worth having, all pass in a vacuum.
 fn source_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);
-    std::fs::read_to_string(path).unwrap_or_default()
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "contract test source {} is missing: {error}",
+            path.display()
+        )
+    })
 }
 
 #[test]
@@ -111,3 +122,28 @@ fn camera_module_is_split_by_responsibility_not_single_file() {
 }
 
 mod behavior;
+
+#[test]
+fn the_frame_fill_factor_has_one_definition() {
+    // The bare 0.7 was written three times, twice here and once in the Explorer
+    // preview, with nothing naming what it meant -- and the preview kept its
+    // own orthographic floor under a comment asking for the real one to be
+    // exported.
+    assert!((BBOX_FRAME_FILL - 0.7).abs() < f32::EPSILON);
+    assert!((MIN_ORTHOGRAPHIC_HEIGHT_MM - 0.01).abs() < f32::EPSILON);
+
+    let bare = format!("/ {}.7", 0);
+    for (name, source) in [
+        ("framing", include_str!("framing.rs")),
+        ("presets", include_str!("presets.rs")),
+        (
+            "preview",
+            include_str!("../../../occluview-shell/src/preview_scene/interaction.rs"),
+        ),
+    ] {
+        assert!(
+            !source.contains(&bare),
+            "{name} should divide by the named fill factor, not a bare literal"
+        );
+    }
+}

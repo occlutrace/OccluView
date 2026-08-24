@@ -1,8 +1,11 @@
 //! `occluview-render` - the wgpu renderer.
 //!
 //! Two consumers share this code: the live GUI (`occluview-app`) and the
-//! offscreen thumbnail renderer (`occluview-thumbnail`). One pipeline = the
-//! Explorer thumbnail is pixel-identical to the in-app frame.
+//! offscreen thumbnail renderer (`occluview-thumbnail`). One pipeline, one
+//! shader and one camera, so a given mesh rasterizes identically either way.
+//! What can differ is the mesh: above the fidelity cutoffs in
+//! `occluview-thumbnail`, Explorer gets a decimated preview mesh through this
+//! same pipeline.
 //!
 //! ## Layout
 //!

@@ -3,10 +3,21 @@ use crate::mesh::{Mesh, MeshTexture, Vertex};
 use glam::{Affine3A, Vec3};
 use std::path::PathBuf;
 
+/// A source file of this crate, read for a contract assertion.
+///
+/// It panics rather than returning an empty string. A path that stops
+/// resolving -- a rename, a move, a typo -- would otherwise turn every
+/// assertion about that file into an assertion about "", and the negative
+/// ones, which are the assertions worth having, all pass in a vacuum.
 fn source_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);
-    std::fs::read_to_string(path).unwrap_or_default()
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "contract test source {} is missing: {error}",
+            path.display()
+        )
+    })
 }
 
 fn tri() -> Mesh {
@@ -399,20 +410,14 @@ fn append_scene_keeps_existing_order_and_appends_new_entries() {
 fn append_scene_preserves_existing_scene_settings() {
     let mut s = Scene::new();
     s.background = [0.1, 0.2, 0.3, 1.0];
-    s.ambient = 0.6;
-    s.key_light_dir = Vec3::new(1.0, 0.0, 0.0);
 
     let mut other = Scene::new();
     other.background = [0.9, 0.8, 0.7, 1.0];
-    other.ambient = 0.1;
-    other.key_light_dir = Vec3::new(0.0, 1.0, 0.0);
     other.add(SceneMesh::new(tri()));
 
     s.append_scene(other);
 
     assert_eq!(s.background, [0.1, 0.2, 0.3, 1.0]);
-    assert_eq!(s.ambient, 0.6);
-    assert_eq!(s.key_light_dir, Vec3::new(1.0, 0.0, 0.0));
 }
 
 #[test]

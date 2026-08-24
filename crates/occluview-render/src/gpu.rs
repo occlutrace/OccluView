@@ -4,7 +4,6 @@
 //! shader expects (`position`/`normal`/`color`). We upload with a bytemuck
 //! cast slice - no reformatting.
 
-use crate::error::RenderError;
 use occluview_core::{Mesh, Vertex};
 
 /// A mesh resident on the GPU: vertex buffer, index buffer, and the index count
@@ -127,15 +126,6 @@ impl GpuMesh {
         self.index_count
     }
 
-    /// Minimum binding size for a uniform buffer holding a [`crate::GpuCamera`].
-    /// Used by the pipeline builder; exported here for tests.
-    ///
-    /// [`crate::GpuCamera`] is a fixed 160-byte POD, so this never returns `None`.
-    #[must_use]
-    pub fn camera_uniform_size() -> u64 {
-        size_of::<crate::GpuCamera>() as u64
-    }
-
     /// Issue the draw for this mesh into `render_pass`. Triangle meshes use
     /// `draw_indexed`; point clouds use `draw` over all vertices.
     pub(crate) fn draw(&self, rpass: &mut wgpu::RenderPass<'_>, kind: occluview_core::MeshKind) {
@@ -196,11 +186,6 @@ pub(crate) fn camera_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
             count: None,
         }],
     })
-}
-
-/// Convert a `wgpu::Error` (from a device-loss callback) into our error type.
-pub fn map_wgpu_error(e: wgpu::Error) -> RenderError {
-    RenderError::Surface(e.to_string())
 }
 
 #[cfg(test)]

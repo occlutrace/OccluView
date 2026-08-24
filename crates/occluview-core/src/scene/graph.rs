@@ -1,6 +1,5 @@
 use super::material::linear_srgb_from_srgb;
 use super::{Scene, SceneMesh};
-use glam::Vec3;
 
 impl Default for Scene {
     fn default() -> Self {
@@ -8,8 +7,6 @@ impl Default for Scene {
             meshes: Vec::new(),
             // OccluTrace brand dark: #0a0a0a in sRGB.
             background: linear_srgb_from_srgb([0.039, 0.039, 0.039, 1.0]),
-            ambient: 0.35,
-            key_light_dir: Vec3::new(0.4, 0.8, 0.5).normalize_or_zero(),
         }
     }
 }

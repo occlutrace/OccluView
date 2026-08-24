@@ -1,10 +1,5 @@
-//! Timeout wrapper for shell thumbnail requests.
-//!
-//! The heavyweight concurrency gate already lives in `render_thumb.rs` via the
-//! shared offscreen renderer pool. Adding a second bounded worker queue here
-//! makes bursty Explorer folders spend timeout budget before a render even
-//! starts. We instead run each request on its own lightweight helper thread and
-//! let the renderer pool remain the single throughput bottleneck.
+//! Timeout wrapper for shell thumbnail requests. Rendering concurrency remains
+//! bounded by the shared offscreen renderer pool.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc;
@@ -41,9 +36,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Barrier, Mutex};
     use std::thread;
-    use std::time::Instant;
 
     #[test]
     fn returns_worker_value_before_deadline() {
@@ -52,15 +47,23 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_after_deadline() {
-        let started = Instant::now();
-        let result = run_with_timeout(Duration::from_millis(10), || {
-            thread::sleep(Duration::from_millis(200));
+    fn returns_none_after_deadline_without_waiting_for_the_worker() {
+        let (release, blocked) = mpsc::channel::<()>();
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_finished = Arc::clone(&finished);
+
+        let result = run_with_timeout(Duration::from_millis(50), move || {
+            let _ = blocked.recv();
+            worker_finished.store(true, Ordering::SeqCst);
             42
         });
+
         assert_eq!(result, None);
-        assert!(started.elapsed() < Duration::from_millis(120));
-        thread::sleep(Duration::from_millis(250));
+        assert!(
+            !finished.load(Ordering::SeqCst),
+            "the timeout must return while the worker is still running"
+        );
+        drop(release);
     }
 
     #[test]

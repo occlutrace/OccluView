@@ -1,12 +1,5 @@
-//! A compact triangle bounding-volume hierarchy for ray picking.
-//!
-//! Scene picking was brute-force O(triangles): fine for the occasional focus
-//! click, ruinous for a sculpt brush that raycasts the mesh every hover and drag
-//! frame — on a million-triangle scan that is tens of milliseconds per frame
-//! twice over (cursor + dab). This BVH turns a pick into O(log n). It is built
-//! LAZILY (the first pick pays for it, in parallel) and cached on the `Mesh`;
-//! because mesh geometry is immutable after construction, the cache never goes
-//! stale — a sculpt commit mints a new `Mesh`, which builds its own.
+//! Compact triangle BVH for ray picking. The tree is built lazily and cached on
+//! immutable meshes; sculpt commits create a new mesh and cache.
 
 // Triangle/vertex counts never approach u32::MAX, so the index casts here are
 // exact; the ray-math functions genuinely want short local names.

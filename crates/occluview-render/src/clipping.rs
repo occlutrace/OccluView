@@ -105,8 +105,13 @@ impl Default for CutViewSpec {
     fn default() -> Self {
         Self {
             plane: ClipPlane::disabled(),
-            // Gingiva-warm pink: #E8 4C 4B in sRGB, converted to linear.
-            cap_color: [0.776, 0.182, 0.175, 1.0],
+            // Gingiva-warm pink #E84C4B, as sRGB fractions.
+            //
+            // Not converted to linear: this colour is written straight into an
+            // `Rgba8Unorm` target that nothing encodes, so a linear value comes
+            // out darker than the hex it is named after -- #E84C4B was
+            // reaching the screen as (198, 46, 45).
+            cap_color: [0.910, 0.298, 0.294, 1.0],
             show_hollow: false,
         }
     }
@@ -237,6 +242,17 @@ mod tests {
         // Pink-ish.
         assert!(s.cap_color[0] > s.cap_color[1]);
         assert!(s.cap_color[0] > s.cap_color[2]);
+        // The constant against the hex its name promises, in the space the
+        // target actually is. This compares numbers and renders nothing; what
+        // the render path does with a colour is pinned in
+        // occluview-render/tests/colour_space.rs.
+        for (channel, expected) in s.cap_color[..3].iter().zip([0xE8, 0x4C, 0x4B]) {
+            let byte = (channel * 255.0).round() as i32;
+            assert!(
+                (byte - expected).abs() <= 1,
+                "cap colour channel renders as {byte}, not the {expected} its name claims"
+            );
+        }
     }
 
     #[test]

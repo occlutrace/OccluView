@@ -3,8 +3,8 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used, clippy::panic))]
 
 use super::{
-    Duration, Mutex, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT, THUMBNAIL_JOB_GATE,
-    THUMBNAIL_RENDERER_POOL,
+    Duration, Mutex, ThumbnailAttempt, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT,
+    THUMBNAIL_JOB_GATE, THUMBNAIL_RENDERER_POOL,
 };
 use crate::offscreen_factory::create_thumbnail_offscreen;
 use occluview_render::Offscreen;
@@ -14,12 +14,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, MutexGuard, PoisonError};
 use std::time::Instant;
 
-// A shell surrogate is a shared, memory-constrained host, not a render farm.
-// Explorer can ask for twelve thumbnails at once, so keep that many bounded
-// decode jobs in flight. GPU work has a separate, much smaller budget: every
-// Offscreen owns a wgpu device, and creating several D3D devices concurrently
-// makes the driver serialize or contend instead of making thumbnails faster.
+// Match Explorer's observed twelve-request folder fan-out. These bounded jobs
+// spend part of their lifetime waiting on the single renderer and therefore
+// must not be capped by the machine's logical CPU count.
 const MAX_THUMBNAIL_JOB_LANES: usize = 12;
+// GPU work has a separate, smaller budget: every Offscreen owns a wgpu device,
+// and creating several D3D devices concurrently makes the driver contend.
 const MAX_THUMBNAIL_RENDERERS: usize = 1;
 
 /// Lock a shared thumbnail mutex, recovering the guard even if a previous
@@ -42,6 +42,31 @@ pub(super) struct ThumbnailRendererPool {
     state: Mutex<ThumbnailRendererPoolState>,
     ready: Condvar,
     max_renderers: usize,
+    /// How a renderer is built. A function pointer rather than a direct call
+    /// so the recovery paths below -- a create that fails, and a create that
+    /// panics -- can be exercised without a GPU.
+    create: fn() -> Result<Offscreen, ThumbnailError>,
+}
+
+/// Longest a request may wait for the pooled renderer before it gives up.
+///
+/// This is not the request's budget; the request has its own, and Explorer
+/// abandons the call long before this. It is the backstop that keeps a
+/// renderer lost to a wedged device from parking every decode lane forever:
+/// a worker waiting here holds its lane, so twelve of them are the whole
+/// folder. Reaching this ceiling means something is wrong, not that the
+/// machine is busy.
+const RENDERER_WAIT_CEILING: Duration = Duration::from_secs(30);
+
+/// The pool never produced a renderer inside the ceiling above.
+///
+/// Reported as a render error, which the request path already treats as
+/// transient: Explorer retries, and a retry is exactly right for a pool that
+/// is merely oversubscribed.
+fn renderer_wait_expired() -> ThumbnailError {
+    ThumbnailError::Render(occluview_render::RenderError::Surface(
+        "timed out waiting for the thumbnail renderer".to_string(),
+    ))
 }
 
 pub(super) struct ThumbnailJobGate {
@@ -80,7 +105,37 @@ pub(super) struct InflightThumbnail {
 
 enum InflightThumbnailState {
     Running,
-    Finished(Vec<u8>),
+    Finished(InflightThumbnailResult),
+}
+
+/// The clonable form of a leader's verdict, published to coalesced followers.
+///
+/// Followers must inherit the leader's transient/deterministic split: handing
+/// a follower a placeholder bitmap while the leader reported a transient
+/// failure would put exactly the cacheable stand-in into Explorer's thumbcache
+/// that the split exists to prevent.
+#[derive(Clone)]
+enum InflightThumbnailResult {
+    Bitmap(Vec<u8>),
+    TransientFailure,
+}
+
+impl From<ThumbnailAttempt> for InflightThumbnailResult {
+    fn from(attempt: ThumbnailAttempt) -> Self {
+        match attempt {
+            ThumbnailAttempt::Bitmap(pixels) => Self::Bitmap(pixels),
+            ThumbnailAttempt::TransientFailure => Self::TransientFailure,
+        }
+    }
+}
+
+impl From<InflightThumbnailResult> for ThumbnailAttempt {
+    fn from(result: InflightThumbnailResult) -> Self {
+        match result {
+            InflightThumbnailResult::Bitmap(pixels) => Self::Bitmap(pixels),
+            InflightThumbnailResult::TransientFailure => Self::TransientFailure,
+        }
+    }
 }
 
 pub(super) enum InflightThumbnailLease {
@@ -112,7 +167,15 @@ impl ThumbnailRendererPool {
     }
 
     pub(super) const fn new(max_renderers: usize) -> Self {
+        Self::with_create(max_renderers, create_thumbnail_offscreen)
+    }
+
+    pub(super) const fn with_create(
+        max_renderers: usize,
+        create: fn() -> Result<Offscreen, ThumbnailError>,
+    ) -> Self {
         Self {
+            create,
             state: Mutex::new(ThumbnailRendererPoolState {
                 idle: Vec::new(),
                 total_renderers: 0,
@@ -136,19 +199,35 @@ impl ThumbnailRendererPool {
             ));
         };
 
-        match f(offscreen) {
-            Ok(value) => Ok(value),
-            Err(error) => {
+        // A panic is the same evidence as an error: whatever the renderer was
+        // doing, it did not finish, and its device may be lost or mid-command.
+        // Unwinding on its own would run the lease's `Drop`, which parks the
+        // renderer back in the pool for the next file in the folder.
+        match panic::catch_unwind(AssertUnwindSafe(|| f(offscreen))) {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => {
                 // A renderer that reported a GPU/readback error may have a
                 // lost device or stale backend state. Never hand it to the
                 // next Explorer request; release the pool capacity instead.
                 lease.discard();
                 Err(error)
             }
+            Err(payload) => {
+                lease.discard();
+                panic::resume_unwind(payload);
+            }
         }
     }
 
     pub(super) fn checkout_renderer(&self) -> Result<Offscreen, ThumbnailError> {
+        self.checkout_renderer_within(RENDERER_WAIT_CEILING)
+    }
+
+    pub(super) fn checkout_renderer_within(
+        &self,
+        budget: Duration,
+    ) -> Result<Offscreen, ThumbnailError> {
+        let deadline = Instant::now() + budget;
         loop {
             let mut state = lock_recover(&self.state);
             if let Some(offscreen) = state.idle.pop() {
@@ -157,21 +236,44 @@ impl ThumbnailRendererPool {
             if state.total_renderers < self.max_renderers {
                 state.total_renderers += 1;
                 drop(state);
-                match create_thumbnail_offscreen() {
-                    Ok(offscreen) => return Ok(offscreen),
-                    Err(error) => {
-                        let mut state = lock_recover(&self.state);
-                        state.total_renderers = state.total_renderers.saturating_sub(1);
-                        self.ready.notify_one();
+                // The slot is claimed before the device exists, so every way
+                // out of the create has to give it back. An unwind out of wgpu
+                // -- a driver reset during device creation is exactly the kind
+                // of thing a long-lived surrogate sees -- would otherwise leave
+                // the pool believing its one renderer is in use forever, and
+                // every later request waiting for a renderer that is not
+                // coming.
+                match panic::catch_unwind(AssertUnwindSafe(self.create)) {
+                    Ok(Ok(offscreen)) => return Ok(offscreen),
+                    Ok(Err(error)) => {
+                        self.release_reservation();
                         return Err(error);
+                    }
+                    Err(payload) => {
+                        self.release_reservation();
+                        panic::resume_unwind(payload);
                     }
                 }
             }
-            let _guard = self
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(renderer_wait_expired());
+            }
+            let (_guard, wait) = self
                 .ready
-                .wait(state)
+                .wait_timeout(state, remaining)
                 .unwrap_or_else(PoisonError::into_inner);
+            if wait.timed_out() && Instant::now() >= deadline {
+                return Err(renderer_wait_expired());
+            }
         }
+    }
+
+    fn release_reservation(&self) {
+        let mut state = lock_recover(&self.state);
+        state.total_renderers = state.total_renderers.saturating_sub(1);
+        drop(state);
+        self.ready.notify_one();
     }
 
     fn return_renderer(&self, offscreen: Offscreen) {
@@ -207,8 +309,13 @@ impl ThumbnailJobGate {
     /// Infallible with respect to lock poisoning: the gate counter is recovered
     /// rather than treated as fatal, so one panicking request cannot wedge the
     /// gate shut for the rest of a folder's thumbnails.
+    #[cfg(test)]
     pub(super) fn acquire_timeout(&self, timeout: Duration) -> Option<ThumbnailJobPermit> {
-        let deadline = Instant::now() + timeout;
+        self.acquire_by(Instant::now() + timeout)
+    }
+
+    /// Acquires a permit by a caller-provided deadline.
+    pub(super) fn acquire_by(&self, deadline: Instant) -> Option<ThumbnailJobPermit> {
         let mut state = lock_recover(&self.inner.state);
         let ticket = state.next_ticket;
         state.next_ticket = state.next_ticket.wrapping_add(1);
@@ -293,6 +400,23 @@ impl Drop for ThumbnailRendererLease<'_> {
     }
 }
 
+/// Create the pooled renderer ahead of the first request and park it idle.
+///
+/// Under Explorer's Apartment hosting every extraction serializes through one
+/// host STA thread, so the very first `GetThumbnail` used to pay wgpu
+/// instance + adapter + device + pipeline creation in line, in front of the
+/// whole folder's queue. Prewarming from a background thread at class
+/// activation overlaps that fixed cost with the shell's Initialize and
+/// stream-copy phase. A failure is deliberately swallowed: the first real
+/// request repeats the attempt and owns the error path, and the pool's
+/// capacity accounting already tolerates a failed create.
+pub(super) fn prewarm_renderer_pool() {
+    let pool = ThumbnailRendererPool::shared();
+    if let Ok(renderer) = pool.checkout_renderer() {
+        drop(ThumbnailRendererLease::new(pool, renderer));
+    }
+}
+
 const fn default_thumbnail_job_capacity() -> usize {
     MAX_THUMBNAIL_JOB_LANES
 }
@@ -330,11 +454,11 @@ fn acquire_inflight_thumbnail(key: &ThumbnailRequestKey) -> InflightThumbnailLea
 fn finish_inflight_thumbnail(
     key: &ThumbnailRequestKey,
     entry: &Arc<InflightThumbnail>,
-    pixels: &[u8],
+    result: InflightThumbnailResult,
 ) {
     {
         let mut state = lock_recover(&entry.state);
-        *state = InflightThumbnailState::Finished(pixels.to_vec());
+        *state = InflightThumbnailState::Finished(result);
         entry.ready.notify_all();
     }
 
@@ -350,13 +474,13 @@ fn finish_inflight_thumbnail(
 fn wait_for_inflight_thumbnail(
     entry: &Arc<InflightThumbnail>,
     timeout: Duration,
-) -> Option<Vec<u8>> {
+) -> Option<InflightThumbnailResult> {
     let deadline = Instant::now() + timeout;
     let mut state = lock_recover(&entry.state);
 
     loop {
         match &*state {
-            InflightThumbnailState::Finished(pixels) => return Some(pixels.clone()),
+            InflightThumbnailState::Finished(result) => return Some(result.clone()),
             InflightThumbnailState::Running => {
                 let remaining = deadline.checked_duration_since(Instant::now())?;
                 let (next_state, wait_result) = entry
@@ -375,116 +499,39 @@ fn wait_for_inflight_thumbnail(
 pub(super) fn render_coalesced_thumbnail(
     key: ThumbnailRequestKey,
     timeout: Duration,
-    render: impl FnOnce() -> Vec<u8>,
-    follower_fallback: impl FnOnce() -> Vec<u8>,
-) -> Vec<u8> {
-    // Both `render` and `follower_fallback` are infallible producers of a
-    // full-size bitmap (a real thumbnail or a placeholder), so every arm here
-    // returns real pixels — this function never yields an empty buffer, which
-    // is what "never show nothing in the folder" depends on downstream.
+    render: impl FnOnce() -> ThumbnailAttempt,
+) -> ThumbnailAttempt {
+    // `render` is an infallible producer of a verdict: a full-size bitmap (a
+    // real thumbnail or a deterministic placeholder) or an explicit transient
+    // failure. Followers inherit the leader's verdict verbatim; a follower
+    // that outwaits its budget reports transient failure rather than
+    // duplicating the render or inventing a cacheable placeholder.
     match acquire_inflight_thumbnail(&key) {
         InflightThumbnailLease::Leader(entry) => {
-            let pixels = panic::catch_unwind(AssertUnwindSafe(render)).unwrap_or_else(|_| {
+            let attempt = panic::catch_unwind(AssertUnwindSafe(render)).unwrap_or_else(|_| {
                 tracing::error!(
-                    "thumbnail leader panicked outside the worker boundary; returning a placeholder"
+                    "thumbnail leader panicked outside the worker boundary; reporting transient failure"
                 );
-                follower_fallback()
+                ThumbnailAttempt::TransientFailure
             });
-            finish_inflight_thumbnail(&key, &entry, &pixels);
-            pixels
+            let result = InflightThumbnailResult::from(attempt);
+            finish_inflight_thumbnail(&key, &entry, result.clone());
+            result.into()
         }
         InflightThumbnailLease::Follower(entry) => {
-            if let Some(pixels) = wait_for_inflight_thumbnail(&entry, timeout) {
-                pixels
+            if let Some(result) = wait_for_inflight_thumbnail(&entry, timeout) {
+                result.into()
             } else {
                 tracing::warn!(
                     ?timeout,
-                    "waiting for an identical in-flight thumbnail timed out; returning fallback instead of duplicate render"
+                    "waiting for an identical in-flight thumbnail timed out; reporting transient failure instead of duplicate render"
                 );
-                follower_fallback()
+                ThumbnailAttempt::TransientFailure
             }
         }
     }
 }
 
-#[cfg(test)]
-pub(super) fn run_thumbnail_job_with_gate_and_timeouts<T, F>(
-    gate: &ThumbnailJobGate,
-    setup_timeout: Duration,
-    render_timeout: Duration,
-    work: F,
-) -> ThumbnailJobOutcome<T>
-where
-    T: Send + 'static,
-    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
-{
-    let Some(permit) = gate.acquire_timeout(setup_timeout) else {
-        return ThumbnailJobOutcome::SetupTimedOut;
-    };
-    run_thumbnail_job_with_permit(permit, setup_timeout, render_timeout, work)
-}
-
-#[cfg(test)]
-pub(super) fn run_thumbnail_job_with_permit<T, F>(
-    permit: ThumbnailJobPermit,
-    setup_timeout: Duration,
-    render_timeout: Duration,
-    work: F,
-) -> ThumbnailJobOutcome<T>
-where
-    T: Send + 'static,
-    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
-{
-    let (tx, rx) = mpsc::sync_channel(2);
-    let timed_out = Arc::new(AtomicBool::new(false));
-    let timed_out_worker = timed_out.clone();
-    let spawn = std::thread::Builder::new()
-        .name("occluview-thumbnail-job".to_string())
-        .spawn(move || {
-            // The worker, not its waiting caller, owns process capacity. A
-            // timeout cannot cancel Rust parsing or a submitted GPU readback;
-            // releasing this permit early would let every subsequent Explorer
-            // request create another surviving worker.
-            let _permit = permit;
-            let _ = panic::catch_unwind(AssertUnwindSafe(|| work(tx)));
-            if timed_out_worker.load(Ordering::Relaxed) {
-                tracing::debug!(
-                    "thumbnail worker completed after caller timed out; releasing its burst slot"
-                );
-            }
-        });
-    if spawn.is_err() {
-        return ThumbnailJobOutcome::Failed;
-    }
-
-    let mut prepared = false;
-    loop {
-        let timeout = if prepared {
-            render_timeout
-        } else {
-            setup_timeout
-        };
-        match rx.recv_timeout(timeout) {
-            Ok(ThumbnailJobProgress::Prepared) => prepared = true,
-            Ok(ThumbnailJobProgress::Finished(value)) => {
-                return ThumbnailJobOutcome::Finished(value)
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                timed_out.store(true, Ordering::Relaxed);
-                return if prepared {
-                    ThumbnailJobOutcome::RenderTimedOut
-                } else {
-                    ThumbnailJobOutcome::SetupTimedOut
-                };
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => return ThumbnailJobOutcome::Failed,
-        }
-    }
-}
-
-/// Run one thumbnail job against a single wall-clock budget. Queueing for the
-/// bounded decode slot, format loading, renderer checkout, and GPU readback all
-/// consume the same deadline so a mixed Explorer folder cannot multiply the
 /// request budget by waiting once for setup and again for rendering.
 pub(super) fn run_thumbnail_job_with_deadline<T, F>(
     timeout: Duration,
@@ -494,17 +541,30 @@ where
     T: Send + 'static,
     F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
 {
-    let Some(permit) = ThumbnailJobGate::shared().acquire_timeout(timeout) else {
+    // One budget for the whole request. Waiting for a slot and then rendering
+    // each took the full timeout of their own, so a file could spend twice
+    // what the caller asked for -- twelve seconds against six -- and under
+    // Explorer's Apartment hosting that is twelve seconds the rest of the
+    // folder spends queued behind it. The deadline is fixed here, once, and
+    // both halves spend the same one.
+    let deadline = Instant::now() + timeout;
+    let Some(permit) = ThumbnailJobGate::shared().acquire_by(deadline) else {
         return ThumbnailJobOutcome::SetupTimedOut;
     };
-    run_thumbnail_job_with_permit_deadline(permit, timeout, work)
+    run_thumbnail_job_by(permit, deadline, work)
 }
 
 /// Variant of [`run_thumbnail_job_with_deadline`] for the Windows shell path,
 /// which reserves a gate permit before it copies an `IStream`.
-pub(super) fn run_thumbnail_job_with_permit_deadline<T, F>(
+/// Run `work` on a worker thread against a deadline the caller already fixed,
+/// so that a wait which has already happened is spent, not forgotten.
+///
+/// The permit is the caller's: the shell reserves one before it copies an
+/// `IStream`, and a test hands one from a private gate so that its assertions
+/// do not depend on what the rest of the suite is doing.
+pub(super) fn run_thumbnail_job_by<T, F>(
     permit: ThumbnailJobPermit,
-    timeout: Duration,
+    deadline: Instant,
     work: F,
 ) -> ThumbnailJobOutcome<T>
 where
@@ -532,7 +592,6 @@ where
         return ThumbnailJobOutcome::Failed;
     }
 
-    let deadline = Instant::now() + timeout;
     let mut prepared = false;
     loop {
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
@@ -562,145 +621,4 @@ where
 }
 
 #[cfg(test)]
-mod poison_recovery_tests {
-    use super::*;
-
-    fn wait_for_queued_jobs(gate: &ThumbnailJobGate, expected: usize) {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            if lock_recover(&gate.inner.state).waiters.len() == expected {
-                return;
-            }
-            assert!(Instant::now() < deadline, "thumbnail job did not queue");
-            std::thread::yield_now();
-        }
-    }
-
-    /// Panic while holding `mutex`'s guard, poisoning it, then hand the
-    /// (recovered) inner value back.
-    fn poison<T>(mutex: &Mutex<T>) {
-        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
-            let _guard = mutex.lock().expect("fresh mutex is not poisoned");
-            panic!("intentionally poison the lock for the recovery test");
-        }));
-        assert!(mutex.is_poisoned(), "the lock should now be poisoned");
-    }
-
-    #[test]
-    fn lock_recover_returns_the_guard_even_when_poisoned() {
-        let mutex = Mutex::new(41u32);
-        {
-            let mut guard = lock_recover(&mutex);
-            *guard += 1;
-        }
-        poison(&mutex);
-        // Recovery still yields a usable guard with the last-written value.
-        let mut guard = lock_recover(&mutex);
-        assert_eq!(*guard, 42);
-        *guard = 7;
-        assert_eq!(*guard, 7);
-    }
-
-    #[test]
-    fn shell_renderer_parallelism_stays_inside_the_process_budget() {
-        assert_eq!(default_thumbnail_renderer_pool_size(), 1);
-        assert_eq!(default_thumbnail_job_capacity(), 12);
-    }
-
-    #[test]
-    fn poisoned_job_gate_still_acquires_and_releases() {
-        // One panicking request must not wedge the gate shut for every other
-        // file in the folder (the mixed-folder "no thumbnails at all" bug).
-        let gate = ThumbnailJobGate::new(1);
-        poison(&gate.inner.state);
-
-        let permit = gate.acquire_timeout(Duration::from_millis(50));
-        assert!(
-            permit.is_some(),
-            "a poisoned gate must still hand out permits"
-        );
-        // Dropping the permit must release it despite the poison, so the single
-        // slot is reusable rather than leaked forever.
-        drop(permit);
-        let again = gate.acquire_timeout(Duration::from_millis(50));
-        assert!(
-            again.is_some(),
-            "release must not skip on poison, or the gate leaks its only permit"
-        );
-    }
-
-    #[test]
-    fn queued_thumbnail_jobs_acquire_in_arrival_order() {
-        let gate = Arc::new(ThumbnailJobGate::new(1));
-        let held = gate
-            .acquire_timeout(Duration::from_millis(10))
-            .expect("initial permit");
-        let (order_tx, order_rx) = mpsc::channel();
-        let (release_first_tx, release_first_rx) = mpsc::channel();
-
-        let first_gate = gate.clone();
-        let first_tx = order_tx.clone();
-        let first = std::thread::spawn(move || {
-            let _permit = first_gate
-                .acquire_timeout(Duration::from_secs(1))
-                .expect("first queued permit");
-            first_tx.send(1_u8).expect("record first acquisition");
-            release_first_rx.recv().expect("release first waiter");
-        });
-        wait_for_queued_jobs(&gate, 1);
-
-        let second_gate = gate.clone();
-        let second = std::thread::spawn(move || {
-            let _permit = second_gate
-                .acquire_timeout(Duration::from_secs(1))
-                .expect("second queued permit");
-            order_tx.send(2_u8).expect("record second acquisition");
-        });
-        wait_for_queued_jobs(&gate, 2);
-
-        drop(held);
-        assert_eq!(order_rx.recv_timeout(Duration::from_secs(1)), Ok(1));
-        assert!(order_rx.recv_timeout(Duration::from_millis(20)).is_err());
-        release_first_tx.send(()).expect("release first waiter");
-        assert_eq!(order_rx.recv_timeout(Duration::from_secs(1)), Ok(2));
-        first.join().expect("first waiter thread");
-        second.join().expect("second waiter thread");
-    }
-
-    #[test]
-    fn poisoned_renderer_pool_still_serves_and_returns_renderers() {
-        let _guard = crate::acquire_render_test_guard();
-        let pool = ThumbnailRendererPool::new(2);
-        poison(&pool.state);
-
-        // A poisoned pool must still create/serve a renderer instead of failing
-        // every checkout for the rest of the process.
-        let renderer = pool
-            .checkout_renderer()
-            .expect("a poisoned renderer pool must still serve a renderer");
-        {
-            let lease = ThumbnailRendererLease::new(&pool, renderer);
-            drop(lease);
-        }
-        // The returned renderer landed back in the idle set (return_renderer did
-        // not skip on poison), so it is reusable.
-        let idle = lock_recover(&pool.state).idle.len();
-        assert_eq!(
-            idle, 1,
-            "the returned renderer must be reusable, not leaked, after poison"
-        );
-    }
-
-    #[test]
-    fn discarded_renderer_releases_pool_capacity() {
-        let pool = ThumbnailRendererPool::new(2);
-        {
-            let mut state = lock_recover(&pool.state);
-            state.total_renderers = 1;
-        }
-
-        pool.discard_renderer();
-
-        assert_eq!(lock_recover(&pool.state).total_renderers, 0);
-    }
-}
+mod recovery_tests;

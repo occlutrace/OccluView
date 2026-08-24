@@ -15,6 +15,7 @@ mod test_support;
 
 use occluview_core::{Camera, Scene};
 use occluview_render::{Offscreen, PreparedScene};
+use std::sync::Arc;
 
 #[cfg_attr(not(windows), allow(unused_imports))]
 pub(crate) use interaction::win32_preview_orbit_delta;
@@ -24,7 +25,10 @@ pub(crate) use interaction::PreviewViewPreset;
 pub(crate) struct PreviewSceneState {
     pub(super) scene: Scene,
     pub(super) camera: Camera,
-    pub(super) offscreen: Offscreen,
+    /// The process-shared renderer (see `offscreen_factory`): scene state
+    /// borrows the device but does not own its lifetime, so successive file
+    /// clicks reuse one device instead of re-creating wgpu per preview.
+    pub(super) offscreen: Arc<Offscreen>,
     pub(super) prepared_scene: PreparedScene,
 }
 
