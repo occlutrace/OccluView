@@ -254,6 +254,14 @@ fn parse_raw_texture_image(
     let Some(bytes_per_pixel) = optional_u32_attr(open_tag, "BytesPerPixel")? else {
         return Ok(None);
     };
+    // A pixel of no bytes is not a raw texture, and the length gate below
+    // cannot catch it: width x height x 0 is zero, which an empty body matches
+    // exactly. The decode would then divide by it, and a division by zero
+    // panics in release too -- in the viewer and the command-line tool, which
+    // abort rather than unwind, that is the process.
+    if bytes_per_pixel == 0 {
+        return Ok(None);
+    }
 
     // Width/Height/BytesPerPixel describe the raw HPS representation, but HPS
     // exporters also store JPEG/PNG payloads with the same metadata. Compare
@@ -517,5 +525,29 @@ fn decode_packed_texture_component(component: u16) -> f32 {
         value / 32767.0
     } else {
         value * (512.0 / 32767.0) - 256.0
+    }
+}
+
+#[cfg(test)]
+mod zero_pixel_tests {
+    use super::parse_raw_texture_image;
+
+    /// A texture declaring no bytes per pixel is refused, not divided by.
+    ///
+    /// The length gate cannot catch it on its own: width times height times
+    /// zero is zero, and an empty body is exactly that length, so the decode
+    /// was reached and divided the body length by zero. That panics in release
+    /// as well, and the viewer and the command-line tool abort rather than
+    /// unwind -- a 400-byte file ended the process.
+    #[test]
+    fn a_texture_of_zero_byte_pixels_is_refused() {
+        let decoded = parse_raw_texture_image(
+            r#"<TextureImage Width="1" Height="1" BytesPerPixel="0">"#,
+            &[],
+        );
+        assert!(
+            matches!(decoded, Ok(None)),
+            "a pixel of no bytes is not a texture: {decoded:?}"
+        );
     }
 }
