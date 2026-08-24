@@ -124,7 +124,7 @@ impl PreviewHandler {
                 let square = if let Some(byte_len) = self.oversize_stream_len.get() {
                     placeholder_for_oversize_input(spec, byte_len)
                 } else {
-                    crate::placeholder::placeholder_thumbnail(spec)
+                    occluview_thumbnail::placeholder::placeholder_thumbnail(spec)
                 };
                 center_square_on_canvas(
                     &square,

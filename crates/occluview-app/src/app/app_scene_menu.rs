@@ -1,9 +1,6 @@
-//! What a right-click on empty viewport space does.
+//! Scene actions shown by the empty-viewport context menu.
 //!
-//! The scene actions exist because OccluView has no project file. A scan the
-//! operator aligned lives in the layer transform for exactly as long as the
-//! session does, so "save the scene" is not a convenience here — it is the only
-//! way the work survives.
+//! OccluView has no project file, so aligned transforms persist through export.
 
 use super::OccluViewApp;
 use crate::edit_mode::EditModeCommand;

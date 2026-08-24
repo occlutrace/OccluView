@@ -1,17 +1,8 @@
-//! Placing a square render on the preview pane's canvas.
-//!
-//! Platform-free on purpose: it is pixel arithmetic, and the preview pane is
-//! the one surface where getting it wrong is visible rather than merely slow.
+//! Platform-independent placement of a square render on the preview canvas.
 
 /// Draw a square image centred on a canvas of the pane's size.
 ///
-/// The square is composited, not copied. A rendered scan is opaque where the
-/// mesh is and transparent everywhere else, and the placeholder cube -- what a
-/// file that cannot be read shows -- is transparent everywhere but the cube.
-/// Copying those pixels put the placeholder's transparent black over the
-/// canvas, so an unreadable scan appeared as a black square the height of the
-/// pane on a light-grey background. In dark mode the canvas is already black,
-/// which is why it went unseen.
+/// Alpha-composite the square so transparent pixels retain the pane background.
 #[must_use]
 pub(crate) fn center_square_on_canvas(
     square: &[u8],
