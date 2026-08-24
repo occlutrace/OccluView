@@ -107,7 +107,7 @@ pollster   = "0.4"
 # Image encode/decode: PNG for golden tests + thumbnail output, JPEG for glTF
 # texture images (dental GLBs commonly embed JPEG textures). 0.25.10 raises
 # MSRV to 1.88; stay below it while rust-toolchain.toml pins 1.86.
-image      = { version = ">=0.25.5, <0.25.10", default-features = false, features = ["png", "jpeg"] }
+image      = { version = ">=0.25.5, <0.25.11", default-features = false, features = ["png", "jpeg"] }
 
 # Memory-mapped file loading for large meshes.
 memmap2    = "0.9"
