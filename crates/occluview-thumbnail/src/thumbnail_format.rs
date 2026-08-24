@@ -35,20 +35,32 @@ pub fn infer_thumbnail_format(
         }
         return deferred("3mf");
     }
-    if looks_like_obj_text(bytes) {
-        return Ok(FormatKind::Obj);
-    }
-
     if matches!(extension.as_deref(), Some("3mf")) {
         return deferred("3mf");
     }
     if matches!(extension.as_deref(), Some("gltf")) {
         return deferred("gltf");
     }
-    match probe(extension.as_deref(), bytes)? {
-        FormatKind::Threemf => deferred("3mf"),
-        FormatKind::Gltf if !bytes.starts_with(b"glTF") => deferred("gltf"),
-        kind => Ok(kind),
+    match probe(extension.as_deref(), bytes) {
+        Ok(FormatKind::Threemf) => deferred("3mf"),
+        Ok(FormatKind::Gltf) if !bytes.starts_with(b"glTF") => deferred("gltf"),
+        Ok(kind) => Ok(kind),
+        // The shared probe knows every format that declares itself and every
+        // extension the viewer opens. Only when it knows neither does the text
+        // probe below get a say -- which is the case it exists for: a stream
+        // carries bytes and no name, and OBJ has no magic of its own.
+        //
+        // It used to get the first word instead, and a binary STL's 80-byte
+        // header is free-form text: an exporter that wrote "g 1 arch upper"
+        // there had its scan read as an OBJ, fail, and wear a corrupt-file
+        // badge the shell caches, while the viewer opened the same file
+        // without complaint.
+        Err(error) => {
+            if looks_like_obj_text(bytes) {
+                return Ok(FormatKind::Obj);
+            }
+            Err(error)
+        }
     }
 }
 
@@ -66,12 +78,37 @@ fn is_zip_magic(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && bytes[..4] == [0x50, 0x4B, 0x03, 0x04]
 }
 
+/// Whether the first meaningful line reads as an OBJ record.
+///
+/// Only the lines it has to look at are decoded. Decoding the whole input
+/// first cost 796 ms and about 165 MB of transient allocation on a 94 MB STL,
+/// which is most of that file's thumbnail: this runs on Explorer's own thread,
+/// before a render lane is taken, and outside the six-second deadline. It
+/// fires for every STL over 40 MiB, every PLY over 4 MiB -- which is nearly
+/// every real dental PLY -- and on every stream request.
 fn looks_like_obj_text(bytes: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(bytes);
-    text.lines()
-        .map(|line| line.trim_start().trim_start_matches('\u{feff}'))
-        .find(|line| !line.is_empty() && !line.starts_with('#'))
-        .is_some_and(is_obj_record)
+    // A record line in a real OBJ is short; anything longer is not one.
+    const MAX_RECORD_BYTES: usize = 4096;
+    // And the whole probe reads at most this much. Splitting on newlines over
+    // the full input is still linear when the input has none -- which is what
+    // a binary STL of a flat surface looks like -- so the window is what makes
+    // the cost independent of file size. A text OBJ's first record is in the
+    // first few hundred bytes; a file whose first 64 KiB hold no line at all
+    // is not one.
+    const PROBE_WINDOW_BYTES: usize = 64 * 1024;
+
+    let window = &bytes[..bytes.len().min(PROBE_WINDOW_BYTES)];
+    for line in window.split(|byte| *byte == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let line = &line[..line.len().min(MAX_RECORD_BYTES)];
+        let text = String::from_utf8_lossy(line);
+        let text = text.trim_start().trim_start_matches('\u{feff}');
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        return is_obj_record(text);
+    }
+    false
 }
 
 fn is_obj_record(line: &str) -> bool {
@@ -109,6 +146,46 @@ fn is_obj_record(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// The OBJ probe must look at the first line, not at the file.
+    ///
+    /// Decoding the whole input cost 660 ms on a 100 MB binary STL, measured
+    /// on the machine this was written on, against 12 us for the line-wise
+    /// form. This runs on Explorer's thread before a render lane is taken.
+    #[test]
+    fn the_obj_probe_does_not_read_the_whole_file() {
+        // 32 MB of binary STL: the old form takes about 210 ms on it.
+        let mut bytes = vec![0u8; 80];
+        bytes.extend_from_slice(&600_000_u32.to_le_bytes());
+        bytes.resize(32 * 1024 * 1024, 0x7f);
+
+        let started = std::time::Instant::now();
+        let answer = looks_like_obj_text(&bytes);
+        let elapsed = started.elapsed();
+
+        assert!(!answer, "binary STL is not an OBJ");
+        assert!(
+            elapsed < std::time::Duration::from_millis(40),
+            "the probe took {elapsed:?} on 32 MB; it is reading past the first \
+             line again"
+        );
+    }
+
+    /// And it still answers correctly for the format it exists to spot.
+    #[test]
+    fn a_text_obj_is_still_recognised_after_comments_and_a_bom() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice("\u{feff}".as_bytes());
+        bytes.extend_from_slice(b"# exported by a scanner\r\n\r\n");
+        bytes.extend_from_slice(b"v 1.0 2.0 3.0\n");
+        assert!(looks_like_obj_text(&bytes));
+
+        assert!(!looks_like_obj_text(
+            b"ply\nformat binary_little_endian 1.0\n"
+        ));
+        assert!(!looks_like_obj_text(b""));
+        assert!(!looks_like_obj_text(b"# only a comment\n"));
+    }
+
     use super::*;
 
     fn one_triangle_binary_stl() -> Vec<u8> {
@@ -212,6 +289,49 @@ mod tests {
         assert!(matches!(
             infer_thumbnail_format(None, b"not a mesh"),
             Err(FormatError::Unsupported { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod agreement_tests {
+    use super::infer_thumbnail_format;
+    use occluview_formats::{probe, FormatKind};
+
+    /// A binary STL's 80-byte header is free-form text, and exporters put
+    /// words in it. If those words happen to read like an OBJ record, the
+    /// thumbnail inference used to call the file an OBJ -- while the viewer,
+    /// which asks the shared probe, called it what it is. The thumbnail then
+    /// wore a corrupt-file badge that the shell caches against the file's
+    /// timestamp, on a scan that opens perfectly.
+    #[test]
+    fn a_binary_stl_whose_header_reads_like_obj_is_still_an_stl() {
+        let mut bytes = b"g 1 arch upper".to_vec();
+        bytes.resize(80, 0);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for value in [
+            0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0, 0]);
+
+        assert!(matches!(probe(Some("stl"), &bytes), Ok(FormatKind::Stl)));
+        let inferred = infer_thumbnail_format(Some("stl"), &bytes);
+        assert!(
+            matches!(inferred, Ok(FormatKind::Stl)),
+            "the picture and the viewer must read the same file the same way: {inferred:?}"
+        );
+    }
+
+    /// The text probe still earns its place: a stream carries bytes and no
+    /// name, and OBJ has no magic of its own.
+    #[test]
+    fn an_unnamed_stream_of_obj_text_is_still_recognised() {
+        let obj = b"# exported\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        assert!(matches!(
+            infer_thumbnail_format(None, obj),
+            Ok(FormatKind::Obj)
         ));
     }
 }

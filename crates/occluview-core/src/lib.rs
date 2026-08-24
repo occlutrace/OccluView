@@ -12,7 +12,7 @@
 //! - **`Send + Sync`.** All public types are shareable across threads; the
 //!   renderer and the file loaders rely on this.
 //! - **Millimeter units** internally ([`units::Millimeters`]).
-//! - **Right-handed Y-up** coordinate frame ([`frame`]).
+//! - **Right-handed Y-up** coordinate frame.
 //!
 //! The crate is organized as follows; each module re-exports its public surface
 //! from here so callers can `use occluview_core::Mesh` etc.
@@ -38,36 +38,31 @@
 pub mod bbox;
 pub mod camera;
 pub mod error;
-pub mod frame;
-pub mod jump_list;
 pub mod mesh;
-pub mod recent_files;
-pub mod scale_bar;
 pub mod scene;
 pub mod units;
 
 pub use bbox::Aabb;
 pub use camera::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Camera, CameraAxisView, CameraPreset,
-    CameraProjection, CAD_ORBIT_DRAG_GAIN, CAD_ZOOM_SCROLL_SENSITIVITY,
+    CameraProjection, BBOX_FRAME_FILL, CAD_ORBIT_DRAG_GAIN, CAD_ZOOM_SCROLL_SENSITIVITY,
+    MIN_ORTHOGRAPHIC_HEIGHT_MM,
 };
 pub use error::CoreError;
-pub use jump_list::JumpListItem;
 pub use mesh::{
-    bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, component_at_triangle_in_mesh,
-    crop_mesh_to_selected_faces, delete_selected_faces_in_mesh, fill_holes_in_mesh,
-    fill_selected_holes_in_mesh, invert_mesh_orientation, mesh_edit_buffers_from_mesh,
-    mesh_from_edit_buffers_like, mesh_from_sculpt_session_like, normalize_bridge_split_input,
-    prepare_bridge_split_source, repair_mesh_in_mesh, selected_connected_components_in_mesh,
-    CoreBridgeSplitError, CoreBridgeSplitResult, CoreMeshEditResult, CoreMeshRepairResult, Mesh,
-    MeshBuilder, MeshKind, MeshTexture, PreparedBridgeSplitSource, PrincipalFrame, Vertex,
+    accumulate_smooth_normals, bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world,
+    component_at_triangle_in_mesh, crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
+    fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
+    mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
+    normalize_bridge_split_input, prepare_bridge_split_source, repair_mesh_in_mesh,
+    selected_connected_components_in_mesh, CoreBridgeSplitError, CoreBridgeSplitResult,
+    CoreMeshEditResult, CoreMeshRepairResult, Mesh, MeshBuilder, MeshKind, MeshTexture,
+    PreparedBridgeSplitSource, PrincipalFrame, Vertex,
 };
 pub use occlu_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, BrushMode, BrushSession, BrushStroke,
     BrushStrokeOutcome, FaceSelection, MeshEditOptions, MeshEditReport, MeshEditWarning,
-    RepairOptions, RepairReport,
+    RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
 };
-pub use recent_files::{RecentEntry, RecentFiles};
-pub use scale_bar::ScaleBar;
 pub use scene::{Scene, SceneMesh, SceneMeshId, ScenePickHit, DEFAULT_UNTEXTURED_MESH_TINT};
 pub use units::Millimeters;

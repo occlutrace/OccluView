@@ -2,21 +2,14 @@
 //! matrix of vertex positions, sorted by descending variance, plus the
 //! centroid they were computed about.
 //!
-//! This is the STABLE, per-mesh-constant "global shape" signal the cut disc
-//! (Bridge Split and Cut View both drive `cut_manipulator` logic
-//! through it) anchors its orientation to, instead of the hit triangle's
-//! local normal: a dental arch or bridge span's own axes and centroid never
-//! jitter as the cursor crosses triangles, and the LOCAL direction from the
-//! centroid to a point on the surface, projected onto the `axes[0]`/`axes[1]`
-//! plane, rotates smoothly around the arch — reducing to (roughly) `axes[0]`
-//! at the arch's left/right extremes, the anatomically useful orientation for
-//! viewing occlusal contacts there, and adapting continuously in between
-//! instead of staying fixed for the whole mesh.
+//! The per-mesh frame anchors cut orientation to global shape rather than the
+//! hit triangle normal. The projected centroid-to-surface direction varies
+//! smoothly across an arch.
 
 use glam::Vec3;
 
 /// A point cloud's PCA centroid and its three orthonormal axes, sorted by
-/// DESCENDING variance: `axes[0]` is the direction of greatest spread,
+/// descending variance: `axes[0]` is the direction of greatest spread,
 /// `axes[2]` the least. Right-handed (`axes[2] == axes[0].cross(axes[1])`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PrincipalFrame {

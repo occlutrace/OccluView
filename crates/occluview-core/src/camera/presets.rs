@@ -2,7 +2,7 @@ use crate::bbox::Aabb;
 
 use glam::Vec3;
 
-use super::{Camera, CameraProjection, MIN_ORTHOGRAPHIC_HEIGHT_MM};
+use super::{Camera, CameraProjection, BBOX_FRAME_FILL, MIN_ORTHOGRAPHIC_HEIGHT_MM};
 
 /// Named camera presets exposed by the desktop viewer.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -135,9 +135,9 @@ fn frame_planar(bbox: Aabb, fovy: f32, yaw: f32, pitch: f32) -> Camera {
     camera.set_yaw_pitch(yaw, pitch);
     camera.projection = CameraProjection::Orthographic;
     camera.fovy = fovy;
-    camera.orthographic_height = (radius * 2.0 / 0.7).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
+    camera.orthographic_height = (radius * 2.0 / BBOX_FRAME_FILL).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
     camera.distance = if half_fov > 1e-5 {
-        radius / half_fov.tan() / 0.7
+        radius / half_fov.tan() / BBOX_FRAME_FILL
     } else {
         radius * 2.0
     };

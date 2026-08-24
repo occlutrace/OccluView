@@ -6,6 +6,15 @@ use windows::Win32::System::Registry::{RegCloseKey, HKEY_LOCAL_MACHINE};
 /// Static HSTRINGs via the `h!` macro (the macro yields `&'static HSTRING`).
 const FRIENDLY_NAME_H: &HSTRING = h!("OccluView Thumbnail Provider");
 const PREVIEW_FRIENDLY_NAME_H: &HSTRING = h!("OccluView Preview Handler");
+/// `Apartment` is mandatory, not a choice: Microsoft's shell-extension
+/// registration doc states "ThreadingModel must be Apartment for shell
+/// extension handlers" ("Registering Shell Extension Handlers",
+/// learn.microsoft.com), and PowerToys/SumatraPDF register the same. The
+/// consequence to design around, never to "fix" by switching to `Both`: in
+/// the isolated dllhost surrogate, COM hosts every Apartment instance on one
+/// host STA, so all extractions of this CLSID serialize — per-call speed is
+/// the only throughput lever (prewarmed pooled renderer, bounded budgets),
+/// and no `GetThumbnail` may park its thread.
 const THREADING_MODEL_H: &HSTRING = h!("Apartment");
 const PREVHOST_APPID: &HSTRING = h!("{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}");
 const APPROVED_SHELL_EXTENSIONS_KEY: &str =

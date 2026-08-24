@@ -122,9 +122,9 @@ pub struct ViewportSpec {
 /// Offscreen renderer. Wraps a headless [`Renderer`].
 pub struct Offscreen {
     renderer: Renderer,
-    /// Cached identity mesh uniform + bind group (group 1). The thumbnail path
-    /// renders one mesh at the origin, so the model matrix is identity.
-    mesh_uniform_buffer: wgpu::Buffer,
+    /// Cached identity mesh bind group (group 1). The thumbnail path renders
+    /// one mesh at the origin, so the model matrix is identity. The uniform
+    /// buffer behind it is owned by the bind group and never read back.
     mesh_bind_group: wgpu::BindGroup,
     /// Cached 1x1 white fallback texture + bind group (group 2). The thumbnail
     /// path uses vertex colors (no texture), but the pipeline requires a bound
@@ -171,10 +171,45 @@ impl Offscreen {
 
         Self {
             renderer,
-            mesh_uniform_buffer,
             mesh_bind_group,
             texture_bind_group,
         }
+    }
+
+    /// Draw one known triangle and report whether any of it arrived.
+    ///
+    /// An adapter can accept every command and then produce an empty target:
+    /// a virtual display driver, a headless server's stub, a runner's nominal
+    /// GPU. Nothing reports an error, so the only way to tell is to draw
+    /// something and look. Callers that prefer hardware use this to demote a
+    /// device that cannot draw, before it is handed a scan and answers with a
+    /// blank picture.
+    #[must_use]
+    pub async fn can_draw(&self) -> bool {
+        use glam::Vec3;
+        use occluview_core::{MeshBuilder, Vertex};
+
+        let mut builder = MeshBuilder::new();
+        let a = builder.push_vertex(Vertex::at(Vec3::new(-0.8, -0.8, 0.0)).with_normal(Vec3::Z));
+        let b = builder.push_vertex(Vertex::at(Vec3::new(0.8, -0.8, 0.0)).with_normal(Vec3::Z));
+        let c = builder.push_vertex(Vertex::at(Vec3::new(0.0, 0.8, 0.0)).with_normal(Vec3::Z));
+        builder.push_triangle(a, b, c);
+        let Ok(mesh) = builder.build() else {
+            return false;
+        };
+        let camera = crate::GpuCamera::new(
+            glam::Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
+            glam::Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, 3.0),
+        );
+        let spec = ThumbnailSpec {
+            size_px: 16,
+            ..ThumbnailSpec::default()
+        };
+        self.render(&mesh, &camera, spec)
+            .await
+            .is_ok_and(|pixels| pixels.chunks_exact(4).any(|pixel| pixel[3] != 0))
     }
 
     /// Access the underlying renderer (for callers that need device/queue).
@@ -187,18 +222,6 @@ impl Offscreen {
     #[must_use]
     pub fn prepare_scene(&self, sources: &[PreparedSceneSource<'_>]) -> PreparedScene {
         PreparedScene::upload(&self.renderer, sources)
-    }
-
-    /// Access the cached fallback texture bind group (group 2). Useful for
-    /// multi-mesh draws where some meshes are untextured.
-    pub fn fallback_texture_bind_group(&self) -> &wgpu::BindGroup {
-        &self.texture_bind_group
-    }
-
-    /// Access the cached identity mesh uniform buffer. Useful for building
-    /// additional bind groups.
-    pub fn identity_uniform_buffer(&self) -> &wgpu::Buffer {
-        &self.mesh_uniform_buffer
     }
 
     /// The per-mesh uniform bind group layout (group 1). Exposed so callers

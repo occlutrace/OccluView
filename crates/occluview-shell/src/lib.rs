@@ -1,21 +1,14 @@
 //! `occluview-shell` — Windows COM shell extension for OccluView.
 //!
-//! Implements `IThumbnailProvider` as an **out-of-process** COM server: Windows
-//! hosts this DLL in `dllhost.exe`, so a bug or a malicious file cannot crash
-//! `explorer.exe`.
+//! Implements `IThumbnailProvider` as an out-of-process COM server hosted by
+//! Windows in `dllhost.exe`.
 //!
-//! The thumbnail reuses [`occluview_render`] offscreen path, so it is
-//! pixel-identical to the in-app frame — one shader, one camera, one loader.
+//! The thumbnail reuses [`occluview_render`] offscreen path — one shader, one
+//! camera — so a given mesh rasterizes exactly as it does in the app. Large
+//! files are the exception by design: past the fidelity cutoffs in
+//! [`occluview_thumbnail`] the tile is drawn from a decimated preview mesh
+//! through the same pipeline.
 //!
-//! ## Status
-//!
-//! `render_thumbnail` is the platform-agnostic render entry point, fully tested
-//! on Linux. The COM class (`com::ThumbnailProvider`), class factory,
-//! `DllGetClassObject`/`DllCanUnloadNow`, and `DllRegisterServer`/
-//! `DllUnregisterServer` live in `com.rs` and the `registration` module, all `cfg(windows)`
-//! — they require the windows toolchain to compile but the rest of the crate
-//! builds on any host.
-
 #![cfg_attr(not(test), deny(unsafe_code))]
 #![cfg_attr(test, allow(clippy::expect_used))]
 // The COM class (`com.rs`) is `unsafe` by definition (FFI + raw pointers across
@@ -27,7 +20,11 @@
 #[cfg(any(windows, test))]
 mod deferred_source;
 pub mod error;
+#[cfg(test)]
+mod installer_contract_tests;
 mod offscreen_factory;
+#[cfg(any(windows, test))]
+mod preview_canvas;
 #[cfg(any(windows, test))]
 mod preview_menu;
 mod preview_scene;
@@ -70,13 +67,13 @@ pub mod render_thumb {
     use std::path::Path;
 
     pub use occluview_thumbnail::render_thumb::{
-        placeholder_for_oversize_input, render_thumbnail_file_or_placeholder,
-        render_thumbnail_file_or_placeholder_with_timeout, render_thumbnail_or_placeholder,
-        render_thumbnail_or_placeholder_with_timeout,
-        render_thumbnail_shared_or_placeholder_with_reservation,
+        placeholder_for_oversize_input, prewarm_thumbnail_renderer,
+        render_thumbnail_file_or_placeholder, render_thumbnail_file_or_placeholder_with_timeout,
+        render_thumbnail_or_placeholder, render_thumbnail_or_placeholder_with_timeout,
         render_thumbnail_shared_or_placeholder_with_timeout, reserve_thumbnail_stream_job,
-        ThumbnailJobReservation, DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_FILE_BYTES,
-        MAX_THUMBNAIL_INPUT_BYTES,
+        try_render_thumbnail_file, try_render_thumbnail_shared,
+        try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, ThumbnailJobReservation,
+        DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
     };
 
     /// Render a thumbnail from bytes, preserving the shell error type.
@@ -123,8 +120,8 @@ pub use occluview_formats::{LEGACY_HPS_EXTENSION, V1_OPEN_EXTENSIONS};
 pub use placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind, PlaceholderKind};
 pub use render_thumb::{render_thumbnail, render_thumbnail_bytes, render_thumbnail_or_placeholder};
 pub use shell_contract::{
-    APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS,
-    THUMBNAIL_PROVIDER_CATEGORY,
+    owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
+    PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS, THUMBNAIL_PROVIDER_CATEGORY,
 };
 
 #[cfg(windows)]

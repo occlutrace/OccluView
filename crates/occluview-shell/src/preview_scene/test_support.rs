@@ -50,12 +50,8 @@ pub(super) fn binary_stl_preview_smoke_mesh() -> Vec<u8> {
     ])
 }
 
-/// Vertically asymmetric fixture for orientation/parity tests: a small marker
-/// triangle at world **+Y** (the "top") floating clearly above a big low blob
-/// spanning world `y ∈ [-2.0, -0.2]`. All faces point +Z so the `Front`
-/// preset (look -Z, up +Y) lights them. With a correct app-convention present
-/// path the marker lands in the TOP rows; a vertical mirror sends it to the
-/// bottom — which is exactly the inverted-orbit defect this pins.
+/// Vertically asymmetric fixture for orientation tests: a marker at +Y above
+/// a low blob. The `Front` preset lights both faces.
 pub(super) fn binary_stl_marker_above_blob() -> Vec<u8> {
     binary_stl(&[
         // Big low blob (two triangles forming a quad), world-bottom.
@@ -72,9 +68,7 @@ pub(super) fn binary_stl_marker_above_blob() -> Vec<u8> {
     ])
 }
 
-/// Row index (0 = top) of the centroid of the lit pixels that fall inside the
-/// requested vertical half of an RGBA frame — used to locate the marker
-/// (top half) or the blob (bottom half) of [`binary_stl_marker_above_blob`].
+/// Row index (0 = top) of lit pixels in one vertical half of an RGBA frame.
 /// Returns `None` if that half has no lit pixel.
 // Row indices are small preview dimensions (< 2^16), exactly representable in
 // f32, so the centroid cast is lossless in practice.

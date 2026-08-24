@@ -12,13 +12,29 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct SceneMesh {
     id: SceneMeshId,
-    /// The underlying mesh. Shared via `Arc` once we add cross-thread sharing;
-    /// owned for now to keep `core` dependency-free.
-    pub mesh: Mesh,
+    /// The geometry this entry places.
+    ///
+    /// Shared rather than owned. A `Mesh` holds its vertices, indices and
+    /// decoded texture inline, so an owned one made `Scene: Clone` a copy of
+    /// the whole case -- and every in-place scene edit goes through
+    /// `Arc::make_mut`, which copies whenever a second handle is alive.
+    /// Measured on a two-arch scene of 980k triangles: cloning the scene went
+    /// from 157 ms to 217 ns, and an in-place edit with a second handle alive
+    /// from 136 ms to 610 ns. Those paths run per frame -- an opacity slider, a
+    /// tint, a nudge -- and behind an `Arc` they touch only this entry's own
+    /// fields, whoever else is reading the geometry.
+    ///
+    /// `Mesh` is already an immutable value -- every mutation is a `with_*`
+    /// constructor that mints fresh identity -- so sharing it costs no
+    /// discipline. A background worker can hold exactly the mesh it needs
+    /// instead of the case it came from.
+    pub mesh: Arc<Mesh>,
     /// Per-instance transform (placement of this mesh in the scene).
     pub transform: Affine3A,
-    /// Display tint in linear sRGB (0..1). Textured/colored meshes default to
-    /// neutral white; untextured scans default to warm dental stone.
+    /// Display tint (0..1) in the renderer's own space: it is multiplied into
+    /// the shaded colour and nothing encodes on the way out, so the number
+    /// here is the number that reaches the screen. Textured/colored meshes
+    /// default to neutral white; untextured scans default to warm dental stone.
     pub tint: [f32; 4],
     /// Opacity 0..1, used for transparency / ghost arches.
     pub opacity: f32,
@@ -53,7 +69,8 @@ impl SceneMesh {
     /// tint, opaque, visible.
     #[inline]
     #[must_use]
-    pub fn new(mesh: Mesh) -> Self {
+    pub fn new(mesh: impl Into<Arc<Mesh>>) -> Self {
+        let mesh = mesh.into();
         let tint = default_mesh_tint(&mesh);
         let show_texture = mesh.texture().is_some();
         Self {
@@ -113,7 +130,7 @@ impl SceneMesh {
         self
     }
 
-    /// Set the linear-sRGB tint.
+    /// Set the display tint, in the renderer's own space -- see the `tint` field.
     #[inline]
     #[must_use]
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
@@ -159,10 +176,10 @@ impl SceneMesh {
     /// mesh when a background editor already prepared an undo mesh.
     #[inline]
     #[must_use]
-    pub fn with_mesh(&self, mesh: Mesh) -> Self {
+    pub fn with_mesh(&self, mesh: impl Into<Arc<Mesh>>) -> Self {
         Self {
             id: self.id,
-            mesh,
+            mesh: mesh.into(),
             transform: self.transform,
             tint: self.tint,
             opacity: self.opacity,

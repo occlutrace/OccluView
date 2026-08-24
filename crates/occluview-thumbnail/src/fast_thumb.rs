@@ -176,22 +176,9 @@ fn robust_axis_range(values: &mut [f32]) -> Option<(f32, f32)> {
 
 /// Contiguous vertex-clustering decimator for triangle soups.
 ///
-/// The old fast surface path kept every Nth triangle. On a dense scan that
-/// punches the surface full of holes, the thumbnail comes out speckled and
-/// see-through instead of solid. This instead snaps every vertex onto a
-/// coarse spatial grid and welds all vertices that
-/// land in the same cell to one shared representative. Neighboring triangles go
-/// on sharing edges through those representatives, so the reduced mesh stays a
-/// closed, opaque surface — just at a lower, thumbnail-appropriate resolution.
-/// Triangles whose three corners collapse into fewer than three cells are
-/// dropped (they carry no area), and exact-duplicate triangles are coalesced so
-/// pathological inputs (e.g. thousands of stacked coincident triangles) can't
-/// bloat the output.
-///
-/// The grid is sized over an outlier-robust box (see [`RobustBoundsSampler`]),
-/// so a stray far vertex cannot inflate the cell size and collapse the model.
-/// A triangle with ANY non-finite corner is dropped whole: a NaN/Inf vertex is
-/// never made a cell representative and never poisons the output mesh bbox.
+/// Decimator for triangle soups. Vertices are welded on a coarse spatial grid;
+/// degenerate, duplicate, and non-finite triangles are discarded. Grid bounds
+/// ignore extreme outliers so the reduced surface remains visible.
 struct SurfaceGridCluster {
     min: Vec3,
     /// Upper corner of the robust box. Representatives are clamped into

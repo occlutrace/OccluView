@@ -1,7 +1,7 @@
 use super::{
     rendering, Duration, Mutex, Path, ThumbnailError, MAX_THUMBNAIL_FILE_BYTES,
-    MAX_THUMBNAIL_INPUT_BYTES, MAX_THUMBNAIL_SETUP_TIMEOUT, THUMBNAIL_FILE_CACHE,
-    THUMBNAIL_FILE_CONTENT_CACHE, THUMBNAIL_STREAM_CACHE,
+    MAX_THUMBNAIL_INPUT_BYTES, THUMBNAIL_FILE_CACHE, THUMBNAIL_FILE_CONTENT_CACHE,
+    THUMBNAIL_STREAM_CACHE,
 };
 use occluview_formats::{FormatError, FormatKind};
 use sha2::{Digest, Sha256};
@@ -13,8 +13,18 @@ use std::time::UNIX_EPOCH;
 
 const MAX_CACHED_FILE_THUMBNAILS: usize = 96;
 const MAX_CACHED_FILE_THUMBNAIL_BYTES: usize = 32 * 1024 * 1024;
-const EXACT_CONTENT_HASH_BYTES: u64 = 16 * 1024 * 1024;
-const EXACT_CONTENT_HASH_BYTES_USIZE: usize = 16 * 1024 * 1024;
+/// Files up to this size are keyed on every byte.
+///
+/// Above it the key is built from sampled windows, and sampling can be fooled:
+/// two scans of exactly the same length whose difference lies between the
+/// windows key the same, and the second one is then served the first one's
+/// picture -- the wrong arch on screen, which is the worst thing this cache
+/// can do. The budget therefore covers the scans a clinic actually holds
+/// rather than the smallest number that keeps the hash cheap: measured at
+/// 1.45 GB/s here, a 64 MB file costs about 45 ms to key exactly, and the
+/// largest real scan in the corpora on this machine is 33 MB.
+pub(super) const EXACT_CONTENT_HASH_BYTES: u64 = 64 * 1024 * 1024;
+const EXACT_CONTENT_HASH_BYTES_USIZE: usize = 64 * 1024 * 1024;
 const CONTENT_HASH_SAMPLE_BYTES: u64 = 64 * 1024;
 const CONTENT_HASH_SAMPLE_BYTES_USIZE: usize = 64 * 1024;
 
@@ -99,7 +109,12 @@ pub(super) struct FileThumbnailRenderPlan {
 pub(super) enum FileThumbnailPreflightError {
     UnsupportedExtension,
     Metadata(ThumbnailError),
-    Oversize { byte_len: usize },
+    /// The path names something that is not a regular file: a directory, a
+    /// named pipe, a device. Opening a pipe with no writer blocks forever.
+    NotAFile,
+    Oversize {
+        byte_len: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -161,6 +176,7 @@ where
                 .iter()
                 .filter(|thumb| {
                     thumb.background == background
+                        && size_px > 0
                         && thumb.size_px > size_px
                         && thumb.size_px % size_px == 0
                 })
@@ -272,15 +288,44 @@ pub(super) fn thumbnail_stream_cache() -> &'static Mutex<ThumbnailStreamCache> {
 pub(super) fn thumbnail_file_metadata(
     path: &Path,
 ) -> Result<ThumbnailFileMetadata, ThumbnailError> {
+    thumbnail_file_metadata_checked(path).map(|(metadata, _)| metadata)
+}
+
+/// The metadata, and whether the path names a regular file.
+///
+/// The caller needs the second answer before it opens anything: a folder
+/// holding `pipe.stl` with no writer on the other end blocks the opening
+/// thread for as long as the process lives, and under the shell that thread is
+/// the one every other file in the folder is queued behind.
+pub(super) fn thumbnail_file_metadata_checked(
+    path: &Path,
+) -> Result<(ThumbnailFileMetadata, bool), ThumbnailError> {
     let metadata = std::fs::metadata(path).map_err(|e| file_io_error(path, e))?;
+    let is_regular_file = metadata.is_file();
     let modified_nanos = metadata
         .modified()
         .ok()
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
-    Ok(ThumbnailFileMetadata {
-        byte_len: metadata.len(),
-        modified_nanos,
+    Ok((
+        ThumbnailFileMetadata {
+            byte_len: metadata.len(),
+            modified_nanos,
+        },
+        is_regular_file,
+    ))
+}
+
+/// Whether the file is not the one the preflight measured.
+///
+/// A scanner writing into a watched folder is the case: the shell asks for a
+/// thumbnail of a file that is still growing, the decode stops mid-record, and
+/// the verdict has to say whether that is a property of the file or of the
+/// moment. Comparing length and timestamp against the preflight answers it
+/// exactly, without guessing from a clock.
+pub(super) fn thumbnail_file_changed_since(path: &Path, measured: &ThumbnailFileMetadata) -> bool {
+    thumbnail_file_metadata(path).is_ok_and(|now| {
+        now.byte_len != measured.byte_len || now.modified_nanos != measured.modified_nanos
     })
 }
 
@@ -305,6 +350,16 @@ pub(super) fn thumbnail_file_content_key(
         hash_file_range(&mut file, &mut hasher, 0, metadata.byte_len)
             .map_err(|e| file_io_error(path, e))?;
     } else {
+        // Past the exact budget the key is a sample, and a sample can be
+        // fooled. Mixing the timestamp in bounds what a collision can cost:
+        // two files now have to share a length, three windows AND a
+        // modification time to share a picture. It costs the deduplication of
+        // copies -- but only for files this large, where a folder holding two
+        // copies of the same 100 MB export is a rarer thing than a re-export
+        // that kept its triangle count.
+        hasher.update(b"mtime");
+        hasher.update(metadata.modified_nanos.to_le_bytes());
+
         // Hash three labelled, position-aware windows. The labels prevent
         // ambiguous concatenations and the offsets make equal windows at
         // different positions distinct.
@@ -451,11 +506,4 @@ fn thumbnail_bytes_fingerprint(bytes: &[u8]) -> [u8; 32] {
         }
     }
     hasher.finalize().into()
-}
-
-pub(super) fn thumbnail_setup_timeout(render_timeout: Duration) -> Duration {
-    render_timeout
-        .checked_mul(4)
-        .unwrap_or(MAX_THUMBNAIL_SETUP_TIMEOUT)
-        .min(MAX_THUMBNAIL_SETUP_TIMEOUT)
 }

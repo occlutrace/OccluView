@@ -3,7 +3,7 @@ use super::PreviewSceneState;
 use crate::fast_thumb::{
     try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
 };
-use crate::offscreen_factory::create_shell_offscreen;
+use crate::offscreen_factory::shared_shell_offscreen;
 use crate::thumbnail_format::infer_thumbnail_format;
 use crate::ShellError;
 use occluview_core::{Camera, Mesh, Scene, SceneMesh};
@@ -43,7 +43,7 @@ impl PreviewSceneState {
 
         let bbox = scene.bbox();
         let camera = Camera::default().frame_occlusal(bbox, PREVIEW_FOV_RADIANS);
-        let offscreen = create_shell_offscreen()?;
+        let offscreen = shared_shell_offscreen()?;
         let prepared_scene = offscreen.prepare_scene(&prepared_scene_sources(&scene));
         Ok(Self {
             scene,

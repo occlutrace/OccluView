@@ -10,31 +10,73 @@ fn mesh_shader_uses_camera_relative_inspection_lighting() {
         shader.contains("let rim_lit = pow(fresnel, 1.45)"),
         "rim cue should be view-relative instead of a fixed world-space direction"
     );
+    // Three separate assertions, not one `&&`: the golden scene is a flat
+    // triangle facing the camera, so fresnel, rim, wrap and backface are all
+    // near zero in it and this text is the only guard these terms have. A
+    // combined assert reported "studio light and side walls" without saying
+    // which of the three had moved.
     assert!(
-        shader.contains("0.50 + 0.36 * wrapped_key + 0.095 * fill_lit + 0.018 * rim_lit")
-            && shader.contains("0.48,\n        1.05,")
-            && shader.contains("let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel"),
-        "form-giving studio light should keep a lit floor (no cast shadow) yet a full key/fill/rim swing so side walls read with depth"
+        shader.contains("0.50 + 0.36 * wrapped_key + 0.095 * fill_lit + 0.018 * rim_lit"),
+        "the studio light's key/fill/rim mix should keep its lit floor and its full swing"
+    );
+    // Matched with whitespace collapsed: the previous form pinned the exact
+    // indentation of a `clamp()` argument list, so reflowing it onto one line
+    // -- byte-identical semantics, golden images unchanged -- failed this test.
+    // Nothing formats WGSL in CI.
+    let collapsed: String = shader.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        collapsed.contains("0.48, 1.05,"),
+        "the studio light's ambient floor and key gain should stay as tuned"
     );
     assert!(
-        shader.contains("let textured = mesh_uniform.has_texture != 0u")
-            && shader.contains("mesh_uniform.show_texture != 0u")
-            && shader.contains("let texture_glaze = select(0.0, 1.0, textured)")
-            && shader.contains("let glaze_highlight ="),
-        "textured scans should get a restrained glaze highlight without making untextured STL glossy, and the neutral-material toggle should suppress it too"
+        shader.contains("let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel"),
+        "form contrast should stay view-relative so side walls read with depth"
     );
-    assert!(
-        shader.contains("@builtin(front_facing) front_facing: bool")
-            && shader.contains("BACKFACE_INSPECTION_TINT")
-            && shader.contains("let backface_mix = select(0.0, 0.14, !front_facing)"),
-        "mesh shader should give back-facing triangles only a faint cool tint (not a dark grey) so a flipped surface stays distinguishable without a half-shadow"
-    );
-    assert!(
-        !shader.contains("back_falloff")
-            && !shader.contains("- 0.018")
-            && !shader.contains("normal_faces_away"),
-        "even dental light must not add a moving back-falloff or grazing grey-wash half-shadow over dental surfaces"
-    );
+    for (fragment, why) in [
+        (
+            "let textured = mesh_uniform.has_texture != 0u",
+            "the glaze must key off whether the mesh has a texture at all",
+        ),
+        (
+            "mesh_uniform.show_texture != 0u",
+            "the neutral-material toggle must suppress the glaze too",
+        ),
+        (
+            "let texture_glaze = select(0.0, 1.0, textured)",
+            "an untextured STL must not be made glossy by the glaze",
+        ),
+        (
+            "let glaze_highlight =",
+            "the glaze highlight itself must exist",
+        ),
+    ] {
+        assert!(shader.contains(fragment), "{why}");
+    }
+    for (fragment, why) in [
+        (
+            "@builtin(front_facing) front_facing: bool",
+            "the shader needs the facing flag to tint a back face at all",
+        ),
+        (
+            "BACKFACE_INSPECTION_TINT",
+            "the back-face tint constant must stay named",
+        ),
+        (
+            "let backface_mix = select(0.0, 0.14, !front_facing)",
+            "the back-face mix should stay a restrained inspection cue",
+        ),
+    ] {
+        assert!(shader.contains(fragment), "{why}");
+    }
+    // A back-facing triangle gets a faint cool tint, never a dark grey: a
+    // flipped surface has to stay distinguishable without looking half-shadowed.
+    for forbidden in ["back_falloff", "- 0.018", "normal_faces_away"] {
+        assert!(
+            !shader.contains(forbidden),
+            "dental light must not grow a moving back-falloff or a grazing \
+             grey-wash half-shadow: found `{forbidden}`"
+        );
+    }
 }
 
 #[test]
@@ -77,5 +119,75 @@ fn gpu_error_latch_poison_is_ignored_not_fatal() {
     assert!(
         super::drain_gpu_error(&latch).is_none(),
         "poisoned latch drains to None instead of panicking"
+    );
+}
+
+/// A GPU fault must not come back as pixels.
+///
+/// The device's error handler records rather than panics, because a panic
+/// inside the shell surrogate is a crash. Nothing on the offscreen path used
+/// to ask what it recorded, so a refused buffer allocation -- a scan of three
+/// million triangles against the 256 MiB floor the limits used to request --
+/// produced a frame of zeroes that travelled on as a valid transparent
+/// thumbnail, and Explorer cached it against the file's timestamp.
+#[test]
+#[allow(clippy::expect_used)]
+fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() {
+    use crate::{GpuCamera, Offscreen, ThumbnailSpec};
+    use glam::{Mat4, Vec3};
+    use occluview_core::{MeshBuilder, Vertex};
+
+    // Like the crate's other GPU suites, this one needs an adapter -- the
+    // software fallback counts, and CI provides one.
+    let offscreen = pollster::block_on(Offscreen::new()).expect("an offscreen adapter");
+
+    let mut builder = MeshBuilder::new();
+    let a = builder.push_vertex(Vertex::at(Vec3::new(-0.5, -0.5, 0.0)).with_normal(Vec3::Z));
+    let b = builder.push_vertex(Vertex::at(Vec3::new(0.5, -0.5, 0.0)).with_normal(Vec3::Z));
+    let c = builder.push_vertex(Vertex::at(Vec3::new(0.0, 0.5, 0.0)).with_normal(Vec3::Z));
+    builder.push_triangle(a, b, c);
+    let mesh = builder.build().expect("a triangle is a mesh");
+    let camera = GpuCamera::new(
+        Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
+        Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(0.0, 0.0, 3.0),
+    );
+    let spec = ThumbnailSpec {
+        size_px: 32,
+        ..ThumbnailSpec::default()
+    };
+
+    let clean = pollster::block_on(offscreen.render(&mesh, &camera, spec));
+    assert!(clean.is_ok(), "a triangle renders: {clean:?}");
+
+    super::record_gpu_error(
+        &offscreen.renderer().gpu_error,
+        "buffer allocation refused".to_string(),
+    );
+    // Map the pixels away before asserting: a failure here must print the
+    // reason, not thirty-two rows of RGBA.
+    let faulted = pollster::block_on(offscreen.render(&mesh, &camera, spec))
+        .map(|pixels| format!("{} pixels", pixels.len()));
+    let error = faulted.expect_err("a recorded fault must not return pixels");
+    assert!(
+        format!("{error}").contains("buffer allocation refused"),
+        "the fault the driver reported must be the one the caller sees: {error}"
+    );
+}
+
+/// The buffer ceiling has to come from the adapter, not from the floor.
+///
+/// `using_resolution` copies the three texture dimensions and nothing else, so
+/// a request built from `downlevel_defaults` keeps that profile's 256 MiB
+/// `max_buffer_size` however capable the adapter is. Three million triangles
+/// need 309 MiB of vertex buffer -- an ordinary full-arch export with texture
+/// coordinates -- and the allocation was refused.
+#[test]
+fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
+    let source = include_str!("pipeline_init.rs");
+    assert!(
+        source.contains("max_buffer_size: adapter.limits().max_buffer_size,"),
+        "the headless device must ask for the adapter's buffer ceiling"
     );
 }

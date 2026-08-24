@@ -29,12 +29,8 @@ pub(super) fn fast_binary_stl_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, Forma
         });
     }
 
-    // Contiguous decimation: read EVERY triangle (never stride — striding is the
-    // see-through speckle), welding vertices onto a coarse grid so the reduced
-    // mesh stays a solid, opaque surface. Two passes over the fixed-size records
-    // (robust bounds first, then cluster) keep this O(triangles) and
-    // allocation-light regardless of how many millions of triangles the file
-    // declares.
+    // Read every triangle and weld vertices onto a coarse grid so the reduced
+    // mesh remains a solid surface. Robust bounds are computed first.
     let (min, max) = stl_robust_bounds(bytes, actual_count)?;
     let mut cluster = SurfaceGridCluster::new("STL", min, max, FAST_CLUSTER_GRID);
 
@@ -63,12 +59,7 @@ pub(super) fn fast_binary_stl_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, Forma
         );
     }
 
-    // Zero-triangle safety net: the file declared triangles (actual_count > 0)
-    // but none survived clustering (all degenerate / non-finite). Building here
-    // would yield a triangle mesh with 0 triangles that renders as a fully
-    // transparent tile. Decline instead (mirroring how the surface-PLY fast path
-    // declines) so the loader falls through to the full reader; if that is also
-    // blank, loading.rs's renderability guard surfaces the corrupt placeholder.
+    // Defer files whose triangles do not produce a renderable surface.
     if cluster.triangle_count() == 0 {
         return Err(FormatError::Deferred {
             format: "STL (binary)",

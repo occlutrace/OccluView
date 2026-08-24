@@ -584,9 +584,7 @@ pub(super) fn large_binary_ply_point_grid(min_bytes: usize) -> Vec<u8> {
 }
 
 /// A binary `little_endian` PLY *surface* (a tessellated plane with a real
-/// `face` element) sized to at least `min_bytes`. Used to prove that a surface
-/// PLY well above the fidelity cutoff thumbnails as a SURFACE (via the full
-/// reader) rather than being splatted as a cloud of points.
+/// `face` element) sized to at least `min_bytes` for surface thumbnail tests.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub(super) fn large_binary_ply_surface_grid(min_bytes: usize) -> Vec<u8> {
     const VERTEX_ROW_BYTES: usize = (4 * 3) + 3; // x,y,z f32 + r,g,b uchar

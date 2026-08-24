@@ -117,98 +117,6 @@ impl Offscreen {
         self.read_back(&output_buffer, padded, spec.size_px)
     }
 
-    /// Render an already-uploaded multi-mesh scene offscreen.
-    ///
-    /// # Errors
-    /// - [`RenderError::Surface`] on device loss or buffer-map failure.
-    #[allow(clippy::too_many_lines, clippy::unused_async)]
-    pub async fn render_prepared_scene(
-        &self,
-        scene: &PreparedScene,
-        camera: &GpuCamera,
-        spec: ThumbnailSpec,
-    ) -> Result<Vec<u8>, RenderError> {
-        let size = u32::from(spec.size_px);
-        let device = self.renderer.device();
-        let queue = self.renderer.queue();
-
-        let (color_texture, color_view) = make_color_target(device, size);
-        let (_depth_texture, depth_view) =
-            make_depth_target(device, size, self.renderer.depth_format());
-
-        self.renderer.set_point_splat_viewport(size, size);
-        self.renderer.set_camera(camera);
-        let camera_bg = self.renderer.camera_bind_group();
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("occluview prepared scene encoder"),
-        });
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("occluview prepared scene pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: spec.background[0],
-                        g: spec.background[1],
-                        b: spec.background[2],
-                        a: spec.background[3],
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                }),
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        scene.draw(
-            &self.renderer,
-            &mut rpass,
-            &camera_bg,
-            &self.texture_bind_group,
-        );
-        drop(rpass);
-
-        let padded = padded_bytes_per_row(size);
-        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("occluview prepared scene readback"),
-            size: u64::from(padded) * u64::from(size),
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
-                texture: &color_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyBuffer {
-                buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded),
-                    rows_per_image: Some(size),
-                },
-            },
-            extent(size),
-        );
-        queue.submit(std::iter::once(encoder.finish()));
-
-        self.read_back(&output_buffer, padded, spec.size_px)
-    }
-
     /// Render an already-uploaded scene with a clipping plane.
     ///
     /// # Errors
@@ -424,23 +332,6 @@ impl Offscreen {
         queue.submit(std::iter::once(encoder.finish()));
 
         self.read_back_extent(&output_buffer, padded, spec.size_px)
-    }
-
-    /// Render an already-uploaded scene into a rectangular app viewport with
-    /// an active clipping plane.
-    ///
-    /// # Errors
-    /// - [`RenderError::Surface`] on device loss or buffer-map failure.
-    #[allow(clippy::too_many_lines, clippy::unused_async)]
-    pub async fn render_prepared_viewport_with_clip(
-        &self,
-        scene: &PreparedScene,
-        camera: &GpuCamera,
-        clip: &ClipPlane,
-        spec: ViewportSpec,
-    ) -> Result<Vec<u8>, RenderError> {
-        self.render_prepared_viewport_with_clip_and_overlay(scene, None, camera, clip, spec)
-            .await
     }
 
     /// Render an already-uploaded scene and optional overlay into a

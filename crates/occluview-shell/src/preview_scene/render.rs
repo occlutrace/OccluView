@@ -66,60 +66,20 @@ impl PreviewSceneState {
                 size_px: [width, height],
                 background,
             },
-        ))?;
+        ))
+        .inspect_err(|_| {
+            // A failed render means the shared device may be lost (driver
+            // reset, TDR). Retire it so the next preview load creates a fresh
+            // renderer instead of failing on the same dead device forever.
+            crate::offscreen_factory::discard_shared_shell_offscreen(&self.offscreen);
+        })?;
         Ok(present_app_convention_rows(rgba, [width, height]))
     }
 }
 
-/// ── PREVIEW-PANE VERTICAL PARITY (read this before touching any sign here) ──
-///
-/// The Explorer preview pane orbited *opposite* to the main app three times.
-/// The recurring root cause is a **parity war between two independent flips**,
-/// not a camera-math bug. The camera path is byte-identical to the app:
-///
-///   Win32 client delta (Y-down) ─▶ `win32_preview_orbit_delta` (identity)
-///     ─▶ `orbit_delta_from_pointer_motion` ─▶ `Camera::orbit_view_by`
-///
-/// The app feeds the SAME shared functions with the SAME egui Y-down delta, so
-/// for one gesture the camera moves the same way in both. What differs is the
-/// number of vertical flips between the rendered framebuffer and the pixels the
-/// user actually sees:
-///
-///   FRAMEBUFFER row 0 = TOP of the view (wgpu clip +Y ↦ framebuffer top row).
-///
-///   • APP path:   framebuffer ──(egui paints it directly, 0 flips)──▶ screen
-///                 → screen row 0 = view top.  RIGHT-SIDE-UP.
-///
-///   • PREVIEW path: framebuffer
-///        ──(`read_back_extent` REVERSES rows, +1 flip)──▶ readback (BOTTOM-UP)
-///        ──(`pixels_to_hbitmap` negative `biHeight` = top-down DIB, 0 flip)──▶ screen
-///                 → screen row 0 = view BOTTOM.  UPSIDE-DOWN (mirrored vs app).
-///
-/// So the preview differs from the app by EXACTLY ONE flip, living in the shared
-/// `occluview_render::read_back_extent` (which the app never calls). That extra
-/// flip is why "drag down moves the model UP": the camera pitches exactly like
-/// the app, but the image it lands in is mirrored top↔bottom, so the motion
-/// reads inverted. Left/right is untouched because nothing mirrors horizontally.
-///
-/// Every past "fix" toggled ONE side of this parity in isolation — either
-/// negating the input `dy` (see `win32_preview_orbit_delta`, kept IDENTITY on
-/// purpose) or flipping a DIB / readback sign in the render path — so the two
-/// flips kept leap-frogging each other and the bug came back each time the other
-/// side moved.
-///
-/// The durable fix, pinned by tests, is to make the PRESENTED buffer match the
-/// APP convention right here, at the one cross-platform seam the preview owns,
-/// and to keep the input mapping identical to the app (NO compensating sign in
-/// the input adapter). We cancel `read_back_extent`'s flip once, explicitly, so
-/// the buffer we hand to the (top-down, non-flipping) blit is right-side-up —
-/// world +Y at row 0 — exactly like the app viewport. `pixels_to_hbitmap` must
-/// stay a top-down, non-flipping DIB for this to hold end to end; that contract
-/// is locked by `blit_is_top_down_non_flipping_contract`.
-///
-/// If a future change makes `read_back_extent` (or any upstream stage) stop
-/// flipping, delete THIS flip in the same commit — the parity-guard test
-/// `preview_presented_buffer_is_app_convention_right_side_up` will fail loudly
-/// and point here rather than letting the inversion resurface silently.
+/// Convert bottom-up GPU readback rows to the app's top-down image convention.
+/// Input deltas use the same orientation as the main viewport; this is the only
+/// preview-specific vertical flip.
 fn present_app_convention_rows(mut rgba: Vec<u8>, size_px: [u16; 2]) -> Vec<u8> {
     let width = usize::from(size_px[0].max(1));
     let height = usize::from(size_px[1].max(1));
@@ -192,18 +152,7 @@ mod tests {
 
     const PARITY_SIZE: [u16; 2] = [64, 64];
 
-    /// PARITY GUARD (static, no drag). The preview's PRESENTED buffer must be
-    /// right-side-up in the app convention: world **+Y** at the TOP of the frame.
-    ///
-    /// The app paints the framebuffer directly (row 0 = view top, +Y up); the
-    /// preview instead goes through `read_back_extent` (which reverses rows) and
-    /// a top-down non-flipping DIB, so without the compensating flip in
-    /// `present_app_convention_rows` the marker lands at the BOTTOM and the whole
-    /// pane reads upside-down — which the user feels as inverted vertical orbit.
-    ///
-    /// This is the "any future mirror-fix fails HERE, not silently in the input"
-    /// guard: flip the present path again and the marker drops to the bottom half
-    /// and this test fails, pointing straight at the parity map in `render.rs`.
+    /// The presented preview buffer uses the same top-down convention as the app.
     #[test]
     fn preview_presented_buffer_is_app_convention_right_side_up() {
         let mut state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
@@ -242,12 +191,8 @@ mod tests {
         );
     }
 
-    /// PIXEL-LEVEL END-TO-END REGRESSION (the unbreakable one). A downward drag
-    /// (positive `dy` in Win32 client coords) through the SAME present path the
-    /// pane blits must move the top marker DOWN the screen — its centroid row
-    /// INCREASES — exactly like the main app viewport (drag down rotates the top
-    /// toward the viewer). If either the input sign or the present parity flips,
-    /// the marker moves UP instead and this fails.
+    /// A downward Win32 drag moves the top marker down through the presented
+    /// preview path, matching the main viewport's camera convention.
     #[test]
     fn preview_downward_drag_moves_top_feature_down_on_screen() {
         let mut state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
@@ -280,32 +225,46 @@ mod tests {
         );
     }
 
-    /// BLIT SOURCE CONTRACT. The presented RGBA buffer's orientation only equals
-    /// the on-screen orientation if `pixels_to_hbitmap` blits it top-down without
-    /// reordering rows. That final blit is Windows-only, so we can't render it on
-    /// Linux; instead we pin its contract at the source so a change to it fails
-    /// here (and is caught against the render.rs parity map) rather than silently
-    /// re-inverting the pane.
+    /// The Windows blit consumes the presented buffer top-down without another
+    /// row reversal.
     #[test]
     fn blit_is_top_down_non_flipping_contract() {
         let com_src = include_str!("../com.rs");
-        let start = com_src
-            .find("fn pixels_to_hbitmap")
-            .expect("pixels_to_hbitmap should exist in com.rs");
-        let body = &com_src[start..(start + 1600).min(com_src.len())];
+        // The DIB header lives in the one function that allocates one; the
+        // swizzle that feeds it lives in `pixels_to_hbitmap`. Both halves of
+        // the contract are checked where they actually are.
+        let allocator = function_body(com_src, "fn create_top_down_bgra_dib");
         assert!(
-            body.contains("biHeight: -(height as i32)"),
+            allocator.contains("biHeight: -(height as i32)"),
             "the preview/thumbnail blit must use a NEGATIVE biHeight (top-down DIB) \
              so presented-buffer row 0 maps to the top of the window"
         );
         // A top-down DIB must NOT also reorder rows, or the two flips would cancel
         // and reintroduce the mirror. The swizzle must stay a straight row-preserving
         // zip (no `height - 1 - y` style row math).
+        let swizzle = function_body(com_src, "fn pixels_to_hbitmap");
         assert!(
-            !body.contains("height as usize - 1 -") && !body.contains("- 1 - y"),
+            !swizzle.contains("height as usize - 1 -") && !swizzle.contains("- 1 - y"),
             "pixels_to_hbitmap must not vertically flip rows; keep it a straight \
              top-down, row-preserving swizzle"
         );
+        assert!(
+            swizzle.contains("create_top_down_bgra_dib(width, height, &bgra)"),
+            "the swizzle must hand its bytes to the one allocator, not carry its \
+             own copy of the header and the GDI leak guard"
+        );
+    }
+
+    /// Everything from a function's signature to the next top-level item.
+    fn function_body<'a>(source: &'a str, signature: &str) -> &'a str {
+        let start = source.find(signature);
+        assert!(start.is_some(), "missing {signature}");
+        let Some(start) = start else {
+            return "";
+        };
+        let body = &source[start..];
+        let end = body.find("\n}\n").map_or(body.len(), |offset| offset + 3);
+        &body[..end]
     }
 
     #[test]

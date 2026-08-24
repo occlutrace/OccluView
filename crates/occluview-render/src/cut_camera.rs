@@ -4,9 +4,11 @@
 //! orthographically (no perspective distortion). This is the standard dental
 //! CBCT cross-section view: an axial/coronal/sagittal slice shown flat.
 //!
-//! Unlike the orbital [`occluview_core::Camera`] (perspective, occlusal bias),
-//! this camera is defined directly by a view + projection matrix pair, fitted
-//! to the mesh's bounding box projected onto the plane.
+//! Unlike the orbital [`occluview_core::Camera`], which the operator moves
+//! freely from an occlusal default, this camera is not steerable at all: it is
+//! a fixed view + projection matrix pair, fitted to the mesh's bounding box
+//! projected onto the plane. Both are orthographic --
+//! [`occluview_core::CameraProjection`] has exactly one variant.
 
 use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;

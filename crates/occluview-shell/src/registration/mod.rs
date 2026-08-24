@@ -49,40 +49,48 @@ use paths::app_exe_path;
 use registry::delete_tree;
 
 use crate::com::{OCCLUVIEW_PREVIEW_CLSID, OCCLUVIEW_THUMBNAIL_CLSID};
-use crate::{APP_EXE_NAME, SUPPORTED_EXTENSIONS};
+use crate::{owns_extension, APP_EXE_NAME, SUPPORTED_EXTENSIONS};
 use windows::core::{HRESULT, HSTRING, PCWSTR};
-use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Foundation::{E_FAIL, HMODULE, S_OK};
 use windows::Win32::System::LibraryLoader::{
     GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
     GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 };
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
 
-const S_OK: HRESULT = HRESULT(0);
-const E_FAIL: HRESULT = HRESULT(-2_147_418_235);
-
 /// `regsvr32 occluview_shell.dll` calls this. Creates all registry entries.
+///
+/// Wrapped in `com_entry` like every other exported COM boundary: a panic
+/// unwinding out of an `extern "system"` fn aborts the calling process.
 #[no_mangle]
 pub extern "system" fn DllRegisterServer() -> HRESULT {
-    match register_all() {
-        Ok(()) => S_OK,
-        Err(e) => {
-            tracing::error!(error = ?e, "DllRegisterServer failed");
-            E_FAIL
-        }
-    }
+    crate::com::com_entry(
+        "DllRegisterServer",
+        || E_FAIL,
+        || match register_all() {
+            Ok(()) => S_OK,
+            Err(e) => {
+                tracing::error!(error = ?e, "DllRegisterServer failed");
+                E_FAIL
+            }
+        },
+    )
 }
 
 /// `regsvr32 /u occluview_shell.dll` calls this. Removes all entries.
 #[no_mangle]
 pub extern "system" fn DllUnregisterServer() -> HRESULT {
-    match unregister_all() {
-        Ok(()) => S_OK,
-        Err(e) => {
-            tracing::error!(error = ?e, "DllUnregisterServer failed");
-            E_FAIL
-        }
-    }
+    crate::com::com_entry(
+        "DllUnregisterServer",
+        || E_FAIL,
+        || match unregister_all() {
+            Ok(()) => S_OK,
+            Err(e) => {
+                tracing::error!(error = ?e, "DllUnregisterServer failed");
+                E_FAIL
+            }
+        },
+    )
 }
 
 /// Write every registry entry. Idempotent — re-running over existing entries
@@ -101,6 +109,12 @@ fn register_all() -> windows::core::Result<()> {
     let our_clsid = HSTRING::from(OCCLUVIEW_THUMBNAIL_CLSID);
     let preview_clsid = HSTRING::from(OCCLUVIEW_PREVIEW_CLSID);
     for &ext in SUPPORTED_EXTENSIONS {
+        // Extension-wide handlers only for extensions OccluView owns. `.dcm`
+        // is shared with medical DICOM, so it gets the Open-with surface below
+        // and nothing that fires without the user asking.
+        if !owns_extension(ext) {
+            continue;
+        }
         register_extension(ext, &our_clsid)?;
         register_preview_extension(ext, &preview_clsid)?;
         register_system_extension(ext, &our_clsid)?;
@@ -108,8 +122,15 @@ fn register_all() -> windows::core::Result<()> {
     }
     if let Some(app_path) = app_exe_path(&dll_path) {
         for &ext in SUPPORTED_EXTENSIONS {
+            // The ProgID and the Open-with entries are opt-in surfaces: they
+            // put OccluView in the "Open with" list and give it the icon,
+            // thumbnail and preview once a user picks it. Those are safe for
+            // every supported extension. The extension fallback writes the
+            // machine-wide default ProgID, so it is not.
             register_progid(ext, &app_path)?;
-            register_extension_fallback(ext, &app_path)?;
+            if owns_extension(ext) {
+                register_extension_fallback(ext, &app_path)?;
+            }
             register_open_with(ext)?;
         }
     } else {
@@ -130,6 +151,10 @@ fn unregister_all() -> windows::core::Result<()> {
     unregister_preview_handler_clsid()?;
     let _ = unregister_approved_shell_extension();
     let _ = unregister_preview_handlers_list();
+    // Every extension, including the ones `register_all` now leaves alone: a
+    // build before this policy did claim `.dcm`, and uninstalling that build
+    // has to give it back. Each of these removes a value only when it still
+    // points at OccluView, so a foreign handler is never touched.
     for &ext in SUPPORTED_EXTENSIONS {
         // Missing entry is fine (user may have deleted it); ignore not-found.
         let _ = unregister_extension(ext);
