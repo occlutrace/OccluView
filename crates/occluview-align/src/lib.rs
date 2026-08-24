@@ -1,17 +1,15 @@
 //! Scan-to-scan registration and deviation metrology for dental meshes.
 //!
-//! Three stages, mirroring how lab and metrology software does it:
-//!   1. ALIGN  — a rigid fit from clicked surface point pairs;
-//!   2. REFINE — trimmed point-to-plane ICP against the fixed surface;
-//!   3. PROOF  — a signed deviation map (± mm along the fixed normal).
+//! The pipeline has three stages:
+//! 1. Align clicked surface point pairs with a rigid fit.
+//! 2. Refine the pose with trimmed point-to-plane ICP.
+//! 3. Produce signed deviations along the fixed surface normal.
 //!
 //! # What the deviation number means
 //!
-//! This matters more than anything else in the crate, because the number ends
-//! up in front of a clinician. A deviation map measures the distance from each
-//! moving vertex to the **nearest point on the fixed surface**. That is not the
-//! distance between corresponding pieces of material, and the difference is not
-//! academic:
+//! A deviation map measures the distance from each moving vertex to the
+//! **nearest point on the fixed surface**. This is not a material
+//! correspondence:
 //!
 //! * It is **one-sided**. Fixed surface the moving scan never covered is not
 //!   measured at all, so a scan with a hole in it can report a perfect fit. What
@@ -26,9 +24,8 @@
 //!   [`Observability::hidden_displacement_mm`] turns a reported RMS into the
 //!   largest true displacement that could be hiding behind it.
 //!
-//! Report [`deviation_stats`] with [`observability()`] beside it, and read the
-//! unmeasured counts: on its own the distance figure understates, and there is
-//! no setting that makes it not.
+//! Report [`deviation_stats`] with [`observability()`] and include the
+//! unmeasured counts. The distance alone is a lower bound.
 //!
 //! The crate is a leaf: plain slices in, plain values out. It never allocates
 //! unboundedly, never panics on hostile input, and is deterministic — no RNG,
@@ -62,9 +59,9 @@ pub use deviation::{
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
-pub use pairs::{fit_pairs, FitRejection, PairFit};
+pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 pub use rigid::Rigid;
-pub use sample::extent_of;
+pub use sample::bounds_of;
 pub use surface::{SurfaceHit, SurfaceIndex};
 
 use std::sync::atomic::{AtomicBool, Ordering};

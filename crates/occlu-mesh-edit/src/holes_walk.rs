@@ -11,8 +11,73 @@ use super::{MeshEditBuffers, MeshEditError};
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
-pub(crate) type BoundaryOwnerMap = HashMap<(usize, usize), usize>;
 pub(crate) type BoundaryNextMap = HashMap<usize, usize>;
+
+/// Every directed edge of a mesh, sorted with its owning triangle.
+///
+/// A packed `u64` key and binary search avoid duplicate hash tables. Vertex
+/// indices are bounded by `Mesh::new` and fit in `u32`.
+pub(crate) struct BoundaryOwners {
+    /// `(packed edge, owning triangle)`, sorted by key, one entry per edge.
+    edges: Vec<(u64, u32)>,
+}
+
+impl BoundaryOwners {
+    /// Pack a directed edge into a sortable key.
+    fn key(from: usize, to: usize) -> u64 {
+        ((from as u64) << 32) | (to as u64 & 0xffff_ffff)
+    }
+
+    /// Collect the directed edges of `mesh`, last owner winning for a repeated
+    /// edge -- which is what the hash map it replaces did.
+    fn from_mesh(mesh: &MeshEditBuffers) -> Result<Self, MeshEditError> {
+        let mut edges = Vec::with_capacity(mesh.triangle_count() * 3);
+        for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
+            let [a, b, c] = triangle_vertices(triangle, triangle_index)?;
+            let owner = u32::try_from(triangle_index).unwrap_or(u32::MAX);
+            for (from, to) in [(a, b), (b, c), (c, a)] {
+                edges.push((Self::key(from, to), owner));
+            }
+        }
+        // Stable, so equal keys keep the order they were pushed in and the
+        // last of a run is the one the hash map would have kept.
+        edges.sort_by_key(|(key, _)| *key);
+        let mut deduped: Vec<(u64, u32)> = Vec::with_capacity(edges.len());
+        for entry in edges {
+            match deduped.last_mut() {
+                Some(last) if last.0 == entry.0 => last.1 = entry.1,
+                _ => deduped.push(entry),
+            }
+        }
+        Ok(Self { edges: deduped })
+    }
+
+    /// The triangle owning the directed edge `from -> to`.
+    pub(crate) fn owner(&self, from: usize, to: usize) -> Option<usize> {
+        let key = Self::key(from, to);
+        self.edges
+            .binary_search_by_key(&key, |(key, _)| *key)
+            .ok()
+            .and_then(|at| self.edges.get(at))
+            .map(|(_, owner)| *owner as usize)
+    }
+
+    /// Whether the directed edge `from -> to` exists.
+    fn contains(&self, from: usize, to: usize) -> bool {
+        self.edges
+            .binary_search_by_key(&Self::key(from, to), |(key, _)| *key)
+            .is_ok()
+    }
+
+    /// Every directed edge, in key order.
+    fn iter(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.edges.iter().map(|(key, _)| {
+            let from = usize::try_from(key >> 32).unwrap_or(usize::MAX);
+            let to = usize::try_from(key & 0xffff_ffff).unwrap_or(usize::MAX);
+            (from, to)
+        })
+    }
+}
 
 /// Follow the boundary half-edge chain from `start` until it closes back on
 /// itself. Non-simple / broken chains return None; every touched vertex is
@@ -144,16 +209,8 @@ fn first_valid_coincident_pair(
 
 pub(crate) fn build_boundary_maps(
     mesh: &MeshEditBuffers,
-) -> Result<(BoundaryNextMap, BoundaryOwnerMap, Vec<usize>), MeshEditError> {
-    let mut directed_edges = HashSet::with_capacity(mesh.triangle_count() * 3);
-    let mut owner_by_edge = HashMap::with_capacity(mesh.triangle_count() * 3);
-    for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
-        let [a, b, c] = triangle_vertices(triangle, triangle_index)?;
-        for edge in [(a, b), (b, c), (c, a)] {
-            directed_edges.insert(edge);
-            owner_by_edge.insert(edge, triangle_index);
-        }
-    }
+) -> Result<(BoundaryNextMap, BoundaryOwners, Vec<usize>), MeshEditError> {
+    let owner_by_edge = BoundaryOwners::from_mesh(mesh)?;
 
     // Directed edges with no opposing twin are boundary half-edges. A clean
     // rim is a simple directed cycle: every boundary vertex has exactly one
@@ -161,8 +218,8 @@ pub(crate) fn build_boundary_maps(
     let mut boundary_edges = Vec::new();
     let mut out_degree: HashMap<usize, usize> = HashMap::new();
     let mut in_degree: HashMap<usize, usize> = HashMap::new();
-    for &(a, b) in &directed_edges {
-        if !directed_edges.contains(&(b, a)) {
+    for (a, b) in owner_by_edge.iter() {
+        if !owner_by_edge.contains(b, a) {
             boundary_edges.push((a, b));
             *out_degree.entry(a).or_default() += 1;
             *in_degree.entry(b).or_default() += 1;
@@ -190,8 +247,8 @@ pub(crate) fn build_boundary_maps(
         // skipped loop, so pinched rims are never quietly dropped.
         boundary_starts.push(a);
     }
-    // `directed_edges` is a HashSet, so iteration order (and thus fill order,
-    // triangulation, and appended vertex numbering) is otherwise random per run.
+    // Sorted for the same reason the edges are: fill order decides
+    // triangulation and the numbering of appended vertices.
     boundary_starts.sort_unstable();
     boundary_starts.dedup();
 

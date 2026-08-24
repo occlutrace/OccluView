@@ -38,11 +38,7 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
     out
 }
 
-/// Area-weighted vertex normals for the whole soup, normalized.
-///
-/// Computed from triangle geometry: a scan's stored normals routinely disagree
-/// with its own winding, and the orientation test that decides whether a
-/// correspondence is accepted would then reject the right matches.
+/// Area-weighted vertex normals computed from triangle winding.
 #[must_use]
 pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
     let count = soup.vertex_count();
@@ -84,10 +80,13 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
     normals
 }
 
-/// Bounding-box diagonal of the soup, in millimetres. Zero when nothing is
-/// usable — callers treat that as "no plausible motion".
+/// Bounding-box centre and diagonal of the soup, in millimetres, in the
+/// soup's own frame.
+///
+/// `None` when no finite vertex is available. The centre is reported in the
+/// soup's local frame; callers must not infer it from the coordinate origin.
 #[must_use]
-pub fn extent_of(soup: Soup<'_>) -> f64 {
+pub fn bounds_of(soup: Soup<'_>) -> Option<(DVec3, f64)> {
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut seen = false;
@@ -98,16 +97,13 @@ pub fn extent_of(soup: Soup<'_>) -> f64 {
             seen = true;
         }
     }
-    if seen {
-        (max - min).length()
-    } else {
-        0.0
-    }
+    seen.then(|| ((min + max) * 0.5, (max - min).length()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{extent_of, sample_vertices, vertex_normals};
+    #![allow(clippy::panic)]
+    use super::{bounds_of, sample_vertices, vertex_normals};
     use crate::Soup;
     use glam::DVec3;
 
@@ -167,14 +163,17 @@ mod tests {
     }
 
     #[test]
-    fn the_extent_is_the_bounding_box_diagonal() {
+    fn the_bounds_diagonal_spans_the_soup() {
         let (positions, indices) = quad();
         let soup = Soup {
             positions: &positions,
             indices: &indices,
             mask: None,
         };
-        assert!((extent_of(soup) - 2.0f64.sqrt()).abs() < 1e-9);
+        let Some((_, diagonal)) = bounds_of(soup) else {
+            panic!("a quad has bounds");
+        };
+        assert!((diagonal - 2.0f64.sqrt()).abs() < 1e-9);
     }
 
     #[test]
@@ -184,7 +183,7 @@ mod tests {
             indices: &[],
             mask: None,
         };
-        assert_eq!(extent_of(soup), 0.0);
+        assert!(bounds_of(soup).is_none(), "an empty soup has no bounds");
         assert!(sample_vertices(soup, 8).is_empty());
     }
 }

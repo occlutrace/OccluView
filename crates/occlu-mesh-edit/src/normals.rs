@@ -4,13 +4,39 @@ use glam::Vec3;
 /// normal. Scale-free: the test compares twice the facet's area against its own
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a
 /// 10 um sliver.
+///
+/// One of three copies. This crate is a leaf and must not depend on
+/// `occluview-core`, which holds `occluview_core::DEGENERATE_AREA_SIN`;
+/// `occluview-hps` keeps the third for the same reason. Change one, change all
+/// three: the fix of 2026-07-25 landed in one crate and reached the others four
+/// weeks later, and for those four weeks every scan opened through the other
+/// paths lost shading on facets under 20 um.
 const DEGENERATE_AREA_SIN: f32 = 1e-10;
 use std::collections::HashMap;
 
 use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
 
 const DUPLICATE_NORMAL_DOT: f32 = 0.5;
-const DUPLICATE_POSITION_EPS_MM: f32 = 0.002;
+
+/// Past this many vertices at one position, agreement is judged against the
+/// group's mean normal instead of against every other member.
+///
+/// Copied from `occluview-core` for the reason above. Bounding core's loader
+/// path and leaving this one pairwise made things worse, not better: the file
+/// now opens in milliseconds, so the pile reaches the scene, and the first
+/// Repair, Close holes or Invert normals runs the pairwise form on the UI
+/// thread with no repaint, no progress and no cancel. In the test profile
+/// 20000 coincident vertices cost 820 ms pairwise against 16 ms bounded, and
+/// pairwise grows as the square.
+const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
+/// Two positions within this distance are the same point for shading.
+///
+/// One number decides which vertices share a normal, and both crates need it:
+/// core welds at load, this crate welds after every brush stroke and hole fill.
+/// Written twice, under two names, with two byte-identical key functions, the
+/// same scan shades one way on open and another way after any edit -- a seam
+/// that appears mid-session with nothing to blame.
+pub const COINCIDENT_POSITION_EPS_MM: f32 = 0.002;
 
 /// Recompute every vertex normal from triangle winding.
 ///
@@ -77,11 +103,66 @@ pub fn recompute_all_normals(
     Ok(())
 }
 
+/// How many directions one coincident group may hold before it is left alone.
+///
+/// Copied from `occluview-core` alongside the bound above.
+const MAX_DUPLICATE_CLUSTERS: usize = 16;
+
+/// Average a large coincident group by clustering it, not by one global mean.
+///
+/// A single mean is right while the group points one way and wrong the moment
+/// it does not: K coincident vertices at a hard crease form two clusters ninety
+/// degrees apart, the mean lands on the bisector, both clusters agree with it
+/// to within sixty degrees, and the crease is welded flat. Members join the
+/// first cluster they agree with instead, so a coherent group forms one cluster
+/// and a crease keeps its two. Linear in the group for any bounded cluster
+/// count.
+fn average_by_cluster(indices: &[usize], source_normals: &[Vec3], smoothed: &mut [Vec3]) {
+    let mut sums: Vec<Vec3> = Vec::new();
+    let mut assigned: Vec<(usize, usize)> = Vec::with_capacity(indices.len());
+
+    for &index in indices {
+        let current = source_normals[index];
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let existing = sums
+            .iter()
+            .position(|sum| sum.normalize_or_zero().dot(current) >= DUPLICATE_NORMAL_DOT);
+        if let Some(cluster) = existing {
+            sums[cluster] += current;
+            assigned.push((index, cluster));
+        } else {
+            if sums.len() == MAX_DUPLICATE_CLUSTERS {
+                // Too many directions to be a surface. Leave them as they
+                // arrived.
+                return;
+            }
+            sums.push(current);
+            assigned.push((index, sums.len() - 1));
+        }
+    }
+
+    for (index, cluster) in assigned {
+        let mean = sums[cluster].normalize_or_zero();
+        if mean.length_squared() > f32::EPSILON {
+            smoothed[index] = mean;
+        }
+    }
+}
+
+/// The duplicate-averaging pass alone, for tests that need to see it without
+/// the recompute above it replacing the normals first.
+#[cfg(test)]
+pub(crate) fn smooth_duplicate_position_normals_for_tests(vertices: &mut [EditVertex]) {
+    smooth_duplicate_position_normals(vertices);
+}
+
 fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     let mut groups: HashMap<[i32; 3], Vec<usize>> = HashMap::with_capacity(vertices.len());
     for (index, vertex) in vertices.iter().enumerate() {
         groups
-            .entry(position_key(vertex.position))
+            .entry(coincident_position_key(vertex.position))
             .or_default()
             .push(index);
     }
@@ -100,6 +181,13 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     let mut smoothed = source_normals.clone();
 
     for indices in groups.values().filter(|indices| indices.len() > 1) {
+        // Past the threshold the group is clustered instead, in one greedy
+        // pass. See `average_by_cluster` for why a single mean is wrong.
+        if indices.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
+            average_by_cluster(indices, &source_normals, &mut smoothed);
+            continue;
+        }
+
         for &index in indices {
             let current = source_normals[index];
             if current.length_squared() <= f32::EPSILON {
@@ -129,7 +217,12 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     }
 }
 
-fn position_key(position: [f32; 3]) -> [i32; 3] {
+/// Quantize a position onto the [`COINCIDENT_POSITION_EPS_MM`] lattice.
+///
+/// Equal keys mean "the same point" for normal welding. Shared with
+/// `occluview-core` so both sides of an edit agree.
+#[must_use]
+pub fn coincident_position_key(position: [f32; 3]) -> [i32; 3] {
     [
         position_lane_key(position[0]),
         position_lane_key(position[1]),
@@ -143,12 +236,58 @@ fn position_lane_key(value: f32) -> i32 {
         return 0;
     }
 
-    let scaled = f64::from(value / DUPLICATE_POSITION_EPS_MM).round();
+    let scaled = f64::from(value / COINCIDENT_POSITION_EPS_MM).round();
     if scaled <= f64::from(i32::MIN) {
         i32::MIN
     } else if scaled >= f64::from(i32::MAX) {
         i32::MAX
     } else {
         scaled as i32
+    }
+}
+
+#[cfg(test)]
+mod shared_tolerance_tests {
+    use super::{coincident_position_key, COINCIDENT_POSITION_EPS_MM};
+
+    #[test]
+    fn one_tolerance_decides_which_vertices_share_a_normal() {
+        // The seam described on `COINCIDENT_POSITION_EPS_MM`: two copies of
+        // the number and the same scan shades one way on open, another after
+        // any edit.
+        let origin = [0.0_f32, 0.0, 0.0];
+        let inside = [COINCIDENT_POSITION_EPS_MM * 0.4, 0.0, 0.0];
+        let outside = [COINCIDENT_POSITION_EPS_MM * 4.0, 0.0, 0.0];
+
+        assert_eq!(
+            coincident_position_key(origin),
+            coincident_position_key(inside),
+            "positions inside the tolerance must be one point"
+        );
+        assert_ne!(
+            coincident_position_key(origin),
+            coincident_position_key(outside),
+            "positions well outside it must not be"
+        );
+        // Non-finite input has to answer something rather than panic: it
+        // arrives from files.
+        assert_eq!(
+            coincident_position_key([f32::NAN, f32::INFINITY, 0.0]),
+            [0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn core_does_not_keep_its_own_copy() {
+        let core = include_str!("../../occluview-core/src/mesh/normals.rs");
+        assert!(
+            core.contains("use occlu_mesh_edit::coincident_position_key"),
+            "core must use the shared key rather than redefining it"
+        );
+        let redefinition = format!("const {}_EPS_MM", "SMOOTH_POSITION");
+        assert!(
+            !core.contains(&redefinition),
+            "a second tolerance is how the two shadings drifted apart"
+        );
     }
 }

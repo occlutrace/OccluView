@@ -1,8 +1,4 @@
-//! The tooth-socket close-holes workflow: digitally extract a tooth (lasso
-//! delete), then close the socket. Regression coverage for the "closed N holes
-//! (M damaged rims skipped)" bug — a jagged cut left needle nicks and a socket
-//! rim too big for the old min-area cap, so the one rim the operator wanted
-//! closed stayed open. These tests exercise the REAL kernels the app runs.
+//! End-to-end coverage for lasso extraction followed by socket capping.
 
 // Grid/geometry fixtures use conventional short axis names (i, j, u, v, x, y).
 #![allow(clippy::many_single_char_names)]
@@ -15,9 +11,7 @@ use crate::{EditVertex, FaceSelection, MeshEditBuffers, MeshEditOptions, MeshTop
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
-/// A dense curved arch segment ("gum") carrying a raised tooth dome, so a
-/// lasso deletion leaves a socket rim that wraps out of plane — the case the
-/// planar caps refuse.
+/// Curved arch and raised tooth dome; the socket rim is non-planar.
 fn dome_with_tooth(nu: usize, nv: usize) -> MeshEditBuffers {
     let (width, depth, vault) = (20.0_f32, 14.0_f32, 6.0_f32);
     let (tooth_cx, tooth_r, tooth_h) = (0.15_f32, 0.26_f32, 2.4_f32);
@@ -50,9 +44,7 @@ fn dome_with_tooth(nu: usize, nv: usize) -> MeshEditBuffers {
     }
 }
 
-/// A jagged "lasso" mask around the tooth: one connected region (a real tooth
-/// is one region) whose high-frequency boundary makes the per-triangle centroid
-/// test isolate needle nicks along the cut.
+/// A connected, high-frequency lasso mask around the tooth.
 fn lasso_delete_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
     let (cx, cy) = (0.15_f32 * 20.0, 0.0_f32);
     let segs = 220;

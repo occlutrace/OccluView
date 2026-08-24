@@ -1,4 +1,5 @@
 use super::*;
+use crate::normals::smooth_duplicate_position_normals_for_tests;
 
 #[test]
 fn point_cloud_face_edit_validation_is_typed() {
@@ -425,4 +426,105 @@ fn fill_holes_respects_selection_scoped_loop_gating() {
     .expect("fully selected fill");
     assert_eq!(full.report.filled_holes, 1);
     assert_eq!(full.report.output_triangles, 6);
+}
+
+/// A pile of coincident vertices must not make the duplicate-normal pass
+/// quadratic.
+///
+/// Bounding core's loader path alone makes it worse, not better: the file then
+/// opens in milliseconds, the pile reaches the scene, and the first Repair,
+/// Close holes or Invert normals runs this on the UI thread with no repaint, no
+/// progress and no cancel.
+#[test]
+fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
+    let group = 20_000usize;
+    let mut vertices = Vec::with_capacity(group * 3);
+    let mut indices = Vec::with_capacity(group * 3);
+    for i in 0..group {
+        let angle = i as f32 * 0.0001;
+        let spread = i as f32 * 0.001;
+        let mut shared = v([0.0, 0.0, 0.0]);
+        shared.normal = [angle.cos(), angle.sin(), 0.0];
+        for (corner, position) in [[0.0, 0.0, 0.0], [1.0, spread, 0.0], [2.0, spread, 0.0]]
+            .into_iter()
+            .enumerate()
+        {
+            let mut vertex = v(position);
+            if corner == 0 {
+                vertex = shared;
+            }
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(vertex);
+        }
+    }
+
+    let started = std::time::Instant::now();
+    recompute_all_normals(&mut vertices, &indices).expect("valid mesh");
+    let elapsed = started.elapsed();
+
+    // Measured here in the test profile at this k: 820 ms pairwise against
+    // 16 ms bounded. 300 ms sits between them with room on either side for a
+    // runner that is not this machine.
+    assert!(
+        elapsed < std::time::Duration::from_millis(300),
+        "coincident-group normal smoothing took {elapsed:?} on the edit path; \
+         it is quadratic again"
+    );
+    for vertex in &vertices {
+        let normal = glam::Vec3::from_array(vertex.normal);
+        assert!(
+            normal.is_finite(),
+            "every vertex should keep a finite normal, got {normal:?}"
+        );
+    }
+}
+
+/// A crease inside a coincident pile past the bounded threshold must survive.
+///
+/// The same defect as in `occluview-core`: judging the whole group against one
+/// mean puts that mean on the bisector of two clusters and welds both to it.
+#[test]
+fn a_crease_survives_a_group_past_the_threshold_on_the_edit_path() {
+    let group = 400usize;
+    let mut vertices = Vec::with_capacity(group * 3);
+    let mut indices = Vec::with_capacity(group * 3);
+    for i in 0..group {
+        let facing_up = i % 2 == 0;
+        let spread = i as f32 * 0.001;
+        for corner in 0..3 {
+            let mut vertex = v(if corner == 0 {
+                [0.0, 0.0, 0.0]
+            } else {
+                [corner as f32, spread, 0.0]
+            });
+            if corner == 0 {
+                vertex.normal = if facing_up {
+                    [0.0, 1.0, 0.0]
+                } else {
+                    [1.0, 0.0, 0.0]
+                };
+            }
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(vertex);
+        }
+    }
+
+    // Only the duplicate-averaging pass, not the recompute above it: the
+    // recompute would replace these normals with the facets' own.
+    smooth_duplicate_position_normals_for_tests(&mut vertices);
+
+    let shared: Vec<glam::Vec3> = vertices
+        .iter()
+        .filter(|vertex| vertex.position == [0.0, 0.0, 0.0])
+        .map(|vertex| glam::Vec3::from_array(vertex.normal))
+        .collect();
+    assert_eq!(shared.len(), group);
+    for normal in &shared {
+        assert!(
+            normal.dot(glam::Vec3::Y) > 0.99 || normal.dot(glam::Vec3::X) > 0.99,
+            "a member of the crease came out at {normal:?}"
+        );
+    }
+    assert!(shared.iter().any(|n| n.dot(glam::Vec3::Y) > 0.99));
+    assert!(shared.iter().any(|n| n.dot(glam::Vec3::X) > 0.99));
 }

@@ -23,8 +23,6 @@ use thiserror::Error;
 
 /// Tolerance for accepting a normal as unit length in [`SectionPlane::new`].
 const UNIT_NORMAL_TOLERANCE: f32 = 1.0e-4;
-/// Minimum length below which a normal is treated as degenerate.
-const MIN_NORMAL_LENGTH: f32 = 1.0e-6;
 /// Squared minimum length: segments shorter than this (in `f64`) are dropped.
 const SEGMENT_MIN_SQ: f64 = 1.0e-9 * 1.0e-9;
 /// Endpoint quantization scale for stitching (grid step `1 / WELD_SCALE`).
@@ -66,33 +64,6 @@ impl SectionPlane {
             return Err(SectionError::NonFinite);
         }
         Ok(Self { normal, distance })
-    }
-
-    /// Construct from an arbitrary non-zero `normal` and a `point` on the plane.
-    ///
-    /// The normal is normalized and `distance = normal · point`.
-    ///
-    /// # Errors
-    /// Returns [`SectionError::NonFinite`] if any input is not finite, or
-    /// [`SectionError::DegenerateNormal`] if `normal` is shorter than the
-    /// minimum length.
-    pub fn from_normal_point(normal: Vec3, point: Vec3) -> Result<Self, SectionError> {
-        if !normal.is_finite() || !point.is_finite() {
-            return Err(SectionError::NonFinite);
-        }
-        let length = normal.length();
-        if length < MIN_NORMAL_LENGTH {
-            return Err(SectionError::DegenerateNormal);
-        }
-        let unit = normal / length;
-        let distance = unit.dot(point);
-        if !distance.is_finite() {
-            return Err(SectionError::NonFinite);
-        }
-        Ok(Self {
-            normal: unit,
-            distance,
-        })
     }
 
     /// Signed distance of a world point to the plane. `>= 0` is the kept side.

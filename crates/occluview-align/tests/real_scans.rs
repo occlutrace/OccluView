@@ -10,13 +10,19 @@
 //! it; without that the test reports that it skipped and passes, so CI stays
 //! green without shipping meshes.
 //!
+//! That means these two tests are green on CI without having verified anything,
+//! and the thresholds below — a 0.05 mm residual, 85% measured, 90% inside the
+//! clinical band — are product acceptance criteria that nothing enforces
+//! automatically. The names say `_when_fixtures_are_present` so a green tick is
+//! not mistaken for a passing clinical check. Substituting a synthetic mesh
+//! here would be worse than the gap: it would manufacture the proof. Run them
+//! against the private corpus before any release that touches alignment.
+//!
 //! The STL reader here is deliberately local. Pulling in the format crate would
 //! give this leaf crate a dev-dependency on half the workspace for forty lines
 //! of parsing.
 
-// A skipped run and a per-mesh result line are the whole point of this test:
-// without them a green tick would not distinguish "verified on real geometry"
-// from "no fixtures present".
+// Report skipped fixtures explicitly so CI cannot imply clinical coverage.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -42,7 +48,7 @@ const MIN_WITHIN_TOLERANCE: f64 = 0.90;
 const TOLERANCE_MM: f64 = 0.2;
 
 #[test]
-fn a_real_scan_returns_to_a_known_pose_and_measures_clean() {
+fn a_real_scan_returns_to_a_known_pose_and_measures_clean_when_fixtures_are_present() {
     let Some(files) = fixtures() else {
         eprintln!(
             "skipped: set OCCLUVIEW_ALIGN_FIXTURES to a directory of binary STL files to run this"
@@ -147,7 +153,7 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean() {
 /// the reader to notice, because a nearest-point map cannot do that and a mean
 /// that suddenly does is measuring something else.
 #[test]
-fn a_known_rigid_offset_is_under_reported_and_the_estimate_corrects_it() {
+fn a_known_rigid_offset_is_corrected_when_fixtures_are_present() {
     /// Displacement applied, in millimetres.
     const OFFSET_MM: f64 = 0.30;
     /// Along the blind mode the estimate is required to be *tight*, which is

@@ -8,10 +8,10 @@ use glam::Vec3;
 
 use super::holes_walk::{
     split_loop_at_coincident_positions, vertex_position, walk_boundary_loop, BoundaryNextMap,
-    BoundaryOwnerMap,
+    BoundaryOwners,
 };
 use super::{FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions};
-use crate::holes::{FillLoopStats, SELECTION_MAX_BOUNDARY_LOOP};
+use crate::holes::{FillLoopStats, CLOSE_HOLES_EDGE_CEILING};
 
 /// Border guard: a rim must reach this fraction of the LARGEST rim's
 /// perimeter to count as scan border.
@@ -139,7 +139,7 @@ pub(super) fn rim_exceeds_size_cap(
     options: MeshEditOptions,
 ) -> bool {
     let edge_cap = if has_selection {
-        options.max_boundary_loop.max(SELECTION_MAX_BOUNDARY_LOOP)
+        options.max_boundary_loop.max(CLOSE_HOLES_EDGE_CEILING)
     } else {
         options.max_boundary_loop
     };
@@ -162,7 +162,7 @@ pub(super) fn rim_exceeds_size_cap(
 /// large unrelated rim stays well under the threshold and is refused.
 pub(super) fn rim_selection_qualifies(
     boundary_loop: &[usize],
-    owner_by_edge: &BoundaryOwnerMap,
+    owner_by_edge: &BoundaryOwners,
     selection: &FaceSelection,
 ) -> bool {
     let loop_len = boundary_loop.len();
@@ -174,8 +174,8 @@ pub(super) fn rim_selection_qualifies(
             let a = boundary_loop[index];
             let b = boundary_loop[(index + 1) % loop_len];
             owner_by_edge
-                .get(&(a, b))
-                .is_some_and(|owner| selection.as_slice().get(*owner).copied().unwrap_or(false))
+                .owner(a, b)
+                .is_some_and(|owner| selection.as_slice().get(owner).copied().unwrap_or(false))
         })
         .count();
     // `selected / loop_len >= 0.5`, done in integers to stay exact.
@@ -192,4 +192,40 @@ fn rim_perimeter_mm(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> Result<f
         perimeter += f64::from((current - next).length());
     }
     Ok(perimeter)
+}
+
+/// Refuse a triangle soup that the caller has not asked to weld.
+///
+/// With `heal_boundary_rims` off nothing welds, so in index space every edge
+/// of every triangle reads as a boundary: each triangle becomes its own
+/// three-edge rim, and the duplicate check each rim runs scans all triangles.
+/// That is quadratic, and it does not finish -- a 500k-triangle soup was still
+/// running after ten minutes.
+///
+/// The shipped callers all pass `heal_boundary_rims: true`, and the repair
+/// path welds before it gets here, so this only catches a caller using the
+/// default options on soup: `MeshEditOptions::default()` has healing off, which
+/// makes the obvious call the trap. A soup is recognisable for free -- every
+/// corner is its own vertex, so the vertex and index counts match.
+pub(super) fn refuse_unweldable_soup(
+    mesh: &MeshEditBuffers,
+    heal_boundary_rims: bool,
+    triangles: usize,
+) -> Result<(), MeshEditError> {
+    /// Below this a quadratic pass is merely slow, and some fixtures rely on
+    /// filling small soups directly.
+    const SOUP_REFUSAL_TRIANGLES: usize = 20_000;
+
+    if heal_boundary_rims
+        || triangles < SOUP_REFUSAL_TRIANGLES
+        || mesh.vertices.len() != mesh.indices.len()
+    {
+        return Ok(());
+    }
+    Err(MeshEditError::InvalidOptions {
+        reason: format!(
+            "hole filling on {triangles} unwelded triangles is quadratic; set \
+             heal_boundary_rims to weld the soup first"
+        ),
+    })
 }

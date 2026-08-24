@@ -165,19 +165,6 @@ impl FaceSelection {
         Self { selected_faces }
     }
 
-    /// Construct and validate a selection against a triangle count.
-    ///
-    /// # Errors
-    /// Returns [`MeshEditError::InvalidSelectionLength`] on length mismatch.
-    pub fn try_for_triangle_count(
-        triangle_count: usize,
-        selected_faces: Vec<bool>,
-    ) -> Result<Self, MeshEditError> {
-        let selection = Self::new(selected_faces);
-        selection.validate_for_triangle_count(triangle_count)?;
-        Ok(selection)
-    }
-
     /// Borrow the underlying mask.
     #[must_use]
     pub fn as_slice(&self) -> &[bool] {

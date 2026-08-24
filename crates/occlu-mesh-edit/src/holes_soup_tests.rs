@@ -154,8 +154,7 @@ fn soup_close_holes_reports_honest_counts_and_closes_curved_rims() {
 
     let closed = fill_holes(&punched, None, close_holes_options()).expect("close holes");
 
-    // Honest counts: the soup's half-million phantom needles are NOT reported as
-    // healed nicks. A clean punched solid has no genuine cut-line damage.
+    // Soup duplicates are not cut-line damage and must not count as healed rims.
     assert_eq!(
         closed.report.healed_rims, 0,
         "soup duplicates must never be counted as healed nicks"
@@ -164,7 +163,7 @@ fn soup_close_holes_reports_honest_counts_and_closes_curved_rims() {
         closed.report.skipped_damaged_rims, 0,
         "honest curved rims must not be refused as damaged"
     );
-    // The real holes close.
+    // The punched holes close.
     assert!(
         closed.report.filled_holes >= holes.len(),
         "every punched hole must close (got {})",
