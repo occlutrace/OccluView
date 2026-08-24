@@ -114,6 +114,8 @@ pub const OCCLUVIEW_PREVIEW_CLSID: &str = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046
 
 const OCCLUVIEW_THUMBNAIL_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3045);
 const OCCLUVIEW_PREVIEW_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3046);
+use crate::preview_canvas::center_square_on_canvas;
+
 const MAX_OFFSCREEN_EDGE: u32 = 2048;
 const PREVIEW_WINDOW_CLASS_NAME: PCWSTR = w!("OccluViewPreviewPane");
 const PREVIEW_LIGHT_BACKGROUND_LINEAR: [f64; 4] = [0.80, 0.82, 0.84, 1.0];
@@ -187,33 +189,6 @@ fn path_extension(path: &Path) -> Option<String> {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.trim_start_matches('.').to_ascii_lowercase())
         .filter(|ext| !ext.is_empty())
-}
-
-fn center_square_on_canvas(
-    square: &[u8],
-    side_px: u16,
-    width: u32,
-    height: u32,
-    background: [u8; 4],
-) -> Vec<u8> {
-    let width = width.max(1) as usize;
-    let height = height.max(1) as usize;
-    let side = usize::from(side_px).min(width).min(height).max(1);
-    let mut canvas = vec![0u8; width * height * 4];
-    for px in canvas.chunks_exact_mut(4) {
-        px.copy_from_slice(&background);
-    }
-    if square.len() < side * side * 4 {
-        return canvas;
-    }
-    let x0 = (width - side) / 2;
-    let y0 = (height - side) / 2;
-    for y in 0..side {
-        let src = y * side * 4;
-        let dst = ((y0 + y) * width + x0) * 4;
-        canvas[dst..dst + side * 4].copy_from_slice(&square[src..src + side * 4]);
-    }
-    canvas
 }
 
 /// Build a 32bpp BGRA top-down `HBITMAP` from top-to-bottom RGBA8 pixels.

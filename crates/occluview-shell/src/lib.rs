@@ -34,6 +34,8 @@ pub mod error;
 mod installer_contract_tests;
 mod offscreen_factory;
 #[cfg(any(windows, test))]
+mod preview_canvas;
+#[cfg(any(windows, test))]
 mod preview_menu;
 mod preview_scene;
 mod shell_contract;
