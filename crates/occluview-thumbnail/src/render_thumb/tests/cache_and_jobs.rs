@@ -774,3 +774,109 @@ fn oversize_obj_stream_returns_placeholder_via_size_guard_before_parser() {
     let pixels = render_thumbnail_or_placeholder(Some("obj"), &bytes, spec);
     assert_eq!(pixels, placeholder_thumbnail(spec));
 }
+
+/// Two different scans of the same length must not share a thumbnail.
+///
+/// Above the exact-hash budget the content key is built from three 64 KiB
+/// windows -- the head, the middle and the tail. A re-export whose changes are
+/// interior falls between all three: the two files then key the same, and the
+/// second one is served the first one's picture. That is the wrong patient's
+/// arch on screen, so it is worth the cost of a 17 MB fixture to hold.
+#[test]
+fn a_scan_that_differs_only_inside_gets_its_own_thumbnail() {
+    let triangles = 350_000_u32;
+    let first = fixtures::dense_binary_stl_strip(triangles);
+
+    // Move a run of triangles a quarter of the way in: away from the head,
+    // the middle and the tail windows, and far enough to change the silhouette.
+    let mut second = first.clone();
+    let quarter = 84 + (usize::try_from(triangles).unwrap_or(0) / 4) * 50;
+    for triangle in 0..20_000_usize {
+        let base = quarter + triangle * 50 + 12;
+        if base + 36 > second.len() {
+            break;
+        }
+        for corner in 0..3 {
+            let y = base + corner * 12 + 4;
+            let lifted =
+                f32::from_le_bytes([second[y], second[y + 1], second[y + 2], second[y + 3]]) + 9.0;
+            second[y..y + 4].copy_from_slice(&lifted.to_le_bytes());
+        }
+    }
+    assert_ne!(first, second, "the two fixtures must actually differ");
+
+    let spec = ThumbnailSpec {
+        size_px: 64,
+        ..Default::default()
+    };
+    let first_path = fixtures::write_temp_fixture("stl", &first);
+    let second_path = fixtures::write_temp_fixture("stl", &second);
+    let first_meta = cache::thumbnail_file_metadata(&first_path).expect("first metadata");
+    let second_meta = cache::thumbnail_file_metadata(&second_path).expect("second metadata");
+    let first_key =
+        thumbnail_file_content_key(&first_path, &first_meta).expect("first content key");
+    let second_key =
+        thumbnail_file_content_key(&second_path, &second_meta).expect("second content key");
+    assert_ne!(
+        first_key, second_key,
+        "the two scans share a content key, so the second is served the first one's picture"
+    );
+
+    let rendered =
+        |path: &Path| match try_render_thumbnail_file(path, spec, Duration::from_secs(20)) {
+            ThumbnailAttempt::Bitmap(pixels) => pixels,
+            // An empty answer fails the comparison below and names itself there.
+            ThumbnailAttempt::TransientFailure => Vec::new(),
+        };
+    let first_pixels = rendered(&first_path);
+    let second_pixels = rendered(&second_path);
+    assert!(
+        !first_pixels.is_empty() && !second_pixels.is_empty(),
+        "both fixtures have to render before their pictures can be compared"
+    );
+    assert_ne!(
+        first_pixels, second_pixels,
+        "two different scans of the same length shared one picture"
+    );
+    let _ = fs::remove_file(first_path);
+    let _ = fs::remove_file(second_path);
+}
+
+/// Past the exact budget the key is a sample, so it carries the timestamp too.
+///
+/// Sampling three windows can be fooled by a file that differs only between
+/// them. Mixing the modification time in bounds what that costs: two files
+/// then have to share a length, three windows and a timestamp before one can
+/// be served the other's picture.
+#[test]
+fn a_sampled_content_key_is_not_shared_by_two_moments() {
+    let path = fixtures::write_temp_fixture("stl", &fixtures::binary_stl_cube());
+    let measured = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
+    // Claim a size past the exact budget so the sampled branch is taken; the
+    // window reads stop at end of file.
+    let sampled = |modified_nanos| ThumbnailFileMetadata {
+        byte_len: cache::EXACT_CONTENT_HASH_BYTES + 1,
+        modified_nanos,
+    };
+    let morning =
+        thumbnail_file_content_key(&path, &sampled(1_000)).expect("a key for the earlier stamp");
+    let evening =
+        thumbnail_file_content_key(&path, &sampled(2_000)).expect("a key for the later stamp");
+    assert_ne!(
+        morning, evening,
+        "a sampled key must distinguish two files that merely sample alike"
+    );
+
+    // And the exact branch keeps deduplicating copies, whatever their stamps.
+    let exact = |modified_nanos| ThumbnailFileMetadata {
+        byte_len: measured.byte_len,
+        modified_nanos,
+    };
+    let copied = thumbnail_file_content_key(&path, &exact(1_000)).expect("a key");
+    let original = thumbnail_file_content_key(&path, &exact(2_000)).expect("a key");
+    assert_eq!(
+        copied, original,
+        "a scan copied into a folder must still share one decode with its twin"
+    );
+    let _ = fs::remove_file(path);
+}
