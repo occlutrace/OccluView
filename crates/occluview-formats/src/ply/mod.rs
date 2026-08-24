@@ -48,10 +48,18 @@ use occluview_core::Mesh;
 /// # Errors
 /// See [`FormatError`]. Parsers never panic.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    read_shaded(bytes, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
     let parsed = header::parse(bytes)?;
     match parsed.format {
-        header::Format::Ascii => ascii::read(&parsed),
-        header::Format::BinaryLittleEndian => binary::read_le(&parsed),
-        header::Format::BinaryBigEndian => binary::read_be(&parsed),
+        header::Format::Ascii => ascii::read_shaded(&parsed, shading),
+        header::Format::BinaryLittleEndian => binary::read_le_shaded(&parsed, shading),
+        header::Format::BinaryBigEndian => binary::read_be_shaded(&parsed, shading),
     }
 }

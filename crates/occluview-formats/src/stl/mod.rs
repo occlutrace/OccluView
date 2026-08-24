@@ -29,9 +29,17 @@ use occluview_core::Mesh;
 /// # Errors
 /// See [`FormatError`]. Parsers never panic.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    read_shaded(bytes, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
     if ascii::looks_like_ascii(bytes) {
-        ascii::read(bytes)
+        ascii::read_shaded(bytes, shading)
     } else {
-        binary::read(bytes)
+        binary::read_shaded(bytes, shading)
     }
 }

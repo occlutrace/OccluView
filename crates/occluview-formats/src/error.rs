@@ -55,8 +55,14 @@ pub enum FormatError {
         extension: String,
     },
 
-    /// The format was recognized, but its reader is intentionally not exposed yet.
-    #[error("{format} support is recognized but not enabled yet: {reason}")]
+    /// The format was recognized, but this reader declined to produce a mesh.
+    ///
+    /// Three situations arrive here and one message has to fit all of them: a
+    /// deferred reader (3MF), a fast thumbnail path handing back to the full
+    /// reader, and an encrypted container with no key configured. "Not enabled
+    /// yet" fits the first and tells the third that their file type is
+    /// unsupported, which is the opposite of the truth.
+    #[error("{format} was recognized but not read: {reason}")]
     Deferred {
         /// The recognized format family.
         format: &'static str,

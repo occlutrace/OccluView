@@ -1,4 +1,4 @@
-//! Smoke-test the loaders against REAL dental files on disk.
+//! Smoke-test the loaders against dental files on disk.
 //!
 //! Run with:
 //!   cargo run -p occluview-formats --example smoke_real_files -- <file> [<file> ...]
@@ -48,7 +48,7 @@ fn main() -> ExitCode {
 
         let size_mb = bytes.len() as f64 / 1_048_576.0;
         match dispatch_by_extension(&ext, &bytes) {
-            Ok(mut mesh) => {
+            Ok(mesh) => {
                 let bbox = mesh.bbox();
                 let [w, h, d] = bbox.dimensions_mm();
                 let tris = mesh.triangle_count();

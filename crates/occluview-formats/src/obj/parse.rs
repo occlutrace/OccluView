@@ -418,4 +418,26 @@ f 1 2 3\n";
         assert!(resolve_index("6", 5, 0, "").is_err());
         assert!(resolve_index("0", 5, 0, "").is_err());
     }
+
+    /// Every face corner becomes a vertex, so a file of short face lines makes
+    /// a mesh many times its own size: 22 MB of `f 1 2 3` produced 288 MB of
+    /// geometry, and at the sizes the shell accepts that allocation fails --
+    /// which aborts, uncatchably, taking the surrogate and the whole folder's
+    /// thumbnails with it.
+    #[test]
+    fn a_file_of_face_corners_cannot_outgrow_itself_without_limit() {
+        use std::fmt::Write as _;
+        let mut obj = String::new();
+        for index in 0..100 {
+            let _ = writeln!(obj, "v {}.0 {}.0 {}.0", index % 7, index % 5, index % 3);
+        }
+        for _ in 0..40_000 {
+            obj.push_str("f 1 2 3\n");
+        }
+        let error = super::super::read(obj.as_bytes()).expect_err("a mesh many times its file");
+        assert!(
+            format!("{error}").contains("outgrew its source"),
+            "unexpected error: {error}"
+        );
+    }
 }

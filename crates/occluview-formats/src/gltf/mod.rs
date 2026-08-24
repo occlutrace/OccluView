@@ -24,6 +24,8 @@ mod error;
 mod primitive;
 mod reader;
 mod scene;
+#[cfg(test)]
+mod tests;
 mod texture;
 
 use crate::error::FormatError;

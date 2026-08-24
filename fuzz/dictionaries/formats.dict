@@ -1,0 +1,70 @@
+# Tokens libFuzzer inserts verbatim while mutating. Only \xNN, \\ and \" are
+# valid escapes here -- a bare \n makes libFuzzer refuse the whole file.
+# Tokens libFuzzer inserts verbatim while mutating. Without them a random
+# mutation almost never produces a valid header, so the budget is spent
+# rediscovering the first few bytes of each reader instead of its arithmetic.
+
+# STL
+"solid "
+"facet normal "
+"outer loop"
+"vertex "
+"endloop"
+"endfacet"
+"endsolid"
+
+# PLY
+"ply\x0a"
+"format ascii 1.0"
+"format binary_little_endian 1.0"
+"format binary_big_endian 1.0"
+"element vertex "
+"element face "
+"property float "
+"property list uchar int vertex_indices"
+"end_header\x0a"
+
+# OBJ
+"v "
+"vn "
+"vt "
+"f "
+"mtllib "
+"usemtl "
+
+# glTF / GLB
+"glTF"
+"JSON"
+"BIN\x00"
+"\"asset\""
+"\"accessors\""
+"\"bufferViews\""
+"\"byteOffset\""
+"\"byteStride\""
+"\"byteLength\""
+"\"componentType\""
+"\"count\""
+"\"SCALAR\""
+"\"VEC3\""
+"\"primitives\""
+"\"POSITION\""
+
+# OFF
+"OFF"
+"OFF BINARY"
+
+# HPS
+"<HPS>"
+"<Packed_geometry>"
+"<Schema>CC</Schema>"
+"<Schema>CE</Schema>"
+"<Binary_data>"
+"base64_encoded_bytes="
+"facet_count="
+"vertex_count="
+"check_value="
+"PackageLockList"
+"EKID"
+
+# ZIP container (HPS packages, 3MF)
+"PK\x03\x04"

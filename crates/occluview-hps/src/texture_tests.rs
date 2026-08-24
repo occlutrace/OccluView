@@ -224,7 +224,7 @@ fn compressed_texture_uses_decoded_dimensions_before_raw_metadata_limits() {
     assert_eq!(texture.rgba().len(), 2 * 4);
 }
 
-// A format-less raw HPS texture MUST decode deterministically as BGRA — HPS
+// A format-less raw HPS texture decodes deterministically as BGRA: HPS
 // emits DirectX surfaces (D3DFMT_A8R8G8B8) whose memory byte order is [B,G,R,A].
 // This is the verified-correct behavior: a warm-white dental surface
 // (physical R>=G>B) is stored with the small blue value in byte 0, and swapping
@@ -304,8 +304,7 @@ fn raw_texture_image_cool_dominant_atlas_keeps_enamel_warm() {
 }
 
 // A file that declares the DirectX pixel-format NAME D3DFMT_A8R8G8B8 (0xAARRGGBB)
-// stores memory bytes [B,G,R,A]. It must decode as BGRA (swap R<->B), NOT as the
-// literal channel order ARGB — the historic ARGB mismap forced blue = alpha byte,
+// stores memory bytes [B,G,R,A]. Decode as BGRA (swap R<->B), not literal ARGB:
 // painting entire scans blue.
 #[test]
 fn raw_a8r8g8b8_directx_name_decodes_as_bgra() {
@@ -354,12 +353,8 @@ fn solid_rgba_png_bytes(
     buf.into_inner()
 }
 
-// Regression for a real bug: an HPS dental scan whose
-// embedded JPEG texture atlas has its chroma channels swapped AT THE SOURCE
-// (standards-compliant decode still comes out blue — there is no container
-// pixel-format ambiguity to resolve here, unlike the raw-D3DFMT tests above).
-// Calibrated against the real file's measured statistics: swapped mean
-// R≈107/B≈150, corrected mean R≈150/B≈107.
+// Source-level chroma swap in an embedded raster is corrected by the dental
+// surface prior (swapped mean R≈107/B≈150; corrected R≈150/B≈107).
 #[test]
 fn embedded_png_with_swapped_dental_chroma_is_corrected_to_warm() {
     let png_bytes = solid_rgba_png_bytes(4, 4, [107, 117, 150, 255], true);
@@ -390,12 +385,8 @@ fn embedded_png_with_swapped_dental_chroma_is_corrected_to_warm() {
     assert_eq!(texture.rgba()[3], 0);
 }
 
-// A mildly cool tint (a bluish stone shade, or a cool composite light) stays
-// well under the implausible-blue margin and must NOT be flipped — the
-// physical prior only fires on a whole-texture bias far beyond normal
-// material/lighting variation. The 20-value gap clears the near-gray filter
-// (so this genuinely exercises the margin comparison, not the gray skip) but
-// stays under `red_mean / 4` (150 / 4 = 37).
+// A mild cool tint remains below the whole-texture swap threshold. The 20-value
+// gap clears the near-gray filter and stays below `red_mean / 4` (150 / 4 = 37).
 #[test]
 fn embedded_png_with_a_mild_cool_tint_is_left_untouched() {
     let pixel = [150, 160, 170, 255]; // R=150, B=170: a 20-value cool tint.
@@ -483,5 +474,59 @@ fn embedded_png_with_a_localized_blue_material_patch_is_left_untouched() {
         gingiva_pixel,
         [200, 140, 80, 255],
         "a localized blue material patch must not swap real warm gingiva color"
+    );
+}
+
+/// A structurally valid PNG whose header claims `width` x 1 grayscale.
+///
+/// A run of identical bytes compresses to almost nothing, which is exactly
+/// what makes an oversized header cheap to send and expensive to decode.
+fn over_wide_png(width: u32) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    let mut bytes = Vec::new();
+    let row = vec![0_u8; width as usize];
+    let encoded = image::codecs::png::PngEncoder::new(&mut bytes).write_image(
+        &row,
+        width,
+        1,
+        image::ExtendedColorType::L8,
+    );
+    assert!(encoded.is_ok(), "fixture encode failed: {encoded:?}");
+    bytes
+}
+
+#[test]
+fn an_embedded_image_larger_than_the_pixel_limit_never_reaches_the_decoder() {
+    // `validate_texture_dimensions` runs on an already-decoded image, so it can
+    // only report a bomb that has already been allocated — inside dllhost.exe,
+    // on a file Explorer handed us. The line that actually prevents it is
+    // `reader.limits(limits)` in `decode_embedded_raster`, and removing it
+    // broke no test. This one goes through the real container path.
+    let bomb = over_wide_png(9_000);
+    assert!(
+        bomb.len() < 4096,
+        "the fixture must stay small to be a bomb at all: {} bytes",
+        bomb.len()
+    );
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="9000" Height="1" BytesPerPixel="3" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        bomb.len(),
+        encode_base64(&bomb)
+    );
+
+    let result = read(&cc_fixture(3, 1, &[4], &extra));
+    let Err(error) = result else {
+        unreachable!("a 9000px texture must be refused");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("decode failed"),
+        "the refusal should come from the bounded decoder rather than a \
+         post-decode dimension check: {message}"
     );
 }

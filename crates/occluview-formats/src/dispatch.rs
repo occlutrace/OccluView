@@ -81,10 +81,28 @@ pub fn dispatch_by_kind_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
+    dispatch_by_kind_shaded(kind, bytes, key_provider, crate::MeshShading::Reconstructed)
+}
+
+/// As [`dispatch_by_kind_with_key_provider`], choosing how vertex normals are
+/// produced.
+///
+/// Only the three formats a scanner writes take the policy; the rest are read
+/// the one way they have always been read, because they are rare enough on the
+/// thumbnail path that the plumbing would cost more than the milliseconds.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn dispatch_by_kind_shaded(
+    kind: FormatKind,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     match kind {
-        FormatKind::Stl => crate::stl::read(bytes),
-        FormatKind::Ply => crate::ply::read(bytes),
-        FormatKind::Obj => crate::obj::read(bytes),
+        FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
+        FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
+        FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
         FormatKind::Gltf => crate::gltf::read(bytes),
         FormatKind::Off => crate::off::read(bytes),
         // Implement natively when demand appears.
@@ -124,6 +142,25 @@ pub fn dispatch_by_extension_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
+    dispatch_by_extension_shaded(
+        extension,
+        bytes,
+        key_provider,
+        crate::MeshShading::Reconstructed,
+    )
+}
+
+/// As [`dispatch_by_extension_with_key_provider`], choosing how vertex normals
+/// are produced.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn dispatch_by_extension_shaded(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
@@ -141,7 +178,7 @@ pub fn dispatch_by_extension_with_key_provider(
             other => return Err(other),
         },
     };
-    dispatch_by_kind_with_key_provider(kind, bytes, key_provider)
+    dispatch_by_kind_shaded(kind, bytes, key_provider, shading)
 }
 
 fn normalized_extension(path: &Path) -> Result<String, FormatError> {
@@ -154,12 +191,25 @@ fn normalized_extension(path: &Path) -> Result<String, FormatError> {
 }
 
 #[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
-fn read_file_bytes_storage(mut file: std::fs::File) -> Result<FileBytesStorage, FormatError> {
-    // mmap is best-effort: fall back to a regular read when it fails.
-    // SAFETY: the file is opened read-only and we keep the File handle alive
-    // for the lifetime of the Mmap stored inside FileBytes.
-    if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
-        return Ok(FileBytesStorage::Mapped(mmap));
+fn read_file_bytes_storage(
+    mut file: std::fs::File,
+    path: &Path,
+) -> Result<FileBytesStorage, FormatError> {
+    // mmap is best-effort in two ways: the storage has to be safe to map at
+    // all, and the call itself may still fail.
+    //
+    // SAFETY: memmap2 requires that the mapped file not be modified or
+    // truncated while the mapping lives; violating that raises
+    // EXCEPTION_IN_PAGE_ERROR or SIGBUS, neither of which unwinds, so no
+    // `catch_unwind` above this point can turn it back into an error. The
+    // guarantee is obtained by refusing to map anything that can be withdrawn
+    // mid-parse -- see `crate::mappable` -- which leaves local, non-removable
+    // storage, where a concurrent writer is the only remaining hazard and is
+    // out of scope for a read-only viewer.
+    if crate::mappable::is_mappable_storage(path) {
+        if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
+            return Ok(FileBytesStorage::Mapped(mmap));
+        }
     }
 
     let mut bytes = Vec::new();
@@ -176,11 +226,10 @@ fn read_file_bytes_storage(mut file: std::fs::File) -> Result<FileBytesStorage, 
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or read.
 /// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
 pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
     let extension = normalized_extension(path)?;
     let file = std::fs::File::open(path).map_err(FormatError::Io)?;
-    let storage = read_file_bytes_storage(file)?;
+    let storage = read_file_bytes_storage(file, path)?;
     Ok(FileBytes { extension, storage })
 }
 
@@ -197,7 +246,6 @@ pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or mapped.
 /// - See [`dispatch_by_extension`] for parse errors.
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
 pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
     read_file_with_key_provider(path, &crate::hps::NoHpsKeyProvider)
 }
@@ -206,12 +254,25 @@ pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
 ///
 /// # Errors
 /// See [`read_file`].
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
 pub fn read_file_with_key_provider(
     path: &Path,
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
-    read_file_bytes(path)?.dispatch_with_key_provider(key_provider)
+    read_file_shaded(path, key_provider, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_file_with_key_provider`], choosing how vertex normals are
+/// produced.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn read_file_shaded(
+    path: &Path,
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    let bytes = read_file_bytes(path)?;
+    dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)
 }
 
 /// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a

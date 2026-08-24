@@ -9,8 +9,7 @@
 //! - Parsers return [`FormatError`] on malformed input; they never panic.
 //! - Path traversal is forbidden before any external resource format is exposed
 //!   to the app or shell (`.gltf` JSON and 3MF are deferred from v1 surfaces).
-//! - Coordinate-frame conversion to OccluView's Y-up RH frame happens here, not
-//!   in the renderer (see [`occluview_core::frame`]).
+//! - Coordinate-frame conversion happens in readers, not in the renderer.
 //! - Units: STL/OBJ declare none (assume mm, surfaced in UI); GLB declares
 //!   meters but scanner exports vary, so v1 keeps coordinates unchanged.
 //!
@@ -21,8 +20,9 @@
 
 // `deny(unsafe_code)` (not `forbid`): the mmap streaming path
 // (dispatch::read_file) needs one `unsafe` block for memmap2::Mmap::map,
-// which is the audited kernel-FFI for memory-mapping. All format PARSERS
-// remain safe; the lone unsafe lives behind the read_file helper.
+// which is the audited kernel-FFI for memory-mapping, and on Windows one more
+// for the drive-type query that decides whether mapping is safe at all
+// (`mappable`). All format PARSERS remain safe.
 #![deny(unsafe_code)]
 // Test-only relaxation of strict lints; production parser code stays stricter.
 #![cfg_attr(
@@ -44,6 +44,9 @@ pub mod error;
 pub mod glb_writer;
 pub mod gltf;
 pub mod hps;
+#[cfg(test)]
+mod load_perf_tests;
+mod mappable;
 pub mod obj;
 pub mod off;
 pub mod ply;
@@ -80,6 +83,39 @@ pub trait FormatReader {
     fn read(&self, bytes: &[u8]) -> Result<occluview_core::Mesh, FormatError>;
 }
 
+/// Whether a reader reconstructs vertex normals or keeps what the file wrote.
+///
+/// Reading a scan is mostly not parsing: it is
+/// [`Mesh::new`](occluview_core::Mesh::new) welding vertices that share a
+/// position and averaging normals across each run, so that a scan carrying one
+/// flat normal per facet shades smoothly in the viewport. On a 326 000
+/// triangle arch that reconstruction is 135 ms of a 172 ms read.
+///
+/// Nothing drawn at thumbnail or preview-pane size can show the difference --
+/// a full arch puts about a tenth of a pixel under each triangle -- so those
+/// callers ask for [`MeshShading::AsWritten`] and get the file's own normals,
+/// filled in cheaply only where it wrote none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MeshShading {
+    /// Weld and average, for a mesh that will be looked at closely or edited.
+    #[default]
+    Reconstructed,
+    /// Keep the normals in the file; fill in absent ones with one pass.
+    AsWritten,
+}
+
+impl MeshShading {
+    pub(crate) fn build(
+        self,
+        builder: occluview_core::MeshBuilder,
+    ) -> Result<occluview_core::Mesh, occluview_core::CoreError> {
+        match self {
+            Self::Reconstructed => builder.build(),
+            Self::AsWritten => builder.build_for_preview(),
+        }
+    }
+}
+
 pub use dispatch::{dispatch_by_extension, read_file, read_files, read_files_with_key_provider};
 pub use error::FormatError;
 pub use glb_writer::write_textured_glb;
@@ -100,8 +136,29 @@ mod tests {
             ["stl", "ply", "obj", "glb", "hps", LEGACY_HPS_EXTENSION]
         );
 
+        // Pin the claim, not two substrings. "`.hps` and `.dcm` appear
+        // somewhere in the file" passes on a README stating the opposite, and
+        // `.dcm` appears here several times for other reasons -- including a
+        // paragraph about NOT claiming the extension.
         let readme = include_str!("../../../README.md");
-        let public_promise = "`.hps` and `.dcm` - HPS mesh containers";
-        assert!(readme.contains(public_promise));
+        let promise = readme
+            .lines()
+            .find(|line| line.starts_with("- `.hps` and `.dcm`"));
+        assert!(
+            promise.is_some(),
+            "the README's supported-format list must carry an .hps/.dcm entry"
+        );
+        let Some(promise) = promise else {
+            return;
+        };
+        assert!(
+            promise.contains("medical DICOM is not supported"),
+            "the entry must keep saying that medical DICOM is refused, since \
+             the reader refuses it: {promise}"
+        );
+        assert!(
+            promise.contains("DICM"),
+            "the entry should name the marker the reader actually tests: {promise}"
+        );
     }
 }
