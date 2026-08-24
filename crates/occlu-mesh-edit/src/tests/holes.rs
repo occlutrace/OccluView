@@ -355,3 +355,51 @@ fn fill_holes_splits_and_closes_rims_sharing_a_pinch_vertex() {
     assert_eq!(result.report.output_triangles, before_triangles);
     assert_eq!(result.report.warnings.len(), 2);
 }
+
+/// Filling holes on a large unwelded soup is refused, not attempted.
+///
+/// With healing off nothing welds, every triangle becomes its own three-edge
+/// rim, and the per-rim duplicate check scans all triangles: a 500k-triangle
+/// soup was still running after ten minutes. Every shipped caller asks for
+/// welding; `MeshEditOptions::default()` does not, which makes the obvious
+/// call the trap.
+#[test]
+fn a_large_unwelded_soup_is_refused_rather_than_filled() {
+    let triangles = 25_000usize;
+    let mut vertices = Vec::with_capacity(triangles * 3);
+    let mut indices = Vec::with_capacity(triangles * 3);
+    for i in 0..triangles {
+        let x = i as f32 * 0.01;
+        for corner in [[x, 0.0, 0.0], [x + 0.005, 0.0, 0.0], [x, 0.005, 0.0]] {
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(v(corner));
+        }
+    }
+    let buffers = MeshEditBuffers {
+        vertices,
+        indices,
+        topology: MeshTopology::TriangleMesh,
+    };
+
+    let started = std::time::Instant::now();
+    let error = fill_holes(&buffers, None, MeshEditOptions::default())
+        .expect_err("an unwelded soup this size must be refused");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the refusal must be immediate, not after the quadratic pass"
+    );
+    assert!(
+        matches!(error, MeshEditError::InvalidOptions { .. }),
+        "expected the options to be named as the problem, got {error}"
+    );
+
+    // And the same soup fills when the caller asks for the weld.
+    let options = MeshEditOptions {
+        heal_boundary_rims: true,
+        ..MeshEditOptions::default()
+    };
+    assert!(
+        fill_holes(&buffers, None, options).is_ok(),
+        "welding is what makes this shape fillable"
+    );
+}

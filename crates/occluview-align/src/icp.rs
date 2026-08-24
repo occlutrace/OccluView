@@ -1,20 +1,15 @@
-//! REFINE: trimmed point-to-plane ICP against the fixed surface.
+//! Trimmed point-to-plane ICP against the fixed surface.
 //!
-//! Two resolutions. A coarse sample closes the bulk motion, a dense sample
-//! finishes; that converges from farther away than a single dense pass and
-//! costs less than one.
+//! Refinement runs at coarse and dense sample resolutions.
 //!
-//! The correspondence search is parallel — it is pure — but the normal
-//! equations are folded **serially in sample order**. A parallel reduction over
-//! floating-point sums gives a different answer for a different thread count,
-//! and a registration that lands a micron away depending on the machine it ran
-//! on is not a measurement.
+//! Correspondence search is parallel, while normal equations are accumulated
+//! serially in sample order to keep floating-point results deterministic.
 
 use glam::{DMat3, DQuat, DVec3};
 use rayon::prelude::*;
 
 use crate::pairs::FitRejection;
-use crate::sample::{extent_of, sample_vertices, vertex_at, vertex_normals};
+use crate::sample::{bounds_of, sample_vertices, vertex_at, vertex_normals};
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
 /// Samples used by the coarse level.
@@ -71,8 +66,7 @@ pub enum Orientation {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RefineSettings {
     /// Farthest a moving vertex may look for fixed surface, in millimetres.
-    /// This is the same "maximum influence distance" the operator's dental
-    /// CAD software exposes.
+    /// Maximum correspondence distance, in millimetres.
     pub influence_radius_mm: f64,
     /// Fraction of correspondences kept after trimming, 0 to 1.
     pub matching_ratio: f64,
@@ -154,7 +148,7 @@ pub fn refine(
     }
 
     let normals = vertex_normals(moving);
-    let extent = extent_of(moving);
+    let (center, extent) = bounds_of(moving).unwrap_or((DVec3::ZERO, 0.0));
     let mut pose = start;
     let mut iterations = 0u32;
     let mut converged = false;
@@ -176,12 +170,8 @@ pub fn refine(
         });
         let level = match outcome {
             Ok(level) => level,
-            // A later level that cannot run does not undo an earlier one that
-            // did. This used to propagate, so a clean coarse pass followed by a
-            // dense pass that ran out of correspondences — or a cancellation
-            // arriving between the two — threw the good pose away and reported
-            // the whole refine as failed. `CancelFlag`'s own contract is to
-            // return what there is so far.
+            // Preserve a successful earlier level when a later level has too
+            // few correspondences or cancellation arrives between levels.
             Err(rejection) if summary.is_some() => {
                 debug_assert!(
                     matches!(rejection, FitRejection::TooFewPairs { .. }),
@@ -203,7 +193,9 @@ pub fn refine(
             need: MIN_CORRESPONDENCES,
         });
     };
-    let moved_by = (pose.translation - start.translation).length();
+    // Measure displacement at the mesh centre; the pose translation column can
+    // change during rotation even when the geometry moves little.
+    let moved_by = (pose.apply(center) - start.apply(center)).length();
     let allowed = extent.max(1.0);
     if moved_by > allowed {
         return Err(FitRejection::Runaway { moved_by, allowed });
@@ -282,8 +274,7 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut summary: Option<Summary> = None;
     let mut best_rms = f64::INFINITY;
     let mut stalled = 0u32;
-    // The pose the best residual was measured AT, kept so a level that gives up
-    // returns its best answer rather than wherever it happened to wander to.
+    // Keep the pose associated with the best residual.
     let mut best: Option<(Rigid, Summary)> = None;
 
     for _ in 0..level.settings.max_iterations {
@@ -330,26 +321,14 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
             break;
         }
 
-        // Stop when the residual stops falling.
-        //
-        // The pose-delta test above is the textbook exit and it is the right
-        // one for a pair that really does converge: a scan nudged off its own
-        // position settles in five iterations. It never fires for a pair that
-        // CANNOT converge, though, and the reason is exactly what dental CAD
-        // software warns operators about — best-fit matching is for
-        // identically shaped meshes. Give it an arch with
-        // crowns on it against the same arch without, and the step never gets
-        // small, it just wanders. Left alone that is every core at full tilt
-        // for the whole iteration ceiling, and it does not even end up at its
-        // own best answer: on a real 942k-vertex pair the ceiling run finished
-        // at 0.42 mm having passed through 0.19 mm on the way.
+        // Stop when the residual has stalled even if the pose delta has not.
         if stalled >= STALL_ROUNDS {
             break;
         }
     }
 
-    // A level that gave up hands back the best pose it saw, not the last one it
-    // wandered to. A level that converged hands back where it converged.
+    // A stalled level returns its best residual; a converged level returns its
+    // final pose.
     let settled = if converged {
         summary.map(|summary| (pose, summary))
     } else {

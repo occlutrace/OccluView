@@ -1,39 +1,9 @@
-//! PROOF: the signed deviation map, its statistics, and the ramp the viewport
-//! paints it with.
+//! Signed nearest-surface deviation values and display statistics.
 //!
-//! The sign lives in the measured value; the ramp only answers "how far". A
-//! vertex with no fixed surface inside the influence radius is **not**
-//! measured — it is marked and painted grey, because painting it at full scale
-//! would be a lie, and letting it into the statistics would be a worse one.
-//!
-//! A vertex the operator painted out is treated the same way. Excluding a
-//! region from the fit but still counting it in the numbers would report a
-//! quality the operator explicitly said not to measure.
-//!
-//! # What this map measures, and what it does not
-//!
-//! Every value here is the distance from a moving vertex to the **nearest
-//! point on the fixed surface**. That is a distance from a point to a *set*,
-//! not the distance between two corresponding pieces of material, and the two
-//! agree only where the fixed surface cannot slide onto itself. Two
-//! consequences the operator must be told about, both measured on real arch
-//! scans and on analytic primitives:
-//!
-//! 1. **Tangential blindness.** Displace two surfaces along a direction the
-//!    fixed surface is smooth in and the nearest point simply slides: the
-//!    reported value collapses towards zero while the material has genuinely
-//!    moved. A 0.30 mm rigid offset of a real 945k-vertex arch reads as a mean
-//!    of 0.14 mm — under half. On a cylinder displaced along its own axis it
-//!    reads 0.0075 mm, and on a sphere turned about any diameter, 0.0008 mm.
-//!    Measuring the other direction as well does **not** help; the surfaces
-//!    really do coincide as point sets. [`crate::observability()`] quantifies how
-//!    much of a rigid displacement can hide, and is the number that must be
-//!    reported next to these statistics.
-//! 2. **One-sided blindness.** A moving scan missing a region reports a perfect
-//!    fit over it, because the vertices that would have measured it are not
-//!    there. Nothing derived from this map can see that, so what the map could
-//!    not reach is counted and reported by cause — see [`Unmeasured`] — rather
-//!    than folded into a single number that looks like a verdict.
+//! Values are distances from moving vertices to the nearest fixed surface, not
+//! material correspondences. Unreachable, excluded, degenerate, and non-finite
+//! vertices remain outside the statistics. [`crate::observability()`]
+//! quantifies directions that nearest-surface distance cannot measure well.
 
 use glam::DVec3;
 use rayon::prelude::*;

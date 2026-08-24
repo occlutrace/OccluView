@@ -1,13 +1,11 @@
-//! ALIGN: the rigid fit from clicked surface point pairs.
+//! Rigid fitting from clicked surface point pairs.
 //!
 //! Three or more pairs use Horn's closed-form quaternion fit. Two pairs use
-//! the clicked surface normals to build a frame per side, exactly as lab
-//! software does — two bare points in space cannot determine a rotation, and
-//! this module refuses rather than inventing one.
+//! the clicked surface normals to build a frame; two points alone cannot
+//! determine a rotation.
 //!
-//! Every refusal is a named [`FitRejection`] carrying what the caller needs to
-//! tell the operator. A fit that cannot be determined is never returned as a
-//! confident pose.
+//! Each refusal is a named [`FitRejection`] with the diagnostics needed by the
+//! caller. Underdetermined fits are never returned as valid poses.
 
 use glam::{DMat3, DQuat, DVec3};
 
@@ -20,25 +18,25 @@ const MIN_PAIRS: usize = 2;
 /// rotation about that line is free.
 const COLLINEAR_FRACTION: f64 = 1e-6;
 
-/// Distance ratio outside this band means the two sets are in different units
-/// (millimetres against centimetres, say), which is a problem to report rather
-/// than a scale to fit.
+/// Accepted ratio of median fixed pair distances to median moving pair
+/// distances. Values outside this band indicate inconsistent units.
 const UNIT_RATIO_LOW: f64 = 0.5;
 /// Upper end of the accepted distance-ratio band.
 const UNIT_RATIO_HIGH: f64 = 2.0;
 
-/// A residual must exceed both this many times the median AND
+/// A residual must exceed this many times the median and
 /// [`TRIM_FLOOR_MM`] before trimming drops its pair.
 const TRIM_MEDIAN_FACTOR: f64 = 3.0;
 
-/// Absolute residual floor for trimming, in millimetres. Without it a clean
-/// fit would trim forever: one 3e-16 residual genuinely is three times the
-/// median of 1e-16.
+/// Absolute residual floor for trimming, in millimetres.
 const TRIM_FLOOR_MM: f64 = 0.05;
 
 /// How nearly parallel a clicked normal may lie to the two-pair segment before
 /// the frame it would build is meaningless.
 const NORMAL_ALONG_SEGMENT_LIMIT: f64 = 0.99;
+
+/// Minimum overlap allowance for degenerate or very small bounds, in mm.
+const MIN_OVERLAP_MM: f64 = 1.0;
 
 /// A world axis is named in a degeneracy report when the undetermined
 /// direction has at least this much of its length along that axis. A unit
@@ -64,7 +62,8 @@ pub struct PairFit {
     pub max_pair_err: f64,
     /// Indices of pairs dropped as outliers, ascending.
     pub rejected: Vec<u32>,
-    /// Mean fixed distance over mean moving distance. One means same units.
+    /// Median fixed pairwise distance over median moving pairwise distance.
+    /// One means same units.
     pub unit_ratio: f64,
 }
 
@@ -78,9 +77,7 @@ pub enum FitRejection {
         /// Minimum this fit requires.
         need: usize,
     },
-    /// The two point lists differ in length, so some clicked point has no
-    /// partner. Refused rather than truncated: dropping a click silently would
-    /// be worse than saying so.
+    /// The point lists differ in length, so at least one point has no partner.
     Unpaired {
         /// Points supplied on the moving side.
         moving: usize,
@@ -94,15 +91,25 @@ pub enum FitRejection {
     },
     /// The two sets are in different units.
     UnitMismatch {
-        /// Mean fixed distance over mean moving distance.
+        /// Median fixed pairwise distance over median moving pairwise
+        /// distance.
         ratio: f64,
     },
-    /// The fit would move the mesh farther than its own size — a mis-click,
-    /// not a registration.
+    /// The fit does not leave the two scans on top of each other — a
+    /// mis-click, not a registration.
+    Apart {
+        /// How far apart the two scans end up, centre to centre, in
+        /// millimetres.
+        separation: f64,
+        /// The largest separation at which they still overlap at all, in
+        /// millimetres.
+        allowed: f64,
+    },
+    /// A surface refine displaced the scan farther than its own size.
     Runaway {
-        /// Translation length the fit produced, in millimetres.
+        /// How far the scan actually travelled, in millimetres.
         moved_by: f64,
-        /// Largest translation considered plausible, in millimetres.
+        /// Largest displacement a refine is allowed, in millimetres.
         allowed: f64,
     },
     /// A supplied point or normal was not finite.
@@ -115,12 +122,47 @@ const ALL_AXES_WEAK: FitRejection = FitRejection::Degenerate {
     weak_axes: [true, true, true],
 };
 
+/// Bounds used by the overlap guard. Centres are stored in each mesh's own
+/// frame so the guard measures the transformed geometry rather than a pose's
+/// translation column.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FitBounds {
+    /// Bounding-box centre of the moving mesh, in the moving layer's local
+    /// frame — the same frame the moving points are in.
+    pub moving_center: DVec3,
+    /// Bounding-box diagonal of the moving mesh, in millimetres.
+    pub moving_extent: f64,
+    /// Bounding-box centre of the fixed mesh, in world.
+    pub fixed_center: DVec3,
+    /// Bounding-box diagonal of the fixed mesh, in millimetres.
+    pub fixed_extent: f64,
+}
+
+impl FitBounds {
+    /// Whether `rigid` leaves the two scans overlapping, and by how far it
+    /// misses when it does not.
+    ///
+    /// Returns the transformed centre separation and the maximum separation
+    /// allowed for the two bounding spheres to overlap.
+    fn miss(&self, rigid: &Rigid) -> Option<(f64, f64)> {
+        let separation = (rigid.apply(self.moving_center) - self.fixed_center).length();
+        let allowed = ((self.moving_extent + self.fixed_extent) * 0.5).max(MIN_OVERLAP_MM);
+        // Non-finite bounds cannot be judged. The comparison below would
+        // quietly answer "no miss" for a NaN either way; making the pass
+        // explicit keeps it a decision instead of an accident.
+        if !separation.is_finite() || !allowed.is_finite() {
+            return None;
+        }
+        (separation > allowed).then_some((separation, allowed))
+    }
+}
+
 /// Fit `moving` onto `fixed`.
 ///
 /// `normals`, when supplied, are the clicked surface normals for each side and
-/// are used only in the two-pair case. `moving_extent` is the moving mesh's
-/// bounding-box diagonal in millimetres; a fit translating farther than that
-/// is refused as [`FitRejection::Runaway`].
+/// are used only in the two-pair case. `bounds` says where the two meshes are
+/// and how big they are; a fit that does not leave them overlapping is refused
+/// as [`FitRejection::Apart`].
 ///
 /// # Errors
 ///
@@ -129,7 +171,7 @@ pub fn fit_pairs(
     moving: &[DVec3],
     fixed: &[DVec3],
     normals: Option<(&[DVec3], &[DVec3])>,
-    moving_extent: f64,
+    bounds: &FitBounds,
 ) -> Result<PairFit, FitRejection> {
     if moving.len() != fixed.len() {
         return Err(FitRejection::Unpaired {
@@ -155,7 +197,7 @@ pub fn fit_pairs(
     if moving.len() == MIN_PAIRS {
         let rigid = two_pair_frame(moving, fixed, normals)?;
         let residuals = residuals_of(&rigid, moving, fixed, &[0, 1]);
-        return finish(rigid, &residuals, Vec::new(), unit_ratio, moving_extent);
+        return finish(rigid, &residuals, Vec::new(), unit_ratio, bounds);
     }
 
     let mut keep: Vec<usize> = (0..moving.len()).collect();
@@ -172,24 +214,25 @@ pub fn fit_pairs(
     }
     rejected.sort_unstable();
     let residuals = residuals_of(&rigid, moving, fixed, &keep);
-    finish(rigid, &residuals, rejected, unit_ratio, moving_extent)
+    finish(rigid, &residuals, rejected, unit_ratio, bounds)
 }
 
-/// Apply the runaway guard and package the diagnostics.
+/// Apply the overlap guard and package the diagnostics.
 fn finish(
     rigid: Rigid,
     residuals: &[f64],
     rejected: Vec<u32>,
     unit_ratio: f64,
-    moving_extent: f64,
+    bounds: &FitBounds,
 ) -> Result<PairFit, FitRejection> {
     if !rigid.is_finite() {
         return Err(FitRejection::NonFinite);
     }
-    let moved_by = rigid.translation.length();
-    let allowed = moving_extent.max(1.0);
-    if moved_by > allowed {
-        return Err(FitRejection::Runaway { moved_by, allowed });
+    if let Some((separation, allowed)) = bounds.miss(&rigid) {
+        return Err(FitRejection::Apart {
+            separation,
+            allowed,
+        });
     }
     #[allow(clippy::cast_precision_loss)]
     let count = residuals.len().max(1) as f64;
@@ -208,10 +251,16 @@ fn finish(
 /// The quaternion form is deliberate: it can only ever produce a proper
 /// rotation, so a mirrored point set yields the best real rotation instead of
 /// a reflection that would silently turn a scan inside out.
+///
+/// Degeneracy is tested on both sides. Collinear clicks leave rotation about
+/// the line undetermined.
 fn horn_fit(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Result<Rigid, FitRejection> {
     let moving_centroid = centroid(moving, keep);
     let fixed_centroid = centroid(fixed, keep);
     if let Some(rejection) = line_degeneracy(moving, keep, moving_centroid) {
+        return Err(rejection);
+    }
+    if let Some(rejection) = line_degeneracy(fixed, keep, fixed_centroid) {
         return Err(rejection);
     }
     let mut covariance = DMat3::ZERO;
@@ -484,18 +533,33 @@ fn worst_outlier(residuals: &[f64]) -> Option<usize> {
     (value > TRIM_FLOOR_MM && value > median * TRIM_MEDIAN_FACTOR).then_some(position)
 }
 
-/// Mean fixed pairwise distance over mean moving pairwise distance.
+/// Median fixed pairwise distance over median moving pairwise distance.
+///
+/// Medians, not means: one grossly mis-clicked pair drags every mean it
+/// touches, and the gate then reports a unit problem for what is really one
+/// bad arrow — sending the operator to import scaling while the trimming
+/// loop that exists for exactly that click never runs.
 fn distance_ratio(moving: &[DVec3], fixed: &[DVec3]) -> f64 {
-    let mut moving_total = 0.0;
-    let mut fixed_total = 0.0;
+    let mut moving_gaps = Vec::new();
+    let mut fixed_gaps = Vec::new();
     for left in 0..moving.len() {
         for right in (left + 1)..moving.len() {
-            moving_total += moving[left].distance(moving[right]);
-            fixed_total += fixed[left].distance(fixed[right]);
+            moving_gaps.push(moving[left].distance(moving[right]));
+            fixed_gaps.push(fixed[left].distance(fixed[right]));
         }
     }
-    if moving_total <= f64::EPSILON {
+    let moving_median = median(&mut moving_gaps);
+    if moving_median <= f64::EPSILON {
         return 1.0;
     }
-    fixed_total / moving_total
+    median(&mut fixed_gaps) / moving_median
+}
+
+/// Median of `values`, which are sorted in place. Zero when empty.
+fn median(values: &mut [f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
 }

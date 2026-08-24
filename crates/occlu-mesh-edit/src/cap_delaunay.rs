@@ -1,8 +1,4 @@
-//! Planar Delaunay predicates for hole caps (in-circle, winding, quad
-//! rewrite) and the validity-guarded in-plane relaxation. The flip ENGINE —
-//! worklist-driven incremental Lawson over a persistent edge map — lives in
-//! `cap_lawson.rs`; this file keeps the shared geometry so both stay within
-//! the file-size budget.
+//! Planar Delaunay predicates and validity-guarded relaxation for hole caps.
 
 use glam::Vec2;
 
@@ -16,9 +12,7 @@ pub(super) fn apex_of(triangle: [usize; 3], u: usize, v: usize) -> Option<usize>
         .find(|&vertex| vertex != u && vertex != v)
 }
 
-/// Rebuild `triangle` with the endpoint `edge.1` swapped for the new apex.
-/// The caller drops a DIFFERENT endpoint from each of the two triangles, which
-/// preserves consistent winding and all four quad-boundary directed edges.
+/// Rebuild `triangle` with `edge.1` replaced by the new apex.
 pub(super) fn replace_edge(
     triangle: [usize; 3],
     edge: (usize, usize),
@@ -41,13 +35,10 @@ pub(super) fn signed_area(uv: &[Vec2], triangle: [usize; 3]) -> f32 {
 }
 
 /// Circumcircle classification of `query` against triangle `(tri_a, tri_b,
-/// tri_c)`: strictly inside, strictly outside, or numerically COCIRCULAR.
+/// tri_c)`: inside, outside, or numerically cocircular.
 ///
-/// On a cocircular tie (the shape of a round hole rim, where the determinant
-/// vanishes and classic Lawson never fires) the engine falls back to the
-/// shorter diagonal: strictly length-decreasing, so it cannot cycle, and it
-/// dissolves the ear-clip's long parallel chords that density refinement
-/// would otherwise have to chop wholesale.
+/// Cocircular ties use the shorter diagonal, which strictly decreases length
+/// and prevents cycling.
 pub(super) enum CircleVerdict {
     Inside,
     Outside,
@@ -55,7 +46,7 @@ pub(super) enum CircleVerdict {
 }
 
 /// Standard in-circle determinant, evaluated relative to `query`, with a
-/// RELATIVE tie band: the determinant scales with the fourth power of the
+/// relative tie band: the determinant scales with the fourth power of the
 /// quad size, so an absolute epsilon misclassifies every tie on real-world
 /// coordinates. The sign is taken against the triangle's own winding so the
 /// predicate is orientation-agnostic.
@@ -92,10 +83,8 @@ pub(super) fn circumcircle_verdict(
 /// of its neighbors in the plane while the rim stays pinned. Uniform in-plane
 /// distribution lifts to an evenly sampled cap.
 ///
-/// The move is VALIDITY-GUARDED: it is applied only if it keeps every incident
-/// triangle on the same (nonzero) side it started on. Near a concave rim notch
-/// a raw Laplacian step could push an interior vertex across a rim edge and
-/// invert a triangle (a self-intersecting cap); the guard forbids exactly that.
+/// Apply a move only when every incident triangle remains on its original
+/// nonzero side, preventing inverted or self-intersecting caps.
 pub(super) fn relax_uv(uv: &mut [Vec2], rim_len: usize, triangles: &[[usize; 3]]) {
     if uv.len() <= rim_len {
         return;

@@ -1,22 +1,9 @@
 //! Nearest-surface queries over a triangle soup.
 //!
-//! A uniform grid whose cell size follows the mesh's own triangle size, so one
-//! query costs the same on a small denture and on a full arch. A fixed
-//! millimetre cell — the shape this replaces — either wastes memory on fine
-//! meshes or drops a hundred triangles into one bucket on coarse ones.
-//!
-//! A query walks the grid as shells growing out of the cell it lands in and
-//! stops at the first shell that cannot beat what it has already found, so its
-//! cost follows the distance to the surface and not the influence radius the
-//! operator dialled in. A second, coarse grid records how far the nearest
-//! occupied block is, which is what lets a query in open space skip the void it
-//! sits in instead of sweeping every cell of it. Both are pure geometry: the
-//! answer is the one a scan over every triangle would give, tie-break included,
-//! which is what `surface/tests.rs` pins.
-//!
-//! Normals are computed from triangle geometry and never read from the file:
-//! the sign of the whole deviation map hangs on them, and scanner exports
-//! routinely carry normals that disagree with their own winding.
+//! The adaptive grid follows triangle size and uses coarse occupancy data to
+//! skip empty space. Queries remain equivalent to a full triangle scan,
+//! including tie-breaking. Normals come from triangle winding rather than
+//! imported vertex data so deviation signs use the indexed geometry.
 
 use std::ops::Range;
 
@@ -126,12 +113,9 @@ pub struct SurfaceIndex {
 impl SurfaceIndex {
     /// Build an index over every usable triangle in `soup`.
     ///
-    /// Triangles with out-of-range indices, non-finite vertices, or no usable
-    /// area are dropped rather than poisoning a query. So are triangles the
-    /// operator has masked out: this is the FIXED side of the "Exclude
-    /// selected parts" convention dental CAD software uses, and the only
-    /// honest way to exclude fixed surface is to leave it out of the index,
-    /// so nothing can ever match against it or measure to it.
+    /// Triangles with invalid indices, non-finite vertices, degenerate area, or
+    /// excluded corners are omitted from the index. Excluded fixed geometry
+    /// cannot participate in correspondence or deviation measurements.
     ///
     /// Returns `None` when nothing usable survives.
     #[must_use]
@@ -331,10 +315,8 @@ impl SurfaceIndex {
 
     /// Test a run of `length` cells along x, starting at `start`.
     ///
-    /// A row is walked through the bucket table directly, so an empty cell
-    /// costs two adjacent reads and nothing else. Most of a shell is empty on
-    /// any real scan, and paying a box-distance test for each of those cells is
-    /// what made a wide radius expensive.
+    /// Walk the bucket table directly so empty cells require only adjacent
+    /// reads.
     fn visit_run(&self, query: &Query, start: [i64; 3], length: i64, best: &mut Option<Candidate>) {
         let Some(base) = self.cell_index(start) else {
             return;
@@ -457,9 +439,7 @@ impl SurfaceIndex {
         self
     }
 
-    /// Bucket every triangle into the cells its bounding box overlaps, as a
-    /// counted-then-scattered CSR list: no per-cell `Vec`, no rehashing, and a
-    /// layout that is identical for identical input.
+    /// Bucket triangles into a deterministic counted-and-scattered CSR list.
     #[allow(clippy::cast_sign_loss)]
     fn with_buckets(mut self) -> Self {
         let cells = cell_count(self.dims);

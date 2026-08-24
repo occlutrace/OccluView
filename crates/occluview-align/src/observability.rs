@@ -1,91 +1,13 @@
-//! HONESTY: how much of a rigid displacement a nearest-point map can actually
-//! see, and how much can hide behind the number it prints.
-//!
-//! # The problem
-//!
-//! A deviation map reports, per moving vertex, the distance to the nearest
-//! point on the fixed surface. Move the two surfaces apart along the fixed
-//! surface's own normal and the map reports the move in full. Slide them past
-//! each other along a direction the surface is smooth in and the nearest point
-//! slides with them: the material has moved, and the map says almost nothing.
-//! On a cylinder displaced 0.30 mm along its own axis the mean reads 0.0075 mm;
-//! on a sphere turned one degree about any diameter, 0.0008 mm against a true
-//! 0.055 mm. Measuring the reverse direction as well does not help — the
-//! surfaces really do coincide as point sets. Nothing computed *from surface
-//! distance alone* can recover the offset, so the tool must say how blind it is
-//! instead of pretending it is not.
-//!
-//! # The measure
-//!
-//! Take a small rigid perturbation of the fitted pose — a twist `(ω, v)` about
-//! the centroid `c` of the measured points — which displaces the measured point
-//! `pᵢ` by `δᵢ = ω × (pᵢ − c) + v`.
-//!
-//! * What the map **sees** is, to first order, `δᵢ · nᵢ` at each vertex, with
-//!   `nᵢ` the fixed surface normal at the hit. Its mean square is `ξᵀCξ / N`
-//!   with `ξ = (ω, v)` and `C = Σ aᵢaᵢᵀ`, `aᵢ = [(pᵢ − c) × nᵢ ; nᵢ]` — the
-//!   familiar point-to-plane normal matrix.
-//! * What **truly happened** is `|δᵢ|`. Its mean square is `ξᵀMξ / N` with
-//!   `M = Σ GᵢᵀGᵢ`, `Gᵢ = [−[pᵢ − c]× | I]`.
-//!
-//! Their ratio is what the map converts truth into:
+//! Sensitivity of a nearest-point deviation map to rigid displacement.
 //!
 //! ```text
 //! sensitivity(ξ) = RMS(seen) / RMS(true) = sqrt( ξᵀCξ / ξᵀMξ )
 //! ```
 //!
-//! It lies in `[0, 1]` because `(δ · n)² ≤ |δ|²` for a unit normal. Its six
-//! extremes are the generalized eigenvalues of `(C, M)`, and the smallest names
-//! the direction the pair of surfaces is blindest in. That is the whole
-//! measure: `1.0` means a millimetre of displacement reads as a millimetre,
-//! `0.5` means it reads as half, `0.0` means the surfaces slide freely and the
-//! map cannot see the motion at all.
-//!
-//! # What it returns on real geometry
-//!
-//! Measured on the fixtures in `tests/measurement_truth.rs` and on real arch
-//! scans, the six sensitivities come out as:
-//!
-//! | fixture | six sensitivities | reading |
-//! |---|---|---|
-//! | plane | `0 0 0 1 1 1` | blind to both in-plane slides and the in-plane turn |
-//! | cylinder | `0 0 .61 .61 .71 .71` | blind to the axial slide and the axial turn |
-//! | sphere | `0 0 0 .50 .50 .71` | blind to all three turns |
-//! | full arch scan | `.45 .48 .55 .60 .67 .68` | no blind direction, but every direction reads about half |
-//!
-//! The arch row is the important one. A real dental scan has no *fully* blind
-//! direction — its curvature and undercuts see to that — but it under-reports a
-//! rigid displacement by roughly a factor of two in every direction at once,
-//! which is exactly the 0.30 mm offset that measured 0.14 mm.
-//!
-//! # Where this comes from
-//!
-//! `C` is the point-to-plane normal matrix of Gelfand, Ikemoto, Rusinkiewicz
-//! and Levoy, "Geometrically Stable Sampling for the ICP Algorithm", 3DIM 2003,
-//! equations 3 to 5, including their `cᵢ = pᵢ × nᵢ`. Their reading of it is the
-//! one used here: "The transformations for which this increase is comparatively
-//! small correspond to directions where the input meshes can slide relative to
-//! each other", and "If any of the eigenvalues are small, the corresponding
-//! eigenvector defines a transformation that can move two meshes from their
-//! optimum alignment with only a small increase in error." They use the
-//! condition number of `C` to choose samples; this module instead divides by
-//! `M` so the result comes out as a dimensionless fraction of a displacement
-//! rather than as a ratio between two eigenvalues of mixed units.
-//!
-//! The second-order geometry behind the collapse is Pottmann and Hofer,
-//! "Geometry of the Squared Distance Function to Curves and Surfaces" (2003),
-//! propositions 2 and 3: in the principal frame at the footpoint the tangential
-//! coordinates enter the squared distance only through curvature, so a
-//! tangential slide `t` on a surface of radius `r` reappears as roughly
-//! `t²/2r` — 5 µm for a 100 µm slide on a 1 mm cusp, and exactly nothing on a
-//! flat abutment face.
-//!
-//! That a small residual after a fit says nothing about error at the feature
-//! you care about is the same result Fitzpatrick reports for landmark
-//! registration in "Fiducial registration error and target registration error
-//! are uncorrelated", SPIE Medical Imaging 2009. This module is the attempt to
-//! give the operator the missing half of that picture rather than to leave the
-//! residual standing on its own.
+//! `C` is the point-to-plane normal matrix and `M` is the full rigid-motion
+//! metric. The six generalized eigenvalues describe observable motion; the
+//! smallest value is the least observable direction. See Gelfand et al.,
+//! "Geometrically Stable Sampling for the ICP Algorithm" (3DIM 2003).
 
 use glam::DVec3;
 use rayon::prelude::*;

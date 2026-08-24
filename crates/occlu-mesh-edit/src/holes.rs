@@ -5,8 +5,8 @@ use super::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d};
 use super::cap_refine::refine_and_relax;
 use super::cap_support::{build_vertex_adjacency, gather_support_band, rim_outside_support};
 use super::holes_gate::{
-    border_perimeter_threshold, collect_boundary_loops, rim_exceeds_size_cap,
-    rim_selection_qualifies,
+    border_perimeter_threshold, collect_boundary_loops, refuse_unweldable_soup,
+    rim_exceeds_size_cap, rim_selection_qualifies,
 };
 use super::holes_walk::{build_boundary_maps, ear_clip_cap, push_cap_index, vertex_position};
 use super::{
@@ -32,11 +32,21 @@ const MIN_INTERPOLATED_LOOP: usize = 8;
 /// is refused by the fold/pierce guards and still falls back to the membrane.
 const MAX_INTERPOLATED_LOOP: usize = 4096;
 
-/// Generous edge ceiling applied when a face selection is present: an explicit
-/// selection is the operator's intent, so large marked rims still close. Bounded
-/// well under the ear-clip's `u16` rim limit and within the measured cost of
-/// the linked-ring ear-clip so a huge accidental selection cannot hang the tool.
-pub(crate) const SELECTION_MAX_BOUNDARY_LOOP: usize = 20_000;
+/// The edge ceiling for closing a hole: how many boundary edges one rim may
+/// have before the tool refuses it.
+///
+/// Bounded well under the ear-clip's `u16` rim limit and within its measured
+/// cost, so a huge accidental selection cannot hang the tool. With a face
+/// selection present the gate takes `max(options.max_boundary_loop, this)`,
+/// because an explicit selection is the operator's intent and large marked
+/// rims should still close.
+///
+/// Exported because that `max` makes a caller's private copy of this number
+/// silently authoritative: the application and the CLI each held their own
+/// `20_000`, so lowering this constant to fix a hang would have changed
+/// nothing in the shipped product -- `max(20_000, 8_000)` is `20_000`. One
+/// number, in one place, for every caller.
+pub const CLOSE_HOLES_EDGE_CEILING: usize = 20_000;
 
 #[derive(Copy, Clone)]
 struct FillInputCounts {
@@ -114,7 +124,7 @@ pub(crate) struct FillLoopStats {
 /// - non-simple / numerically stalled loops, degenerate planar normals, and
 ///   piercing caps are skipped (damaged counter).
 ///
-/// Loops left open because a selection did not cover their rim are NOT warned
+/// Loops left open because a selection did not cover their rim are not warned
 /// about — that is requested behavior, not degeneracy.
 ///
 /// # Errors
@@ -177,6 +187,8 @@ pub(crate) fn fill_holes_with_outcome(
     if counts.triangles == 0 {
         return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));
     }
+
+    refuse_unweldable_soup(mesh, options.heal_boundary_rims, counts.triangles)?;
 
     // Weld STL-style soup to shared topology first (Close Holes path only), so
     // the boundary walk sees real rims instead of one phantom needle per
