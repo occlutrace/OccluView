@@ -8,6 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 mod api;
 mod architecture;
 mod attempts;
+mod burst_stress;
 mod cache_and_jobs;
 mod fixtures;
 mod framing;

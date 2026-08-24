@@ -1,9 +1,6 @@
 # Changelog
 
-Versions 1.0.7 and 1.0.8 were internal build bumps and were never released;
-their changes are listed under 1.0.9, which is the version that ships them.
-
-## 1.0.9 - 2026-08-23
+## 1.0.7 - 2026-08-24
 
 - Made Shift actually strengthen the Smooth brush. Shift doubled the force
   slider and capped it at 100% — but Smooth turns force into relaxation
