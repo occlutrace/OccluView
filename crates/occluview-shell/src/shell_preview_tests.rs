@@ -1,3 +1,7 @@
+//! Contract tests for the Explorer preview handler and its window.
+
+#![allow(clippy::panic, clippy::expect_used)]
+
 use std::path::{Path, PathBuf};
 
 fn registration_source() -> String {
@@ -22,10 +26,21 @@ fn combined_com_source() -> String {
     .join("\n")
 }
 
+/// A source file of this crate, read for a contract assertion.
+///
+/// It panics rather than returning an empty string. A path that stops
+/// resolving -- a rename, a move, a typo -- would otherwise turn every
+/// assertion about that file into an assertion about "", and the negative
+/// ones, which are the assertions worth having, all pass in a vacuum.
 fn source_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);
-    std::fs::read_to_string(path).unwrap_or_default()
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "contract test source {} is missing: {error}",
+            path.display()
+        )
+    })
 }
 
 #[test]
@@ -140,10 +155,10 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
 
 #[test]
 fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
-    let com = include_str!("com.rs");
+    let com = include_str!("com/thumbnail_provider.rs");
     let start = com
-        .find("fn render_pixels(&self, spec: ThumbnailSpec)")
-        .expect("thumbnail render_pixels");
+        .find("fn render_attempt(&self, spec: ThumbnailSpec)")
+        .expect("thumbnail render_attempt");
     let body = &com[start..];
     let reserve = body
         .find("reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT)")
@@ -152,7 +167,7 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
         .find("self.ensure_stream_bytes()")
         .expect("shell stream read");
     let reserved_render = body
-        .find("render_thumbnail_shared_or_placeholder_with_reservation(")
+        .find("try_render_thumbnail_shared_with_reservation(")
         .expect("reserved render path");
 
     assert!(
@@ -167,10 +182,10 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
 
 #[test]
 fn thumbnail_provider_releases_full_stream_bytes_after_each_request() {
-    let com = include_str!("com.rs");
+    let com = include_str!("com/thumbnail_provider.rs");
     let start = com
-        .find("fn render_pixels(&self, spec: ThumbnailSpec)")
-        .expect("thumbnail render_pixels");
+        .find("fn render_attempt(&self, spec: ThumbnailSpec)")
+        .expect("thumbnail render_attempt");
     let body = &com[start..];
     let guard = body
         .find("ThumbnailStreamBytesGuard::new(&self.bytes)")
@@ -334,6 +349,126 @@ fn preview_render_forces_paint_after_bitmap_refresh() {
 }
 
 #[test]
+fn preview_reuses_one_process_shared_offscreen_renderer() {
+    // prevhost keeps the handler process alive between file clicks; creating a
+    // fresh wgpu device + compiling shaders per click was the dominant fixed
+    // cost of first paint. The scene loader must borrow the process-shared
+    // renderer, and the render path must retire it on failure so a lost device
+    // heals instead of failing every later preview.
+    let factory = include_str!("offscreen_factory.rs");
+    let load = include_str!("preview_scene/load.rs");
+    let render = include_str!("preview_scene/render.rs");
+
+    assert!(factory.contains("fn shared_shell_offscreen()"));
+    assert!(factory.contains("fn discard_shared_shell_offscreen("));
+    assert!(factory.contains("fn prewarm_shared_shell_offscreen()"));
+    assert!(load.contains("let offscreen = shared_shell_offscreen()?;"));
+    assert!(
+        !load.contains("create_shell_offscreen()"),
+        "preview loads must not create a per-file wgpu device"
+    );
+    assert!(render.contains("discard_shared_shell_offscreen(&self.offscreen)"));
+}
+
+#[test]
+fn preview_resize_renders_once_through_wm_size() {
+    // MoveWindow synchronously delivers WM_SIZE when the size changed, and the
+    // WM_SIZE handler re-renders. A second explicit render in SetRect/SetWindow
+    // made every host resize pay two full GPU renders and readbacks.
+    let preview = include_str!("com/preview.rs");
+    let window = include_str!("com/preview/window.rs");
+
+    let set_rect_start = preview.find("fn SetRect(").expect("SetRect impl");
+    let set_rect_end = preview[set_rect_start..]
+        .find("fn DoPreview(")
+        .map(|offset| set_rect_start + offset)
+        .expect("DoPreview follows SetRect");
+    let set_window_start = preview.find("fn SetWindow(").expect("SetWindow impl");
+    let set_window_end = preview[set_window_start..]
+        .find("fn SetRect(")
+        .map(|offset| set_window_start + offset)
+        .expect("SetRect follows SetWindow");
+
+    assert!(
+        !preview[set_rect_start..set_rect_end].contains("render_preview_now"),
+        "SetRect must leave the re-render to the WM_SIZE handler"
+    );
+    assert!(
+        !preview[set_window_start..set_window_end].contains("render_preview_now"),
+        "SetWindow must leave the re-render to the WM_SIZE handler"
+    );
+    let wm_size = window.find("WM_SIZE =>").expect("WM_SIZE arm");
+    assert!(
+        window[wm_size..].contains("render_preview_now"),
+        "the WM_SIZE handler owns the resize re-render"
+    );
+}
+
+#[test]
+fn every_com_boundary_is_panic_guarded() {
+    // Rust aborts the process when a panic unwinds out of an `extern "system"`
+    // fn — the ABI of every #[implement] vtable shim, the Dll* exports, and
+    // the wndproc — regardless of the unwind profile the DLL builds with. In a
+    // shared surrogate that abort blanks every other file's thumbnail or
+    // preview in flight, so each boundary must catch via `com_entry`.
+    // Whitespace-normalize so rustfmt's argument wrapping cannot break the
+    // assertions; the guard is the call plus its context literal.
+    let flatten = |source: &str| source.split_whitespace().collect::<String>();
+    let com = flatten(concat!(
+        include_str!("com.rs"),
+        include_str!("com/thumbnail_provider.rs")
+    ));
+    let preview = flatten(include_str!("com/preview.rs"));
+    let window = flatten(include_str!("com/preview/window.rs"));
+    let registration = flatten(include_str!("registration/mod.rs"));
+
+    for guarded in [
+        "com_entry(\"IThumbnailProvider::GetThumbnail\"",
+        "com_entry(\"thumbnailIInitializeWithStream\"",
+        "com_entry(\"thumbnailIInitializeWithFile\"",
+        "com_entry(\"thumbnailIInitializeWithItem\"",
+        "com_entry(\"thumbnailIClassFactory::CreateInstance\"",
+        "com_entry(\"previewIClassFactory::CreateInstance\"",
+        "com_entry(\"DllGetClassObject\"",
+    ] {
+        assert!(com.contains(guarded), "missing panic guard: {guarded}");
+    }
+    for guarded in [
+        "com_entry(\"IPreviewHandler::SetWindow\"",
+        "com_entry(\"IPreviewHandler::SetRect\"",
+        "com_entry(\"IPreviewHandler::DoPreview\"",
+        "com_entry(\"IPreviewHandler::Unload\"",
+        "com_entry(\"IObjectWithSite::SetSite\"",
+        "com_entry(\"IObjectWithSite::GetSite\"",
+        "com_entry(\"previewIInitializeWithStream\"",
+        "com_entry(\"previewIInitializeWithFile\"",
+        "com_entry(\"previewIInitializeWithItem\"",
+    ] {
+        assert!(preview.contains(guarded), "missing panic guard: {guarded}");
+    }
+    assert!(window.contains("com_entry(\"preview_window_proc\""));
+    assert!(registration.contains("com_entry(\"DllRegisterServer\""));
+    assert!(registration.contains("com_entry(\"DllUnregisterServer\""));
+    // The HRESULT vocabulary comes from Win32::Foundation, never hand-typed
+    // decimal literals (which once drifted into 0x8000FF85-style non-codes).
+    assert!(!com.contains("HRESULT(-2_147_4"));
+    assert!(!registration.contains("HRESULT(-2_147_4"));
+}
+
+#[test]
+fn class_activation_prewarms_the_matching_renderer() {
+    // Under Apartment hosting the first GetThumbnail serializes in front of a
+    // whole folder's queue; starting device creation at class activation
+    // overlaps it with Initialize instead. Each host warms only its own path.
+    let com = include_str!("com.rs");
+
+    assert!(com.contains("fn spawn_renderer_prewarm(class: &GUID)"));
+    assert!(com.contains("spawn_renderer_prewarm(&requested);"));
+    assert!(com.contains("prewarm_thumbnail_renderer"));
+    assert!(com.contains("prewarm_shared_shell_offscreen"));
+}
+
+#[test]
 fn linux_host_has_windows_msvc_build_script() {
     let script_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-windows-msvc.sh");
@@ -376,6 +511,12 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
         .expect("desktop file should be readable");
     assert!(desktop.contains("Exec=occluview %F"));
     assert!(desktop.contains("MimeType=model/stl;model/obj;model/gltf-binary;"));
+    // The launcher searches Name, GenericName and Keywords. Without keywords a
+    // technician who types the file format, or the work, finds nothing.
+    assert!(
+        desktop.contains("Keywords=") && desktop.contains("STL;"),
+        "the desktop entry must be findable by what the user is looking for"
+    );
 
     let thumbnailer = std::fs::read_to_string(linux.join("ai.occlutrace.OccluView.thumbnailer"))
         .expect("thumbnailer file should be readable");
@@ -418,9 +559,16 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
         "usr/share/mime/packages/occluview-mime.xml",
         "usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer",
         "usr/share/icons/hicolor/512x512/apps/occluview.png",
+        // One icon name per registered type: a scan with no thumbnail yet must
+        // still be drawn as a scan, the way the Windows installer draws it.
+        "usr/share/icons/hicolor/scalable/mimetypes/model-stl.svg",
+        "usr/share/icons/hicolor/scalable/mimetypes/application-x-occluview-hps.svg",
         "usr/share/doc/occluview/README.md",
         "usr/share/doc/occluview/copyright",
+        "usr/share/doc/occluview/NEWS.gz",
         "usr/share/doc/occluview/changelog.gz",
+        "usr/share/man/man1/occluview.1.gz",
+        "usr/share/man/man1/occluview-cli.1.gz",
     ] {
         assert!(
             check_script.contains(required_path),
@@ -443,4 +591,124 @@ fn gui_windows_resource_is_embedded_during_cross_builds() {
     assert!(build_rs.contains("llvm-rc"));
     assert!(build_rs.contains("cargo:rustc-link-arg-bin=occluview="));
     assert!(!build_rs.contains("env::consts::OS != \"windows\""));
+}
+
+#[test]
+fn the_preview_window_and_the_com_object_die_together() {
+    // The child preview window holds a raw `&PreviewHandler` in GWLP_USERDATA
+    // with no AddRef, so their lifetimes have to be tied by hand. Two ordinary
+    // routes reach the mismatch:
+    //
+    //   * A host releases without calling `Unload` -- etiquette, not a COM
+    //     requirement, and especially likely after `DoPreview` returned an
+    //     error.
+    //   * Re-entrancy with a perfectly behaved host: `show_context_menu` runs
+    //     `TrackPopupMenuEx`, a modal loop that pumps the STA, so a click on
+    //     another file in Explorer can deliver Unload and Release while that
+    //     call is still on the stack.
+    //
+    // And the reverse: when Explorer destroys the parent, the child dies with
+    // it and a later Unload would call DestroyWindow on a recycled handle.
+    let preview = include_str!("com/preview.rs");
+    let window = include_str!("com/preview/window.rs");
+
+    let drop_impl = preview
+        .split_once("impl Drop for PreviewHandler {")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let drop_body = drop_impl
+        .split_once("\n}")
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    assert!(
+        drop_body.contains("self.destroy_preview_window();"),
+        "dropping the COM object must take the window with it, or a live \
+         window is left pointing at freed memory"
+    );
+    let destroys_before_count = drop_body
+        .find("destroy_preview_window")
+        .zip(drop_body.find("ACTIVE_COM_OBJECTS"))
+        .is_some_and(|(window, count)| window < count);
+    assert!(
+        destroys_before_count,
+        "the window must be torn down before the object count drops"
+    );
+
+    // Clearing the slot is legal cross-thread; DestroyWindow is not. An
+    // orphaned window must degrade to DefWindowProcW, not to a dangling read.
+    let destroy = preview
+        .split_once("fn destroy_preview_window(&self)")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let clears = destroy.find("SetWindowLongPtrW");
+    let destroys = destroy.find("DestroyWindow(hwnd)");
+    assert!(
+        clears
+            .zip(destroys)
+            .is_some_and(|(clear, destroy)| clear < destroy),
+        "GWLP_USERDATA must be cleared before DestroyWindow, and unconditionally"
+    );
+    assert!(
+        destroy.contains("DeleteObject"),
+        "the last rendered bitmap is up to 2048x2048x4 of GDI memory and must not leak"
+    );
+
+    assert!(
+        window.contains("WM_NCDESTROY"),
+        "a window destroyed with its parent must clear the handler's stale HWND"
+    );
+
+    // Destroying the window narrows the second route -- the common case then
+    // returns 0 from the modal call -- but cannot close it: the frame that
+    // opened the menu is still on the stack when Drop runs, and running the
+    // selected command from there reads the preview scene and the source
+    // stream of a freed object. What closes it is refusing to touch `self`
+    // once the window no longer names it.
+    let menu = include_str!("com/preview/context_menu.rs");
+    let after_tracking = menu
+        .split_once("TrackPopupMenuEx(menu,")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let confirms = after_tracking.find("window_owns_handler(hwnd, std::ptr::from_ref(self))");
+    let runs = after_tracking.find("self.run_menu_command(hwnd, command)");
+    assert!(
+        confirms
+            .zip(runs)
+            .is_some_and(|(confirm, run)| confirm < run),
+        "the selected command must not run until the window has confirmed it \
+         still points at this handler"
+    );
+
+    // The Windows packaging job runs this through test-msi-lifecycle.ps1, so
+    // the rule is checked against a real host, not only against the source.
+    let smoke = include_str!("../../../install/test-preview-handler.ps1");
+    assert!(
+        smoke.contains("Release without Unload left the child preview window alive"),
+        "the preview smoke should cover a host that releases without Unload"
+    );
+}
+
+/// The COM boundary guard has to catch, not merely be spelled at every site.
+///
+/// Windows-only, because the module it tests is: CI runs the workspace suite
+/// on windows-latest, which is where this one counts.
+///
+/// The guard beside it checks that every entry point names `com_entry`. That
+/// is all a Linux build can check about the call sites, and it is worth
+/// having -- but it says nothing about the body. Deleting the `catch_unwind`
+/// from `com_entry` left the whole shell suite green, and `[profile.release]`
+/// sets `panic = "abort"` for the cdylib, so what these catches prevent is one
+/// bad file taking down `dllhost` and blanking every thumbnail in the folder.
+#[cfg(windows)]
+#[test]
+fn com_entry_returns_the_fallback_when_the_body_panics() {
+    let value = crate::com::com_entry("test::body_returns", || 0_u32, || 7);
+    assert_eq!(value, 7, "a body that returns must pass its value through");
+
+    let caught = crate::com::com_entry("test::body_panics", || 0_u32, || panic!("boom"));
+    assert_eq!(
+        caught, 0,
+        "a panicking body must come back as the fallback, not unwind into the \
+         COM caller"
+    );
 }

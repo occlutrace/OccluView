@@ -10,28 +10,11 @@
 use super::{Scene, SceneMesh, SceneMeshId};
 use glam::{Affine3A, DAffine3, DMat3};
 use occlu_mesh_edit::{plane_section, SectionPlane, SectionPolyline};
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// Which layers a section should include.
-pub enum VisibilityFilter<'a> {
-    /// Use each layer's own `visible` flag.
-    SceneVisibility,
-    /// Include only layers whose id is in this set (point clouds still skipped).
-    Ids(&'a BTreeSet<SceneMeshId>),
-}
-
-impl VisibilityFilter<'_> {
-    /// Whether `entry` contributes a contour. Never true for point clouds.
-    fn includes(&self, entry: &SceneMesh) -> bool {
-        if entry.mesh.is_point_cloud() {
-            return false;
-        }
-        match self {
-            Self::SceneVisibility => entry.visible,
-            Self::Ids(ids) => ids.contains(&entry.id()),
-        }
-    }
+/// Whether `entry` contributes a contour. Never true for point clouds.
+fn contributes_contour(entry: &SceneMesh) -> bool {
+    !entry.mesh.is_point_cloud() && entry.visible
 }
 
 /// The section contour of one scene layer, in world space (`f64`).
@@ -53,10 +36,10 @@ pub struct SceneSection {
 impl SceneSection {
     /// Compute world-space section contours for every included layer.
     #[must_use]
-    pub fn compute(scene: &Scene, plane: SectionPlane, visible: &VisibilityFilter<'_>) -> Self {
+    pub fn compute(scene: &Scene, plane: SectionPlane) -> Self {
         let mut per_layer = Vec::new();
         for entry in scene.meshes() {
-            if !visible.includes(entry) {
+            if !contributes_contour(entry) {
                 continue;
             }
             let Some(local) = world_plane_to_local(plane, &entry.transform) else {
@@ -160,7 +143,7 @@ struct LayerFingerprint {
 }
 
 /// Build the content fingerprint for these inputs.
-fn section_key(scene: &Scene, plane: SectionPlane, visible: &VisibilityFilter<'_>) -> SectionKey {
+fn section_key(scene: &Scene, plane: SectionPlane) -> SectionKey {
     let plane = [
         plane.normal.x.to_bits(),
         plane.normal.y.to_bits(),
@@ -170,7 +153,7 @@ fn section_key(scene: &Scene, plane: SectionPlane, visible: &VisibilityFilter<'_
     let layers = scene
         .meshes()
         .iter()
-        .filter(|entry| visible.includes(entry))
+        .filter(|entry| contributes_contour(entry))
         .map(|entry| LayerFingerprint {
             id: entry.id().get(),
             topology: entry.mesh.topology_id(),
@@ -212,19 +195,14 @@ impl SectionCache {
     }
 
     /// Return the cached section for these inputs, computing it on a miss.
-    pub fn get_or_compute(
-        &mut self,
-        scene: &Scene,
-        plane: SectionPlane,
-        visible: &VisibilityFilter<'_>,
-    ) -> Arc<SceneSection> {
-        let key = section_key(scene, plane, visible);
+    pub fn get_or_compute(&mut self, scene: &Scene, plane: SectionPlane) -> Arc<SceneSection> {
+        let key = section_key(scene, plane);
         if let Some((cached_key, cached)) = &self.cached {
             if *cached_key == key {
                 return Arc::clone(cached);
             }
         }
-        let section = Arc::new(SceneSection::compute(scene, plane, visible));
+        let section = Arc::new(SceneSection::compute(scene, plane));
         self.cached = Some((key, Arc::clone(&section)));
         section
     }
@@ -275,8 +253,7 @@ mod tests {
     #[test]
     fn cube_layer_yields_one_closed_contour() {
         let scene = scene_with(cube());
-        let section =
-            SceneSection::compute(&scene, xplane(0.5), &VisibilityFilter::SceneVisibility);
+        let section = SceneSection::compute(&scene, xplane(0.5));
         assert_eq!(section.per_layer.len(), 1);
         let layer = &section.per_layer[0];
         assert_eq!(layer.polylines.len(), 1);
@@ -286,21 +263,13 @@ mod tests {
 
     #[test]
     fn translated_layer_translates_the_contour() {
-        let base = SceneSection::compute(
-            &scene_with(cube()),
-            xplane(0.5),
-            &VisibilityFilter::SceneVisibility,
-        );
+        let base = SceneSection::compute(&scene_with(cube()), xplane(0.5));
 
         let shift = Vec3::new(3.0, -2.0, 1.5);
         let mut scene = Scene::new();
         scene.add(SceneMesh::new(cube()).with_transform(Affine3A::from_translation(shift)));
         // Translate the plane by n·shift so the contour rides along with it.
-        let moved = SceneSection::compute(
-            &scene,
-            xplane(0.5 + Vec3::X.dot(shift)),
-            &VisibilityFilter::SceneVisibility,
-        );
+        let moved = SceneSection::compute(&scene, xplane(0.5 + Vec3::X.dot(shift)));
 
         assert_eq!(base.per_layer.len(), 1);
         assert_eq!(moved.per_layer.len(), 1);
@@ -319,11 +288,7 @@ mod tests {
     #[test]
     fn point_cloud_layers_are_skipped() {
         let cloud = Mesh::point_cloud(None, vec![Vertex::at(Vec3::ZERO), Vertex::at(Vec3::X)]);
-        let section = SceneSection::compute(
-            &scene_with(cloud),
-            xplane(0.5),
-            &VisibilityFilter::SceneVisibility,
-        );
+        let section = SceneSection::compute(&scene_with(cloud), xplane(0.5));
         assert!(section.per_layer.is_empty());
     }
 
@@ -331,8 +296,8 @@ mod tests {
     fn cache_reuses_until_geometry_transform_or_plane_changes() {
         let scene = scene_with(cube());
         let mut cache = SectionCache::new();
-        let first = cache.get_or_compute(&scene, xplane(0.5), &VisibilityFilter::SceneVisibility);
-        let second = cache.get_or_compute(&scene, xplane(0.5), &VisibilityFilter::SceneVisibility);
+        let first = cache.get_or_compute(&scene, xplane(0.5));
+        let second = cache.get_or_compute(&scene, xplane(0.5));
         assert!(
             Arc::ptr_eq(&first, &second),
             "unchanged inputs reuse the cache"
@@ -341,11 +306,11 @@ mod tests {
         // Transform change invalidates.
         let mut moved = scene.clone();
         moved.meshes_mut()[0].transform = Affine3A::from_translation(Vec3::X);
-        let third = cache.get_or_compute(&moved, xplane(0.5), &VisibilityFilter::SceneVisibility);
+        let third = cache.get_or_compute(&moved, xplane(0.5));
         assert!(!Arc::ptr_eq(&first, &third));
 
         // Plane change invalidates.
-        let fourth = cache.get_or_compute(&scene, xplane(0.6), &VisibilityFilter::SceneVisibility);
+        let fourth = cache.get_or_compute(&scene, xplane(0.6));
         assert!(!Arc::ptr_eq(&third, &fourth));
     }
 
@@ -353,12 +318,11 @@ mod tests {
     fn cache_reuses_across_material_only_change() {
         let scene = scene_with(cube());
         let mut cache = SectionCache::new();
-        let first = cache.get_or_compute(&scene, xplane(0.5), &VisibilityFilter::SceneVisibility);
+        let first = cache.get_or_compute(&scene, xplane(0.5));
         // Re-tint the layer (clones the mesh, preserving topology_id).
         let mut retinted = scene.clone();
         retinted.meshes_mut()[0].tint = [0.1, 0.2, 0.3, 1.0];
-        let second =
-            cache.get_or_compute(&retinted, xplane(0.5), &VisibilityFilter::SceneVisibility);
+        let second = cache.get_or_compute(&retinted, xplane(0.5));
         assert!(Arc::ptr_eq(&first, &second), "material-only change reuses");
     }
 
@@ -381,11 +345,7 @@ mod tests {
         // Cut through the transformed cube centroid (local (0.5, 0.5, 0.5)).
         let world_centroid = transform.transform_point3(Vec3::splat(0.5));
         let d = n.dot(world_centroid);
-        let section = SceneSection::compute(
-            &scene,
-            SectionPlane::new(n, d).expect("unit normal"),
-            &VisibilityFilter::SceneVisibility,
-        );
+        let section = SceneSection::compute(&scene, SectionPlane::new(n, d).expect("unit normal"));
         assert_eq!(section.per_layer.len(), 1);
         let nd = n.as_dvec3();
         let dd = f64::from(d);

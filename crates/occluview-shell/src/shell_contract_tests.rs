@@ -1,6 +1,4 @@
-use super::{
-    APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, SUPPORTED_EXTENSIONS, V1_OPEN_EXTENSIONS,
-};
+use super::{owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, SUPPORTED_EXTENSIONS};
 use std::path::Path;
 
 fn canonical_extension(extension: &str) -> &str {
@@ -11,7 +9,7 @@ fn canonical_extension(extension: &str) -> &str {
     }
 }
 
-fn registration_source() -> String {
+pub(super) fn registration_source() -> String {
     [
         include_str!("registration/mod.rs"),
         include_str!("registration/associations.rs"),
@@ -24,22 +22,33 @@ fn registration_source() -> String {
 
 #[test]
 fn thumbnail_registration_only_includes_implemented_stream_formats() {
-    assert_eq!(
-        SUPPORTED_EXTENSIONS,
-        ["stl", "ply", "obj", "glb", "hps", "dcm"]
-    );
-}
-
-#[test]
-fn shell_associations_include_all_v1_open_extensions() {
-    for ext in V1_OPEN_EXTENSIONS {
-        assert!(SUPPORTED_EXTENSIONS.contains(ext));
+    // Comparing the constant with a longhand copy of itself holds whatever the
+    // list says, including an extension Explorer would then hand to a reader
+    // that does not exist. Registering a format promises the shell that a
+    // stream of those bytes produces a thumbnail, and the dispatcher is what
+    // keeps the promise.
+    // An empty list would pass the loop below vacuously; it cannot be empty,
+    // and the compiler says so -- clippy rejects the check as always false.
+    for extension in SUPPORTED_EXTENSIONS {
+        assert!(
+            occluview_formats::probe::by_extension(extension).is_some(),
+            "{extension} is registered with Explorer, and no reader claims it"
+        );
     }
 }
 
 #[test]
 fn open_with_targets_the_real_gui_binary_name() {
-    assert_eq!(APP_EXE_NAME, "occluview.exe");
+    // Bound to the manifest that produces the file, the way platform.rs binds
+    // the Linux app id to the installed .desktop entry. Against a copy of the
+    // constant, renaming the [[bin]] target stays green while "Open with" on
+    // every installed machine points at an executable that is gone.
+    let stem = APP_EXE_NAME.strip_suffix(".exe").unwrap_or(APP_EXE_NAME);
+    let manifest = include_str!("../../occluview-app/Cargo.toml");
+    assert!(
+        manifest.contains(&format!("name = \"{stem}\"")),
+        "APP_EXE_NAME ({APP_EXE_NAME}) must name the [[bin]] target in occluview-app/Cargo.toml"
+    );
 }
 
 #[test]
@@ -222,17 +231,23 @@ fn installer_metadata_tracks_supported_shell_extensions() {
         let dot_ext = format!(".{ext}");
         let upper = canonical_extension(ext).to_ascii_uppercase();
         let progid = format!("MeshFile.{upper}");
-        assert!(wxs.contains(&format!(
+        if owns_extension(ext) {
+            assert!(wxs.contains(&format!(
                 "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\""
             )));
-        assert!(wxs.contains(&format!(
+            assert!(wxs.contains(&format!(
                 "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\" />\n              <RegistryValue Name=\"ThumbnailCutoff\""
             )));
-        assert!(wxs.contains(&format!(
+            assert!(wxs.contains(&format!(
                 "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\" />\n              <RegistryValue Name=\"ThumbnailCutoff\" Type=\"integer\" Value=\"1\" />\n              <RegistryValue Name=\"TypeOverlay\""
             )));
-        assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\DefaultIcon")));
-        assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\ShellEx")));
+            assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\DefaultIcon")));
+            assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\ShellEx")));
+        } else {
+            super::installer_contract_tests::assert_extension_is_offered_not_owned(
+                wxs, reg, &dot_ext,
+            );
+        }
         assert!(wxs.contains(&format!("Software\\Classes\\{progid}\\ShellEx")));
         assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\OpenWithProgids")));
         assert!(wxs.contains(&format!(
@@ -243,15 +258,17 @@ fn installer_metadata_tracks_supported_shell_extensions() {
         )));
         assert!(wxs.contains(&format!("Name=\"{progid}\" Type=\"string\" Value=\"\"")));
         assert!(wxs.contains(&format!("Software\\Classes\\{progid}\\DefaultIcon")));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"")));
-        assert!(reg.contains(&format!(
-            "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001"
-        )));
-        assert!(reg.contains(&format!(
+        if owns_extension(ext) {
+            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"")));
+            assert!(reg.contains(&format!(
+                "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001"
+            )));
+            assert!(reg.contains(&format!(
                 "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001\n\"TypeOverlay\"=\"\""
             )));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\DefaultIcon]")));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx")));
+            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\DefaultIcon]")));
+            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx")));
+        }
         assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{progid}\\ShellEx")));
         assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\OpenWithProgids]")));
         assert!(reg.contains(&format!(
@@ -361,6 +378,8 @@ fn package_workflow_runs_installer_lifecycle_smoke() {
     assert!(thumbnail_smoke.contains("Assert-ShellProbeSucceeded"));
     assert!(thumbnail_smoke.contains("Assert-MixedFolderBurst"));
     assert!(thumbnail_smoke.contains("occluview-thumbnail-mixed"));
+    assert!(thumbnail_smoke.contains("ProbeShellForced"));
+    assert!(thumbnail_smoke.contains("WTS_FORCEEXTRACTION"));
     assert!(thumbnail_smoke.contains("$noiseCount"));
     assert!(thumbnail_smoke.contains("$request.Is3d"));
     assert!(thumbnail_smoke.contains("if (-not $request.Is3d)"));
@@ -405,7 +424,9 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux"));
     assert!(workflow.contains("cargo test -p occluview-hps --features private-hps-key"));
     assert!(workflow.contains("install/linux/build-deb.sh"));
-    assert!(workflow.contains("install/linux/check-deb.sh target/deb/*.deb"));
+    // The package to validate is the one build-deb.sh just named; globbing
+    // target/deb hands dpkg-deb a second path as a control-file name.
+    assert!(workflow.contains("install/linux/check-deb.sh \"$DEB\""));
     assert!(workflow.contains("appstreamcli validate --no-net"));
     assert!(workflow.contains("xmllint --noout"));
     assert!(workflow.contains("lintian"));
@@ -426,7 +447,10 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(check_deb.contains("usr/bin/occluview"));
     assert!(check_deb.contains("usr/bin/occluview-cli"));
     assert!(check_deb.contains("usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"));
+    assert!(check_deb.contains("usr/share/doc/occluview/NEWS.gz"));
     assert!(check_deb.contains("usr/share/doc/occluview/changelog.gz"));
+    assert!(check_deb.contains("usr/share/man/man1/occluview.1.gz"));
+    assert!(check_deb.contains("usr/share/man/man1/occluview-cli.1.gz"));
     assert!(check_deb.contains("/usr/share/common-licenses/Apache-2.0"));
     assert!(check_deb.contains("desktop-file-validate"));
     assert!(check_deb.contains("appstreamcli validate --no-net"));
@@ -619,6 +643,7 @@ fn self_registration_unregister_only_removes_occluview_values() {
 fn com_thumbnail_provider_accepts_file_paths_for_extension_hints() {
     let com = [
         include_str!("com.rs"),
+        include_str!("com/thumbnail_provider.rs"),
         include_str!("com/preview.rs"),
         include_str!("com/preview/theme.rs"),
         include_str!("com/preview/window.rs"),
@@ -630,7 +655,7 @@ fn com_thumbnail_provider_accepts_file_paths_for_extension_hints() {
     assert!(com.contains("IInitializeWithItem"));
     assert!(com.contains("impl IInitializeWithFile_Impl for ThumbnailProvider_Impl"));
     assert!(com.contains("impl IInitializeWithItem_Impl for ThumbnailProvider_Impl"));
-    assert!(com.contains("render_thumbnail_file_or_placeholder(&path, spec)"));
+    assert!(com.contains("try_render_thumbnail_file(&path, spec, DEFAULT_THUMBNAIL_TIMEOUT)"));
     assert!(!com.contains("ThumbnailProvider::read_file(&path)"));
     assert!(!com.contains("std::fs::read(path)"));
     assert!(com.contains(".initialize_path(path.clone(), path_extension(&path));"));
@@ -680,4 +705,28 @@ fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
         return rest.get(..rest.find('"')?);
     }
     None
+}
+
+#[test]
+fn both_offscreen_factories_choose_the_adapter_the_same_way() {
+    // The rule is duplicated because `cfg!(test)` is per crate: a shared
+    // definition answers "not under test" while this crate's own tests run, and
+    // those are exactly the ones that must not touch a hardware adapter. Hence
+    // a copy, and hence this check that the copy still matches.
+    let shell = include_str!("offscreen_factory.rs");
+    let thumbnail = include_str!("../../occluview-thumbnail/src/offscreen_factory.rs");
+    let rule = concat!(
+        "pub(crate) const fn should_prefer_hardware_offscreen() -> bool {\n",
+        "    !cfg!(test)\n",
+        "}"
+    );
+    for (crate_name, source) in [
+        ("occluview-shell", shell),
+        ("occluview-thumbnail", thumbnail),
+    ] {
+        assert!(
+            source.contains(rule),
+            "{crate_name} chooses its adapter by a different rule"
+        );
+    }
 }

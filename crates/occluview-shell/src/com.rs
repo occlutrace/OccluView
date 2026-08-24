@@ -1,13 +1,19 @@
 //! The COM `IThumbnailProvider` class.
 //!
 //! Windows Explorer activates this class out-of-process in a `dllhost.exe`
-//! surrogate. Per the addendum, the class is a **thin stub**: it stores the
-//! file/stream the shell hands it at initialize time, and on `GetThumbnail` it
-//! detects the format, renders the mesh, and calls the same
-//! `render_thumbnail` code path the CLI uses.
+//! surrogate. The class is a thin stub: it stores the file/stream the shell
+//! hands it at initialize time, and on `GetThumbnail` it detects the format,
+//! renders the mesh, and calls the same `render_thumbnail` code path the CLI
+//! uses.
 //!
-//! On render errors we return an OccluView placeholder bitmap. COM ABI errors
-//! still return `E_FAIL`. We never propagate a panic across the COM boundary.
+//! Verdict policy at the COM boundary: a broken or unsupported file returns an
+//! OccluView placeholder bitmap (a stable verdict Explorer may cache), while a
+//! *transient* miss — timeout, saturated queue, GPU fault, unreadable stream —
+//! returns a failure `HRESULT`. Explorer's thumbcache permanently stores any
+//! bitmap returned with `S_OK`, so answering "busy" with a placeholder would
+//! freeze the placeholder into the file's icon until the file is modified.
+//! COM ABI errors still return `E_FAIL`. We never propagate a panic across
+//! the COM boundary.
 
 // This module is the COM ABI boundary: FFI exports, raw pointer parameters,
 // and windows-rs calls that are `unsafe` by definition. The rest of the crate
@@ -30,12 +36,11 @@
 )]
 
 use crate::deferred_source::DeferredSource;
-use crate::placeholder::placeholder_thumbnail;
 use crate::preview_scene::{win32_preview_orbit_delta, PreviewSceneState};
 use crate::render_thumb::{
-    placeholder_for_oversize_input, render_thumbnail_file_or_placeholder,
-    render_thumbnail_shared_or_placeholder_with_reservation, reserve_thumbnail_stream_job,
-    DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_INPUT_BYTES,
+    placeholder_for_oversize_input, reserve_thumbnail_stream_job, try_render_thumbnail_file,
+    try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, DEFAULT_THUMBNAIL_TIMEOUT,
+    MAX_THUMBNAIL_INPUT_BYTES,
 };
 use crate::stream_read::{read_capped_stream, StreamRead};
 use crate::ShellError;
@@ -48,7 +53,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use windows::core::{implement, w, IUnknown, Interface, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    BOOL, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
+    BOOL, CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_NOTIMPL, E_POINTER, HANDLE,
+    HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, S_FALSE, S_OK, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, EndPaint,
@@ -59,7 +65,9 @@ use windows::Win32::System::Com::STREAM_SEEK_SET;
 use windows::Win32::System::Com::{
     CoTaskMemFree, IClassFactory, IClassFactory_Impl, IStream, STATFLAG, STATSTG,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::LibraryLoader::{
+    GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+};
 use windows::Win32::System::Ole::{
     IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
 };
@@ -83,9 +91,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, RegisterClassW, SetParent,
     CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, MSG, WINDOW_EX_STYLE,
     WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
-    WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
+
+mod thumbnail_provider;
+
+pub use thumbnail_provider::ThumbnailProvider;
 
 mod preview;
 
@@ -102,10 +114,9 @@ pub const OCCLUVIEW_PREVIEW_CLSID: &str = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046
 
 const OCCLUVIEW_THUMBNAIL_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3045);
 const OCCLUVIEW_PREVIEW_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3046);
-const E_POINTER_HR: HRESULT = HRESULT(-2_147_467_259);
-const CLASS_E_CLASSNOTAVAILABLE: HRESULT = HRESULT(-2_147_221_231);
-const CLASS_E_NOAGGREGATION: HRESULT = HRESULT(-2_147_221_232);
-const MAX_PREVIEW_EDGE: u32 = 2048;
+use crate::preview_canvas::center_square_on_canvas;
+
+const MAX_OFFSCREEN_EDGE: u32 = 2048;
 const PREVIEW_WINDOW_CLASS_NAME: PCWSTR = w!("OccluViewPreviewPane");
 const PREVIEW_LIGHT_BACKGROUND_LINEAR: [f64; 4] = [0.80, 0.82, 0.84, 1.0];
 const PREVIEW_DARK_BACKGROUND_LINEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -116,317 +127,60 @@ const ERROR_FILE_NOT_FOUND: u32 = 2;
 static ACTIVE_COM_OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);
 static PREVIEW_WINDOW_CLASS: OnceLock<Result<(), HRESULT>> = OnceLock::new();
+static THUMBNAIL_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
+static PREVIEW_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
 
-/// The COM class. Holds the bytes read from the shell-provided stream between
-/// `Initialize` and `GetThumbnail`.
-#[implement(
-    IThumbnailProvider,
-    IInitializeWithFile,
-    IInitializeWithItem,
-    IInitializeWithStream,
-    IClassFactory
-)]
-pub struct ThumbnailProvider {
-    /// The bytes of the file, captured eagerly for file-backed paths or
-    /// loaded lazily from a shell stream at `GetThumbnail` time.
-    bytes: std::cell::RefCell<Arc<[u8]>>,
-    /// File-backed vs stream-backed activation is tracked lazily until first render.
-    source: std::cell::RefCell<DeferredSource<IStream>>,
-    /// Set when Explorer handed us a stream larger than the shell size cap.
-    oversize_stream_len: std::cell::Cell<Option<usize>>,
+/// This DLL's own module handle, pinned into the process.
+///
+/// Two kinds of code in this DLL outlive COM's refcount view of it: the
+/// preview window class's wndproc (a raw function pointer registered with
+/// USER32), and the background threads — prewarm, and render workers that
+/// keep going after a caller times out. `DllCanUnloadNow` counts only live
+/// COM objects, so without the pin COM could unmap the image while any of
+/// those still execute inside it. A pinned module is a small, bounded cost:
+/// the shell recycles its surrogate hosts anyway.
+pub(super) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
+{
+    // An address inside our own mapped image, used to find the DLL's module.
+    // Typed as `u16` so it can become a `PCWSTR` (an opaque address here,
+    // never dereferenced) without an alignment-widening pointer cast.
+    static ANCHOR: u16 = 0;
+    let mut module = windows::Win32::Foundation::HMODULE::default();
+    let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN;
+    let address = PCWSTR(core::ptr::addr_of!(ANCHOR));
+    // SAFETY: `address` lies within this DLL; `module` is a valid out-param.
+    unsafe { GetModuleHandleExW(flags, address, &mut module) }?;
+    Ok(module)
 }
 
-struct ThumbnailStreamBytesGuard<'a> {
-    bytes: &'a std::cell::RefCell<Arc<[u8]>>,
-}
-
-impl<'a> ThumbnailStreamBytesGuard<'a> {
-    fn new(bytes: &'a std::cell::RefCell<Arc<[u8]>>) -> Self {
-        Self { bytes }
+/// Start renderer creation the moment the host activates one of our classes.
+///
+/// Both surrogate hosts activate the class well before the first heavy call
+/// (`GetThumbnail` in `dllhost`, `DoPreview` in `prevhost`), and wgpu
+/// instance + adapter + device + pipeline creation is a fixed cost of one to
+/// several hundred milliseconds. Warming on a background thread overlaps that
+/// cost with the shell's Initialize / stream-copy phase; the per-class gates
+/// keep it to a single attempt per process, and only the requested class's
+/// renderer warms so a thumbnail host never builds the preview device (or
+/// vice versa).
+fn spawn_renderer_prewarm(class: &GUID) {
+    // Pin before the first background thread exists (see
+    // `own_pinned_dll_module`); a failed pin only means we skip the warmup.
+    if own_pinned_dll_module().is_err() {
+        return;
     }
-}
-
-impl Drop for ThumbnailStreamBytesGuard<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut bytes) = self.bytes.try_borrow_mut() {
-            *bytes = Arc::<[u8]>::from([]);
-        } else {
-            tracing::warn!("thumbnail stream buffer remained borrowed while releasing request");
-        }
-    }
-}
-
-impl ThumbnailProvider {
-    /// Construct an empty provider. Used by the class factory.
-    pub fn new() -> Self {
-        ACTIVE_COM_OBJECTS.fetch_add(1, Ordering::AcqRel);
-        Self {
-            bytes: std::cell::RefCell::new(Arc::<[u8]>::from([])),
-            source: std::cell::RefCell::new(DeferredSource::default()),
-            oversize_stream_len: std::cell::Cell::new(None),
-        }
-    }
-}
-
-impl Drop for ThumbnailProvider {
-    fn drop(&mut self) {
-        ACTIVE_COM_OBJECTS.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-impl Default for ThumbnailProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ThumbnailProvider {
-    const MIN_STREAM_BUFFER_BYTES: usize = 16 * 1024;
-    const STREAM_READ_CHUNK_BYTES: usize = 1024 * 1024;
-
-    fn rewind_stream(stream: &IStream) -> windows::core::Result<()> {
-        // SAFETY: the caller owns a valid COM IStream reference for the
-        // duration of this synchronous helper.
-        unsafe { stream.Seek(0, STREAM_SEEK_SET, None)? };
-        Ok(())
-    }
-
-    /// Reads the stream into a byte buffer, capped for shell safety.
-    fn read_stream(stream: &IStream) -> windows::core::Result<StreamRead> {
-        // SAFETY: `stat` is a stack-local zeroed STATSTG owned by us; the
-        // STATFLAG_NONAME flag avoids an internal allocation we'd have to free.
-        let mut stat: STATSTG = unsafe { std::mem::zeroed() };
-        // SAFETY: passing a valid pointer to our zeroed STATSTG.
-        unsafe { stream.Stat(&mut stat, STATFLAG(1))? };
-        let declared = if stat.cbSize > 0 {
-            // STATSTG.cbSize is a u64 union member (_ULARGE_INTEGER QuadPart).
-            #[allow(clippy::cast_possible_truncation)]
-            let n = stat.cbSize as u64;
-            n
-        } else {
-            0
-        };
-        Ok(read_capped_stream(
-            (declared != 0).then_some(declared),
-            MAX_THUMBNAIL_INPUT_BYTES,
-            Self::MIN_STREAM_BUFFER_BYTES,
-            Self::STREAM_READ_CHUNK_BYTES,
-            |buf| {
-                let mut read = 0u32;
-                // SAFETY: `buf` is a valid write region; `read` is a stack out-param.
-                let result = unsafe {
-                    stream.Read(
-                        buf.as_mut_ptr() as *mut std::ffi::c_void,
-                        buf.len() as u32,
-                        Some(std::ptr::from_mut(&mut read)),
-                    )
-                };
-                if result.is_err() {
-                    tracing::warn!(hresult = ?result, "shell stream read failed");
-                    return Err(());
-                }
-                Ok(read as usize)
-            },
-        ))
-    }
-
-    /// Render at `size` px (square, clamped to 1..=1024) and return the HBITMAP.
-    fn render_to_hbitmap(&self, size: u32) -> windows::core::Result<HBITMAP> {
-        let size_px = size.clamp(1, 1024) as u16;
-        let spec = ThumbnailSpec {
-            size_px,
-            ..Default::default()
-        };
-        let pixels = self.thumbnail_pixels(spec);
-        pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px))
-    }
-
-    /// Produce the RGBA pixels for this request. Infallible, correctly sized,
-    /// and never empty: over-budget files, unreadable shell streams, decode
-    /// failures, and renderer/timeout errors all collapse to a deterministic
-    /// placeholder of exactly `spec.size_px`.
-    ///
-    /// This matters for a *folder* of files, not just one file. Returning an
-    /// error HRESULT or a wrong-sized/empty buffer here makes Explorer show a
-    /// generic icon for this file; a panic escaping this COM method is worse
-    /// still — it unwinds across the `extern "system"` ABI (undefined behavior
-    /// when the DLL is built `panic = "unwind"`, an immediate `abort` of the
-    /// whole `dllhost` surrogate when built `panic = "abort"`). Either way one
-    /// bad file would blank the thumbnails of every *other* file the same
-    /// surrogate is servicing. Catching here keeps each request isolated.
-    fn thumbnail_pixels(&self, spec: ThumbnailSpec) -> Vec<u8> {
-        let produced = catch_unwind(AssertUnwindSafe(|| self.render_pixels(spec)));
-        let pixels = produced.unwrap_or_else(|_panic| {
-            tracing::error!(
-                "thumbnail render panicked; substituting placeholder to keep the COM boundary safe"
-            );
-            placeholder_thumbnail(spec)
+    if *class == OCCLUVIEW_THUMBNAIL_GUID {
+        THUMBNAIL_RENDERER_PREWARM.get_or_init(|| {
+            let _ = std::thread::Builder::new()
+                .name("occluview-thumbnail-prewarm".to_string())
+                .spawn(crate::render_thumb::prewarm_thumbnail_renderer);
         });
-
-        let expected = usize::from(spec.size_px) * usize::from(spec.size_px) * 4;
-        if pixels.len() == expected {
-            pixels
-        } else {
-            tracing::warn!(
-                got = pixels.len(),
-                expected,
-                "thumbnail pixels had an unexpected size; substituting placeholder"
-            );
-            placeholder_thumbnail(spec)
-        }
-    }
-
-    /// The underlying pixel producer. May read the shell stream; a stream-read
-    /// failure resolves to a placeholder rather than an error HRESULT so the
-    /// shell never gets "nothing" for a file it asked us to render.
-    fn render_pixels(&self, spec: ThumbnailSpec) -> Vec<u8> {
-        if let Some(byte_len) = self.oversize_stream_len.get() {
-            return placeholder_for_oversize_input(spec, byte_len);
-        }
-        // Bind the owned path first so the `source` borrow is released before
-        // `ensure_stream_bytes` may borrow it mutably.
-        let source_path = self.source.borrow().path().map(PathBuf::from);
-        if let Some(path) = source_path {
-            return render_thumbnail_file_or_placeholder(&path, spec);
-        }
-        let _stream_bytes_guard = ThumbnailStreamBytesGuard::new(&self.bytes);
-        let Some(reservation) = reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT) else {
-            tracing::warn!(
-                "thumbnail stream budget was busy; returning a bounded placeholder instead of overcommitting dllhost"
-            );
-            return placeholder_thumbnail(spec);
-        };
-        let ext = self.source.borrow().extension().map(str::to_owned);
-        let bytes = match self.ensure_stream_bytes() {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::warn!(?error, "shell stream read failed; returning placeholder");
-                return placeholder_thumbnail(spec);
-            }
-        };
-        if let Some(byte_len) = self.oversize_stream_len.get() {
-            placeholder_for_oversize_input(spec, byte_len)
-        } else {
-            render_thumbnail_shared_or_placeholder_with_reservation(
-                ext,
-                bytes,
-                spec,
-                DEFAULT_THUMBNAIL_TIMEOUT,
-                reservation,
-            )
-        }
-    }
-
-    fn ensure_stream_bytes(&self) -> windows::core::Result<Arc<[u8]>> {
-        if !self.bytes.borrow().is_empty() {
-            return Ok(self.bytes.borrow().clone());
-        }
-
-        let Some(stream_result) = self.source.borrow_mut().consume_pending_stream(
-            |stream, _extension| -> windows::core::Result<StreamRead> {
-                ThumbnailProvider::rewind_stream(&stream)?;
-                ThumbnailProvider::read_stream(&stream)
-            },
-        ) else {
-            return Ok(Arc::<[u8]>::from([]));
-        };
-
-        match stream_result? {
-            StreamRead::Complete(bytes) => {
-                let bytes = Arc::<[u8]>::from(bytes);
-                *self.bytes.borrow_mut() = bytes.clone();
-                self.oversize_stream_len.set(None);
-                Ok(bytes)
-            }
-            StreamRead::OverCap { byte_len } => {
-                *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-                self.oversize_stream_len.set(Some(byte_len));
-                Ok(Arc::<[u8]>::from([]))
-            }
-            StreamRead::ReadFailed => {
-                *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-                Ok(Arc::<[u8]>::from([]))
-            }
-        }
-    }
-
-    fn initialize_path(&self, path: PathBuf) {
-        *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-        self.source
-            .borrow_mut()
-            .initialize_path(path.clone(), path_extension(&path));
-        self.oversize_stream_len.set(None);
-    }
-}
-
-impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
-    /// Explorer calls this after `Initialize`. `cx` is the max square edge in
-    /// pixels; we render exactly that size.
-    fn GetThumbnail(
-        &self,
-        cx: u32,
-        phbmp: *mut HBITMAP,
-        pdwalpha: *mut WTS_ALPHATYPE,
-    ) -> windows::core::Result<()> {
-        if phbmp.is_null() || pdwalpha.is_null() {
-            return Err(e_pointer());
-        }
-        let hbmp = self.this.render_to_hbitmap(cx)?;
-        // SAFETY: phbmp is a caller-provided out-pointer; the shell owns the
-        // handle we write through it.
-        unsafe { *phbmp = hbmp };
-        // SAFETY: pdwalpha is a caller-provided out-pointer.
-        unsafe { *pdwalpha = WTSAT_ARGB };
-        Ok(())
-    }
-}
-
-impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
-    /// Called by the shell with a read-only stream over the file (handles
-    /// MotW / OneDrive placeholders).
-    fn Initialize(&self, pstream: Option<&IStream>, _grfmode: u32) -> windows::core::Result<()> {
-        let stream = pstream.ok_or_else(e_pointer)?;
-        self.this
-            .source
-            .borrow_mut()
-            .initialize_stream(stream.clone());
-        *self.this.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-        self.this.oversize_stream_len.set(None);
-        Ok(())
-    }
-}
-
-impl IInitializeWithFile_Impl for ThumbnailProvider_Impl {
-    /// Called by the shell with a filesystem path. This path keeps the file
-    /// extension available, which is more reliable than pure magic-byte
-    /// probing for text formats and HPS variants.
-    fn Initialize(&self, pszfilepath: &PCWSTR, _grfmode: u32) -> windows::core::Result<()> {
-        let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
-        let path = PathBuf::from(&path_string);
-        self.this.initialize_path(path);
-        Ok(())
-    }
-}
-
-impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
-    /// Called by the shell with an item. This gives us a filesystem path on
-    /// Explorer code paths that do not use `IInitializeWithFile`, preserving
-    /// extension hints for HPS and using mmap-backed file loading.
-    fn Initialize(&self, psi: Option<&IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
-        let item = psi.ok_or_else(e_pointer)?;
-        // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
-        // allocated null-terminated UTF-16 path. We copy it into a Rust String
-        // before freeing the COM allocation.
-        let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-        let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
-            // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
-            unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-            e_fail()
-        })?;
-        // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
-        unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-        self.this.initialize_path(PathBuf::from(path_string));
-        Ok(())
+    } else if *class == OCCLUVIEW_PREVIEW_GUID {
+        PREVIEW_RENDERER_PREWARM.get_or_init(|| {
+            let _ = std::thread::Builder::new()
+                .name("occluview-preview-prewarm".to_string())
+                .spawn(crate::offscreen_factory::prewarm_shared_shell_offscreen);
+        });
     }
 }
 
@@ -435,33 +189,6 @@ fn path_extension(path: &Path) -> Option<String> {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.trim_start_matches('.').to_ascii_lowercase())
         .filter(|ext| !ext.is_empty())
-}
-
-fn center_square_on_canvas(
-    square: &[u8],
-    side_px: u16,
-    width: u32,
-    height: u32,
-    background: [u8; 4],
-) -> Vec<u8> {
-    let width = width.max(1) as usize;
-    let height = height.max(1) as usize;
-    let side = usize::from(side_px).min(width).min(height).max(1);
-    let mut canvas = vec![0u8; width * height * 4];
-    for px in canvas.chunks_exact_mut(4) {
-        px.copy_from_slice(&background);
-    }
-    if square.len() < side * side * 4 {
-        return canvas;
-    }
-    let x0 = (width - side) / 2;
-    let y0 = (height - side) / 2;
-    for y in 0..side {
-        let src = y * side * 4;
-        let dst = ((y0 + y) * width + x0) * 4;
-        canvas[dst..dst + side * 4].copy_from_slice(&square[src..src + side * 4]);
-    }
-    canvas
 }
 
 /// Build a 32bpp BGRA top-down `HBITMAP` from top-to-bottom RGBA8 pixels.
@@ -481,6 +208,28 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
         dst[1] = src[1]; // G
         dst[2] = src[0]; // R
         dst[3] = src[3]; // A
+    }
+    create_top_down_bgra_dib(width, height, &bgra)
+}
+
+/// Allocate a 32bpp top-down BGRA DIB and fill it with `bgra`.
+///
+/// The one place this crate calls `CreateDIBSection`. Written twice -- here
+/// and for the context-menu glyphs -- both copies carry the same hand-written
+/// GDI leak guard for the null-bits path, inside a DLL that lives in
+/// `explorer.exe` for a whole session; fix a leak or a header field in one and
+/// the other stays wrong, in a `cfg(windows)` crate no Linux gate compiles.
+/// The callers differ only in how they produce the bytes: this one swizzles
+/// RGBA, the glyph path premultiplies.
+///
+/// The caller owns the returned handle.
+fn create_top_down_bgra_dib(
+    width: u32,
+    height: u32,
+    bgra: &[u8],
+) -> windows::core::Result<HBITMAP> {
+    if width == 0 || height == 0 || bgra.len() != (width * height * 4) as usize {
+        return Err(e_fail());
     }
     let bitmap_info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -525,38 +274,6 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
     Ok(hbmp)
 }
 
-impl IClassFactory_Impl for ThumbnailProvider_Impl {
-    fn CreateInstance(
-        &self,
-        punkouter: Option<&IUnknown>,
-        riid: *const GUID,
-        ppvobject: *mut *mut std::ffi::c_void,
-    ) -> windows::core::Result<()> {
-        if ppvobject.is_null() {
-            return Err(e_pointer());
-        }
-        if punkouter.is_some() {
-            return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
-        }
-        let provider = ThumbnailProvider::new();
-        let unknown: IUnknown = provider.into();
-        // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows the
-        // COM ABI contract for QueryInterface.
-        let hr = unsafe { unknown.query(riid, ppvobject) };
-        if hr.is_ok() {
-            Ok(())
-        } else {
-            Err(windows::core::Error::from_hresult(hr))
-        }
-    }
-
-    fn LockServer(&self, _flock: BOOL) -> windows::core::Result<()> {
-        // No-op: the surrogate manages the process lifetime; we don't need a
-        // server lock count for correctness.
-        Ok(())
-    }
-}
-
 impl IClassFactory_Impl for PreviewHandler_Impl {
     fn CreateInstance(
         &self,
@@ -564,22 +281,28 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
-        if ppvobject.is_null() {
-            return Err(e_pointer());
-        }
-        if punkouter.is_some() {
-            return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
-        }
-        let provider = PreviewHandler::new();
-        let unknown: IUnknown = provider.into();
-        // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows the
-        // COM ABI contract for QueryInterface.
-        let hr = unsafe { unknown.query(riid, ppvobject) };
-        if hr.is_ok() {
-            Ok(())
-        } else {
-            Err(windows::core::Error::from_hresult(hr))
-        }
+        com_entry(
+            "preview IClassFactory::CreateInstance",
+            || Err(e_fail()),
+            || {
+                if ppvobject.is_null() {
+                    return Err(e_pointer());
+                }
+                if punkouter.is_some() {
+                    return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
+                }
+                let provider = PreviewHandler::new();
+                let unknown: IUnknown = provider.into();
+                // SAFETY: `riid` and `ppvobject` are COM-supplied; `query` follows
+                // the COM ABI contract for QueryInterface.
+                let hr = unsafe { unknown.query(riid, ppvobject) };
+                if hr.is_ok() {
+                    Ok(())
+                } else {
+                    Err(windows::core::Error::from_hresult(hr))
+                }
+            },
+        )
     }
 
     fn LockServer(&self, flock: BOOL) -> windows::core::Result<()> {
@@ -592,25 +315,51 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
     }
 }
 
-/// `E_FAIL` (0x80004005) as a `windows::core::Error`.
+/// `E_FAIL` as a `windows::core::Error`.
+///
+/// These helpers wrap the canonical `Win32::Foundation` constants. Earlier
+/// revisions hand-transcribed the decimal values and drifted into
+/// `0x8000FF85`-style non-codes — still failures, but meaningless to anyone
+/// reading an Explorer trace. Never write an HRESULT literal here again.
 fn e_fail() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(-2_147_418_235))
+    windows::core::Error::from_hresult(E_FAIL)
 }
 
-/// `E_POINTER` (0x80004003) as a `windows::core::Error`.
+/// `E_POINTER` as a `windows::core::Error`.
 fn e_pointer() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(-2_147_418_237))
+    windows::core::Error::from_hresult(E_POINTER)
 }
 
-/// `E_NOTIMPL` (0x80004001) as a `windows::core::Error`.
+/// `E_NOTIMPL` as a `windows::core::Error`.
 fn e_notimpl() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(-2_147_418_239))
+    windows::core::Error::from_hresult(E_NOTIMPL)
 }
 
-/// `S_FALSE` (0x00000001) as a `windows::core::Error` so COM returns the
-/// non-fatal "not handled" status instead of incorrectly claiming success.
+/// `S_FALSE` as a `windows::core::Error` so COM returns the non-fatal "not
+/// handled" status instead of incorrectly claiming success.
 fn s_false() -> windows::core::Error {
-    windows::core::Error::from_hresult(HRESULT(1))
+    windows::core::Error::from_hresult(S_FALSE)
+}
+
+/// Run a COM entry body, converting a panic into `fallback`.
+///
+/// The `#[implement]` vtable shims are `extern "system"`; Rust aborts the
+/// whole process when a panic unwinds past that ABI boundary — even under the
+/// unwind profile the DLL ships with — and in a shared surrogate that abort
+/// blanks every other file's thumbnail or preview in flight. Catching at each
+/// entry keeps one poisoned request from taking the host down.
+/// `AssertUnwindSafe` is sound here: a panicking request abandons only its own
+/// per-instance state, and the process-wide pool/gate statics recover poisoned
+/// locks by design (see `occluview-thumbnail`'s `lock_recover`).
+pub(super) fn com_entry<T>(
+    context: &'static str,
+    fallback: impl FnOnce() -> T,
+    body: impl FnOnce() -> T,
+) -> T {
+    catch_unwind(AssertUnwindSafe(body)).unwrap_or_else(|_panic| {
+        tracing::error!(context, "panic caught at the COM boundary");
+        fallback()
+    })
 }
 
 /// `DllGetClassObject` — the COM runtime calls this when our CLSID is
@@ -621,28 +370,35 @@ pub extern "system" fn DllGetClassObject(
     riid: *const std::ffi::c_void,
     ppv: *mut *mut std::ffi::c_void,
 ) -> HRESULT {
-    if ppv.is_null() || riid.is_null() || rclsid.is_null() {
-        return E_POINTER_HR;
-    }
-    // SAFETY: `rclsid` is supplied by COM and points to a GUID for the
-    // activation request.
-    let requested = unsafe { *(rclsid as *const GUID) };
-    let factory: IUnknown = if requested == OCCLUVIEW_THUMBNAIL_GUID {
-        ThumbnailProvider::new().into()
-    } else if requested == OCCLUVIEW_PREVIEW_GUID {
-        PreviewHandler::new().into()
-    } else {
-        // SAFETY: ppv is a caller-provided out-pointer.
-        unsafe { *ppv = std::ptr::null_mut() };
-        return CLASS_E_CLASSNOTAVAILABLE;
-    };
-    // SAFETY: caller-supplied COM pointers; query follows the ABI contract.
-    let hr = unsafe { factory.query(riid as *const GUID, ppv) };
-    if hr.is_ok() {
-        HRESULT(0) // S_OK
-    } else {
-        hr
-    }
+    com_entry(
+        "DllGetClassObject",
+        || E_FAIL,
+        || {
+            if ppv.is_null() || riid.is_null() || rclsid.is_null() {
+                return E_POINTER;
+            }
+            // SAFETY: `rclsid` is supplied by COM and points to a GUID for the
+            // activation request.
+            let requested = unsafe { *(rclsid as *const GUID) };
+            spawn_renderer_prewarm(&requested);
+            let factory: IUnknown = if requested == OCCLUVIEW_THUMBNAIL_GUID {
+                ThumbnailProvider::new().into()
+            } else if requested == OCCLUVIEW_PREVIEW_GUID {
+                PreviewHandler::new().into()
+            } else {
+                // SAFETY: ppv is a caller-provided out-pointer.
+                unsafe { *ppv = std::ptr::null_mut() };
+                return CLASS_E_CLASSNOTAVAILABLE;
+            };
+            // SAFETY: caller-supplied COM pointers; query follows the ABI contract.
+            let hr = unsafe { factory.query(riid as *const GUID, ppv) };
+            if hr.is_ok() {
+                S_OK
+            } else {
+                hr
+            }
+        },
+    )
 }
 
 /// `DllCanUnloadNow` — the COM runtime asks whether this DLL can be unloaded.
@@ -650,8 +406,8 @@ pub extern "system" fn DllGetClassObject(
 pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if ACTIVE_COM_OBJECTS.load(Ordering::Acquire) == 0 && SERVER_LOCKS.load(Ordering::Acquire) == 0
     {
-        HRESULT(0) // S_OK
+        S_OK
     } else {
-        HRESULT(1) // S_FALSE
+        S_FALSE
     }
 }

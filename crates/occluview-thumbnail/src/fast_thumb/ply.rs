@@ -18,18 +18,8 @@ pub(super) fn fast_ply_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, FormatError>
             reason: "fast thumbnail path requires vertex element first".to_string(),
         });
     }
-    // A PLY that declares a `face` element is a SURFACE mesh. This fast reader
-    // only ever emits a point cloud (it never walks the face list), so building
-    // it here would splat a solid surface as a cloud of dots - exactly the
-    // "half my thumbnails are just points" bug on real dental PLY scans, which
-    // are routinely well above the fidelity gate. Decline surface PLYs so the
-    // caller falls through to the full `occluview-formats` reader, which
-    // triangulates the faces into a real surface. This is affordable: the full
-    // reader parses a 40 MB / 2M-triangle binary PLY in ~0.49 s and the whole
-    // thumbnail (parse + offscreen render) lands in ~0.59 s - an order of
-    // magnitude under the 6 s thumbnail budget - so there is no latency reason
-    // to trade a surface for a point splat. Genuine point clouds (no `face`
-    // element) keep the O(target) decimated fast path below.
+    // This fast reader emits point clouds only. Defer surface PLYs to the full
+    // reader so their faces are triangulated before rendering.
     if parsed.elements.iter().any(|element| element.name == "face") {
         return Err(FormatError::Deferred {
             format: "PLY",

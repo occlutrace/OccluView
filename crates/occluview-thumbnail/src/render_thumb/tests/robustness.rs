@@ -1,12 +1,4 @@
-//! Outlier / non-finite / degenerate robustness of the fast thumbnail path.
-//!
-//! Regression cover for two clusterer defects and the loader safety net:
-//! - a lone far outlier vertex must not stretch the grid and collapse a dense
-//!   surface into a transparent tile (robust grid bounds);
-//! - a triangle with any non-finite (NaN/Inf) corner must be dropped whole, not
-//!   poison the mesh bbox and blank the tile;
-//! - a wholly non-drawable file must yield a placeholder, never a transparent
-//!   tile, and never panic.
+//! Robustness checks for outlier, non-finite, and degenerate meshes.
 
 use super::*;
 use crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind;
@@ -22,11 +14,6 @@ fn spec_256() -> ThumbnailSpec {
 
 #[test]
 fn stl_far_outlier_above_gate_thumbnails_solid_through_public_entry_point() {
-    // 44 MB dense sphere + one outlier triangle at 1e6 mm: above the STL fidelity
-    // gate, so it routes through the fast (grid-clustered) surrogate. Robust grid
-    // bounds must trim the outlier so the sphere still renders as a SOLID disc
-    // (substantial visible coverage, zero interior see-through holes) rather than
-    // the fully transparent tile the raw-bbox grid produced.
     let spec = spec_256();
     let bytes = fixtures::dense_binary_stl_sphere_with_far_outlier(44 * 1024 * 1024);
     let pixels = render_thumbnail_or_placeholder(Some("stl"), &bytes, spec);
@@ -42,11 +29,8 @@ fn stl_far_outlier_above_gate_thumbnails_solid_through_public_entry_point() {
 
 #[test]
 fn stl_far_outlier_fast_surrogate_stays_a_solid_reduced_surface() {
-    // Same defect at the mesh level (fast path runs regardless of file size):
-    // the clustered surrogate must keep real triangles and a bounded, finite
-    // bbox (no 1e6 mm vertex parked in the mesh).
     let bytes = fixtures::dense_binary_stl_sphere_with_far_outlier(4 * 1024 * 1024);
-    let mut mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
+    let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
         .expect("outlier STL should cluster into a surface, not collapse");
     assert!(!mesh.is_point_cloud());
     assert!(
@@ -55,8 +39,6 @@ fn stl_far_outlier_fast_surrogate_stays_a_solid_reduced_surface() {
     );
     let bbox = mesh.bbox();
     assert!(bbox.size().is_finite(), "outlier poisoned the mesh bbox");
-    // The outlier's representative is clamped into the robust box, so the mesh
-    // stays at sphere scale (radius ~10 mm) instead of spanning to 1e6 mm.
     assert!(
         bbox.max.max_element() < 1.0e3 && bbox.min.min_element() > -1.0e3,
         "outlier vertex was left in the mesh at full scale: bbox {:?}..{:?}",
@@ -67,8 +49,6 @@ fn stl_far_outlier_fast_surrogate_stays_a_solid_reduced_surface() {
 
 #[test]
 fn stl_nonfinite_corners_thumbnail_stays_visible_and_solid() {
-    // ~0.2% NaN/Inf corners in an otherwise valid dense sphere. Dropping those
-    // triangles whole keeps the mesh finite and the tile a solid, visible disc.
     let spec = spec_256();
     let bytes = fixtures::dense_binary_stl_sphere_with_nonfinite(4 * 1024 * 1024);
     let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
@@ -86,8 +66,6 @@ fn stl_nonfinite_corners_thumbnail_stays_visible_and_solid() {
 
 #[test]
 fn stl_huge_coordinate_range_thumbnail_stays_visible() {
-    // Coordinate range spans 1e-3..1e6 mm around an mm-scale bulk. Robust bounds
-    // trim both extremes and frame the bulk; the tile stays visible.
     let spec = spec_256();
     let bytes = fixtures::dense_binary_stl_huge_coordinate_range(4 * 1024 * 1024);
     let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
@@ -99,8 +77,6 @@ fn stl_huge_coordinate_range_thumbnail_stays_visible() {
 
 #[test]
 fn obj_far_outlier_thumbnails_solid() {
-    // OBJ counterpart of the STL outlier regression: a grid plane plus one far
-    // outlier triangle must still cluster into a solid, visible surface.
     let spec = spec_256();
     let bytes = fixtures::obj_grid_surface_with_far_outlier(150);
     let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Obj, &bytes)
@@ -117,18 +93,13 @@ fn obj_far_outlier_thumbnails_solid() {
 
 #[test]
 fn all_degenerate_stl_never_returns_a_transparent_tile() {
-    // Only zero-area and non-finite triangles: nothing is drawable. The public
-    // entry point must return a placeholder (never a transparent bitmap) and
-    // must not panic.
     let spec = spec_256();
     let bytes = fixtures::all_degenerate_binary_stl();
 
-    // The fast surrogate declines rather than emitting a 0-triangle "surface".
     assert!(
         try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes).is_none(),
         "the fast path must decline an all-degenerate STL"
     );
-    // The mesh loader surfaces a corrupt-file error so the placeholder path runs.
     assert!(
         load_thumbnail_mesh_from_bytes_kind(FormatKind::Stl, &bytes).is_err(),
         "an all-degenerate STL must not load as a renderable mesh"
@@ -140,10 +111,87 @@ fn all_degenerate_stl_never_returns_a_transparent_tile() {
         visible > 0,
         "the public entry point returned a fully transparent tile for a degenerate file"
     );
-    // It is the honest corrupt placeholder, not a real (empty) render.
     assert_eq!(
         pixels,
         placeholder_thumbnail_kind(spec, PlaceholderKind::Corrupt),
         "a wholly degenerate recognized file should get the corrupt placeholder"
     );
+}
+
+/// A named pipe with a supported extension is rejected without blocking.
+#[cfg(unix)]
+#[test]
+fn a_named_pipe_is_refused_rather_than_opened() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let dir = std::env::temp_dir().join(format!(
+        "occluview-fifo-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("pipe.stl");
+    let _ = fs::remove_file(&path);
+    let made = std::process::Command::new("mkfifo").arg(&path).status();
+    if !made.is_ok_and(|status| status.success()) {
+        return;
+    }
+    assert!(fs::metadata(&path)
+        .expect("the pipe exists")
+        .file_type()
+        .is_fifo());
+
+    let spec = ThumbnailSpec {
+        size_px: 32,
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let attempt = try_render_thumbnail_file(&path, spec, Duration::from_secs(6));
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "the pipe was opened instead of refused: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(attempt, ThumbnailAttempt::Bitmap(_)),
+        "a pipe is not a scan and never will be, so the verdict is cacheable"
+    );
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir(&dir);
+}
+
+/// A file that changes during loading is treated as transient.
+#[test]
+fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
+    let mut truncated = fixtures::binary_stl_cube();
+    truncated.truncate(truncated.len() - 20);
+    let path = fixtures::write_temp_fixture("stl", &truncated);
+    let spec = ThumbnailSpec {
+        size_px: 32,
+        ..Default::default()
+    };
+    let measured = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
+    let keys = || FileThumbnailCacheKeys {
+        path: ThumbnailFileCacheKey::new(&path, &measured),
+        content: None,
+    };
+
+    let settled =
+        render_file_thumbnail_job(path.clone(), measured, keys(), spec, Duration::from_secs(6));
+    assert!(
+        matches!(settled, ThumbnailAttempt::Bitmap(_)),
+        "a file that is simply short is a verdict about the file"
+    );
+
+    let stale = ThumbnailFileMetadata {
+        byte_len: measured.byte_len + 1024,
+        modified_nanos: measured.modified_nanos,
+    };
+    let moving =
+        render_file_thumbnail_job(path.clone(), stale, keys(), spec, Duration::from_secs(6));
+    assert!(
+        matches!(moving, ThumbnailAttempt::TransientFailure),
+        "a file that changed while it was read must be asked about again"
+    );
+    let _ = fs::remove_file(path);
 }

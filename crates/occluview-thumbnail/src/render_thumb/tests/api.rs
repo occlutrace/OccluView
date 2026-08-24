@@ -1,6 +1,6 @@
 use super::*;
 use occluview_formats::dispatch::{
-    dispatch_by_kind_with_key_provider, read_file_with_key_provider,
+    dispatch_by_kind_shaded, dispatch_by_kind_with_key_provider, read_file_with_key_provider,
 };
 use occluview_formats::{hps::RuntimeHpsKeyProvider, FormatError, FormatKind};
 
@@ -292,7 +292,7 @@ fn noisy_obj_thumbnail_at_small_shell_size_stays_visible_not_edge_on() {
 }
 
 #[test]
-fn large_obj_streams_use_fast_surrogate_policy() {
+fn a_thirty_two_megabyte_obj_is_read_in_full_not_decimated() {
     let spec = ThumbnailSpec {
         size_px: 256,
         ..Default::default()
@@ -302,15 +302,19 @@ fn large_obj_streams_use_fast_surrogate_policy() {
     );
     let direct_pixels =
         render_thumbnail_bytes(Some("obj"), &bytes, spec).expect("large OBJ stream should render");
-    let fast_mesh =
-        crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind(FormatKind::Obj, &bytes)
-            .expect("fast OBJ surrogate should parse");
-    let fast_pixels = rendering::render_mesh_thumbnail(fast_mesh, spec)
-        .expect("fast OBJ surrogate should render");
+    let full_mesh = dispatch_by_kind_shaded(
+        FormatKind::Obj,
+        &bytes,
+        &RuntimeHpsKeyProvider,
+        occluview_formats::MeshShading::AsWritten,
+    )
+    .expect("the canonical reader should load the OBJ fixture");
+    let full_pixels =
+        rendering::render_mesh_thumbnail(full_mesh, spec).expect("full parsed OBJ should render");
 
     assert_eq!(
-        direct_pixels, fast_pixels,
-        "stream-backed large OBJ thumbnails should use the fast surrogate path before full parse"
+        direct_pixels, full_pixels,
+        "an OBJ inside the fidelity budget must stay on the canonical reader"
     );
 }
 
@@ -391,15 +395,10 @@ fn large_ply_streams_resurrect_fast_point_cloud_surrogate_and_render_non_black_p
 
 #[test]
 fn large_surface_ply_above_cutoff_thumbnails_as_a_surface_not_points() {
-    // Regression for the "half my thumbnails are just points" bug: a PLY that
-    // declares faces (a real surface mesh) sized well above the 4 MB PLY
-    // fidelity cutoff must load as a triangle SURFACE, never as a decimated
-    // point splat. The fast reader declines surface PLYs so the loader falls
-    // through to the full `occluview-formats` reader.
+    // Surface PLYs above the fidelity cutoff still load as triangle meshes.
     let bytes = fixtures::large_binary_ply_surface_grid(6 * 1024 * 1024);
     assert!(bytes.len() > 6 * 1024 * 1024);
 
-    // The fast surrogate must decline (surface PLY), not return a point cloud.
     assert!(
         crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind(FormatKind::Ply, &bytes).is_none(),
         "fast PLY reader must decline a surface PLY so the full reader renders a surface"
@@ -460,11 +459,7 @@ fn large_stl_file_and_ply_stream_render_through_the_public_thumbnail_entry_point
 
 #[test]
 fn fast_path_dense_surface_thumbnail_has_no_see_through_holes() {
-    // Bug A (speckled, see-through thumbnails): the old fast path kept every
-    // Nth triangle, punching the surface full of holes so the thumbnail read as
-    // a see-through sieve. The fast path now WELDS onto a grid, so a decimated
-    // dense surface must render as a SOLID disc — zero interior holes at 256px
-    // for every size class that stays on the fast path.
+    // Dense surfaces must remain opaque after fast-path decimation.
     let spec = ThumbnailSpec {
         size_px: 256,
         ..Default::default()
@@ -523,4 +518,32 @@ fn timed_out_thumbnail_returns_placeholder() {
 fn malformed_stl_returns_format_error_without_panic() {
     let res = render_thumbnail("stl", &[0u8; 10], ThumbnailSpec::default());
     assert!(matches!(res, Err(ThumbnailError::Format(_))));
+}
+
+/// A request for a thumbnail of no pixels answers, rather than dividing by it.
+///
+/// The cache serves a smaller tile from a larger one when the sizes divide
+/// evenly, and asked that question of a zero. Explorer clamps the size before
+/// it ever reaches here, so this is the library's own contract rather than the
+/// shell's -- and the command-line tool aborts on a panic instead of
+/// unwinding, which turns a bad argument into a dead process.
+#[test]
+fn a_thumbnail_of_no_pixels_is_answered_not_divided_by() {
+    let bytes = fixtures::binary_stl_cube();
+    let usable = ThumbnailSpec {
+        size_px: 64,
+        ..Default::default()
+    };
+    let _ = render_thumbnail_or_placeholder(Some("stl"), &bytes, usable);
+
+    let empty = ThumbnailSpec {
+        size_px: 0,
+        ..Default::default()
+    };
+    let pixels = render_thumbnail_or_placeholder(Some("stl"), &bytes, empty);
+    assert_eq!(
+        pixels.len() % 4,
+        0,
+        "whatever comes back is whole pixels, and the call returns at all"
+    );
 }

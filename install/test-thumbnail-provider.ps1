@@ -297,6 +297,21 @@ public static class OccluViewShellThumbnailSmoke
         WTSAT_ARGB = 2
     }
 
+    [Flags]
+    public enum WTS_FLAGS : uint
+    {
+        WTS_EXTRACT = 0x00,
+        WTS_FORCEEXTRACTION = 0x04
+    }
+
+    [Flags]
+    public enum WTS_CACHEFLAGS : uint
+    {
+        WTS_DEFAULT = 0x00,
+        WTS_LOWQUALITY = 0x01,
+        WTS_CACHED = 0x02
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct BITMAP
     {
@@ -378,6 +393,32 @@ public static class OccluViewShellThumbnailSmoke
     [Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE")]
     public interface IShellItem
     {
+    }
+
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("091162a4-bc96-411f-aae8-c5122cd03363")]
+    public interface ISharedBitmap
+    {
+        void GetSharedBitmap(out IntPtr phbm);
+        void GetSize(out SIZE size);
+        void GetFormat(out WTS_ALPHATYPE alphaType);
+        void InitializeBitmap(IntPtr bitmap, WTS_ALPHATYPE alphaType);
+        void Detach(out IntPtr phbm);
+    }
+
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("f676c15d-596a-4ce2-8234-33996f445db1")]
+    public interface IThumbnailCache
+    {
+        void GetThumbnail(
+            IShellItem shellItem,
+            uint requestedSize,
+            WTS_FLAGS flags,
+            out ISharedBitmap thumbnail,
+            out WTS_CACHEFLAGS cacheFlags,
+            IntPtr thumbnailId);
     }
 
     [ComImport]
@@ -490,6 +531,72 @@ public static class OccluViewShellThumbnailSmoke
         }
     }
 
+    public static ProbeResult ProbeShellForced(string path, int size)
+    {
+        const string localThumbnailCacheClsid = "50EF4544-AC9F-4A8E-B21B-8A26180DB13F";
+        object cacheObject = null;
+        IShellItem item = null;
+        ISharedBitmap sharedBitmap = null;
+        try
+        {
+            Guid iid = typeof(IShellItem).GUID;
+            SHCreateShellItemFromParsingName(path, IntPtr.Zero, ref iid, out item);
+            if (item == null)
+            {
+                throw new InvalidOperationException("SHCreateItemFromParsingName returned a null shell item.");
+            }
+
+            Type cacheType = Type.GetTypeFromCLSID(new Guid(localThumbnailCacheClsid), true);
+            if (cacheType == null)
+            {
+                throw new InvalidOperationException("Local thumbnail cache COM type was not found.");
+            }
+            cacheObject = Activator.CreateInstance(cacheType);
+            if (cacheObject == null)
+            {
+                throw new InvalidOperationException("Local thumbnail cache COM instance was not created.");
+            }
+
+            WTS_CACHEFLAGS cacheFlags;
+            var sw = Stopwatch.StartNew();
+            ((IThumbnailCache)cacheObject).GetThumbnail(
+                item,
+                (uint)size,
+                WTS_FLAGS.WTS_FORCEEXTRACTION,
+                out sharedBitmap,
+                out cacheFlags,
+                IntPtr.Zero);
+            sw.Stop();
+            if (sharedBitmap == null)
+            {
+                throw new InvalidOperationException("Forced shell extraction returned no shared bitmap.");
+            }
+
+            IntPtr bitmap;
+            sharedBitmap.GetSharedBitmap(out bitmap);
+            if (bitmap == IntPtr.Zero)
+            {
+                throw new InvalidOperationException("Forced shell extraction returned a null bitmap.");
+            }
+            return ProbeOwnedBitmap(bitmap, "shell-force", sw.ElapsedMilliseconds);
+        }
+        finally
+        {
+            if (sharedBitmap != null && Marshal.IsComObject(sharedBitmap))
+            {
+                Marshal.FinalReleaseComObject(sharedBitmap);
+            }
+            if (item != null && Marshal.IsComObject(item))
+            {
+                Marshal.FinalReleaseComObject(item);
+            }
+            if (cacheObject != null && Marshal.IsComObject(cacheObject))
+            {
+                Marshal.FinalReleaseComObject(cacheObject);
+            }
+        }
+    }
+
     public static ProbeResult[] ProbeShellBurst(string[] paths, int size)
     {
         var results = new ProbeResult[paths.Length];
@@ -513,15 +620,17 @@ public static class OccluViewShellThumbnailSmoke
         };
         System.Threading.Tasks.Parallel.For(0, paths.Length, options, i =>
         {
+            var sw = Stopwatch.StartNew();
             try
             {
                 results[i] = ProbeShell(paths[i], size);
             }
             catch (Exception ex)
             {
+                sw.Stop();
                 results[i] = new ProbeResult
                 {
-                    Route = "shell-miss:" + ex.GetType().Name,
+                    Route = "shell-miss:" + ex.GetType().Name + ":0x" + ex.HResult.ToString("X8"),
                     Width = 0,
                     Height = 0,
                     BitsPerPixel = 0,
@@ -529,7 +638,7 @@ public static class OccluViewShellThumbnailSmoke
                     ContentWidth = 0,
                     ContentHeight = 0,
                     Hash = 0,
-                    ElapsedMs = 0
+                    ElapsedMs = sw.ElapsedMilliseconds
                 };
             }
         });
@@ -1166,7 +1275,13 @@ function Assert-MixedFolderBurst {
             $request = $requests[$i]
             $result = $results[$i]
             if ($request.Is3d -and $result.Route -like "shell-miss:*") {
-                throw "Mixed folder shell thumbnail failed for ${size}px $([IO.Path]::GetFileName($request.Path)). Result=$($result.Summary())"
+                try {
+                    $retry = [OccluViewShellThumbnailSmoke]::ProbeShellForced($request.Path, $size)
+                } catch {
+                    throw "Mixed folder shell thumbnail failed for ${size}px $([IO.Path]::GetFileName($request.Path)) and did not recover through forced shell extraction. First=$($result.Summary()) Retry=$($_.Exception.GetType().Name): $($_.Exception.Message)"
+                }
+                Write-Host "mixed folder forced extraction recovered ${size}px $([IO.Path]::GetFileName($request.Path)): first=$($result.Route) retry=$($retry.Summary())"
+                $result = $retry
             }
             if (-not $request.Is3d) {
                 continue

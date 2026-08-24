@@ -35,9 +35,8 @@ pub(super) fn fast_obj_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, FormatError>
         return sampled_obj_point_cloud(&source_vertices);
     }
 
-    // Contiguous decimation: triangulate EVERY face and weld its corners onto a
-    // coarse grid so the reduced surface stays solid. Never stride faces — that
-    // is the see-through speckle the old fast path produced on dense scans.
+    // Triangulate every face and weld its corners onto a coarse grid so the
+    // reduced surface stays solid.
     let (min, max) = obj_robust_bounds(&source_vertices);
     let mut cluster = SurfaceGridCluster::new("OBJ", min, max, FAST_CLUSTER_GRID);
     let mut seen_faces = 0usize;
@@ -68,11 +67,8 @@ pub(super) fn fast_obj_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, FormatError>
         seen_faces += 1;
     }
 
-    // Zero-triangle safety net: the file declared faces (face_records > 0 to
-    // reach here) but none survived clustering (all degenerate / non-finite).
-    // Building would yield a triangle mesh with 0 triangles that renders as a
-    // fully transparent tile; splatting the raw vertices as a point cloud would
-    // misrepresent a surface file as dots. Decline instead so the loader falls
+    // Defer files whose faces do not produce a renderable surface instead of
+    // representing a surface file as a point cloud. The loader falls
     // through to the full reader (mirroring how the surface-PLY fast path
     // declines); loading.rs's renderability guard covers the case where the
     // full reader is also blank.
