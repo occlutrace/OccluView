@@ -195,3 +195,50 @@ fn a_named_pipe_is_refused_rather_than_opened() {
     let _ = fs::remove_file(&path);
     let _ = fs::remove_dir(&dir);
 }
+
+/// A scan still being written gets a retry, not a permanent badge.
+///
+/// The shell stores whatever bitmap a provider returns and keys it on the
+/// file's timestamp. A scanner exporting into the folder the operator is
+/// looking at produces a file that stops mid-record for a second or two; if
+/// that becomes a corrupt-file badge, the badge can outlive the cause -- an
+/// exporter that writes to a temporary file and renames it with the capture
+/// time never gives the shell a reason to ask again.
+#[test]
+fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
+    let mut truncated = fixtures::binary_stl_cube();
+    truncated.truncate(truncated.len() - 20);
+    let path = fixtures::write_temp_fixture("stl", &truncated);
+    let spec = ThumbnailSpec {
+        size_px: 32,
+        ..Default::default()
+    };
+    let measured = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
+    let keys = || FileThumbnailCacheKeys {
+        path: ThumbnailFileCacheKey::new(&path, &measured),
+        content: None,
+    };
+
+    // Measured as it is: short is a property of the file, and the shell may
+    // keep the answer.
+    let settled =
+        render_file_thumbnail_job(path.clone(), measured, keys(), spec, Duration::from_secs(6));
+    assert!(
+        matches!(settled, ThumbnailAttempt::Bitmap(_)),
+        "a file that is simply short is a verdict about the file"
+    );
+
+    // Measured as something else: the file moved under the read, so the
+    // truncation describes the moment and must not be cached.
+    let stale = ThumbnailFileMetadata {
+        byte_len: measured.byte_len + 1024,
+        modified_nanos: measured.modified_nanos,
+    };
+    let moving =
+        render_file_thumbnail_job(path.clone(), stale, keys(), spec, Duration::from_secs(6));
+    assert!(
+        matches!(moving, ThumbnailAttempt::TransientFailure),
+        "a file that changed while it was read must be asked about again"
+    );
+    let _ = fs::remove_file(path);
+}

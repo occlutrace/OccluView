@@ -306,6 +306,19 @@ pub(super) fn thumbnail_file_metadata_checked(
     ))
 }
 
+/// Whether the file is not the one the preflight measured.
+///
+/// A scanner writing into a watched folder is the case: the shell asks for a
+/// thumbnail of a file that is still growing, the decode stops mid-record, and
+/// the verdict has to say whether that is a property of the file or of the
+/// moment. Comparing length and timestamp against the preflight answers it
+/// exactly, without guessing from a clock.
+pub(super) fn thumbnail_file_changed_since(path: &Path, measured: &ThumbnailFileMetadata) -> bool {
+    thumbnail_file_metadata(path).is_ok_and(|now| {
+        now.byte_len != measured.byte_len || now.modified_nanos != measured.modified_nanos
+    })
+}
+
 /// Build a bounded content key for a file-backed thumbnail.
 ///
 /// The content key lets Explorer's common copy-heavy folders (for example,

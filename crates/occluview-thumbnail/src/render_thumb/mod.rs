@@ -374,6 +374,7 @@ fn render_file_thumbnail_job(
     spec: ThumbnailSpec,
     timeout: Duration,
 ) -> ThumbnailAttempt {
+    let measured_path = path.clone();
     let result = run_thumbnail_job_with_deadline(timeout, move |progress| {
         let result = (|| -> Result<Vec<u8>, ThumbnailError> {
             let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
@@ -392,6 +393,23 @@ fn render_file_thumbnail_job(
         let _ = progress.send(ThumbnailJobProgress::Finished(result));
     });
 
+    // "Truncated" is a verdict about the file, and the shell keeps verdicts
+    // forever. When the file is still being written -- a scanner exporting into
+    // the folder the operator is looking at -- it is a verdict about the
+    // moment, and the badge would outlive the cause. The preflight measured
+    // this file; if it no longer matches, say so instead.
+    if let ThumbnailJobOutcome::Finished(Err(ThumbnailError::Format(FormatError::Truncated {
+        ..
+    }))) = &result
+    {
+        if cache::thumbnail_file_changed_since(&measured_path, &metadata) {
+            tracing::warn!(
+                extension = ?measured_path.extension(),
+                "thumbnail source changed while it was being read; reporting transient failure"
+            );
+            return ThumbnailAttempt::TransientFailure;
+        }
+    }
     thumbnail_attempt_for_job_outcome(result, spec, timeout, "file")
 }
 
