@@ -95,6 +95,12 @@ impl OccluViewApp {
                     .transform
                     .transform_point3(entry.mesh.bbox_cached().center()),
             });
+            // Nothing below reads the scene, and what follows edits it in
+            // place: `forget_align_fit` reaches `live_scene_mut` through the
+            // deviation overlay, and a second handle alive there copies the
+            // whole case. It survives today only because of an early return
+            // three modules away, which is not a guarantee this function makes.
+            drop(scene);
             // The map describes the pose the scan is leaving. Dropped once, at
             // the start of the gesture, rather than at the end: for the whole
             // duration of a hand-drag the colours stayed welded to the surface
@@ -165,10 +171,9 @@ impl OccluViewApp {
     /// copying it per mouse-move frame moved forty megabytes of mesh on a full
     /// arch to change sixteen floats that live in the layer's uniform.
     fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
-        let Some(scene) = self.scene.as_mut() else {
+        let Some(live) = self.live_scene_mut() else {
             return;
         };
-        let live = std::sync::Arc::make_mut(scene);
         if let Some(entry) = live
             .meshes_mut()
             .iter_mut()
@@ -243,10 +248,7 @@ impl OccluViewApp {
         let name = self
             .layer_display_name(drag.layer)
             .unwrap_or_else(|| "The scan".to_owned());
-        // The teardown first: it sets its own status when it drops a map, and it
-        // would otherwise overwrite the one line that says WHICH scan moved and
-        // by how much — the whole point of naming it. Every other caller in this
-        // module already runs in this order.
+        // Teardown first so its status cannot overwrite the movement result.
         self.forget_align_fit("Moved by hand");
         self.align_status = Some(format!(
             "{name} moved {moved_mm:.2} mm by hand (Ctrl+Z undoes)"

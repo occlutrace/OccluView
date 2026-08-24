@@ -1,3 +1,16 @@
+//! Turning the current scene into pixels, through whichever path is available.
+//!
+//! Two paths draw the same scene with the same `occluview-render` pipeline: an
+//! eframe/wgpu paint callback into the live surface, and an offscreen render
+//! whose result is blitted as an egui texture. The live path is used when the
+//! backend gave us one; the offscreen path is the fallback and is also what
+//! produces the cut-view preview.
+//!
+//! Both consume the dirty flags documented in [`super::state`] and clear the
+//! ones they have honoured. Each path caches its own `PreparedScene`, so a
+//! scene change has to mark both or the untouched path keeps drawing the
+//! previous geometry.
+
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
@@ -8,7 +21,7 @@ use super::{
 };
 
 impl OccluViewApp {
-    pub(super) fn render_now_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn render_now(&mut self, ctx: &egui::Context) {
         let render_started_at = Instant::now();
         let (spec, pixels) = match self.render_scene_pixels() {
             Ok(frame) => frame,
@@ -60,7 +73,7 @@ impl OccluViewApp {
         );
     }
 
-    pub(super) fn render_cut_now_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
         let Some(scene) = self.scene.clone() else {
             self.cut_view.disable();
             return;
@@ -200,7 +213,7 @@ impl OccluViewApp {
         visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
     }
 
-    pub(super) fn ensure_offscreen_impl(&mut self) -> Result<()> {
+    pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if self.offscreen.is_none() {
             self.offscreen = Some(
                 pollster::block_on(Offscreen::new_prefer_hardware())
@@ -210,7 +223,7 @@ impl OccluViewApp {
         Ok(())
     }
 
-    pub(super) fn render_scene_pixels_impl(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
+    pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
         if self.camera.is_none() {
             self.reset_camera_to_home();
         }
@@ -287,7 +300,7 @@ impl OccluViewApp {
         Ok((spec, pixels))
     }
 
-    pub(super) fn sync_live_viewport_impl(&mut self) {
+    pub(super) fn sync_live_viewport(&mut self) {
         // A rebuild uploads the scan's own colours, so a live deviation map
         // has to be pushed again or it silently vanishes on the next scene
         // change.
@@ -356,7 +369,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn clear_live_viewport_impl(&self) {
+    pub(super) fn clear_live_viewport(&self) {
         let Some(live_viewport) = self.live_viewport.as_ref() else {
             return;
         };
@@ -370,7 +383,7 @@ impl OccluViewApp {
     /// we installed instead of panicking; surface any message honestly (status
     /// line always, copyable dialog only when no other error is showing, so a
     /// GPU that faults every frame cannot spam modal dialogs).
-    pub(super) fn poll_gpu_errors_impl(&mut self) {
+    pub(super) fn poll_gpu_errors(&mut self) {
         let Some(live_viewport) = self.live_viewport.as_ref() else {
             return;
         };
@@ -398,7 +411,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn set_scene_impl(&mut self, scene: Scene, reset_camera: bool) {
+    pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
@@ -454,14 +467,14 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn update_scene_materials_impl(&mut self, scene: Scene) {
+    pub(super) fn update_scene_materials(&mut self, scene: Scene) {
         self.scene = Some(Arc::new(scene));
-        self.mark_scene_materials_changed_impl();
+        self.mark_scene_materials_changed();
     }
 
     /// The bookkeeping a material change needs, for a caller that already owns
     /// the live scene and mutated it in place.
-    pub(super) fn mark_scene_materials_changed_impl(&mut self) {
+    pub(super) fn mark_scene_materials_changed(&mut self) {
         if let Some(scene) = self.scene.clone() {
             self.edit_mode.sync_to_scene(&scene);
         }
@@ -477,7 +490,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn clear_scene_impl(&mut self) {
+    pub(super) fn clear_scene(&mut self) {
         self.clear_unsaved_mesh_edits();
         self.hidden_layer_stack.clear();
         self.translucent_layer_restore.clear();
@@ -504,7 +517,7 @@ impl OccluViewApp {
         self.section_cache.clear();
     }
 
-    pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(226, 230, 234));
@@ -516,43 +529,7 @@ impl OccluViewApp {
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
-                let mut axis_snap = None;
-                if let Some(camera) = self.camera.as_ref() {
-                    paint_scale_bar(ui, response.rect, camera);
-                }
-                if let Some(camera) = self.camera.as_ref() {
-                    // Lift the gizmo above the docked Section panel while cutting
-                    // so it never sits under the bottom-right panel.
-                    let gizmo_avoid = self.active_section_panel_rect(response.rect);
-                    axis_snap = paint_axis_gizmo(ui, response.rect, camera, &response, gizmo_avoid);
-                }
-                self.show_layers_overlay(ui, response.rect, ctx);
-                self.show_mesh_editor_overlay(response.rect, ctx);
-                self.paint_mesh_selection_drag_overlay_impl(ui);
-                self.paint_sculpt_cursor_impl(ui, response.rect);
-                self.show_status_overlay(ui, response.rect);
-                let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
-                let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
-                // A click the axis gizmo snapped on never doubles as a measure
-                // anchor.
-                let align_ui_consumed =
-                    self.show_align_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                let measure_ui_consumed =
-                    self.show_measure_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                if let Some(axis) = axis_snap {
-                    if let Some(camera) = self.camera.as_mut() {
-                        camera.snap_to_axis(axis);
-                        self.needs_render = true;
-                        ctx.request_repaint();
-                    }
-                }
-                if !bridge_ui_consumed
-                    && !cut_ui_consumed
-                    && !measure_ui_consumed
-                    && !align_ui_consumed
-                {
-                    self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
-                }
+                self.show_viewport_overlays(ui, &response, ctx);
             } else if let Some(texture) = self
                 .rendered
                 .as_ref()
@@ -565,43 +542,7 @@ impl OccluViewApp {
                     egui::Image::new((texture.id(), available))
                         .sense(egui::Sense::click_and_drag()),
                 );
-                let mut axis_snap = None;
-                if let Some(camera) = self.camera.as_ref() {
-                    paint_scale_bar(ui, response.rect, camera);
-                }
-                if let Some(camera) = self.camera.as_ref() {
-                    // Lift the gizmo above the docked Section panel while cutting
-                    // so it never sits under the bottom-right panel.
-                    let gizmo_avoid = self.active_section_panel_rect(response.rect);
-                    axis_snap = paint_axis_gizmo(ui, response.rect, camera, &response, gizmo_avoid);
-                }
-                self.show_layers_overlay(ui, response.rect, ctx);
-                self.show_mesh_editor_overlay(response.rect, ctx);
-                self.paint_mesh_selection_drag_overlay_impl(ui);
-                self.paint_sculpt_cursor_impl(ui, response.rect);
-                self.show_status_overlay(ui, response.rect);
-                let bridge_ui_consumed = self.show_bridge_split_overlay(ui, &response, ctx);
-                let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
-                // A click the axis gizmo snapped on never doubles as a measure
-                // anchor.
-                let align_ui_consumed =
-                    self.show_align_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                let measure_ui_consumed =
-                    self.show_measure_tool_overlay(ui, &response, axis_snap.is_some(), ctx);
-                if let Some(axis) = axis_snap {
-                    if let Some(camera) = self.camera.as_mut() {
-                        camera.snap_to_axis(axis);
-                        self.needs_render = true;
-                        ctx.request_repaint();
-                    }
-                }
-                if !bridge_ui_consumed
-                    && !cut_ui_consumed
-                    && !measure_ui_consumed
-                    && !align_ui_consumed
-                {
-                    self.handle_viewport_input(ctx, &response, response.rect, axis_snap.is_some());
-                }
+                self.show_viewport_overlays(ui, &response, ctx);
             } else if self.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
@@ -613,7 +554,57 @@ impl OccluViewApp {
         });
     }
 
-    pub(super) fn render_pending_frame_impl(&mut self, ctx: &egui::Context) {
+    /// Every overlay the viewport draws, and the input arbitration that
+    /// follows them.
+    ///
+    /// One body, called by both branches of `show_central_panel_impl`. Written
+    /// twice, every new tool has to be wired into both copies with nothing to
+    /// say when one is missed, and the one that gets missed is the offscreen
+    /// copy: it never runs on a developer machine, only for operators whose
+    /// driver could not give the app a live viewport, who are the people least
+    /// able to diagnose "the Align button does nothing". The branches differ
+    /// only in how they obtain `response`.
+    fn show_viewport_overlays(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        ctx: &egui::Context,
+    ) {
+        let mut axis_snap = None;
+        if let Some(camera) = self.camera.as_ref() {
+            paint_scale_bar(ui, response.rect, camera);
+        }
+        if let Some(camera) = self.camera.as_ref() {
+            // Lift the gizmo above the docked Section panel while cutting so it
+            // never sits under the bottom-right panel.
+            let gizmo_avoid = self.active_section_panel_rect(response.rect);
+            axis_snap = paint_axis_gizmo(ui, response.rect, camera, response, gizmo_avoid);
+        }
+        self.show_layers_overlay(ui, response.rect, ctx);
+        self.show_mesh_editor_overlay(response.rect, ctx);
+        self.paint_mesh_selection_drag_overlay_impl(ui);
+        self.paint_sculpt_cursor_impl(ui, response.rect);
+        self.show_status_overlay(ui, response.rect);
+        let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
+        let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
+        // A click the axis gizmo snapped on never doubles as a measure anchor.
+        let align_ui_consumed =
+            self.show_align_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        let measure_ui_consumed =
+            self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        if let Some(axis) = axis_snap {
+            if let Some(camera) = self.camera.as_mut() {
+                camera.snap_to_axis(axis);
+                self.needs_render = true;
+                ctx.request_repaint();
+            }
+        }
+        if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed && !align_ui_consumed {
+            self.handle_viewport_input(ctx, response, response.rect, axis_snap.is_some());
+        }
+    }
+
+    pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
         if self.needs_render {
             if self.live_viewport.is_some() {
                 self.sync_live_viewport();
@@ -682,7 +673,8 @@ mod tests {
     /// the first-time-only fallback in the `None` arm.
     #[test]
     fn per_frame_render_paths_reuse_persistent_texture_ids() {
-        let source = include_str!("app_render.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"))
+            .replace("\r\n", "\n");
         assert!(
             source.contains("frame.texture.set(color_image, egui::TextureOptions::LINEAR)"),
             "render_now must update the viewport texture in place, not reallocate it"

@@ -144,19 +144,32 @@ fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
     (u, v)
 }
 
-/// Darken a linear-RGBA layer tint toward slate for the contour stroke, keeping
-/// enough of the layer's hue to disambiguate multiple layers.
-pub(crate) fn contour_color(tint_linear: [f32; 4]) -> egui::Color32 {
-    // egui does the linear -> sRGB (u8) conversion for us.
-    let srgb = egui::Color32::from(egui::Rgba::from_rgb(
-        tint_linear[0],
-        tint_linear[1],
-        tint_linear[2],
-    ));
-    let mix = |channel: u8, slate: u8| -> u8 {
-        u8::try_from((u16::from(channel) + u16::from(slate) * 2) / 3).unwrap_or(u8::MAX)
+/// Darken a layer tint toward slate for the contour stroke, keeping enough of
+/// the layer's hue to tell two layers apart.
+///
+/// The tint is the number the renderer draws with, and nothing encodes on the
+/// way out of the shader, so it is already in the space this stroke is drawn
+/// in. Running it through `egui::Rgba`, which is egui's linear type, applied a
+/// transfer the viewport does not: the stroke came out about twice as bright
+/// as the surface it outlines, and the default untextured tint -- warm dental
+/// stone -- collapsed to within three levels of neutral grey, so two layers on
+/// the two nearest stone shades were outlined in the same colour, which is the
+/// one thing this function exists to prevent.
+pub(crate) fn contour_color(tint: [f32; 4]) -> egui::Color32 {
+    let channel = |value: f32| -> u8 {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        {
+            (value.clamp(0.0, 1.0) * 255.0).round() as u8
+        }
     };
-    egui::Color32::from_rgb(mix(srgb.r(), 15), mix(srgb.g(), 23), mix(srgb.b(), 42))
+    let mix = |value: u8, slate: u8| -> u8 {
+        u8::try_from((u16::from(value) + u16::from(slate) * 2) / 3).unwrap_or(u8::MAX)
+    };
+    egui::Color32::from_rgb(
+        mix(channel(tint[0]), 15),
+        mix(channel(tint[1]), 23),
+        mix(channel(tint[2]), 42),
+    )
 }
 
 #[cfg(test)]
@@ -185,5 +198,35 @@ mod tests {
         // A red-tinted layer keeps a red bias.
         let red = contour_color([1.0, 0.0, 0.0, 1.0]);
         assert!(red.r() > red.g() && red.r() > red.b());
+    }
+
+    #[test]
+    fn the_contour_is_the_tint_it_outlines_and_not_a_brighter_one() {
+        // Drawn beside a surface the renderer paints from the same numbers, so
+        // no transfer here either.
+        let cobalt = [0.03_f32, 0.15, 0.79, 1.0];
+        let contour = contour_color(cobalt);
+        for (channel, drawn) in [(0_usize, contour.r()), (1, contour.g()), (2, contour.b())] {
+            let surface = (cobalt[channel] * 255.0).round();
+            assert!(
+                f32::from(drawn) <= surface.mul_add(0.34, 30.0),
+                "channel {channel}: the contour is {drawn} against a surface \
+                 byte of {surface}; it should be that byte mixed toward slate, \
+                 not a re-encoded one"
+            );
+        }
+    }
+
+    #[test]
+    fn two_neighbouring_stone_shades_still_get_different_contours() {
+        // The whole purpose: telling layers apart, including across the warm
+        // stone shades a transfer would flatten together.
+        let stone = contour_color([0.82, 0.68, 0.42, 1.0]);
+        let plaster = contour_color([0.86, 0.83, 0.76, 1.0]);
+        let spread = i32::from(stone.b()).abs_diff(i32::from(plaster.b()));
+        assert!(
+            spread > 20,
+            "two stone shades produced contours {spread} levels apart"
+        );
     }
 }

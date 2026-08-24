@@ -1,4 +1,5 @@
 use std::mem::{size_of, size_of_val};
+use std::sync::Arc;
 
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 
@@ -72,14 +73,17 @@ impl EditModeController {
         self.begin_layer_edit_with_snapshot(layer, layer.mesh.clone(), command)
     }
 
-    /// Begin a layer edit using a prebuilt mesh snapshot. Background editors
-    /// use this to keep the expensive vertex/index clone off the UI thread;
-    /// the layer's identity and display settings still come from the live
-    /// entry, so undo restores the exact instance rather than a new layer.
+    /// Begin a layer edit using a prebuilt mesh snapshot. The layer's identity
+    /// and display settings still come from the live entry, so undo restores
+    /// the exact instance rather than a new layer.
+    ///
+    /// The snapshot is shared, not copied: geometry is immutable, so the
+    /// history and the live scene can hold the same vertices until one of them
+    /// is replaced.
     pub(crate) fn begin_layer_edit_with_snapshot(
         &mut self,
         layer: &SceneMesh,
-        snapshot_mesh: Mesh,
+        snapshot_mesh: Arc<Mesh>,
         command: EditModeCommand,
     ) -> Option<EditSessionToken> {
         let layer_key = LayerKey::from_scene_mesh_id(layer.id());

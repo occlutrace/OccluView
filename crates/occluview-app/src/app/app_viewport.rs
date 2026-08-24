@@ -25,7 +25,7 @@ fn secondary_pointer_sample(ctx: &egui::Context) -> SecondaryPointerSample {
 }
 
 impl OccluViewApp {
-    pub(super) fn grab_viewport_orbit_cursor_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
         if self.viewport_orbit_cursor_grabbed {
             return;
         }
@@ -34,7 +34,7 @@ impl OccluViewApp {
         self.viewport_orbit_cursor_grabbed = true;
     }
 
-    pub(super) fn release_viewport_orbit_cursor_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn release_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
         if !self.viewport_orbit_cursor_grabbed {
             return;
         }
@@ -43,7 +43,7 @@ impl OccluViewApp {
         self.viewport_orbit_cursor_grabbed = false;
     }
 
-    pub(super) fn release_viewport_orbit_cursor_if_inactive_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn release_viewport_orbit_cursor_if_inactive(&mut self, ctx: &egui::Context) {
         let secondary_drag_possible =
             ctx.input(|i| i.focused && i.pointer.button_down(egui::PointerButton::Secondary));
         if !secondary_drag_possible {
@@ -51,7 +51,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn maybe_render_cut_view_impl(&mut self, ctx: &egui::Context) {
+    pub(super) fn maybe_render_cut_view(&mut self, ctx: &egui::Context) {
         // `take_needs_render` always clears the flag; the GPU slice render runs
         // only in Mesh mode (Lines draws the cached contour, no offscreen work).
         if self.cut_view.take_needs_render()
@@ -64,7 +64,7 @@ impl OccluViewApp {
         }
     }
 
-    pub(super) fn sync_render_extent_impl(
+    pub(super) fn sync_render_extent(
         &mut self,
         viewport_points: egui::Vec2,
         pixels_per_point: f32,
@@ -128,7 +128,7 @@ impl OccluViewApp {
         orbit_drag_active
     }
 
-    pub(super) fn handle_viewport_input_impl(
+    pub(super) fn handle_viewport_input(
         &mut self,
         ctx: &egui::Context,
         response: &egui::Response,

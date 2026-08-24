@@ -2,16 +2,22 @@ use super::*;
 
 #[test]
 fn primary_camera_action_labels_stay_generic() {
-    let labels = primary_camera_action_labels();
+    // Read against the real toolbar, not a `#[cfg(test)]` stub returning an
+    // empty array -- that asserts `[]` is empty and survives any change to the
+    // chrome. The requirement is real: always-visible chrome stays generic, and
+    // named dental views belong in a surface the operator opens.
+    let chrome = app_chrome_source();
+    let dialogs = app_dialogs_source();
+    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar");
 
-    assert!(
-        labels.is_empty(),
-        "primary toolbar should not expose persistent camera action buttons"
-    );
     for dental_label in ["Occlusal", "Buccal", "Lingual", "Mesial", "Distal"] {
         assert!(
-            !labels.contains(&dental_label),
-            "primary camera controls should not expose {dental_label}"
+            !toolbar.contains(dental_label),
+            "the primary toolbar should not expose a persistent {dental_label} button"
+        );
+        assert!(
+            !chrome.contains(dental_label),
+            "the persistent chrome should not expose a {dental_label} button"
         );
     }
 }
@@ -55,7 +61,7 @@ fn successful_appends_do_not_leave_status_overlay_copy() {
 #[test]
 fn toolbar_and_about_are_operator_focused() {
     let dialogs = app_dialogs_source();
-    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar_impl");
+    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar");
 
     assert!(
         dialogs.contains("egui::TopBottomPanel::top(\"toolbar\")")
@@ -118,7 +124,10 @@ fn toolbar_and_about_are_operator_focused() {
 #[test]
 fn layer_overlay_does_not_clone_full_scene_each_repaint() {
     let layer_source = repo_source_file("src/layers_overlay/mod.rs");
-    let viewport_source = app_viewport_source();
+    // Read the one file these claims are about. The concatenated viewport
+    // source also carries the mesh editor, which has its own `draft` clone, so
+    // ordering assertions over the concatenation compare the wrong lines.
+    let viewport_source = repo_source_file("src/app/app_layer_interaction.rs");
     let layer_edits = app_layer_edits_source();
 
     assert!(
@@ -131,14 +140,37 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         "full scene mutation should happen only after a real layer edit"
     );
     assert!(
-        viewport_source
-            .find("if changes.context_request.is_none() && changes.layer_edits.is_empty()")
-            < viewport_source.find("let mut draft = scene.clone();"),
-        "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
+        !viewport_source.is_empty(),
+        "the layer interaction source should be readable"
     );
     assert!(
-        !viewport_source.contains("let mut draft = (*scene).clone();"),
-        "layer overlay must not deep-clone mesh payloads before every repaint"
+        appears_before(
+            &viewport_source,
+            "if changes.context_request.is_none() && changes.layer_edits.is_empty()",
+            "let mut draft = scene.as_ref().clone();",
+        ),
+        "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
+    );
+    // The early return is only half of it. The material-only path goes through
+    // `Arc::make_mut`, 45.75 ms per frame against 40 ns when the scene has a
+    // single owner, so the overlay must HAND OVER its handle rather than lend
+    // it and drop it before touching the live scene.
+    assert!(
+        viewport_source.contains("scene: Arc<Scene>,"),
+        "the overlay handler must take ownership of the scene handle"
+    );
+    assert!(
+        viewport_source.contains("drop(scene);"),
+        "the handle must be released before the in-place material edit"
+    );
+    let state = repo_source_file("src/app/state.rs");
+    assert!(
+        state.contains("let handles = Arc::strong_count(scene);"),
+        "a future caller that holds a second handle must be caught"
+    );
+    assert!(
+        state.contains("report_shared_scene_edit(handles);"),
+        "and reported in a release build too, where the assertion is gone"
     );
     assert!(
         layer_edits.contains("let entry = scene.meshes().get(request.index)?;")
@@ -218,7 +250,7 @@ fn edit_shortcut_stays_with_viewport_input_not_layer_mutation() {
 fn empty_state_is_blank_instead_of_showing_drop_copy() {
     let central = function_source(
         app_render_source(),
-        "pub(super) fn show_central_panel_impl(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {",
     );
 
     assert!(
@@ -267,7 +299,7 @@ fn unsaved_mesh_edits_guard_the_window_close() {
     assert!(
         guard.contains("close_requested()")
             && guard.contains("ViewportCommand::CancelClose")
-            && guard.contains("self.has_unsaved_mesh_edits"),
+            && guard.contains("self.has_unsaved_mesh_edits()"),
         "closing with unsaved mesh edits must be intercepted, not silently lost"
     );
     assert!(
@@ -285,6 +317,52 @@ fn unsaved_mesh_edits_guard_the_window_close() {
             repo_source_file(file).contains("app.mark_mesh_edits_unsaved("),
             "{file} must mark unsaved mesh edits per layer so the save flow \
              knows exactly what to export"
+        );
+    }
+}
+
+#[test]
+fn about_opens_the_embedded_third_party_notices() {
+    let dialogs = app_dialogs_source();
+    let notices = repo_source_file("src/app/app_third_party.rs");
+
+    assert!(
+        function_source(dialogs, "pub(super) fn show_about_window")
+            .contains("Third-party licenses"),
+        "About should offer the third-party licenses view"
+    );
+    assert!(
+        notices.contains("include_str!(\"../../../../THIRD-PARTY-NOTICES.md\")"),
+        "the window must show the very file the artifacts ship"
+    );
+    assert!(
+        notices.contains("show_rows"),
+        "a quarter-megabyte of licenses must render lazily, not as one label"
+    );
+}
+
+#[test]
+fn the_unsaved_edits_flag_stays_derived() {
+    // Derived from the layer set, not kept beside it: a parallel `bool` takes
+    // four assignments to maintain, the export path skipped one, and the close
+    // guard was told a hidden layer's edits were already on disk.
+    let state = repo_source_file("src/app/state.rs");
+    assert!(
+        state.contains("pub(super) fn has_unsaved_mesh_edits(&self) -> bool"),
+        "the unsaved-edits answer should be computed from the layer set"
+    );
+    assert!(
+        !state.contains("has_unsaved_mesh_edits: bool"),
+        "reintroducing the field reintroduces the state that can disagree"
+    );
+    for writer in [
+        "src/app/state.rs",
+        "src/app/app_mesh_export.rs",
+        "src/app/app_scene_commit.rs",
+    ] {
+        assert!(
+            !repo_source_file(writer).contains("self.has_unsaved_mesh_edits ="),
+            "{writer} must not assign the derived answer"
         );
     }
 }

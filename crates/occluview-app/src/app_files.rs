@@ -1,4 +1,4 @@
-use occluview_core::{RecentEntry, RecentFiles};
+use crate::recent_files::{RecentEntry, RecentFiles};
 use std::path::{Path, PathBuf};
 
 const RECENT_FILES_FILE: &str = "recent-files.txt";

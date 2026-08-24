@@ -1,19 +1,12 @@
 //! State machine for the interactive cut disc.
 //!
-//! The cut tool shows a small disc that stands upright on the surface under the
-//! cursor (the same "follow cursor" convention dental CAD software uses): the
-//! disc plane blends continuously between an axial camera alignment and the
-//! local surface direction, so facets cannot snap the blade. A primary click
-//! *plants* the disc; drag anywhere on its body to translate, Ctrl+drag
-//! anywhere to arcball-tilt, or use the outer rim halo for depth push/pull.
-//! The wheel scales the disc radius.
+//! The cut tool follows the surface under the cursor with a disc. A primary
+//! click plants it; body drag translates, Ctrl-drag tilts, and the rim adjusts
+//! depth. The wheel changes its radius.
 //!
-//! This module is deliberately free of egui/renderer side effects: the viewport
-//! adapter samples the current frame's pointer/keyboard/camera facts into a
-//! [`CutFrameInput`], calls [`CutManipulator::update`], and reacts to the
-//! returned [`CutUpdate`]. The stateless geometry (orientation, smoothing,
-//! handle hit-test, transforms) lives in [`crate::cut_geometry`]; both halves
-//! are exhaustively unit-tested without a live context.
+//! The state machine is independent of egui and rendering. The viewport maps
+//! input into [`CutFrameInput`] and applies the returned [`CutUpdate`]; pure
+//! geometry helpers live in [`crate::cut_geometry`].
 
 use crate::cut_geometry::{
     apply_drag, begin_drag, camera_keep_side, follow_plane_normal, hover_cursor, scale_radius,
@@ -37,18 +30,8 @@ pub(crate) const CENTER_GRAB_RADIUS_PX: f32 = 14.0;
 /// Grab tolerance (screen px) around the rim ring for push/pull handles.
 pub(crate) const RIM_GRAB_RADIUS_PX: f32 = 11.0;
 
-/// How the disc follows a zoom of the section window.
-///
-/// The disc covers the patch of the plane the window is looking at, so the two
-/// move **opposite** ways: magnify the section and the disc narrows onto the
-/// detail being examined; pull back and it opens out again.
-///
-/// At the square root of the step rather than the whole of it. The window already
-/// frames `1.6 x radius / zoom`, so the radius and the zoom compound — taking the
-/// full step would swing the framing by the square of every notch and make the
-/// cut size lurch. Half the step, geometrically, leaves the wheel calm and still
-/// moves both. Invertible: a notch in and a notch back out land on the radius you
-/// started from.
+/// Adjust the disc radius as the section window zoom changes. The square-root
+/// factor keeps the combined framing stable and makes the mapping reversible.
 pub(crate) fn radius_after_slice_zoom(radius_mm: f32, zoom_before: f32, zoom_after: f32) -> f32 {
     if !(radius_mm.is_finite() && zoom_before > 0.0 && zoom_after > 0.0) {
         return radius_mm;
@@ -72,15 +55,7 @@ pub(crate) struct DiscPose {
     pub(crate) radius_mm: f32,
 }
 
-/// A hit mesh's principal-axis frame, in WORLD space (see
-/// [`occluview_core::Mesh::principal_frame_cached`]) — a STABLE signal,
-/// constant for a given mesh regardless of cursor position, that the follow
-/// disc derives its orientation from instead of the hit triangle's local
-/// normal: the LOCAL direction from `centroid` to the hit point, projected
-/// onto the `axis0`/`axis1` plane, rotates smoothly as the cursor moves
-/// around a dental arch or bridge span — reducing to (roughly) `axis0` at
-/// the arch's left/right extremes and adapting continuously in between,
-/// instead of staying fixed for the whole mesh.
+/// Principal-axis frame used to derive a stable local arch direction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ArchFrame {
     /// PCA centroid, world space.
@@ -139,11 +114,8 @@ pub(crate) enum CutMode {
         pose: Option<DiscPose>,
         smoothed_normal: Option<Vec3>,
     },
-    /// Planted at a fixed WORLD pose. The disc stays put on the model while the
-    /// main-viewport camera orbits freely — an orbit does NOT sweep the section
-    /// (by design). `keep_positive` is the clip side chosen at plant time
-    /// (flipped by F); `drag` is any in-progress handle drag. Re-aim the cut by
-    /// dragging the disc handles (move / Ctrl-tilt / rim push), not the camera.
+    /// Planted at a fixed world pose. Camera motion does not move the section;
+    /// handles change its pose. `keep_positive` is toggled by F.
     Planted {
         pose: DiscPose,
         keep_positive: bool,
@@ -235,9 +207,7 @@ impl CutManipulator {
         };
     }
 
-    /// Arm follow mode with an explicit starting radius (Bridge Split sizes the
-    /// disc to the object so the first disc isn't the tiny fixed minimum that
-    /// always has to be enlarged).
+    /// Arm follow mode with an explicit starting radius.
     pub(crate) fn arm_with_radius(&mut self, radius_mm: f32) {
         self.radius_mm = radius_mm.clamp(MIN_DISC_RADIUS_MM, MAX_DISC_RADIUS_MM);
         self.arm();
@@ -248,10 +218,7 @@ impl CutManipulator {
         self.mode = CutMode::Off;
     }
 
-    /// Plant the disc programmatically at a fixed WORLD `pose` (the thickness
-    /// probe driving the Section view). This produces exactly the same
-    /// world-fixed [`CutMode::Planted`] a manual click plant does — an orbit
-    /// leaves it untouched — and adopts the pose's radius as the remembered one.
+    /// Plant the disc at a fixed world pose, preserving the pose radius.
     pub(crate) fn plant_pose(&mut self, pose: DiscPose, keep_positive: bool) {
         self.radius_mm = pose.radius_mm;
         self.mode = CutMode::Planted {
@@ -387,8 +354,7 @@ impl CutManipulator {
             out.pose_changed = true;
             out.consumed_pointer = true;
             out.cursor = CutCursor::Grabbing;
-            // Plant the pose in WORLD space: it stays fixed while the camera
-            // orbits — an orbit must not sweep the section.
+            // Keep the planted pose fixed while the camera orbits.
             return CutMode::Planted {
                 pose: new_pose,
                 keep_positive,
@@ -468,12 +434,7 @@ impl CutManipulator {
     }
 }
 
-/// Whether two poses differ enough to warrant a re-render (guards against
-/// spurious per-frame re-renders from float noise while the camera is idle).
-///
-/// pub(crate): the tool ALSO compares the live pose against the pose the
-/// visible slice was rendered from — frame-to-frame deltas alone let a slow
-/// sub-epsilon orbit sweep the section 180° without ever re-rendering.
+/// Whether two poses differ enough to warrant a re-render.
 pub(crate) fn pose_moved(a: &DiscPose, b: &DiscPose) -> bool {
     const POS_EPS: f32 = 1.0e-4;
     const NORMAL_EPS: f32 = 1.0e-5;
@@ -487,8 +448,7 @@ mod tests {
     #![allow(clippy::float_cmp, clippy::expect_used, clippy::unnecessary_wraps)]
     use super::*;
 
-    /// The disc covers what the window is looking at, so magnifying the section
-    /// narrows the disc and pulling back opens it out.
+    /// Magnifying the section narrows the disc; pulling back opens it.
     #[test]
     fn magnifying_the_section_narrows_the_disc() {
         let into = radius_after_slice_zoom(8.0, 1.0, 1.15);
@@ -497,9 +457,7 @@ mod tests {
         assert!(out > 8.0, "pulling back must open it out, got {out}");
     }
 
-    /// It moves by HALF the zoom step, in the geometric sense. The window frames
-    /// 1.6 x radius / zoom, so the radius and the zoom compound: the full step
-    /// would swing the framing by the square of every notch.
+    /// The radius uses the square root of the window zoom step.
     #[test]
     fn the_window_and_the_disc_split_the_step_between_them() {
         let step = 1.15_f32;

@@ -1,15 +1,10 @@
 //! Background execution for Align Scans.
 //!
-//! Every heavy call lives here. A full arch is hundreds of thousands of
-//! triangles; building the surface index, refining, and measuring on the UI
-//! thread would freeze the window for seconds — the bug we already fixed once
-//! in Bridge Split.
+//! Heavy alignment and deviation work runs off the UI thread.
 //!
-//! Two guards make late results safe. A *generation* stamps each job, and a
-//! completion whose generation is behind the worker's current one is dropped:
-//! the pair, pose, or settings it was computed for no longer exist. A *kind*
-//! lets a newer job of the same kind replace a queued one, so dragging a
-//! slider does not queue a hundred measurements.
+//! Each job carries a generation; completions from older generations are
+//! discarded. A job kind allows a queued job to be replaced by a newer request
+//! of the same kind.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,35 +15,26 @@ use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
     deviation, deviation_stats, fit_pairs, observability, ramp_color, refine, CancelFlag,
-    DeviationMap, DeviationSettings, DeviationStats, FitRejection, IcpReport, Observability,
-    Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex, Validity,
-    NO_DATA_COLOR,
+    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, IcpReport,
+    Observability, Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex,
+    Validity, NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-/// The nominal band a dental comparison opens at, in millimetres. Below this
-/// two surfaces are the same surface as far as any scanner can tell.
+/// Initial display maximum, in millimetres.
+pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+/// Initial nominal tolerance band, in millimetres.
+pub(crate) const WORKING_MIN_MM: f64 = 0.005;
+/// The nominal band of the standard range, in millimetres.
 pub(crate) const CLINICAL_MIN_MM: f64 = 0.01;
-/// The display maximum a dental comparison opens at, in millimetres. This is
-/// the number the whole field works to: a fit inside it is clinically usable,
-/// a fit outside it is not.
+/// Standard display maximum, in millimetres.
 pub(crate) const CLINICAL_MAX_MM: f64 = 0.20;
-/// The widest maximum the operator can dial in. Past this a deviation map stops
-/// being a clinical instrument and starts being a picture of two meshes that
-/// have not been aligned yet — which the panel says in words instead.
+/// Maximum display scale exposed by the panel, in millimetres.
 pub(crate) const CLINICAL_CEILING_MM: f64 = 1.0;
 
-/// The standard ranges, tightest first: a display maximum and the nominal band
-/// that goes with it. The panel offers one chip each and the tool opens on the
-/// first, so both read this table rather than each carrying its own copy —
-/// which is how the chip row could show a range highlighted that the tool was
-/// not actually using.
-///
-/// **The first entry is the working range.** A tenth of a millimetre is where a
-/// seated fit and a fit that only looks seated stop looking the same, so it is
-/// the range the map is read at, not the one it is dialled to.
+/// Standard display ranges as `(maximum, tolerance)`, tightest first.
 pub(crate) const CLINICAL_RANGES: [(f64, f64); 3] = [
-    (0.10, 0.005),
+    (WORKING_MAX_MM, WORKING_MIN_MM),
     (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
     (0.50, 0.02),
 ];
@@ -70,13 +56,7 @@ pub(crate) struct AlignSettings {
     pub(crate) bands: Option<u32>,
     /// Which colour scheme the map paints with.
     pub(crate) ramp_mode: RampMode,
-    /// Whether the display scale follows the measurement instead of a guess.
-    ///
-    /// Cleared the moment the operator moves the slider, and set only by the
-    /// `auto` button next to it. A finished fit used to switch this back on so
-    /// the range would re-fit itself, which meant the working range could not be
-    /// held: an operator who set 0.10 mm got some other range back on the next
-    /// fit. Saturation is called out in words instead — see `saturation_advice`.
+    /// Whether the display scale follows the measurement.
     pub(crate) auto_scale: bool,
     /// Whether the map is on screen.
     pub(crate) show_deviation: bool,
@@ -85,30 +65,19 @@ pub(crate) struct AlignSettings {
 impl Default for AlignSettings {
     fn default() -> Self {
         Self {
-            // Far enough that a roughly-placed mesh still has something to
-            // measure against. Too tight and the map comes out mostly grey,
-            // which reads as "broken" rather than "out of reach".
+            // Allow a roughly placed mesh to find the other surface.
             influence_radius_mm: 2.0,
             matching_ratio: 0.8,
             orientation: Orientation::Match,
-            // The working range, and the reason it is not a guess: dentistry
-            // works at a tenth of a millimetre. A map whose ends are five
-            // millimetres apart cannot show a fit that is either good or bad in
-            // that regime — everything lands in the middle and the operator is
-            // reading a picture of nothing. Opening at the tightest standard
-            // range means the first thing on screen is already the question
-            // they are asking, and it stays there: nothing below re-dials it.
+            // Start at the tightest standard range; manual changes remain
+            // stable until the operator selects another range.
             scale_mm: CLINICAL_RANGES[0].0,
             tolerance_mm: CLINICAL_RANGES[0].1,
             bands: None,
-            // Magnitude, not signed: the question this tool answers is "how far
-            // apart are these two", and the nominal band makes everything
-            // inside tolerance one flat cold colour. Which side a surface sits
-            // on is a different question, one click away under More settings.
+            // Magnitude is the default display mode; signed values are an
+            // optional diagnostic.
             ramp_mode: RampMode::Magnitude,
-            // Deliberately off. A range that follows the measurement is a range
-            // that walks away from the clinical one the moment two meshes are
-            // roughly placed, and then the map is about millimetres again.
+            // Keep the clinical display range fixed unless requested.
             auto_scale: false,
             show_deviation: true,
         }
@@ -156,14 +125,8 @@ pub(crate) struct WorldPair {
     pub(crate) fixed_normal: DVec3,
 }
 
-/// Identity of everything a measurement's DISTANCES depend on.
-///
-/// Two jobs with equal keys measure the same two surfaces in the same relative
-/// pose through the same mask and reach, so they cannot produce different
-/// distances — and the second may reuse the first's map instead of spending
-/// half a second re-deriving it. Everything the ramp reads (the display scale,
-/// the band count, the colour scheme) is deliberately absent: those change the
-/// COLOUR of a measurement, never the measurement.
+/// Inputs that determine a deviation map. Display-only settings are excluded
+/// because they affect colours, not measured distances.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MeasureKey {
     /// Geometry and pose of the layer being measured.
@@ -371,8 +334,8 @@ impl AlignWorker {
                 .is_ok_and(|state| !state.jobs.is_empty())
     }
 
-    /// Queue a job, replacing any queued job of the same kind and cancelling a
-    /// running one. Dragging a slider must not queue a hundred measurements.
+    /// Queue a job, replacing queued work of the same kind and cancelling the
+    /// running job.
     pub(crate) fn submit(&self, job: AlignJob) {
         self.cancel_running();
         let Ok(mut state) = self.queue.state.lock() else {
@@ -456,9 +419,8 @@ fn run_worker(
         busy.fetch_add(1, Ordering::SeqCst);
 
         let outcome = execute(&job, &cancel, &mut cached);
-        // A cancelled stage returns a well-formed but meaningless value — the
-        // start pose, or a map where nothing was measured. Publishing that
-        // reverts the operator's drag or flashes a fully grey scan.
+        // Cancelled stages may return structurally valid but unusable values;
+        // do not publish them.
         let abandoned = cancel.is_cancelled();
 
         busy.fetch_sub(1, Ordering::SeqCst);
@@ -479,9 +441,7 @@ fn run_worker(
 
 /// What the worker keeps between jobs.
 ///
-/// Everything here is derived from geometry the operator has not changed. The
-/// alternative — starting from the mesh on every settings change — is what made
-/// nudging the display scale cost most of a second on a full arch.
+/// Cached geometry-derived results reused across settings changes.
 #[derive(Default)]
 struct WorkerCache {
     /// The fixed surface's spatial index, and the surface it was built for.
@@ -495,9 +455,7 @@ struct WorkerCache {
     seen: Option<(MeasureKey, Option<Observability>)>,
 }
 
-/// The jobs that need the fixed surface's spatial index. Fitting the clicked
-/// pairs is not one of them, and naming that in the type is what keeps a
-/// "cannot happen" arm out of the dispatch below.
+/// Jobs that require the fixed surface index.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SurfaceJob {
     /// Seat the surfaces with ICP.
@@ -520,8 +478,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         AlignJobKind::Measure => SurfaceJob::Measure,
     };
 
-    // A re-colour of a measurement already in hand never touches the surface:
-    // the distances did not change, only what they are painted with.
+    // Re-colouring changes only the display, so reuse the cached map.
     if surface_job == SurfaceJob::Measure
         && cached
             .measured
@@ -551,12 +508,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         }
         SurfaceJob::Measure => {
             let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
-            // A cancelled measurement is a map where nothing was measured. It
-            // must not be remembered as this key's answer, or the abandoned
-            // result would be handed to every later re-colour.
-            // Without this the operator reads a nearest-point distance as
-            // though it were a displacement — on a real arch, an understatement
-            // by about a factor of two.
+            // Do not cache a cancelled map or expose it to later re-colouring.
             let seen = observability(moving, index, job.pose, &job.settings.deviation(), cancel);
             if !cancel.is_cancelled() {
                 cached.measured = Some((job.measure_key, map));
@@ -604,16 +556,11 @@ fn paint(
     stats: DeviationStats,
     seen: Option<Observability>,
 ) -> AlignOutcome {
-    // A fixed range is a guess about data nobody has measured yet: too wide and
-    // a good fit is one flat colour, too narrow and everything saturates.
-    // Fitting the range to the measurement is what makes the map show structure
-    // on the first press instead of the tenth.
+    // Automatic scaling exposes measured structure while preserving the
+    // configured tolerance band.
     let mut ramp = job.settings.ramp();
     if job.settings.auto_scale {
-        // Never inside the nominal band, and never so close to it that the ramp
-        // has nowhere to run: everything within tolerance is painted one
-        // colour, so a range that only just clears the band leaves a map with
-        // two colours in it and no gradient to read.
+        // Leave room above the nominal band for a readable gradient.
         ramp.scale_mm = suggested_scale_mm(&stats)
             .max(job.settings.tolerance_mm * BAND_HEADROOM)
             .min(CLINICAL_CEILING_MM);
@@ -628,10 +575,8 @@ fn paint(
 
 /// One RGBA per map entry, grey wherever there is no measurement.
 ///
-/// [`occluview_align::deviation_colors`] does exactly this, serially. On a
-/// 945k-vertex arch that is twenty-odd milliseconds of a re-colour that should
-/// feel instant, so this walks the same ramp in parallel;
-/// `colouring_in_parallel_matches_the_library` pins the two to the same bytes.
+/// Uses the same ramp as [`occluview_align::deviation_colors`] while preserving
+/// its no-data colour.
 fn color_map(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]> {
     map.signed_mm
         .par_iter()
@@ -671,13 +616,35 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     let fixed_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed).collect();
     let moving_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.moving_normal).collect();
     let fixed_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed_normal).collect();
-    let extent = occluview_align::extent_of(moving);
+    // Bounds are measured in the frames used by the corresponding point sets.
+    let fixed_soup = Soup {
+        positions: &job.fixed_world_positions,
+        indices: &job.fixed_indices,
+        mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
+    };
+    // Missing bounds are reported instead of inventing an overlap allowance.
+    let Some((moving_center, moving_extent)) = occluview_align::bounds_of(moving) else {
+        return AlignOutcome::Failed {
+            message: "The moving scan has no usable surface".into(),
+        };
+    };
+    let Some((fixed_center, fixed_extent)) = occluview_align::bounds_of(fixed_soup) else {
+        return AlignOutcome::Failed {
+            message: "The fixed scan has no usable surface".into(),
+        };
+    };
+    let bounds = FitBounds {
+        moving_center,
+        moving_extent,
+        fixed_center,
+        fixed_extent,
+    };
 
     match fit_pairs(
         &moving_points,
         &fixed_points,
         Some((&moving_normals, &fixed_normals)),
-        extent,
+        &bounds,
     ) {
         Ok(fit) => AlignOutcome::Aligned {
             pose: fit.rigid,
@@ -692,8 +659,7 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
 
 /// Turn a refusal into a sentence the operator can act on.
 ///
-/// Never "alignment failed": every refusal knows something specific, and
-/// saying it is the difference between a tool that helps and one that shrugs.
+/// Each refusal is converted to an actionable status message.
 fn describe(rejection: FitRejection) -> String {
     match rejection {
         FitRejection::TooFewPairs { have, need } => format!(
@@ -714,10 +680,21 @@ fn describe(rejection: FitRejection) -> String {
         FitRejection::UnitMismatch { ratio } => format!(
             "The two scans are {ratio:.1}x apart in size — they are probably in different units"
         ),
-        FitRejection::Runaway { moved_by, allowed } => format!(
-            "That fit would move the scan {moved_by:.0} mm, further than its own size ({allowed:.0} mm) — check the pairs"
+        FitRejection::Apart {
+            separation,
+            allowed,
+        } => format!(
+            "That fit leaves the two scans {separation:.0} mm apart instead of on top of each \
+             other ({allowed:.0} mm) — check that each arrow pair points at the same spot on both \
+             scans"
         ),
-        FitRejection::NonFinite => "A clicked point or surface normal was not a finite number".into(),
+        FitRejection::Runaway { moved_by, allowed } => format!(
+            "Best fit wandered {moved_by:.0} mm, further than the scan's own size ({allowed:.0} \
+             mm) — place a few arrow pairs first, or lower max influence"
+        ),
+        FitRejection::NonFinite => {
+            "A clicked point or surface normal was not a finite number".into()
+        }
     }
 }
 

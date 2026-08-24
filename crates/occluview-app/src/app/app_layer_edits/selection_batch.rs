@@ -10,6 +10,7 @@ use super::whole_mesh::{close_holes_in_mesh, edit_command_for_layer_action};
 use occluview_core::{
     selected_connected_components_in_mesh, CoreError, FaceSelection, Mesh, SceneMeshId,
 };
+use std::sync::Arc;
 
 enum PlannedEdit {
     Replace {
@@ -226,13 +227,13 @@ fn apply_planned_edit(scene: &mut Scene, edit: PlannedEdit) -> bool {
     };
     let source = scene.meshes()[index].clone();
     match edit {
-        PlannedEdit::Replace { mesh, .. } => scene.meshes_mut()[index].mesh = mesh,
+        PlannedEdit::Replace { mesh, .. } => scene.meshes_mut()[index].mesh = Arc::new(mesh),
         PlannedEdit::Cut {
             remainder,
             extracted,
             ..
         } => {
-            scene.meshes_mut()[index].mesh = remainder;
+            scene.meshes_mut()[index].mesh = Arc::new(remainder);
             scene.insert(
                 index + 1,
                 clone_layer_with_mesh(&source, extracted)
@@ -244,7 +245,7 @@ fn apply_planned_edit(scene: &mut Scene, edit: PlannedEdit) -> bool {
             components,
             ..
         } => {
-            scene.meshes_mut()[index].mesh = remainder;
+            scene.meshes_mut()[index].mesh = Arc::new(remainder);
             let mut part_tint = source.tint;
             for (offset, mesh) in components.into_iter().enumerate() {
                 part_tint = crate::layer_actions::next_layer_tint(part_tint);

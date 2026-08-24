@@ -13,7 +13,10 @@ use occluview_core::{Aabb, SceneMeshId};
 use occluview_render::{ClipPlane, CutViewSpec};
 
 const CUT_PREVIEW_RENDER_SIZE_PX: u16 = 512;
-const CAP_COLOR: [f32; 4] = [0.776, 0.182, 0.175, 1.0];
+/// Gingiva-warm pink #E84C4B, as sRGB fractions — the same value as
+/// [`occluview_render::CutViewSpec`]'s default, and for the same reason: the
+/// render target is gamma space and nothing encodes on the way out.
+const CAP_COLOR: [f32; 4] = [0.910, 0.298, 0.294, 1.0];
 
 #[derive(Default)]
 pub(super) struct CutTool {

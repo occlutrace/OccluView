@@ -97,7 +97,7 @@ mod tests {
     /// has no project file.
     #[test]
     fn the_scene_menu_offers_saving_before_anything_else() {
-        let source = include_str!("scene_menu.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("scene_menu.rs"));
         let save = source.find("Save scene as…").expect("a save entry");
         let reset = source.find("Reset positions").expect("a reset entry");
         assert!(save < reset, "saving must come first in the menu");
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn every_scene_action_is_reachable_from_the_menu() {
-        let source = include_str!("scene_menu.rs");
+        let source = crate::primary_ui_tests::production_source(include_str!("scene_menu.rs"));
         for action in [
             SceneContextAction::SaveScene,
             SceneContextAction::SaveEachLayer,
@@ -114,7 +114,7 @@ mod tests {
         ] {
             let name = format!("SceneContextAction::{action:?}");
             assert!(
-                source.matches(name.as_str()).count() >= 2,
+                source.contains(name.as_str()),
                 "{name} is declared but never offered"
             );
         }

@@ -1,11 +1,5 @@
-//! Integration contract for `occluview-cli thumbnail` on unrenderable files.
-//!
-//! The freedesktop thumbnailer runs `occluview-cli thumbnail %i -o %o --size %s`
-//! and treats a non-zero exit (or a missing output file) as "no thumbnail",
-//! which surfaces as a broken-image glyph in the file manager. So a garbage
-//! file must still exit 0 and write a valid placeholder PNG.
+//! Integration contract for placeholder output from `occluview-cli thumbnail`.
 
-// Test harness: `expect` on setup steps is the idiomatic fail-fast.
 #![allow(clippy::expect_used)]
 
 use std::path::PathBuf;
@@ -18,7 +12,7 @@ fn unique_tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("occluview-cli-thumb-{nanos}-{name}"))
 }
 
-/// A binary STL that claims millions of triangles but is truncated garbage.
+/// A truncated binary STL fixture.
 fn corrupt_stl_bytes() -> Vec<u8> {
     let mut bytes = vec![0u8; 84];
     bytes[..7].copy_from_slice(b"corrupt");

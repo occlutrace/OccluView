@@ -207,7 +207,8 @@ impl egui_wgpu::CallbackTrait for LiveViewportCallback {
 mod tests {
     #[test]
     fn live_viewport_keeps_selection_overlay_separate_from_base_scene() {
-        let source = include_str!("live_viewport.rs").replace("\r\n", "\n");
+        let source = crate::primary_ui_tests::production_source(include_str!("live_viewport.rs"))
+            .replace("\r\n", "\n");
         let production_source = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
@@ -221,8 +222,11 @@ mod tests {
             "selection overlay should have its own sync path"
         );
         assert!(
-            production_source.find("scene.draw_with_clip(")
-                < production_source.find("overlay.draw_with_clip("),
+            crate::primary_ui_tests::appears_before(
+                production_source,
+                "scene.draw_with_clip(",
+                "overlay.draw_with_clip(",
+            ),
             "selection overlay should draw after the base scene"
         );
         assert!(

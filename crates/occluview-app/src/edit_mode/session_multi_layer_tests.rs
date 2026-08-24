@@ -93,7 +93,7 @@ fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count(
     assert!(controller.begin_face_selection(&layer_b, &scene));
 
     let original_topology = scene.meshes()[index_a].mesh.topology_id();
-    scene.meshes_mut()[index_a].mesh = rebuilt_a;
+    scene.meshes_mut()[index_a].mesh = std::sync::Arc::new(rebuilt_a);
     assert_eq!(scene.meshes()[index_a].mesh.triangle_count(), 2);
     assert_ne!(
         scene.meshes()[index_a].mesh.topology_id(),
@@ -140,7 +140,7 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
         controller.finish_layer_edit_success(token),
         BusyFinish::Applied
     );
-    scene.meshes_mut()[index_a].mesh = edited_a;
+    scene.meshes_mut()[index_a].mesh = std::sync::Arc::new(edited_a);
     controller.sync_to_scene(&scene);
 
     assert!(controller.begin_face_selection(&scene.meshes()[index_b], &scene));
@@ -151,7 +151,7 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
         controller.finish_layer_edit_success(token),
         BusyFinish::Applied
     );
-    scene.meshes_mut()[index_b].mesh = edited_b;
+    scene.meshes_mut()[index_b].mesh = std::sync::Arc::new(edited_b);
     controller.sync_to_scene(&scene);
 
     let Some(restored) = controller.cancel_edit_session() else {
@@ -266,7 +266,7 @@ fn cancel_restores_dirty_session_after_its_active_layer_is_removed_then_switched
         controller.finish_layer_edit_success(token),
         BusyFinish::Applied
     );
-    scene.meshes_mut()[index_a].mesh = edited_a;
+    scene.meshes_mut()[index_a].mesh = std::sync::Arc::new(edited_a);
     controller.sync_to_scene(&scene);
     assert!(controller.is_dirty());
 
