@@ -4,8 +4,10 @@ description = "Self-update checks for OccluView: signed latest.json manifest, ar
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [dependencies]
 minisign-verify = "0.2"

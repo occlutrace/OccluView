@@ -26,4 +26,5 @@ image    = { workspace = true }
 md-5     = { workspace = true }
 thiserror = { workspace = true }
 zeroize  = { workspace = true }
+tracing  = { workspace = true }
 zip      = { workspace = true }

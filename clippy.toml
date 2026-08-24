@@ -7,9 +7,17 @@ cognitive-complexity-threshold = 15
 # Max function arguments.
 too-many-arguments-threshold = 5
 
-# Max number of lines in a function body.
-# Clippy's `too_many_lines` default is 100; we tighten to 60.
-# NOTE: file-length (500) is enforced by a separate custom CI check, not clippy.
+# Function length: the pedantic `too_many_lines` default of 100 applies as
+# written. There is deliberately no `too-many-lines-threshold` key here --
+# lowering it would turn the existing, individually justified exceptions into a
+# wave of errors under `-D warnings`. Functions that are legitimately longer
+# carry a local `#[allow(clippy::too_many_lines)]`, which keeps each exception
+# visible at the function instead of hidden in a global number.
+#
+# NOTE: the 800-line budget per source file is not a clippy rule and is not a CI
+# script either. It is asserted by
+# `rust_source_files_stay_within_the_physical_line_budget` in
+# crates/occluview-app/src/primary_ui_tests/viewport.rs.
 
 # Enum variant size: warn on large variants (helps keep types cache-friendly).
 enum-variant-size-threshold = 256

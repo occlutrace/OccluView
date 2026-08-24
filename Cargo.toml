@@ -4,13 +4,14 @@
 #   mesh-edit ← (nothing)
 #   hps       ← (no OccluView crates)
 #   align     ← (nothing; plain slices in, plain values out)
-#   core → mesh-edit (+ optional robust-csg bridge fallback)
-#   formats → core + hps
-#   render  → core
+#   core      → mesh-edit (+ optional robust-csg bridge fallback)
+#   formats   → core + hps
+#   render    → core
 #   thumbnail → core + render + formats
-#   shell   → core + render + formats + thumbnail
-#   app     → core + formats + render + align (+ shell on Windows for installer refresh)
-#   cli     → core + formats + render + thumbnail
+#   shell     → core + render + formats + thumbnail
+#   app       → core + formats + render + align + update (+ shell on Windows for installer refresh)
+#   cli       → core + formats + render + thumbnail
+#   update    → (nothing)
 # Cycles are P0. Never add an upward dependency.
 #
 # License: Apache-2.0 (NOTICE + LICENSE).
@@ -31,6 +32,8 @@ members = [
     "crates/occluview-app",
     "crates/occluview-cli",
 ]
+exclude = ["fuzz"]
+
 # `cargo check/test` without `--workspace` uses default-members. Keep the
 # cross-platform app and logic crates here; the Windows COM shell crate remains
 # opt-in unless the full workspace is requested.
@@ -62,16 +65,16 @@ publish = false              # we are not on crates.io yet
 # `dep = { workspace = true }` in each crate's [dependencies].
 [workspace.dependencies]
 # Internal crates.
-occlu-mesh-edit  = { path = "crates/occlu-mesh-edit", version = "1.0.6" }
-occluview-robust-csg = { path = "crates/occluview-robust-csg", version = "1.0.6" }
-occluview-align   = { path = "crates/occluview-align", version = "1.0.6" }
-occluview-core    = { path = "crates/occluview-core", version = "1.0.6" }
-occluview-hps = { path = "crates/occluview-hps", version = "1.0.6" }
-occluview-formats = { path = "crates/occluview-formats", version = "1.0.6" }
-occluview-render  = { path = "crates/occluview-render", version = "1.0.6" }
-occluview-thumbnail = { path = "crates/occluview-thumbnail", version = "1.0.6" }
-occluview-shell   = { path = "crates/occluview-shell", version = "1.0.6" }
-occluview-update  = { path = "crates/occluview-update", version = "1.0.6" }
+occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
+occluview-robust-csg = { path = "crates/occluview-robust-csg" }
+occluview-align   = { path = "crates/occluview-align" }
+occluview-core    = { path = "crates/occluview-core" }
+occluview-hps = { path = "crates/occluview-hps" }
+occluview-formats = { path = "crates/occluview-formats" }
+occluview-render  = { path = "crates/occluview-render" }
+occluview-thumbnail = { path = "crates/occluview-thumbnail" }
+occluview-shell   = { path = "crates/occluview-shell" }
+occluview-update  = { path = "crates/occluview-update" }
 
 # Math / numerics.
 glam    = "0.29"            # permissive (MIT OR Apache-2.0)
@@ -130,31 +133,16 @@ rfd     = { version = "0.14", default-features = false, features = ["xdg-portal"
 wayland-client   = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
-# Windows bindings (shell + windowing interop) — windows-rs only.
-# Target = x86_64-pc-windows-msvc (rust-toolchain.toml).
-target-our-windows = { version = "0", package = "windows", features = [
-    # COM plumbing
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Ole",
-    "Win32_System_Registry",
-    # Shell / thumbnail provider
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_Graphics_Imaging",
-    # GDI for HBITMAP interop
-    "Win32_Graphics_Gdi",
-] }
-
-# Format loaders.
-# cgltf is a single-file C header; we build it via the `cc` crate in
-# occluview-formats/build.rs.
-cc = "1.1"
+# NOTE: the windows-rs dependency is declared per crate, not here. A workspace
+# entry used to carry a tidy commented feature list that neither consumer read
+# -- it pinned `version = "0"` while both real declarations pin 0.58 -- so
+# adding a feature to it changed nothing and cost an afternoon to work out. The
+# feature sets live in `crates/occluview-shell/Cargo.toml`,
+# `crates/occluview-app/Cargo.toml` and `crates/occluview-formats/Cargo.toml`,
+# next to the code that needs them.
 
 # Testing.
 proptest = "1.5"
-criterion = { version = "0.5", features = ["html_reports"] }
 
 # Workspace lints — applied to every crate via `lints.workspace = true`.
 [workspace.lints.rust]
@@ -195,14 +183,14 @@ panic = "abort"
 
 # The Explorer shell DLL builds with THIS profile: panic = "abort" in a cdylib
 # hosted by dllhost.exe turns any panic into an abort of the whole surrogate
-# process, blanking every thumbnail in the folder. Unwinding lets the COM
-# boundary's catch_unwind substitute a placeholder instead.
+# process, blanking every thumbnail in the folder. Unwinding alone is not the
+# protection, though — Rust also aborts when a panic reaches an extern
+# "system" boundary (every COM vtable shim), so the real safety net is the
+# catch_unwind at each COM entry (`com_entry` in occluview-shell). This
+# profile is what makes those catches able to catch at all.
 [profile.release-unwind]
 inherits = "release"
 panic = "unwind"
-
-[profile.bench]
-inherits = "release"
 
 [profile.dev]
 opt-level = 1                # faster dev runs for the wgpu hot path

@@ -1,33 +1,29 @@
-//! Windows resource embedding for the `occluview.exe` GUI binary.
+//! Windows VERSIONINFO for `occluview_shell.dll`.
 //!
-//! Two hand-kept copies of this plumbing exist, because build scripts cannot
-//! share code without a dedicated build-dependency crate:
-//! `crates/occluview-cli/build.rs` (the console binaries) and
-//! `crates/occluview-shell/build.rs` (the Explorer DLL). A change here almost
-//! always belongs in both.
+//! The MSI installs and Authenticode-signs this DLL, so its Properties page
+//! must name the product and version like the executables do. The resource
+//! plumbing is kept in sync with `crates/occluview-app/build.rs` by hand:
+//! build scripts cannot share code without a dedicated build-dependency
+//! crate, and this much duplication is the cheaper contract.
 
 #![allow(clippy::print_stdout)]
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=assets/windows/occluview.ico");
-
     let target_is_windows = env::var_os("CARGO_CFG_WINDOWS").is_some();
     if !target_is_windows {
         return Ok(());
     }
 
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let icon_path = manifest_dir.join("assets/windows/occluview.ico");
-    let rc_path = out_dir.join("occluview.rc");
-    let res_path = out_dir.join("occluview.res");
+    let rc_path = out_dir.join("occluview_shell.rc");
+    let res_path = out_dir.join("occluview_shell.res");
 
-    fs::write(&rc_path, windows_resource_script(&icon_path)?)?;
+    fs::write(&rc_path, dll_resource_script()?)?;
 
     let rc_exe = find_resource_compiler()?;
     let status = Command::new(rc_exe)
@@ -39,7 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("rc.exe failed while compiling {}", rc_path.display()).into());
     }
 
-    println!("cargo:rustc-link-arg-bin=occluview={}", res_path.display());
+    // The crate builds as rlib + cdylib; only the DLL artifact carries the
+    // resource, so rlib consumers and test binaries stay untouched.
+    println!("cargo:rustc-link-arg-cdylib={}", res_path.display());
     Ok(())
 }
 
@@ -88,20 +86,18 @@ fn windows_kits_roots() -> Vec<PathBuf> {
         .collect()
 }
 
-fn windows_resource_script(icon_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+fn dll_resource_script() -> Result<String, Box<dyn std::error::Error>> {
     let version = env::var("CARGO_PKG_VERSION")?;
     let version_parts = version_tuple(&version);
-    let icon = icon_path.display().to_string().replace('\\', "\\\\");
+    // FILETYPE 0x2 is VFT_DLL; everything else mirrors the exe resource.
     Ok(format!(
-        r#"1 ICON "{icon}"
-
-1 VERSIONINFO
+        r#"1 VERSIONINFO
  FILEVERSION {major},{minor},{patch},0
  PRODUCTVERSION {major},{minor},{patch},0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
- FILETYPE 0x1L
+ FILETYPE 0x2L
  FILESUBTYPE 0x0L
 BEGIN
   BLOCK "StringFileInfo"
@@ -109,11 +105,11 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "CompanyName", "Dental Cloud Technologies\0"
-      VALUE "FileDescription", "OccluView 3D Viewer\0"
+      VALUE "FileDescription", "OccluView Explorer shell extension\0"
       VALUE "FileVersion", "{version}\0"
-      VALUE "InternalName", "occluview\0"
+      VALUE "InternalName", "occluview_shell\0"
       VALUE "LegalCopyright", "Copyright (c) Dental Cloud Technologies and contributors\0"
-      VALUE "OriginalFilename", "occluview.exe\0"
+      VALUE "OriginalFilename", "occluview_shell.dll\0"
       VALUE "ProductName", "OccluView 3D Viewer\0"
       VALUE "ProductVersion", "{version}\0"
     END
