@@ -52,7 +52,7 @@ default-members = [
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.0.6"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.86"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
