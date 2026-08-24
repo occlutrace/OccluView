@@ -275,10 +275,10 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
         "both SBOM steps must check which component they describe"
     );
 
-    // A guard reading a variable scoped to another step fails a release whose
-    // artifacts were signed perfectly well.
+    // Authenticode remains optional; minisign protects the update channel.
     assert!(!package.contains("Authenticode signing is required for tagged releases"));
-    assert!(package.contains("No signing material resolved for tagged release."));
+    assert!(!package.contains("No signing material resolved for tagged release."));
+    assert!(package.contains("No Authenticode certificate configured"));
 
     // The signing key and the key compiled into the updater must agree, or
     // every installed copy silently stops updating.

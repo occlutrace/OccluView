@@ -208,11 +208,8 @@ if (-not $SkipBuild) {
     }
     if (Test-HasText $env:OCCLUVIEW_HPS_EMBEDDED_KEY) {
         Write-Host "Private HPS key embedding enabled for this build."
-        # BOTH the app AND the Explorer shell DLL must embed the key: the shell
-        # decodes encrypted (CE) HPS scans for thumbnails and the
-        # preview pane. Without the feature the shell cannot decrypt them and
-        # Explorer falls back to the neutral placeholder cube, even though the
-        # app opens the same file fine.
+        # The app and Explorer shell DLL both need the key to decode encrypted
+        # HPS scans for the viewer, thumbnails, and the preview pane.
         $cargoArgs += @("--features", "occluview-formats/private-hps-key")
         $shellCargoArgs += @("--features", "occluview-formats/private-hps-key")
     }

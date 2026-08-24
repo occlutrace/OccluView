@@ -19,17 +19,8 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // The layout below is derived from the key and this salt, and from nothing
-    // else. It used to mix in the wall clock and the process id, which made the
-    // shipped binary irreproducible: same source, same key, same toolchain, two
-    // builds, two different SHA-256 sums. Everything else in the supply chain
-    // -- pinned actions, SBOMs, provenance, Authenticode, minisign -- answers
-    // "this came out of our pipeline"; that build script made "this matches
-    // this source" unanswerable, including for a rebuild of an old tag.
-    //
-    // If a release ever wants a different layout, it sets the salt explicitly
-    // and records it, which is a decision rather than a side effect of when the
-    // compiler happened to run.
+    // Derive the generated layout only from the key and explicit salt so the
+    // same release inputs produce the same embedded bytes.
     let salt = env::var("OCCLUVIEW_HPS_KEY_SALT")
         .unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").unwrap_or_default());
     let embedded = ObfuscatedKey::from_key(&key, salt.as_bytes());

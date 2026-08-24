@@ -46,6 +46,12 @@ Windows Registry Editor Version 5.00
 ;       MeshFile.<EXT> = ""
 ;   HKCR\<ext>\OpenWithList\occluview.exe
 ;
+;   .dcm is the one exception to <ext> above: OccluView is offered for it and
+;   never owns it. No HKCR\.dcm default ProgID, no DefaultIcon, and no ShellEx
+;   under either the bare key or SystemFileAssociations\.dcm, because that
+;   extension also belongs to medical DICOM, which this reader rejects. Only
+;   OpenWithProgids, OpenWithList, SupportedTypes and Capabilities name it.
+;
 ; Replace <DLL_PATH> with the absolute path to occluview_shell.dll and
 ; <APP_EXE_PATH> with the absolute path to occluview.exe before importing.
 ; Replace <APP_DIR> with the directory containing occluview.exe and the
@@ -156,25 +162,19 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\SystemFileAssociations\.glb\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
 @="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
 
-[HKEY_CLASSES_ROOT\.dcm]
-@="MeshFile.HPS"
-"ThumbnailCutoff"=dword:00000001
-"TypeOverlay"=""
-
-[HKEY_CLASSES_ROOT\.dcm\DefaultIcon]
-@="<APP_DIR>\\occluview-3d.ico"
-
-[HKEY_CLASSES_ROOT\.dcm\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
-@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
-
-[HKEY_CLASSES_ROOT\.dcm\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
-@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
-
-[HKEY_CLASSES_ROOT\SystemFileAssociations\.dcm\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
-@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
-
-[HKEY_CLASSES_ROOT\SystemFileAssociations\.dcm\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
-@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+; --- .dcm is offered, never owned ---
+;
+; 3Shape writes HPS containers under the .dcm extension, which is why OccluView
+; reads it, but on a dental workstation .dcm belongs to medical DICOM, and this
+; reader rejects DICOM by design. There is deliberately no HKCR\.dcm
+; default ProgId here, no DefaultIcon, and no ShellEx -- not under the bare key
+; and not under SystemFileAssociations\.dcm, which Explorer falls back to when the
+; owning ProgId has no provider of its own. Any of those would put OccluView's
+; failing thumbnail and preview handlers on every CBCT file on the machine.
+;
+; OccluView still reaches .dcm through OpenWithProgids, OpenWithList,
+; SupportedTypes and Capabilities\FileAssociations further down; a user who picks
+; it gets icon, thumbnail, preview and open verb from the MeshFile.HPS ProgId.
 
 [HKEY_CLASSES_ROOT\.hps]
 @="MeshFile.HPS"

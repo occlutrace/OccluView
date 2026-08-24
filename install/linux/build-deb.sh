@@ -57,8 +57,10 @@ mkdir -p \
   "$pkg_root/usr/bin" \
   "$pkg_root/usr/share/applications" \
   "$pkg_root/usr/share/icons/hicolor/512x512/apps" \
+  "$pkg_root/usr/share/icons/hicolor/scalable/mimetypes" \
   "$pkg_root/usr/share/metainfo" \
   "$pkg_root/usr/share/mime/packages" \
+  "$pkg_root/usr/share/man/man1" \
   "$pkg_root/usr/share/thumbnailers" \
   "$pkg_root/usr/share/doc/occluview"
 
@@ -66,6 +68,21 @@ install -m 0755 target/release/occluview "$pkg_root/usr/bin/occluview"
 install -m 0755 target/release/occluview-cli "$pkg_root/usr/bin/occluview-cli"
 install -m 0644 assets/occluview-logo.png \
   "$pkg_root/usr/share/icons/hicolor/512x512/apps/occluview.png"
+# The file-type icon the Windows installer registers per extension, installed
+# under the freedesktop icon name of each type it belongs to. Without it a scan
+# that has no thumbnail yet -- or whose thumbnailer the desktop never runs --
+# is drawn with the generic unknown-file glyph.
+for mime_icon in \
+  model-stl \
+  model-obj \
+  model-gltf-binary \
+  application-x-ply \
+  application-x-occluview-hps
+do
+  install -m 0644 install/assets/file-icons/occluview-3d.svg \
+    "$pkg_root/usr/share/icons/hicolor/scalable/mimetypes/${mime_icon}.svg"
+done
+
 install -m 0644 install/linux/ai.occlutrace.OccluView.desktop \
   "$pkg_root/usr/share/applications/ai.occlutrace.OccluView.desktop"
 install -m 0644 install/linux/ai.occlutrace.OccluView.metainfo.xml \
@@ -76,7 +93,29 @@ install -m 0644 install/linux/ai.occlutrace.OccluView.thumbnailer \
   "$pkg_root/usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"
 install -m 0644 README.md "$pkg_root/usr/share/doc/occluview/README.md"
 install -m 0644 install/linux/copyright "$pkg_root/usr/share/doc/occluview/copyright"
-gzip -9 -n -c CHANGELOG.md > "$pkg_root/usr/share/doc/occluview/changelog.gz"
+# The Apache NOTICE and the generated third-party attributions travel with
+# the statically linked binary; the copyright file points at them.
+install -m 0644 NOTICE "$pkg_root/usr/share/doc/occluview/NOTICE"
+install -m 0644 docs/USAGE.md \
+  "$pkg_root/usr/share/doc/occluview/USAGE.md"
+install -m 0644 THIRD-PARTY-NOTICES.md \
+  "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
+# The C++ geometry kernel and its own dependencies are statically linked and
+# invisible to every Cargo tool, so their notices are carried by hand.
+install -m 0644 THIRD-PARTY-NOTICES-NATIVE.md \
+  "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"
+gzip -9 -n -c CHANGELOG.md > "$pkg_root/usr/share/doc/occluview/NEWS.gz"
+gzip -9 -n -c install/linux/occluview.1 \
+  > "$pkg_root/usr/share/man/man1/occluview.1.gz"
+gzip -9 -n -c install/linux/occluview-cli.1 \
+  > "$pkg_root/usr/share/man/man1/occluview-cli.1.gz"
+cat <<CHANGELOG | gzip -9 -n > "$pkg_root/usr/share/doc/occluview/changelog.gz"
+occluview ($version) stable; urgency=medium
+
+  * Release OccluView $version.
+
+ -- Dental Cloud Technologies <support@occlutrace.ai>  Mon, 24 Aug 2026 00:00:00 -0400
+CHANGELOG
 
 installed_size="$(du -sk "$pkg_root/usr" | awk '{ print $1 }')"
 cat > "$pkg_root/DEBIAN/control" <<CONTROL
@@ -130,4 +169,7 @@ chmod 0755 "$pkg_root/DEBIAN/postinst" "$pkg_root/DEBIAN/postrm"
 out_dir="target/deb"
 mkdir -p "$out_dir"
 dpkg-deb --build --root-owner-group "$pkg_root" "$out_dir/occluview_${version}_${arch}.deb"
+# Contract: the last line on stdout is the path of the package just built.
+# Callers take it from here rather than globbing target/deb, which on a
+# developer machine holds every earlier version as well.
 echo "$out_dir/occluview_${version}_${arch}.deb"

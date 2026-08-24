@@ -1,6 +1,14 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: OccluView
 Source: https://github.com/occlutrace/OccluView
+Comment: Statically linked third-party Rust crates and bundled fonts are
+ distributed under their own licenses; the complete list with copyright
+ notices and license texts is installed at
+ /usr/share/doc/occluview/THIRD-PARTY-NOTICES.md, next to the Apache
+ NOTICE file for this product. The statically linked C++ components --
+ Manifold (Apache-2.0), oneTBB (Apache-2.0) and Clipper2 (BSL-1.0) -- are
+ invisible to Cargo tooling and are listed separately at
+ /usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md.
 
 Files: *
 Copyright: 2026 Dental Cloud Technologies and contributors
