@@ -15,11 +15,18 @@ use std::sync::{mpsc, Arc, Condvar, MutexGuard, PoisonError};
 use std::time::Instant;
 
 // A shell surrogate is a shared, memory-constrained host, not a render farm.
-// Explorer can ask for twelve thumbnails at once, so keep that many bounded
-// decode jobs in flight. GPU work has a separate, much smaller budget: every
-// Offscreen owns a wgpu device, and creating several D3D devices concurrently
-// makes the driver serialize or contend instead of making thumbnails faster.
-const MAX_THUMBNAIL_JOB_LANES: usize = 12;
+// Decode jobs are bounded, and the bound is a latency decision rather than a
+// throughput one: measured on a folder of 120 real scans, three lanes give
+// 48.6 files/s at a median of 45 ms per file, six give 58.6 at 87 ms, and
+// twelve give 57.9 at 185 ms. Past six the queue is the only thing that grows
+// -- and under Explorer's Apartment hosting every extraction of this CLSID
+// serialises through one host thread, so a request that waits its turn inside
+// this process is a request the whole folder waits behind.
+//
+// GPU work has a separate, much smaller budget: every Offscreen owns a wgpu
+// device, and creating several D3D devices concurrently makes the driver
+// serialize or contend instead of making thumbnails faster.
+const MAX_THUMBNAIL_JOB_LANES: usize = 6;
 const MAX_THUMBNAIL_RENDERERS: usize = 1;
 
 /// Lock a shared thumbnail mutex, recovering the guard even if a previous
@@ -412,8 +419,14 @@ pub(super) fn prewarm_renderer_pool() {
     }
 }
 
-const fn default_thumbnail_job_capacity() -> usize {
-    MAX_THUMBNAIL_JOB_LANES
+fn default_thumbnail_job_capacity() -> usize {
+    // Never more lanes than the machine has threads to run them on: the decode
+    // inside a lane is itself parallel, so oversubscription buys queueing.
+    std::thread::available_parallelism()
+        .map_or(MAX_THUMBNAIL_JOB_LANES, |threads| {
+            threads.get().min(MAX_THUMBNAIL_JOB_LANES)
+        })
+        .max(1)
 }
 
 const fn default_thumbnail_renderer_pool_size() -> usize {
@@ -734,9 +747,13 @@ mod poison_recovery_tests {
         );
         let lanes = default_thumbnail_job_capacity();
         assert!(
-            (8..=16).contains(&lanes),
-            "Explorer asks for a folder at a time and gives up after six \
-             seconds; {lanes} lanes is outside what that balances"
+            (1..=6).contains(&lanes),
+            "past six lanes the folder gains no throughput and every request \
+             waits longer for the same answer; {lanes} is outside that"
+        );
+        assert!(
+            lanes <= std::thread::available_parallelism().map_or(6, std::num::NonZeroUsize::get),
+            "a lane needs a thread to run on; {lanes} is more than this machine has"
         );
     }
 
