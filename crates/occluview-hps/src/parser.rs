@@ -216,6 +216,15 @@ fn build_surface(
         .with_normals(normals)
 }
 
+/// A facet is degenerate when its area falls below this fraction of its own
+/// longest edge squared.
+///
+/// One of three copies: this crate depends on no OccluView crate by design, so
+/// it cannot import `occluview_core::DEGENERATE_AREA_SIN` or the one in
+/// `occlu-mesh-edit`. All three hold the same number and must move together.
+/// They did not once -- the 2026-07-25 fix reached the others four weeks later.
+const DEGENERATE_AREA_SIN: f32 = 1e-10;
+
 fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
     let mut normals = vec![[0.0_f32; 3]; positions.len()];
     for triangle in indices.chunks_exact(3) {
@@ -237,8 +246,12 @@ fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
             ab[0] * ac[1] - ab[1] * ac[0],
         ];
         let length_squared = dot(face_normal, face_normal);
+        let longest_edge_sq = dot(ab, ab).max(dot(ac, ac)).max({
+            let bc = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+            dot(bc, bc)
+        });
         if face_normal.iter().all(|component| component.is_finite())
-            && length_squared > f32::EPSILON
+            && length_squared > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
         {
             for index in [index_a, index_b, index_c] {
                 normals[index][0] += face_normal[0];

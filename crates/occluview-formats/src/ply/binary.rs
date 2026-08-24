@@ -27,7 +27,18 @@ use occluview_core::{Mesh, MeshBuilder, Vertex};
 /// Returns [`FormatError::Truncated`] if the data section ends mid-record, or
 /// [`FormatError::Malformed`] for a structurally invalid element/property.
 pub fn read_le(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
-    read_with(parsed, Endian::Little)
+    read_le_shaded(parsed, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_le`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read_le`].
+pub fn read_le_shaded(
+    parsed: &ParsedHeader<'_>,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    read_with(parsed, Endian::Little, shading)
 }
 
 /// Read a big-endian binary PLY.
@@ -35,7 +46,18 @@ pub fn read_le(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
 /// # Errors
 /// Same as [`read_le`].
 pub fn read_be(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
-    read_with(parsed, Endian::Big)
+    read_be_shaded(parsed, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_be`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read_le`].
+pub fn read_be_shaded(
+    parsed: &ParsedHeader<'_>,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    read_with(parsed, Endian::Big, shading)
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -187,10 +209,16 @@ enum ScalarValue {
     Float(f32),
 }
 
-fn read_with(parsed: &ParsedHeader<'_>, endian: Endian) -> Result<Mesh, FormatError> {
+fn read_with(
+    parsed: &ParsedHeader<'_>,
+    endian: Endian,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     let mut cursor = Cursor::new(parsed.data, endian);
     let has_face = parsed.elements.iter().any(|e| e.name == "face");
-    let builder_init = MeshBuilder::new().with_name("PLY");
+    let builder_init = MeshBuilder::new()
+        .with_name("PLY")
+        .from_input_of(parsed.data.len());
     let mut builder = if has_face {
         builder_init
     } else {
@@ -211,7 +239,7 @@ fn read_with(parsed: &ParsedHeader<'_>, endian: Endian) -> Result<Mesh, FormatEr
         }
     }
 
-    builder.build().map_err(FormatError::Core)
+    shading.build(builder).map_err(FormatError::Core)
 }
 
 fn read_vertices(
@@ -219,7 +247,7 @@ fn read_vertices(
     element: &Element,
     builder: &mut MeshBuilder,
 ) -> Result<(), FormatError> {
-    let plan = FieldPlan::plan_for(element);
+    let plan = FieldPlan::plan_for_vertices(element, "PLY (binary)")?;
     for _ in 0..element.count {
         let mut position = [0.0_f32; 3];
         let mut normal = [0.0_f32; 3];

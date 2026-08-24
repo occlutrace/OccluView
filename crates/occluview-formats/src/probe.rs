@@ -40,8 +40,15 @@ pub fn by_extension(ext: &str) -> Option<FormatKind> {
 }
 
 /// Probe both the extension and the leading magic bytes and return the most
-/// likely [`FormatKind`]. Magic bytes win when extension and magic disagree
-/// (some scanners mislabel files).
+/// likely [`FormatKind`].
+///
+/// Order, in the order the body applies it:
+/// 1. An HPS extension decides on its own. The container is XML or binary
+///    depending on how it was written, so its magic identifies neither, and a
+///    file named for it is one.
+/// 2. Otherwise magic wins, because scanners do mislabel files.
+/// 3. The extension is the fallback for formats with no usable magic -- OBJ
+///    and ASCII variants that begin with a comment.
 ///
 /// # Errors
 /// - [`FormatError::Unsupported`] if neither extension nor magic match.

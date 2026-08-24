@@ -165,6 +165,81 @@ mod tests {
         );
     }
 
+    /// EKID rules for combining the lock hash with the base key.
+    #[test]
+    fn ekid_selects_which_key_a_locked_package_is_opened_with() {
+        let base = b"0123456789abcdef".to_vec();
+        let provider = StaticProvider(base.clone());
+        let lock_list = "b;a;b";
+        let expected_hash = compute_package_lock_hash(&BTreeMap::from([(
+            "PackageLockList".to_string(),
+            lock_list.to_string(),
+        )]))
+        .expect("a non-empty lock list hashes");
+
+        // Uppercase MD5 hex of the canonicalised list: sorted, de-duplicated,
+        // every item followed by ';'.
+        assert_eq!(expected_hash, to_upper_hex(&Md5::digest(b"a;b;")));
+
+        let derive = |ekid: Option<&str>| {
+            let mut properties =
+                BTreeMap::from([("PackageLockList".to_string(), lock_list.to_string())]);
+            if let Some(ekid) = ekid {
+                properties.insert("EKID".to_string(), ekid.to_string());
+            }
+            derive_encryption_key(&provider, &properties)
+                .expect("derivation succeeds")
+                .to_vec()
+        };
+
+        // No EKID: the lock hash replaces the base key.
+        let replaced = derive(None);
+        assert_eq!(replaced, expected_hash.as_bytes());
+        assert_ne!(replaced, base);
+
+        // EKID="1": append the lock hash to the base key.
+        let appended = derive(Some("1"));
+        assert_eq!(
+            appended,
+            [base.clone(), expected_hash.into_bytes()].concat()
+        );
+
+        // Other EKID values leave the base key unchanged.
+        assert_eq!(derive(Some("2")), base);
+        assert_eq!(derive(Some("7")), base);
+    }
+
+    #[test]
+    fn an_empty_lock_list_leaves_the_base_key_alone() {
+        let base = b"0123456789abcdef".to_vec();
+        let provider = StaticProvider(base.clone());
+        for lock_list in ["", ";;;"] {
+            let properties =
+                BTreeMap::from([("PackageLockList".to_string(), lock_list.to_string())]);
+            let derived = derive_encryption_key(&provider, &properties)
+                .expect("derivation succeeds")
+                .to_vec();
+            assert_eq!(derived, base, "lock list {lock_list:?} should not derive");
+        }
+    }
+
+    #[test]
+    fn an_empty_ekid_is_treated_as_absent() {
+        // `.filter(|value| !value.is_empty())` is what makes EKID="" take the
+        // replace branch rather than the unchanged one.
+        let base = b"0123456789abcdef".to_vec();
+        let provider = StaticProvider(base.clone());
+        let properties = BTreeMap::from([
+            ("PackageLockList".to_string(), "a".to_string()),
+            ("EKID".to_string(), String::new()),
+        ]);
+        let derived = derive_encryption_key(&provider, &properties)
+            .expect("derivation succeeds")
+            .to_vec();
+        assert_ne!(derived, base);
+        assert_eq!(derived.len(), 32, "an MD5 hex string is 32 characters");
+    }
+
     #[test]
     fn provider_missing_key_returns_deferred() {
         let provider = NoHpsKeyProvider;

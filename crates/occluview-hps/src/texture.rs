@@ -8,8 +8,14 @@ use std::io::Cursor;
 use std::mem::size_of;
 use zeroize::Zeroizing;
 
-const MAX_TEXTURE_DIMENSION_PX: u32 = 8_192;
-const MAX_TEXTURE_RGBA_BYTES: u64 = 256 * 1024 * 1024;
+/// Longest edge accepted for an embedded texture, in pixels.
+///
+/// Shared edge limit for all readers.
+pub const MAX_TEXTURE_DIMENSION_PX: u32 = 8_192;
+/// Ceiling on the decoded RGBA surface, in bytes.
+///
+/// Together with the edge limit, this also bounds lopsided images.
+pub const MAX_TEXTURE_RGBA_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Default)]
 pub(super) struct SurfaceTexture {
@@ -86,24 +92,13 @@ fn parse_texture_image(text: &str) -> Result<Option<DecodedTexture>, HpsError> {
     Ok(Some(correct_channel_order_for_dental(texture)?))
 }
 
-/// A dental scan surface is always physically WARM: enamel and stone are
-/// cream/white, gingiva is pink-to-red, so over any real texture `R >= B` on
-/// average. This holds regardless of how the texture was decoded — the
-/// embedded-raster path (`decode_embedded_raster`) trusts the container's own
-/// declared color space with no channel-order ambiguity to resolve, yet a
-/// real exporter-authored HPS JPEG atlas can still have its own
-/// chroma channels swapped at the SOURCE (Cb/Cr transposed before
-/// compression) — a standards-compliant decode of a mis-authored file still
-/// comes out blue. Detecting the physical prior and undoing a channel swap
-/// catches that case independent of its root cause, on top of the raw-path's
-/// own DirectX-format-aware layout guess.
-///
-/// Faint natural blue casts (a cool composite light, a bluish stone shade)
-/// stay well under the threshold and are never touched; only an
-/// implausible, whole-texture blue bias trips it.
+/// Correct a likely source-level R/B swap using the dental-surface prior
+/// (`R >= B` on average). Localized blue material and mild blue casts remain
+/// below the uniform-bias threshold.
 fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTexture, HpsError> {
     let (width, height, mut rgba) = texture.into_parts();
     if texture_is_implausibly_blue(&rgba) {
+        tracing::debug!("texture channel correction: swapping R/B (implausibly blue)");
         for pixel in rgba.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
@@ -116,28 +111,14 @@ fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTe
     DecodedTexture::new(width, height, rgba)
 }
 
-/// Strided, deterministic sample of up to ~4096 pixels (skipping fully
-/// transparent and near-gray pixels, which carry no reliable hue signal).
-/// Requires the blue bias to be near-UNIFORM across the sampled pixels, not
-/// just present in the aggregate mean: a genuine chroma swap at the source
-/// flips R/B for every pixel alike, so virtually every non-gray sample reads
-/// blue-biased once swapped. A real blue dental material (anti-glare spray,
-/// bite-registration silicone) instead covers only PART of the scan, so most
-/// of the sampled surface stays warm even where the material itself reads
-/// strongly blue — the aggregate mean alone cannot tell these two cases
-/// apart (a strong localized patch can drag the mean past the margin on its
-/// own), but the per-pixel PROPORTION can, since only a real whole-texture
-/// swap makes nearly every sample agree. Matches the calibration measured
-/// against a real HPS dental scan JPEG atlas with swapped chroma
-/// (mean R 107 / mean B 150 on the swapped file, uniformly across the
-/// texture; mean R 150 / mean B 107 once corrected).
+/// Inspect up to 4096 deterministic samples, ignoring transparent and near-gray
+/// pixels. A source swap must produce a near-uniform blue bias; localized blue
+/// material must not.
 fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
     const SAMPLE_BUDGET: usize = 4096;
     const MIN_ALPHA: u8 = 8;
     const NEAR_GRAY_DELTA: i32 = 16;
-    /// Fraction of sampled (non-transparent, non-near-gray) pixels that must
-    /// INDIVIDUALLY read blue-biased before this is treated as a uniform
-    /// source-level channel swap rather than a localized blue material.
+    /// Required fraction of sampled pixels with a blue bias.
     const BLUE_BIASED_PIXEL_FRACTION: f64 = 0.9;
 
     let pixel_count = rgba.len() / 4;
@@ -239,12 +220,13 @@ fn parse_raw_texture_image(
     let Some(bytes_per_pixel) = optional_u32_attr(open_tag, "BytesPerPixel")? else {
         return Ok(None);
     };
+    // Reject zero-byte pixels before the length check to avoid division by zero.
+    if bytes_per_pixel == 0 {
+        return Ok(None);
+    }
 
-    // Width/Height/BytesPerPixel describe the raw HPS representation, but HPS
-    // exporters also store JPEG/PNG payloads with the same metadata. Compare
-    // the body length before applying raw-pixel limits; otherwise a valid
-    // compressed 8192x4096 atlas is rejected as if it already contained 128 MiB
-    // of RGBA pixels.
+    // HPS exporters may store compressed payloads with raw dimensions. Compare
+    // body length before applying raw-pixel limits.
     let Some(raw_len) = raw_texture_len(width, height, bytes_per_pixel) else {
         return Ok(None);
     };
@@ -302,10 +284,8 @@ fn raw_texture_layout(open_tag: &str) -> Result<Option<RawTextureLayout>, HpsErr
             .filter(char::is_ascii_alphanumeric)
             .flat_map(char::to_lowercase)
             .collect();
-        // DirectX D3DFMT names (digit forms) list channels high-byte-first, so
-        // the little-endian MEMORY byte order is the REVERSE. Map them to the
-        // memory layout the bytes actually arrive in — the historic mismap of
-        // A8R8G8B8 -> literal ARGB is exactly what rendered white scans blue.
+        // DirectX D3DFMT names list channels high-byte-first; map them to the
+        // little-endian memory layout.
         if normalized.contains("a8r8g8b8") || normalized.contains("x8r8g8b8") {
             return Ok(Some(RawTextureLayout::Bgra)); // 0xAARRGGBB -> [B,G,R,A]
         }
@@ -502,5 +482,29 @@ fn decode_packed_texture_component(component: u16) -> f32 {
         value / 32767.0
     } else {
         value * (512.0 / 32767.0) - 256.0
+    }
+}
+
+#[cfg(test)]
+mod zero_pixel_tests {
+    use super::parse_raw_texture_image;
+
+    /// A texture declaring no bytes per pixel is refused, not divided by.
+    ///
+    /// The length gate cannot catch it on its own: width times height times
+    /// zero is zero, and an empty body is exactly that length, so the decode
+    /// was reached and divided the body length by zero. That panics in release
+    /// as well, and the viewer and the command-line tool abort rather than
+    /// unwind -- a 400-byte file ended the process.
+    #[test]
+    fn a_texture_of_zero_byte_pixels_is_refused() {
+        let decoded = parse_raw_texture_image(
+            r#"<TextureImage Width="1" Height="1" BytesPerPixel="0">"#,
+            &[],
+        );
+        assert!(
+            matches!(decoded, Ok(None)),
+            "a pixel of no bytes is not a texture: {decoded:?}"
+        );
     }
 }

@@ -39,18 +39,6 @@ pub enum HpsReadFailure {
     KeyProviderFailed,
 }
 
-/// Detailed HPS read failures for headless callers that need stable error
-/// classification without depending on the leaf parser directly.
-#[derive(Debug)]
-pub enum HpsReadError {
-    /// The input failed HPS parsing or validation.
-    Parser(HpsReadFailure),
-    /// The runtime key provider failed while decoding encrypted input.
-    KeyProvider(HpsReadFailure),
-    /// The decoded surface could not be represented by the core mesh model.
-    Surface(FormatError),
-}
-
 /// HPS failures that can occur before conversion into the viewer mesh model.
 #[derive(Debug)]
 pub enum HpsDecodedReadError {
@@ -58,15 +46,6 @@ pub enum HpsDecodedReadError {
     Parser(HpsReadFailure),
     /// The runtime key provider failed while decoding encrypted input.
     KeyProvider(HpsReadFailure),
-}
-
-impl From<HpsDecodedReadError> for HpsReadError {
-    fn from(error: HpsDecodedReadError) -> Self {
-        match error {
-            HpsDecodedReadError::Parser(error) => Self::Parser(error),
-            HpsDecodedReadError::KeyProvider(error) => Self::KeyProvider(error),
-        }
-    }
 }
 
 /// Secret bytes used to decrypt encrypted HPS `CE` blocks.
@@ -222,20 +201,6 @@ pub fn read_decoded_surface_with_key_provider(
     }
 }
 
-/// Read HPS bytes with the runtime environment/embedded key provider.
-///
-/// This is the headless conversion facade: callers receive the parser version
-/// and structured parser/key-provider classification without importing the
-/// product-neutral leaf crate.
-///
-/// # Errors
-/// Returns a stable HPS failure category when parsing, key resolution, or
-/// conversion into the core mesh model fails.
-pub fn read_bytes_with_runtime_key_provider(bytes: &[u8]) -> Result<Mesh, HpsReadError> {
-    let surface = read_decoded_surface_bytes_with_runtime_key_provider(bytes)?;
-    mesh::build_mesh(surface).map_err(HpsReadError::Surface)
-}
-
 /// Read HPS bytes with the runtime key provider while preserving the source
 /// CAD topology for a lossless geometry export.
 ///
@@ -301,7 +266,10 @@ fn map_parser_error(error: occluview_hps::HpsError) -> FormatError {
         }
         HpsError::KeyMissing => FormatError::Deferred {
             format: "HPS",
-            reason: "encrypted CE schema needs a configured key provider".to_string(),
+            reason: "the package is encrypted and no decryption key is configured \
+                     (official builds embed one; a build from source reads \
+                     OCCLUVIEW_HPS_ENCRYPTION_KEY)"
+                .to_string(),
         },
         HpsError::BadContainer { reason }
         | HpsError::InvalidKey { reason }
