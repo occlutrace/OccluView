@@ -1,10 +1,6 @@
 use super::render::prepared_scene_sources;
 use super::PreviewSceneState;
-use crate::fast_thumb::{
-    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
-};
 use crate::offscreen_factory::shared_shell_offscreen;
-use crate::thumbnail_format::infer_thumbnail_format;
 use crate::ShellError;
 use occluview_core::{Camera, Mesh, Scene, SceneMesh};
 use occluview_formats::dispatch::{
@@ -12,6 +8,10 @@ use occluview_formats::dispatch::{
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::FormatKind;
+use occluview_thumbnail::fast_thumb::{
+    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
+};
+use occluview_thumbnail::thumbnail_format::infer_thumbnail_format;
 use std::path::Path;
 
 const PREVIEW_FULL_FIDELITY_SURFACE_FILE_BYTES: u64 = 32 * 1024 * 1024;

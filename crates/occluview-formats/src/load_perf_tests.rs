@@ -1,21 +1,13 @@
-//! A measured baseline for the path that is the product.
+//! Manual load-path performance baselines.
 //!
-//! Opening a file runs mmap-or-read, parse, normal generation and mesh
-//! construction, and every one of those has been changed this cycle. The
-//! correctness tests would all stay green if a dependency bump made a
-//! four-hundred-megabyte scan thirty percent slower, because none of them look
-//! at time.
-//!
-//! `#[ignore]`, and not in CI: shared runners vary by more than any regression
-//! worth catching, and a gate that cries wolf is worse than no gate. Run it by
-//! hand before and after anything that touches the load path:
+//! These tests are ignored because shared-runner timing is not stable enough
+//! for a useful CI gate. Run them before and after load-path changes:
 //!
 //! ```text
 //! cargo test -p occluview-formats --release -- --ignored --nocapture load_
 //! ```
 //!
-//! Recorded on the machine this was written on (release, 8 threads), so a later
-//! run has something to compare against rather than a bare number:
+//! Reference timings from the original release-mode, eight-thread run:
 //!
 //! ```text
 //! load_binary_stl_500k_triangles   0.24 s
@@ -63,18 +55,8 @@ fn time_parse(triangles: usize) -> Duration {
     elapsed
 }
 
-/// Compare against the recorded baseline, in the build the harness is for.
-///
-/// Five times the baseline. At 20 s and 60 s against baselines of 0.24 s and
-/// 0.89 s the ceilings sat 83x and 67x clear, so the "regressed by an order of
-/// magnitude" the message promises sailed through. Five tolerates a machine
-/// several times slower than the one these numbers come from and still fails a
-/// tenfold regression.
-///
-/// A debug build is three to five times slower here for reasons that have
-/// nothing to do with the load path, so it prints the number and judges
-/// nothing: the module says to run this with --release, and a ceiling that
-/// only holds in one build mode is a ceiling nobody can trust in the other.
+/// Compare a release-mode run against a relaxed multiple of the baseline.
+/// Debug builds report timing without enforcing the release threshold.
 fn assert_within_baseline(what: &str, elapsed: Duration, ceiling: Duration) {
     if cfg!(debug_assertions) {
         println!(

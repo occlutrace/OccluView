@@ -1,16 +1,8 @@
-//! Align Scans: the click model, with no object picker anywhere in it.
+//! Align Scans point-pair selection.
 //!
-//! Lab software makes you choose which mesh moves onto which before you may
-//! place a point. This tool has no such step: **the first clicked point names
-//! the moving scan**, the next click on a different layer names the fixed one,
-//! and the pair falls out of the points themselves.
-//!
-//! With exactly two visible layers the pair is guessed at arm time so a plain
-//! "compare these two files" needs no clicks at all. That guess is *provisional*
-//! — it can only go by scene order, which is the order the files were opened in.
-//! The first placed point overrides it. It used to stick, and then an operator
-//! who clicked the scan they wanted moved got the alignment run the other way
-//! round, decided by which file they had happened to open first.
+//! The first point selects the moving scan and the next point on another layer
+//! selects the fixed scan. Two visible layers are preselected provisionally;
+//! the first placed point overrides scene order.
 //!
 //! Points are stored in their layer's **local** coordinates. A marker's world
 //! position is `pose x local`, recomputed every frame, so markers stay welded

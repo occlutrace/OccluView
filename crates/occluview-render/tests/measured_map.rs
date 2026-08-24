@@ -1,8 +1,4 @@
-//! Colour fidelity of the deviation heatmap, end to end through the GPU.
-//!
-//! Separate from `golden_image` so both stay inside the workspace's 800-line
-//! file budget, and because these two ask one narrow question: does a measured
-//! colour survive the trip to the screen unchanged?
+//! End-to-end GPU colour fidelity tests for the deviation heatmap.
 
 #![allow(clippy::expect_used)]
 

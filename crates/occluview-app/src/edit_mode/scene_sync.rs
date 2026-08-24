@@ -9,28 +9,28 @@ use super::EditModeController;
 impl EditModeController {
     pub(crate) fn sync_to_scene(&mut self, scene: &Scene) {
         self.selections.sync_to_scene(scene);
-        self.sync_compatibility_target(scene);
+        self.sync_active_layer(scene);
         self.sync_state_to_scene(scene);
         self.sync_undo_to_scene(scene);
     }
 
-    fn sync_compatibility_target(&mut self, scene: &Scene) {
-        let Some(layer_id) = self.compatibility_layer_id else {
+    fn sync_active_layer(&mut self, scene: &Scene) {
+        let Some(layer_id) = self.active_layer_id else {
             return;
         };
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
-            self.compatibility_layer_id = None;
+            self.active_layer_id = None;
             return;
         };
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
-            self.compatibility_layer_id = None;
+            self.active_layer_id = None;
             return;
         }
         if self.selections.selection_for_layer(layer_id).is_none() {
             if self.session_layer_id == Some(layer_id) {
                 let _ = self.selections.ensure_for_entry(entry);
             } else {
-                self.compatibility_layer_id = None;
+                self.active_layer_id = None;
             }
         }
     }

@@ -32,18 +32,10 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-/// Send the workspace's `tracing` output to stderr.
+/// Initialize CLI and thumbnailer diagnostics on stderr.
 ///
-/// This binary is the freedesktop thumbnailer the Debian package installs, so
-/// when a clinic's file manager shows placeholder cubes instead of scans, this
-/// is where the reason comes out. Without it every `tracing::warn!` from the
-/// format, thumbnail and render crates goes nowhere and `RUST_LOG` does
-/// nothing, while the subscriber's dependency tree ships in the binary and in
-/// its attribution regardless.
-///
-/// Default is `warn`, so ordinary runs stay quiet; `RUST_LOG=debug` turns the
-/// diagnosis on. stderr, because that is already this tool's progress channel
-/// and the thumbnailer contract only cares about the output file.
+/// The default level is `warn`; `RUST_LOG` can enable more detail without
+/// mixing diagnostics with command output.
 fn install_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -90,14 +82,8 @@ enum FileArgument {
     Help,
 }
 
-/// Take the file that every subcommand expects first, refusing to read a flag
-/// as a filename.
-///
-/// Taken verbatim, `thumbnail --help` renders a placeholder cube into
-/// `./--help.png` and exits 0, and `thumbnail -o out.png scan.stl` opens a
-/// file called `-o`. A path never starts with `-`, so a leading `-` is a
-/// misplaced flag; say so rather than write a file nobody asked for. A file
-/// genuinely named `-x` is still reachable as `./-x`.
+/// Parse the leading file argument without accepting a flag as a path.
+/// Files whose names begin with `-` remain addressable through `./name`.
 fn take_file_argument(
     args: &mut impl Iterator<Item = String>,
     subcommand: &str,
@@ -200,9 +186,8 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
     Ok(())
 }
 
-/// `close-holes <file> -o out.stl [--limit-mm N]` - run the whole-mesh Close
-/// Holes pipeline headlessly (STL loads as soup) and write the closed result.
-/// Prints the honest edit report so a soup input can be verified end to end.
+/// `close-holes <file> -o out.stl [--limit-mm N]` - run Close Holes headlessly
+/// and print the resulting edit report.
 fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
     let input: PathBuf = match take_file_argument(args, "close-holes")? {
         FileArgument::Help => {
@@ -367,19 +352,12 @@ fn cmd_info_one(file: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The usage text, on stdout, because it was asked for.
-///
-/// A `--help` that answers on stderr cannot be piped into a pager or a file
-/// without redirecting the error stream, which is the one thing nobody expects
-/// to have to do for help.
+/// Print requested usage text to stdout.
 fn print_usage() {
     println!("{}", usage_text());
 }
 
-/// The same text on stderr, where it accompanies an error.
-///
-/// stdout belongs to whatever the command was going to produce; an error and
-/// the usage that explains it belong beside the error message.
+/// Print usage text alongside an error on stderr.
 fn print_usage_with_error() {
     eprintln!("{}", usage_text());
 }

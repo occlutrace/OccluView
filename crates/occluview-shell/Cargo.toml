@@ -58,3 +58,6 @@ features = [
 version = "0.58"
 
 [dev-dependencies]
+
+[package.metadata.cargo-machete]
+ignored = ["windows-core"] # referenced by generated windows-rs macro code

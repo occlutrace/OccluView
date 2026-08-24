@@ -18,7 +18,7 @@ impl EditModeController {
             return false;
         }
         let starting_session = self.baseline_scene.is_none();
-        self.compatibility_layer_id = Some(layer.id());
+        self.active_layer_id = Some(layer.id());
         let _ = self.state.start(LayerKey::from_scene_mesh_id(layer.id()));
 
         // Capture the pre-edit scene the first time a session opens, so Cancel
@@ -37,7 +37,7 @@ impl EditModeController {
     /// scene; this closes the session and clears selection/tool state.
     pub(crate) fn finish_edit_session(&mut self) {
         self.selections.clear();
-        self.compatibility_layer_id = None;
+        self.active_layer_id = None;
         self.baseline_scene = None;
         self.session_dirty = false;
         self.session_layer_id = None;
@@ -50,7 +50,7 @@ impl EditModeController {
     pub(crate) fn cancel_edit_session(&mut self) -> Option<Scene> {
         let baseline = self.baseline_scene.take()?;
         self.selections.clear();
-        self.compatibility_layer_id = None;
+        self.active_layer_id = None;
         self.session_layer_id = None;
         self.session_dirty = false;
         self.undo.clear();
@@ -79,7 +79,7 @@ impl EditModeController {
         self.state.confirm_discard();
         self.undo.clear();
         self.selections.clear();
-        self.compatibility_layer_id = None;
+        self.active_layer_id = None;
         self.gesture = SelectGesture::default();
         self.baseline_scene = None;
         self.session_dirty = false;
