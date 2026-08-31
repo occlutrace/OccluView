@@ -1,17 +1,18 @@
 # OccluView — Cargo workspace root.
 #
 # Workspace layering:
-#   mesh-edit ← (nothing)
-#   hps       ← (no OccluView crates)
-#   align     ← (nothing; plain slices in, plain values out)
-#   core      → mesh-edit (+ optional robust-csg bridge fallback)
-#   formats   → core + hps
-#   render    → core
-#   thumbnail → core + render + formats
-#   shell     → core + render + formats + thumbnail
-#   app       → core + formats + render + align + update (+ shell on Windows for installer refresh)
-#   cli       → core + formats + render + thumbnail
-#   update    → (nothing)
+#   geometry-math ← (nothing; shared constants + trivial pure math)
+#   mesh-edit     → geometry-math
+#   hps           → geometry-math (no other OccluView crates)
+#   align         ← (nothing OccluView; plain slices in, plain values out)
+#   core          → mesh-edit + geometry-math (+ optional robust-csg bridge fallback)
+#   formats       → core + hps
+#   render        → core
+#   thumbnail     → core + render + formats
+#   shell         → core + render + formats + thumbnail
+#   app           → core + formats + render + align + update (+ shell on Windows for installer refresh)
+#   cli           → core + formats + render + thumbnail
+#   update        → (nothing)
 # Cycles are P0. Never add an upward dependency.
 #
 # License: Apache-2.0 (NOTICE + LICENSE).
@@ -19,6 +20,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/occlu-geometry-math",
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
     "crates/occluview-align",
@@ -65,6 +67,7 @@ publish = false              # we are not on crates.io yet
 # `dep = { workspace = true }` in each crate's [dependencies].
 [workspace.dependencies]
 # Internal crates.
+occlu-geometry-math = { path = "crates/occlu-geometry-math" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-align   = { path = "crates/occluview-align" }

@@ -2,6 +2,8 @@ use crate::{
     base64, crypto, faces, malformed, texture, xml, DecodedSurface, HpsError, HpsKeyProvider,
     NoHpsKeyProvider, ReadError,
 };
+use glam::Vec3;
+use occlu_geometry_math::accumulate_smooth_normals;
 use std::io::{Cursor, Read};
 use std::mem::size_of;
 use std::path::Path;
@@ -216,66 +218,29 @@ fn build_surface(
         .with_normals(normals)
 }
 
-/// A facet is degenerate when its area falls below this fraction of its own
-/// longest edge squared.
+/// Area-weighted vertex normals for HPS surfaces.
 ///
-/// One of three copies: this crate depends on no OccluView crate by design, so
-/// it cannot import `occluview_core::DEGENERATE_AREA_SIN` or the one in
-/// `occlu-mesh-edit`. All three hold the same number and must move together.
-/// They did not once -- the 2026-07-25 fix reached the others four weeks later.
-const DEGENERATE_AREA_SIN: f32 = 1e-10;
-
+/// The accumulation itself is shared with `occlu-mesh-edit` and `occluview-core`
+/// via `occlu-geometry-math` (it used to be hand-rolled here, and the
+/// facet-degeneracy threshold was a third local copy that drifted once -- the
+/// 2026-07-25 fix reached the others four weeks later). A vertex that only
+/// touches degenerate or missing facets keeps a hard +Z fallback, matching the
+/// pre-shared behavior.
 fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
-    let mut normals = vec![[0.0_f32; 3]; positions.len()];
-    for triangle in indices.chunks_exact(3) {
-        let index_a = triangle[0] as usize;
-        let index_b = triangle[1] as usize;
-        let index_c = triangle[2] as usize;
-        let (Some(&a), Some(&b), Some(&c)) = (
-            positions.get(index_a),
-            positions.get(index_b),
-            positions.get(index_c),
-        ) else {
-            continue;
-        };
-        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-        let face_normal = [
-            ab[1] * ac[2] - ab[2] * ac[1],
-            ab[2] * ac[0] - ab[0] * ac[2],
-            ab[0] * ac[1] - ab[1] * ac[0],
-        ];
-        let length_squared = dot(face_normal, face_normal);
-        let longest_edge_sq = dot(ab, ab).max(dot(ac, ac)).max({
-            let bc = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
-            dot(bc, bc)
-        });
-        if face_normal.iter().all(|component| component.is_finite())
-            && length_squared > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
-        {
-            for index in [index_a, index_b, index_c] {
-                normals[index][0] += face_normal[0];
-                normals[index][1] += face_normal[1];
-                normals[index][2] += face_normal[2];
-            }
-        }
-    }
-    for normal in &mut normals {
-        let length_squared = dot(*normal, *normal);
-        if length_squared > f32::EPSILON {
-            let inverse_length = length_squared.sqrt().recip();
-            normal[0] *= inverse_length;
-            normal[1] *= inverse_length;
-            normal[2] *= inverse_length;
+    accumulate_smooth_normals(positions.len(), indices, |index| {
+        positions
+            .get(index)
+            .map(|position| Vec3::from_array(*position))
+    })
+    .into_iter()
+    .map(|normal| {
+        if normal.length_squared() > f32::EPSILON {
+            normal.normalize().to_array()
         } else {
-            *normal = [0.0, 0.0, 1.0];
+            [0.0, 0.0, 1.0]
         }
-    }
-    normals
-}
-
-fn dot(left: [f32; 3], right: [f32; 3]) -> f32 {
-    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+    })
+    .collect()
 }
 
 fn decode_vertex_bytes(

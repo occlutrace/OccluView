@@ -1,42 +1,26 @@
 use glam::Vec3;
+use occlu_geometry_math::{coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS};
 
 /// Squared sine of the smallest angle a facet may have and still contribute a
 /// normal. Scale-free: the test compares twice the facet's area against its own
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a
 /// 10 um sliver.
 ///
-/// One of three copies. This crate is a leaf and must not depend on
-/// `occluview-core`, which holds `occluview_core::DEGENERATE_AREA_SIN`;
-/// `occluview-hps` keeps the third for the same reason. Change one, change all
-/// three: the fix of 2026-07-25 landed in one crate and reached the others four
-/// weeks later, and for those four weeks every scan opened through the other
-/// paths lost shading on facets under 20 um.
-const DEGENERATE_AREA_SIN: f32 = 1e-10;
+/// Owned by `occlu-geometry-math` since 2026-08-29. Before that it was three
+/// copies across this crate, `occluview-core` and `occluview-hps`, and the
+/// fix of 2026-07-25 landed in one crate and reached the others four weeks
+/// later -- for those four weeks every scan opened through the other paths
+/// lost shading on facets under 20 um.
+pub use occlu_geometry_math::DEGENERATE_AREA_SIN;
 use std::collections::HashMap;
 
 use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
 
-const DUPLICATE_NORMAL_DOT: f32 = 0.5;
-
 /// Past this many vertices at one position, agreement is judged against the
 /// group's mean normal instead of against every other member.
 ///
-/// Copied from `occluview-core` for the reason above. Bounding core's loader
-/// path and leaving this one pairwise made things worse, not better: the file
-/// now opens in milliseconds, so the pile reaches the scene, and the first
-/// Repair, Close holes or Invert normals runs the pairwise form on the UI
-/// thread with no repaint, no progress and no cancel. In the test profile
-/// 20000 coincident vertices cost 820 ms pairwise against 16 ms bounded, and
-/// pairwise grows as the square.
-const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
-/// Two positions within this distance are the same point for shading.
-///
-/// One number decides which vertices share a normal, and both crates need it:
-/// core welds at load, this crate welds after every brush stroke and hole fill.
-/// Written twice, under two names, with two byte-identical key functions, the
-/// same scan shades one way on open and another way after any edit -- a seam
-/// that appears mid-session with nothing to blame.
-pub const COINCIDENT_POSITION_EPS_MM: f32 = 0.002;
+/// Owned by `occlu-geometry-math`; core and this crate share the bound.
+pub use occlu_geometry_math::MAX_PAIRWISE_DUPLICATE_GROUP;
 
 /// Recompute every vertex normal from triangle winding.
 ///
@@ -102,11 +86,6 @@ pub fn recompute_all_normals(
     smooth_duplicate_position_normals(vertices);
     Ok(())
 }
-
-/// How many directions one coincident group may hold before it is left alone.
-///
-/// Copied from `occluview-core` alongside the bound above.
-const MAX_DUPLICATE_CLUSTERS: usize = 16;
 
 /// Average a large coincident group by clustering it, not by one global mean.
 ///
@@ -217,38 +196,10 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
     }
 }
 
-/// Quantize a position onto the [`COINCIDENT_POSITION_EPS_MM`] lattice.
-///
-/// Equal keys mean "the same point" for normal welding. Shared with
-/// `occluview-core` so both sides of an edit agree.
-#[must_use]
-pub fn coincident_position_key(position: [f32; 3]) -> [i32; 3] {
-    [
-        position_lane_key(position[0]),
-        position_lane_key(position[1]),
-        position_lane_key(position[2]),
-    ]
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn position_lane_key(value: f32) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-
-    let scaled = f64::from(value / COINCIDENT_POSITION_EPS_MM).round();
-    if scaled <= f64::from(i32::MIN) {
-        i32::MIN
-    } else if scaled >= f64::from(i32::MAX) {
-        i32::MAX
-    } else {
-        scaled as i32
-    }
-}
-
 #[cfg(test)]
 mod shared_tolerance_tests {
-    use super::{coincident_position_key, COINCIDENT_POSITION_EPS_MM};
+    use super::coincident_position_key;
+    use occlu_geometry_math::COINCIDENT_POSITION_EPS_MM;
 
     #[test]
     fn one_tolerance_decides_which_vertices_share_a_normal() {
@@ -278,16 +229,21 @@ mod shared_tolerance_tests {
     }
 
     #[test]
-    fn core_does_not_keep_its_own_copy() {
+    fn core_and_this_crate_import_the_shared_tolerances() {
         let core = include_str!("../../occluview-core/src/mesh/normals.rs");
         assert!(
-            core.contains("use occlu_mesh_edit::coincident_position_key"),
-            "core must use the shared key rather than redefining it"
+            core.contains("use occlu_geometry_math::"),
+            "core must use the shared tolerances rather than redefining them"
         );
-        let redefinition = format!("const {}_EPS_MM", "SMOOTH_POSITION");
         assert!(
-            !core.contains(&redefinition),
-            "a second tolerance is how the two shadings drifted apart"
+            !core.contains(&format!("{}_DUPLICATE_GROUP", "const MAX_PAIRWISE")),
+            "core must not keep a local copy of the coincident-group bound: \
+             that is how the two shadings drifted apart"
+        );
+        assert!(
+            !core.contains(&format!("{}_NORMAL_DOT", "const DUPLICATE"))
+                && !core.contains(&format!("{}_NORMAL_DOT", "const SMOOTH_DUPLICATE")),
+            "core must not keep a local copy of the normal-agreement threshold"
         );
     }
 }

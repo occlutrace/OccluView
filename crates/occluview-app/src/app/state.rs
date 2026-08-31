@@ -123,36 +123,10 @@ pub(crate) struct OccluViewApp {
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
     /// Interactive sculpt-brush tool and active stroke state.
     pub(super) sculpt: crate::sculpt_tool::SculptTool,
-    pub(super) align: crate::align_tool::AlignTool,
-    pub(super) align_worker: Option<crate::align_worker::AlignWorker>,
-    pub(super) align_settings: crate::align_worker::AlignSettings,
-    pub(super) align_status: Option<String>,
-    pub(super) align_stats: Option<occluview_align::DeviationStats>,
-    pub(super) align_rejected: Vec<u32>,
-    /// Per-layer overlay colours currently on screen.
-    pub(super) align_overlay_colors: Vec<(occluview_core::SceneMeshId, Arc<Vec<[u8; 4]>>)>,
-    /// The flat arrays the align worker takes, kept between jobs so a settings
-    /// change does not re-copy geometry that has not moved.
-    pub(super) align_geometry: crate::align_geometry::AlignGeometry,
-    /// The vertex buffer a deviation map is uploaded through, repainted across
-    /// re-colours instead of rebuilt.
-    pub(super) align_painted: crate::align_geometry::PaintedVertices,
-    /// Set when new colours are attached and the GPU has not seen them yet.
-    /// Consumed by the viewport sync, which is the one place that knows whether
-    /// there is a prepared scene to write into.
-    pub(super) deviation_push_pending: bool,
-    /// What the operator marked out of the match, on both scans. Owns its own
-    /// revision and coverage counts, so no caller can change a mask without the
-    /// caches downstream hearing about it.
-    pub(super) align_markings: crate::align_markings::AlignMarkings,
-    pub(super) align_drag: Option<super::app_align_drag::AlignDrag>,
-    pub(super) align_constraint: crate::align_drag::DragConstraint,
-    pub(super) align_brush: crate::align_brush::AlignBrush,
-    /// What the per-vertex colours on the moving scan currently mean.
-    pub(super) align_overlay: super::app_align_display::AlignOverlay,
-    pub(super) align_session_poses: Vec<(occluview_core::SceneMeshId, glam::Affine3A)>,
-    pub(super) align_tab: crate::align_panel::AlignTab,
-    pub(super) align_ghosted: Vec<(occluview_core::SceneMeshId, f32)>,
+    /// The Align Scans tool's whole state: tool, worker, settings, deviation
+    /// display, markings, drag, brush and session poses. One struct so the app
+    /// carries a single `align` field instead of eighteen loose ones.
+    pub(super) align: crate::align_state::AlignState,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
@@ -332,24 +306,7 @@ impl OccluViewApp {
             viewport_secondary_gesture_moved_since_press: false,
             mesh_selection_drag: None,
             sculpt: crate::sculpt_tool::SculptTool::default(),
-            align: crate::align_tool::AlignTool::default(),
-            align_worker: None,
-            align_settings: crate::align_worker::AlignSettings::default(),
-            align_status: None,
-            align_stats: None,
-            align_rejected: Vec::new(),
-            align_overlay_colors: Vec::new(),
-            align_geometry: crate::align_geometry::AlignGeometry::default(),
-            align_painted: crate::align_geometry::PaintedVertices::default(),
-            deviation_push_pending: false,
-            align_markings: crate::align_markings::AlignMarkings::default(),
-            align_drag: None,
-            align_constraint: crate::align_drag::DragConstraint::default(),
-            align_brush: crate::align_brush::AlignBrush::default(),
-            align_overlay: super::app_align_display::AlignOverlay::default(),
-            align_session_poses: Vec::new(),
-            align_tab: crate::align_panel::AlignTab::default(),
-            align_ghosted: Vec::new(),
+            align: crate::align_state::AlignState::default(),
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
             update_notice: crate::update_notice::UpdateNotice::begin_check(),

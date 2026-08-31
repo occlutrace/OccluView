@@ -32,11 +32,12 @@ mod align_panel;
 mod align_panel_brush;
 mod align_panel_map;
 mod align_panel_roles;
+mod align_state;
 mod align_tool;
 #[cfg(test)]
 mod align_tool_tests;
 mod align_worker;
-mod app;
+pub(crate) mod app;
 mod app_bootstrap;
 mod app_chrome;
 mod app_files;

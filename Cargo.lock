@@ -2346,11 +2346,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "occlu-geometry-math"
+version = "1.1.0"
+dependencies = [
+ "glam",
+]
+
+[[package]]
 name = "occlu-mesh-edit"
 version = "1.1.0"
 dependencies = [
  "earcutr",
  "glam",
+ "occlu-geometry-math",
  "rayon",
  "thiserror 1.0.69",
 ]
@@ -2414,6 +2422,7 @@ version = "1.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "occlu-geometry-math",
  "occlu-mesh-edit",
  "occluview-robust-csg",
  "rayon",
@@ -2445,8 +2454,10 @@ version = "1.1.0"
 dependencies = [
  "adler2",
  "blowfish",
+ "glam",
  "image",
  "md-5",
+ "occlu-geometry-math",
  "thiserror 1.0.69",
  "tracing",
  "zeroize",

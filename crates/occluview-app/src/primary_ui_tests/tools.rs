@@ -24,18 +24,18 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        "self.align_drag = None;",
+        "self.align.drag = None;",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
-        "self.align_geometry.clear();",
-        "self.align.disarm();",
-        "self.align_status = None;",
-        "self.align_stats = None;",
-        "self.align_rejected.clear();",
-        "self.align_session_poses.clear();",
-        "self.align_brush.set_armed(false);",
-        "self.align_tab = crate::align_panel::AlignTab::default();",
-        "self.align_constraint = crate::align_drag::DragConstraint::default();",
+        "self.align.geometry.clear();",
+        "self.align.tool.disarm();",
+        "self.align.status = None;",
+        "self.align.stats = None;",
+        "self.align.rejected.clear();",
+        "self.align.session_poses.clear();",
+        "self.align.brush.set_armed(false);",
+        "self.align.tab = crate::align_panel::AlignTab::default();",
+        "self.align.constraint = crate::align_drag::DragConstraint::default();",
     ] {
         assert!(
             disarm.contains(reset),

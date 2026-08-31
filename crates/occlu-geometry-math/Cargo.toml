@@ -1,0 +1,24 @@
+# occlu-geometry-math — product-neutral shared geometry constants and math.
+#
+# Bottom layer of the workspace: no OccluView crate may import this crate, and
+# this crate imports nothing but glam. Exists so `occlu-mesh-edit`,
+# `occluview-core` and `occluview-hps` can share the tolerances that decide
+# which vertices weld and which facets shade, instead of holding copies that
+# drift apart (they did once: the 2026-07-25 fix took four weeks to reach all
+# three crates).
+[package]
+name = "occlu-geometry-math"
+description = "Shared geometry constants and trivial pure math for OccluView kernels."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }

@@ -5,10 +5,11 @@
 > See [`Cargo.toml:3-14`](../Cargo.toml#L3-L14) for the canonical layering comment.
 
 ```
-mesh-edit  ← (nothing)
-hps        ← (no OccluView crates)
-align      ← (nothing; plain slices in, plain values out)
-core       → mesh-edit (+ optional robust-csg)
+geometry-math ← (nothing; shared constants + trivial pure math)
+mesh-edit  → geometry-math
+hps        → geometry-math (no other OccluView crates)
+align      ← (nothing OccluView; plain slices in, plain values out)
+core       → mesh-edit + geometry-math (+ optional robust-csg)
 formats    → core + hps
 render     → core
 thumbnail  → core + render + formats
@@ -24,6 +25,7 @@ Cycles are P0. `publish = false` — not on crates.io.
 
 | Crate | Role |
 |-------|------|
+| `occlu-geometry-math` | Shared geometry constants (degeneracy gate, welding tolerance) + trivial pure math (`accumulate_smooth_normals`, `coincident_position_key`). Bottom layer; `forbid(unsafe)`. |
 | `occlu-mesh-edit` | Pure kernels: holes, brush, bridge-split, repair, topology. `forbid(unsafe)`. |
 | `occluview-robust-csg` | FFI boundary for `manifold-csg`. Optional feature in `core`. |
 | `occluview-align` | Rigid ICP + deviation, slices in / values out. No IO/GPU. |

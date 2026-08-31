@@ -343,7 +343,7 @@ impl OccluViewApp {
                     self.live_viewport_scene_dirty = false;
                 }
                 let repush_deviation =
-                    (rebuilt && restore_deviation) || self.deviation_push_pending;
+                    (rebuilt && restore_deviation) || self.align.deviation_push_pending;
                 if self.selection_overlay_dirty {
                     let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
@@ -365,7 +365,7 @@ impl OccluViewApp {
             // A push before the viewport has a prepared scene writes nowhere.
             // Keep the request standing until one exists, or the very first
             // measurement would come out in the scan's own colours.
-            self.deviation_push_pending = !self.push_deviation_colors();
+            self.align.deviation_push_pending = !self.push_deviation_colors();
         }
     }
 

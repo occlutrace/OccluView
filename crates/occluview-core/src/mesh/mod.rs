@@ -18,7 +18,7 @@ mod builder;
 mod bvh;
 mod edit_adapter;
 mod normals;
-pub use normals::accumulate_smooth_normals;
+pub use occlu_geometry_math::accumulate_smooth_normals;
 mod principal_axis;
 mod texture;
 mod vertex;
