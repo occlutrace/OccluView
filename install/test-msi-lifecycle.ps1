@@ -2,8 +2,8 @@
 param(
     [string]$MsiPath = "",
     [string]$LegacyUpgradeMsiPath = "",
-    [string]$SameVersionUpgradeMsiPath = "",
     [string]$UpgradeMsiPath = "",
+    [string]$DowngradeMsiPath = "",
     [switch]$Diagnostic
 )
 
@@ -109,6 +109,19 @@ function Invoke-MsiExec {
         }
         throw "msiexec failed with exit code $($process.ExitCode). Log: $LogPath"
     }
+}
+
+function Invoke-MsiExecExpectFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$Arguments,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "$Arguments /l*v `"$LogPath`"" -Wait -PassThru
+    if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
+        throw "msiexec unexpectedly accepted a blocked downgrade (exit $($process.ExitCode)). Log: $LogPath"
+    }
+    Write-Host "Blocked downgrade exited as expected with $($process.ExitCode)."
 }
 
 function Start-ActivePreviewHost {
@@ -503,15 +516,15 @@ $resolvedUpgradeMsi = if ([string]::IsNullOrWhiteSpace($UpgradeMsiPath)) {
 } else {
     (Resolve-Path $UpgradeMsiPath).Path
 }
-$resolvedSameVersionUpgradeMsi = if ([string]::IsNullOrWhiteSpace($SameVersionUpgradeMsiPath)) {
+$resolvedDowngradeMsi = if ([string]::IsNullOrWhiteSpace($DowngradeMsiPath)) {
     ""
 } else {
-    (Resolve-Path $SameVersionUpgradeMsiPath).Path
+    (Resolve-Path $DowngradeMsiPath).Path
 }
 $installLog = Join-Path $env:TEMP "occluview-msi-install.log"
 $legacyInstallLog = Join-Path $env:TEMP "occluview-msi-legacy-install.log"
-$sameVersionUpgradeLog = Join-Path $env:TEMP "occluview-msi-same-version-upgrade.log"
 $upgradeLog = Join-Path $env:TEMP "occluview-msi-upgrade.log"
+$downgradeLog = Join-Path $env:TEMP "occluview-msi-downgrade.log"
 $uninstallLog = Join-Path $env:TEMP "occluview-msi-uninstall.log"
 $diagnosticSwitchBefore = if ($Diagnostic) { Get-DiagnosticSwitchState } else { $null }
 $legacyProductCode = $null
@@ -538,12 +551,13 @@ try {
         throw "Legacy MSI upgrade kept product code $productCode instead of completing a major upgrade."
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($resolvedSameVersionUpgradeMsi)) {
-        Write-Host "Upgrading with same-version MSI: $resolvedSameVersionUpgradeMsi"
+    if (-not [string]::IsNullOrWhiteSpace($resolvedUpgradeMsi)) {
+        Write-Host "Upgrading MSI: $resolvedUpgradeMsi"
+        $previousProductCode = $productCode
         $previewHolder = Start-ActivePreviewHost
         try {
             Assert-ActivePreviewHost $previewHolder
-            Invoke-MsiExec -Arguments "/i `"$resolvedSameVersionUpgradeMsi`" /qn /norestart" -LogPath $sameVersionUpgradeLog
+            Invoke-MsiExec -Arguments "/i `"$resolvedUpgradeMsi`" /qn /norestart" -LogPath $upgradeLog
             Assert-ActivePreviewHost $previewHolder
         } finally {
             Stop-ActivePreviewHost $previewHolder
@@ -552,15 +566,20 @@ try {
         & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
         & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
         $productCode = Assert-OneInstalledProduct
+        if ($productCode -eq $previousProductCode) {
+            throw "Major upgrade kept product code $productCode instead of replacing the prior product."
+        }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($resolvedUpgradeMsi)) {
-        Write-Host "Upgrading MSI: $resolvedUpgradeMsi"
-        Invoke-MsiExec -Arguments "/i `"$resolvedUpgradeMsi`" /qn /norestart" -LogPath $upgradeLog
+    if (-not [string]::IsNullOrWhiteSpace($resolvedDowngradeMsi)) {
+        Write-Host "Attempting blocked downgrade MSI: $resolvedDowngradeMsi"
+        $productCodeBeforeDowngrade = $productCode
+        Invoke-MsiExecExpectFailure -Arguments "/i `"$resolvedDowngradeMsi`" /qn /norestart" -LogPath $downgradeLog
         Assert-InstalledRegistry
-        & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
-        & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
         $productCode = Assert-OneInstalledProduct
+        if ($productCode -ne $productCodeBeforeDowngrade) {
+            throw "Blocked downgrade replaced product code $productCodeBeforeDowngrade with $productCode."
+        }
     }
 
     Write-Host "Uninstalling MSI product: $productCode"

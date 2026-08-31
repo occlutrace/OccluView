@@ -3,6 +3,15 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.1.2 - 2026-08-31
+
+### Windows
+
+- Moved the Explorer Preview Pane handler into an OccluView-owned preview host,
+  so a failed preview is isolated from Windows' shared host.
+- Made installer upgrades strictly forward-only: a newer installation cannot be
+  replaced by an older package with the same visible version number.
+
 ## 1.1.1 - 2026-08-31
 
 ### Windows

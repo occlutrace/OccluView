@@ -201,8 +201,9 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
     )));
     assert!(!wxs.contains(WINDOWS_DEFAULT_PREVHOST_APPID));
     assert!(wxs.contains(
-        "<RegistryKey Root=\"HKLM\" Key=\"Software\\Classes\\AppID\\$(var.PrevhostAppId)\" Action=\"createAndRemoveOnUninstall\">"
+        "<RegistryKey Root=\"HKLM\" Key=\"Software\\Classes\\AppID\\$(var.PrevhostAppId)\" ForceDeleteOnUninstall=\"yes\">"
     ));
+    assert!(!wxs.contains("Action=\"createAndRemoveOnUninstall\""));
     assert!(wxs.contains("Name=\"DllSurrogate\" Type=\"string\" Value=\"Prevhost.exe\""));
     assert!(!wxs.contains("<RemoveRegistryKey"));
     assert!(wxs.contains("<ComponentRef Id=\"cmpPreviewHostRegistration\""));
@@ -524,26 +525,34 @@ fn major_upgrade_preserves_the_previous_product_until_the_new_install_succeeds()
 }
 
 #[test]
-fn windows_package_lifecycle_exercises_a_same_version_major_upgrade() {
+fn windows_package_lifecycle_allows_only_monotonic_major_upgrades() {
     let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
     let preview_smoke = include_str!("../../../install/test-preview-handler.ps1");
 
     assert!(
-        lifecycle.contains("[string]$SameVersionUpgradeMsiPath = \"\""),
-        "the lifecycle smoke needs a distinct same-version upgrade input"
+        lifecycle.contains("[string]$DowngradeMsiPath = \"\""),
+        "the lifecycle smoke needs an explicit downgrade probe"
     );
     assert!(
-        lifecycle.contains("Upgrading with same-version MSI:"),
-        "the lifecycle smoke must execute the same-version package"
+        lifecycle.contains("Attempting blocked downgrade MSI:"),
+        "the lifecycle smoke must prove that an older package cannot replace a newer one"
     );
     assert!(
-        workflow.contains("occluview-msi-same-version-upgrade"),
-        "Windows CI must build a same-version MSI with a new ProductCode"
+        workflow.contains("-DowngradeMsiPath $releaseMsi.FullName"),
+        "Windows CI must pass the current package as the post-upgrade downgrade probe"
     );
     assert!(
-        workflow.contains("-SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName"),
-        "Windows CI must pass the same-version MSI to lifecycle smoke"
+        !workflow.contains("occluview-msi-same-version-upgrade"),
+        "Windows CI must never exercise equal-version major upgrades"
+    );
+    assert!(
+        !lifecycle.contains("SameVersionUpgradeMsiPath"),
+        "the lifecycle smoke must not retain an equal-version upgrade path"
+    );
+    assert!(
+        lifecycle.contains("Invoke-MsiExecExpectFailure"),
+        "the downgrade probe must fail explicitly instead of relying on a later registry assertion"
     );
     assert!(
         lifecycle.contains("Start-ActivePreviewHost"),

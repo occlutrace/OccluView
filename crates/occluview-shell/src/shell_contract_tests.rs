@@ -164,7 +164,7 @@ fn installer_metadata_tracks_supported_shell_extensions() {
     let reg = include_str!("../../../install/occluview-shell-registration.reg");
 
     assert!(wxs.contains("<MajorUpgrade"));
-    assert!(wxs.contains("AllowSameVersionUpgrades=\"yes\""));
+    assert!(!wxs.contains("AllowSameVersionUpgrades=\"yes\""));
     assert!(wxs.contains("DowngradeErrorMessage="));
     assert!(wxs.contains("<RemoveFolder Id=\"rmProgramMenuDir\" On=\"uninstall\""));
     assert!(wxs.contains("&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;"));

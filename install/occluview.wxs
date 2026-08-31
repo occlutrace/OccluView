@@ -8,7 +8,7 @@
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{FD67C578-DBCC-4E10-8E47-63A8E48F7654}" ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.1.1" ?>
+<?define ProductVersion = "1.1.2" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>
@@ -29,11 +29,11 @@
     <!--
       ProductVersion is passed in from build-msi.ps1 (-dProductVersion) and
       defaults to the value defined at the top of this file. MSI ProductVersion
-      is X.Y.Z only; the Product/@Id is "*" so every build gets a fresh
-      ProductCode while the fixed UpgradeCode below drives MajorUpgrade.
+      is X.Y.Z only; each released build increments one of those fields.
+      Product/@Id is "*" so every package gets a fresh ProductCode while the
+      fixed UpgradeCode below drives a monotonic MajorUpgrade.
     -->
     <MajorUpgrade
-      AllowSameVersionUpgrades="yes"
       Schedule="afterInstallInitialize"
       DowngradeErrorMessage="A newer version of OccluView is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -142,7 +142,7 @@
                generic surrogate to OccluView's private AppID, so this must
                be a new MSI component identity. -->
           <Component Id="cmpPreviewHostRegistration" Guid="{79955DD2-8C4F-4C1B-8E63-435AB43125DA}" Win64="yes">
-            <RegistryKey Root="HKLM" Key="Software\Classes\AppID\$(var.PrevhostAppId)" Action="createAndRemoveOnUninstall">
+            <RegistryKey Root="HKLM" Key="Software\Classes\AppID\$(var.PrevhostAppId)" ForceDeleteOnUninstall="yes">
               <RegistryValue Name="DllSurrogate" Type="string" Value="Prevhost.exe" KeyPath="yes" />
             </RegistryKey>
           </Component>
