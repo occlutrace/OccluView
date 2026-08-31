@@ -250,13 +250,18 @@ fn preview_pane_has_a_native_right_click_context_menu() {
 }
 
 #[test]
-fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
+fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering() {
     let smoke = include_str!("../../../install/test-preview-handler.ps1");
 
     assert!(smoke.contains("ApartmentState.STA"));
     assert!(smoke.contains("CoCreateInstance"));
     assert!(smoke.contains("CLSCTX_LOCAL_SERVER = 0x4"));
+    assert!(smoke.contains("CLSCTX_INPROC_SERVER = 0x1"));
     assert!(smoke.contains("CreateLocalServerPreviewHandler"));
+    assert!(smoke.contains("CreateInProcessPreviewHandler"));
+    assert!(smoke.contains("JoinOrThrow(thread, \"private-surrogate preview\")"));
+    assert!(smoke.contains("JoinOrThrow(thread, \"preview\")"));
+    assert!(smoke.contains("JoinOrThrow(thread, \"shell-item preview\")"));
     assert!(smoke.contains("Marshal.GetObjectForIUnknown"));
     assert!(smoke.contains("Marshal.Release(unknown)"));
     assert!(!smoke.contains("Activator.CreateInstance"));
@@ -291,6 +296,8 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     assert!(smoke.contains("GetWindowThreadProcessId"));
     assert!(smoke.contains("EnsurePreviewHostProcess(child)"));
     assert!(smoke.contains("PREVIEW_HOST_PID="));
+    assert!(smoke.contains("ProbePrivateSurrogate"));
+    assert!(smoke.contains("WaitForPreviewChild"));
     assert!(
         smoke.contains("private static void PumpMessages(IntPtr hwnd)"),
         "the smoke message pump must receive the preview child handle explicitly"
@@ -341,6 +348,69 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     assert!(unload < set_focus);
     assert!(set_focus < query_focus);
     assert!(query_focus < translate);
+
+    let private_start = offset("public static string ProbePrivateSurrogate(");
+    let private_end = offset("public static string Probe(");
+    let private_surrogate = &smoke[private_start..private_end];
+    for required in [
+        "CreateLocalServerPreviewHandler(previewClsid)",
+        "IInitializeWithFile",
+        "preview.DoPreview();",
+        "WaitForPreviewChild(parent, \"private surrogate preview\")",
+        "EnsurePreviewHostProcess(child);",
+        "preview.Unload();",
+        "if (IsWindow(child))",
+    ] {
+        assert!(
+            private_surrogate.contains(required),
+            "private-surrogate liveness probe missing {required}"
+        );
+    }
+    for forbidden in [
+        "GetClientRect",
+        "UpdateWindow",
+        "CaptureFrame",
+        "BitBlt",
+        "SendMessageW",
+        "preview.SetRect",
+        "preview.SetFocus",
+    ] {
+        assert!(
+            !private_surrogate.contains(forbidden),
+            "private-surrogate liveness probe must not drive a low-integrity child: {forbidden}"
+        );
+    }
+
+    let detailed_start = offset("public static string Probe(");
+    let detailed_end = offset("public static string ProbeFromItem(");
+    let detailed_probe = &smoke[detailed_start..detailed_end];
+    assert!(
+        detailed_probe.contains("CreateInProcessPreviewHandler(previewClsid)"),
+        "the detailed render and interaction contract must run in-process"
+    );
+    assert!(
+        !detailed_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
+        "the detailed render and interaction contract must not pretend it can drive Prevhost's low-integrity child"
+    );
+    let item_start = offset("public static string ProbeFromItem(");
+    let item_end = offset("private static IntPtr WaitForPreviewChild(");
+    let item_probe = &smoke[item_start..item_end];
+    assert!(
+        item_probe.contains("CreateInProcessPreviewHandler(previewClsid)"),
+        "shell-item rendering must use the same intentional in-process contract"
+    );
+    assert!(
+        !item_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
+        "shell-item rendering must not drive a private Prevhost child"
+    );
+
+    let private_call =
+        offset("$surrogateResult = [OccluViewShellPreviewSmoke]::ProbePrivateSurrogate(");
+    let file_call = offset("$fileResult = [OccluViewShellPreviewSmoke]::Probe(");
+    assert!(
+        private_call < file_call,
+        "the private Prevhost liveness probe must run before detailed in-process rendering"
+    );
 }
 
 #[test]

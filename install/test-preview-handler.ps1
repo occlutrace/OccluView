@@ -66,6 +66,7 @@ using System.Threading;
 public static class OccluViewShellPreviewSmoke
 {
     private const uint COINIT_APARTMENTTHREADED = 0x2;
+    private const uint CLSCTX_INPROC_SERVER = 0x1;
     private const uint CLSCTX_LOCAL_SERVER = 0x4;
     private const string PreviewChildClass = "OccluViewPreviewPane";
     private const int WM_RBUTTONDOWN = 0x0204;
@@ -356,13 +357,23 @@ public static class OccluViewShellPreviewSmoke
 
     private static object CreateLocalServerPreviewHandler(string previewClsid)
     {
+        return CreatePreviewHandler(previewClsid, CLSCTX_LOCAL_SERVER);
+    }
+
+    private static object CreateInProcessPreviewHandler(string previewClsid)
+    {
+        return CreatePreviewHandler(previewClsid, CLSCTX_INPROC_SERVER);
+    }
+
+    private static object CreatePreviewHandler(string previewClsid, uint classContext)
+    {
         Guid clsid = new Guid(previewClsid);
         Guid iidIUnknown = new Guid("00000000-0000-0000-C000-000000000046");
         IntPtr unknown = IntPtr.Zero;
         int createHr = CoCreateInstance(
             ref clsid,
             IntPtr.Zero,
-            CLSCTX_LOCAL_SERVER,
+            classContext,
             ref iidIUnknown,
             out unknown);
         if (createHr < 0)
@@ -393,6 +404,92 @@ public static class OccluViewShellPreviewSmoke
         }
     }
 
+    // Prevhost runs the handler at low integrity. This liveness probe only
+    // proves the private surrogate can create a child and return from Unload;
+    // it deliberately does not control, resize, or capture that foreign child.
+    public static string ProbePrivateSurrogate(
+        string previewClsid,
+        string path,
+        int width,
+        int height)
+    {
+        string result = null;
+        Exception failure = null;
+
+        var thread = new Thread(() =>
+        {
+            IntPtr parent = IntPtr.Zero;
+            object instance = null;
+            bool coInitialized = false;
+            var coinit = CoInitializeEx(IntPtr.Zero, COINIT_APARTMENTTHREADED);
+            if (coinit < 0)
+            {
+                Marshal.ThrowExceptionForHR(coinit);
+            }
+            coInitialized = true;
+
+            try
+            {
+                parent = CreateWindowExW(0, "Static", "OccluViewPreviewSurrogateSmoke", WS_POPUP | WS_VISIBLE, 0, 0, width, height, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (parent == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("CreateWindowExW failed for private-surrogate smoke host parent window.");
+                }
+                ShowWindow(parent, SW_SHOWNOACTIVATE);
+
+                instance = CreateLocalServerPreviewHandler(previewClsid);
+                var preview = (IPreviewHandler)instance;
+                var initialRect = new RECT { left = 0, top = 0, right = width, bottom = height };
+                ((IInitializeWithFile)instance).Initialize(path, 0);
+                preview.SetWindow(parent, ref initialRect);
+                preview.DoPreview();
+
+                IntPtr child = WaitForPreviewChild(parent, "private surrogate preview");
+                EnsurePreviewHostProcess(child);
+                preview.Unload();
+                if (IsWindow(child))
+                {
+                    throw new InvalidOperationException("Private-surrogate preview handler left the child window alive after Unload.");
+                }
+                result = "private Prevhost child created and unloaded";
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+            finally
+            {
+                if (instance != null && Marshal.IsComObject(instance))
+                {
+                    Marshal.FinalReleaseComObject(instance);
+                }
+                if (parent != IntPtr.Zero && IsWindow(parent))
+                {
+                    DestroyWindow(parent);
+                }
+                if (coInitialized)
+                {
+                    CoUninitialize();
+                }
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        JoinOrThrow(thread, "private-surrogate preview");
+
+        if (failure != null)
+        {
+            throw new InvalidOperationException("Private-surrogate preview smoke failed: " + failure, failure);
+        }
+
+        return result ?? throw new InvalidOperationException("Private-surrogate preview smoke produced no result.");
+    }
+
+    // The detailed pixel, resize, focus, and input contract is intentionally
+    // in-process. Those controller operations cannot be asserted across the
+    // low-integrity boundary used by the private-surrogate liveness probe.
     public static string Probe(
         string previewClsid,
         string path,
@@ -429,7 +526,7 @@ public static class OccluViewShellPreviewSmoke
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
                 UpdateWindow(parent);
 
-                instance = CreateLocalServerPreviewHandler(previewClsid);
+                instance = CreateInProcessPreviewHandler(previewClsid);
 
                 var preview = (IPreviewHandler)instance;
 
@@ -523,7 +620,7 @@ public static class OccluViewShellPreviewSmoke
                 // window pointing at a freed object. Build a second handler,
                 // give it a window, release it WITHOUT Unload, and check the
                 // child is gone.
-                object orphan = CreateLocalServerPreviewHandler(previewClsid);
+                object orphan = CreateInProcessPreviewHandler(previewClsid);
                 try
                 {
                     var orphanPreview = (IPreviewHandler)orphan;
@@ -597,8 +694,9 @@ public static class OccluViewShellPreviewSmoke
         });
 
         thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
         thread.Start();
-        thread.Join();
+        JoinOrThrow(thread, "preview");
 
         if (failure != null)
         {
@@ -642,7 +740,7 @@ public static class OccluViewShellPreviewSmoke
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
                 UpdateWindow(parent);
 
-                instance = CreateLocalServerPreviewHandler(previewClsid);
+                instance = CreateInProcessPreviewHandler(previewClsid);
 
                 var preview = (IPreviewHandler)instance;
                 var initialRect = new RECT { left = 0, top = 0, right = width, bottom = height };
@@ -750,8 +848,9 @@ public static class OccluViewShellPreviewSmoke
         });
 
         thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
         thread.Start();
-        thread.Join();
+        JoinOrThrow(thread, "shell-item preview");
 
         if (failure != null)
         {
@@ -759,6 +858,32 @@ public static class OccluViewShellPreviewSmoke
         }
 
         return result ?? throw new InvalidOperationException("Preview smoke produced no result.");
+    }
+
+    private static IntPtr WaitForPreviewChild(IntPtr parent, string label)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (deadline.ElapsedMilliseconds < 10000)
+        {
+            IntPtr child = FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null);
+            if (child != IntPtr.Zero)
+            {
+                return child;
+            }
+            Thread.Sleep(25);
+        }
+        throw new InvalidOperationException(label + " did not create a preview child within 10 seconds.");
+    }
+
+    private static void JoinOrThrow(Thread thread, string label)
+    {
+        if (!thread.Join(20000))
+        {
+            // A hung handler must fail this disposable controller, not hold a
+            // CI worker forever. The probe thread is background-only so the
+            // PowerShell process can terminate after this explicit failure.
+            throw new TimeoutException(label + " did not finish within 20 seconds.");
+        }
     }
 
     private static void EnsurePreviewChild(IntPtr hwnd, int expectedWidth, int expectedHeight, string label)
@@ -1141,6 +1266,14 @@ if ($HoldOpenSeconds -lt 0) {
     throw "HoldOpenSeconds must not be negative."
 }
 
+$surrogateResult = [OccluViewShellPreviewSmoke]::ProbePrivateSurrogate(
+    $PreviewClsid,
+    $SamplePath,
+    $Width,
+    $Height
+)
+Write-Host "Private-surrogate preview smoke: [$surrogateResult]"
+
 $fileResult = [OccluViewShellPreviewSmoke]::Probe(
     $PreviewClsid,
     $SamplePath,
@@ -1172,4 +1305,4 @@ $itemResult = [OccluViewShellPreviewSmoke]::ProbeFromItem(
     $ResizeHeight
 )
 
-Write-Host "Preview smoke: file[$fileResult] stream[$streamResult] item[$itemResult]"
+Write-Host "Preview smoke: private-surrogate[$surrogateResult] file[$fileResult] stream[$streamResult] item[$itemResult]"

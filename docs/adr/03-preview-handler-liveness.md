@@ -89,6 +89,16 @@ asynchronously produced frame, exercise resize and interaction, and report
 the host PID for a targeted dump. Static tests and CI do not replace an
 owner-machine Explorer reproduction.
 
+The Windows smoke harness keeps two deliberately separate contracts. Its
+`CLSCTX_LOCAL_SERVER` probe verifies that the private surrogate creates a
+`Prevhost` child and removes it on `Unload`, but it never drives that
+low-integrity child. A second `CLSCTX_INPROC_SERVER` probe verifies pixels,
+resize, focus, and input against the same handler DLL. It is not presented as
+Explorer acceptance: Windows prevents a normal test controller from operating
+the low-integrity surrogate window. Every disposable probe has a finite
+controller timeout, so a regression fails the CI process rather than occupying
+a worker indefinitely.
+
 ## References
 
 - [Microsoft: Preview Handlers and Shell Preview Host]
