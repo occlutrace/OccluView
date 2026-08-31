@@ -41,7 +41,7 @@ const PIPE_NAME: &str = "OccluTrace.OccluView.OpenRequests";
 fn current_user_sid_string() -> Option<String> {
     let mut token = HANDLE::default();
     // SAFETY: `token` is an out-parameter this function owns and closes below.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) }.is_err() {
         return None;
     }
     let sid_text = read_token_user_sid(token);
@@ -53,7 +53,7 @@ fn current_user_sid_string() -> Option<String> {
 fn read_token_user_sid(token: HANDLE) -> Option<String> {
     let mut needed = 0u32;
     // SAFETY: the probing call is documented to fail with the required size.
-    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
+    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &raw mut needed) };
     if needed == 0 {
         return None;
     }
@@ -68,7 +68,7 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
             TokenUser,
             Some(buffer.as_mut_ptr().cast()),
             needed,
-            &mut needed,
+            &raw mut needed,
         )
     }
     .ok()?;
@@ -79,7 +79,7 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
     let mut sid_text = windows::core::PWSTR::null();
     // SAFETY: `sid` is a valid SID from the token; `sid_text` receives a
     // LocalAlloc'd string that is freed below.
-    unsafe { ConvertSidToStringSidW(sid, &mut sid_text) }.ok()?;
+    unsafe { ConvertSidToStringSidW(sid, &raw mut sid_text) }.ok()?;
     let owned = unsafe { sid_text.to_string() }.ok();
     // SAFETY: `sid_text` was allocated by ConvertSidToStringSidW.
     let _ = unsafe {
@@ -130,7 +130,7 @@ fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             &sddl,
             SDDL_REVISION_1,
-            &mut descriptor,
+            &raw mut descriptor,
             None,
         )
     };
@@ -254,7 +254,7 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
         WriteFile(
             pipe,
             Some(payload.as_slice()),
-            Some(&mut bytes_written),
+            Some(&raw mut bytes_written),
             None,
         )
     };
@@ -372,7 +372,7 @@ fn read_pipe_message(pipe: HANDLE) -> Result<Vec<u8>> {
             ReadFile(
                 pipe,
                 Some(chunk.as_mut_slice()),
-                Some(&mut bytes_read),
+                Some(&raw mut bytes_read),
                 None,
             )
         };

@@ -29,6 +29,11 @@
     clippy::not_unsafe_ptr_arg_deref,
     clippy::ptr_as_ptr,
     clippy::borrow_as_ptr,
+    // `windows::core::implement` generates COM vtable adapters using these
+    // patterns. Keep the exception at the FFI boundary rather than weakening
+    // Clippy for the rest of the workspace.
+    clippy::ref_as_ptr,
+    clippy::inline_always,
     clippy::unnecessary_cast,
     clippy::cast_precision_loss,
     clippy::doc_markdown,
@@ -203,11 +208,19 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
         return Err(e_fail());
     }
     let mut bgra = vec![0u8; pixels.len()];
-    for (dst, src) in bgra.chunks_exact_mut(4).zip(pixels.chunks_exact(4)) {
-        dst[0] = src[2]; // B
-        dst[1] = src[1]; // G
-        dst[2] = src[0]; // R
-        dst[3] = src[3]; // A
+    {
+        let (bgra_pixels, []) = bgra.as_chunks_mut::<4>() else {
+            return Err(e_fail());
+        };
+        let (rgba_pixels, []) = pixels.as_chunks::<4>() else {
+            return Err(e_fail());
+        };
+        for (dst, src) in bgra_pixels.iter_mut().zip(rgba_pixels) {
+            dst[0] = src[2]; // B
+            dst[1] = src[1]; // G
+            dst[2] = src[0]; // R
+            dst[3] = src[3]; // A
+        }
     }
     create_top_down_bgra_dib(width, height, &bgra)
 }

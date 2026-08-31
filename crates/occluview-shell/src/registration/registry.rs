@@ -214,8 +214,9 @@ pub(super) fn query_string_value(
     if r.0 != ERROR_SUCCESS {
         return Err(windows::core::Error::from_thread());
     }
-    let mut wide = bytes
-        .chunks_exact(2)
+    let (wide_bytes, _) = bytes.as_chunks::<2>();
+    let mut wide = wide_bytes
+        .iter()
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .collect::<Vec<_>>();
     while wide.last().copied() == Some(0) {

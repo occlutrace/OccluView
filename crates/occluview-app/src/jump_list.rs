@@ -46,7 +46,7 @@ pub(crate) fn publish_recent_files(recent: &RecentFiles) -> windows::core::Resul
         })?;
         destination_list.SetAppID(&HSTRING::from(APP_USER_MODEL_ID))?;
         let mut min_slots = 0;
-        let _removed: IObjectArray = destination_list.BeginList(&mut min_slots)?;
+        let _removed: IObjectArray = destination_list.BeginList(&raw mut min_slots)?;
 
         let collection: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
@@ -116,7 +116,7 @@ impl OwnedPropVariant {
 impl Drop for OwnedPropVariant {
     fn drop(&mut self) {
         // SAFETY: this value was constructed with a BSTR in PROPVARIANT form.
-        let _ = unsafe { PropVariantClear(&mut self.0) };
+        let _ = unsafe { PropVariantClear(&raw mut self.0) };
     }
 }
 
