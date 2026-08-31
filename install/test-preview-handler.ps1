@@ -765,7 +765,6 @@ public static class OccluViewShellPreviewSmoke
                 }
 
                 EnsurePreviewChild(child, width, height, "initial preview host size");
-                EnsurePreviewHostProcess(child);
 
                 preview.SetFocus();
                 var focused = preview.QueryFocus();

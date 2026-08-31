@@ -407,6 +407,10 @@ fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering(
         !item_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
         "shell-item rendering must not drive a private Prevhost child"
     );
+    assert!(
+        !item_probe.contains("EnsurePreviewHostProcess(child)"),
+        "the shell-item in-process contract must not assert that its own child belongs to Prevhost"
+    );
 
     let private_call =
         offset("$surrogateResult = [OccluViewShellPreviewSmoke]::ProbePrivateSurrogate(");
