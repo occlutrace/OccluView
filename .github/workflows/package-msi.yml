@@ -26,7 +26,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.ref }}
+  # A non-release diagnostic run must not cancel an ordinary package
+  # verification for the same commit. Tag and normal manual runs still share
+  # the release lane.
+  group: package-${{ github.ref }}-${{ inputs.windows_configuration || 'release' }}
   cancel-in-progress: true
 
 env:
