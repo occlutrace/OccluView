@@ -537,6 +537,11 @@ try {
 
     Write-Host "Uninstalling MSI product: $productCode"
     Invoke-MsiExec -Arguments "/x `"$productCode`" /qn /norestart" -LogPath $uninstallLog
+    if (Test-Path $previewAppIdPath) {
+        $surrogate = Get-RegistryNamedValue $previewAppIdPath "DllSurrogate"
+        $freshQuery = (& reg.exe query "HKLM\Software\Classes\AppID\$prevhostAppId" 2>&1 | Out-String).Trim()
+        Write-Host "Uninstall left preview AppID: DllSurrogate='$surrogate'; reg.exe query: $freshQuery"
+    }
     Assert-UninstalledRegistry
     if ($Diagnostic) {
         Assert-DiagnosticSwitchUnchanged $diagnosticSwitchBefore
