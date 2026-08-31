@@ -555,6 +555,10 @@ fn windows_package_lifecycle_allows_only_monotonic_major_upgrades() {
         "the downgrade probe must fail explicitly instead of relying on a later registry assertion"
     );
     assert!(
+        lifecycle.contains("ExitCode -ne 1603"),
+        "the downgrade probe must require Windows Installer's expected blocking result"
+    );
+    assert!(
         lifecycle.contains("Start-ActivePreviewHost"),
         "the MSI lifecycle smoke must upgrade while the old preview surrogate is live"
     );

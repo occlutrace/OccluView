@@ -118,10 +118,13 @@ function Invoke-MsiExecExpectFailure {
     )
 
     $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "$Arguments /l*v `"$LogPath`"" -Wait -PassThru
-    if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
-        throw "msiexec unexpectedly accepted a blocked downgrade (exit $($process.ExitCode)). Log: $LogPath"
+    if ($process.ExitCode -ne 1603) {
+        if (Test-Path $LogPath) {
+            Get-Content $LogPath -Tail 120 | Write-Host
+        }
+        throw "Expected Windows Installer downgrade block 1603, got $($process.ExitCode). Log: $LogPath"
     }
-    Write-Host "Blocked downgrade exited as expected with $($process.ExitCode)."
+    Write-Host "Blocked downgrade exited as expected with 1603."
 }
 
 function Start-ActivePreviewHost {
