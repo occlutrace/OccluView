@@ -105,6 +105,78 @@ function Invoke-MsiExec {
     }
 }
 
+function Start-ActivePreviewHost {
+    $readyMarker = "PREVIEW_HOLD_READY"
+    $workDir = Join-Path $env:TEMP ("occluview-preview-upgrade-" + [guid]::NewGuid().ToString("N"))
+    $stdoutPath = Join-Path $workDir "preview.stdout.log"
+    $stderrPath = Join-Path $workDir "preview.stderr.log"
+    $process = $null
+    New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+
+    try {
+        $currentHost = Get-Process -Id $PID -ErrorAction Stop
+        $previewSmokePath = Join-Path $PSScriptRoot "test-preview-handler.ps1"
+        $startArgs = @{
+            FilePath = $currentHost.Path
+            ArgumentList = @("-NoLogo", "-NoProfile", "-NonInteractive", "-File", ('\"{0}\"' -f $previewSmokePath), "-HoldOpenSeconds", "90")
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError = $stderrPath
+            PassThru = $true
+        }
+        $process = Start-Process @startArgs
+
+        $deadline = [Diagnostics.Stopwatch]::StartNew()
+        while ($deadline.Elapsed.TotalSeconds -lt 45) {
+            $process.Refresh()
+            if ($process.HasExited) {
+                $stdout = if (Test-Path $stdoutPath) { Get-Content -Raw $stdoutPath } else { "" }
+                $stderr = if (Test-Path $stderrPath) { Get-Content -Raw $stderrPath } else { "" }
+                throw "Preview-holder exited before activation (exit $($process.ExitCode)). stdout: $stdout stderr: $stderr"
+            }
+            if ((Test-Path $stdoutPath) -and (Select-String -Path $stdoutPath -SimpleMatch -Quiet $readyMarker)) {
+                return [pscustomobject]@{
+                    Process = $process
+                    WorkDir = $workDir
+                    StdoutPath = $stdoutPath
+                    StderrPath = $stderrPath
+                }
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        throw "Preview-holder did not report $readyMarker within 45 seconds."
+    } catch {
+        if ($null -ne $process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force
+        }
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
+function Assert-ActivePreviewHost {
+    param([Parameter(Mandatory = $true)]$Holder)
+
+    $Holder.Process.Refresh()
+    if ($Holder.Process.HasExited) {
+        $stdout = if (Test-Path $Holder.StdoutPath) { Get-Content -Raw $Holder.StdoutPath } else { "" }
+        $stderr = if (Test-Path $Holder.StderrPath) { Get-Content -Raw $Holder.StderrPath } else { "" }
+        throw "Preview-holder exited during the MSI upgrade (exit $($Holder.Process.ExitCode)). stdout: $stdout stderr: $stderr"
+    }
+}
+
+function Stop-ActivePreviewHost {
+    param([Parameter(Mandatory = $true)]$Holder)
+
+    if ($null -ne $Holder.Process) {
+        $Holder.Process.Refresh()
+        if (-not $Holder.Process.HasExited) {
+            Stop-Process -Id $Holder.Process.Id -Force
+            $Holder.Process.WaitForExit()
+        }
+    }
+    Remove-Item -LiteralPath $Holder.WorkDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 function Get-RegistryDefault {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -383,7 +455,14 @@ try {
 
     if (-not [string]::IsNullOrWhiteSpace($resolvedSameVersionUpgradeMsi)) {
         Write-Host "Upgrading with same-version MSI: $resolvedSameVersionUpgradeMsi"
-        Invoke-MsiExec -Arguments "/i `"$resolvedSameVersionUpgradeMsi`" /qn /norestart" -LogPath $sameVersionUpgradeLog
+        $previewHolder = Start-ActivePreviewHost
+        try {
+            Assert-ActivePreviewHost $previewHolder
+            Invoke-MsiExec -Arguments "/i `"$resolvedSameVersionUpgradeMsi`" /qn /norestart" -LogPath $sameVersionUpgradeLog
+            Assert-ActivePreviewHost $previewHolder
+        } finally {
+            Stop-ActivePreviewHost $previewHolder
+        }
         Assert-InstalledRegistry
         & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
         & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid

@@ -5,6 +5,7 @@ param(
     [int]$Height = 480,
     [int]$ResizeWidth = 320,
     [int]$ResizeHeight = 180,
+    [int]$HoldOpenSeconds = 0,
     [string]$PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
 )
 
@@ -334,7 +335,8 @@ public static class OccluViewShellPreviewSmoke
         int height,
         int resizeWidth,
         int resizeHeight,
-        bool useStream)
+        bool useStream,
+        int holdOpenMilliseconds)
     {
         string result = null;
         Exception failure = null;
@@ -396,6 +398,12 @@ public static class OccluViewShellPreviewSmoke
                 }
 
                 EnsurePreviewChild(child, width, height, "initial preview host size");
+
+                if (holdOpenMilliseconds > 0)
+                {
+                    Console.WriteLine("PREVIEW_HOLD_READY");
+                    Thread.Sleep(holdOpenMilliseconds);
+                }
 
                 preview.SetFocus();
                 var focused = preview.QueryFocus();
@@ -1020,6 +1028,9 @@ if ([string]::IsNullOrWhiteSpace($SamplePath)) {
 if ($Width -lt 64 -or $Height -lt 64 -or $ResizeWidth -lt 64 -or $ResizeHeight -lt 64) {
     throw "Preview smoke dimensions must be at least 64 px."
 }
+if ($HoldOpenSeconds -lt 0) {
+    throw "HoldOpenSeconds must not be negative."
+}
 
 $fileResult = [OccluViewShellPreviewSmoke]::Probe(
     $PreviewClsid,
@@ -1028,7 +1039,8 @@ $fileResult = [OccluViewShellPreviewSmoke]::Probe(
     $Height,
     $ResizeWidth,
     $ResizeHeight,
-    $false
+    $false,
+    ($HoldOpenSeconds * 1000)
 )
 
 $streamResult = [OccluViewShellPreviewSmoke]::Probe(
@@ -1038,7 +1050,8 @@ $streamResult = [OccluViewShellPreviewSmoke]::Probe(
     $Height,
     $ResizeWidth,
     $ResizeHeight,
-    $true
+    $true,
+    0
 )
 
 $itemResult = [OccluViewShellPreviewSmoke]::ProbeFromItem(

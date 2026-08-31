@@ -2,36 +2,8 @@ use crate::ShellError;
 use occluview_render::Offscreen;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Whether this build should ask wgpu for a hardware adapter. Tests use the
-/// software fallback so they do not depend on the host GPU.
-///
-/// The thumbnail crate has the same per-crate definition because `cfg!(test)`
-/// is evaluated independently for each crate.
-pub(crate) const fn should_prefer_hardware_offscreen() -> bool {
-    !cfg!(test)
-}
-
 pub(crate) fn create_shell_offscreen() -> Result<Offscreen, ShellError> {
-    if let Some(offscreen) = hardware_offscreen_that_draws() {
-        return Ok(offscreen);
-    }
     pollster::block_on(Offscreen::new()).map_err(Into::into)
-}
-
-/// A hardware renderer, but only if it can put a triangle on the screen.
-///
-/// A device that accepts commands and renders nothing would otherwise answer
-/// every scan with a blank preview pane.
-fn hardware_offscreen_that_draws() -> Option<Offscreen> {
-    if !should_prefer_hardware_offscreen() {
-        return None;
-    }
-    let offscreen = pollster::block_on(Offscreen::new_prefer_hardware()).ok()?;
-    if pollster::block_on(offscreen.can_draw()) {
-        return Some(offscreen);
-    }
-    tracing::warn!("hardware adapter drew nothing; falling back to the software rasteriser");
-    None
 }
 
 /// One offscreen renderer per host process, shared across preview loads.

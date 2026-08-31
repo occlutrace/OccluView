@@ -175,6 +175,7 @@ fn spawn_renderer_prewarm(class: &GUID) {
         return;
     }
     if *class == OCCLUVIEW_THUMBNAIL_GUID {
+        occluview_thumbnail::use_software_renderer_only();
         THUMBNAIL_RENDERER_PREWARM.get_or_init(|| {
             let _ = std::thread::Builder::new()
                 .name("occluview-thumbnail-prewarm".to_string())

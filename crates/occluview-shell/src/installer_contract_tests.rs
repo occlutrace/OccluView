@@ -324,6 +324,7 @@ fn major_upgrade_preserves_the_previous_product_until_the_new_install_succeeds()
 fn windows_package_lifecycle_exercises_a_same_version_major_upgrade() {
     let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let preview_smoke = include_str!("../../../install/test-preview-handler.ps1");
 
     assert!(
         lifecycle.contains("[string]$SameVersionUpgradeMsiPath = \"\""),
@@ -340,6 +341,26 @@ fn windows_package_lifecycle_exercises_a_same_version_major_upgrade() {
     assert!(
         workflow.contains("-SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName"),
         "Windows CI must pass the same-version MSI to lifecycle smoke"
+    );
+    assert!(
+        lifecycle.contains("Start-ActivePreviewHost"),
+        "the MSI lifecycle smoke must upgrade while the old preview surrogate is live"
+    );
+    assert!(
+        lifecycle.contains("Stop-ActivePreviewHost"),
+        "the preview-holder process must be cleaned up after the upgrade probe"
+    );
+    assert!(
+        lifecycle.contains("\"-HoldOpenSeconds\", \"90\""),
+        "the preview surrogate must remain live for the actual upgrade window"
+    );
+    assert!(
+        preview_smoke.contains("[int]$HoldOpenSeconds = 0"),
+        "the preview smoke must support holding an activated COM preview open"
+    );
+    assert!(
+        preview_smoke.contains("PREVIEW_HOLD_READY"),
+        "the lifecycle smoke needs a positive signal that the surrogate is active before upgrade"
     );
 }
 

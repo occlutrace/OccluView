@@ -53,10 +53,8 @@ fn open_with_targets_the_real_gui_binary_name() {
 
 #[test]
 fn shell_gpu_tests_use_the_stable_fallback_adapter() {
-    assert!(
-        !crate::offscreen_factory::should_prefer_hardware_offscreen(),
-        "unit tests must not depend on a Windows runner's transient hardware adapter"
-    );
+    let factory = include_str!("offscreen_factory.rs");
+    assert!(!factory.contains("Offscreen::new_prefer_hardware()"));
 }
 
 #[test]
@@ -686,25 +684,27 @@ fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 }
 
 #[test]
-fn both_offscreen_factories_choose_the_adapter_the_same_way() {
-    // The rule is duplicated because `cfg!(test)` is per crate: a shared
-    // definition answers "not under test" while this crate's own tests run, and
-    // those are exactly the ones that must not touch a hardware adapter. Hence
-    // a copy, and hence this check that the copy still matches.
-    let shell = include_str!("offscreen_factory.rs");
-    let thumbnail = include_str!("../../occluview-thumbnail/src/offscreen_factory.rs");
-    let rule = concat!(
-        "pub(crate) const fn should_prefer_hardware_offscreen() -> bool {\n",
-        "    !cfg!(test)\n",
-        "}"
+fn explorer_preview_never_activates_a_hardware_renderer() {
+    let factory = include_str!("offscreen_factory.rs");
+
+    assert!(
+        !factory.contains("Offscreen::new_prefer_hardware()"),
+        "the preview handler runs in Prevhost; it must not invoke a workstation GPU driver"
     );
-    for (crate_name, source) in [
-        ("occluview-shell", shell),
-        ("occluview-thumbnail", thumbnail),
-    ] {
-        assert!(
-            source.contains(rule),
-            "{crate_name} chooses its adapter by a different rule"
-        );
-    }
+    assert!(factory.contains("Offscreen::new()"));
+}
+
+#[test]
+fn explorer_thumbnail_host_forces_the_software_renderer_before_prewarm() {
+    let com = include_str!("com.rs");
+
+    let thumbnail_branch = com
+        .split_once("if *class == OCCLUVIEW_THUMBNAIL_GUID {")
+        .and_then(|(_, rest)| rest.split_once("} else if *class == OCCLUVIEW_PREVIEW_GUID"))
+        .map(|(branch, _)| branch)
+        .expect("thumbnail prewarm branch");
+    assert!(
+        thumbnail_branch.contains("occluview_thumbnail::use_software_renderer_only();"),
+        "the out-of-process thumbnail host must choose software before it starts its renderer"
+    );
 }
