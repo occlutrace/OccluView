@@ -272,6 +272,20 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UpdateWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool PeekMessageW(
+        out MSG lpMsg,
+        IntPtr hWnd,
+        uint wMsgFilterMin,
+        uint wMsgFilterMax,
+        uint wRemoveMsg);
+
+    [DllImport("user32.dll")]
+    private static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr DispatchMessageW(ref MSG lpMsg);
+
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
@@ -441,19 +455,9 @@ public static class OccluViewShellPreviewSmoke
 
                 EnsurePreviewChild(child, resizeWidth, resizeHeight, "resized preview host size");
 
-                var initialFrame = CaptureFrame(child);
-                EnsureFrameVisible(initialFrame, "initial resized preview frame");
-                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight);
-                if (!FramesDiffer(initialFrame, orbitFrame))
-                {
-                    throw new InvalidOperationException("Preview orbit drag did not change the rendered frame. Initial=" + initialFrame.Summary() + " orbit=" + orbitFrame.Summary());
-                }
-
-                var zoomFrame = ZoomPreview(child);
-                if (!FramesDiffer(orbitFrame, zoomFrame))
-                {
-                    throw new InvalidOperationException("Preview zoom did not change the rendered frame. Orbit=" + orbitFrame.Summary() + " zoom=" + zoomFrame.Summary());
-                }
+                var initialFrame = WaitForVisibleFrame(child, "initial resized preview frame");
+                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight, initialFrame);
+                var zoomFrame = ZoomPreview(child, orbitFrame);
 
                 preview.Unload();
 
@@ -651,19 +655,9 @@ public static class OccluViewShellPreviewSmoke
 
                 EnsurePreviewChild(child, resizeWidth, resizeHeight, "resized preview host size");
 
-                var initialFrame = CaptureFrame(child);
-                EnsureFrameVisible(initialFrame, "initial resized preview frame");
-                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight);
-                if (!FramesDiffer(initialFrame, orbitFrame))
-                {
-                    throw new InvalidOperationException("Preview orbit drag did not change the rendered frame. Initial=" + initialFrame.Summary() + " orbit=" + orbitFrame.Summary());
-                }
-
-                var zoomFrame = ZoomPreview(child);
-                if (!FramesDiffer(orbitFrame, zoomFrame))
-                {
-                    throw new InvalidOperationException("Preview zoom did not change the rendered frame. Orbit=" + orbitFrame.Summary() + " zoom=" + zoomFrame.Summary());
-                }
+                var initialFrame = WaitForVisibleFrame(child, "initial resized preview frame");
+                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight, initialFrame);
+                var zoomFrame = ZoomPreview(child, orbitFrame);
 
                 preview.Unload();
 
@@ -749,7 +743,7 @@ public static class OccluViewShellPreviewSmoke
         }
     }
 
-    private static FrameProbe OrbitPreview(IntPtr hwnd, int width, int height)
+    private static FrameProbe OrbitPreview(IntPtr hwnd, int width, int height, FrameProbe before)
     {
         int centerX = Math.Max(8, width / 2);
         int centerY = Math.Max(8, height / 2);
@@ -760,22 +754,67 @@ public static class OccluViewShellPreviewSmoke
         SendMessageW(hwnd, WM_MOUSEMOVE, new IntPtr(MK_RBUTTON), MakeLParam((centerX + dragX) / 2, (centerY + dragY) / 2));
         SendMessageW(hwnd, WM_MOUSEMOVE, new IntPtr(MK_RBUTTON), MakeLParam(dragX, dragY));
         SendMessageW(hwnd, WM_RBUTTONUP, IntPtr.Zero, MakeLParam(dragX, dragY));
-        if (!UpdateWindow(hwnd))
-        {
-            throw new InvalidOperationException("UpdateWindow failed after preview orbit drag.");
-        }
-        return CaptureFrame(hwnd);
+        return WaitForChangedFrame(hwnd, before, "preview orbit frame");
     }
 
-    private static FrameProbe ZoomPreview(IntPtr hwnd)
+    private static FrameProbe ZoomPreview(IntPtr hwnd, FrameProbe before)
     {
         IntPtr wheelWParam = new IntPtr(240 << 16);
         SendMessageW(hwnd, WM_MOUSEWHEEL, wheelWParam, IntPtr.Zero);
-        if (!UpdateWindow(hwnd))
+        return WaitForChangedFrame(hwnd, before, "preview zoom frame");
+    }
+
+    private static FrameProbe WaitForVisibleFrame(IntPtr hwnd, string label)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        FrameProbe latest = null;
+        while (deadline.ElapsedMilliseconds < 10000)
         {
-            throw new InvalidOperationException("UpdateWindow failed after preview zoom.");
+            PumpMessages(hwnd);
+            if (!UpdateWindow(hwnd))
+            {
+                throw new InvalidOperationException("UpdateWindow failed while waiting for " + label + ".");
+            }
+            latest = CaptureFrame(hwnd);
+            if (latest.VisiblePixels >= 64)
+            {
+                return latest;
+            }
+            Thread.Sleep(25);
         }
-        return CaptureFrame(hwnd);
+        throw new InvalidOperationException(label + " did not contain enough visible geometry within 10 seconds. " + (latest == null ? "no frame" : latest.Summary()));
+    }
+
+    private static FrameProbe WaitForChangedFrame(IntPtr hwnd, FrameProbe before, string label)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        FrameProbe latest = null;
+        while (deadline.ElapsedMilliseconds < 10000)
+        {
+            PumpMessages(hwnd);
+            if (!UpdateWindow(hwnd))
+            {
+                throw new InvalidOperationException("UpdateWindow failed while waiting for " + label + ".");
+            }
+            latest = CaptureFrame(hwnd);
+            if (FramesDiffer(before, latest))
+            {
+                return latest;
+            }
+            Thread.Sleep(25);
+        }
+        throw new InvalidOperationException(label + " did not change within 10 seconds. Before=" + before.Summary() + " latest=" + (latest == null ? "no frame" : latest.Summary()));
+    }
+
+    private static void PumpMessages(IntPtr hwnd)
+    {
+        const uint PM_REMOVE = 0x0001;
+        MSG message;
+        while (PeekMessageW(out message, hwnd, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(ref message);
+            DispatchMessageW(ref message);
+        }
     }
 
     private static void EnsureFrameVisible(FrameProbe frame, string label)

@@ -278,6 +278,18 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     assert!(smoke.contains("WM_RBUTTONDOWN"));
     assert!(smoke.contains("WM_MOUSEWHEEL"));
     assert!(smoke.contains("CaptureFrame"));
+    assert!(smoke.contains("WaitForVisibleFrame"));
+    assert!(smoke.contains("WaitForChangedFrame"));
+    assert!(smoke.contains("PumpMessages"));
+    assert!(smoke.contains("PeekMessageW"));
+    assert!(
+        smoke.contains("private static void PumpMessages(IntPtr hwnd)"),
+        "the smoke message pump must receive the preview child handle explicitly"
+    );
+    assert!(
+        smoke.contains("PeekMessageW(out message, hwnd"),
+        "the smoke pump must service only the test preview child, not consume unrelated STA messages"
+    );
     assert!(smoke.contains("FramesDiffer"));
     assert!(smoke.contains("VisiblePixels"));
     assert!(smoke.contains("OrbitPreview"));
@@ -300,10 +312,9 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     let query_focus = offset("IntPtr QueryFocus();");
     let translate = offset("int TranslateAccelerator(ref MSG pmsg);");
     let resize = offset("preview.SetRect(ref resizedRect);");
-    let update_after_resize = smoke[resize..].find("UpdateWindow(child)");
     assert!(
-        update_after_resize.is_some(),
-        "missing UpdateWindow(child) call after preview resize"
+        smoke[resize..].contains("WaitForVisibleFrame(child, \"initial resized preview frame\")"),
+        "the asynchronous Preview Handler smoke must wait for the resized frame instead of capturing it immediately"
     );
     assert!(
         smoke.contains("preview.SetFocus();"),
@@ -332,20 +343,24 @@ fn com_lazy_stream_paths_release_source_borrow_before_rendering() {
 }
 
 #[test]
-fn preview_render_forces_paint_after_bitmap_refresh() {
+fn preview_render_invalidates_without_a_synchronous_paint_round_trip() {
     let com = combined_com_source();
     let start = com
-        .find("fn render_preview_now(&self)")
-        .expect("missing render_preview_now");
+        .find("fn render_scheduled_preview(&self")
+        .expect("missing deferred preview render");
     let end = com[start..]
         .find("fn replace_preview_bitmap(&self")
-        .expect("missing replace_preview_bitmap after render_preview_now");
+        .expect("missing replace_preview_bitmap after deferred preview render");
     let render_now = &com[start..start + end];
 
     assert!(
-            render_now.contains("RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW)"),
-            "preview render should synchronously invalidate and paint after resize/interaction so preview captures are never a blank host background"
-        );
+        render_now.contains("InvalidateRect(Some(hwnd), None, false)"),
+        "the deferred render should request an ordinary later paint"
+    );
+    assert!(
+        !render_now.contains("RDW_UPDATENOW"),
+        "a Preview Handler must never synchronously paint while servicing a shell callback"
+    );
 }
 
 #[test]
@@ -361,7 +376,10 @@ fn preview_reuses_one_process_shared_offscreen_renderer() {
 
     assert!(factory.contains("fn shared_shell_offscreen()"));
     assert!(factory.contains("fn discard_shared_shell_offscreen("));
-    assert!(factory.contains("fn prewarm_shared_shell_offscreen()"));
+    assert!(
+        !factory.contains("fn prewarm_shared_shell_offscreen()"),
+        "preview renderer initialization must have exactly one deferred owner, not a competing activation prewarm"
+    );
     assert!(load.contains("let offscreen = shared_shell_offscreen()?;"));
     assert!(
         !load.contains("create_shell_offscreen()"),
@@ -371,10 +389,10 @@ fn preview_reuses_one_process_shared_offscreen_renderer() {
 }
 
 #[test]
-fn preview_resize_renders_once_through_wm_size() {
-    // MoveWindow synchronously delivers WM_SIZE when the size changed, and the
-    // WM_SIZE handler re-renders. A second explicit render in SetRect/SetWindow
-    // made every host resize pay two full GPU renders and readbacks.
+fn preview_callbacks_coalesce_work_onto_a_private_window_message() {
+    // MoveWindow synchronously delivers WM_SIZE when the size changed. The
+    // handler must return to Explorer before it parses or renders, then make
+    // one later, coalesced render request for the final geometry.
     let preview = include_str!("com/preview.rs");
     let window = include_str!("com/preview/window.rs");
 
@@ -390,17 +408,65 @@ fn preview_resize_renders_once_through_wm_size() {
         .expect("SetRect follows SetWindow");
 
     assert!(
-        !preview[set_rect_start..set_rect_end].contains("render_preview_now"),
-        "SetRect must leave the re-render to the WM_SIZE handler"
+        !preview[set_rect_start..set_rect_end].contains("render_scheduled_preview"),
+        "SetRect must not render synchronously"
     );
     assert!(
-        !preview[set_window_start..set_window_end].contains("render_preview_now"),
-        "SetWindow must leave the re-render to the WM_SIZE handler"
+        !preview[set_window_start..set_window_end].contains("render_scheduled_preview"),
+        "SetWindow must not render synchronously"
     );
     let wm_size = window.find("WM_SIZE =>").expect("WM_SIZE arm");
     assert!(
-        window[wm_size..].contains("render_preview_now"),
-        "the WM_SIZE handler owns the resize re-render"
+        window[wm_size..].contains("schedule_preview_render"),
+        "WM_SIZE must schedule, rather than perform, the resize render"
+    );
+    let do_preview_start = preview.find("fn DoPreview(").expect("DoPreview impl");
+    let do_preview_end = preview[do_preview_start..]
+        .find("fn Unload(")
+        .map(|offset| do_preview_start + offset)
+        .expect("Unload follows DoPreview");
+    assert!(
+        preview[do_preview_start..do_preview_end].contains("schedule_preview_render"),
+        "DoPreview must return before parsing or rendering the source"
+    );
+}
+
+#[test]
+fn preview_render_messages_cannot_outlive_the_window_owner() {
+    let preview = include_str!("com/preview.rs");
+    let window = include_str!("com/preview/window.rs");
+
+    assert!(preview.contains("pending_render_token"));
+    assert!(preview.contains("fn clear_pending_preview_render(&self)"));
+    assert!(preview.contains("self.clear_pending_preview_render();"));
+    let compact_preview = preview.split_whitespace().collect::<String>();
+    assert!(compact_preview.contains("PostMessageW(Some(hwnd),WM_OCCLUVIEW_RENDER_PREVIEW"));
+    assert!(window.contains("WM_OCCLUVIEW_RENDER_PREVIEW"));
+    assert!(window.contains("render_scheduled_preview(hwnd, wparam)"));
+    let nc_destroy = window.find("WM_NCDESTROY =>").expect("WM_NCDESTROY arm");
+    assert!(
+        window[nc_destroy..].contains("handler.clear_pending_preview_render();"),
+        "a parent-driven child destruction must clear the pending token before a new window can schedule work"
+    );
+    assert!(
+        window.contains("window_owns_handler(hwnd, std::ptr::from_ref(handler))"),
+        "a deferred message must check that the current HWND still belongs to the handler before dereferencing it"
+    );
+    let deferred_start = preview
+        .find("fn render_scheduled_preview(&self")
+        .expect("missing deferred render method");
+    let deferred_end = preview[deferred_start..]
+        .find("fn clear_pending_preview_render(&self)")
+        .map(|offset| deferred_start + offset)
+        .expect("missing pending-render cleanup after deferred render method");
+    let deferred = &preview[deferred_start..deferred_end];
+    assert!(
+        deferred.contains("self.pending_render_token.get() != Some(token)"),
+        "a stale message must compare its token without clearing a newer render request"
+    );
+    assert!(
+        deferred.contains("self.pending_render_token.set(None);"),
+        "only the matching render message may consume the pending token"
     );
 }
 
@@ -456,16 +522,16 @@ fn every_com_boundary_is_panic_guarded() {
 }
 
 #[test]
-fn class_activation_prewarms_the_matching_renderer() {
-    // Under Apartment hosting the first GetThumbnail serializes in front of a
-    // whole folder's queue; starting device creation at class activation
-    // overlaps it with Initialize instead. Each host warms only its own path.
+fn class_activation_prewarms_only_the_thumbnail_renderer() {
+    // Thumbnail activation is a throughput problem: it runs outside Explorer
+    // and has a separate renderer. Preview activation must not race a private
+    // preview message with a background device creation thread.
     let com = include_str!("com.rs");
 
     assert!(com.contains("fn spawn_renderer_prewarm(class: &GUID)"));
     assert!(com.contains("spawn_renderer_prewarm(&requested);"));
     assert!(com.contains("prewarm_thumbnail_renderer"));
-    assert!(com.contains("prewarm_shared_shell_offscreen"));
+    assert!(!com.contains("prewarm_shared_shell_offscreen"));
 }
 
 #[test]

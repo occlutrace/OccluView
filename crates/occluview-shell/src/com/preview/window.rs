@@ -2,15 +2,17 @@ use super::super::{
     com_entry, e_fail, own_pinned_dll_module, DefWindowProcW, RegisterClassW, ReleaseCapture,
     SetCapture, SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
     HINSTANCE, HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME,
-    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SIZE, WNDCLASSW, WPARAM,
+    WM_APP, WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WPARAM,
 };
 
 /// Virtual-key code for the `F` (fit view) shortcut.
 const VK_F: u32 = 0x46;
 /// Virtual-key code for the `W` (wireframe toggle) shortcut.
 const VK_W: u32 = 0x57;
+/// Private, coalesced work item. Only this preview child processes it.
+pub(super) const WM_OCCLUVIEW_RENDER_PREVIEW: u32 = WM_APP + 0x31;
 use super::{PreviewDragMode, PreviewHandler};
 
 pub(super) fn ensure_preview_window_class() -> windows::core::Result<()> {
@@ -84,6 +86,17 @@ unsafe fn preview_window_proc_body(
         WM_PAINT => {
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 handler.paint_preview(hwnd);
+                return LRESULT(0);
+            }
+        }
+        WM_OCCLUVIEW_RENDER_PREVIEW => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                // Unload clears GWLP_USERDATA before it destroys the child.
+                // The token also rejects an old posted message if USER32 has
+                // already reused this HWND for a new PreviewHandler.
+                if window_owns_handler(hwnd, std::ptr::from_ref(handler)) {
+                    handler.render_scheduled_preview(hwnd, wparam);
+                }
                 return LRESULT(0);
             }
         }
@@ -170,7 +183,7 @@ unsafe fn preview_window_proc_body(
         WM_SIZE => {
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 if handler.preview_bitmap.borrow().is_some() {
-                    let _ = handler.render_preview_now();
+                    let _ = handler.schedule_preview_render();
                 }
                 return LRESULT(0);
             }
@@ -194,6 +207,7 @@ unsafe fn preview_window_proc_body(
                 if handler.preview_hwnd.get() == hwnd {
                     handler.preview_hwnd.set(HWND::default());
                 }
+                handler.clear_pending_preview_render();
             }
             // SAFETY: clearing the slot this wndproc set at WM_NCCREATE.
             unsafe {

@@ -63,8 +63,8 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, EndPaint,
-    RedrawWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
-    HGDIOBJ, PAINTSTRUCT, RDW_INVALIDATE, RDW_UPDATENOW, SRCCOPY,
+    InvalidateRect, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
+    HGDIOBJ, PAINTSTRUCT, SRCCOPY,
 };
 use windows::Win32::System::Com::STREAM_SEEK_SET;
 use windows::Win32::System::Com::{
@@ -93,11 +93,11 @@ use windows::Win32::UI::Shell::{
     WTS_ALPHATYPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, RegisterClassW, SetParent,
-    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG, WINDOW_EX_STYLE,
-    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, PostMessageW, RegisterClassW,
+    SetParent, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG,
+    WINDOW_EX_STYLE, WM_APP, WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod thumbnail_provider;
@@ -133,17 +133,16 @@ static ACTIVE_COM_OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);
 static PREVIEW_WINDOW_CLASS: OnceLock<Result<(), HRESULT>> = OnceLock::new();
 static THUMBNAIL_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
-static PREVIEW_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
+static NEXT_PREVIEW_RENDER_TOKEN: AtomicUsize = AtomicUsize::new(1);
 
 /// This DLL's own module handle, pinned into the process.
 ///
 /// Two kinds of code in this DLL outlive COM's refcount view of it: the
 /// preview window class's wndproc (a raw function pointer registered with
-/// USER32), and the background threads — prewarm, and render workers that
-/// keep going after a caller times out. `DllCanUnloadNow` counts only live
-/// COM objects, so without the pin COM could unmap the image while any of
-/// those still execute inside it. A pinned module is a small, bounded cost:
-/// the shell recycles its surrogate hosts anyway.
+/// USER32), and the thumbnail prewarm thread. `DllCanUnloadNow` counts only
+/// live COM objects, so without the pin COM could unmap the image while either
+/// still executes inside it. A pinned module is a small, bounded cost: the
+/// shell recycles its surrogate hosts anyway.
 pub(super) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
 {
     // An address inside our own mapped image, used to find the DLL's module.
@@ -160,14 +159,11 @@ pub(super) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::F
 
 /// Start renderer creation the moment the host activates one of our classes.
 ///
-/// Both surrogate hosts activate the class well before the first heavy call
-/// (`GetThumbnail` in `dllhost`, `DoPreview` in `prevhost`), and wgpu
-/// instance + adapter + device + pipeline creation is a fixed cost of one to
-/// several hundred milliseconds. Warming on a background thread overlaps that
-/// cost with the shell's Initialize / stream-copy phase; the per-class gates
-/// keep it to a single attempt per process, and only the requested class's
-/// renderer warms so a thumbnail host never builds the preview device (or
-/// vice versa).
+/// Thumbnail hosts activate the class before their first render. Warming the
+/// thumbnail renderer overlaps that fixed cost with stream initialization.
+/// Preview hosts deliberately do not prewarm: their renderer creation must be
+/// serialized by the preview window's deferred message, never raced from class
+/// activation while Explorer is entering a handler call.
 fn spawn_renderer_prewarm(class: &GUID) {
     // Pin before the first background thread exists (see
     // `own_pinned_dll_module`); a failed pin only means we skip the warmup.
@@ -180,12 +176,6 @@ fn spawn_renderer_prewarm(class: &GUID) {
             let _ = std::thread::Builder::new()
                 .name("occluview-thumbnail-prewarm".to_string())
                 .spawn(occluview_thumbnail::render_thumb::prewarm_thumbnail_renderer);
-        });
-    } else if *class == OCCLUVIEW_PREVIEW_GUID {
-        PREVIEW_RENDERER_PREWARM.get_or_init(|| {
-            let _ = std::thread::Builder::new()
-                .name("occluview-preview-prewarm".to_string())
-                .spawn(crate::offscreen_factory::prewarm_shared_shell_offscreen);
         });
     }
 }

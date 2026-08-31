@@ -6,12 +6,13 @@ use super::{
     GetKeyboardFocus, IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl,
     IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
     IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
-    IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface, MoveWindow,
-    Ordering, PathBuf, PreviewSceneState, RedrawWindow, Ref, SelectObject, SetKeyboardFocus,
-    SetParent, ShellError, StreamRead, ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS,
-    BOOL, GUID, GWLP_USERDATA, HBITMAP, HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG,
-    PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT,
-    SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface,
+    InvalidateRect, MoveWindow, Ordering, PathBuf, PostMessageW, PreviewSceneState, Ref,
+    SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead, ThumbnailProvider,
+    ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP, HGDIOBJ,
+    HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, NEXT_PREVIEW_RENDER_TOKEN, PAINTSTRUCT,
+    PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RECT, SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE,
+    WPARAM, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod context_menu;
@@ -19,7 +20,7 @@ mod theme;
 mod window;
 
 use theme::preview_theme;
-use window::ensure_preview_window_class;
+use window::{ensure_preview_window_class, WM_OCCLUVIEW_RENDER_PREVIEW};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PreviewDragMode {
@@ -55,6 +56,7 @@ pub struct PreviewHandler {
     drag_mode: std::cell::Cell<PreviewDragMode>,
     last_pointer: std::cell::Cell<POINT>,
     drag_moved: std::cell::Cell<bool>,
+    pending_render_token: std::cell::Cell<Option<usize>>,
 }
 
 impl PreviewHandler {
@@ -72,6 +74,7 @@ impl PreviewHandler {
             drag_mode: std::cell::Cell::new(PreviewDragMode::None),
             last_pointer: std::cell::Cell::new(POINT::default()),
             drag_moved: std::cell::Cell::new(false),
+            pending_render_token: std::cell::Cell::new(None),
         }
     }
 
@@ -212,19 +215,66 @@ impl PreviewHandler {
         Ok(())
     }
 
-    fn render_preview_now(&self) -> windows::core::Result<()> {
+    /// Queue one render for this window, collapsing resize and interaction
+    /// bursts into the latest scene state. This stays small enough to call
+    /// from COM methods and the window procedure.
+    fn schedule_preview_render(&self) -> windows::core::Result<()> {
         let hwnd = self.preview_hwnd.get();
         if hwnd.0.is_null() {
             return Err(e_fail());
         }
-        let (width, height) = self.preview_size();
-        let hbmp = self.preview_render_to_hbitmap(width, height)?;
-        self.replace_preview_bitmap(hbmp);
-        // SAFETY: `hwnd` is our live preview child window.
-        if unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW) }.0 == 0 {
-            return Err(e_fail());
+        if self.pending_render_token.get().is_some() {
+            return Ok(());
+        }
+        let token = NEXT_PREVIEW_RENDER_TOKEN
+            .fetch_add(1, Ordering::AcqRel)
+            .max(1);
+        self.pending_render_token.set(Some(token));
+        // SAFETY: `hwnd` is the child preview window owned by this handler.
+        if let Err(error) = unsafe {
+            PostMessageW(
+                Some(hwnd),
+                WM_OCCLUVIEW_RENDER_PREVIEW,
+                WPARAM(token),
+                Default::default(),
+            )
+        } {
+            self.pending_render_token.set(None);
+            return Err(error);
         }
         Ok(())
+    }
+
+    /// Compatibility choke point for scene mutations in the context-menu
+    /// module. It schedules work; it never performs a render on the caller's
+    /// COM or window-procedure stack.
+    fn render_preview_now(&self) -> windows::core::Result<()> {
+        self.schedule_preview_render()
+    }
+
+    fn render_scheduled_preview(&self, hwnd: HWND, wparam: WPARAM) {
+        let token = wparam.0;
+        if self.preview_hwnd.get() != hwnd || self.pending_render_token.get() != Some(token) {
+            return;
+        }
+        self.pending_render_token.set(None);
+        let (width, height) = self.preview_size();
+        match self.preview_render_to_hbitmap(width, height) {
+            Ok(hbmp) => self.replace_preview_bitmap(hbmp),
+            Err(error) => {
+                tracing::warn!(?error, "deferred preview render failed");
+                return;
+            }
+        }
+        // SAFETY: `hwnd` is still owned by this handler and a normal invalidation
+        // lets the host paint only after the render callback has returned.
+        if unsafe { InvalidateRect(Some(hwnd), None, false) }.0 == 0 {
+            tracing::warn!("could not invalidate deferred preview frame");
+        }
+    }
+
+    fn clear_pending_preview_render(&self) {
+        self.pending_render_token.set(None);
     }
 
     fn replace_preview_bitmap(&self, hbmp: HBITMAP) {
@@ -285,6 +335,7 @@ impl PreviewHandler {
     }
 
     fn destroy_preview_window(&self) {
+        self.clear_pending_preview_render();
         let hwnd = self.preview_hwnd.replace(HWND::default());
         if !hwnd.0.is_null() {
             // Cut the window's link to this object BEFORE destroying it, and do
@@ -512,7 +563,7 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
             || Err(e_fail()),
             || {
                 let _ = self.this.ensure_preview_window()?;
-                self.this.render_preview_now()
+                self.this.schedule_preview_render()
             },
         )
     }

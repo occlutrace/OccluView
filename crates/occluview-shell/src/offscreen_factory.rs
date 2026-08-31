@@ -26,12 +26,6 @@ pub(crate) fn shared_shell_offscreen() -> Result<Arc<Offscreen>, ShellError> {
     Ok(offscreen)
 }
 
-/// Warm the shared preview renderer ahead of the first `DoPreview`.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn prewarm_shared_shell_offscreen() {
-    let _ = shared_shell_offscreen();
-}
-
 /// Retire the shared renderer after a render on it failed. A replacement
 /// created concurrently is preserved.
 pub(crate) fn discard_shared_shell_offscreen(sick: &Arc<Offscreen>) {
