@@ -266,6 +266,18 @@ fn windows_package_runtime_audits_cover_the_full_dynamic_crt_family() {
     let msi_build = include_str!("../../../install/build-msi.ps1");
     let windows_build = include_str!("../../../scripts/build-windows-msvc.sh");
 
+    for required_probe in [
+        "function Find-DumpBin",
+        "vswhere.exe",
+        "Microsoft.VCToolsVersion.default.txt",
+        "Hostx64\\x64\\dumpbin.exe",
+    ] {
+        assert!(
+            msi_build.contains(required_probe),
+            "the native MSI build must locate dumpbin without assuming Visual Studio tools are on PATH: {required_probe}"
+        );
+    }
+
     for (surface, source) in [
         ("native Windows MSI build", msi_build),
         ("Linux-to-Windows MSI build", windows_build),

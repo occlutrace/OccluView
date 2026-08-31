@@ -160,16 +160,61 @@ function Sign-WindowsArtifact {
     Write-Host "Signed: $Path"
 }
 
+function Find-DumpBin {
+    $command = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+    if ($null -ne $command) {
+        return $command.Source
+    }
+
+    # GitHub's Windows image has the native tools installed, but does not put
+    # their Visual Studio directory on PATH for a plain pwsh step. Locate the
+    # selected MSVC toolset through the supported Visual Studio Installer
+    # entry point instead of relying on a runner-specific PATH mutation.
+    $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+    if (-not (Test-HasText $programFilesX86)) {
+        return $null
+    }
+    $vswhere = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) {
+        return $null
+    }
+
+    $installations = @(& $vswhere -products * -sort -property installationPath)
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+    foreach ($installation in $installations) {
+        $installationPath = "$installation".Trim()
+        if (-not (Test-HasText $installationPath)) {
+            continue
+        }
+        $versionFile = Join-Path $installationPath "VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt"
+        if (-not (Test-Path $versionFile)) {
+            continue
+        }
+        $toolsetVersion = (Get-Content $versionFile -Raw).Trim()
+        if (-not (Test-HasText $toolsetVersion)) {
+            continue
+        }
+        $candidate = Join-Path $installationPath "VC\Tools\MSVC\$toolsetVersion\bin\Hostx64\x64\dumpbin.exe"
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 function Assert-StaticMsvcRuntime {
     param([Parameter(Mandatory = $true)][string[]]$Paths)
 
-    $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
-    if ($null -eq $dumpbin) {
+    $dumpbin = Find-DumpBin
+    if (-not (Test-HasText $dumpbin)) {
         throw "dumpbin.exe is required to verify that the MSI payload does not depend on the VC++ runtime."
     }
 
     foreach ($path in $Paths) {
-        $imports = & $dumpbin.Source /imports $path 2>&1
+        $imports = & $dumpbin /imports $path 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "dumpbin.exe could not inspect imports for $path"
         }
