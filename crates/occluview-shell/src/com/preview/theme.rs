@@ -46,7 +46,7 @@ fn windows_apps_use_light_theme() -> Option<bool> {
         RegOpenKeyExW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            0,
+            None,
             KEY_QUERY_VALUE,
             &mut hkey,
         )

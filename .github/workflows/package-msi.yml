@@ -146,7 +146,7 @@ jobs:
             if ($sig.Status -ne "Valid") { throw "Authenticode signature for $path is $($sig.Status): $($sig.StatusMessage)" }
             Write-Host "Authenticode valid: $path ($($sig.SignerCertificate.Subject))"
           }
-      - name: Build upgrade smoke MSI
+      - name: Build upgrade smoke MSIs
         shell: pwsh
         env:
           OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
@@ -156,6 +156,8 @@ jobs:
           $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
           if (-not $match.Success) { throw "Could not find workspace package version." }
           $version = [version]$match.Groups[1].Value
+          $sameVersionSmokeDir = Join-Path $env:RUNNER_TEMP "occluview-msi-same-version-upgrade"
+          ./install/build-msi.ps1 -Version $version -OutputDir $sameVersionSmokeDir -SkipBuild -SignMode auto
           $upgradeVersion = "{0}.{1}.{2}" -f $version.Major, $version.Minor, ($version.Build + 1)
           $smokeDir = Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade"
           ./install/build-msi.ps1 -Version $upgradeVersion -OutputDir $smokeDir -SkipBuild -SignMode auto
@@ -163,8 +165,9 @@ jobs:
         shell: pwsh
         run: |
           $releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $sameVersionUpgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-same-version-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $upgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
+          ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
       - name: Write Windows checksums
         shell: pwsh
         run: |

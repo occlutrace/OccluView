@@ -91,7 +91,7 @@ unsafe fn preview_window_proc_body(
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 let point = point_from_lparam(lparam);
                 handler.begin_drag(PreviewDragMode::Orbit, point);
-                let _ = unsafe { SetKeyboardFocus(hwnd) };
+                let _ = unsafe { SetKeyboardFocus(Some(hwnd)) };
                 unsafe { SetCapture(hwnd) };
                 return LRESULT(0);
             }
@@ -100,7 +100,7 @@ unsafe fn preview_window_proc_body(
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 let point = point_from_lparam(lparam);
                 handler.begin_drag(PreviewDragMode::Pan, point);
-                let _ = unsafe { SetKeyboardFocus(hwnd) };
+                let _ = unsafe { SetKeyboardFocus(Some(hwnd)) };
                 unsafe { SetCapture(hwnd) };
                 return LRESULT(0);
             }

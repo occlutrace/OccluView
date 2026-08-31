@@ -229,6 +229,95 @@ fn candidate_package_builds_are_lockfile_strict() {
 }
 
 #[test]
+fn windows_package_builds_link_the_msvc_runtime_statically() {
+    // The MSI invokes occluview.exe during installation.  A package that
+    // depends on a separately installed VC++ runtime can therefore roll back
+    // before it has shown the operator anything, especially under /qn.
+    let msi_build = include_str!("../../../install/build-msi.ps1");
+    let windows_build = include_str!("../../../scripts/build-windows-msvc.sh");
+
+    for (surface, source) in [
+        ("native Windows MSI build", msi_build),
+        ("Linux-to-Windows MSI build", windows_build),
+    ] {
+        assert!(
+            source.contains("target-feature=+crt-static"),
+            "{surface} must not depend on a preinstalled VC++ runtime"
+        );
+    }
+}
+
+#[test]
+fn windows_package_runtime_audits_cover_the_full_dynamic_crt_family() {
+    let msi_build = include_str!("../../../install/build-msi.ps1");
+    let windows_build = include_str!("../../../scripts/build-windows-msvc.sh");
+
+    for (surface, source) in [
+        ("native Windows MSI build", msi_build),
+        ("Linux-to-Windows MSI build", windows_build),
+    ] {
+        let normalized_source = source.to_ascii_lowercase();
+        for import_name in ["VCRUNTIME", "MSVCP", "UCRTBASE", "api-ms-win-crt-"] {
+            assert!(
+                normalized_source.contains(&import_name.to_ascii_lowercase()),
+                "{surface} must reject dynamic CRT import family {import_name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn linux_runtime_audit_does_not_mask_a_match_under_pipefail() {
+    let windows_build = include_str!("../../../scripts/build-windows-msvc.sh");
+
+    assert!(
+        !windows_build.contains("grep -Eiq"),
+        "grep -q may close early and hide a dynamic CRT import under pipefail"
+    );
+    assert!(
+        windows_build.contains("grep -Ei") && windows_build.contains(">/dev/null"),
+        "the import matcher must consume objdump output before checking its status"
+    );
+}
+
+#[test]
+fn major_upgrade_preserves_the_previous_product_until_the_new_install_succeeds() {
+    let wxs = include_str!("../../../install/occluview.wxs");
+
+    assert!(
+        wxs.contains("Schedule=\"afterInstallInitialize\""),
+        "a failed major upgrade must roll the previous product back into place"
+    );
+    assert!(
+        wxs.contains("REMOVE=\"ALL\" AND NOT UPGRADINGPRODUCTCODE"),
+        "the old product must not run its uninstall shell refresh during a major upgrade"
+    );
+}
+
+#[test]
+fn windows_package_lifecycle_exercises_a_same_version_major_upgrade() {
+    let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+
+    assert!(
+        lifecycle.contains("[string]$SameVersionUpgradeMsiPath = \"\""),
+        "the lifecycle smoke needs a distinct same-version upgrade input"
+    );
+    assert!(
+        lifecycle.contains("Upgrading with same-version MSI:"),
+        "the lifecycle smoke must execute the same-version package"
+    );
+    assert!(
+        workflow.contains("occluview-msi-same-version-upgrade"),
+        "Windows CI must build a same-version MSI with a new ProductCode"
+    );
+    assert!(
+        workflow.contains("-SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName"),
+        "Windows CI must pass the same-version MSI to lifecycle smoke"
+    );
+}
+
+#[test]
 fn package_sbom_generation_is_lockfile_guarded() {
     // cargo-cyclonedx 0.5.8 has no --locked option.  The metadata preflight
     // fixes the resolved graph, while the diff guard stops a modified lockfile

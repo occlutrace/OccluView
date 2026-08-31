@@ -54,7 +54,7 @@ default-members = [
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 rust-version = "1.98"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
@@ -139,7 +139,7 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 # NOTE: the windows-rs dependency is declared per crate, not here. A workspace
 # entry used to carry a tidy commented feature list that neither consumer read
-# -- it pinned `version = "0"` while both real declarations pin 0.58 -- so
+# -- it pinned `version = "0"` while both real declarations pin 0.62 -- so
 # adding a feature to it changed nothing and cost an afternoon to work out. The
 # feature sets live in `crates/occluview-shell/Cargo.toml`,
 # `crates/occluview-app/Cargo.toml` and `crates/occluview-formats/Cargo.toml`,

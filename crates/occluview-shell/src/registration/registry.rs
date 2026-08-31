@@ -25,7 +25,7 @@ pub(super) fn create_key_at(root: HKEY, subkey: &HSTRING) -> windows::core::Resu
     if r.0 == ERROR_SUCCESS {
         Ok(hkey)
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
@@ -45,7 +45,7 @@ pub(super) fn open_key_for_value_update_at(
         RegOpenKeyExW(
             root,
             PCWSTR(subkey.as_ptr()),
-            0,
+            None,
             KEY_QUERY_VALUE | KEY_SET_VALUE,
             &mut hkey,
         )
@@ -55,7 +55,7 @@ pub(super) fn open_key_for_value_update_at(
     } else if r.0 == ERROR_FILE_NOT_FOUND || r.0 == ERROR_PATH_NOT_FOUND {
         Ok(None)
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
@@ -70,18 +70,18 @@ pub(super) fn set_string(
         None => PCWSTR::null(),
     };
     // Include the trailing NUL wide char in the byte length.
-    let bytes = value.as_wide();
-    let byte_len = (bytes.len() + 1) * 2;
+    let units: &[u16] = value;
+    let byte_len = (units.len() + 1) * 2;
     // SAFETY: `value`'s wide buffer is valid for byte_len bytes; the trailing
     // NUL is implicit in HSTRING's allocation.
     let r = unsafe {
         RegSetValueExW(
             hkey,
             name_pcwstr,
-            0,
+            None,
             REG_SZ,
             Some(std::slice::from_raw_parts(
-                bytes.as_ptr() as *const u8,
+                units.as_ptr().cast::<u8>(),
                 byte_len,
             )),
         )
@@ -89,18 +89,18 @@ pub(super) fn set_string(
     if r.0 == ERROR_SUCCESS {
         Ok(())
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
 pub(super) fn set_dword(hkey: HKEY, name: &HSTRING, value: u32) -> windows::core::Result<()> {
     let bytes = value.to_le_bytes();
     // SAFETY: `bytes` is exactly four bytes, as required for REG_DWORD.
-    let r = unsafe { RegSetValueExW(hkey, PCWSTR(name.as_ptr()), 0, REG_DWORD, Some(&bytes)) };
+    let r = unsafe { RegSetValueExW(hkey, PCWSTR(name.as_ptr()), None, REG_DWORD, Some(&bytes)) };
     if r.0 == ERROR_SUCCESS {
         Ok(())
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
@@ -126,7 +126,7 @@ pub(super) fn delete_value_at(
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
@@ -142,10 +142,7 @@ pub(super) fn delete_value_if_matches(
         return Ok(());
     };
     let current = query_string_value(hkey, name)?;
-    let result = if current
-        .as_ref()
-        .is_some_and(|value| value.as_wide() == expected.as_wide())
-    {
+    let result = if current.as_ref().is_some_and(|value| value == expected) {
         let name_pcwstr = value_name_pcwstr(name);
         // SAFETY: `hkey` is open and `name_pcwstr` is either null or a live
         // HSTRING pointer.
@@ -153,7 +150,7 @@ pub(super) fn delete_value_if_matches(
         if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
             Ok(())
         } else {
-            Err(windows::core::Error::from_win32())
+            Err(windows::core::Error::from_thread())
         }
     } else {
         Ok(())
@@ -171,9 +168,7 @@ pub(super) fn key_default_matches(
     };
     let current = query_string_value(hkey, None)?;
     let _ = unsafe { RegCloseKey(hkey) };
-    Ok(current
-        .as_ref()
-        .is_some_and(|value| value.as_wide() == expected.as_wide()))
+    Ok(current.as_ref().is_some_and(|value| value == expected))
 }
 
 pub(super) fn query_string_value(
@@ -198,7 +193,7 @@ pub(super) fn query_string_value(
         return Ok(None);
     }
     if r.0 != ERROR_SUCCESS {
-        return Err(windows::core::Error::from_win32());
+        return Err(windows::core::Error::from_thread());
     }
     if value_type != REG_SZ || byte_len == 0 {
         return Ok(None);
@@ -217,7 +212,7 @@ pub(super) fn query_string_value(
         )
     };
     if r.0 != ERROR_SUCCESS {
-        return Err(windows::core::Error::from_win32());
+        return Err(windows::core::Error::from_thread());
     }
     let mut wide = bytes
         .chunks_exact(2)
@@ -226,7 +221,7 @@ pub(super) fn query_string_value(
     while wide.last().copied() == Some(0) {
         let _ = wide.pop();
     }
-    Ok(Some(HSTRING::from_wide(&wide).unwrap_or_default()))
+    Ok(Some(HSTRING::from_wide(&wide)))
 }
 
 fn value_name_pcwstr(name: Option<&HSTRING>) -> PCWSTR {
@@ -244,6 +239,6 @@ pub(super) fn delete_tree(subkey: &HSTRING) -> windows::core::Result<()> {
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }

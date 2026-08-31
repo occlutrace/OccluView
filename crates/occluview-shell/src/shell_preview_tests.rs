@@ -103,7 +103,7 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
     assert!(com.contains("impl IOleWindow_Impl for PreviewHandler_Impl"));
     assert!(com.contains("IObjectWithSite"));
     assert!(com.contains("impl IObjectWithSite_Impl for PreviewHandler_Impl"));
-    assert!(com.contains("SetParent(preview, hwnd)"));
+    assert!(com.contains("SetParent(preview, Some(hwnd))"));
     assert!(com.contains("SetKeyboardFocus"));
     assert!(com.contains("GetKeyboardFocus()"));
     assert!(com.contains("Err(e_fail())"));
@@ -343,7 +343,7 @@ fn preview_render_forces_paint_after_bitmap_refresh() {
     let render_now = &com[start..start + end];
 
     assert!(
-            render_now.contains("RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW)"),
+            render_now.contains("RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW)"),
             "preview render should synchronously invalidate and paint after resize/interaction so preview captures are never a blank host background"
         );
 }

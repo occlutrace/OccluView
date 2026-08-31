@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$MsiPath = "",
+    [string]$SameVersionUpgradeMsiPath = "",
     [string]$UpgradeMsiPath = ""
 )
 
@@ -362,7 +363,13 @@ $resolvedUpgradeMsi = if ([string]::IsNullOrWhiteSpace($UpgradeMsiPath)) {
 } else {
     (Resolve-Path $UpgradeMsiPath).Path
 }
+$resolvedSameVersionUpgradeMsi = if ([string]::IsNullOrWhiteSpace($SameVersionUpgradeMsiPath)) {
+    ""
+} else {
+    (Resolve-Path $SameVersionUpgradeMsiPath).Path
+}
 $installLog = Join-Path $env:TEMP "occluview-msi-install.log"
+$sameVersionUpgradeLog = Join-Path $env:TEMP "occluview-msi-same-version-upgrade.log"
 $upgradeLog = Join-Path $env:TEMP "occluview-msi-upgrade.log"
 $uninstallLog = Join-Path $env:TEMP "occluview-msi-uninstall.log"
 
@@ -373,6 +380,15 @@ try {
     & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
     & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
     $productCode = Assert-OneInstalledProduct
+
+    if (-not [string]::IsNullOrWhiteSpace($resolvedSameVersionUpgradeMsi)) {
+        Write-Host "Upgrading with same-version MSI: $resolvedSameVersionUpgradeMsi"
+        Invoke-MsiExec -Arguments "/i `"$resolvedSameVersionUpgradeMsi`" /qn /norestart" -LogPath $sameVersionUpgradeLog
+        Assert-InstalledRegistry
+        & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
+        & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
+        $productCode = Assert-OneInstalledProduct
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($resolvedUpgradeMsi)) {
         Write-Host "Upgrading MSI: $resolvedUpgradeMsi"

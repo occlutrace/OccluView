@@ -51,14 +51,14 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
-use windows::core::{implement, w, IUnknown, Interface, GUID, HRESULT, PCWSTR};
+use windows::core::{implement, w, IUnknown, Interface, Ref, BOOL, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    BOOL, CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_NOTIMPL, E_POINTER, HANDLE,
-    HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, S_FALSE, S_OK, WPARAM,
+    CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_NOTIMPL, E_POINTER, HINSTANCE,
+    HWND, LPARAM, LRESULT, POINT, RECT, S_FALSE, S_OK, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, EndPaint,
-    RedrawWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
+    RedrawWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
     HGDIOBJ, PAINTSTRUCT, RDW_INVALIDATE, RDW_UPDATENOW, SRCCOPY,
 };
 use windows::Win32::System::Com::STREAM_SEEK_SET;
@@ -89,7 +89,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, RegisterClassW, SetParent,
-    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, MSG, WINDOW_EX_STYLE,
+    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG, WINDOW_EX_STYLE,
     WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
     WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
@@ -249,16 +249,7 @@ fn create_top_down_bgra_dib(
     // SAFETY: `bitmap_info` is a valid 32bpp BI_RGB DIB descriptor, `bits`
     // is an out-pointer written by GDI, and the returned handle is owned by
     // the caller.
-    let hbmp = unsafe {
-        CreateDIBSection(
-            HDC::default(),
-            &bitmap_info,
-            DIB_RGB_COLORS,
-            &mut bits,
-            HANDLE::default(),
-            0,
-        )
-    }?;
+    let hbmp = unsafe { CreateDIBSection(None, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0) }?;
     if bits.is_null() {
         // CreateDIBSection succeeded and handed us a bitmap handle even
         // though the pixel buffer pointer came back null; free it here so we
@@ -277,7 +268,7 @@ fn create_top_down_bgra_dib(
 impl IClassFactory_Impl for PreviewHandler_Impl {
     fn CreateInstance(
         &self,
-        punkouter: Option<&IUnknown>,
+        punkouter: Ref<'_, IUnknown>,
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
@@ -288,7 +279,7 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
                 if ppvobject.is_null() {
                     return Err(e_pointer());
                 }
-                if punkouter.is_some() {
+                if !punkouter.is_null() {
                     return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
                 }
                 let provider = PreviewHandler::new();

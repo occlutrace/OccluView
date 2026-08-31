@@ -160,6 +160,25 @@ function Sign-WindowsArtifact {
     Write-Host "Signed: $Path"
 }
 
+function Assert-StaticMsvcRuntime {
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+
+    $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+    if ($null -eq $dumpbin) {
+        throw "dumpbin.exe is required to verify that the MSI payload does not depend on the VC++ runtime."
+    }
+
+    foreach ($path in $Paths) {
+        $imports = & $dumpbin.Source /imports $path 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin.exe could not inspect imports for $path"
+        }
+        if ($imports -match '(?im)^\s*(VCRUNTIME[0-9_]*\.DLL|MSVCP[0-9_]*\.DLL|UCRTBASE\.DLL|API-MS-WIN-CRT-[A-Z0-9_-]*\.DLL)\s*$') {
+            throw "MSI payload $path depends on a separately installed VC++ runtime."
+        }
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $cargoText = Get-Content $cargoToml -Raw
     $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
@@ -217,18 +236,28 @@ if (-not $SkipBuild) {
     }
 
     $previousEncodedRustFlags = [Environment]::GetEnvironmentVariable("CARGO_ENCODED_RUSTFLAGS")
+    $rustFlags = @()
     if ($Configuration -eq "release") {
         $separator = [string][char]0x1f
-        $releaseRustFlags = @("--remap-path-prefix=$repoRoot=occluview")
+        $rustFlags += "--remap-path-prefix=$repoRoot=occluview"
         $normalizedRepoRoot = $repoRoot.Replace("\", "/")
         if ($normalizedRepoRoot -ne $repoRoot) {
-            $releaseRustFlags += "--remap-path-prefix=$normalizedRepoRoot=occluview"
+            $rustFlags += "--remap-path-prefix=$normalizedRepoRoot=occluview"
         }
-        $encodedReleaseRustFlags = $releaseRustFlags -join $separator
+    }
+    if ($Target -like "*-pc-windows-msvc") {
+        # The MSI runs occluview.exe as a custom action.  Link the MSVC CRT
+        # statically so a clean workstation never rolls the installation back
+        # before the action can report success.
+        $rustFlags += @("-C", "target-feature=+crt-static")
+    }
+    if ($rustFlags.Count -gt 0) {
+        $separator = [string][char]0x1f
+        $encodedRustFlags = $rustFlags -join $separator
         if (Test-HasText $previousEncodedRustFlags) {
-            $env:CARGO_ENCODED_RUSTFLAGS = "$previousEncodedRustFlags$separator$encodedReleaseRustFlags"
+            $env:CARGO_ENCODED_RUSTFLAGS = "$previousEncodedRustFlags$separator$encodedRustFlags"
         } else {
-            $env:CARGO_ENCODED_RUSTFLAGS = $encodedReleaseRustFlags
+            $env:CARGO_ENCODED_RUSTFLAGS = $encodedRustFlags
         }
     }
     try {
@@ -264,6 +293,9 @@ foreach ($path in $required) {
     if (-not (Test-Path $path)) {
         throw "Required build artifact missing: $path"
     }
+}
+if ($Target -like "*-pc-windows-msvc") {
+    Assert-StaticMsvcRuntime -Paths $required
 }
 
 $resolvedSignMode = Resolve-SigningMode $SignMode

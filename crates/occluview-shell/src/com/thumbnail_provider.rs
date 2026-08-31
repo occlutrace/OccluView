@@ -12,7 +12,7 @@ use super::{
     DeferredSource, IClassFactory, IClassFactory_Impl, IInitializeWithFile,
     IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
     IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider, IThumbnailProvider_Impl,
-    IUnknown, Interface, Ordering, PathBuf, StreamRead, ThumbnailAttempt, ThumbnailSpec,
+    IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead, ThumbnailAttempt, ThumbnailSpec,
     ACTIVE_COM_OBJECTS, BOOL, CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP,
     MAX_OFFSCREEN_EDGE, MAX_THUMBNAIL_INPUT_BYTES, PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET,
     WTSAT_ARGB, WTS_ALPHATYPE,
@@ -334,12 +334,12 @@ impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
 impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
     /// Called by the shell with a read-only stream over the file (handles
     /// MotW / OneDrive placeholders).
-    fn Initialize(&self, pstream: Option<&IStream>, _grfmode: u32) -> windows::core::Result<()> {
+    fn Initialize(&self, pstream: Ref<'_, IStream>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "thumbnail IInitializeWithStream",
             || Err(e_fail()),
             || {
-                let stream = pstream.ok_or_else(e_pointer)?;
+                let stream = pstream.ok()?;
                 self.this
                     .source
                     .borrow_mut()
@@ -374,12 +374,12 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
     /// Called by the shell with an item. This gives us a filesystem path on
     /// Explorer code paths that do not use `IInitializeWithFile`, preserving
     /// extension hints for HPS and using mmap-backed file loading.
-    fn Initialize(&self, psi: Option<&IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
+    fn Initialize(&self, psi: Ref<'_, IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "thumbnail IInitializeWithItem",
             || Err(e_fail()),
             || {
-                let item = psi.ok_or_else(e_pointer)?;
+                let item = psi.ok()?;
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // allocated null-terminated UTF-16 path. We copy it into a Rust
                 // String before freeing the COM allocation.
@@ -402,7 +402,7 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
 impl IClassFactory_Impl for ThumbnailProvider_Impl {
     fn CreateInstance(
         &self,
-        punkouter: Option<&IUnknown>,
+        punkouter: Ref<'_, IUnknown>,
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
@@ -413,7 +413,7 @@ impl IClassFactory_Impl for ThumbnailProvider_Impl {
                 if ppvobject.is_null() {
                     return Err(e_pointer());
                 }
-                if punkouter.is_some() {
+                if !punkouter.is_null() {
                     return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
                 }
                 let provider = ThumbnailProvider::new();

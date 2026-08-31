@@ -3,6 +3,15 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.1.1 - 2026-08-31
+
+### Windows
+
+- Fixed MSI rollback on workstations without a separately installed Microsoft
+  Visual C++ runtime.
+- Made same-version installs and failed major upgrades preserve a working
+  existing installation.
+
 ## 1.1.0 - 2026-08-24
 
 ### Highlights

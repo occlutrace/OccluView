@@ -372,7 +372,6 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 #[cfg(windows)]
 fn show_startup_fatal_message_box(report_path: Option<&Path>, details: &str) {
     use windows::core::HSTRING;
-    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
     let message = if let Some(path) = report_path {
@@ -387,7 +386,7 @@ fn show_startup_fatal_message_box(report_path: Option<&Path>, details: &str) {
     let title = HSTRING::from("OccluView 3D Viewer");
     let message = HSTRING::from(message);
     unsafe {
-        MessageBoxW(HWND::default(), &message, &title, MB_OK | MB_ICONERROR);
+        MessageBoxW(None, &message, &title, MB_OK | MB_ICONERROR);
     }
 }
 

@@ -8,7 +8,7 @@
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.1.0" ?>
+<?define ProductVersion = "1.1.1" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>
@@ -31,6 +31,7 @@
     -->
     <MajorUpgrade
       AllowSameVersionUpgrades="yes"
+      Schedule="afterInstallInitialize"
       DowngradeErrorMessage="A newer version of OccluView is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
@@ -78,7 +79,7 @@
       TerminalServerAware="yes" />
     <InstallExecuteSequence>
       <Custom Action="RefreshShellAssociationsInstall" After="WriteRegistryValues">NOT REMOVE</Custom>
-      <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL"</Custom>
+      <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
 
     <Directory Id="TARGETDIR" Name="SourceDir">

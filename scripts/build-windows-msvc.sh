@@ -66,13 +66,22 @@ if [[ -d "$repo_root/target/$target" ]]; then
   )
 fi
 
+rust_flags=()
 if [[ "$profile" == "release" ]]; then
+  rust_flags+=("--remap-path-prefix=$repo_root=occluview")
+fi
+if [[ "$target" == *-pc-windows-msvc ]]; then
+  # The MSI invokes the viewer as a checked custom action.  A static CRT keeps
+  # that action runnable on a clean Windows installation with no VC++ redist.
+  rust_flags+=("-C" "target-feature=+crt-static")
+fi
+if ((${#rust_flags[@]})); then
   sep=$'\x1f'
-  remap_flag="--remap-path-prefix=$repo_root=occluview"
+  joined_rust_flags="$(IFS="$sep"; printf '%s' "${rust_flags[*]}")"
   if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
-    export CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS}${sep}${remap_flag}"
+    export CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS}${sep}${joined_rust_flags}"
   else
-    export CARGO_ENCODED_RUSTFLAGS="$remap_flag"
+    export CARGO_ENCODED_RUSTFLAGS="$joined_rust_flags"
   fi
 fi
 
@@ -108,5 +117,18 @@ for path in "${required[@]}"; do
     exit 1
   fi
 done
+
+if [[ "$target" == *-pc-windows-msvc ]]; then
+  if ! command -v objdump >/dev/null 2>&1; then
+    echo "objdump is required to verify static MSVC runtime linkage." >&2
+    exit 127
+  fi
+  for path in "${required[@]}"; do
+    if objdump -p "$path" | grep -Ei '^[[:space:]]*DLL Name: (VCRUNTIME[0-9_]*\.DLL|MSVCP[0-9_]*\.DLL|UCRTBASE\.DLL|api-ms-win-crt-[a-z0-9_-]*\.DLL)$' >/dev/null; then
+      echo "Dynamic VC++ runtime import found in $path." >&2
+      exit 1
+    fi
+  done
+fi
 
 printf 'Windows MSVC artifacts built in %s\n' "$build_dir"

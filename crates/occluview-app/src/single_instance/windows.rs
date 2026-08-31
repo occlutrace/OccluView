@@ -83,7 +83,9 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
     let owned = unsafe { sid_text.to_string() }.ok();
     // SAFETY: `sid_text` was allocated by ConvertSidToStringSidW.
     let _ = unsafe {
-        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(sid_text.0.cast()))
+        windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+            sid_text.0.cast(),
+        )))
     };
     owned
 }
@@ -240,7 +242,7 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
             None,
             OPEN_EXISTING,
             SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-            HANDLE::default(),
+            None,
         )
     }
     .context("opening single-instance pipe")?;
@@ -316,7 +318,9 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
     // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
     // which allocates with LocalAlloc, and CreateNamedPipeW has copied what it needs.
     let _ = unsafe {
-        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(descriptor.0))
+        windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+            descriptor.0,
+        )))
     };
     if pipe.is_invalid() {
         // Transient, or someone already holds the name. Report either; do not

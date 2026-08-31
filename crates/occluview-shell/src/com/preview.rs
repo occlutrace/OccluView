@@ -7,9 +7,9 @@ use super::{
     IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
     IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
     IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface, MoveWindow,
-    Ordering, PathBuf, PreviewSceneState, RedrawWindow, SelectObject, SetKeyboardFocus, SetParent,
-    ShellError, StreamRead, ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID,
-    GWLP_USERDATA, HBITMAP, HGDIOBJ, HINSTANCE, HMENU, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG,
+    Ordering, PathBuf, PreviewSceneState, RedrawWindow, Ref, SelectObject, SetKeyboardFocus,
+    SetParent, ShellError, StreamRead, ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS,
+    BOOL, GUID, GWLP_USERDATA, HBITMAP, HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG,
     PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT,
     SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
@@ -221,7 +221,7 @@ impl PreviewHandler {
         let hbmp = self.preview_render_to_hbitmap(width, height)?;
         self.replace_preview_bitmap(hbmp);
         // SAFETY: `hwnd` is our live preview child window.
-        if unsafe { RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW) }.0 == 0 {
+        if unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW) }.0 == 0 {
             return Err(e_fail());
         }
         Ok(())
@@ -262,9 +262,9 @@ impl PreviewHandler {
                 rect.top,
                 width as i32,
                 height as i32,
-                parent,
-                HMENU::default(),
-                HINSTANCE(module.0),
+                Some(parent),
+                None,
+                Some(HINSTANCE(module.0)),
                 Some(create_param),
             )
         }?;
@@ -397,7 +397,7 @@ impl PreviewHandler {
         let hdc = unsafe { BeginPaint(hwnd, &mut paint) };
         if let Some(bitmap) = *self.preview_bitmap.borrow() {
             // SAFETY: `hdc` is valid for the active paint cycle.
-            let memory_dc = unsafe { CreateCompatibleDC(hdc) };
+            let memory_dc = unsafe { CreateCompatibleDC(Some(hdc)) };
             if !memory_dc.0.is_null() {
                 // SAFETY: the bitmap handle is owned by this module.
                 let previous = unsafe { SelectObject(memory_dc, HGDIOBJ(bitmap.0)) };
@@ -417,7 +417,7 @@ impl PreviewHandler {
                         0,
                         blit_width as i32,
                         blit_height as i32,
-                        memory_dc,
+                        Some(memory_dc),
                         0,
                         0,
                         SRCCOPY,
@@ -473,7 +473,7 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
                 let preview = self.this.preview_hwnd.get();
                 if !preview.0.is_null() && previous_parent != hwnd {
                     // SAFETY: `preview` is our live child preview window.
-                    let _ = unsafe { SetParent(preview, hwnd)? };
+                    let _ = unsafe { SetParent(preview, Some(hwnd))? };
                 }
                 // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
                 *self.this.rect.borrow_mut() = unsafe { *prc };
@@ -542,7 +542,7 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
             return Err(e_fail());
         }
         // SAFETY: `target` is either our preview child or the host parent.
-        let _ = unsafe { SetKeyboardFocus(target) };
+        let _ = unsafe { SetKeyboardFocus(Some(target)) };
         Ok(())
     }
 
@@ -572,12 +572,12 @@ impl IOleWindow_Impl for PreviewHandler_Impl {
 }
 
 impl IObjectWithSite_Impl for PreviewHandler_Impl {
-    fn SetSite(&self, punksite: Option<&IUnknown>) -> windows::core::Result<()> {
+    fn SetSite(&self, punksite: Ref<'_, IUnknown>) -> windows::core::Result<()> {
         com_entry(
             "IObjectWithSite::SetSite",
             || Err(e_fail()),
             || {
-                *self.this.site.borrow_mut() = punksite.cloned();
+                *self.this.site.borrow_mut() = punksite.as_ref().cloned();
                 Ok(())
             },
         )
@@ -612,12 +612,12 @@ impl IObjectWithSite_Impl for PreviewHandler_Impl {
 }
 
 impl IInitializeWithStream_Impl for PreviewHandler_Impl {
-    fn Initialize(&self, pstream: Option<&IStream>, _grfmode: u32) -> windows::core::Result<()> {
+    fn Initialize(&self, pstream: Ref<'_, IStream>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "preview IInitializeWithStream",
             || Err(e_fail()),
             || {
-                let stream = pstream.ok_or_else(e_pointer)?;
+                let stream = pstream.ok()?;
                 self.this
                     .source
                     .borrow_mut()
@@ -645,12 +645,12 @@ impl IInitializeWithFile_Impl for PreviewHandler_Impl {
 }
 
 impl IInitializeWithItem_Impl for PreviewHandler_Impl {
-    fn Initialize(&self, psi: Option<&IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
+    fn Initialize(&self, psi: Ref<'_, IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "preview IInitializeWithItem",
             || Err(e_fail()),
             || {
-                let item = psi.ok_or_else(e_pointer)?;
+                let item = psi.ok()?;
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // path.
                 let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };

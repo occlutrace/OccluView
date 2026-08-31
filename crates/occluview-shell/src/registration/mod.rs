@@ -182,11 +182,11 @@ fn own_dll_path() -> windows::core::Result<HSTRING> {
     let mut buf = [0u16; 1024];
     // SAFETY: GetModuleFileNameW writes up to `buf.len()` wide chars into our
     // stack array. `module` is resolved from an address inside this DLL.
-    let n = unsafe { GetModuleFileNameW(module, buf.as_mut_slice()) };
+    let n = unsafe { GetModuleFileNameW(Some(module), buf.as_mut_slice()) };
     if n == 0 {
-        return Err(windows::core::Error::from_win32());
+        return Err(windows::core::Error::from_thread());
     }
-    HSTRING::from_wide(&buf[..n as usize])
+    Ok(HSTRING::from_wide(&buf[..n as usize]))
 }
 
 fn own_module_handle() -> windows::core::Result<HMODULE> {
