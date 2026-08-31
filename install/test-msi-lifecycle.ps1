@@ -355,10 +355,16 @@ function Assert-InstalledRegistry {
     Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid" "AppID") $prevhostAppId "preview CLSID AppID"
     Assert-PathExists $previewAppIdPath
     # Windows Installer may canonicalize this documented surrogate executable
-    # to its System32 path. The COM contract is the executable identity, not
-    # whether the registry representation is a basename or full path.
+    # to its System32 path. Accept only the documented basename or that exact
+    # system executable: any other path would select a different surrogate.
     $previewSurrogate = Get-RegistryNamedValue $previewAppIdPath "DllSurrogate"
-    Assert-Equals ([IO.Path]::GetFileName($previewSurrogate)) "Prevhost.exe" "preview AppID DllSurrogate"
+    $allowedPreviewSurrogates = @(
+        "Prevhost.exe",
+        (Join-Path $env:WINDIR "System32\Prevhost.exe")
+    )
+    if ($previewSurrogate -notin $allowedPreviewSurrogates) {
+        throw "preview AppID DllSurrogate must be Prevhost.exe or its System32 path, got '$previewSurrogate'."
+    }
     Assert-RegistryNamedValueAbsent "HKLM:\Software\Classes\CLSID\$previewClsid" "DisableLowILProcessIsolation" "preview low-integrity isolation override"
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$previewClsid\InprocServer32") $shellDll "preview CLSID InprocServer32"
     Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid\InprocServer32" "ThreadingModel") "Apartment" "preview CLSID threading model"
