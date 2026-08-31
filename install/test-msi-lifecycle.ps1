@@ -118,7 +118,7 @@ function Start-ActivePreviewHost {
         $previewSmokePath = Join-Path $PSScriptRoot "test-preview-handler.ps1"
         $startArgs = @{
             FilePath = $currentHost.Path
-            ArgumentList = @("-NoLogo", "-NoProfile", "-NonInteractive", "-File", ('\"{0}\"' -f $previewSmokePath), "-HoldOpenSeconds", "90")
+            ArgumentList = @("-NoLogo", "-NoProfile", "-NonInteractive", "-File", ('"{0}"' -f $previewSmokePath), "-HoldOpenSeconds", "90")
             RedirectStandardOutput = $stdoutPath
             RedirectStandardError = $stderrPath
             PassThru = $true

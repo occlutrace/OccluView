@@ -355,6 +355,14 @@ fn windows_package_lifecycle_exercises_a_same_version_major_upgrade() {
         "the preview surrogate must remain live for the actual upgrade window"
     );
     assert!(
+        lifecycle.contains(r#"('"{0}"' -f $previewSmokePath)"#),
+        "the preview-holder must pass its script path as one PowerShell argument"
+    );
+    assert!(
+        !lifecycle.contains(r#"('\"{0}\"' -f $previewSmokePath)"#),
+        "the preview-holder must not put literal backslashes into the script-path quotes"
+    );
+    assert!(
         preview_smoke.contains("[int]$HoldOpenSeconds = 0"),
         "the preview smoke must support holding an activated COM preview open"
     );
