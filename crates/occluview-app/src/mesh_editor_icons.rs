@@ -1,546 +1,19 @@
-//! Hand-painted vector icons for the mesh editor toolbar and the layer menu.
-//!
-//! egui ships only a thin emoji subset and glyph coverage is unreliable across
-//! platforms, so every tool draws its own crisp, monochrome glyph here (the
-//! CAD toolbar style: simple geometry, even 1.2-1.6 px stroke weight,
-//! readable at 15-18 px). This module is presentation only — no mesh logic lives
-//! here. Two glyph vocabularies share one drawing language and the low-level
-//! primitives (`arrowhead`, `arc`, …): [`EditorIcon`] for the editor toolbar and
-//! [`LayerMenuIcon`] for the layer context-menu rows. Neither enum leaks into
-//! the action layer.
+//! Shared icon-button control for mesh and alignment tools.
 
-// Icon glyphs are sampled from parametric curves; the loop indices cast to f32
-// are tiny and exact, and one big `match` paints every glyph in one place on
-// purpose (splitting it across files would scatter the visual language).
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::too_many_lines,
-    clippy::many_single_char_names
-)]
+use eframe::egui::{self, FontId, Pos2, Rect, Response, Sense, Ui, Vec2};
 
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2};
-
+use crate::icons::AppIcon;
 use crate::ui_theme::ACCENT;
 
-#[path = "mesh_editor_icons_layer_menu.rs"]
-mod layer_menu;
-pub(crate) use layer_menu::{paint_layer_menu, LayerMenuIcon};
-
-/// Shared corner radius for every mesh-editor cell and the text commit buttons,
-/// so the icon tiles and the OK/Cancel-style buttons share one silhouette.
+/// Shared corner radius for tool cells and commit buttons.
 pub(crate) const CELL_ROUNDING: f32 = 4.0;
 
-/// One tool glyph. Maps 1:1 onto a mesh-editor button.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EditorIcon {
-    /// Freehand outline selection (the dental CAD "Mark triangles" semantics).
-    Lasso,
-    /// Object pick: select one whole connected object of a multi-part STL.
-    Object,
-    /// Select every face (the dental CAD "All").
-    SelectAll,
-    /// Clear the selection (the dental CAD "None").
-    SelectNone,
-    /// Swap marked and unmarked faces (the dental CAD "Invert").
-    SelectInvert,
-    /// Trash can — remove the marked faces.
-    Delete,
-    /// Crop marks — keep only the marked area (the dental CAD "Crop").
-    Keep,
-    /// Fill open holes with interpolated caps (the dental CAD "Close Holes").
-    CloseHoles,
-    /// A wave settling flat — the smoothing sculpt brush.
-    Smooth,
-    /// Brush falloff disc with a plus/minus — the Add/Remove clay sculpt tool.
-    SculptAdd,
-    /// Scissors on a dashed line — move the marked faces to a new mesh.
-    Cut,
-    /// Split the marked region into one mesh per connected part.
-    Separate,
-    /// Undo the last edit.
-    Undo,
-    /// Redo the undone edit.
-    Redo,
-    /// Selection mode: only visible front-facing surface.
-    SurfaceMode,
-    /// Selection mode: straight through the mesh, including backsides.
-    ThroughMode,
-    /// Two paired points drawing one arc onto another — the point fit.
-    AlignFit,
-    /// Two surfaces settling together — the surface refine.
-    AlignRefine,
-    /// A graded colour bar — the deviation heatmap.
-    Heatmap,
-    /// A round brush over a patch — the region brush.
-    MaskBrush,
-    /// A four-way arrow — move the scan freely by hand.
-    MoveLayer,
-    /// A two-way vertical arrow — movement locked to the up axis.
-    MoveVertical,
-    /// A ground plane with an arrow on it — movement locked to the xy plane.
-    MovePlane,
-}
-
-/// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
-/// the stroke and adds a soft fill accent so a toggled-on tool reads as engaged.
-pub(crate) fn paint(
-    painter: &egui::Painter,
-    rect: Rect,
-    icon: EditorIcon,
-    color: Color32,
-    active: bool,
-) {
-    let side = rect.width().min(rect.height());
-    let base = (side * 0.075).clamp(1.2, 1.6);
-    let w = if active { base + 0.3 } else { base };
-    let stroke = Stroke::new(w, color);
-    // Soft fill for solid glyph parts; only shown when the tool is engaged so
-    // the resting state stays a clean line drawing.
-    let soft = color.gamma_multiply(if active { 0.40 } else { 0.22 });
-
-    // Drawing box: a centred square inside the button so every glyph shares the
-    // same optical weight regardless of the caller's rect aspect.
-    let b = Rect::from_center_size(rect.center(), Vec2::splat(side * 0.72));
-    let p = |x: f32, y: f32| Pos2::new(b.min.x + x * b.width(), b.min.y + y * b.height());
-    let r = |v: f32| v * b.width();
-
-    match icon {
-        EditorIcon::Lasso => {
-            // Dashed closed loop with a hanging grab node.
-            let c = p(0.46, 0.42);
-            let (rx, ry) = (r(0.32), r(0.30));
-            let mut loop_pts = Vec::with_capacity(25);
-            for i in 0..=24 {
-                let a = std::f32::consts::TAU * (i as f32) / 24.0;
-                loop_pts.push(Pos2::new(c.x + rx * a.cos(), c.y + ry * a.sin()));
-            }
-            painter.extend(Shape::dashed_line(&loop_pts, stroke, r(0.11), r(0.09)));
-            painter.line_segment([p(0.42, 0.72), p(0.36, 0.90)], stroke);
-            painter.circle_filled(p(0.36, 0.90), r(0.07), color);
-        }
-        EditorIcon::Object => {
-            // A single 3D box (one whole object) with its front face lit and a
-            // pick dot: click one object of a multi-part STL to select it. The
-            // front face is a 4-corner array; the back carries only the three
-            // corners the receding edges need.
-            let front = [p(0.18, 0.42), p(0.62, 0.42), p(0.62, 0.86), p(0.18, 0.86)];
-            let back_top_left = p(0.38, 0.26);
-            let back_top_right = p(0.82, 0.26);
-            let back_bottom_right = p(0.82, 0.70);
-            // Lit front face (the selected object) plus its outline.
-            painter.add(Shape::convex_polygon(front.to_vec(), soft, Stroke::NONE));
-            painter.add(Shape::closed_line(front.to_vec(), stroke));
-            // Top face and the three receding right-face edges give it depth.
-            painter.add(Shape::closed_line(
-                vec![front[0], back_top_left, back_top_right, front[1]],
-                stroke,
-            ));
-            painter.line_segment([front[1], back_top_right], stroke);
-            painter.line_segment([front[2], back_bottom_right], stroke);
-            painter.line_segment([back_top_right, back_bottom_right], stroke);
-            // Pick dot on the lit front face.
-            painter.circle_filled(p(0.40, 0.64), r(0.07), color);
-        }
-        EditorIcon::SelectAll => {
-            let rc = Rect::from_min_max(p(0.16, 0.16), p(0.84, 0.84));
-            painter.rect_filled(rc, r(0.06), soft);
-            painter.extend(Shape::dashed_line(
-                &closed(&corners(rc)),
-                stroke,
-                r(0.11),
-                r(0.08),
-            ));
-        }
-        EditorIcon::SelectNone => {
-            let rc = Rect::from_min_max(p(0.16, 0.16), p(0.84, 0.84));
-            painter.extend(Shape::dashed_line(
-                &closed(&corners(rc)),
-                stroke,
-                r(0.11),
-                r(0.08),
-            ));
-        }
-        EditorIcon::SelectInvert => {
-            let rc = Rect::from_min_max(p(0.16, 0.16), p(0.84, 0.84));
-            // One diagonal half filled to show the marked/unmarked swap.
-            painter.add(Shape::convex_polygon(
-                vec![rc.left_top(), rc.right_top(), rc.left_bottom()],
-                soft,
-                Stroke::NONE,
-            ));
-            painter.extend(Shape::dashed_line(
-                &closed(&corners(rc)),
-                stroke,
-                r(0.11),
-                r(0.08),
-            ));
-            painter.line_segment([rc.right_top(), rc.left_bottom()], stroke);
-        }
-        EditorIcon::Delete => {
-            // Lid, handle, tapered body, and inner stripes.
-            painter.line_segment([p(0.18, 0.28), p(0.82, 0.28)], stroke);
-            painter.add(Shape::line(
-                vec![p(0.40, 0.28), p(0.40, 0.16), p(0.60, 0.16), p(0.60, 0.28)],
-                stroke,
-            ));
-            painter.add(Shape::line(
-                vec![p(0.27, 0.28), p(0.31, 0.86), p(0.69, 0.86), p(0.73, 0.28)],
-                stroke,
-            ));
-            // Two inner stripes (not three): the trash can was the densest
-            // glyph in the row, so drop one line to match its neighbours' weight.
-            for x in [0.44_f32, 0.56] {
-                painter.line_segment([p(x, 0.38), p(x, 0.76)], stroke);
-            }
-        }
-        EditorIcon::Keep => {
-            // Two crop brackets framing the kept region.
-            painter.rect_filled(Rect::from_min_max(p(0.26, 0.26), p(0.74, 0.74)), 0.0, soft);
-            painter.line_segment([p(0.24, 0.14), p(0.24, 0.60)], stroke);
-            painter.line_segment([p(0.14, 0.24), p(0.60, 0.24)], stroke);
-            painter.line_segment([p(0.76, 0.40), p(0.76, 0.86)], stroke);
-            painter.line_segment([p(0.40, 0.76), p(0.86, 0.76)], stroke);
-        }
-        EditorIcon::CloseHoles => {
-            let c = p(0.50, 0.52);
-            let rad = r(0.34);
-            // Solid rim around the bottom, dashed rim across the open top, and a
-            // soft filled patch = the interpolated cap.
-            painter.add(Shape::line(arc(c, rad, -50.0, 230.0, 24), stroke));
-            painter.extend(Shape::dashed_line(
-                &arc(c, rad, 230.0, 310.0, 10),
-                stroke,
-                r(0.10),
-                r(0.08),
-            ));
-            painter.circle_filled(p(0.50, 0.30), r(0.11), soft);
-        }
-        EditorIcon::AlignFit => {
-            // One arc pulled onto another by a paired tie: the click model.
-            painter.add(Shape::line(
-                arc(p(0.12, 0.50), r(0.42), 300.0, 60.0, 16),
-                stroke,
-            ));
-            painter.add(Shape::line(
-                arc(p(0.88, 0.50), r(0.42), 120.0, 240.0, 16),
-                stroke,
-            ));
-            let left = p(0.12 + 0.42, 0.50);
-            let right = p(0.88 - 0.42, 0.50);
-            painter.line_segment([left, right], stroke);
-            painter.circle_filled(left, r(0.075), color);
-            painter.circle_filled(right, r(0.075), color);
-        }
-        EditorIcon::AlignRefine => {
-            // Two surfaces settling together, the upper one arrowed down onto
-            // the lower: what a refine actually does.
-            painter.add(Shape::line(
-                arc(p(0.50, 0.90), r(0.46), 200.0, 340.0, 18),
-                stroke,
-            ));
-            painter.add(Shape::line(
-                arc(p(0.50, 0.52), r(0.46), 200.0, 340.0, 18),
-                stroke,
-            ));
-            arrowhead(painter, p(0.50, 0.52), Vec2::new(0.0, 1.0), r(0.11), stroke);
-        }
-        EditorIcon::Heatmap => {
-            // A graded bar: the false-colour scale the map is read against.
-            let bar = Rect::from_min_max(p(0.12, 0.34), p(0.88, 0.66));
-            painter.rect_stroke(bar, r(0.06), stroke);
-            for step in 1..4 {
-                let x = 0.12 + 0.76 * (step as f32 / 4.0);
-                painter.line_segment([p(x, 0.34), p(x, 0.66)], stroke);
-            }
-        }
-        EditorIcon::MaskBrush => {
-            // A round brush over a patch it has taken out of the comparison.
-            painter.add(Shape::line(
-                arc(p(0.50, 0.86), r(0.44), 200.0, 340.0, 16),
-                stroke,
-            ));
-            painter.circle_stroke(p(0.62, 0.36), r(0.20), stroke);
-            painter.line_segment([p(0.20, 0.72), p(0.44, 0.48)], stroke);
-        }
-        EditorIcon::MoveLayer => {
-            // A four-way arrow: drag the scan wherever it needs to go.
-            painter.line_segment([p(0.50, 0.12), p(0.50, 0.88)], stroke);
-            painter.line_segment([p(0.12, 0.50), p(0.88, 0.50)], stroke);
-            for (tip, dir) in [
-                (p(0.50, 0.12), Vec2::new(0.0, -1.0)),
-                (p(0.50, 0.88), Vec2::new(0.0, 1.0)),
-                (p(0.12, 0.50), Vec2::new(-1.0, 0.0)),
-                (p(0.88, 0.50), Vec2::new(1.0, 0.0)),
-            ] {
-                arrowhead(painter, tip, dir, r(0.11), stroke);
-            }
-        }
-        EditorIcon::MoveVertical => {
-            // A two-way vertical arrow: movement locked to the up axis.
-            painter.line_segment([p(0.50, 0.12), p(0.50, 0.88)], stroke);
-            arrowhead(
-                painter,
-                p(0.50, 0.12),
-                Vec2::new(0.0, -1.0),
-                r(0.13),
-                stroke,
-            );
-            arrowhead(painter, p(0.50, 0.88), Vec2::new(0.0, 1.0), r(0.13), stroke);
-        }
-        EditorIcon::MovePlane => {
-            // A ground plane in perspective with a two-way arrow lying on it.
-            painter.add(Shape::closed_line(
-                vec![p(0.10, 0.66), p(0.42, 0.42), p(0.90, 0.42), p(0.58, 0.66)],
-                stroke,
-            ));
-            painter.line_segment([p(0.26, 0.80), p(0.80, 0.80)], stroke);
-            arrowhead(
-                painter,
-                p(0.26, 0.80),
-                Vec2::new(-1.0, 0.0),
-                r(0.11),
-                stroke,
-            );
-            arrowhead(painter, p(0.80, 0.80), Vec2::new(1.0, 0.0), r(0.11), stroke);
-        }
-        EditorIcon::Smooth => {
-            // A bumpy line settling flat: the wavy source above a straight
-            // target line, joined by a short downward arrow.
-            let wave: Vec<Pos2> = (0..=16)
-                .map(|i| {
-                    let t = i as f32 / 16.0;
-                    let x = 0.14 + t * 0.72;
-                    let y = 0.28 - 0.09 * (std::f32::consts::TAU * 2.0 * t).sin();
-                    p(x, y)
-                })
-                .collect();
-            painter.add(Shape::line(wave, stroke));
-            painter.line_segment([p(0.14, 0.82), p(0.86, 0.82)], stroke);
-            arrowhead(painter, p(0.50, 0.82), Vec2::new(0.0, 1.0), r(0.10), stroke);
-        }
-        EditorIcon::SculptAdd => {
-            // A surface line bulging under a soft brush disc that carries both a
-            // plus and a minus: the one Add/Remove clay tool (Shift carves).
-            let bulge: Vec<Pos2> = (0..=16)
-                .map(|i| {
-                    let t = i as f32 / 16.0;
-                    let x = 0.10 + t * 0.80;
-                    let s = (std::f32::consts::PI * t).sin().powi(2);
-                    p(x, 0.78 - 0.20 * s)
-                })
-                .collect();
-            painter.add(Shape::line(bulge, stroke));
-            let c = p(0.50, 0.30);
-            painter.circle_stroke(c, r(0.20), stroke);
-            painter.circle_filled(c, r(0.20), soft);
-            // Plus on the left of the disc, minus on the right.
-            let plus = Pos2::new(c.x - r(0.10), c.y);
-            painter.line_segment(
-                [
-                    Pos2::new(plus.x - r(0.06), plus.y),
-                    Pos2::new(plus.x + r(0.06), plus.y),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    Pos2::new(plus.x, plus.y - r(0.06)),
-                    Pos2::new(plus.x, plus.y + r(0.06)),
-                ],
-                stroke,
-            );
-            let minus = Pos2::new(c.x + r(0.10), c.y);
-            painter.line_segment(
-                [
-                    Pos2::new(minus.x - r(0.06), minus.y),
-                    Pos2::new(minus.x + r(0.06), minus.y),
-                ],
-                stroke,
-            );
-        }
-        EditorIcon::Cut => {
-            // Scissors opening onto a dashed cut line.
-            painter.extend(Shape::dashed_line(
-                &[p(0.10, 0.50), p(0.90, 0.50)],
-                stroke,
-                r(0.10),
-                r(0.08),
-            ));
-            let pivot = p(0.46, 0.50);
-            painter.line_segment([pivot, p(0.88, 0.32)], stroke);
-            painter.line_segment([pivot, p(0.88, 0.68)], stroke);
-            let h1 = p(0.22, 0.34);
-            let h2 = p(0.22, 0.66);
-            painter.circle_stroke(h1, r(0.10), stroke);
-            painter.circle_stroke(h2, r(0.10), stroke);
-            painter.line_segment([h1, pivot], stroke);
-            painter.line_segment([h2, pivot], stroke);
-        }
-        EditorIcon::Separate => {
-            // Two parts with a gap, arrows pulling them apart.
-            painter.rect_stroke(
-                Rect::from_min_max(p(0.14, 0.34), p(0.40, 0.72)),
-                r(0.04),
-                stroke,
-            );
-            painter.rect_stroke(
-                Rect::from_min_max(p(0.60, 0.34), p(0.86, 0.72)),
-                r(0.04),
-                stroke,
-            );
-            painter.line_segment([p(0.30, 0.20), p(0.16, 0.20)], stroke);
-            arrowhead(
-                painter,
-                p(0.16, 0.20),
-                Vec2::new(-1.0, 0.0),
-                r(0.12),
-                stroke,
-            );
-            painter.line_segment([p(0.70, 0.20), p(0.84, 0.20)], stroke);
-            arrowhead(painter, p(0.84, 0.20), Vec2::new(1.0, 0.0), r(0.12), stroke);
-        }
-        EditorIcon::Undo => circular_arrow(painter, b, color, w, false),
-        EditorIcon::Redo => circular_arrow(painter, b, color, w, true),
-        EditorIcon::SurfaceMode => {
-            // A single visible surface with a pick marker on top.
-            let mut s = Vec::with_capacity(17);
-            for i in 0..=16 {
-                let t = i as f32 / 16.0;
-                let x = 0.14 + 0.72 * t;
-                let y = 0.66 - 0.16 * (std::f32::consts::PI * t).sin();
-                s.push(p(x, y));
-            }
-            painter.add(Shape::line(s, stroke));
-            painter.line_segment([p(0.50, 0.44), p(0.50, 0.52)], stroke);
-            painter.circle_filled(p(0.50, 0.34), r(0.08), color);
-        }
-        EditorIcon::ThroughMode => {
-            // Two stacked surfaces with an arrow passing straight through both.
-            let mut front = Vec::with_capacity(17);
-            let mut back = Vec::with_capacity(17);
-            for i in 0..=16 {
-                let t = i as f32 / 16.0;
-                let x = 0.14 + 0.72 * t;
-                let bump = 0.10 * (std::f32::consts::PI * t).sin();
-                front.push(p(x, 0.40 - bump));
-                back.push(p(x, 0.72 - bump));
-            }
-            painter.add(Shape::line(front, stroke));
-            painter.add(Shape::line(back, stroke));
-            painter.line_segment([p(0.50, 0.14), p(0.50, 0.88)], stroke);
-            arrowhead(painter, p(0.50, 0.88), Vec2::new(0.0, 1.0), r(0.16), stroke);
-        }
-    }
-}
-
-/// One measurement glyph for the top toolbar's Measure toggles. A vocabulary
-/// distinct from [`EditorIcon`]/[`LayerMenuIcon`] (these name viewport
-/// measurement tools) sharing the same drawing language and primitives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MeasureIcon {
-    /// A slanted ruler with tick marks — two-point distance.
-    Ruler,
-    /// A shell cross-section with a wall-depth arrow — local thickness.
-    Thickness,
-    /// Two arcs drawn together by a paired-point tie — scan alignment.
-    Align,
-    /// Pencil on a mesh patch — mesh editor (selection & sculpt).
-    EditMesh,
-}
-
-/// Paint `icon` inside `rect` in a single `color`. `active` slightly thickens
-/// the stroke, matching [`paint`]'s engaged-tool treatment.
-pub(crate) fn paint_measure(
-    painter: &egui::Painter,
-    rect: Rect,
-    icon: MeasureIcon,
-    color: Color32,
-    active: bool,
-) {
-    let side = rect.width().min(rect.height());
-    let base = (side * 0.075).clamp(1.2, 1.6);
-    let w = if active { base + 0.3 } else { base };
-    let stroke = Stroke::new(w, color);
-
-    // Centred drawing box (same optical weight rule as the editor glyphs).
-    let b = Rect::from_center_size(rect.center(), Vec2::splat(side * 0.86));
-    let p = |x: f32, y: f32| Pos2::new(b.min.x + x * b.width(), b.min.y + y * b.height());
-    let r = |v: f32| v * b.width();
-
-    match icon {
-        MeasureIcon::Ruler => {
-            // A slanted ruler body with graduation ticks along the top edge.
-            let a0 = p(0.10, 0.90);
-            let a1 = p(0.90, 0.10);
-            let dir = (a1 - a0).normalized();
-            let n = Vec2::new(-dir.y, dir.x);
-            let hw = r(0.15);
-            let c0 = a0 + n * hw;
-            let c1 = a1 + n * hw;
-            let d0 = a0 - n * hw;
-            let d1 = a1 - n * hw;
-            painter.add(Shape::closed_line(vec![c0, c1, d1, d0], stroke));
-            for t in [0.3_f32, 0.5, 0.7] {
-                let top = a0 + (a1 - a0) * t + n * hw;
-                painter.line_segment([top, top - n * hw * 0.9], stroke);
-            }
-        }
-        MeasureIcon::Thickness => {
-            // A crown-shell cross-section: outer + inner dome arcs with a
-            // double-headed arrow spanning the wall at the top.
-            let c = p(0.50, 0.82);
-            painter.add(Shape::line(arc(c, r(0.58), 205.0, 335.0, 20), stroke));
-            painter.add(Shape::line(arc(c, r(0.34), 210.0, 330.0, 16), stroke));
-            let top_outer = p(0.50, 0.82 - 0.58);
-            let top_inner = p(0.50, 0.82 - 0.34);
-            painter.line_segment([top_outer, top_inner], stroke);
-            arrowhead(painter, top_outer, Vec2::new(0.0, -1.0), r(0.10), stroke);
-            arrowhead(painter, top_inner, Vec2::new(0.0, 1.0), r(0.10), stroke);
-        }
-        MeasureIcon::Align => {
-            // Two arcs facing each other, tied by a short segment between one
-            // matched point on each: the gesture the tool is built around.
-            painter.add(Shape::line(
-                arc(p(0.16, 0.50), r(0.44), 300.0, 60.0, 18),
-                stroke,
-            ));
-            painter.add(Shape::line(
-                arc(p(0.84, 0.50), r(0.44), 120.0, 240.0, 18),
-                stroke,
-            ));
-            let left = p(0.16 + 0.44, 0.50);
-            let right = p(0.84 - 0.44, 0.50);
-            painter.line_segment([left, right], stroke);
-            painter.circle_filled(left, r(0.07), color);
-            painter.circle_filled(right, r(0.07), color);
-        }
-        MeasureIcon::EditMesh => {
-            // Mesh patch with a pencil diagonally across it.
-            painter.add(Shape::line(
-                arc(p(0.42, 0.62), r(0.36), 200.0, 340.0, 16),
-                stroke,
-            ));
-            let tip = p(0.78, 0.14);
-            let base = p(0.52, 0.40);
-            painter.line_segment([tip, base], stroke);
-            painter.line_segment([base, p(0.46, 0.48)], stroke);
-            painter.line_segment([base, p(0.60, 0.46)], stroke);
-            painter.line_segment([p(0.46, 0.48), p(0.60, 0.46)], stroke);
-            painter.circle_filled(tip, r(0.05), color);
-        }
-    }
-}
-
-/// A square icon button: a glyph over a tiny wrapping caption. Returns the
-/// `Response` with `tooltip` already attached. Disabled buttons still hover so
-/// the operator can read why an action is unavailable.
-// A toolbar cell genuinely needs its glyph, caption, tooltip, and both state
-// flags; bundling them into a struct would only add ceremony at every call.
+/// Draw an icon tile with a caption.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn icon_button(
     ui: &mut Ui,
     size: Vec2,
-    icon: EditorIcon,
+    icon: AppIcon,
     label: &str,
     tooltip: &str,
     enabled: bool,
@@ -563,177 +36,71 @@ pub(crate) fn icon_button(
 
     let painter = ui.painter();
     if active {
-        // Lit "pressed" tool: a filled accent cell with a firm accent border so
-        // an engaged toggle (Lasso / Surface / Through) is unmistakable at a
-        // glance.
         painter.rect_filled(rect, CELL_ROUNDING, ACCENT.gamma_multiply(0.20));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            Stroke::new(1.2, ACCENT.gamma_multiply(0.90)),
+            egui::Stroke::new(1.2, ACCENT.gamma_multiply(0.90)),
         );
     } else if enabled && response.hovered() {
-        // Warm hover: a soft accent wash plus a faint ring so the cell lifts
-        // without shouting.
         painter.rect_filled(rect, CELL_ROUNDING, ACCENT.gamma_multiply(0.12));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            Stroke::new(1.0, ACCENT.gamma_multiply(0.30)),
+            egui::Stroke::new(1.0, ACCENT.gamma_multiply(0.30)),
         );
     }
 
-    // Reserve the bottom strip for the caption. The editor labels are short and
-    // the cells are wide enough that they render on one line.
-    let caption_h = 20.0_f32;
-    let icon_side = (rect.width().min(rect.height() - caption_h) - 6.0).clamp(12.0, 22.0);
+    // Reserve the bottom strip for the caption; the glyph takes what is left.
+    let caption_h = 22.0_f32;
+    let icon_side = (rect.width().min(rect.height() - caption_h) - 8.0).clamp(14.0, 24.0);
     let icon_center = Pos2::new(rect.center().x, rect.top() + 4.0 + icon_side * 0.5);
     let icon_rect = Rect::from_center_size(icon_center, Vec2::splat(icon_side));
-    paint(painter, icon_rect, icon, fg, active);
+    crate::icons::paint(painter, icon_rect, icon, fg);
 
     let galley = painter.layout(
         label.to_owned(),
-        FontId::proportional(9.0),
+        FontId::proportional(10.0),
         fg,
         rect.width() - 2.0,
     );
     let caption_pos = Pos2::new(
         rect.center().x - galley.size().x * 0.5,
-        rect.bottom() - caption_h + ((caption_h - galley.size().y) * 0.5).max(0.0),
+        rect.bottom() - caption_h + (caption_h - galley.size().y) * 0.5,
     );
     painter.galley(caption_pos, galley, fg);
 
     response.on_hover_text(tooltip)
 }
 
-/// Two barbs forming an arrowhead at `tip`, opening opposite `dir`.
-pub(super) fn arrowhead(painter: &egui::Painter, tip: Pos2, dir: Vec2, len: f32, stroke: Stroke) {
-    let [left, right] = arrowhead_barbs(tip, dir, len);
-    painter.line_segment([tip, left], stroke);
-    painter.line_segment([tip, right], stroke);
-}
-
-/// Where the two barbs of an arrowhead end, given its tip and direction.
-///
-/// Separate from the painting so the geometry can be asserted: a painter
-/// swallows whatever it is given, and a barb sent to infinity by a
-/// normalization edge case draws nothing anyone would notice in a test.
-fn arrowhead_barbs(tip: Pos2, dir: Vec2, len: f32) -> [Pos2; 2] {
-    let d = dir.normalized();
-    let n = Vec2::new(-d.y, d.x);
-    let back = tip - d * len;
-    [back + n * len * 0.6, back - n * len * 0.6]
-}
-
-/// A circular history arrow. `redo` draws the clockwise (right-hand) sense; the
-/// undo variant is the mirror image so the pair reads left/right at a glance.
-fn circular_arrow(painter: &egui::Painter, b: Rect, color: Color32, w: f32, redo: bool) {
-    let stroke = Stroke::new(w, color);
-    let c = Pos2::new(b.min.x + 0.50 * b.width(), b.min.y + 0.54 * b.height());
-    let rad = 0.32 * b.width();
-    let mut pts = arc(c, rad, 30.0, 300.0, 28);
-    if !redo {
-        for pt in &mut pts {
-            pt.x = 2.0 * c.x - pt.x;
-        }
-    }
-    let n = pts.len();
-    let tip = pts[n - 1];
-    let dir = tip - pts[n - 2];
-    painter.add(Shape::line(pts, stroke));
-    arrowhead(painter, tip, dir, 0.22 * b.width(), stroke);
-}
-
-/// Sample a circular arc (degrees, screen y-down) into a polyline.
-pub(super) fn arc(center: Pos2, radius: f32, deg0: f32, deg1: f32, segments: usize) -> Vec<Pos2> {
-    let mut pts = Vec::with_capacity(segments + 1);
-    for i in 0..=segments {
-        let deg = deg0 + (deg1 - deg0) * (i as f32 / segments as f32);
-        let a = deg.to_radians();
-        pts.push(Pos2::new(
-            center.x + radius * a.cos(),
-            center.y + radius * a.sin(),
-        ));
-    }
-    pts
-}
-
-fn corners(rc: Rect) -> [Pos2; 4] {
-    [
-        rc.left_top(),
-        rc.right_top(),
-        rc.right_bottom(),
-        rc.left_bottom(),
-    ]
-}
-
-/// Close a polyline by repeating its first point (for `dashed_line`).
-fn closed(pts: &[Pos2]) -> Vec<Pos2> {
-    let mut out = pts.to_vec();
-    if let Some(&first) = pts.first() {
-        out.push(first);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ICONS: [EditorIcon; 16] = [
-        EditorIcon::Lasso,
-        EditorIcon::Object,
-        EditorIcon::SelectAll,
-        EditorIcon::SelectNone,
-        EditorIcon::SelectInvert,
-        EditorIcon::Delete,
-        EditorIcon::Keep,
-        EditorIcon::CloseHoles,
-        EditorIcon::Smooth,
-        EditorIcon::SculptAdd,
-        EditorIcon::Cut,
-        EditorIcon::Separate,
-        EditorIcon::Undo,
-        EditorIcon::Redo,
-        EditorIcon::SurfaceMode,
-        EditorIcon::ThroughMode,
+    /// The editor cells the two panels actually place.
+    const CELL_ICONS: [AppIcon; 16] = [
+        AppIcon::Lasso,
+        AppIcon::Object,
+        AppIcon::SelectAll,
+        AppIcon::SelectNone,
+        AppIcon::SelectInvert,
+        AppIcon::Delete,
+        AppIcon::Keep,
+        AppIcon::CloseHoles,
+        AppIcon::Smooth,
+        AppIcon::SculptAdd,
+        AppIcon::Cut,
+        AppIcon::Separate,
+        AppIcon::Undo,
+        AppIcon::Redo,
+        AppIcon::AlignFit,
+        AppIcon::AlignRefine,
     ];
 
     #[test]
-    fn every_icon_paints_without_panicking() {
-        let ctx = egui::Context::default();
-        let painter = ctx.debug_painter();
-        let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::splat(18.0));
-        for icon in ALL_ICONS {
-            for active in [false, true] {
-                paint(&painter, rect, icon, Color32::WHITE, active);
-            }
-        }
-    }
-
-    const ALL_MEASURE_ICONS: [MeasureIcon; 2] = [MeasureIcon::Ruler, MeasureIcon::Thickness];
-
-    #[test]
-    fn every_measure_icon_paints_without_panicking() {
-        let ctx = egui::Context::default();
-        let painter = ctx.debug_painter();
-        // Exercise both the toolbar toggle size and the strip glyph size.
-        for side in [14.0_f32, 15.0, 18.0] {
-            let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::splat(side));
-            for icon in ALL_MEASURE_ICONS {
-                for active in [false, true] {
-                    paint_measure(&painter, rect, icon, Color32::WHITE, active);
-                }
-            }
-        }
-    }
-
-    #[test]
     fn icon_button_renders_in_every_state_without_panicking() {
-        // Exercise the disabled / hover-less / active branches of `icon_button`
-        // with a real `Ui`, at the narrow cell size the window now uses.
         egui::__run_test_ui(|ui| {
-            for icon in ALL_ICONS {
+            for icon in CELL_ICONS {
                 for enabled in [false, true] {
                     for active in [false, true] {
                         icon_button(
@@ -749,34 +116,5 @@ mod tests {
                 }
             }
         });
-    }
-
-    #[test]
-    fn arrowhead_barbs_stay_near_the_tip() {
-        // The barbs must not shoot off when the direction is axis-aligned or
-        // degenerate. This used to call the painter and assert nothing, so
-        // barbs a thousand times too far away passed it.
-        let tip = Pos2::new(10.0, 10.0);
-        let len = 3.0;
-        for dir in [
-            Vec2::new(0.0, 1.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(-1.0, 0.0),
-            Vec2::new(0.7, -0.7),
-            Vec2::ZERO,
-        ] {
-            for barb in arrowhead_barbs(tip, dir, len) {
-                let offset = barb - tip;
-                assert!(
-                    offset.x.is_finite() && offset.y.is_finite(),
-                    "barb at {barb:?} for direction {dir:?}"
-                );
-                assert!(
-                    offset.length() <= len * 2.0,
-                    "barb sits {} px from a {len} px arrowhead, direction {dir:?}",
-                    offset.length()
-                );
-            }
-        }
     }
 }

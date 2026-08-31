@@ -41,6 +41,12 @@ enum DownloadEvent {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct DownloadDrain {
+    finished: bool,
+    repaint: bool,
+}
+
 enum Phase {
     Idle,
     Available(AvailableUpdate),
@@ -57,10 +63,24 @@ enum Phase {
     Dismissed,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckStatus {
+    Idle,
+    Disabled,
+    Checking,
+    Current,
+    Available(String),
+    Skipped(String),
+    Failed(String),
+}
+
+type CheckResult = Result<Option<AvailableUpdate>, String>;
+
 /// Launch-time update notice state; owned by the app, drawn every frame.
 pub(crate) struct UpdateNotice {
     phase: Phase,
-    check_rx: Option<mpsc::Receiver<Option<AvailableUpdate>>>,
+    check_status: UpdateCheckStatus,
+    check_rx: Option<mpsc::Receiver<CheckResult>>,
     download_rx: Option<mpsc::Receiver<DownloadEvent>>,
 }
 
@@ -76,37 +96,91 @@ fn update_download_dir() -> Option<PathBuf> {
 }
 
 impl UpdateNotice {
-    /// Start the once-per-launch background check (unless disabled by env).
-    pub(crate) fn begin_check() -> Self {
-        let mut notice = Self {
-            phase: Phase::Idle,
-            check_rx: None,
-            download_rx: None,
-        };
+    /// Start the once-per-launch background check. The env var is a hard
+    /// override (CI, packaging); the setting only applies when it is unset.
+    pub(crate) fn begin_check(setting_enabled: bool) -> Self {
+        let mut notice = Self::idle();
         if std::env::var_os("OCCLUVIEW_NO_UPDATE_CHECK").is_some() {
+            notice.check_status = UpdateCheckStatus::Disabled;
             return notice;
         }
+        if setting_enabled {
+            notice.spawn_check();
+        }
+        notice
+    }
+
+    fn idle() -> Self {
+        Self {
+            phase: Phase::Idle,
+            check_status: UpdateCheckStatus::Idle,
+            check_rx: None,
+            download_rx: None,
+        }
+    }
+
+    fn spawn_check(&mut self) {
         let (tx, rx) = mpsc::channel();
-        notice.check_rx = Some(rx);
-        std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name("occluview-update-check".to_string())
             .spawn(move || {
-                // Errors mean "no update today": never bother the operator
-                // over a flaky network or a missing manifest.
-                let found = occluview_update::check_for_update(env!("CARGO_PKG_VERSION"))
-                    .unwrap_or(None)
-                    // An explicitly skipped version stays quiet; anything NEWER
-                    // than the skipped one is offered again.
-                    .filter(|update| load_skipped_version().as_deref() != Some(update.version.to_string().as_str()));
-                let _ = tx.send(found);
-            })
-            .ok();
-        notice
+                let result = occluview_update::check_for_update(env!("CARGO_PKG_VERSION"))
+                    .map_err(|error| error.to_string());
+                let _ = tx.send(result);
+            }) {
+            Ok(_) => {
+                self.check_status = UpdateCheckStatus::Checking;
+                self.check_rx = Some(rx);
+            }
+            Err(error) => {
+                self.check_status = UpdateCheckStatus::Failed(error.to_string());
+            }
+        }
+    }
+
+    pub(crate) fn request_check(&mut self) {
+        if std::env::var_os("OCCLUVIEW_NO_UPDATE_CHECK").is_some() {
+            self.check_status = UpdateCheckStatus::Disabled;
+        } else if self.check_rx.is_none() {
+            self.spawn_check();
+        }
+    }
+
+    pub(crate) fn check_status(&self) -> &UpdateCheckStatus {
+        &self.check_status
+    }
+
+    fn offer(&mut self, update: AvailableUpdate) {
+        if matches!(
+            self.phase,
+            Phase::Idle | Phase::Dismissed | Phase::Failed(_)
+        ) {
+            self.phase = Phase::Available(update);
+        }
+    }
+
+    fn finish_check(&mut self, result: CheckResult) {
+        match result {
+            Err(error) => self.check_status = UpdateCheckStatus::Failed(error),
+            Ok(None) => self.check_status = UpdateCheckStatus::Current,
+            Ok(Some(update)) => {
+                let version = update.version.to_string();
+                if load_skipped_version().as_deref() == Some(version.as_str()) {
+                    self.check_status = UpdateCheckStatus::Skipped(version);
+                } else {
+                    self.check_status = UpdateCheckStatus::Available(version);
+                    self.offer(update);
+                }
+            }
+        }
     }
 
     /// Drain worker events and draw the notice when there is one.
     pub(crate) fn show(&mut self, ctx: &egui::Context) {
         self.drain_events(ctx);
+        if self.check_status == UpdateCheckStatus::Checking {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
         match &self.phase {
             Phase::Idle | Phase::Dismissed => {}
             _ => self.draw_window(ctx),
@@ -114,47 +188,29 @@ impl UpdateNotice {
     }
 
     fn drain_events(&mut self, ctx: &egui::Context) {
+        use std::sync::mpsc::TryRecvError;
         if let Some(rx) = &self.check_rx {
-            if let Ok(result) = rx.try_recv() {
-                self.check_rx = None;
-                if let Some(update) = result {
-                    self.phase = Phase::Available(update);
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.check_rx = None;
+                    self.finish_check(result);
                     ctx.request_repaint();
                 }
+                Err(TryRecvError::Disconnected) => {
+                    self.check_rx = None;
+                    self.check_status = UpdateCheckStatus::Failed(
+                        "the update-check worker stopped unexpectedly".to_string(),
+                    );
+                }
+                Err(TryRecvError::Empty) => {}
             }
         }
         if let Some(rx) = &self.download_rx {
-            let mut finished = false;
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    DownloadEvent::Progress(received, total) => {
-                        if let Phase::Downloading {
-                            received: current_received,
-                            total: current_total,
-                            ..
-                        } = &mut self.phase
-                        {
-                            *current_received = received;
-                            *current_total = total;
-                        }
-                    }
-                    DownloadEvent::Done(installer) => {
-                        if let Phase::Downloading { update, .. } = &self.phase {
-                            self.phase = Phase::Ready {
-                                update: update.clone(),
-                                installer,
-                            };
-                        }
-                        finished = true;
-                    }
-                    DownloadEvent::Failed(message) => {
-                        self.phase = Phase::Failed(message);
-                        finished = true;
-                    }
-                }
+            let outcome = drain_download_events(&mut self.phase, rx);
+            if outcome.repaint {
                 ctx.request_repaint();
             }
-            if finished {
+            if outcome.finished {
                 self.download_rx = None;
             }
         }
@@ -199,9 +255,8 @@ impl UpdateNotice {
 
     fn start_download(&mut self, update: AvailableUpdate) -> Phase {
         let (tx, rx) = mpsc::channel();
-        self.download_rx = Some(rx);
         let worker_update = update.clone();
-        std::thread::Builder::new()
+        let spawn = std::thread::Builder::new()
             .name("occluview-update-download".to_string())
             .spawn(move || {
                 let Some(dest) = update_download_dir() else {
@@ -221,14 +276,68 @@ impl UpdateNotice {
                         let _ = tx.send(DownloadEvent::Failed(error.to_string()));
                     }
                 }
-            })
-            .ok();
-        Phase::Downloading {
-            update,
-            received: 0,
-            total: None,
+            });
+        match spawn {
+            Ok(_) => {
+                self.download_rx = Some(rx);
+                Phase::Downloading {
+                    update,
+                    received: 0,
+                    total: None,
+                }
+            }
+            Err(error) => Phase::Failed(format!("could not start update download: {error}")),
         }
     }
+}
+
+fn drain_download_events(
+    phase: &mut Phase,
+    events: &mpsc::Receiver<DownloadEvent>,
+) -> DownloadDrain {
+    use std::sync::mpsc::TryRecvError;
+    let mut outcome = DownloadDrain::default();
+    loop {
+        match events.try_recv() {
+            Ok(DownloadEvent::Progress(received, total)) => {
+                if let Phase::Downloading {
+                    received: current_received,
+                    total: current_total,
+                    ..
+                } = phase
+                {
+                    *current_received = received;
+                    *current_total = total;
+                }
+                outcome.repaint = true;
+            }
+            Ok(DownloadEvent::Done(installer)) => {
+                if let Phase::Downloading { update, .. } = phase {
+                    *phase = Phase::Ready {
+                        update: update.clone(),
+                        installer,
+                    };
+                }
+                outcome.finished = true;
+                outcome.repaint = true;
+                break;
+            }
+            Ok(DownloadEvent::Failed(message)) => {
+                *phase = Phase::Failed(message);
+                outcome.finished = true;
+                outcome.repaint = true;
+                break;
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                *phase = Phase::Failed("the update-download worker stopped unexpectedly".into());
+                outcome.finished = true;
+                outcome.repaint = true;
+                break;
+            }
+        }
+    }
+    outcome
 }
 
 fn draw_available(
@@ -237,6 +346,13 @@ fn draw_available(
     start_download: &mut Option<AvailableUpdate>,
     next_phase: &mut Option<Phase>,
 ) {
+    let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+    crate::icons::paint(
+        ui.painter(),
+        icon_rect,
+        crate::icons::AppIcon::InstallUpdate,
+        crate::ui_theme::TEXT,
+    );
     ui.label(egui::RichText::new(format!("OccluView {} is available", update.version)).strong());
     ui.label(
         egui::RichText::new(format!("You are on {}.", env!("CARGO_PKG_VERSION")))
@@ -250,7 +366,7 @@ fn draw_available(
         }
     }
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if update.downloadable() {
             if ui.button("Download update").clicked() {
                 *start_download = Some(update.clone());
@@ -341,4 +457,32 @@ fn progress_fraction(received: u64, total: Option<u64>) -> f32 {
     };
     let permille = received.saturating_mul(1000) / total;
     f32::from(u16::try_from(permille.min(1000)).unwrap_or(1000)) / 1000.0
+}
+
+#[cfg(test)]
+mod settings_status_tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_manual_check_remains_a_failure() {
+        let mut notice = UpdateNotice::idle();
+        notice.finish_check(Err("network unavailable".to_string()));
+
+        assert_eq!(
+            notice.check_status(),
+            &UpdateCheckStatus::Failed("network unavailable".to_string())
+        );
+    }
+
+    #[test]
+    fn a_disconnected_download_worker_becomes_a_failure() {
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        let mut phase = Phase::Idle;
+
+        let outcome = drain_download_events(&mut phase, &receiver);
+
+        assert!(outcome.finished);
+        assert!(matches!(phase, Phase::Failed(_)));
+    }
 }

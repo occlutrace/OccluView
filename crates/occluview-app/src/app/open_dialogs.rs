@@ -16,14 +16,14 @@ pub(super) struct OpenDialogs {
     pub(super) close_guard: bool,
     pub(super) pending_replace: bool,
     pub(super) error: bool,
-    pub(super) about: bool,
+    pub(super) settings: bool,
     pub(super) third_party: bool,
 }
 
 impl OpenDialogs {
     /// True when anything modal is in front of the viewport.
     pub(super) fn any(self) -> bool {
-        self.close_guard || self.pending_replace || self.error || self.about || self.third_party
+        self.close_guard || self.pending_replace || self.error || self.settings || self.third_party
     }
 
     /// Every flag, paired with the name a failing test should print.
@@ -33,7 +33,7 @@ impl OpenDialogs {
             ("close_guard", self.close_guard),
             ("pending_replace", self.pending_replace),
             ("error", self.error),
-            ("about", self.about),
+            ("settings", self.settings),
             ("third_party", self.third_party),
         ]
     }
@@ -44,7 +44,7 @@ impl OpenDialogs {
             close_guard: false,
             pending_replace: false,
             error: false,
-            about: false,
+            settings: false,
             third_party: false,
         }
     }
@@ -56,7 +56,7 @@ impl OpenDialogs {
             0 => dialogs.close_guard = true,
             1 => dialogs.pending_replace = true,
             2 => dialogs.error = true,
-            3 => dialogs.about = true,
+            3 => dialogs.settings = true,
             _ => dialogs.third_party = true,
         }
         dialogs

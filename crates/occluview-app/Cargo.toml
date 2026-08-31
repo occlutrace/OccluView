@@ -36,6 +36,10 @@ egui              = { workspace = true }
 eframe            = { workspace = true, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 rfd               = { workspace = true }
 image             = { workspace = true }
+# Lucide icon rasterization: SVG -> RGBA at draw size, see src/icons.rs.
+resvg             = { version = "0.48", default-features = false }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
 # Read the top-level window handle for the single-instance file handoff (used
 # to raise the running window). The X11-specific raise lives behind a Linux
 # target dep (x11rb); this crate only provides the handle type, so it stays

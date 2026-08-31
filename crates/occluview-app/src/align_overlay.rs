@@ -23,7 +23,7 @@ const MARKER_FILL: egui::Color32 = egui::Color32::from_rgb(246, 247, 249);
 
 /// The colour a rejected pair is drawn in. It is shown, not hidden: the
 /// operator needs to see which click the fit threw away.
-const REJECTED_INK: egui::Color32 = egui::Color32::from_rgb(198, 64, 48);
+const REJECTED_INK: egui::Color32 = ui_theme::DANGER;
 
 /// Everything one paint pass needs.
 pub(crate) struct PairPaint<'a> {

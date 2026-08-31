@@ -7,11 +7,10 @@ use super::model::{CutRuler, SliceBasis, SliceCam, SlicePlaneMap};
 use crate::cut_geometry::snap_to_contour;
 use crate::{probe_section, ui_theme};
 
-/// Docked Section-panel geometry (bottom-right; the axis gizmo lifts above it).
-/// The image stays square so the orthographic mm-per-pixel is identical on both
-/// axes and the ruler mapping remains exact.
-const IMAGE_SIDE_PX: f32 = 340.0;
-const MIN_IMAGE_SIDE_PX: f32 = 180.0;
+/// The section image stays square so both axes use the same mm-per-pixel scale.
+const MAX_IMAGE_SIDE_PX: f32 = 300.0;
+const IMAGE_SIDE_VIEWPORT_FRACTION: f32 = 0.40;
+const MIN_IMAGE_SIDE_PX: f32 = 170.0;
 const CHROME_GAP_PX: f32 = 8.0;
 const PANEL_PAD_PX: f32 = 6.0;
 const PANEL_HEADER_PX: f32 = 22.0;
@@ -100,7 +99,7 @@ struct RulerPlacement<'a> {
 /// sit just above this rect while the cut tool is active.
 ///
 /// The panel ADAPTS to the window instead of painting over the chrome: its
-/// image side shrinks from the full [`IMAGE_SIDE_PX`] until it would drop
+/// image side shrinks from [`MAX_IMAGE_SIDE_PX`] until it would drop
 /// below [`MIN_IMAGE_SIDE_PX`], budgeting (vertically) the lifted axis gizmo
 /// and (horizontally) the bottom-left status pill.
 pub(crate) fn section_panel_rect(viewport_rect: egui::Rect) -> Option<egui::Rect> {
@@ -114,7 +113,12 @@ pub(crate) fn section_panel_rect(viewport_rect: egui::Rect) -> Option<egui::Rect
     let pill_right = crate::app_chrome::status_overlay_rect(viewport_rect).right();
     let side_by_width =
         viewport_rect.right() - PANEL_MARGIN_PX - PANEL_PAD_PX * 2.0 - (pill_right + CHROME_GAP_PX);
-    let side = IMAGE_SIDE_PX.min(side_by_height).min(side_by_width);
+    let proportional =
+        IMAGE_SIDE_VIEWPORT_FRACTION * viewport_rect.height().min(viewport_rect.width());
+    let side = MAX_IMAGE_SIDE_PX
+        .min(proportional)
+        .min(side_by_height)
+        .min(side_by_width);
     if side < MIN_IMAGE_SIDE_PX {
         return None;
     }
@@ -355,13 +359,21 @@ fn draw_section_header(
                 out.measure_mode = SliceMeasureMode::Thickness;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close = ui
-                    .add_sized(
-                        [24.0, 20.0],
-                        egui::Button::new(egui::RichText::new("×").size(16.0)).frame(false),
-                    )
-                    .on_hover_text("Close section");
-                if close.clicked() {
+                let (close_rect, close) =
+                    ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
+                let close_hovered = close.hovered();
+                crate::icons::paint(
+                    ui.painter(),
+                    close_rect,
+                    crate::icons::AppIcon::Close,
+                    if close_hovered {
+                        ui_theme::TEXT
+                    } else {
+                        ui_theme::TEXT_WEAK
+                    },
+                );
+                let close_clicked = close.on_hover_text("Close section").clicked();
+                if close_clicked {
                     out.command = SectionPanelCommand::Close;
                 }
                 let snap = ui
@@ -370,8 +382,7 @@ fn draw_section_header(
                 if snap.clicked() {
                     out.magnet = !magnet;
                 }
-                out.consumed |=
-                    close.hovered() || close.clicked() || snap.hovered() || snap.clicked();
+                out.consumed |= close_hovered || close_clicked || snap.hovered() || snap.clicked();
             });
             out.consumed |= lines.hovered()
                 || mesh.hovered()

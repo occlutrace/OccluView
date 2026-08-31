@@ -14,7 +14,7 @@
 use eframe::egui;
 use occluview_core::RepairReport;
 
-use crate::mesh_editor_icons::{self, EditorIcon};
+use crate::icons::AppIcon;
 use crate::ui_theme;
 
 /// Headline shown when Repair ran but found nothing to fix.
@@ -349,7 +349,7 @@ impl RepairReportDialog {
 
                 ui.add_space(10.0);
                 ui.separator();
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         close_clicked = true;
                     }
@@ -386,40 +386,13 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
     let painter = ui.painter();
     match icon {
         LineIcon::Removed => {
-            mesh_editor_icons::paint(
-                painter,
-                rect,
-                EditorIcon::Delete,
-                ui_theme::TEXT_WEAK,
-                false,
-            );
+            crate::icons::paint(painter, rect, AppIcon::Delete, ui_theme::TEXT_WEAK);
         }
         LineIcon::Closed => {
-            mesh_editor_icons::paint(
-                painter,
-                rect,
-                EditorIcon::CloseHoles,
-                ui_theme::TEXT_WEAK,
-                false,
-            );
+            crate::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::TEXT_WEAK);
         }
-        LineIcon::Fixed => paint_check(painter, rect, ui_theme::ACCENT),
+        LineIcon::Fixed => crate::icons::paint(painter, rect, AppIcon::Check, ui_theme::ACCENT),
     }
-}
-
-/// A small check mark ("done") for topology fixes without a natural glyph.
-fn paint_check(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    let stroke = egui::Stroke::new(1.6, color);
-    let point = |x: f32, y: f32| {
-        egui::pos2(
-            rect.min.x + x * rect.width(),
-            rect.min.y + y * rect.height(),
-        )
-    };
-    painter.add(egui::Shape::line(
-        vec![point(0.22, 0.52), point(0.42, 0.72), point(0.80, 0.30)],
-        stroke,
-    ));
 }
 
 #[cfg(test)]

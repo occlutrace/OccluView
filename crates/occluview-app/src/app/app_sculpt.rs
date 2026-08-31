@@ -13,6 +13,7 @@ use crate::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
 use glam::Vec3;
 use occluview_core::{BrushMode, BrushStroke, SceneMeshId, ScenePickHit};
+use std::sync::Arc;
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
 /// does not re-read input.
@@ -258,6 +259,9 @@ impl OccluViewApp {
         if self.sculpt.stroke.is_none() && !response.contains_pointer() {
             return false;
         }
+        if self.sculpt.stroke.is_none() {
+            let _ = self.ensure_sculpt_session_for_target();
+        }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
             // Keep owning this held gesture while the background BVH/brush
             // preparation finishes. The next frame retries the current point,
@@ -282,7 +286,7 @@ impl OccluViewApp {
             }
             Some(_) => {}
             None => {
-                if !self.ensure_sculpt_session(hit) {
+                if !self.ensure_sculpt_session_for_hit(hit) {
                     ctx.request_repaint();
                     return;
                 }
@@ -324,10 +328,19 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// Ensure a valid prepared session covers the hit layer, preparing one (the
-    /// one-time O(n) weld/adjacency/grid cost) only when the layer or its
-    /// topology identity changed since the last stroke.
-    fn ensure_sculpt_session(&mut self, hit: &ScenePickHit) -> bool {
+    /// Prepare the target without requiring a successful BVH hit first.
+    fn ensure_sculpt_session_for_target(&mut self) -> bool {
+        let Some(scene) = self.scene.clone() else {
+            return false;
+        };
+        let Some((index, layer_id)) = sculpt_target(&scene, self.edit_mode.session_layer_id())
+        else {
+            return false;
+        };
+        self.ensure_sculpt_session_for_layer(&scene, index, layer_id)
+    }
+
+    fn ensure_sculpt_session_for_hit(&mut self, hit: &ScenePickHit) -> bool {
         let Some(scene) = self.scene.clone() else {
             return false;
         };
@@ -337,14 +350,28 @@ impl OccluViewApp {
         if entry.id() != hit.layer_id {
             return false;
         }
+        self.ensure_sculpt_session_for_layer(&scene, hit.layer_index, hit.layer_id)
+    }
+
+    fn ensure_sculpt_session_for_layer(
+        &mut self,
+        scene: &Arc<occluview_core::Scene>,
+        index: usize,
+        layer_id: SceneMeshId,
+    ) -> bool {
+        let Some(entry) = scene.meshes().get(index) else {
+            return false;
+        };
+        if entry.id() != layer_id {
+            return false;
+        }
         if self
             .sculpt
-            .session_matches(hit.layer_id, entry.mesh.topology_id())
+            .session_matches(layer_id, entry.mesh.topology_id())
         {
             return true;
         }
-        let _ = self.sculpt.queue_preparation(scene, hit.layer_index);
-        false
+        self.sculpt.queue_preparation(Arc::clone(scene), index)
     }
 
     /// Prepare the active edit layer as soon as Edit Mesh/Sculpt becomes
@@ -489,24 +516,7 @@ impl OccluViewApp {
     }
 
     fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
-        self.edit_mode
-            .session_layer_id()
-            .filter(|layer_id| {
-                scene.meshes().iter().any(|entry| {
-                    entry.id() == *layer_id
-                        && entry.visible
-                        && !entry.mesh.is_point_cloud()
-                        && entry.mesh.triangle_count() > 0
-                })
-            })
-            .or_else(|| {
-                scene.meshes().iter().find_map(|entry| {
-                    (entry.visible
-                        && !entry.mesh.is_point_cloud()
-                        && entry.mesh.triangle_count() > 0)
-                        .then_some(entry.id())
-                })
-            })
+        sculpt_target(scene, self.edit_mode.session_layer_id()).map(|(_, layer_id)| layer_id)
     }
 
     /// The brush cursor is deliberately screen-space: a surface-projected ring
@@ -562,6 +572,32 @@ impl OccluViewApp {
     }
 }
 
+fn sculpt_target(
+    scene: &occluview_core::Scene,
+    preferred: Option<SceneMeshId>,
+) -> Option<(usize, SceneMeshId)> {
+    let valid = |entry: &occluview_core::SceneMesh| {
+        entry.visible && !entry.mesh.is_point_cloud() && entry.mesh.triangle_count() > 0
+    };
+    preferred
+        .and_then(|layer_id| {
+            scene
+                .meshes()
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| entry.id() == layer_id && valid(entry))
+                .map(|(index, _)| (index, layer_id))
+        })
+        .or_else(|| {
+            scene
+                .meshes()
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| valid(entry))
+                .map(|(index, entry)| (index, entry.id()))
+        })
+}
+
 /// Quiet semantic colors: build, carve, and smooth remain distinguishable but
 /// do not introduce the saturated blue accent used by the old editor chrome.
 fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
@@ -576,9 +612,34 @@ fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
-    use super::plan_dab_centers;
+    use super::{plan_dab_centers, sculpt_target};
     use crate::sculpt_tool::{HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME};
     use glam::Vec3;
+    use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+
+    #[test]
+    fn a_cold_mesh_can_be_resolved_for_background_preparation() -> anyhow::Result<()> {
+        let mesh = Mesh::new(
+            None,
+            vec![
+                Vertex::at(Vec3::ZERO),
+                Vertex::at(Vec3::X),
+                Vertex::at(Vec3::Y),
+            ],
+            vec![0, 1, 2],
+        )?;
+        assert!(!mesh.bvh_is_ready());
+        let mut scene = Scene::new();
+        let index = scene.add(SceneMesh::new(mesh));
+        let layer_id = scene.meshes()[index].id();
+
+        assert_eq!(
+            sculpt_target(&scene, Some(layer_id)),
+            Some((index, layer_id))
+        );
+        assert!(!scene.meshes()[index].mesh.bvh_is_ready());
+        Ok(())
+    }
 
     #[test]
     fn first_dab_lands_at_the_cursor_and_arms_the_path() {

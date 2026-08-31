@@ -20,6 +20,7 @@ use super::{
     PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Scene, SceneLoadRequest,
     SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
+use crate::app_settings::{SettingsPersistence, SettingsWindowState};
 
 /// Everything the bootstrap hands the app about how this process was started:
 /// the single-instance guard, the window raise handle, and the launcher's
@@ -108,7 +109,10 @@ pub(crate) struct OccluViewApp {
     /// Latest window-activation token forwarded by a second instance, used as
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
     pub(super) pending_raise_token: Option<String>,
-    pub(super) about_window: AboutWindowState,
+    pub(super) settings_window: SettingsWindowState,
+    /// Operator preferences, loaded once at startup and saved on change.
+    pub(super) settings: crate::app_settings::Settings,
+    pub(super) settings_persistence: SettingsPersistence,
     /// The Third-party licenses window, opened from About.
     pub(super) third_party_window_open: bool,
     /// Persistent post-repair report card, populated by the Repair executor and
@@ -196,12 +200,6 @@ pub(super) struct AppErrorDialog {
     pub(super) details: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AboutWindowState {
-    Closed,
-    Open,
-}
-
 pub(super) struct RenderedFrame {
     pub(super) texture: egui::TextureHandle,
     pub(super) pixels: Vec<u8>,
@@ -262,12 +260,22 @@ impl OccluViewApp {
         live_viewport: Option<SharedLiveViewport>,
         startup: StartupHandles,
     ) -> Self {
+        let settings = crate::app_settings::Settings::load();
+        let last_export_dir = if settings.remember_export_dir {
+            settings.last_export_dir.as_ref().map(PathBuf::from)
+        } else {
+            None
+        };
+        let update_check_on_start = settings.update_check_on_start;
         let mut app = Self {
             repaint_ctx: repaint_ctx.clone(),
             scene: None,
             current_paths: Vec::new(),
-            last_export_dir: None,
+            last_export_dir,
             recent_files: load_recent_files(),
+            settings,
+            settings_persistence: SettingsPersistence::default(),
+            settings_window: SettingsWindowState::default(),
             camera: None,
             live_viewport,
             offscreen: None,
@@ -297,7 +305,6 @@ impl OccluViewApp {
             _single_instance: startup.single_instance,
             raise_target: startup.raise_target,
             pending_raise_token: startup.activation_token,
-            about_window: AboutWindowState::Closed,
             third_party_window_open: false,
             repair_report: crate::repair_report::RepairReportDialog::default(),
             app_logo: None,
@@ -309,7 +316,7 @@ impl OccluViewApp {
             align: crate::align_state::AlignState::default(),
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
-            update_notice: crate::update_notice::UpdateNotice::begin_check(),
+            update_notice: crate::update_notice::UpdateNotice::begin_check(update_check_on_start),
             unsaved_edit_layer_ids: std::collections::BTreeSet::new(),
             hidden_layer_stack: Vec::new(),
             translucent_layer_restore: std::collections::HashMap::new(),
@@ -337,7 +344,7 @@ impl OccluViewApp {
             close_guard: self.close_guard_open,
             pending_replace: self.pending_replace_open.is_some(),
             error: self.app_error.is_some(),
-            about: self.about_window == AboutWindowState::Open,
+            settings: self.settings_window.open || self.settings_window.about_open,
             third_party: self.third_party_window_open,
         }
         .any()
@@ -463,11 +470,29 @@ impl OccluViewApp {
     pub(super) fn save_recent_files(&self) {
         save_recent_files(&self.recent_files);
     }
+
+    fn persist_settings_if_due(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        if self.settings_persistence.should_attempt(now) {
+            match self.settings.save() {
+                Ok(()) => self.settings_persistence.record_success(),
+                Err(error) => {
+                    tracing::warn!(%error, "could not persist viewer preferences");
+                    self.settings_persistence
+                        .record_failure(now, error.to_string());
+                }
+            }
+        }
+        if let Some(delay) = self.settings_persistence.retry_after(now) {
+            ctx.request_repaint_after(delay);
+        }
+    }
 }
 
 impl eframe::App for OccluViewApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(super::viewer_visuals());
+        self.persist_settings_if_due(ctx);
         self.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
@@ -488,7 +513,7 @@ impl eframe::App for OccluViewApp {
         // Surface GPU faults before drawing the error dialog.
         self.poll_gpu_errors();
         self.show_error_dialog(ctx);
-        self.show_about_window(ctx);
+        self.show_about_dialog(ctx);
         self.show_third_party_window(ctx);
         self.repair_report.ui(ctx);
         self.update_notice.show(ctx);

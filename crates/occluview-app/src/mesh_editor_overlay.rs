@@ -11,6 +11,8 @@
 
 use eframe::egui;
 
+use crate::icons::AppIcon;
+
 use crate::sculpt_tool::{
     size_to_radius_mm, SculptToolKind, SCULPT_INTENSITY_DEFAULT, SCULPT_SIZE_DEFAULT,
 };
@@ -216,6 +218,7 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
     // selection-mode toggles stay live so the operator is never locked out.
     let ops_enabled = !state.busy;
 
+    groups::header(ui, "Mesh editor", AppIcon::EditMesh);
     let mut action = groups::tab_strip(ui, &state);
     ui.add_space(4.0);
     match state.active_tab {

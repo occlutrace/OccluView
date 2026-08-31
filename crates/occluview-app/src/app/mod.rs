@@ -64,6 +64,7 @@ mod app_scene_export;
 mod app_scene_menu;
 mod app_sculpt;
 mod app_sculpt_worker;
+mod app_settings_window;
 mod app_third_party;
 mod app_viewport;
 mod disc_frame;
@@ -79,9 +80,7 @@ use app_layer_edits::{
 use app_load_errors::load_error_dialog;
 use app_scale_bar::paint_scale_bar;
 pub(crate) use state::{parse_args, OccluViewApp, StartupHandles};
-use state::{
-    AboutWindowState, AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame,
-};
+use state::{AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame};
 
 #[cfg(test)]
 mod tests {

@@ -133,7 +133,8 @@ fn the_one_guarded_forwarder_is_not_named_like_the_others() {
         "self.close_guard_open",
         "self.pending_replace_open.is_some()",
         "self.app_error.is_some()",
-        "self.about_window == AboutWindowState::Open",
+        "self.settings_window.open",
+        "self.settings_window.about_open",
         "self.third_party_window_open",
     ] {
         assert!(
@@ -178,7 +179,8 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
         "self.close_guard_open",
         "self.pending_replace_open.is_some()",
         "self.app_error.is_some()",
-        "self.about_window == AboutWindowState::Open",
+        "self.settings_window.open",
+        "self.settings_window.about_open",
         "self.third_party_window_open",
     ] {
         assert!(state.contains(dialog), "the predicate must count {dialog}");

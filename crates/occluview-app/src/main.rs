@@ -42,6 +42,7 @@ mod app_bootstrap;
 mod app_chrome;
 mod app_files;
 mod app_paths;
+mod app_settings;
 mod bridge_split;
 mod bridge_split_overlay;
 mod cut_geometry;
@@ -50,6 +51,7 @@ mod cut_overlay;
 mod cut_ruler;
 mod cut_tool;
 mod edit_mode;
+mod icons;
 #[cfg(windows)]
 mod jump_list;
 mod jump_list_model;

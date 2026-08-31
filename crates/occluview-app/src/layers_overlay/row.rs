@@ -74,6 +74,14 @@ pub(super) fn show_layer_row(
     if view.active {
         ui.painter()
             .rect_filled(row_rect, 5.0, ui_theme::row_active_fill());
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                row_rect.min,
+                egui::pos2(row_rect.min.x + 3.0, row_rect.max.y),
+            ),
+            1.5,
+            ui_theme::ACCENT,
+        );
     } else if hovered {
         ui.painter()
             .rect_filled(row_rect, 5.0, ui_theme::row_hover_fill());
@@ -103,12 +111,24 @@ pub(super) fn show_layer_row(
                 // the destructive remove control.
                 ui.spacing_mut().item_spacing.x = 0.0;
 
-                // Visibility eye.
                 let (eye_rect, eye_response) = ui.allocate_exact_size(
                     egui::vec2(LAYER_ROW_EYE_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX),
                     egui::Sense::click(),
                 );
-                ui_theme::paint_visibility_eye(ui.painter(), eye_rect, visible);
+                crate::icons::paint(
+                    ui.painter(),
+                    eye_rect,
+                    if visible {
+                        crate::icons::AppIcon::Eye
+                    } else {
+                        crate::icons::AppIcon::EyeOff
+                    },
+                    if visible {
+                        ui_theme::TEXT
+                    } else {
+                        ui_theme::TEXT_MUTED
+                    },
+                );
                 let eye_response =
                     eye_response.on_hover_text(if visible { "Hide layer" } else { "Show layer" });
                 if eye_response.clicked() {
@@ -170,7 +190,16 @@ pub(super) fn show_layer_row(
                     egui::vec2(LAYER_ROW_REMOVE_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX),
                     egui::Sense::click(),
                 );
-                paint_remove_glyph(ui.painter(), remove_rect, remove_response.hovered());
+                crate::icons::paint(
+                    ui.painter(),
+                    remove_rect,
+                    crate::icons::AppIcon::Close,
+                    if remove_response.hovered() {
+                        ui_theme::ACCENT
+                    } else {
+                        ui_theme::TEXT_MUTED
+                    },
+                );
                 let remove_response = remove_response.on_hover_text("Remove layer");
                 if remove_response.clicked() {
                     *context_request = Some(LayerContextRequest {
@@ -294,19 +323,6 @@ fn tint_swatch(
 // copy here once existed and the two drifting apart would make the popup
 // highlight a colour the apply refused to treat as current.
 
-/// A crisp remove "x", quiet at rest and accented on hover.
-fn paint_remove_glyph(painter: &egui::Painter, rect: egui::Rect, hovered: bool) {
-    let color = if hovered {
-        ui_theme::ACCENT
-    } else {
-        ui_theme::TEXT_MUTED
-    };
-    let stroke = egui::Stroke::new(1.4, color);
-    let inset = rect.shrink(rect.width() * 0.30);
-    painter.line_segment([inset.left_top(), inset.right_bottom()], stroke);
-    painter.line_segment([inset.right_top(), inset.left_bottom()], stroke);
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -318,16 +334,17 @@ mod tests {
             .map_or(source.as_str(), |(source, _)| source);
 
         assert!(
-            production_source.contains("ui_theme::paint_visibility_eye("),
-            "visibility should be a drawn eye toggle, not an On/Off text button"
+            production_source.contains("AppIcon::Eye")
+                && production_source.contains("AppIcon::EyeOff"),
+            "visibility should be the icon-set eye pair, not an On/Off text button"
         );
         assert!(
             !production_source.contains("\"On\"") && !production_source.contains("\"Off\""),
             "the eye replaces the On/Off text toggle"
         );
         assert!(
-            production_source.contains("paint_remove_glyph("),
-            "remove should be a crisp drawn x, not a cramped text character"
+            production_source.contains("AppIcon::Close"),
+            "remove should be a crisp icon-set x, not a cramped text character"
         );
     }
 

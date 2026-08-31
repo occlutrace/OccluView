@@ -1,5 +1,6 @@
+use crate::icons::AppIcon;
 use crate::layer_actions::{LayerContextAction, LayerContextRequest};
-use crate::mesh_editor_icons::{paint_layer_menu, LayerMenuIcon, CELL_ROUNDING};
+use crate::mesh_editor_icons::CELL_ROUNDING;
 use crate::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
@@ -79,7 +80,7 @@ fn show_material_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Tint,
+            AppIcon::Palette,
             "Next tint",
             true,
             LayerContextAction::NextTint,
@@ -87,9 +88,9 @@ fn show_material_actions(
         context_request,
     );
     let (colors_label, colors_icon) = if target.show_vertex_colors {
-        ("Hide scan colors", LayerMenuIcon::ColorsOn)
+        ("Hide scan colors", AppIcon::ScanColors)
     } else {
-        ("Show scan colors", LayerMenuIcon::ColorsOff)
+        ("Show scan colors", AppIcon::ScanColorsOff)
     };
     layer_menu_button(
         ui,
@@ -104,9 +105,9 @@ fn show_material_actions(
     );
     if target.has_texture {
         let (texture_label, texture_icon) = if target.show_texture {
-            ("Disable texture", LayerMenuIcon::TextureOn)
+            ("Disable texture", AppIcon::Texture)
         } else {
-            ("Show texture", LayerMenuIcon::TextureOff)
+            ("Show texture", AppIcon::TextureOff)
         };
         layer_menu_button(
             ui,
@@ -131,7 +132,7 @@ fn show_mesh_edit_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Pencil,
+            AppIcon::EditMesh,
             "Edit mesh",
             target.face_editable,
             LayerContextAction::EditMesh,
@@ -142,7 +143,7 @@ fn show_mesh_edit_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Repair,
+            AppIcon::BridgeSplit,
             "Split bridge...",
             target.visible && target.face_editable,
             LayerContextAction::BridgeSplit,
@@ -153,7 +154,7 @@ fn show_mesh_edit_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Repair,
+            AppIcon::Repair,
             "Repair mesh",
             target.face_editable,
             LayerContextAction::RepairMesh,
@@ -164,7 +165,7 @@ fn show_mesh_edit_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::FlipNormals,
+            AppIcon::FlipNormals,
             "Flip normals",
             target.face_editable,
             LayerContextAction::InvertNormals,
@@ -175,7 +176,7 @@ fn show_mesh_edit_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Export,
+            AppIcon::Export,
             "Export layer...",
             target.face_editable,
             LayerContextAction::ExportLayer,
@@ -198,7 +199,7 @@ fn show_layer_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Wireframe,
+            AppIcon::Wireframe,
             wireframe_label,
             true,
             LayerContextAction::ToggleWireframe,
@@ -209,7 +210,7 @@ fn show_layer_actions(
         ui,
         target,
         LayerMenuButton::new(
-            LayerMenuIcon::Trash,
+            AppIcon::Trash,
             "Remove layer",
             true,
             LayerContextAction::Remove,
@@ -219,19 +220,14 @@ fn show_layer_actions(
 }
 
 struct LayerMenuButton<'a> {
-    icon: LayerMenuIcon,
+    icon: AppIcon,
     label: &'a str,
     enabled: bool,
     action: LayerContextAction,
 }
 
 impl<'a> LayerMenuButton<'a> {
-    const fn new(
-        icon: LayerMenuIcon,
-        label: &'a str,
-        enabled: bool,
-        action: LayerContextAction,
-    ) -> Self {
+    const fn new(icon: AppIcon, label: &'a str, enabled: bool, action: LayerContextAction) -> Self {
         Self {
             icon,
             label,
@@ -263,7 +259,7 @@ fn layer_menu_button(
 /// and carries an icon. Returns the row `Response`.
 pub(super) fn menu_item(
     ui: &mut egui::Ui,
-    icon: LayerMenuIcon,
+    icon: AppIcon,
     label: &str,
     enabled: bool,
 ) -> egui::Response {
@@ -296,7 +292,7 @@ pub(super) fn menu_item(
     }
     let icon_center = egui::pos2(rect.left() + PAD_L + GUTTER * 0.5, rect.center().y);
     let icon_rect = egui::Rect::from_center_size(icon_center, egui::vec2(ICON, ICON));
-    paint_layer_menu(painter, icon_rect, icon, fg);
+    crate::icons::paint(painter, icon_rect, icon, fg);
     painter.text(
         egui::pos2(rect.left() + PAD_L + GUTTER + LABEL_GAP, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -412,7 +408,7 @@ mod tests {
         );
         // Every button names a glyph (the eye picks open/slashed by state, so a
         // couple of extra glyph mentions are expected — hence >=, not ==).
-        let glyphs = production.matches("LayerMenuIcon::").count();
+        let glyphs = production.matches("AppIcon::").count();
         assert!(
             glyphs >= buttons,
             "every menu entry must carry an icon glyph: {glyphs} glyphs for {buttons} buttons"

@@ -14,12 +14,12 @@
 use eframe::egui;
 use occluview_core::Camera;
 
+use crate::icons::AppIcon;
 use crate::measure_draw::{self, LABEL_LIFT_PX};
 use crate::measure_tool::{
     format_mm, MeasureTool, RulerAnchorRef, RulerEndpoint, RulerMeasurement, ThicknessProbe,
     ThicknessReading,
 };
-use crate::mesh_editor_icons::{self, MeasureIcon};
 use crate::ui_theme;
 use crate::viewer::project_world_to_viewport;
 
@@ -150,20 +150,41 @@ fn paint_probe(
     }
 }
 
-/// A compact toolbar toggle: hand-painted vector glyph + caption, with the
-/// mesh-editor cell visuals (accent wash + ring while the tool is engaged).
-// A toggle genuinely needs its glyph, caption, both state flags, and tooltip;
-// bundling them into a struct would only add ceremony (same call shape as
-// `mesh_editor_icons::icon_button`).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn toolbar_toggle(
-    ui: &mut egui::Ui,
-    icon: MeasureIcon,
-    label: &str,
+pub(crate) struct ToolbarToggle<'a> {
+    icon: AppIcon,
+    label: &'a str,
     enabled: bool,
     active: bool,
-    tooltip: &str,
-) -> bool {
+    tooltip: &'a str,
+}
+
+impl<'a> ToolbarToggle<'a> {
+    pub(crate) const fn new(
+        icon: AppIcon,
+        label: &'a str,
+        enabled: bool,
+        active: bool,
+        tooltip: &'a str,
+    ) -> Self {
+        Self {
+            icon,
+            label,
+            enabled,
+            active,
+            tooltip,
+        }
+    }
+}
+
+/// Compact toolbar toggle with the same active treatment as the tool cells.
+pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> egui::Response {
+    let ToolbarToggle {
+        icon,
+        label,
+        enabled,
+        active,
+        tooltip,
+    } = control;
     let ink = if !enabled {
         ui.visuals().weak_text_color()
     } else if active {
@@ -202,7 +223,7 @@ pub(crate) fn toolbar_toggle(
         egui::pos2(rect.left() + 7.0 + icon_side * 0.5, rect.center().y),
         egui::Vec2::splat(icon_side),
     );
-    mesh_editor_icons::paint_measure(painter, icon_rect, icon, ink, active);
+    crate::icons::paint(painter, icon_rect, icon, ink);
     painter.galley(
         egui::pos2(
             icon_rect.right() + 5.0,
@@ -212,29 +233,15 @@ pub(crate) fn toolbar_toggle(
         ink,
     );
     if active {
-        let x = rect.right() - 8.0;
-        let center = egui::pos2(x, rect.center().y);
-        let arm = 3.2;
-        let stroke = egui::Stroke::new(1.35, ink);
-        painter.line_segment(
-            [
-                center + egui::vec2(-arm, -arm),
-                center + egui::vec2(arm, arm),
-            ],
-            stroke,
+        let close_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 8.0, rect.center().y),
+            egui::vec2(10.0, 10.0),
         );
-        painter.line_segment(
-            [
-                center + egui::vec2(-arm, arm),
-                center + egui::vec2(arm, -arm),
-            ],
-            stroke,
-        );
+        crate::icons::paint(painter, close_rect, AppIcon::Close, ink);
     }
     response
         .on_hover_text(tooltip)
         .on_disabled_hover_text(tooltip)
-        .clicked()
 }
 
 #[cfg(test)]
@@ -352,10 +359,13 @@ mod tests {
     #[test]
     fn toolbar_toggle_renders_in_every_state() {
         egui::__run_test_ui(|ui| {
-            for icon in [MeasureIcon::Ruler, MeasureIcon::Thickness] {
+            for icon in [AppIcon::Ruler, AppIcon::Thickness] {
                 for enabled in [false, true] {
                     for active in [false, true] {
-                        toolbar_toggle(ui, icon, "Label", enabled, active, "tooltip");
+                        let _ = toolbar_toggle(
+                            ui,
+                            ToolbarToggle::new(icon, "Label", enabled, active, "tooltip"),
+                        );
                     }
                 }
             }

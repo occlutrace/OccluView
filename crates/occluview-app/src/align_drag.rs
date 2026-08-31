@@ -38,12 +38,12 @@ impl DragConstraint {
     }
 
     /// The glyph the panel shows.
-    pub(crate) fn icon(self) -> crate::mesh_editor_icons::EditorIcon {
-        use crate::mesh_editor_icons::EditorIcon;
+    pub(crate) fn icon(self) -> crate::icons::AppIcon {
+        use crate::icons::AppIcon;
         match self {
-            Self::Free => EditorIcon::MoveLayer,
-            Self::ZOnly => EditorIcon::MoveVertical,
-            Self::XyPlane => EditorIcon::MovePlane,
+            Self::Free => AppIcon::MoveLayer,
+            Self::ZOnly => AppIcon::MoveVertical,
+            Self::XyPlane => AppIcon::MovePlane,
         }
     }
 

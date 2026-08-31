@@ -72,12 +72,12 @@ fn toolbar_and_about_are_operator_focused() {
         !toolbar.contains("ui.menu_button(\"File\"")
             && !toolbar.contains("ui.menu_button(\"View\"")
             && !toolbar.contains("ui.menu_button(\"Help\""),
-        "the windows-style File/View/Help menubar is retired: actions are direct \
-         toolbar buttons (by design)"
+        "toolbar actions should remain direct rather than move into nested menus"
     );
     assert!(
-        toolbar.contains("toolbar_action(") && toolbar.contains("Cut view"),
-        "toolbar should expose the real actions as direct flat buttons"
+        toolbar.contains("toolbar_toggle(") && toolbar.contains("Cut view"),
+        "toolbar should expose the real actions as direct toggles with \
+         icon-set glyphs"
     );
     assert!(
         !toolbar.contains("Save edits"),
@@ -105,19 +105,24 @@ fn toolbar_and_about_are_operator_focused() {
             && !app_render_source().contains("paint_version_stamp("),
         "the viewport carries no version watermark"
     );
+    let settings = repo_source_file("src/app/app_settings_window.rs");
     assert!(
-        dialogs.contains("About OccluView")
-            && function_source(dialogs, "pub(super) fn show_about_window")
-                .contains("self.app_logo_texture(ctx)")
-            && dialogs.contains("https://occlutrace.ai")
-            && dialogs.contains("https://github.com/occlutrace/OccluView")
-            && function_source(dialogs, "pub(super) fn show_about_window")
-                .contains("horizontal_centered"),
-        "About shows the product, logo, the occlutrace.ai link, and the GitHub link"
+        dialogs.contains("AppIcon::Settings")
+            && dialogs.contains("Open preferences")
+            && dialogs.contains("show_settings_popover"),
+        "the toolbar should open preferences from the settings button"
     );
     assert!(
-        !dialogs.contains("Dental Cloud"),
-        "About must not surface a company name (by design), let alone twice"
+        settings.contains("egui::Window::new(\"About OccluView\")")
+            && settings.contains("self.app_logo_texture(ctx)")
+            && settings.contains("https://occlutrace.ai")
+            && settings.contains("https://github.com/occlutrace/OccluView")
+            && settings.contains("vertical_centered"),
+        "About should show the product, logo, and both project links"
+    );
+    assert!(
+        !dialogs.contains("Dental Cloud") && !settings.contains("Dental Cloud"),
+        "About must not surface a company name"
     );
 }
 
@@ -323,13 +328,12 @@ fn unsaved_mesh_edits_guard_the_window_close() {
 
 #[test]
 fn about_opens_the_embedded_third_party_notices() {
-    let dialogs = app_dialogs_source();
+    let settings = repo_source_file("src/app/app_settings_window.rs");
     let notices = repo_source_file("src/app/app_third_party.rs");
 
     assert!(
-        function_source(dialogs, "pub(super) fn show_about_window")
-            .contains("Third-party licenses"),
-        "About should offer the third-party licenses view"
+        settings.contains("Third-party licenses"),
+        "the About dialog should offer the third-party licenses view"
     );
     assert!(
         notices.contains("include_str!(\"../../../../THIRD-PARTY-NOTICES.md\")"),

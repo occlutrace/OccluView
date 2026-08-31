@@ -120,7 +120,7 @@ fn linux_desktop_state_uses_xdg_paths() {
 fn public_linux_copy_is_not_left_as_windows_only() {
     let app_manifest = app_manifest_source();
     let live_viewport = include_str!("../live_viewport.rs");
-    let about = function_source(app_dialogs_source(), "pub(super) fn show_about_window");
+    let about = repo_source_file("src/app/app_settings_window.rs");
     let ci = ci_workflow_source();
 
     assert!(!app_manifest.contains("Windows-only"));
