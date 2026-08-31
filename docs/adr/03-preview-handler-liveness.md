@@ -47,14 +47,16 @@ touched.
    surrogate, not another provider sharing the default host.
 
 4. **Diagnostics are opt-in and privacy-safe.** A diagnostic MSI is an
-   optimized `release-unwind` build with PDBs. When the diagnostic registry
-   switch is enabled, the shell writes bounded JSONL phase records under the
-   low-integrity user's local application data. Records include process and
-   request IDs, extension, byte count, dimensions, elapsed time and error
-   class; they never include a scan path or scan content. The package includes
-   explicit administrator-run helpers for WER crash dumps and ProcDump hang
-   captures. Neither dump collection nor preview disabling is enabled by a
-   normal release install.
+   optimized `release-unwind` build with PDBs and the `diagnostic-logs`
+   feature; the normal customer package does not compile the logging path.
+   With the explicit per-user registry switch enabled, the shell writes a
+   bounded JSONL record under low-integrity local application data only when
+   preview rendering fails. Each record contains only timestamp, process ID,
+   fixed stage, and fixed error category. It never records a scan path, file
+   name, extension, byte count, dimensions, scan content, or raw error text.
+   The package includes explicit administrator-run helpers for WER crash dumps
+   and ProcDump hang captures. Neither dump collection nor preview disabling
+   is enabled by a normal release install.
 
 5. **A diagnostic package is not a release.** It receives a distinct package
    label and checksum manifest, is verified through the existing Windows

@@ -143,7 +143,7 @@ static NEXT_PREVIEW_RENDER_TOKEN: AtomicUsize = AtomicUsize::new(1);
 /// live COM objects, so without the pin COM could unmap the image while either
 /// still executes inside it. A pinned module is a small, bounded cost: the
 /// shell recycles its surrogate hosts anyway.
-pub(super) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
+pub(crate) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
 {
     // An address inside our own mapped image, used to find the DLL's module.
     // Typed as `u16` so it can become a `PCWSTR` (an opaque address here,

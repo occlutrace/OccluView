@@ -21,6 +21,11 @@ workspace = true
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[features]
+# Diagnostic JSONL is compiled only into the private diagnostic package. The
+# normal customer shell extension has no diagnostics worker or file I/O path.
+diagnostic-logs = []
+
 [dependencies]
 occluview-core    = { workspace = true }
 occluview-render  = { workspace = true }

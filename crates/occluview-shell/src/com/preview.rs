@@ -10,9 +10,9 @@ use super::{
     InvalidateRect, MoveWindow, Ordering, PathBuf, PostMessageW, PreviewSceneState, Ref,
     SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead, ThumbnailProvider,
     ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP, HGDIOBJ,
-    HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, NEXT_PREVIEW_RENDER_TOKEN, PAINTSTRUCT,
-    PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RECT, SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE,
-    WPARAM, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    HINSTANCE, HRESULT, HWND, LPARAM, MAX_OFFSCREEN_EDGE, MSG, NEXT_PREVIEW_RENDER_TOKEN,
+    PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RECT, SIGDN_FILESYSPATH, SRCCOPY,
+    WINDOW_EX_STYLE, WPARAM, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod context_menu;
@@ -21,6 +21,11 @@ mod window;
 
 use theme::preview_theme;
 use window::{ensure_preview_window_class, WM_OCCLUVIEW_RENDER_PREVIEW};
+
+#[cfg(feature = "diagnostic-logs")]
+use crate::preview_diagnostics::{
+    prepare_preview_diagnostics, record_preview_bitmap_failure, record_preview_render_failure,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PreviewDragMode {
@@ -113,7 +118,11 @@ impl PreviewHandler {
         ) {
             Ok(pixels) => pixels,
             Err(error) => {
-                tracing::warn!(?error, "preview render failed; returning placeholder");
+                #[cfg(feature = "diagnostic-logs")]
+                record_preview_render_failure(&error);
+                #[cfg(not(feature = "diagnostic-logs"))]
+                let _ = error;
+                tracing::warn!("preview render failed; returning placeholder");
                 // The resident scene may reference a retired device (the
                 // renderer discards itself on render errors). Drop it so the
                 // next paint reloads against a fresh renderer instead of
@@ -236,7 +245,7 @@ impl PreviewHandler {
                 Some(hwnd),
                 WM_OCCLUVIEW_RENDER_PREVIEW,
                 WPARAM(token),
-                Default::default(),
+                LPARAM::default(),
             )
         } {
             self.pending_render_token.set(None);
@@ -258,11 +267,15 @@ impl PreviewHandler {
             return;
         }
         self.pending_render_token.set(None);
+        #[cfg(feature = "diagnostic-logs")]
+        prepare_preview_diagnostics();
         let (width, height) = self.preview_size();
         match self.preview_render_to_hbitmap(width, height) {
             Ok(hbmp) => self.replace_preview_bitmap(hbmp),
-            Err(error) => {
-                tracing::warn!(?error, "deferred preview render failed");
+            Err(_error) => {
+                #[cfg(feature = "diagnostic-logs")]
+                record_preview_bitmap_failure();
+                tracing::warn!("deferred preview render failed");
                 return;
             }
         }
