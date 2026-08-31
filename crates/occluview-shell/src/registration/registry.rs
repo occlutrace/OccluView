@@ -234,9 +234,14 @@ fn value_name_pcwstr(name: Option<&HSTRING>) -> PCWSTR {
 
 /// Recursively delete a key. `ERROR_FILE_NOT_FOUND` is treated as success.
 pub(super) fn delete_tree(subkey: &HSTRING) -> windows::core::Result<()> {
+    delete_tree_at(HKEY_CLASSES_ROOT, subkey)
+}
+
+/// Recursively delete a key under `root`. Missing keys are successful no-ops.
+pub(super) fn delete_tree_at(root: HKEY, subkey: &HSTRING) -> windows::core::Result<()> {
     // SAFETY: `subkey` is a valid PCWSTR; RegDeleteTreeW recursively removes
     // the key and all subkeys.
-    let r = unsafe { RegDeleteTreeW(HKEY_CLASSES_ROOT, PCWSTR(subkey.as_ptr())) };
+    let r = unsafe { RegDeleteTreeW(root, PCWSTR(subkey.as_ptr())) };
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {

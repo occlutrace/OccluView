@@ -45,6 +45,7 @@ $previewCategory = "{8895B1C6-B41F-4C1C-A562-0D564250836F}"
 $shellClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
 $previewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
 $prevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"
+$previewAppIdPath = "HKLM:\Software\Classes\AppID\$prevhostAppId"
 $productName = "OccluView 3D Viewer"
 $capabilitiesPath = "HKLM:\Software\OccluTrace\OccluView\Capabilities"
 $fileAssociationsPath = "$capabilitiesPath\FileAssociations"
@@ -315,6 +316,9 @@ function Assert-InstalledRegistry {
     Assert-Equals (Get-RegistryNamedValue $approvedShellExtensionsPath $shellClsid) "OccluView Thumbnail Provider" "approved shell extension"
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$previewClsid") "OccluView Preview Handler" "preview CLSID friendly name"
     Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid" "AppID") $prevhostAppId "preview CLSID AppID"
+    Assert-PathExists $previewAppIdPath
+    Assert-Equals (Get-RegistryNamedValue $previewAppIdPath "DllSurrogate") "Prevhost.exe" "preview AppID DllSurrogate"
+    Assert-RegistryNamedValueAbsent "HKLM:\Software\Classes\CLSID\$previewClsid" "DisableLowILProcessIsolation" "preview low-integrity isolation override"
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$previewClsid\InprocServer32") $shellDll "preview CLSID InprocServer32"
     Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid\InprocServer32" "ThreadingModel") "Apartment" "preview CLSID threading model"
     Assert-Equals (Get-RegistryNamedValue $approvedShellExtensionsPath $previewClsid) "OccluView Preview Handler" "approved preview shell extension"
@@ -393,6 +397,7 @@ function Assert-UninstalledRegistry {
     Assert-PathAbsent $startMenuDir
     Assert-PathAbsent "HKLM:\Software\Classes\CLSID\$shellClsid"
     Assert-PathAbsent "HKLM:\Software\Classes\CLSID\$previewClsid"
+    Assert-PathAbsent $previewAppIdPath
     Assert-PathAbsent "HKLM:\Software\Classes\OccluView.Mesh"
     foreach ($legacyProgid in $legacyFormatProgIds.Values) {
         Assert-PathAbsent "HKLM:\Software\Classes\$legacyProgid"

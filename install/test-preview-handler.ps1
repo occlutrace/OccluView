@@ -260,6 +260,9 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetClassNameW(
         IntPtr hWnd,
@@ -412,6 +415,7 @@ public static class OccluViewShellPreviewSmoke
                 }
 
                 EnsurePreviewChild(child, width, height, "initial preview host size");
+                EnsurePreviewHostProcess(child);
 
                 if (holdOpenMilliseconds > 0)
                 {
@@ -618,6 +622,7 @@ public static class OccluViewShellPreviewSmoke
                 }
 
                 EnsurePreviewChild(child, width, height, "initial preview host size");
+                EnsurePreviewHostProcess(child);
 
                 preview.SetFocus();
                 var focused = preview.QueryFocus();
@@ -726,6 +731,25 @@ public static class OccluViewShellPreviewSmoke
         {
             throw new InvalidOperationException(label + " class mismatch. Expected " + PreviewChildClass + ", got " + className + ".");
         }
+    }
+
+    private static void EnsurePreviewHostProcess(IntPtr hwnd)
+    {
+        uint processId;
+        if (GetWindowThreadProcessId(hwnd, out processId) == 0 || processId == 0)
+        {
+            throw new InvalidOperationException("GetWindowThreadProcessId failed for preview child.");
+        }
+
+        using (var process = System.Diagnostics.Process.GetProcessById((int)processId))
+        {
+            if (!string.Equals(process.ProcessName, "prevhost", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Preview child belongs to '" + process.ProcessName + "' (PID " + processId + "), not Prevhost.exe.");
+            }
+        }
+
+        Console.WriteLine("PREVIEW_HOST_PID=" + processId);
     }
 
     private static void EnsureClientRect(IntPtr hwnd, int expectedWidth, int expectedHeight, string label)

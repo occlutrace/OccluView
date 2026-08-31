@@ -94,6 +94,19 @@
               Source="$(var.BuildDir)\occluview_shell.dll"
               KeyPath="yes" />
           </Component>
+          <!-- A private AppID gives this preview handler its own Prevhost.exe
+               surrogate. This preserves Windows' default low-integrity
+               isolation while preventing a bad preview from wedging the
+               shared preview-host process. -->
+          <Component Id="cmpPreviewHostRegistration" Guid="{A2F937D4-7F34-4B6C-874E-62A43FA9D10E}" Win64="yes">
+            <RegistryKey Root="HKLM" Key="Software\Classes\AppID\$(var.PrevhostAppId)">
+              <RegistryValue Name="DllSurrogate" Type="string" Value="Prevhost.exe" KeyPath="yes" />
+            </RegistryKey>
+            <RemoveRegistryKey Action="removeOnUninstall"
+              Id="rmPreviewHostAppId"
+              Root="HKLM"
+              Key="Software\Classes\AppID\$(var.PrevhostAppId)" />
+          </Component>
           <Component Id="cmpFormatIcon3d" Guid="{4B39EB44-2AA6-4908-9A69-94361855695C}" Win64="yes">
             <File
               Id="filFormatIcon3d"
@@ -498,6 +511,7 @@
     <Feature Id="featOccluView" Title="$(var.ProductName)" Level="1">
       <ComponentRef Id="cmpOccluViewExe" />
       <ComponentRef Id="cmpOccluViewShellDll" />
+      <ComponentRef Id="cmpPreviewHostRegistration" />
       <ComponentRef Id="cmpFormatIcon3d" />
       <ComponentRef Id="cmpLicenseFile" />
       <ComponentRef Id="cmpNoticeFile" />

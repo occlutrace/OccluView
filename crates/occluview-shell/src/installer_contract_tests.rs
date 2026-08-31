@@ -167,6 +167,45 @@ fn installer_refreshes_shell_association_cache_after_registry_changes() {
 }
 
 #[test]
+fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integrity() {
+    // Microsoft recommends the in-process DLL + Prevhost.exe model for preview
+    // handlers. A private AppID with DllSurrogate=Prevhost.exe keeps a stuck or
+    // crashing handler out of the shared preview host while retaining the
+    // default low-integrity boundary; it must exist in every registration path
+    // and disappear on a full uninstall.
+    let registration = super::shell_contract_tests::registration_source();
+    let wxs = include_str!("../../../install/occluview.wxs");
+    let reg = include_str!("../../../install/occluview-shell-registration.reg");
+    let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
+
+    assert!(registration.contains("register_preview_handler_appid()?;"));
+    assert!(registration.contains("unregister_preview_handler_appid"));
+    assert!(registration.contains("PREVHOST_APPID_KEY"));
+    assert!(registration
+        .contains("Software\\\\Classes\\\\AppID\\\\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"));
+    assert!(registration.contains("PREVHOST_SURROGATE_H"));
+    assert!(registration.contains("h!(\"Prevhost.exe\")"));
+
+    assert!(wxs.contains("Id=\"cmpPreviewHostRegistration\""));
+    assert!(wxs.contains("Software\\Classes\\AppID\\$(var.PrevhostAppId)"));
+    assert!(wxs.contains("Name=\"DllSurrogate\" Type=\"string\" Value=\"Prevhost.exe\""));
+    assert!(wxs.contains("<RemoveRegistryKey Action=\"removeOnUninstall\""));
+    assert!(wxs.contains("<ComponentRef Id=\"cmpPreviewHostRegistration\""));
+    assert!(!wxs.contains("DisableLowILProcessIsolation"));
+
+    assert!(reg.contains(
+        "[HKEY_LOCAL_MACHINE\\Software\\Classes\\AppID\\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}]"
+    ));
+    assert!(reg.contains("\"DllSurrogate\"=\"Prevhost.exe\""));
+    assert!(!reg.contains("DisableLowILProcessIsolation"));
+
+    assert!(lifecycle.contains("$previewAppIdPath"));
+    assert!(lifecycle.contains("preview AppID DllSurrogate"));
+    assert!(lifecycle.contains("preview low-integrity isolation override"));
+    assert!(lifecycle.contains("Assert-PathAbsent $previewAppIdPath"));
+}
+
+#[test]
 fn candidate_package_builds_are_lockfile_strict() {
     // Removing --locked from any of these artifact-producing commands lets a
     // package build resolve a different dependency graph than Cargo.lock.

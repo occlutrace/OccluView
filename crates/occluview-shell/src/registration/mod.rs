@@ -41,8 +41,9 @@ use associations::{
     unregister_system_extension, unregister_system_preview_extension, LEGACY_OCCLUVIEW_PROGID,
 };
 use clsid::{
-    register_approved_shell_extension, register_clsid, register_preview_handler_clsid,
-    register_preview_handlers_list, unregister_approved_shell_extension, unregister_clsid,
+    register_approved_shell_extension, register_clsid, register_preview_handler_appid,
+    register_preview_handler_clsid, register_preview_handlers_list,
+    unregister_approved_shell_extension, unregister_clsid, unregister_preview_handler_appid,
     unregister_preview_handler_clsid, unregister_preview_handlers_list,
 };
 use paths::app_exe_path;
@@ -103,6 +104,7 @@ pub extern "system" fn DllUnregisterServer() -> HRESULT {
 fn register_all() -> windows::core::Result<()> {
     let dll_path = own_dll_path()?;
     register_clsid(&dll_path)?;
+    register_preview_handler_appid()?;
     register_preview_handler_clsid(&dll_path)?;
     register_approved_shell_extension()?;
     register_preview_handlers_list()?;
@@ -149,6 +151,7 @@ fn unregister_all() -> windows::core::Result<()> {
     let app_path = app_exe_path(&dll_path);
     unregister_clsid()?;
     unregister_preview_handler_clsid()?;
+    unregister_preview_handler_appid()?;
     let _ = unregister_approved_shell_extension();
     let _ = unregister_preview_handlers_list();
     // Every extension, including the ones `register_all` now leaves alone: a

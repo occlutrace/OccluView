@@ -282,6 +282,9 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     assert!(smoke.contains("WaitForChangedFrame"));
     assert!(smoke.contains("PumpMessages"));
     assert!(smoke.contains("PeekMessageW"));
+    assert!(smoke.contains("GetWindowThreadProcessId"));
+    assert!(smoke.contains("EnsurePreviewHostProcess(child)"));
+    assert!(smoke.contains("PREVIEW_HOST_PID="));
     assert!(
         smoke.contains("private static void PumpMessages(IntPtr hwnd)"),
         "the smoke message pump must receive the preview child handle explicitly"

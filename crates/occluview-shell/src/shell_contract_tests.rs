@@ -784,11 +784,14 @@ fn explorer_preview_never_activates_a_hardware_renderer() {
 fn explorer_thumbnail_host_forces_the_software_renderer_before_prewarm() {
     let com = include_str!("com.rs");
 
-    let thumbnail_branch = com
-        .split_once("if *class == OCCLUVIEW_THUMBNAIL_GUID {")
-        .and_then(|(_, rest)| rest.split_once("} else if *class == OCCLUVIEW_PREVIEW_GUID"))
-        .map(|(branch, _)| branch)
+    let thumbnail_start = com
+        .find("if *class == OCCLUVIEW_THUMBNAIL_GUID {")
         .expect("thumbnail prewarm branch");
+    let thumbnail_end = com[thumbnail_start..]
+        .find("\n}\n\nfn path_extension")
+        .map(|offset| thumbnail_start + offset)
+        .expect("thumbnail prewarm branch end");
+    let thumbnail_branch = &com[thumbnail_start..thumbnail_end];
     assert!(
         thumbnail_branch.contains("occluview_thumbnail::use_software_renderer_only();"),
         "the out-of-process thumbnail host must choose software before it starts its renderer"

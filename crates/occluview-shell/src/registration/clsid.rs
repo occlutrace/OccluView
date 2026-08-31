@@ -1,4 +1,6 @@
-use super::registry::{create_key, create_key_at, delete_tree, delete_value_at, set_string};
+use super::registry::{
+    create_key, create_key_at, delete_tree, delete_tree_at, delete_value_at, set_string,
+};
 use crate::com::{OCCLUVIEW_PREVIEW_CLSID, OCCLUVIEW_THUMBNAIL_CLSID};
 use windows::core::{h, HSTRING};
 use windows::Win32::System::Registry::{RegCloseKey, HKEY_LOCAL_MACHINE};
@@ -17,9 +19,28 @@ const PREVIEW_FRIENDLY_NAME_H: &HSTRING = h!("OccluView Preview Handler");
 /// and no `GetThumbnail` may park its thread.
 const THREADING_MODEL_H: &HSTRING = h!("Apartment");
 const PREVHOST_APPID: &HSTRING = h!("{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}");
+const PREVHOST_APPID_KEY: &str = "Software\\Classes\\AppID\\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
+const PREVHOST_SURROGATE_H: &HSTRING = h!("Prevhost.exe");
 const APPROVED_SHELL_EXTENSIONS_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved";
 const PREVIEW_HANDLERS_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers";
+
+/// Register OccluView's private `Prevhost.exe` surrogate.
+///
+/// Preview handlers normally share a low-integrity `Prevhost.exe` process.
+/// Microsoft documents a private AppID with `DllSurrogate=Prevhost.exe` as the
+/// supported way to host one handler independently without opting out of that
+/// low-integrity boundary.
+pub(super) fn register_preview_handler_appid() -> windows::core::Result<()> {
+    let hk = create_key_at(HKEY_LOCAL_MACHINE, &HSTRING::from(PREVHOST_APPID_KEY))?;
+    set_string(hk, Some(h!("DllSurrogate")), PREVHOST_SURROGATE_H)?;
+    let _ = unsafe { RegCloseKey(hk) };
+    Ok(())
+}
+
+pub(super) fn unregister_preview_handler_appid() -> windows::core::Result<()> {
+    delete_tree_at(HKEY_LOCAL_MACHINE, &HSTRING::from(PREVHOST_APPID_KEY))
+}
 
 /// Register `HKCR\CLSID\{clsid}\InprocServer32` with the DLL path.
 pub(super) fn register_clsid(dll_path: &HSTRING) -> windows::core::Result<()> {
