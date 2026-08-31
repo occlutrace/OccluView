@@ -539,8 +539,11 @@ try {
     Invoke-MsiExec -Arguments "/x `"$productCode`" /qn /norestart" -LogPath $uninstallLog
     if (Test-Path $previewAppIdPath) {
         $surrogate = Get-RegistryNamedValue $previewAppIdPath "DllSurrogate"
-        $freshQuery = (& reg.exe query "HKLM\Software\Classes\AppID\$prevhostAppId" 2>&1 | Out-String).Trim()
-        Write-Host "Uninstall left preview AppID: DllSurrogate='$surrogate'; reg.exe query: $freshQuery"
+        $machineQuery = (& reg.exe query "HKLM\Software\Classes\AppID\$prevhostAppId" /s 2>&1 | Out-String).Trim()
+        $wowQuery = (& reg.exe query "HKLM\Software\Classes\WOW6432Node\AppID\$prevhostAppId" /s 2>&1 | Out-String).Trim()
+        $msiEvidence = Select-String -Path $uninstallLog -Pattern "cmpPreviewHostRegistration|RemoveRegistryValues|WriteRegistryValues|RefreshShellAssociationsUninstall|DllSurrogate|$prevhostAppId" | ForEach-Object { $_.Line }
+        Write-Host "Uninstall left preview AppID: DllSurrogate='$surrogate'; machine=$machineQuery; wow6432=$wowQuery"
+        Write-Host "Uninstall AppID action evidence: $($msiEvidence -join [Environment]::NewLine)"
     }
     Assert-UninstalledRegistry
     if ($Diagnostic) {
