@@ -434,7 +434,8 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("actions/download-artifact"));
     assert!(workflow.contains("*.deb"));
     assert!(workflow.contains("*.sha256"));
-    assert!(workflow.contains("Download the `.deb` package for the native Linux viewer, launcher,"));
+    assert!(workflow
+        .contains(r#"Download the \`.deb\` package for the native Linux viewer, launcher,"#));
     assert!(workflow.contains("MIME registration, and thumbnailer."));
 
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
@@ -541,6 +542,40 @@ fn release_notes_put_the_recommended_installer_before_technical_verification() {
         .find("<summary>For IT and verification</summary>")
         .expect("technical verification must remain available without leading the release");
     assert!(download < installer && installer < technical);
+}
+
+#[test]
+fn public_release_groups_technical_verification_material_into_one_download() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let (_, bundle) = workflow
+        .split_once("- name: Bundle verification material")
+        .expect("release workflow must bundle technical verification material");
+    let (_, publish) = workflow
+        .split_once("- name: Publish GitHub Release")
+        .expect("release workflow must publish the customer-facing downloads");
+
+    assert!(bundle.contains("OccluView-${version}-verification.zip"));
+    assert!(bundle.contains("latest.json"));
+    assert!(bundle.contains("sbom-*.json"));
+    assert!(publish.contains("-name '*-verification.zip'"));
+    assert!(publish.contains("-name 'latest.json'"));
+    assert!(publish.contains("-name 'latest.json.minisig'"));
+    assert!(!publish.contains("-o -name '*.sha256'"));
+    assert!(!publish.contains("-o -name '*.minisig'"));
+    assert!(!publish.contains("-o -name '*.json'"));
+}
+
+#[test]
+fn release_note_markdown_is_not_executed_by_the_shell_heredoc() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let (_, write_notes) = workflow
+        .split_once("- name: Write release notes")
+        .expect("release workflow must write customer-facing notes");
+
+    assert!(write_notes.contains("\\`OccluView-…-x86_64-pc-windows-msvc.msi\\`"));
+    assert!(write_notes.contains("\\`…-portable.zip\\`"));
+    assert!(write_notes.contains("\\`.deb\\`"));
+    assert!(write_notes.contains("\\`OccluView-${RELEASE_TAG#v}-verification.zip\\`"));
 }
 
 #[test]

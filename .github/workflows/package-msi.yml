@@ -376,33 +376,36 @@ jobs:
 
           ### Windows installer (.msi) — recommended
 
-          Download `OccluView-…-x86_64-pc-windows-msvc.msi`. It installs the
+          Download \`OccluView-…-x86_64-pc-windows-msvc.msi\`. It installs the
           viewer, Explorer thumbnails, the live Preview Pane, and file
           associations. For a normal Windows workstation, this is the only file
           to choose.
 
           ### Windows portable (.zip)
 
-          Use `…-portable.zip` only when software cannot be installed. It opens
+          Use \`…-portable.zip\` only when software cannot be installed. It opens
           OccluView manually and does not add Explorer previews or file
           associations.
 
           ### Debian / Ubuntu (.deb)
 
-          Download the `.deb` package for the native Linux viewer, launcher,
+          Download the \`.deb\` package for the native Linux viewer, launcher,
           MIME registration, and thumbnailer.
 
           <details>
           <summary>For IT and verification</summary>
 
-          The release also includes checksums, signatures, build provenance, and
-          SBOMs for verification and audit.
+          The \`OccluView-${RELEASE_TAG#v}-verification.zip\` download contains
+          checksums, signature material, the signed update manifest, public key,
+          and SBOMs for verification and audit. GitHub build provenance remains
+          attached to each normal package. Normal users do not need this archive.
 
           All packages install LICENSE, NOTICE, THIRD-PARTY-NOTICES.md and
           THIRD-PARTY-NOTICES-NATIVE.md (the statically linked C++ components,
           which no Cargo-derived document covers).
 
-          Verify what you downloaded (run from the download directory):
+          Extract the verification archive beside the package, then verify if
+          your clinic IT team requires it:
 
           \`\`\`
           sha256sum -c <asset>.sha256
@@ -505,6 +508,20 @@ jobs:
             minisign -V -P "$pubkey" -m "$file"
             echo "Verified against the shipped public key: $file"
           done
+      - name: Bundle verification material
+        run: |
+          version="${RELEASE_TAG#v}"
+          cp ./occluview.pub ./dist/occluview.pub
+          (
+            cd ./dist
+            shopt -s nullglob
+            material=( *.sha256 *.minisig latest.json sbom-*.json occluview.pub )
+            if [[ "${#material[@]}" -eq 0 ]]; then
+              echo "No verification material was produced." >&2
+              exit 1
+            fi
+            zip -q "OccluView-${version}-verification.zip" "${material[@]}"
+          )
       - name: Attest build provenance
         if: ${{ !inputs.release_dry_run }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -524,7 +541,7 @@ jobs:
         run: |
           tag="$RELEASE_TAG"
           release_flags=()
-          mapfile -d '' assets < <(find ./dist -type f \( -name '*.msi' -o -name '*.zip' -o -name '*.deb' -o -name '*.sha256' -o -name '*.minisig' -o -name '*.json' \) -print0 | sort -z)
+          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name '*.msi' -o -name '*-portable.zip' -o -name '*.deb' -o -name '*-verification.zip' -o -name 'latest.json' -o -name 'latest.json.minisig' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1
