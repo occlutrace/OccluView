@@ -18,7 +18,6 @@ accepted = [
     "Zlib",
     "Unicode-3.0",
     "Unlicense",
-    "CC0-1.0",
     "CDLA-Permissive-2.0",
 ]
 # One file covers both shipped platforms: the MSI, the portable ZIP, and
@@ -39,20 +38,20 @@ workarounds = ["ring"]
 # attribute themselves.
 private = { ignore = true }
 
-# eframe's "default_fonts" ships Hack (MIT), Ubuntu-Light (UFL-1.0), and
+# eframe's "default_fonts" ships Hack (MIT), Ubuntu-Light (Ubuntu-font-1.0), and
 # Noto Emoji (OFL-1.1); the font licenses require notice retention in
 # binary distributions. The crate keeps the texts under fonts/, where the
 # default LICENSE-file harvesting does not look, so each file is clarified
-# with a checksum pinning the epaint_default_fonts 0.29.1 contents. An egui
+# with a checksum pinning the epaint_default_fonts 0.36.1 contents. An egui
 # upgrade that changes them fails generation loudly — that is the drift
 # gate working, not a bug. The clarified expression deliberately picks the
 # MIT arm of the crate's `(MIT OR Apache-2.0)` choice so every license in
 # the expression has a hashed source file.
 [epaint_default_fonts]
-accepted = ["OFL-1.1", "LicenseRef-UFL-1.0"]
+accepted = ["OFL-1.1", "Ubuntu-font-1.0"]
 
 [epaint_default_fonts.clarify]
-license = "MIT AND OFL-1.1 AND LicenseRef-UFL-1.0"
+license = "MIT AND OFL-1.1 AND Ubuntu-font-1.0"
 
 [[epaint_default_fonts.clarify.files]]
 path = "fonts/Hack-Regular.txt"
@@ -66,5 +65,5 @@ checksum = "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
 
 [[epaint_default_fonts.clarify.files]]
 path = "fonts/UFL.txt"
-license = "LicenseRef-UFL-1.0"
+license = "Ubuntu-font-1.0"
 checksum = "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002"

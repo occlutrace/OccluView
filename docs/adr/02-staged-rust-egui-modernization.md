@@ -308,15 +308,14 @@ exact diff, reviews both lockfiles, and uses locked package commands. A
 cargo-about upgrade is not coupled to this migration.
 
 The resolved `epaint_default_fonts 0.36.1` manifest declares
-`(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0`. The current scoped
-`deny.toml` exception still names the old `LicenseRef-UFL-1.0`, so
-`cargo deny check licenses` exits 4 and rejects `Ubuntu-font-1.0`. Stage 2 is
-blocked at its final cleanup gate until Task 8 replaces only that stale scoped
-exception with the current SPDX identifier, regenerates notices for
-`epaint_default_fonts 0.36.1`, verifies the Ubuntu Font Licence text and asset
-attribution, proves notice generation byte-stable, and makes
-`cargo deny check all` pass. The license must not be added to the global
-allow-list merely to silence the check.
+`(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0`. Task 8 replaces the
+stale scoped `LicenseRef-UFL-1.0` exception with the current SPDX identifier,
+updates the checked font clarification, and regenerates notices from the
+locked graph. The generated Ubuntu Font Licence text and its
+`epaint_default_fonts 0.36.1` attribution are verified, as is byte-stable
+notice generation and `cargo deny check all`. The license remains scoped to
+`epaint_default_fonts`; it is not added to the global allow-list merely to
+silence a check.
 
 ## Verification gates
 
