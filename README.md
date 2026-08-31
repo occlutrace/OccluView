@@ -36,10 +36,8 @@ build provenance; see the release page for the matching files.
 | --- | --- | --- |
 | STL, PLY, OBJ, GLB, HPS | STL, PLY, OBJ | Windows 10+ x86_64 (MSI or ZIP); Debian x86_64 |
 
-Dental HPS containers may use the `.dcm` extension. Medical DICOM is detected
-and refused; the installer does not claim `.dcm` as a default association.
-Details on encrypted HPS files and the optional source-build key are in the
-[usage guide](docs/USAGE.md).
+- `.hps` and `.dcm` are accepted for dental HPS containers; medical DICOM is not supported (`DICM` is refused), and `.dcm` is not a default association.
+  Details on encrypted HPS files and the optional source-build key are in the [usage guide](docs/USAGE.md).
 
 ## Documentation
 
