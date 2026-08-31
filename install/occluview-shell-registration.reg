@@ -19,7 +19,7 @@ Windows Registry Editor Version 5.00
 ;       {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046} = "OccluView Preview Handler"
 ;   HKLM\Software\Microsoft\Windows\CurrentVersion\PreviewHandlers
 ;       {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046} = "OccluView Preview Handler"
-;   HKLM\Software\Classes\AppID\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}
+;   HKLM\Software\Classes\AppID\{FD67C578-DBCC-4E10-8E47-63A8E48F7654}
 ;       DllSurrogate = "Prevhost.exe" (private low-integrity preview host)
 ;   HKCR\<ext>\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}
 ;       (default) = {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}
@@ -71,13 +71,13 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}]
 @="OccluView Preview Handler"
-"AppID"="{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"
+"AppID"="{FD67C578-DBCC-4E10-8E47-63A8E48F7654}"
 
 [HKEY_CLASSES_ROOT\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}\InprocServer32]
 @="<DLL_PATH>"
 "ThreadingModel"="Apartment"
 
-[HKEY_LOCAL_MACHINE\Software\Classes\AppID\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}]
+[HKEY_LOCAL_MACHINE\Software\Classes\AppID\{FD67C578-DBCC-4E10-8E47-63A8E48F7654}]
 "DllSurrogate"="Prevhost.exe"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved]

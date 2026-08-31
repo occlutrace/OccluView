@@ -44,7 +44,10 @@ touched.
    `DllSurrogate=Prevhost.exe`; the preview CLSID references it. MSI and
    `DllRegisterServer` write the same registry topology, and uninstall removes
    only that owned AppID. A stalled preview can then affect at most its own
-   surrogate, not another provider sharing the default host.
+   surrogate, not another provider sharing the default host. This is
+   `{FD67C578-DBCC-4E10-8E47-63A8E48F7654}`, not Windows' generic Preview
+   Handler Surrogate Host AppID: OccluView must never register, alter, or
+   attempt to remove that system-owned key.
 
 4. **Diagnostics are opt-in and privacy-safe.** A non-release diagnostic MSI
    uses the optimized `release-diagnostic` app profile and

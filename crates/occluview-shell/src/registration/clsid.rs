@@ -18,8 +18,8 @@ const PREVIEW_FRIENDLY_NAME_H: &HSTRING = h!("OccluView Preview Handler");
 /// the only throughput lever (prewarmed pooled renderer, bounded budgets),
 /// and no `GetThumbnail` may park its thread.
 const THREADING_MODEL_H: &HSTRING = h!("Apartment");
-const PREVHOST_APPID: &HSTRING = h!("{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}");
-const PREVHOST_APPID_KEY: &str = "Software\\Classes\\AppID\\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
+const PREVHOST_APPID: &HSTRING = h!("{FD67C578-DBCC-4E10-8E47-63A8E48F7654}");
+const PREVHOST_APPID_KEY: &str = "Software\\Classes\\AppID\\{FD67C578-DBCC-4E10-8E47-63A8E48F7654}";
 const PREVHOST_SURROGATE_H: &HSTRING = h!("Prevhost.exe");
 const APPROVED_SHELL_EXTENSIONS_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved";

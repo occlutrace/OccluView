@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$MsiPath = "",
+    [string]$LegacyUpgradeMsiPath = "",
     [string]$SameVersionUpgradeMsiPath = "",
     [string]$UpgradeMsiPath = "",
     [switch]$Diagnostic
@@ -45,7 +46,8 @@ $thumbnailCategory = "{E357FCCD-A995-4576-B01F-234630154E96}"
 $previewCategory = "{8895B1C6-B41F-4C1C-A562-0D564250836F}"
 $shellClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
 $previewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
-$prevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"
+$windowsDefaultPrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"
+$prevhostAppId = "{FD67C578-DBCC-4E10-8E47-63A8E48F7654}"
 $previewAppIdPath = "HKLM:\Software\Classes\AppID\$prevhostAppId"
 $productName = "OccluView 3D Viewer"
 $capabilitiesPath = "HKLM:\Software\OccluTrace\OccluView\Capabilities"
@@ -439,6 +441,15 @@ function Assert-InstalledRegistry {
     }
 }
 
+function Assert-LegacyPreviewHostRegistration {
+    # The historical 1.1.1 baseline referenced Windows' generic preview-host
+    # AppID but did not own that AppID key. This is intentionally narrower
+    # than Assert-InstalledRegistry: the next install must migrate this value
+    # without treating the Windows key as OccluView-owned state.
+    Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid" "AppID") $windowsDefaultPrevhostAppId "legacy preview CLSID AppID"
+    Assert-PathAbsent $previewAppIdPath
+}
+
 function Assert-UninstalledRegistry {
     Assert-PathAbsent $installDir
     Assert-PathAbsent $startMenuDir
@@ -482,6 +493,11 @@ function Assert-UninstalledRegistry {
 }
 
 $resolvedMsi = Resolve-MsiPath $MsiPath
+$resolvedLegacyUpgradeMsi = if ([string]::IsNullOrWhiteSpace($LegacyUpgradeMsiPath)) {
+    ""
+} else {
+    (Resolve-Path $LegacyUpgradeMsiPath).Path
+}
 $resolvedUpgradeMsi = if ([string]::IsNullOrWhiteSpace($UpgradeMsiPath)) {
     ""
 } else {
@@ -493,14 +509,23 @@ $resolvedSameVersionUpgradeMsi = if ([string]::IsNullOrWhiteSpace($SameVersionUp
     (Resolve-Path $SameVersionUpgradeMsiPath).Path
 }
 $installLog = Join-Path $env:TEMP "occluview-msi-install.log"
+$legacyInstallLog = Join-Path $env:TEMP "occluview-msi-legacy-install.log"
 $sameVersionUpgradeLog = Join-Path $env:TEMP "occluview-msi-same-version-upgrade.log"
 $upgradeLog = Join-Path $env:TEMP "occluview-msi-upgrade.log"
 $uninstallLog = Join-Path $env:TEMP "occluview-msi-uninstall.log"
 $diagnosticSwitchBefore = if ($Diagnostic) { Get-DiagnosticSwitchState } else { $null }
-
-Write-Host "Installing MSI: $resolvedMsi"
-Invoke-MsiExec -Arguments "/i `"$resolvedMsi`" /qn /norestart" -LogPath $installLog
+$legacyProductCode = $null
 try {
+    if (-not [string]::IsNullOrWhiteSpace($resolvedLegacyUpgradeMsi)) {
+        Write-Host "Installing pinned legacy MSI: $resolvedLegacyUpgradeMsi"
+        Invoke-MsiExec -Arguments "/i `"$resolvedLegacyUpgradeMsi`" /qn /norestart" -LogPath $legacyInstallLog
+        Assert-LegacyPreviewHostRegistration
+        $legacyProductCode = Assert-OneInstalledProduct
+        Write-Host "Migrating pinned legacy MSI: $resolvedLegacyUpgradeMsi -> $resolvedMsi"
+    } else {
+        Write-Host "Installing MSI: $resolvedMsi"
+    }
+    Invoke-MsiExec -Arguments "/i `"$resolvedMsi`" /qn /norestart" -LogPath $installLog
     Assert-InstalledRegistry
     if ($Diagnostic) {
         Assert-DiagnosticPayload
@@ -509,6 +534,9 @@ try {
     & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
     & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
     $productCode = Assert-OneInstalledProduct
+    if ($null -ne $legacyProductCode -and $productCode -eq $legacyProductCode) {
+        throw "Legacy MSI upgrade kept product code $productCode instead of completing a major upgrade."
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($resolvedSameVersionUpgradeMsi)) {
         Write-Host "Upgrading with same-version MSI: $resolvedSameVersionUpgradeMsi"

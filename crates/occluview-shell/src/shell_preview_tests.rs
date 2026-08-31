@@ -143,7 +143,8 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
     assert!(wxs.contains("ShellEx\\$(var.PreviewHandlerCategory)"));
 
     assert!(reg.contains("OccluView Preview Handler"));
-    assert!(reg.contains("\"AppID\"=\"{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}\""));
+    assert!(reg.contains("\"AppID\"=\"{FD67C578-DBCC-4E10-8E47-63A8E48F7654}\""));
+    assert!(!reg.contains("{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"));
     assert!(reg.contains("PreviewHandlers"));
     assert!(reg.contains("ShellEx\\{8895B1C6-B41F-4C1C-A562-0D564250836F}"));
     assert!(smoke.contains("$previewCategory"));

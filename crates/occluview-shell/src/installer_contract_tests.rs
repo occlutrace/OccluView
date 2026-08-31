@@ -177,16 +177,29 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
     let wxs = include_str!("../../../install/occluview.wxs");
     let reg = include_str!("../../../install/occluview-shell-registration.reg");
     let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
+    // This is the Windows-owned default Preview Handler Surrogate Host AppID,
+    // not an AppID a third-party handler may own or remove.
+    const WINDOWS_DEFAULT_PREVHOST_APPID: &str = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
+    const OCCLUVIEW_PREVHOST_APPID: &str = "{FD67C578-DBCC-4E10-8E47-63A8E48F7654}";
+    const OCCLUVIEW_PREVHOST_COMPONENT_GUID: &str = "{79955DD2-8C4F-4C1B-8E63-435AB43125DA}";
 
     assert!(registration.contains("register_preview_handler_appid()?;"));
     assert!(registration.contains("unregister_preview_handler_appid"));
     assert!(registration.contains("PREVHOST_APPID_KEY"));
-    assert!(registration
-        .contains("Software\\\\Classes\\\\AppID\\\\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"));
+    assert!(registration.contains(&format!(
+        "Software\\\\Classes\\\\AppID\\\\{OCCLUVIEW_PREVHOST_APPID}"
+    )));
+    assert!(!registration.contains(WINDOWS_DEFAULT_PREVHOST_APPID));
     assert!(registration.contains("PREVHOST_SURROGATE_H"));
     assert!(registration.contains("h!(\"Prevhost.exe\")"));
 
-    assert!(wxs.contains("Id=\"cmpPreviewHostRegistration\""));
+    assert!(wxs.contains(&format!(
+        "Id=\"cmpPreviewHostRegistration\" Guid=\"{OCCLUVIEW_PREVHOST_COMPONENT_GUID}\""
+    )));
+    assert!(wxs.contains(&format!(
+        "<?define PrevhostAppId = \"{OCCLUVIEW_PREVHOST_APPID}\" ?>"
+    )));
+    assert!(!wxs.contains(WINDOWS_DEFAULT_PREVHOST_APPID));
     assert!(wxs.contains(
         "<RegistryKey Root=\"HKLM\" Key=\"Software\\Classes\\AppID\\$(var.PrevhostAppId)\" Action=\"createAndRemoveOnUninstall\">"
     ));
@@ -195,9 +208,10 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
     assert!(wxs.contains("<ComponentRef Id=\"cmpPreviewHostRegistration\""));
     assert!(!wxs.contains("DisableLowILProcessIsolation"));
 
-    assert!(reg.contains(
-        "[HKEY_LOCAL_MACHINE\\Software\\Classes\\AppID\\{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}]"
-    ));
+    assert!(reg.contains(&format!(
+        "[HKEY_LOCAL_MACHINE\\Software\\Classes\\AppID\\{OCCLUVIEW_PREVHOST_APPID}]"
+    )));
+    assert!(!reg.contains(WINDOWS_DEFAULT_PREVHOST_APPID));
     assert!(reg.contains("\"DllSurrogate\"=\"Prevhost.exe\""));
     assert!(!reg.contains("DisableLowILProcessIsolation"));
 
@@ -205,6 +219,29 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
     assert!(lifecycle.contains("preview AppID DllSurrogate"));
     assert!(lifecycle.contains("preview low-integrity isolation override"));
     assert!(lifecycle.contains("Assert-PathAbsent $previewAppIdPath"));
+    assert!(lifecycle.contains(OCCLUVIEW_PREVHOST_APPID));
+    assert!(lifecycle.contains("$windowsDefaultPrevhostAppId"));
+    assert!(lifecycle.contains("legacy preview CLSID AppID"));
+}
+
+#[test]
+fn legacy_preview_host_migration_is_opt_in_and_checksum_pinned() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
+
+    assert!(workflow.contains("legacy_msi_run_id"));
+    assert!(workflow.contains("legacy_msi_sha256"));
+    assert!(workflow.contains("Legacy MSI migration inputs must be supplied together."));
+    assert!(workflow.contains("Get-FileHash -Algorithm SHA256"));
+    assert!(workflow.contains("OCCLUVIEW_LEGACY_MSI_PATH"));
+    assert!(workflow.contains("OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}"));
+    assert!(workflow.contains("OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}"));
+    assert!(workflow.contains("permissions:\n      contents: read\n      actions: read"));
+
+    assert!(lifecycle.contains("[string]$LegacyUpgradeMsiPath = \"\""));
+    assert!(lifecycle.contains("Installing pinned legacy MSI:"));
+    assert!(lifecycle.contains("legacy preview CLSID AppID"));
+    assert!(lifecycle.contains("Migrating pinned legacy MSI:"));
 }
 
 #[test]

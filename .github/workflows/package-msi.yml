@@ -18,12 +18,25 @@ on:
           - release
           - diagnostic
         default: release
+      legacy_msi_run_id:
+        description: >-
+          Optional Actions run ID containing one known legacy MSI to exercise
+          a checksum-pinned migration before package verification.
+        type: string
+        default: ""
+      legacy_msi_sha256:
+        description: >-
+          Required SHA-256 for legacy_msi_run_id's MSI; leave blank unless the
+          run ID is also supplied.
+        type: string
+        default: ""
   push:
     tags:
       - "v*.*.*"
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   # A non-release diagnostic run must not cancel an ordinary package
@@ -42,6 +55,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: read
     env:
       OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
       OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
@@ -180,6 +194,46 @@ jobs:
           $upgradeVersion = "{0}.{1}.{2}" -f $version.Major, $version.Minor, ($version.Build + 1)
           $smokeDir = Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade"
           ./install/build-msi.ps1 -Version $upgradeVersion -OutputDir $smokeDir -SkipBuild -SignMode auto
+      - name: Validate optional legacy MSI migration inputs
+        if: inputs.windows_configuration != 'diagnostic'
+        shell: pwsh
+        env:
+          OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}
+          OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}
+        run: |
+          $runId = $env:OCCLUVIEW_LEGACY_MSI_RUN_ID.Trim()
+          $sha256 = $env:OCCLUVIEW_LEGACY_MSI_SHA256.Trim()
+          if ([string]::IsNullOrWhiteSpace($runId) -xor [string]::IsNullOrWhiteSpace($sha256)) {
+            throw "Legacy MSI migration inputs must be supplied together."
+          }
+      - name: Download optional legacy MSI migration artifact
+        if: inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: occluview-windows-package
+          path: ${{ runner.temp }}/occluview-legacy-migration
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.legacy_msi_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify optional legacy MSI migration artifact
+        if: inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''
+        shell: pwsh
+        env:
+          OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}
+          OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}
+        run: |
+          $legacyRoot = Join-Path $env:RUNNER_TEMP "occluview-legacy-migration"
+          $runId = $env:OCCLUVIEW_LEGACY_MSI_RUN_ID.Trim()
+          $legacyMsis = @(Get-ChildItem -Path $legacyRoot -Filter *.msi -File -Recurse)
+          if ($legacyMsis.Count -ne 1) {
+            throw "Expected exactly one legacy MSI from run $runId, found $($legacyMsis.Count)."
+          }
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $legacyMsis[0].FullName).Hash.ToLowerInvariant()
+          $expectedSha256 = $env:OCCLUVIEW_LEGACY_MSI_SHA256.Trim().ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Legacy MSI SHA-256 mismatch: expected $expectedSha256, got $actualSha256."
+          }
+          "OCCLUVIEW_LEGACY_MSI_PATH=$($legacyMsis[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Smoke install and uninstall
         if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
@@ -187,7 +241,11 @@ jobs:
           $releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $sameVersionUpgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-same-version-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $upgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
+          if (-not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_LEGACY_MSI_PATH)) {
+            ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -LegacyUpgradeMsiPath $env:OCCLUVIEW_LEGACY_MSI_PATH -SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
+          } else {
+            ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
+          }
       - name: Diagnostic MSI lifecycle smoke
         if: inputs.windows_configuration == 'diagnostic'
         shell: pwsh

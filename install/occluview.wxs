@@ -6,7 +6,7 @@
 <?define PreviewHandlerCategory = "{8895B1C6-B41F-4C1C-A562-0D564250836F}" ?>
 <?define ShellClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}" ?>
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
-<?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
+<?define PrevhostAppId = "{FD67C578-DBCC-4E10-8E47-63A8E48F7654}" ?>
 <?ifndef ProductVersion?>
 <?define ProductVersion = "1.1.1" ?>
 <?endif?>
@@ -138,7 +138,10 @@
                surrogate. This preserves Windows' default low-integrity
                isolation while preventing a bad preview from wedging the
                shared preview-host process. -->
-          <Component Id="cmpPreviewHostRegistration" Guid="{A2F937D4-7F34-4B6C-874E-62A43FA9D10E}" Win64="yes">
+          <!-- The AppID Registry KeyPath changed from the Windows-owned
+               generic surrogate to OccluView's private AppID, so this must
+               be a new MSI component identity. -->
+          <Component Id="cmpPreviewHostRegistration" Guid="{79955DD2-8C4F-4C1B-8E63-435AB43125DA}" Win64="yes">
             <RegistryKey Root="HKLM" Key="Software\Classes\AppID\$(var.PrevhostAppId)" Action="createAndRemoveOnUninstall">
               <RegistryValue Name="DllSurrogate" Type="string" Value="Prevhost.exe" KeyPath="yes" />
             </RegistryKey>
