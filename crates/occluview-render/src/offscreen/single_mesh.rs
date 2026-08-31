@@ -13,6 +13,7 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
@@ -88,6 +89,7 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
@@ -195,6 +197,7 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[allow(clippy::unused_async)]
     pub async fn render_cut_view(
         &self,
@@ -213,6 +216,7 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "preserve the lazy async renderer API and first-poll execution boundary"

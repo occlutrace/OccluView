@@ -1,7 +1,12 @@
 use super::{Offscreen, Renderer};
 use crate::error::RenderError;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 use wgpu::TextureView;
+
+/// A stalled GPU readback must not hold a shell surrogate or thumbnail worker
+/// forever. This is intentionally shared by every offscreen render path.
+const READBACK_DEADLINE: Duration = Duration::from_secs(2);
 
 pub(super) struct RenderTargets<'a> {
     pub(super) color: &'a TextureView,
@@ -148,6 +153,36 @@ pub(super) fn padded_bytes_per_row(width: u32) -> u32 {
     unpadded.div_ceil(256) * 256
 }
 
+fn readback_timeout() -> RenderError {
+    RenderError::ReadbackTimeout {
+        timeout: READBACK_DEADLINE,
+    }
+}
+
+fn wait_for_map_callback(
+    map_rx: &mpsc::Receiver<Result<(), String>>,
+    deadline: Instant,
+) -> Result<(), RenderError> {
+    let mapped = match map_rx.try_recv() {
+        Ok(mapped) => mapped,
+        Err(mpsc::TryRecvError::Empty) => map_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => readback_timeout(),
+                mpsc::RecvTimeoutError::Disconnected => {
+                    RenderError::Surface("offscreen readback callback dropped".to_owned())
+                }
+            })?,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            return Err(RenderError::Surface(
+                "offscreen readback callback dropped".to_owned(),
+            ));
+        }
+    };
+
+    mapped.map_err(|error| RenderError::Surface(format!("offscreen readback failed: {error}")))
+}
+
 impl Offscreen {
     pub(super) fn read_back(
         &self,
@@ -170,12 +205,13 @@ impl Offscreen {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = map_tx.send(result.map_err(|error| error.to_string()));
         });
-        let _ = self
-            .renderer
-            .device()
-            .poll(wgpu::PollType::wait_indefinitely());
+        let deadline = Instant::now() + READBACK_DEADLINE;
+        let poll_result = self.renderer.device().poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(READBACK_DEADLINE),
+        });
         // Every offscreen frame -- thumbnail, preview, cut view -- lands here
-        // after its submit, and the wait above is the point by which the
+        // after its submit, and the bounded wait above is the point by which the
         // driver has reported anything it refused. The device's error handler
         // records rather than panics (a panic in the shell surrogate is a
         // crash), so nothing else asks. Unasked, a refused buffer allocation
@@ -183,34 +219,121 @@ impl Offscreen {
         // as a perfectly good transparent thumbnail -- which Explorer then
         // caches against the file's timestamp and never recomputes.
         if let Some(error) = self.renderer.take_gpu_error() {
+            output_buffer.unmap();
             return Err(RenderError::Surface(error));
         }
-        map_rx
-            .recv()
-            .map_err(|error| {
-                RenderError::Surface(format!("offscreen readback callback dropped: {error}"))
-            })?
-            .map_err(|error| RenderError::Surface(format!("offscreen readback failed: {error}")))?;
+        let mapped = match poll_result {
+            Ok(_) => wait_for_map_callback(&map_rx, deadline),
+            Err(wgpu::PollError::Timeout) => Err(readback_timeout()),
+            Err(error) => Err(RenderError::Surface(format!(
+                "offscreen readback poll failed: {error}"
+            ))),
+        };
+        if let Err(error) = mapped {
+            // `unmap` cancels an outstanding map operation, so the local
+            // readback buffer is not dropped while wgpu still considers it
+            // mapped or pending.
+            output_buffer.unmap();
+            return Err(error);
+        }
 
         let row_bytes = usize::from(width_px) * 4;
         let row_count = usize::from(height_px);
-        let pixels = {
-            let data = slice
-                .get_mapped_range()
-                .map_err(|error| RenderError::Surface(error.to_string()))?;
+        let pixels_result = (|| {
+            let data = match slice.get_mapped_range() {
+                Ok(data) => data,
+                Err(error) => return Err(RenderError::Surface(error.to_string())),
+            };
             let mut out = Vec::with_capacity(row_bytes * row_count);
             for row in 0..row_count {
                 let start = row * padded_bytes_per_row as usize;
                 out.extend_from_slice(&data[start..start + row_bytes]);
             }
-            out
-        };
+            Ok(out)
+        })();
         output_buffer.unmap();
+        let pixels = pixels_result?;
 
         let mut flipped = Vec::with_capacity(pixels.len());
         for row in (0..row_count).rev() {
             flipped.extend_from_slice(&pixels[row * row_bytes..(row + 1) * row_bytes]);
         }
         Ok(flipped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn pending_map_callback_returns_a_structured_deadline_error() {
+        let (_map_tx, map_rx) = mpsc::sync_channel(1);
+
+        assert!(matches!(
+            wait_for_map_callback(&map_rx, Instant::now()),
+            Err(RenderError::ReadbackTimeout { timeout }) if timeout == READBACK_DEADLINE
+        ));
+    }
+
+    #[test]
+    fn completed_map_callback_allows_readback() {
+        let (map_tx, map_rx) = mpsc::sync_channel(1);
+        assert!(map_tx.send(Ok(())).is_ok(), "test sender stays connected");
+
+        assert!(
+            wait_for_map_callback(&map_rx, Instant::now()).is_ok(),
+            "a completed map must preserve the normal readback path"
+        );
+    }
+
+    #[test]
+    fn failed_map_callback_reports_the_driver_error() {
+        let (map_tx, map_rx) = mpsc::sync_channel(1);
+        assert!(
+            map_tx.send(Err("device lost".to_owned())).is_ok(),
+            "test sender stays connected"
+        );
+
+        assert!(matches!(
+            wait_for_map_callback(&map_rx, Instant::now()),
+            Err(RenderError::Surface(error)) if error == "offscreen readback failed: device lost"
+        ));
+    }
+
+    #[test]
+    fn disconnected_map_callback_reports_a_surface_error() {
+        let (map_tx, map_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        drop(map_tx);
+
+        assert!(matches!(
+            wait_for_map_callback(&map_rx, Instant::now()),
+            Err(RenderError::Surface(error)) if error == "offscreen readback callback dropped"
+        ));
+    }
+
+    #[test]
+    fn mapped_range_failure_cleans_up_before_the_error_can_return() {
+        let source = include_str!("helpers.rs");
+        let range = source
+            .find("let data = match slice.get_mapped_range()")
+            .expect("mapped range acquisition");
+        let unmap = source[range..]
+            .find("output_buffer.unmap();")
+            .map(|offset| range + offset)
+            .expect("readback buffer cleanup");
+        let propagate = source[unmap..]
+            .find("let pixels = pixels_result?;")
+            .map(|offset| unmap + offset)
+            .expect("readback error propagation after cleanup");
+
+        assert!(
+            !source[range..unmap].contains("?;"),
+            "mapped-range acquisition must remain inside the cleanup scope"
+        );
+        assert!(unmap < propagate, "cleanup must precede error propagation");
     }
 }
