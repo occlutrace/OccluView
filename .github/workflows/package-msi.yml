@@ -374,23 +374,23 @@ jobs:
 
           ## Start here
 
-          ### Windows installer (.msi) — recommended
+          ### Windows installer — recommended
 
-          Download \`OccluView-…-x86_64-pc-windows-msvc.msi\`. It installs the
+          Download \`OccluView-Windows-Setup.msi\`. It installs the
           viewer, Explorer thumbnails, the live Preview Pane, and file
           associations. For a normal Windows workstation, this is the only file
           to choose.
 
           ### Windows portable (.zip)
 
-          Use \`…-portable.zip\` only when software cannot be installed. It opens
-          OccluView manually and does not add Explorer previews or file
-          associations.
+          Use \`OccluView-Windows-Portable.zip\` only when software cannot be
+          installed. It opens OccluView manually and does not add Explorer
+          previews or file associations.
 
           ### Debian / Ubuntu (.deb)
 
-          Download the \`.deb\` package for the native Linux viewer, launcher,
-          MIME registration, and thumbnailer.
+          Download \`OccluView-Linux.deb\` for the native Linux viewer,
+          launcher, MIME registration, and thumbnailer.
 
           <details>
           <summary>For IT and verification</summary>
@@ -453,6 +453,23 @@ jobs:
             echo "Missing release artifact (msi='$msi' zip='$zip' deb='$deb')." >&2
             exit 1
           fi
+
+          rename_release_asset() {
+            local source="$1"
+            local destination="$2"
+            mv "$source" "$destination"
+            rm -f "$source.sha256"
+            (
+              cd ./dist
+              sha256sum "$(basename "$destination")" > "$(basename "$destination").sha256"
+            )
+          }
+          rename_release_asset "$msi" "./dist/OccluView-Windows-Setup.msi"
+          rename_release_asset "$zip" "./dist/OccluView-Windows-Portable.zip"
+          rename_release_asset "$deb" "./dist/OccluView-Linux.deb"
+          msi="./dist/OccluView-Windows-Setup.msi"
+          zip="./dist/OccluView-Windows-Portable.zip"
+          deb="./dist/OccluView-Linux.deb"
 
           sign_and_hash() {
             local file="$1"
@@ -541,7 +558,7 @@ jobs:
         run: |
           tag="$RELEASE_TAG"
           release_flags=()
-          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name '*.msi' -o -name '*-portable.zip' -o -name '*.deb' -o -name '*-verification.zip' -o -name 'latest.json' -o -name 'latest.json.minisig' \) -print0 | sort -z)
+          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name '*-verification.zip' -o -name 'latest.json' -o -name 'latest.json.minisig' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1

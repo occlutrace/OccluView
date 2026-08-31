@@ -22,9 +22,9 @@
 
 | Your workstation | Download on the release page | What it gives you |
 | --- | --- | --- |
-| **Windows — recommended** | `OccluView-…-x86_64-pc-windows-msvc.msi` | The viewer, file thumbnails, and Explorer Preview Pane. Run this installer once. |
-| **Windows — no installation** | `…-portable.zip` | Open the viewer manually. It does not add Explorer previews or file associations. |
-| **Linux (Debian/Ubuntu)** | `occluview_…_amd64.deb` | The native viewer, launcher, MIME setup, and thumbnails. |
+| **Windows — recommended** | `OccluView-Windows-Setup.msi` | The viewer, file thumbnails, and Explorer Preview Pane. Run this installer once. |
+| **Windows — no installation** | `OccluView-Windows-Portable.zip` | Open the viewer manually. It does not add Explorer previews or file associations. |
+| **Linux (Debian/Ubuntu)** | `OccluView-Linux.deb` | The native viewer, launcher, MIME setup, and thumbnails. |
 
 For a Windows lab, choose the **MSI installer**. The other files are for a
 portable copy or a Linux workstation.

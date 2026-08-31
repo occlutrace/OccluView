@@ -434,9 +434,8 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("actions/download-artifact"));
     assert!(workflow.contains("*.deb"));
     assert!(workflow.contains("*.sha256"));
-    assert!(workflow
-        .contains(r#"Download the \`.deb\` package for the native Linux viewer, launcher,"#));
-    assert!(workflow.contains("MIME registration, and thumbnailer."));
+    assert!(workflow.contains(r#"Download \`OccluView-Linux.deb\` for the native Linux viewer,"#));
+    assert!(workflow.contains("launcher, MIME registration, and thumbnailer."));
 
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(build_deb.contains("occluview-formats/private-hps-key"));
@@ -536,12 +535,42 @@ fn release_notes_put_the_recommended_installer_before_technical_verification() {
         .find("## Start here")
         .expect("release notes must start with the download choice");
     let installer = notes
-        .find("Windows installer (.msi) — recommended")
+        .find("Windows installer — recommended")
         .expect("release notes must identify the Windows installer as recommended");
     let technical = notes
         .find("<summary>For IT and verification</summary>")
         .expect("technical verification must remain available without leading the release");
     assert!(download < installer && installer < technical);
+}
+
+#[test]
+fn public_release_uses_plain_package_names() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let signing = workflow
+        .split_once("- name: Sign update artifacts and write latest.json")
+        .and_then(|(_, rest)| {
+            rest.split_once("- name: Verify the signatures against the key the updater ships")
+        })
+        .map(|(signing, _)| signing)
+        .expect("release workflow must normalize the customer-facing package names");
+    let (_, publish) = workflow
+        .split_once("- name: Publish GitHub Release")
+        .expect("release workflow must publish the customer-facing downloads");
+
+    for asset in [
+        "OccluView-Windows-Setup.msi",
+        "OccluView-Windows-Portable.zip",
+        "OccluView-Linux.deb",
+    ] {
+        assert!(
+            signing.contains(asset),
+            "the signed release package should use the plain name {asset}"
+        );
+        assert!(
+            publish.contains(asset),
+            "the customer-facing release should publish {asset}"
+        );
+    }
 }
 
 #[test]
@@ -572,9 +601,9 @@ fn release_note_markdown_is_not_executed_by_the_shell_heredoc() {
         .split_once("- name: Write release notes")
         .expect("release workflow must write customer-facing notes");
 
-    assert!(write_notes.contains("\\`OccluView-…-x86_64-pc-windows-msvc.msi\\`"));
-    assert!(write_notes.contains("\\`…-portable.zip\\`"));
-    assert!(write_notes.contains("\\`.deb\\`"));
+    assert!(write_notes.contains("\\`OccluView-Windows-Setup.msi\\`"));
+    assert!(write_notes.contains("\\`OccluView-Windows-Portable.zip\\`"));
+    assert!(write_notes.contains("\\`OccluView-Linux.deb\\`"));
     assert!(write_notes.contains("\\`OccluView-${RELEASE_TAG#v}-verification.zip\\`"));
 }
 
