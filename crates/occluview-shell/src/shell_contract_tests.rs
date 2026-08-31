@@ -434,7 +434,8 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("actions/download-artifact"));
     assert!(workflow.contains("*.deb"));
     assert!(workflow.contains("*.sha256"));
-    assert!(workflow.contains("Debian package: installs the native Linux viewer"));
+    assert!(workflow.contains("Download the `.deb` package for the native Linux viewer, launcher,"));
+    assert!(workflow.contains("MIME registration, and thumbnailer."));
 
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(build_deb.contains("occluview-formats/private-hps-key"));
@@ -519,6 +520,27 @@ fn package_pipeline_can_sign_windows_artifacts_when_certificate_is_configured() 
     assert!(build_windows.contains("occluview-formats/private-hps-key"));
     assert!(build_windows.contains("CARGO_ENCODED_RUSTFLAGS"));
     assert!(build_windows.contains("--remap-path-prefix=$repo_root=occluview"));
+}
+
+#[test]
+fn release_notes_put_the_recommended_installer_before_technical_verification() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let notes = workflow
+        .split_once("OccluView $RELEASE_TAG")
+        .and_then(|(_, rest)| rest.split_once("NOTES"))
+        .map(|(notes, _)| notes)
+        .expect("release-notes template");
+
+    let download = notes
+        .find("## Start here")
+        .expect("release notes must start with the download choice");
+    let installer = notes
+        .find("Windows installer (.msi) — recommended")
+        .expect("release notes must identify the Windows installer as recommended");
+    let technical = notes
+        .find("<summary>For IT and verification</summary>")
+        .expect("technical verification must remain available without leading the release");
+    assert!(download < installer && installer < technical);
 }
 
 #[test]

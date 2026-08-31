@@ -372,10 +372,31 @@ jobs:
           cat > dist/release-notes.md <<NOTES
           OccluView $RELEASE_TAG
 
-          Assets:
-          - MSI installer: installs the Windows viewer, Explorer thumbnails, live Preview Pane handler, file associations, and the shared 3D file icon.
-          - Portable ZIP: manual Windows launch only; it does not install Explorer thumbnails or file associations.
-          - Debian package: installs the native Linux viewer, freedesktop launcher, MIME registration, icon, and thumbnailer.
+          ## Start here
+
+          ### Windows installer (.msi) — recommended
+
+          Download `OccluView-…-x86_64-pc-windows-msvc.msi`. It installs the
+          viewer, Explorer thumbnails, the live Preview Pane, and file
+          associations. For a normal Windows workstation, this is the only file
+          to choose.
+
+          ### Windows portable (.zip)
+
+          Use `…-portable.zip` only when software cannot be installed. It opens
+          OccluView manually and does not add Explorer previews or file
+          associations.
+
+          ### Debian / Ubuntu (.deb)
+
+          Download the `.deb` package for the native Linux viewer, launcher,
+          MIME registration, and thumbnailer.
+
+          <details>
+          <summary>For IT and verification</summary>
+
+          The release also includes checksums, signatures, build provenance, and
+          SBOMs for verification and audit.
 
           All packages install LICENSE, NOTICE, THIRD-PARTY-NOTICES.md and
           THIRD-PARTY-NOTICES-NATIVE.md (the statically linked C++ components,
@@ -392,6 +413,8 @@ jobs:
           The same key is published as occluview.pub in the repository and is
           compiled into the updater. sbom-windows.json and sbom-linux.json list
           every third-party component in the binaries.
+
+          </details>
           NOTES
           # The changelog section for this version, verbatim, so the release
           # page states what changed without a second hop.

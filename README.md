@@ -1,55 +1,63 @@
 <p align="center">
-  <img src="assets/occluview-logo.png" width="72" height="72" alt="OccluView logo">
+  <img src="assets/occluview-logo.png" width="84" height="84" alt="OccluView logo">
 </p>
 
 <h1 align="center">OccluView</h1>
 
-<p align="center">Native desktop viewer and mesh editor for dental 3D scans.</p>
+<p align="center">A native 3D viewer and mesh editor for digital dental scans.</p>
 
 <p align="center">
-  <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/occlutrace/OccluView/releases/latest"><img src="https://img.shields.io/github/v/release/occlutrace/OccluView?label=release" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0 license"></a>
+  <a href="https://github.com/occlutrace/OccluView/releases/latest"><strong>Download for Windows</strong></a>
+  &nbsp;·&nbsp;
+  <a href="docs/USAGE.md">Open the guide</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml">Build status</a>
 </p>
 
-## Download
+<p align="center">
+  <img src="assets/screenshot1.png" width="820" alt="OccluView open with a dental scan">
+</p>
 
-[Get the latest release](https://github.com/occlutrace/OccluView/releases/latest).
-Published releases provide a Windows MSI, a portable Windows ZIP, and a Debian
-package. Installable packages carry SHA-256 checksums, minisign signatures, and
-build provenance; see the release page for the matching files.
+## Install once, then work normally
 
-## What it does
-
-- **View and inspect** — orthographic 3D viewport, layers, cut view, ruler,
-  and thickness measurement.
-- **Edit** — click, box, and lasso selection; crop, cut, separate, repair,
-  hole closing, sculpting, and undo/redo.
-- **Compare** — align two scans and inspect their deviation heatmap.
-- **Integrate** — use the desktop viewer or `occluview-cli`; receive Explorer
-  thumbnails and Preview Pane support on Windows, or freedesktop thumbnails on
-  Linux.
-
-## Files and platforms
-
-| Input | Export | Packages |
+| Your workstation | Download on the release page | What it gives you |
 | --- | --- | --- |
-| STL, PLY, OBJ, GLB, HPS | STL, PLY, OBJ | Windows 10+ x86_64 (MSI or ZIP); Debian x86_64 |
+| **Windows — recommended** | `OccluView-…-x86_64-pc-windows-msvc.msi` | The viewer, file thumbnails, and Explorer Preview Pane. Run this installer once. |
+| **Windows — no installation** | `…-portable.zip` | Open the viewer manually. It does not add Explorer previews or file associations. |
+| **Linux (Debian/Ubuntu)** | `occluview_…_amd64.deb` | The native viewer, launcher, MIME setup, and thumbnails. |
+
+For a Windows lab, choose the **MSI installer**. The other files are for a
+portable copy or a Linux workstation.
+
+## From a folder to a usable scan
+
+<p align="center">
+  <img src="assets/explorer-preview.gif" width="640" alt="Explorer thumbnails and live 3D preview for dental scans">
+</p>
+
+- Inspect a scan in orthographic 3D, use layers, Cut View, ruler, and thickness measurement.
+- Select, crop, cut, separate, repair, close holes, sculpt, and undo work safely.
+- Align two scans and review a deviation heatmap.
+
+## Files
+
+| Open | Export |
+| --- | --- |
+| STL, PLY, OBJ, GLB, HPS | STL, PLY, OBJ |
 
 - `.hps` and `.dcm` are accepted for dental HPS containers; medical DICOM is not supported (`DICM` is refused), and `.dcm` is not a default association.
   Details on encrypted HPS files and the optional source-build key are in the [usage guide](docs/USAGE.md).
 
-## Documentation
+<details>
+<summary>For clinic IT and verification</summary>
 
-- [Using OccluView](docs/USAGE.md) — controls, editing tools, cut view,
-  alignment, and CLI commands.
-- [Architecture](docs/ARCHITECTURE.md) — workspace boundaries, rendering, file
-  handling, shell integration, and update verification.
-- [Contributing](CONTRIBUTING.md) — local build, test, and fuzzing workflow.
-- [Security policy](SECURITY.md) — private vulnerability reporting.
+Normal users only need the installer. Releases retain checksums, signatures,
+build provenance, and SBOMs for teams that need to verify or audit a package.
 
-## License
+</details>
 
-OccluView is licensed under [Apache-2.0](LICENSE). Distribution notices are in
-[NOTICE](NOTICE), [third-party Rust notices](THIRD-PARTY-NOTICES.md), and
-[native dependency notices](THIRD-PARTY-NOTICES-NATIVE.md).
+## More
+
+[Using OccluView](docs/USAGE.md) · [Architecture](docs/ARCHITECTURE.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
+Licensed under [Apache-2.0](LICENSE). Distribution notices are in [NOTICE](NOTICE) and the [third-party notices](THIRD-PARTY-NOTICES.md).
