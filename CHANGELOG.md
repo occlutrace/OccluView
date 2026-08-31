@@ -7,6 +7,8 @@ remain in the Git history.
 
 ### Windows
 
+- Refreshed Explorer file associations after install or upgrade so STL and OBJ
+  thumbnails update without restarting Explorer.
 - Fixed MSI rollback on workstations without a separately installed Microsoft
   Visual C++ runtime.
 - Made same-version installs and failed major upgrades preserve a working
