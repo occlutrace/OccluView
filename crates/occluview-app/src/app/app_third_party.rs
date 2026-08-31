@@ -1,7 +1,7 @@
 //! The Third-party licenses modal: the generated THIRD-PARTY-NOTICES.md,
 //! readable in place from the About dialog.
 
-use super::app_settings_window::information_modal;
+use super::app_settings_window::show_information_modal;
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
 use crate::ui_theme;
@@ -27,50 +27,51 @@ impl OccluViewApp {
             return;
         }
         let mut close = false;
-        let modal_response = information_modal(
+        let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-third-party-notices-v2"),
             egui::vec2(560.0, 420.0),
-        )
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Third-party licenses")
-                        .strong()
-                        .color(ui_theme::TEXT),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
-                        close = true;
-                    }
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Third-party licenses")
+                            .strong()
+                            .color(ui_theme::TEXT),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
                 });
-            });
-            ui.add_space(4.0);
-            ui.separator();
-            let lines = notice_lines();
-            // Measured from the same 11 pt font the rows paint with; the
-            // Monospace style's default height is taller, and show_rows
-            // anchors scrolling by the declared height, so a mismatch
-            // slides the text against the scrollbar and leaves a blank
-            // band at the bottom of a six-thousand-line document.
-            let row_height = ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::monospace(11.0)));
-            egui::ScrollArea::both()
-                .auto_shrink([false, false])
-                .show_rows(ui, row_height, lines.len(), |ui, rows| {
-                    // License texts are preformatted; wrapping them would
-                    // mangle the alignment the horizontal scrollbar exists
-                    // for.
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    for line in &lines[rows] {
-                        ui.label(
-                            egui::RichText::new(*line)
-                                .monospace()
-                                .size(11.0)
-                                .color(ui_theme::TEXT_WEAK),
-                        );
-                    }
-                });
-        });
+                ui.add_space(4.0);
+                ui.separator();
+                let lines = notice_lines();
+                // Measured from the same 11 pt font the rows paint with; the
+                // Monospace style's default height is taller, and show_rows
+                // anchors scrolling by the declared height, so a mismatch
+                // slides the text against the scrollbar and leaves a blank
+                // band at the bottom of a six-thousand-line document.
+                let row_height =
+                    ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::monospace(11.0)));
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_height, lines.len(), |ui, rows| {
+                        // License texts are preformatted; wrapping them would
+                        // mangle the alignment the horizontal scrollbar exists
+                        // for.
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        for line in &lines[rows] {
+                            ui.label(
+                                egui::RichText::new(*line)
+                                    .monospace()
+                                    .size(11.0)
+                                    .color(ui_theme::TEXT_WEAK),
+                            );
+                        }
+                    });
+            },
+        );
 
         if close || modal_response.should_close() {
             self.information_dialog = InformationDialog::None;

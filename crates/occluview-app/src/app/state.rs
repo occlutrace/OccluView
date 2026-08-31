@@ -200,6 +200,14 @@ pub(super) struct AppErrorDialog {
     pub(super) details: String,
 }
 
+fn information_route_is_blocked(
+    close_guard_open: bool,
+    pending_replace_open: bool,
+    app_error_open: bool,
+) -> bool {
+    close_guard_open || pending_replace_open || app_error_open
+}
+
 pub(super) struct RenderedFrame {
     pub(super) texture: egui::TextureHandle,
     pub(super) pixels: Vec<u8>,
@@ -349,6 +357,17 @@ impl OccluViewApp {
         .any()
     }
 
+    /// A decision dialog takes precedence over informational content. Keep an
+    /// open information route in state so it can return after the decision is
+    /// resolved, but never let its modal consume Escape or clicks underneath.
+    fn foreground_dialog_open(&self) -> bool {
+        information_route_is_blocked(
+            self.close_guard_open,
+            self.pending_replace_open.is_some(),
+            self.app_error.is_some(),
+        )
+    }
+
     /// Edit hotkeys, refused while a dialog is up.
     ///
     /// The callee is named `_unguarded` rather than `_impl` because it is not
@@ -491,6 +510,9 @@ impl OccluViewApp {
     /// pass. A selection inside About therefore replaces it on the following
     /// frame instead of briefly stacking two modal backdrops.
     pub(super) fn show_information_dialog(&mut self, ctx: &egui::Context) {
+        if self.foreground_dialog_open() {
+            return;
+        }
         match self.information_dialog {
             InformationDialog::None => {}
             InformationDialog::About => self.show_about_dialog(ctx),
@@ -534,5 +556,18 @@ impl eframe::App for OccluViewApp {
         self.update_notice.show(&ctx);
         self.show_unsaved_close_guard(&ctx);
         self.guard_pending_replace_open(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::information_route_is_blocked;
+
+    #[test]
+    fn information_route_yields_to_each_foreground_decision_dialog() {
+        assert!(!information_route_is_blocked(false, false, false));
+        assert!(information_route_is_blocked(true, false, false));
+        assert!(information_route_is_blocked(false, true, false));
+        assert!(information_route_is_blocked(false, false, true));
     }
 }

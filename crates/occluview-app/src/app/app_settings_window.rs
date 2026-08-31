@@ -17,22 +17,33 @@ pub(super) fn settings_popup_id() -> egui::Id {
     egui::Id::new(SETTINGS_PANEL_ID)
 }
 
-pub(super) fn information_modal(
+pub(super) fn show_information_modal<T>(
     ctx: &egui::Context,
     id: egui::Id,
     default_size: egui::Vec2,
-) -> egui::Modal {
+    add_contents: impl FnOnce(&mut egui::Ui) -> T,
+) -> egui::ModalResponse<T> {
     let bounds = ctx.content_rect().shrink(16.0);
+    let frame = ui_theme::overlay_frame();
+    let frame_margin = frame.total_margin().sum();
+    let max_content_size = egui::vec2(
+        (bounds.width() - frame_margin.x).max(0.0),
+        (bounds.height() - frame_margin.y).max(0.0),
+    );
     egui::Modal::new(id)
         .area(
             egui::Modal::default_area(id)
                 .default_size(default_size.min(bounds.size()))
                 .constrain_to(bounds),
         )
-        .frame(ui_theme::overlay_frame())
+        .frame(frame)
         .backdrop_color(egui::Color32::from_black_alpha(
             INFORMATION_MODAL_BACKDROP_ALPHA,
         ))
+        .show(ctx, |ui| {
+            ui.set_max_size(max_content_size);
+            add_contents(ui)
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,71 +98,72 @@ impl OccluViewApp {
         let mut open_url = None;
         let logo = self.app_logo_texture(ctx).cloned();
 
-        let modal_response = information_modal(
+        let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-about-dialog-v2"),
             egui::vec2(320.0, 240.0),
-        )
-        .show(ctx, |ui| {
-            ui.set_width(304.0);
-            ui.vertical_centered(|ui| {
-                if let Some(logo) = &logo {
-                    ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
-                }
-                ui.label(
-                    egui::RichText::new("OccluView")
-                        .size(19.0)
-                        .strong()
-                        .color(ui_theme::TEXT),
-                );
-                ui.label(
-                    egui::RichText::new("3D viewer for dental scans")
-                        .size(12.0)
-                        .color(ui_theme::TEXT_WEAK),
-                );
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
-                        .size(11.0)
-                        .color(ui_theme::TEXT_MUTED),
-                );
-            });
+            |ui| {
+                ui.set_width(304.0_f32.min(ui.available_width()));
+                ui.vertical_centered(|ui| {
+                    if let Some(logo) = &logo {
+                        ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
+                    }
+                    ui.label(
+                        egui::RichText::new("OccluView")
+                            .size(19.0)
+                            .strong()
+                            .color(ui_theme::TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new("3D viewer for dental scans")
+                            .size(12.0)
+                            .color(ui_theme::TEXT_WEAK),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
+                            .size(11.0)
+                            .color(ui_theme::TEXT_MUTED),
+                    );
+                });
 
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(1.0);
-                if about_link(ui, width, AppIcon::Globe, "Website") {
-                    open_url = Some("https://occlutrace.ai");
-                }
-                if about_link(ui, width, AppIcon::Github, "Source") {
-                    open_url = Some("https://github.com/occlutrace/OccluView");
-                }
-            });
-            let licenses_width = ui.available_width();
-            if about_link(
-                ui,
-                licenses_width,
-                AppIcon::Licenses,
-                "Third-party licenses",
-            ) {
-                open_third_party = true;
-            }
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Apache License 2.0")
-                        .size(10.5)
-                        .color(ui_theme::TEXT_MUTED),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
-                        close = true;
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let width =
+                        ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(1.0);
+                    if about_link(ui, width, AppIcon::Globe, "Website") {
+                        open_url = Some("https://occlutrace.ai");
+                    }
+                    if about_link(ui, width, AppIcon::Github, "Source") {
+                        open_url = Some("https://github.com/occlutrace/OccluView");
                     }
                 });
-            });
-        });
+                let licenses_width = ui.available_width();
+                if about_link(
+                    ui,
+                    licenses_width,
+                    AppIcon::Licenses,
+                    "Third-party licenses",
+                ) {
+                    open_third_party = true;
+                }
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Apache License 2.0")
+                            .size(10.5)
+                            .color(ui_theme::TEXT_MUTED),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            },
+        );
 
         if let Some(url) = open_url {
             ctx.open_url(egui::OpenUrl::new_tab(url));
@@ -516,6 +528,27 @@ mod tests {
         }
     }
 
+    fn responsive_information_modal_frame(
+        ctx: &egui::Context,
+        screen: egui::Rect,
+    ) -> anyhow::Result<egui::Rect> {
+        let id = egui::Id::new("information-modal-resize-contract");
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| {
+                show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
+                    ui.set_width(304.0_f32.min(ui.available_width()));
+                    ui.set_min_height(180.0_f32.min(ui.available_height()));
+                });
+            },
+        )
+        .drop_without_applying_deltas();
+        popup_rect(ctx, id)
+    }
+
     #[test]
     fn settings_segment_selects_direct_stl_without_closing() -> anyhow::Result<()> {
         let ctx = egui::Context::default();
@@ -660,5 +693,24 @@ mod tests {
             "the raw click should reach the modal backdrop"
         );
         assert!(release.should_close);
+    }
+
+    #[test]
+    fn information_modal_shrinks_to_the_current_content_rect_after_resize() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let large_screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
+        let small_screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 180.0));
+
+        let _ = responsive_information_modal_frame(&ctx, large_screen)?;
+        let _ = responsive_information_modal_frame(&ctx, large_screen)?;
+        let _ = responsive_information_modal_frame(&ctx, small_screen)?;
+        let rect = responsive_information_modal_frame(&ctx, small_screen)?;
+        let bounds = small_screen.shrink(16.0);
+
+        assert!(
+            bounds.contains_rect(rect),
+            "information modal {rect:?} escaped the current content bounds {bounds:?}"
+        );
+        Ok(())
     }
 }
