@@ -179,6 +179,28 @@ function Assert-StaticMsvcRuntime {
     }
 }
 
+function Assert-ManifoldStaticMsvcRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$RepoRoot
+    )
+
+    $targetDir = Join-Path $RepoRoot "target\\$Target"
+    $caches = @(
+        Get-ChildItem -Path $targetDir -Filter "CMakeCache.txt" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]manifold-csg-sys-[^\\/]+[\\/]out[\\/]build[\\/]CMakeCache\.txt$' }
+    )
+    if ($caches.Count -eq 0) {
+        throw "Manifold did not produce a CMake cache for $Target."
+    }
+
+    foreach ($cache in $caches) {
+        if (-not (Select-String -Path $cache.FullName -Pattern '^CMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreaded$' -Quiet)) {
+            throw "Manifold cache $($cache.FullName) is not configured for the static MSVC runtime."
+        }
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $cargoText = Get-Content $cargoToml -Raw
     $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
@@ -260,6 +282,30 @@ if (-not $SkipBuild) {
             $env:CARGO_ENCODED_RUSTFLAGS = $encodedRustFlags
         }
     }
+    $previousCmakeToolchain = $null
+    $previousBaseCmakeToolchain = $null
+    if ($Target -like "*-pc-windows-msvc") {
+        $staticCrtToolchain = Join-Path $PSScriptRoot "cmake\\occluview-static-crt.cmake"
+        if (-not (Test-Path $staticCrtToolchain)) {
+            throw "Missing static-CRT CMake toolchain overlay: $staticCrtToolchain"
+        }
+
+        # manifold-csg-sys invokes CMake itself and does not expose a runtime
+        # option. Feed it a toolchain overlay before its first project() call
+        # so its C++ archives use /MT just like the Rust payload.
+        $previousCmakeToolchain = [Environment]::GetEnvironmentVariable("CMAKE_TOOLCHAIN_FILE")
+        $previousBaseCmakeToolchain = [Environment]::GetEnvironmentVariable("OCCLUVIEW_BASE_CMAKE_TOOLCHAIN_FILE")
+        $env:OCCLUVIEW_BASE_CMAKE_TOOLCHAIN_FILE = $previousCmakeToolchain
+        $env:CMAKE_TOOLCHAIN_FILE = $staticCrtToolchain
+
+        # Cargo does not know that CMake's runtime setting changed. Rebuild
+        # only Manifold so an older /MD cache cannot be silently reused for an
+        # MSI that promises to be self-contained.
+        & cargo clean -p manifold-csg-sys
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo clean could not invalidate the Manifold CMake build"
+        }
+    }
     try {
         & cargo @cargoArgs
         if ($LASTEXITCODE -ne 0) {
@@ -274,6 +320,16 @@ if (-not $SkipBuild) {
             Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
         } else {
             $env:CARGO_ENCODED_RUSTFLAGS = $previousEncodedRustFlags
+        }
+        if ($null -eq $previousCmakeToolchain) {
+            Remove-Item Env:CMAKE_TOOLCHAIN_FILE -ErrorAction SilentlyContinue
+        } else {
+            $env:CMAKE_TOOLCHAIN_FILE = $previousCmakeToolchain
+        }
+        if ($null -eq $previousBaseCmakeToolchain) {
+            Remove-Item Env:OCCLUVIEW_BASE_CMAKE_TOOLCHAIN_FILE -ErrorAction SilentlyContinue
+        } else {
+            $env:OCCLUVIEW_BASE_CMAKE_TOOLCHAIN_FILE = $previousBaseCmakeToolchain
         }
     }
 }
@@ -295,6 +351,7 @@ foreach ($path in $required) {
     }
 }
 if ($Target -like "*-pc-windows-msvc") {
+    Assert-ManifoldStaticMsvcRuntime -Target $Target -RepoRoot $repoRoot
     Assert-StaticMsvcRuntime -Paths $required
 }
 

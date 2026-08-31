@@ -48,22 +48,40 @@ if [[ -z "$cmake_toolchain" || ! -f "$cmake_toolchain" ]]; then
   echo "cargo-xwin did not provide a usable CMake toolchain for $target." >&2
   exit 1
 fi
-export CMAKE_TOOLCHAIN_FILE="$cmake_toolchain"
 
-# Remove generated Manifold build directories whose compiler cache is not
-# configured for clang-cl; valid caches remain reusable.
+if [[ "$target" == *-pc-windows-msvc ]]; then
+  static_crt_toolchain="$repo_root/install/cmake/occluview-static-crt.cmake"
+  if [[ ! -f "$static_crt_toolchain" ]]; then
+    echo "Missing static-CRT CMake toolchain overlay: $static_crt_toolchain" >&2
+    exit 1
+  fi
+  export OCCLUVIEW_BASE_CMAKE_TOOLCHAIN_FILE="$cmake_toolchain"
+  export CMAKE_TOOLCHAIN_FILE="$static_crt_toolchain"
+else
+  export CMAKE_TOOLCHAIN_FILE="$cmake_toolchain"
+fi
+
+# Remove generated Manifold build directories whose compiler or runtime cache
+# is incompatible with this build; valid caches remain reusable.
+rebuild_manifold=false
 if [[ -d "$repo_root/target/$target" ]]; then
   while IFS= read -r -d '' cache; do
-    if ! grep -Eq '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=.*clang-cl' "$cache"; then
+    if ! grep -Eq '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=.*clang-cl' "$cache" \
+      || { [[ "$target" == *-pc-windows-msvc ]] && ! grep -Eq '^CMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreaded$' "$cache"; }; then
       stale_build_dir="${cache%/CMakeCache.txt}"
-      printf 'Removing stale host-compiler CMake cache: %s\n' "$stale_build_dir"
+      printf 'Removing stale Manifold CMake cache: %s\n' "$stale_build_dir"
       rm -rf -- "$stale_build_dir"
+      rebuild_manifold=true
     fi
   done < <(
     find "$repo_root/target/$target" \
       -path '*/build/manifold-csg-sys-*/out/build/CMakeCache.txt' \
       -print0
   )
+fi
+
+if [[ "$rebuild_manifold" == true ]]; then
+  cargo clean -p manifold-csg-sys
 fi
 
 rust_flags=()
@@ -119,6 +137,21 @@ for path in "${required[@]}"; do
 done
 
 if [[ "$target" == *-pc-windows-msvc ]]; then
+  mapfile -d '' -t manifold_caches < <(
+    find "$repo_root/target/$target" \
+      -path '*/build/manifold-csg-sys-*/out/build/CMakeCache.txt' \
+      -print0
+  )
+  if ((${#manifold_caches[@]} == 0)); then
+    echo "Manifold did not produce a CMake cache for $target." >&2
+    exit 1
+  fi
+  for cache in "${manifold_caches[@]}"; do
+    if ! grep -Eq '^CMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreaded$' "$cache"; then
+      echo "Manifold cache is not configured for the static MSVC runtime: $cache" >&2
+      exit 1
+    fi
+  done
   if ! command -v objdump >/dev/null 2>&1; then
     echo "objdump is required to verify static MSVC runtime linkage." >&2
     exit 127

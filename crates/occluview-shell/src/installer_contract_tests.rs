@@ -235,6 +235,7 @@ fn windows_package_builds_link_the_msvc_runtime_statically() {
     // before it has shown the operator anything, especially under /qn.
     let msi_build = include_str!("../../../install/build-msi.ps1");
     let windows_build = include_str!("../../../scripts/build-windows-msvc.sh");
+    let static_crt_toolchain = include_str!("../../../install/cmake/occluview-static-crt.cmake");
 
     for (surface, source) in [
         ("native Windows MSI build", msi_build),
@@ -244,7 +245,20 @@ fn windows_package_builds_link_the_msvc_runtime_statically() {
             source.contains("target-feature=+crt-static"),
             "{surface} must not depend on a preinstalled VC++ runtime"
         );
+        assert!(
+            source.contains("occluview-static-crt.cmake"),
+            "{surface} must align CMake-built native dependencies with Rust's static CRT"
+        );
     }
+
+    assert!(
+        static_crt_toolchain.contains("CMAKE_MSVC_RUNTIME_LIBRARY \"MultiThreaded\""),
+        "the CMake overlay must request /MT for native dependencies"
+    );
+    assert!(
+        static_crt_toolchain.contains("OCCLUVIEW_BASE_CMAKE_TOOLCHAIN_FILE"),
+        "the CMake overlay must preserve a cargo-xwin compiler toolchain"
+    );
 }
 
 #[test]
