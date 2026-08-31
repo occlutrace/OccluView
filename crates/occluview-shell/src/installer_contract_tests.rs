@@ -187,9 +187,11 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
     assert!(registration.contains("h!(\"Prevhost.exe\")"));
 
     assert!(wxs.contains("Id=\"cmpPreviewHostRegistration\""));
-    assert!(wxs.contains("Software\\Classes\\AppID\\$(var.PrevhostAppId)"));
+    assert!(wxs.contains(
+        "<RegistryKey Root=\"HKLM\" Key=\"Software\\Classes\\AppID\\$(var.PrevhostAppId)\" Action=\"createAndRemoveOnUninstall\">"
+    ));
     assert!(wxs.contains("Name=\"DllSurrogate\" Type=\"string\" Value=\"Prevhost.exe\""));
-    assert!(wxs.contains("<RemoveRegistryKey Action=\"removeOnUninstall\""));
+    assert!(!wxs.contains("<RemoveRegistryKey"));
     assert!(wxs.contains("<ComponentRef Id=\"cmpPreviewHostRegistration\""));
     assert!(!wxs.contains("DisableLowILProcessIsolation"));
 
