@@ -392,6 +392,10 @@ fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering(
         !detailed_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
         "the detailed render and interaction contract must not pretend it can drive Prevhost's low-integrity child"
     );
+    assert!(
+        !detailed_probe.contains("EnsurePreviewHostProcess(child)"),
+        "the detailed in-process contract must not assert that its own child belongs to Prevhost"
+    );
     let item_start = offset("public static string ProbeFromItem(");
     let item_end = offset("private static IntPtr WaitForPreviewChild(");
     let item_probe = &smoke[item_start..item_end];
