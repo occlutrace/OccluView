@@ -254,7 +254,13 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     let smoke = include_str!("../../../install/test-preview-handler.ps1");
 
     assert!(smoke.contains("ApartmentState.STA"));
-    assert!(smoke.contains("Type.GetTypeFromCLSID"));
+    assert!(smoke.contains("CoCreateInstance"));
+    assert!(smoke.contains("CLSCTX_LOCAL_SERVER = 0x4"));
+    assert!(smoke.contains("CreateLocalServerPreviewHandler"));
+    assert!(smoke.contains("Marshal.GetObjectForIUnknown"));
+    assert!(smoke.contains("Marshal.Release(unknown)"));
+    assert!(!smoke.contains("Activator.CreateInstance"));
+    assert!(!smoke.contains("Type.GetTypeFromCLSID"));
     assert!(smoke.contains("IInitializeWithFile"));
     assert!(smoke.contains("IInitializeWithStream"));
     assert!(smoke.contains("IInitializeWithItem"));

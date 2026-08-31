@@ -66,6 +66,7 @@ using System.Threading;
 public static class OccluViewShellPreviewSmoke
 {
     private const uint COINIT_APARTMENTTHREADED = 0x2;
+    private const uint CLSCTX_LOCAL_SERVER = 0x4;
     private const string PreviewChildClass = "OccluViewPreviewPane";
     private const int WM_RBUTTONDOWN = 0x0204;
     private const int WM_RBUTTONUP = 0x0205;
@@ -213,6 +214,14 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("ole32.dll")]
     private static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
 
+    [DllImport("ole32.dll", PreserveSig = true)]
+    private static extern int CoCreateInstance(
+        [In] ref Guid rclsid,
+        IntPtr pUnkOuter,
+        uint dwClsContext,
+        [In] ref Guid riid,
+        out IntPtr ppv);
+
     [DllImport("ole32.dll")]
     private static extern void CoUninitialize();
 
@@ -345,6 +354,45 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
 
+    private static object CreateLocalServerPreviewHandler(string previewClsid)
+    {
+        Guid clsid = new Guid(previewClsid);
+        Guid iidIUnknown = new Guid("00000000-0000-0000-C000-000000000046");
+        IntPtr unknown = IntPtr.Zero;
+        int createHr = CoCreateInstance(
+            ref clsid,
+            IntPtr.Zero,
+            CLSCTX_LOCAL_SERVER,
+            ref iidIUnknown,
+            out unknown);
+        if (createHr < 0)
+        {
+            Marshal.ThrowExceptionForHR(createHr);
+        }
+        if (unknown == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("CoCreateInstance returned a null IUnknown for the Preview Handler.");
+        }
+
+        try
+        {
+            object instance = Marshal.GetObjectForIUnknown(unknown);
+            if (!(instance is IPreviewHandler))
+            {
+                if (Marshal.IsComObject(instance))
+                {
+                    Marshal.FinalReleaseComObject(instance);
+                }
+                throw new InvalidOperationException("Local-server activation returned an object without IPreviewHandler.");
+            }
+            return instance;
+        }
+        finally
+        {
+            Marshal.Release(unknown);
+        }
+    }
+
     public static string Probe(
         string previewClsid,
         string path,
@@ -381,8 +429,7 @@ public static class OccluViewShellPreviewSmoke
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
                 UpdateWindow(parent);
 
-                var type = Type.GetTypeFromCLSID(new Guid(previewClsid), true);
-                instance = Activator.CreateInstance(type);
+                instance = CreateLocalServerPreviewHandler(previewClsid);
 
                 var preview = (IPreviewHandler)instance;
 
@@ -476,7 +523,7 @@ public static class OccluViewShellPreviewSmoke
                 // window pointing at a freed object. Build a second handler,
                 // give it a window, release it WITHOUT Unload, and check the
                 // child is gone.
-                object orphan = Activator.CreateInstance(type);
+                object orphan = CreateLocalServerPreviewHandler(previewClsid);
                 try
                 {
                     var orphanPreview = (IPreviewHandler)orphan;
@@ -595,8 +642,7 @@ public static class OccluViewShellPreviewSmoke
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
                 UpdateWindow(parent);
 
-                var type = Type.GetTypeFromCLSID(new Guid(previewClsid), true);
-                instance = Activator.CreateInstance(type);
+                instance = CreateLocalServerPreviewHandler(previewClsid);
 
                 var preview = (IPreviewHandler)instance;
                 var initialRect = new RECT { left = 0, top = 0, right = width, bottom = height };
