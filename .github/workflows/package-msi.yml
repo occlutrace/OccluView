@@ -9,6 +9,15 @@ on:
           latest.json, release notes) without creating a GitHub Release.
         type: boolean
         default: false
+      windows_configuration:
+        description: >-
+          Windows package profile. Diagnostic is a non-release,
+          symbol-carrying MSI and never enters the release path.
+        type: choice
+        options:
+          - release
+          - diagnostic
+        default: release
   push:
     tags:
       - "v*.*.*"
@@ -101,8 +110,14 @@ jobs:
         shell: pwsh
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: ./install/build-msi.ps1 -SignMode auto
+        run: |
+          $configuration = "release"
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and "${{ inputs.windows_configuration }}" -eq "diagnostic") {
+            $configuration = "diagnostic"
+          }
+          ./install/build-msi.ps1 -Configuration $configuration -SignMode auto
       - name: Build portable ZIP
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $cargoText = Get-Content ./Cargo.toml -Raw
@@ -124,7 +139,7 @@ jobs:
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
       - name: Verify Authenticode signatures when configured
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run) && inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
@@ -147,6 +162,7 @@ jobs:
             Write-Host "Authenticode valid: $path ($($sig.SignerCertificate.Subject))"
           }
       - name: Build upgrade smoke MSIs
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         env:
           OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
@@ -162,12 +178,20 @@ jobs:
           $smokeDir = Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade"
           ./install/build-msi.ps1 -Version $upgradeVersion -OutputDir $smokeDir -SkipBuild -SignMode auto
       - name: Smoke install and uninstall
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $sameVersionUpgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-same-version-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $upgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -SameVersionUpgradeMsiPath $sameVersionUpgradeMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
+      - name: Diagnostic MSI lifecycle smoke
+        if: inputs.windows_configuration == 'diagnostic'
+        shell: pwsh
+        run: |
+          $diagnosticMsi = Get-ChildItem ./dist -Filter "*-diagnostic.msi" -File | Select-Object -First 1
+          if ($null -eq $diagnosticMsi) { throw "Diagnostic MSI artifact missing." }
+          ./install/test-msi-lifecycle.ps1 -MsiPath $diagnosticMsi.FullName -Diagnostic
       - name: Write Windows checksums
         shell: pwsh
         run: |
@@ -205,6 +229,7 @@ jobs:
 
   linux-package:
     name: build linux deb
+    if: inputs.windows_configuration != 'diagnostic'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -329,7 +354,7 @@ jobs:
 
   publish:
     name: publish github release
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+    if: (startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run) && inputs.windows_configuration != 'diagnostic'
     timeout-minutes: 20
     needs:
       - windows-package

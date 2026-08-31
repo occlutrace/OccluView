@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::Path;
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 #[cfg(all(windows, feature = "diagnostic-logs"))]
 use windows::core::{w, PCWSTR};
 #[cfg(all(windows, feature = "diagnostic-logs"))]
@@ -152,7 +152,9 @@ const fn diagnostic_switch_enabled(value: Option<u32>) -> bool {
 }
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
-static DIAGNOSTIC_SENDER: OnceLock<Option<mpsc::SyncSender<PreviewFailureEvent>>> = OnceLock::new();
+static DIAGNOSTIC_SENDER: OnceLock<mpsc::SyncSender<PreviewFailureEvent>> = OnceLock::new();
+#[cfg(all(windows, feature = "diagnostic-logs"))]
+static DIAGNOSTIC_WRITER_INIT: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Record a preview render failure without allowing diagnostics I/O to delay the
 /// preview host. The normal customer package does not compile this function.
@@ -185,34 +187,53 @@ pub(crate) fn record_preview_bitmap_failure() {
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
 fn record_preview_failure(event: PreviewFailureEvent) {
-    if let Some(sender) = DIAGNOSTIC_SENDER.get().and_then(Option::as_ref) {
+    if let Some(sender) = DIAGNOSTIC_SENDER.get() {
         let _ = sender.try_send(event);
     }
 }
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
 fn diagnostic_sender() -> Option<&'static mpsc::SyncSender<PreviewFailureEvent>> {
-    DIAGNOSTIC_SENDER
-        .get_or_init(|| {
-            if !diagnostic_switch_enabled(preview_diagnostic_switch_value()) {
-                return None;
+    // Do not cache a disabled result: the operator may enable this per-user
+    // switch while the private preview surrogate is already alive. A later
+    // deferred render observes the new setting without touching the callback
+    // path or requiring an Explorer restart.
+    if !diagnostic_switch_enabled(preview_diagnostic_switch_value()) {
+        return None;
+    }
+    if let Some(sender) = DIAGNOSTIC_SENDER.get() {
+        return Some(sender);
+    }
+
+    // Initialization only runs from deferred preview work, never a COM
+    // callback. The short mutex makes construction single-writer on stable
+    // Rust; the sender remains lock-free for the error callback below.
+    let _guard = diagnostic_writer_init_mutex().lock().ok()?;
+    if let Some(sender) = DIAGNOSTIC_SENDER.get() {
+        return Some(sender);
+    }
+
+    // The diagnostic worker executes Rust code after the render callback
+    // returns. Pin this DLL before creating it so a COM unload cannot unmap
+    // the worker's code. A failed initialization is retried by a later
+    // deferred render and never caches a disabled or failed state.
+    crate::com::own_pinned_dll_module().ok()?;
+    let (sender, receiver) = mpsc::sync_channel(DIAGNOSTIC_QUEUE_CAPACITY);
+    std::thread::Builder::new()
+        .name("occluview-preview-diagnostics".to_owned())
+        .spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                write_preview_failure_event(event);
             }
-            // The diagnostic worker executes Rust code after the render callback
-            // returns. Pin this DLL before creating it so a COM unload cannot
-            // unmap the worker's code. A failed pin is a clean diagnostics no-op.
-            crate::com::own_pinned_dll_module().ok()?;
-            let (sender, receiver) = mpsc::sync_channel(DIAGNOSTIC_QUEUE_CAPACITY);
-            std::thread::Builder::new()
-                .name("occluview-preview-diagnostics".to_owned())
-                .spawn(move || {
-                    while let Ok(event) = receiver.recv() {
-                        write_preview_failure_event(event);
-                    }
-                })
-                .ok()?;
-            Some(sender)
         })
-        .as_ref()
+        .ok()?;
+    let _ = DIAGNOSTIC_SENDER.set(sender);
+    DIAGNOSTIC_SENDER.get()
+}
+
+#[cfg(all(windows, feature = "diagnostic-logs"))]
+fn diagnostic_writer_init_mutex() -> &'static Mutex<()> {
+    DIAGNOSTIC_WRITER_INIT.get_or_init(|| Mutex::new(()))
 }
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
@@ -393,6 +414,56 @@ mod tests {
         assert!(!diagnostic_switch_enabled(None));
         assert!(!diagnostic_switch_enabled(Some(0)));
         assert!(diagnostic_switch_enabled(Some(1)));
+    }
+
+    #[test]
+    fn preparation_rechecks_the_opt_in_switch_before_the_writer_is_cached() {
+        // A diagnostic handler can be activated before the operator runs the
+        // helper. Caching `None` then makes a later opt-in inert until the
+        // surrogate happens to restart. The sender cache must only represent
+        // a running writer; every deferred preparation checks the current
+        // per-user setting first.
+        let source = include_str!("preview_diagnostics.rs");
+        let sender_declaration = source
+            .lines()
+            .find(|line| line.contains("static DIAGNOSTIC_SENDER"))
+            .expect("diagnostic sender declaration");
+        assert!(
+            sender_declaration.contains("OnceLock<mpsc::SyncSender<PreviewFailureEvent>>"),
+            "the writer cache must not persist the disabled state"
+        );
+        assert!(
+            !sender_declaration.contains("Option<"),
+            "the sender declaration must not cache a disabled result"
+        );
+        let start = source
+            .find(
+                "fn diagnostic_sender() -> Option<&'static mpsc::SyncSender<PreviewFailureEvent>>",
+            )
+            .expect("diagnostic sender");
+        let end = source[start..]
+            .find("fn write_preview_failure_event")
+            .map(|offset| start + offset)
+            .expect("writer after sender");
+        let sender = &source[start..end];
+        let switch_check = sender
+            .find("if !diagnostic_switch_enabled(preview_diagnostic_switch_value())")
+            .expect("per-user opt-in check");
+        let writer_initialization = sender
+            .find("diagnostic_writer_init_mutex().lock()")
+            .expect("race-safe diagnostic writer initialization");
+        assert!(
+            switch_check < writer_initialization,
+            "each deferred preparation must re-read opt-in before consulting a cached writer"
+        );
+        assert!(
+            sender.contains("let _guard = diagnostic_writer_init_mutex().lock().ok()?;"),
+            "concurrent preparations must serialize diagnostic writer initialization"
+        );
+        assert!(
+            sender.contains("DIAGNOSTIC_SENDER.set(sender)"),
+            "the one writer constructed under the deferred init lock must become the callback sender"
+        );
     }
 
     #[test]

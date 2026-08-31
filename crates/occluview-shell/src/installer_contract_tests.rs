@@ -206,6 +206,131 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
 }
 
 #[test]
+fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path_unchanged() {
+    // A diagnostic installer is a non-release investigation tool, not a
+    // second customer release channel. It must carry symbols and the opt-in
+    // shell feature, while the ordinary release/debug profile names and
+    // payloads continue through their existing path.
+    let cargo = include_str!("../../../Cargo.toml");
+    let native_build = include_str!("../../../scripts/build-windows-msvc.sh");
+    let msi_build = include_str!("../../../install/build-msi.ps1");
+    let wxs = include_str!("../../../install/occluview.wxs");
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
+    let repo_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let enable = std::fs::read_to_string(format!(
+        "{repo_root}/install/diagnostics/Enable-PreviewDiagnostics.ps1"
+    ))
+    .unwrap_or_default();
+    let collect = std::fs::read_to_string(format!(
+        "{repo_root}/install/diagnostics/Collect-PreviewDiagnostics.ps1"
+    ))
+    .unwrap_or_default();
+
+    assert!(cargo.contains("[profile.release-diagnostic]"));
+    assert!(cargo.contains("debug = 2"));
+    assert!(cargo.contains("strip = \"none\""));
+    assert!(cargo.contains("[profile.release-diagnostic-unwind]"));
+    assert!(cargo.contains("inherits = \"release-diagnostic\""));
+    assert!(cargo.contains("panic = \"unwind\""));
+
+    for source in [native_build, msi_build] {
+        assert!(source.contains("diagnostic"));
+        assert!(source.contains("release-diagnostic-unwind"));
+        assert!(source.contains("diagnostic-logs"));
+        assert!(source.contains("target-feature=+crt-static"));
+    }
+    assert!(msi_build.contains("-diagnostic.msi"));
+    assert!(msi_build.contains("-diagnostic.manifest.json"));
+    assert!(msi_build.contains("IncludeDiagnostics=1"));
+    assert!(msi_build.contains("Get-FileHash -Algorithm SHA256"));
+    assert!(msi_build.contains("downloadable to repository readers"));
+    assert!(msi_build.contains("never published as a GitHub Release asset"));
+    assert!(msi_build.contains("occluview_shell.pdb"));
+    assert!(msi_build.contains("occluview.pdb"));
+    assert!(msi_build.contains("README.txt"));
+
+    assert!(wxs.contains("<?if $(var.IncludeDiagnostics) = 1 ?>"));
+    for component in [
+        "cmpDiagnosticAppSymbols",
+        "cmpDiagnosticShellSymbols",
+        "cmpEnablePreviewDiagnostics",
+        "cmpCollectPreviewDiagnostics",
+        "cmpDiagnosticReadme",
+    ] {
+        assert!(
+            wxs.contains(component),
+            "diagnostic component missing: {component}"
+        );
+    }
+    for forbidden in [
+        "PreviewFailureLogEnabled",
+        "LocalDumps",
+        "DisableLowILProcessIsolation",
+    ] {
+        assert!(
+            !wxs.contains(forbidden),
+            "the diagnostic MSI must not change a system-wide diagnostics or Prevhost policy: {forbidden}"
+        );
+    }
+
+    assert!(enable.contains("HKCU:\\Software\\OccluTrace\\OccluView\\Diagnostics"));
+    assert!(enable.contains("PreviewFailureLogEnabled"));
+    assert!(
+        !enable.contains("HKLM:"),
+        "the installer must not enable per-user diagnostics from an elevated context"
+    );
+    assert!(collect.contains("preview-failures.jsonl"));
+    assert!(collect.contains("Compress-Archive"));
+    assert!(
+        !collect.contains("Start-Process -Verb RunAs"),
+        "collecting safe diagnostic JSONL must not require elevation"
+    );
+    let diagnostic_readme =
+        std::fs::read_to_string(format!("{repo_root}/install/diagnostics/README.txt"))
+            .unwrap_or_default();
+    assert!(diagnostic_readme.contains("no admin"));
+    assert!(diagnostic_readme.contains("$env:USERPROFILE\\Desktop"));
+    assert!(diagnostic_readme.contains("no source mesh/path"));
+    assert!(diagnostic_readme.contains("No dumps are collected automatically"));
+    assert!(lifecycle.contains("[switch]$Diagnostic"));
+    assert!(lifecycle.contains("function Assert-DiagnosticPayload"));
+    assert!(lifecycle.contains("function Assert-DiagnosticSwitchUnchanged"));
+    assert!(lifecycle.contains("README.txt"));
+
+    assert!(workflow.contains("windows_configuration:"));
+    assert!(workflow.contains("diagnostic"));
+    assert!(workflow.contains("-Configuration $configuration"));
+    assert!(workflow.contains("$configuration = \"release\""));
+    assert!(
+        workflow.contains("$env:GITHUB_EVENT_NAME -eq \"workflow_dispatch\""),
+        "a tag build must remain on the release configuration"
+    );
+    assert!(
+        workflow.contains("inputs.windows_configuration != 'diagnostic'"),
+        "a manual diagnostic run must not relabel the normal portable/upgrade artifacts"
+    );
+    let linux_job = workflow
+        .split_once("  linux-package:\n")
+        .map(|(_, remaining)| {
+            remaining
+                .split_once("  publish:\n")
+                .map_or(remaining, |(job, _)| job)
+        });
+    assert!(linux_job.is_some(), "missing Linux package job");
+    let Some(linux_job) = linux_job else { return };
+    assert!(
+        linux_job.contains("if: inputs.windows_configuration != 'diagnostic'"),
+        "a diagnostic dispatch must remain Windows-only and not produce a Debian package"
+    );
+    assert!(
+        workflow.contains("Diagnostic MSI lifecycle smoke")
+            && workflow.contains("-MsiPath $diagnosticMsi.FullName -Diagnostic"),
+        "the diagnostic MSI must be installed and uninstalled in Windows CI"
+    );
+}
+
+#[test]
 fn candidate_package_builds_are_lockfile_strict() {
     // Removing --locked from any of these artifact-producing commands lets a
     // package build resolve a different dependency graph than Cargo.lock.

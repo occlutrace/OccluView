@@ -46,22 +46,29 @@ touched.
    only that owned AppID. A stalled preview can then affect at most its own
    surrogate, not another provider sharing the default host.
 
-4. **Diagnostics are opt-in and privacy-safe.** A diagnostic MSI is an
-   optimized `release-unwind` build with PDBs and the `diagnostic-logs`
-   feature; the normal customer package does not compile the logging path.
-   With the explicit per-user registry switch enabled, the shell writes a
-   bounded JSONL record under low-integrity local application data only when
-   preview rendering fails. Each record contains only timestamp, process ID,
-   fixed stage, and fixed error category. It never records a scan path, file
-   name, extension, byte count, dimensions, scan content, or raw error text.
-   The package includes explicit administrator-run helpers for WER crash dumps
-   and ProcDump hang captures. Neither dump collection nor preview disabling
-   is enabled by a normal release install.
+4. **Diagnostics are opt-in and privacy-safe.** A non-release diagnostic MSI
+   uses the optimized `release-diagnostic` app profile and
+   `release-diagnostic-unwind` shell profile, with PDBs and the
+   `diagnostic-logs` feature; the normal customer package does not compile
+   the logging path. With the explicit per-user registry switch enabled, the
+   shell writes a bounded JSONL record under low-integrity local application
+   data only when preview rendering fails. The deferred preparation path reads
+   that switch for each new preview: enabling it takes effect without killing
+   a preview host or restarting Explorer. Each record contains only timestamp,
+   process ID, fixed stage, and fixed error category. It never records a scan
+   path, file name, extension, byte count, dimensions, scan content, or raw
+   error text. The package carries two current-user helpers: one enables the
+   switch and one archives only this JSONL file to a caller-selected folder.
+   Neither helper needs elevation, and neither dump collection nor preview
+   disabling is enabled by a normal release install.
 
 5. **A diagnostic package is not a release.** It receives a distinct package
-   label and checksum manifest, is verified through the existing Windows
-   lifecycle harness, and is copied locally for owner testing. It is not
-   tagged, published, or added to a GitHub Release.
+   label and checksum manifest, is verified through a dedicated Windows
+   install/uninstall lifecycle harness, and is copied locally for owner
+   testing. The manually-dispatched workflow uploads it only as an Actions
+   artifact: it is downloadable to people with repository read access, not a
+   GitHub Release asset. Its PDB paths are remapped and its packaged helpers
+   and logs carry no patient data; it is not a private distribution channel.
 
 ## Consequences
 

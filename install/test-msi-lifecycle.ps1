@@ -2,7 +2,8 @@
 param(
     [string]$MsiPath = "",
     [string]$SameVersionUpgradeMsiPath = "",
-    [string]$UpgradeMsiPath = ""
+    [string]$UpgradeMsiPath = "",
+    [switch]$Diagnostic
 )
 
 Set-StrictMode -Version Latest
@@ -56,6 +57,8 @@ $previewHandlersPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\PreviewH
 $installDir = Join-Path ${env:ProgramFiles} "OccluView"
 $appExe = Join-Path $installDir "occluview.exe"
 $shellDll = Join-Path $installDir "occluview_shell.dll"
+$diagnosticDir = Join-Path $installDir "Diagnostics"
+$diagnosticRegistryPath = "HKCU:\Software\OccluTrace\OccluView\Diagnostics"
 $formatIconFiles = @{
     stl = Join-Path $installDir "occluview-3d.ico"
     ply = Join-Path $installDir "occluview-3d.ico"
@@ -257,6 +260,40 @@ function Assert-RegistryNamedValueAbsent {
     }
 }
 
+function Get-DiagnosticSwitchState {
+    $keyExists = Test-Path $diagnosticRegistryPath
+    $value = if ($keyExists) {
+        Get-RegistryNamedValue $diagnosticRegistryPath "PreviewFailureLogEnabled"
+    } else {
+        $null
+    }
+    return [pscustomobject]@{
+        KeyExists = $keyExists
+        Value = $value
+    }
+}
+
+function Assert-DiagnosticSwitchUnchanged {
+    param([Parameter(Mandatory = $true)]$Expected)
+
+    $actual = Get-DiagnosticSwitchState
+    if ($actual.KeyExists -ne $Expected.KeyExists -or $actual.Value -ne $Expected.Value) {
+        throw "Diagnostic MSI changed the current user's PreviewFailureLogEnabled switch."
+    }
+}
+
+function Assert-DiagnosticPayload {
+    foreach ($path in @(
+        (Join-Path $diagnosticDir "occluview.pdb"),
+        (Join-Path $diagnosticDir "occluview_shell.pdb"),
+        (Join-Path $diagnosticDir "Enable-PreviewDiagnostics.ps1"),
+        (Join-Path $diagnosticDir "Collect-PreviewDiagnostics.ps1"),
+        (Join-Path $diagnosticDir "README.txt")
+    )) {
+        Assert-PathExists $path
+    }
+}
+
 function Find-InstalledProductCode {
     $codes = @(Find-InstalledProductCodes)
     if ($codes.Count -eq 0) {
@@ -449,11 +486,16 @@ $installLog = Join-Path $env:TEMP "occluview-msi-install.log"
 $sameVersionUpgradeLog = Join-Path $env:TEMP "occluview-msi-same-version-upgrade.log"
 $upgradeLog = Join-Path $env:TEMP "occluview-msi-upgrade.log"
 $uninstallLog = Join-Path $env:TEMP "occluview-msi-uninstall.log"
+$diagnosticSwitchBefore = if ($Diagnostic) { Get-DiagnosticSwitchState } else { $null }
 
 Write-Host "Installing MSI: $resolvedMsi"
 Invoke-MsiExec -Arguments "/i `"$resolvedMsi`" /qn /norestart" -LogPath $installLog
 try {
     Assert-InstalledRegistry
+    if ($Diagnostic) {
+        Assert-DiagnosticPayload
+        Assert-DiagnosticSwitchUnchanged $diagnosticSwitchBefore
+    }
     & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
     & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
     $productCode = Assert-OneInstalledProduct
@@ -486,6 +528,9 @@ try {
     Write-Host "Uninstalling MSI product: $productCode"
     Invoke-MsiExec -Arguments "/x `"$productCode`" /qn /norestart" -LogPath $uninstallLog
     Assert-UninstalledRegistry
+    if ($Diagnostic) {
+        Assert-DiagnosticSwitchUnchanged $diagnosticSwitchBefore
+    }
     Assert-NoInstalledProducts
 } catch {
     $productCode = Find-InstalledProductCode

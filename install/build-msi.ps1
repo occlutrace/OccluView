@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("debug", "release")]
+    [ValidateSet("debug", "release", "diagnostic")]
     [string]$Configuration = "release",
     [string]$Target = "x86_64-pc-windows-msvc",
     [string]$Version = "",
@@ -246,6 +246,53 @@ function Assert-ManifoldStaticMsvcRuntime {
     }
 }
 
+function Get-DiagnosticManifestEntry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$InstallPath,
+        [Parameter(Mandatory = $true)][ValidateSet("binary", "symbol", "helper", "guide")][string]$Kind
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Diagnostic package input missing: $Path"
+    }
+    $item = Get-Item -LiteralPath $Path
+    $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $Path
+    return [ordered]@{
+        path = $InstallPath
+        kind = $Kind
+        bytes = $item.Length
+        sha256 = $hash.Hash.ToLowerInvariant()
+    }
+}
+
+function Write-DiagnosticManifest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$MsiPath,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][object[]]$Contents
+    )
+
+    $manifest = [ordered]@{
+        schema = "occluview-diagnostic-package-v1"
+        version = $Version
+        target = $Target
+        package = [ordered]@{
+            file = (Split-Path -Leaf $MsiPath)
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $MsiPath).Hash.ToLowerInvariant()
+        }
+        contents = $Contents
+    }
+    $json = $manifest | ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText(
+        $Path,
+        $json + [Environment]::NewLine,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}
+
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $cargoText = Get-Content $cargoToml -Raw
     $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
@@ -262,8 +309,21 @@ if ([string]::IsNullOrWhiteSpace($TimestampUrl)) {
     $TimestampUrl = "http://timestamp.digicert.com"
 }
 
-$profileDir = if ($Configuration -eq "release") { "release" } else { "debug" }
-$shellProfileDir = if ($Configuration -eq "release") { "release-unwind" } else { "debug" }
+$profileDir = switch ($Configuration) {
+    "release" { "release" }
+    "debug" { "debug" }
+    "diagnostic" { "release-diagnostic" }
+}
+$shellProfileDir = switch ($Configuration) {
+    "release" { "release-unwind" }
+    "debug" { "debug" }
+    "diagnostic" { "release-diagnostic-unwind" }
+}
+$isDiagnosticPackage = $Configuration -eq "diagnostic"
+# A diagnostic MSI is intentionally a non-release artifact. When built from
+# the manual workflow it is downloadable to repository readers from that run,
+# never published as a GitHub Release asset; package only remapped PDBs and
+# safe JSONL helpers, never patient data.
 $buildDir = Join-Path $repoRoot (Join-Path "target\$Target" $profileDir)
 $shellBuildDir = Join-Path $repoRoot (Join-Path "target\$Target" $shellProfileDir)
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
@@ -272,7 +332,14 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 $outputDir = $OutputDir
 $outputName = "OccluView-$Version-$Target"
 $wixObj = Join-Path $outputDir "occluview.wixobj"
-$msiPath = Join-Path $outputDir "$outputName.msi"
+$msiLeafName = if ($isDiagnosticPackage) { "$outputName-diagnostic.msi" } else { "$outputName.msi" }
+$msiPath = Join-Path $outputDir $msiLeafName
+$diagnosticWixDefine = if ($isDiagnosticPackage) { "-dIncludeDiagnostics=1" } else { "-dIncludeDiagnostics=0" }
+$manifestPath = if ($isDiagnosticPackage) {
+    Join-Path $outputDir "$outputName-diagnostic.manifest.json"
+} else {
+    $null
+}
 
 if (-not $SkipBuild) {
     $cargoArgs = @(
@@ -294,6 +361,10 @@ if (-not $SkipBuild) {
         $cargoArgs += "--release"
         $shellCargoArgs += @("--profile", "release-unwind")
     }
+    if ($isDiagnosticPackage) {
+        $cargoArgs += @("--profile", "release-diagnostic")
+        $shellCargoArgs += @("--profile", "release-diagnostic-unwind")
+    }
     if (Test-HasText $env:OCCLUVIEW_HPS_EMBEDDED_KEY) {
         Write-Host "Private HPS key embedding enabled for this build."
         # The app and Explorer shell DLL both need the key to decode encrypted
@@ -301,10 +372,13 @@ if (-not $SkipBuild) {
         $cargoArgs += @("--features", "occluview-formats/private-hps-key")
         $shellCargoArgs += @("--features", "occluview-formats/private-hps-key")
     }
+    if ($isDiagnosticPackage) {
+        $shellCargoArgs += @("--features", "diagnostic-logs")
+    }
 
     $previousEncodedRustFlags = [Environment]::GetEnvironmentVariable("CARGO_ENCODED_RUSTFLAGS")
     $rustFlags = @()
-    if ($Configuration -eq "release") {
+    if ($Configuration -in @("release", "diagnostic")) {
         $separator = [string][char]0x1f
         $rustFlags += "--remap-path-prefix=$repoRoot=occluview"
         $normalizedRepoRoot = $repoRoot.Replace("\", "/")
@@ -395,6 +469,34 @@ foreach ($path in $required) {
         throw "Required build artifact missing: $path"
     }
 }
+$diagnosticContents = @()
+if ($isDiagnosticPackage) {
+    $shellPdbSource = Join-Path $shellBuildDir "occluview_shell.pdb"
+    $shellPdbDestination = Join-Path $buildDir "occluview_shell.pdb"
+    if (-not (Test-Path -LiteralPath $shellPdbSource -PathType Leaf)) {
+        throw "Required diagnostic shell PDB missing: $shellPdbSource"
+    }
+    Copy-Item -LiteralPath $shellPdbSource -Destination $shellPdbDestination -Force
+
+    $diagnosticRequired = @(
+        (Join-Path $buildDir "occluview.pdb"),
+        $shellPdbDestination
+    )
+    foreach ($path in $diagnosticRequired) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Required diagnostic PDB missing: $path"
+        }
+    }
+    $diagnosticContents = @(
+        (Get-DiagnosticManifestEntry -Path (Join-Path $buildDir "occluview.exe") -InstallPath "OccluView/occluview.exe" -Kind "binary"),
+        (Get-DiagnosticManifestEntry -Path (Join-Path $buildDir "occluview_shell.dll") -InstallPath "OccluView/occluview_shell.dll" -Kind "binary"),
+        (Get-DiagnosticManifestEntry -Path (Join-Path $buildDir "occluview.pdb") -InstallPath "OccluView/Diagnostics/occluview.pdb" -Kind "symbol"),
+        (Get-DiagnosticManifestEntry -Path $shellPdbDestination -InstallPath "OccluView/Diagnostics/occluview_shell.pdb" -Kind "symbol"),
+        (Get-DiagnosticManifestEntry -Path (Join-Path $PSScriptRoot "diagnostics\Enable-PreviewDiagnostics.ps1") -InstallPath "OccluView/Diagnostics/Enable-PreviewDiagnostics.ps1" -Kind "helper"),
+        (Get-DiagnosticManifestEntry -Path (Join-Path $PSScriptRoot "diagnostics\Collect-PreviewDiagnostics.ps1") -InstallPath "OccluView/Diagnostics/Collect-PreviewDiagnostics.ps1" -Kind "helper"),
+        (Get-DiagnosticManifestEntry -Path (Join-Path $PSScriptRoot "diagnostics\README.txt") -InstallPath "OccluView/Diagnostics/README.txt" -Kind "guide")
+    )
+}
 if ($Target -like "*-pc-windows-msvc") {
     Assert-ManifoldStaticMsvcRuntime -Target $Target -RepoRoot $repoRoot
     Assert-StaticMsvcRuntime -Paths $required
@@ -422,6 +524,7 @@ $candleArgs = @(
     "-arch", "x64",
     "-ext", "WixUIExtension",
     "-dBuildDir=$buildDir",
+    $diagnosticWixDefine,
     "-dProductVersion=$Version",
     "-out", $wixObj,
     $wxsPath
@@ -444,5 +547,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Sign-WindowsArtifact -Path $msiPath -Mode $resolvedSignMode -TimestampUrl $TimestampUrl
+
+if ($isDiagnosticPackage) {
+    Write-DiagnosticManifest `
+        -Path $manifestPath `
+        -MsiPath $msiPath `
+        -Version $Version `
+        -Target $Target `
+        -Contents $diagnosticContents
+}
 
 Write-Host "Built MSI: $msiPath"

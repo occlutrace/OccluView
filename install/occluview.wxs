@@ -13,6 +13,9 @@
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>
 <?endif?>
+<?ifndef IncludeDiagnostics?>
+<?define IncludeDiagnostics = "0" ?>
+<?endif?>
 
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product
@@ -94,6 +97,43 @@
               Source="$(var.BuildDir)\occluview_shell.dll"
               KeyPath="yes" />
           </Component>
+          <?if $(var.IncludeDiagnostics) = 1 ?>
+          <!-- Non-release diagnostic packages carry symbols and two per-user
+               helpers. No installer action enables diagnostics or changes a
+               preview-host policy; the operator opts in after installation. -->
+          <Directory Id="DIAGNOSTICSFOLDER" Name="Diagnostics">
+            <Component Id="cmpDiagnosticAppSymbols" Guid="{E5A1E369-9B65-46E0-94D3-9E23D1FB3844}" Win64="yes">
+              <File
+                Id="filDiagnosticAppPdb"
+                Source="$(var.BuildDir)\occluview.pdb"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpDiagnosticShellSymbols" Guid="{7CA22B5F-5DC1-4CBE-95CB-B2543BFB0C34}" Win64="yes">
+              <File
+                Id="filDiagnosticShellPdb"
+                Source="$(var.BuildDir)\occluview_shell.pdb"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpEnablePreviewDiagnostics" Guid="{BFAE8A05-1146-4B16-B2BB-6726B9339721}" Win64="yes">
+              <File
+                Id="filEnablePreviewDiagnostics"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\Enable-PreviewDiagnostics.ps1"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpCollectPreviewDiagnostics" Guid="{82A415B2-A31E-4EA0-B2C1-3A5B18B1E5DA}" Win64="yes">
+              <File
+                Id="filCollectPreviewDiagnostics"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\Collect-PreviewDiagnostics.ps1"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpDiagnosticReadme" Guid="{9D0C8B25-6DE3-4B1C-B092-E50706B0D30E}" Win64="yes">
+              <File
+                Id="filDiagnosticReadme"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\README.txt"
+                KeyPath="yes" />
+            </Component>
+          </Directory>
+          <?endif?>
           <!-- A private AppID gives this preview handler its own Prevhost.exe
                surrogate. This preserves Windows' default low-integrity
                isolation while preventing a bad preview from wedging the
@@ -511,6 +551,13 @@
     <Feature Id="featOccluView" Title="$(var.ProductName)" Level="1">
       <ComponentRef Id="cmpOccluViewExe" />
       <ComponentRef Id="cmpOccluViewShellDll" />
+      <?if $(var.IncludeDiagnostics) = 1 ?>
+      <ComponentRef Id="cmpDiagnosticAppSymbols" />
+      <ComponentRef Id="cmpDiagnosticShellSymbols" />
+      <ComponentRef Id="cmpEnablePreviewDiagnostics" />
+      <ComponentRef Id="cmpCollectPreviewDiagnostics" />
+      <ComponentRef Id="cmpDiagnosticReadme" />
+      <?endif?>
       <ComponentRef Id="cmpPreviewHostRegistration" />
       <ComponentRef Id="cmpFormatIcon3d" />
       <ComponentRef Id="cmpLicenseFile" />

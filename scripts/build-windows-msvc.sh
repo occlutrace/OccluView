@@ -19,8 +19,14 @@ case "$profile" in
     profile_dir="debug"
     shell_profile_dir="debug"
     ;;
+  diagnostic)
+    app_profile_args=(--profile release-diagnostic)
+    shell_profile_args=(--profile release-diagnostic-unwind)
+    profile_dir="release-diagnostic"
+    shell_profile_dir="release-diagnostic-unwind"
+    ;;
   *)
-    echo "OCCLUVIEW_PROFILE must be 'release' or 'debug'." >&2
+    echo "OCCLUVIEW_PROFILE must be 'release', 'debug', or 'diagnostic'." >&2
     exit 2
     ;;
 esac
@@ -85,7 +91,7 @@ if [[ "$rebuild_manifold" == true ]]; then
 fi
 
 rust_flags=()
-if [[ "$profile" == "release" ]]; then
+if [[ "$profile" == "release" || "$profile" == "diagnostic" ]]; then
   rust_flags+=("--remap-path-prefix=$repo_root=occluview")
 fi
 if [[ "$target" == *-pc-windows-msvc ]]; then
@@ -103,9 +109,18 @@ if ((${#rust_flags[@]})); then
   fi
 fi
 
-feature_args=()
+app_feature_args=()
+shell_feature_values=()
 if [[ -n "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
-  feature_args=(--features occluview-formats/private-hps-key)
+  app_feature_args=(--features occluview-formats/private-hps-key)
+  shell_feature_values+=(occluview-formats/private-hps-key)
+fi
+if [[ "$profile" == "diagnostic" ]]; then
+  shell_feature_values+=(diagnostic-logs)
+fi
+shell_feature_args=()
+if ((${#shell_feature_values[@]})); then
+  shell_feature_args=(--features "$(IFS=,; printf '%s' "${shell_feature_values[*]}")")
 fi
 
 cargo xwin build \
@@ -113,14 +128,14 @@ cargo xwin build \
   -p occluview-app \
   --target "$target" \
   "${app_profile_args[@]}" \
-  "${feature_args[@]}"
+  "${app_feature_args[@]}"
 
 cargo xwin build \
   --locked \
   -p occluview-shell \
   --target "$target" \
   "${shell_profile_args[@]}" \
-  "${feature_args[@]}"
+  "${shell_feature_args[@]}"
 
 build_dir="$repo_root/target/$target/$profile_dir"
 shell_build_dir="$repo_root/target/$target/$shell_profile_dir"

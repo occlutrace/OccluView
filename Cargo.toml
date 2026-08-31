@@ -196,6 +196,19 @@ panic = "abort"
 inherits = "release"
 panic = "unwind"
 
+# Non-release diagnostic packages retain optimized code generation while
+# carrying PDBs. The app still aborts on panic; the Explorer-hosted shell DLL
+# gets the matching unwind profile below so its COM entry guards can contain a
+# panic.
+[profile.release-diagnostic]
+inherits = "release"
+debug = 2
+strip = "none"
+
+[profile.release-diagnostic-unwind]
+inherits = "release-diagnostic"
+panic = "unwind"
+
 [profile.dev]
 opt-level = 1                # faster dev runs for the wgpu hot path
 debug = 1
