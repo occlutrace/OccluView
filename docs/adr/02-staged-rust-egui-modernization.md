@@ -174,9 +174,12 @@ and update semantics remain product contracts.
   `ToolButton`, `FloatingPanelFrame`, `PopupSurface`, `ModalSurface`,
   `PanelHeader`, `SectionLabel`, `PropertyRow`, `ActionRow`, `DialogActions`,
   `InlineStatus`, `ViewportOverlayLayout`, and `IconTextAtom` equivalents.
-- Rendering functions receive read-only view state and return typed actions.
-  The application owns file I/O, persistence, update requests, worker polling,
-  and modal transitions.
+- Rendering functions receive read-only view state and return one typed action.
+  The Settings popup's open state lives only in egui `Popup` memory, never in a
+  duplicate application boolean. The application owns file I/O, persistence,
+  update requests, worker polling, and modal transitions. Its `InformationDialog`
+  enum is the sole route for the mutually exclusive About and third-party
+  licence surfaces.
 - Persistence returns `Result`; a failed write remains dirty and retries rather
   than silently becoming clean.
 - Startup and manual update checks share one typed state machine. A network
@@ -206,31 +209,38 @@ fit the viewport.
 
 #### Settings and About
 
-The product uses the single label “Settings”. The popup is anchored below the
-right edge of its toolbar trigger, has a nominal outer width of 344 points, and
-uses content-derived height capped to the viewport with an 8-point inset.
-Scrolling is allowed only when a genuinely compact viewport cannot contain the
-content. A child ComboBox does not dismiss its parent; outside click and Escape
-dismiss Settings.
+The product uses the single label “Settings”. It is a short command-adjacent
+popover, never a second application window: 312 points wide, content-derived
+height, and an 8-point viewport inset. The trigger and popover use egui's
+memory-backed `Popup` with bottom-end alignment and close-on-outside-click.
+This deliberately replaces the temporary foreground `Area`: Settings now has
+no child popups, so the current primitive supplies one source of truth for the
+toggle state, outside click, and Escape rather than hand-rolled dismissal
+rules. Scrolling is allowed only when a genuinely compact viewport cannot
+contain the content.
 
 Settings exposes exactly the durable preferences already supported:
 
-- fallback export format: PLY, STL, or OBJ;
-- remember export directory;
-- check for updates on startup;
-- manual Check now action with typed checking/current/available/failed states;
+- fallback export format as one direct, three-option PLY/STL/OBJ segmented
+  control, with the selected format in solid neutral ink;
+- remember export directory as a single labelled toggle;
+- check for updates on startup as a single labelled toggle;
+- a compact manual Check now row with typed checking/current/available/failed
+  status; and
 - About as a separate transition.
 
 Recent-file clearing stays in Open. Open resets the camera; Add preserves the
 view. These are commands, not preferences. No theme selector, onboarding,
 command palette, docking system, speculative preference, or duplicate control
-is introduced.
+is introduced. The panel has no decorative hero, product card, duplicated
+section title, or Save/Cancel workflow: the existing retrying persistence path
+is immediate, and a real persistence failure is one compact inline message.
 
-About is a true modal, nominally 320 points wide with a 16-point viewport
-margin and an 8–12% neutral scrim. It retains the logo, product name, subtitle,
-version, links, third-party licenses, product license, and Close. Focus is
-contained, background interaction is blocked, and Settings -> About ->
-Third-party remains a typed, mutually exclusive transition.
+About is a true `egui::Modal`, nominally 320 points wide with a 16-point
+viewport margin and an 8–12% neutral scrim. It retains the logo, product name,
+subtitle, version, links, third-party licenses, product license, and Close.
+Focus is contained, background interaction is blocked, and Settings -> About
+-> Third-party remains a typed, mutually exclusive transition.
 
 #### Dialogs, menus, and visual system
 
@@ -258,16 +268,20 @@ behavior matches these contracts.
 
 #### UI proof matrix
 
-Before visual implementation, add production-path interaction fixtures with
-`egui_kittest`; do not maintain a duplicate test-only UI skeleton. Remove
-source-grep assertions for style or interaction once equivalent behavioral
-coverage exists. Keep source contracts only for architecture, packaging, or
-security properties that source inspection genuinely proves.
+Before visual implementation, extend the production-path immediate-mode
+harness; do not maintain a duplicate test-only UI skeleton. The direct format
+selector removes the child-ComboBox fixture. Tests cover the actual popup
+toggle, direct format selection, toggles, update states, inline persistence
+error, Settings -> About -> Third-party, outside click, Escape, focus, and
+modal exclusion. Remove source-grep assertions for style or interaction once
+equivalent behavioral coverage exists. Keep source contracts only for
+architecture, packaging, or security properties that source inspection
+genuinely proves.
 
 The deterministic UI suite covers 1024x768, 800x600, and 500x384 viewports at
 1x and 2x scale. It covers default, update checking/failed/available,
-persistence failure, open ComboBox, Settings -> About -> Third-party, every
-guard, error modal, menu, and overlapping viewport-panel state. It exercises
+persistence failure, Settings -> About -> Third-party, every guard, error
+modal, menu, and overlapping viewport-panel state. It exercises
 toolbar triggering, selection and persistence, outside click, Escape, focus,
 keyboard navigation, modal exclusion, responsive toolbar modes, and overlay
 collision. Screenshot baselines live in a documented test-data location; CI
@@ -375,7 +389,7 @@ The branch is ready for owner evaluation when:
 - all locally available stage and final gates are green;
 - unavailable remote or owner-only gates are listed, never implied to pass;
 - every existing workflow is reachable through the new compact shell;
-- Settings is nominally 344 points wide, content-height at 1024x768, and fully
+- Settings is nominally 312 points wide, content-height at 1024x768, and fully
   bounded and operable at 500x384;
 - the final graph contains the intended single GUI/GPU stack;
 - the final local Debian technical candidate is validated and supplied with

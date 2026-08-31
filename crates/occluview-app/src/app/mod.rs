@@ -73,6 +73,7 @@ mod app_settings_window;
 mod app_third_party;
 mod app_viewport;
 mod disc_frame;
+mod information_dialog;
 mod open_dialogs;
 mod selection_overlay;
 mod state;

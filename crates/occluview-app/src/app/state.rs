@@ -13,6 +13,8 @@
 //! Geometry, materials, or scene changes set all four flags; camera changes set
 //! only `needs_render`.
 
+use super::app_settings_window::settings_popup_id;
+use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
@@ -20,7 +22,7 @@ use super::{
     PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Scene, SceneLoadRequest,
     SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
-use crate::app_settings::{SettingsPersistence, SettingsWindowState};
+use crate::app_settings::SettingsPersistence;
 
 /// Everything the bootstrap hands the app about how this process was started:
 /// the single-instance guard, the window raise handle, and the launcher's
@@ -109,12 +111,10 @@ pub(crate) struct OccluViewApp {
     /// Latest window-activation token forwarded by a second instance, used as
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
     pub(super) pending_raise_token: Option<String>,
-    pub(super) settings_window: SettingsWindowState,
+    pub(super) information_dialog: InformationDialog,
     /// Operator preferences, loaded once at startup and saved on change.
     pub(super) settings: crate::app_settings::Settings,
     pub(super) settings_persistence: SettingsPersistence,
-    /// The Third-party licenses window, opened from About.
-    pub(super) third_party_window_open: bool,
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
@@ -275,7 +275,7 @@ impl OccluViewApp {
             recent_files: load_recent_files(),
             settings,
             settings_persistence: SettingsPersistence::default(),
-            settings_window: SettingsWindowState::default(),
+            information_dialog: InformationDialog::default(),
             camera: None,
             live_viewport,
             offscreen: None,
@@ -305,7 +305,6 @@ impl OccluViewApp {
             _single_instance: startup.single_instance,
             raise_target: startup.raise_target,
             pending_raise_token: startup.activation_token,
-            third_party_window_open: false,
             repair_report: crate::repair_report::RepairReportDialog::default(),
             app_logo: None,
             foreground_pulse_until: None,
@@ -344,8 +343,8 @@ impl OccluViewApp {
             close_guard: self.close_guard_open,
             pending_replace: self.pending_replace_open.is_some(),
             error: self.app_error.is_some(),
-            settings: self.settings_window.open || self.settings_window.about_open,
-            third_party: self.third_party_window_open,
+            settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id()),
+            information_dialog: self.information_dialog.is_open(),
         }
         .any()
     }
@@ -487,6 +486,17 @@ impl OccluViewApp {
             ctx.request_repaint_after(delay);
         }
     }
+
+    /// Render the information route that was active at the start of this UI
+    /// pass. A selection inside About therefore replaces it on the following
+    /// frame instead of briefly stacking two modal backdrops.
+    pub(super) fn show_information_dialog(&mut self, ctx: &egui::Context) {
+        match self.information_dialog {
+            InformationDialog::None => {}
+            InformationDialog::About => self.show_about_dialog(ctx),
+            InformationDialog::ThirdPartyNotices => self.show_third_party_window(ctx),
+        }
+    }
 }
 
 impl eframe::App for OccluViewApp {
@@ -519,8 +529,7 @@ impl eframe::App for OccluViewApp {
         // Surface GPU faults before drawing the error dialog.
         self.poll_gpu_errors();
         self.show_error_dialog(&ctx);
-        self.show_about_dialog(&ctx);
-        self.show_third_party_window(&ctx);
+        self.show_information_dialog(&ctx);
         self.repair_report.ui(&ctx);
         self.update_notice.show(&ctx);
         self.show_unsaved_close_guard(&ctx);

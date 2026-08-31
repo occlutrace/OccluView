@@ -1,5 +1,6 @@
-//! Compact preferences popover and the separate About dialog.
+//! Compact preferences popover and the product-information modals.
 
+use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
 use crate::app_settings::{FallbackExportFormat, Settings};
 use crate::icons::AppIcon;
@@ -7,10 +8,32 @@ use crate::ui_theme;
 use crate::update_notice::UpdateCheckStatus;
 use eframe::egui;
 
-const PANEL_CONTENT_WIDTH: f32 = 320.0;
 const PANEL_MARGIN: i8 = 12;
 const ROW_HEIGHT: f32 = 30.0;
 const SETTINGS_PANEL_ID: &str = "settings-popover-v2";
+const INFORMATION_MODAL_BACKDROP_ALPHA: u8 = 48;
+
+pub(super) fn settings_popup_id() -> egui::Id {
+    egui::Id::new(SETTINGS_PANEL_ID)
+}
+
+pub(super) fn information_modal(
+    ctx: &egui::Context,
+    id: egui::Id,
+    default_size: egui::Vec2,
+) -> egui::Modal {
+    let bounds = ctx.content_rect().shrink(16.0);
+    egui::Modal::new(id)
+        .area(
+            egui::Modal::default_area(id)
+                .default_size(default_size.min(bounds.size()))
+                .constrain_to(bounds),
+        )
+        .frame(ui_theme::overlay_frame())
+        .backdrop_color(egui::Color32::from_black_alpha(
+            INFORMATION_MODAL_BACKDROP_ALPHA,
+        ))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SettingsAction {
@@ -21,250 +44,211 @@ enum SettingsAction {
     OpenAbout,
 }
 
-struct SettingsPanelResponse {
-    actions: Vec<SettingsAction>,
-    dismissed: bool,
-}
-
 impl OccluViewApp {
-    pub(super) fn show_settings_popover(&mut self, ctx: &egui::Context, anchor: egui::Rect) {
-        if !self.settings_window.open {
-            return;
-        }
-
-        let response = show_settings_panel(
-            ctx,
-            anchor,
+    pub(super) fn show_settings_popup(&mut self, trigger: &egui::Response) {
+        let Some(action) = show_settings_popup(
+            trigger,
             &self.settings,
             self.update_notice.check_status(),
             self.settings_persistence.error(),
-        );
+        ) else {
+            return;
+        };
 
-        for action in response.actions {
-            match action {
-                SettingsAction::SetExportFormat(format) => {
-                    self.settings.fallback_export_format = format;
-                    self.settings_persistence.mark_dirty();
-                }
-                SettingsAction::SetRememberExportDir(remember) => {
-                    self.settings
-                        .set_remember_export_dir(remember, self.last_export_dir.as_deref());
-                    self.settings_persistence.mark_dirty();
-                }
-                SettingsAction::SetUpdateCheckOnStart(enabled) => {
-                    self.settings.update_check_on_start = enabled;
-                    self.settings_persistence.mark_dirty();
-                }
-                SettingsAction::CheckForUpdates => self.update_notice.request_check(ctx),
-                SettingsAction::OpenAbout => {
-                    self.settings_window.open = false;
-                    self.settings_window.about_open = true;
-                }
+        match action {
+            SettingsAction::SetExportFormat(format) => {
+                self.settings.fallback_export_format = format;
+                self.settings_persistence.mark_dirty();
             }
-        }
-
-        if response.dismissed {
-            self.settings_window.open = false;
+            SettingsAction::SetRememberExportDir(remember) => {
+                self.settings
+                    .set_remember_export_dir(remember, self.last_export_dir.as_deref());
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetUpdateCheckOnStart(enabled) => {
+                self.settings.update_check_on_start = enabled;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::CheckForUpdates => self.update_notice.request_check(&trigger.ctx),
+            SettingsAction::OpenAbout => {
+                egui::Popup::close_id(&trigger.ctx, settings_popup_id());
+                self.information_dialog = InformationDialog::About;
+            }
         }
     }
 
     pub(super) fn show_about_dialog(&mut self, ctx: &egui::Context) {
-        if !self.settings_window.about_open {
+        if self.information_dialog != InformationDialog::About {
             return;
         }
 
-        let other_modal = self.third_party_window_open
-            || self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some();
-        let mut close = !other_modal && ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        let mut close = false;
         let mut open_third_party = false;
         let mut open_url = None;
         let logo = self.app_logo_texture(ctx).cloned();
-        let mut open = true;
 
-        egui::Window::new("About OccluView")
-            .id(egui::Id::new("occluview-about-dialog-v2"))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .constrain_to(ctx.content_rect().shrink(8.0))
-            .open(&mut open)
-            .movable(false)
-            .resizable(false)
-            .collapsible(false)
-            .title_bar(false)
-            .auto_sized()
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.set_width(304.0);
-                ui.vertical_centered(|ui| {
-                    if let Some(logo) = &logo {
-                        ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
-                    }
-                    ui.label(
-                        egui::RichText::new("OccluView")
-                            .size(19.0)
-                            .strong()
-                            .color(ui_theme::TEXT),
-                    );
-                    ui.label(
-                        egui::RichText::new("3D viewer for dental scans")
-                            .size(12.0)
-                            .color(ui_theme::TEXT_WEAK),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
-                            .size(11.0)
-                            .color(ui_theme::TEXT_MUTED),
-                    );
-                });
-
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let width =
-                        ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(1.0);
-                    if about_link(ui, width, AppIcon::Globe, "Website") {
-                        open_url = Some("https://occlutrace.ai");
-                    }
-                    if about_link(ui, width, AppIcon::Github, "Source") {
-                        open_url = Some("https://github.com/occlutrace/OccluView");
-                    }
-                });
-                let licenses_width = ui.available_width();
-                if about_link(
-                    ui,
-                    licenses_width,
-                    AppIcon::Licenses,
-                    "Third-party licenses",
-                ) {
-                    open_third_party = true;
+        let modal_response = information_modal(
+            ctx,
+            egui::Id::new("occluview-about-dialog-v2"),
+            egui::vec2(320.0, 240.0),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(304.0);
+            ui.vertical_centered(|ui| {
+                if let Some(logo) = &logo {
+                    ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
                 }
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Apache License 2.0")
-                            .size(10.5)
-                            .color(ui_theme::TEXT_MUTED),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
-                            close = true;
-                        }
-                    });
+                ui.label(
+                    egui::RichText::new("OccluView")
+                        .size(19.0)
+                        .strong()
+                        .color(ui_theme::TEXT),
+                );
+                ui.label(
+                    egui::RichText::new("3D viewer for dental scans")
+                        .size(12.0)
+                        .color(ui_theme::TEXT_WEAK),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
+                        .size(11.0)
+                        .color(ui_theme::TEXT_MUTED),
+                );
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(1.0);
+                if about_link(ui, width, AppIcon::Globe, "Website") {
+                    open_url = Some("https://occlutrace.ai");
+                }
+                if about_link(ui, width, AppIcon::Github, "Source") {
+                    open_url = Some("https://github.com/occlutrace/OccluView");
+                }
+            });
+            let licenses_width = ui.available_width();
+            if about_link(
+                ui,
+                licenses_width,
+                AppIcon::Licenses,
+                "Third-party licenses",
+            ) {
+                open_third_party = true;
+            }
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Apache License 2.0")
+                        .size(10.5)
+                        .color(ui_theme::TEXT_MUTED),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
                 });
             });
+        });
 
         if let Some(url) = open_url {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
         if open_third_party {
-            self.third_party_window_open = true;
-        }
-        if close || !open {
-            self.settings_window.about_open = false;
+            self.information_dialog = InformationDialog::ThirdPartyNotices;
+        } else if close || modal_response.should_close() {
+            self.information_dialog = InformationDialog::None;
         }
     }
 }
 
-fn show_settings_panel(
-    ctx: &egui::Context,
-    anchor: egui::Rect,
+fn show_settings_popup(
+    trigger: &egui::Response,
     settings: &Settings,
     update_status: &UpdateCheckStatus,
     save_error: Option<&str>,
-) -> SettingsPanelResponse {
-    let mut actions = Vec::new();
-    let screen = ctx.content_rect().shrink(8.0);
-    let position = anchor.right_bottom() + egui::vec2(0.0, 4.0);
-    let area = egui::Area::new(egui::Id::new(SETTINGS_PANEL_ID))
-        .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(position)
-        .constrain_to(screen)
-        .show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .fill(egui::Color32::from_rgb(250, 251, 252))
+) -> Option<SettingsAction> {
+    egui::Popup::from_toggle_button_response(trigger)
+        .id(settings_popup_id())
+        .align(egui::RectAlign::BOTTOM_END)
+        .align_alternatives(&[])
+        .gap(4.0)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(312.0)
+        .frame(
+            egui::Frame::new()
+                .fill(egui::Color32::WHITE)
                 .stroke(egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()))
-                .corner_radius(8)
+                .corner_radius(6)
                 .shadow(ui_theme::panel_shadow())
-                .inner_margin(egui::Margin::same(PANEL_MARGIN))
-                .show(ui, |ui| {
-                    ui.set_width(PANEL_CONTENT_WIDTH);
-                    panel_header(ui);
-                    ui.add_space(7.0);
-                    section_label(ui, "Files");
-                    export_format_row(ui, settings, &mut actions);
+                .inner_margin(egui::Margin::same(PANEL_MARGIN)),
+        )
+        .show(|ui| {
+            let mut action = None;
+            ui.set_width(286.0);
+            panel_header(ui);
+            ui.add_space(7.0);
+            section_label(ui, "Files");
+            export_format_row(ui, settings, &mut action);
 
-                    let mut remember = settings.remember_export_dir;
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ROW_HEIGHT),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .checkbox(&mut remember, "Remember export folder")
-                                .on_hover_text("Use the same folder after restarting OccluView")
-                                .changed()
-                            {
-                                actions.push(SettingsAction::SetRememberExportDir(remember));
-                            }
-                        },
-                    );
-
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    section_label(ui, "Updates");
-                    let mut check_on_start = settings.update_check_on_start;
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ROW_HEIGHT),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .checkbox(&mut check_on_start, "Check automatically at startup")
-                                .changed()
-                            {
-                                actions.push(SettingsAction::SetUpdateCheckOnStart(check_on_start));
-                            }
-                        },
-                    );
-                    update_row(ui, update_status, &mut actions);
-
-                    if save_error.is_some() {
-                        ui.label(
-                            egui::RichText::new("Preferences could not be saved. Retrying…")
-                                .size(10.5)
-                                .color(ui_theme::DANGER),
-                        )
-                        .on_hover_text("The settings file is currently unavailable");
-                    }
-
-                    ui.add_space(4.0);
-                    ui.separator();
-                    ui.add_space(3.0);
+            let mut remember = settings.remember_export_dir;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), ROW_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
                     if ui
-                        .add(egui::Button::new("About OccluView").frame(false))
-                        .clicked()
+                        .checkbox(&mut remember, "Remember export folder")
+                        .on_hover_text("Use the same folder after restarting OccluView")
+                        .changed()
                     {
-                        actions.push(SettingsAction::OpenAbout);
+                        action = Some(SettingsAction::SetRememberExportDir(remember));
                     }
-                });
-        });
+                },
+            );
 
-    let rect = area.response.rect;
-    let popup_open = egui::Popup::is_any_open(ctx);
-    let escape = !popup_open && ctx.input(|input| input.key_pressed(egui::Key::Escape));
-    let outside_press = ctx.input(|input| {
-        input.pointer.any_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|position| !rect.contains(position) && !anchor.contains(position))
-    });
-    let dismissed = escape || (outside_press && actions.is_empty() && !popup_open);
+            ui.add_space(3.0);
+            ui.separator();
+            ui.add_space(5.0);
+            section_label(ui, "Updates");
+            let mut check_on_start = settings.update_check_on_start;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), ROW_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    if ui
+                        .checkbox(&mut check_on_start, "Check automatically at startup")
+                        .changed()
+                    {
+                        action = Some(SettingsAction::SetUpdateCheckOnStart(check_on_start));
+                    }
+                },
+            );
+            update_row(ui, update_status, &mut action);
 
-    SettingsPanelResponse { actions, dismissed }
+            if save_error.is_some() {
+                ui.label(
+                    egui::RichText::new("Preferences could not be saved. Retrying…")
+                        .size(10.5)
+                        .color(ui_theme::DANGER),
+                )
+                .on_hover_text("The settings file is currently unavailable");
+            }
+
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(3.0);
+            if ui
+                .add(egui::Button::new("About OccluView").frame(false))
+                .clicked()
+            {
+                action = Some(SettingsAction::OpenAbout);
+            }
+            action
+        })
+        .and_then(|response| response.inner)
 }
 
 fn panel_header(ui: &mut egui::Ui) {
@@ -277,7 +261,7 @@ fn panel_header(ui: &mut egui::Ui) {
             crate::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::TEXT);
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Preferences")
+                egui::RichText::new("Settings")
                     .size(14.0)
                     .strong()
                     .color(ui_theme::TEXT),
@@ -295,36 +279,28 @@ fn section_label(ui: &mut egui::Ui, label: &str) {
     );
 }
 
-fn export_format_row(ui: &mut egui::Ui, settings: &Settings, actions: &mut Vec<SettingsAction>) {
+fn export_format_row(ui: &mut egui::Ui, settings: &Settings, action: &mut Option<SettingsAction>) {
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.label("Fallback format")
+            ui.label("Export format")
                 .on_hover_text("Used when the source format cannot be exported");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt("settings-export-format")
-                    .selected_text(settings.fallback_export_format.label())
-                    .width(126.0)
-                    .show_ui(ui, |ui| {
-                        for format in FallbackExportFormat::OPTIONS {
-                            if ui
-                                .selectable_label(
-                                    settings.fallback_export_format == format,
-                                    format.label(),
-                                )
-                                .clicked()
-                            {
-                                actions.push(SettingsAction::SetExportFormat(format));
-                            }
-                        }
-                    });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                for format in FallbackExportFormat::OPTIONS.into_iter().rev() {
+                    if ui
+                        .selectable_label(settings.fallback_export_format == format, format.label())
+                        .clicked()
+                    {
+                        *action = Some(SettingsAction::SetExportFormat(format));
+                    }
+                }
             });
         },
     );
 }
 
-fn update_row(ui: &mut egui::Ui, status: &UpdateCheckStatus, actions: &mut Vec<SettingsAction>) {
+fn update_row(ui: &mut egui::Ui, status: &UpdateCheckStatus, action: &mut Option<SettingsAction>) {
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -341,7 +317,7 @@ fn update_row(ui: &mut egui::Ui, status: &UpdateCheckStatus, actions: &mut Vec<S
                 })
                 .clicked()
             {
-                actions.push(SettingsAction::CheckForUpdates);
+                *action = Some(SettingsAction::CheckForUpdates);
             }
             ui.add_space(5.0);
             let (text, color, detail) = update_status_text(status);
@@ -402,40 +378,68 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::app_dialogs::{
+        recent_files_popup_id, show_recent_files_popup, show_settings_toolbar_toggle,
+    };
+    use crate::recent_files::RecentFiles;
 
     fn test_screen() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 384.0))
     }
 
-    fn test_anchor() -> egui::Rect {
-        egui::Rect::from_min_max(egui::pos2(410.0, 4.0), egui::pos2(492.0, 30.0))
+    struct ToolbarFrame {
+        action: Option<SettingsAction>,
+        settings_trigger: egui::Rect,
+        recent_trigger: egui::Rect,
+        output: egui::FullOutput,
     }
 
-    fn run_settings_frame(
+    fn run_toolbar_frame(
         ctx: &egui::Context,
         events: Vec<egui::Event>,
-    ) -> anyhow::Result<(SettingsPanelResponse, egui::FullOutput)> {
+    ) -> anyhow::Result<ToolbarFrame> {
         let input = egui::RawInput {
             screen_rect: Some(test_screen()),
+            safe_area_insets: Some(egui::SafeAreaInsets(egui::Margin::same(4).into())),
             events,
             ..Default::default()
         };
-        let mut response = None;
+        let mut action = None;
+        let mut settings_trigger = None;
+        let mut recent_trigger = None;
+        let mut recent = RecentFiles::new(1);
+        recent.push("case.stl");
         let mut output = ctx.run_ui(input, |ui| {
-            response = Some(show_settings_panel(
-                ui.ctx(),
-                test_anchor(),
-                &Settings::default(),
-                &UpdateCheckStatus::Idle,
-                None,
-            ));
+            egui::Panel::top("settings-test-toolbar")
+                .exact_size(30.0)
+                .show(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let settings = show_settings_toolbar_toggle(ui, true);
+                        settings_trigger = Some(settings.rect);
+                        action = show_settings_popup(
+                            &settings,
+                            &Settings::default(),
+                            &UpdateCheckStatus::Idle,
+                            None,
+                        );
+
+                        let recent_trigger_response =
+                            ui.add(egui::Button::new("Recent").min_size(egui::vec2(64.0, 22.0)));
+                        recent_trigger = Some(recent_trigger_response.rect);
+                        let _ = show_recent_files_popup(&recent_trigger_response, &recent);
+                    });
+                });
         });
-        let response = response
-            .ok_or_else(|| anyhow::anyhow!("the production settings panel should render"))?;
-        // These tests inspect shapes and widget state but intentionally do not
-        // mount an egui renderer. eframe applies these deltas in production.
         output.textures_delta.clear();
-        Ok((response, output))
+        Ok(ToolbarFrame {
+            action,
+            settings_trigger: settings_trigger.ok_or_else(|| {
+                anyhow::anyhow!("the toolbar-like Settings trigger should render")
+            })?,
+            recent_trigger: recent_trigger
+                .ok_or_else(|| anyhow::anyhow!("the toolbar-like Recent trigger should render"))?,
+            output,
+        })
     }
 
     fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
@@ -447,161 +451,214 @@ mod tests {
         }
     }
 
-    fn rendered_panel_rect(ctx: &egui::Context) -> anyhow::Result<egui::Rect> {
-        ctx.memory(|memory| memory.area_rect(egui::Id::new(SETTINGS_PANEL_ID)))
-            .ok_or_else(|| anyhow::anyhow!("the production settings panel should render"))
-    }
-
-    fn point_outside_panel(panel: egui::Rect) -> anyhow::Result<egui::Pos2> {
-        let screen = test_screen();
-        let outside = egui::pos2(f32::midpoint(screen.left(), panel.left()), panel.center().y);
-        if !screen.contains(outside) || panel.contains(outside) || test_anchor().contains(outside) {
-            return Err(anyhow::anyhow!(
-                "derived outside point {outside:?} was invalid for panel {panel:?}"
-            ));
-        }
-        Ok(outside)
-    }
-
-    #[test]
-    fn settings_does_not_dismiss_while_child_combo_popup_is_open() -> anyhow::Result<()> {
-        let closed_ctx = egui::Context::default();
-        let _ = run_settings_frame(&closed_ctx, Vec::new())?;
-        let _ = run_settings_frame(&closed_ctx, Vec::new())?;
-        let closed_panel = rendered_panel_rect(&closed_ctx)?;
-        let outside = point_outside_panel(closed_panel)?;
-        assert!(!closed_panel.contains(outside));
-
-        let (while_child_closed, _) = run_settings_frame(
-            &closed_ctx,
+    fn click(ctx: &egui::Context, position: egui::Pos2) -> anyhow::Result<ToolbarFrame> {
+        let _ = run_toolbar_frame(
+            ctx,
             vec![
-                egui::Event::PointerMoved(outside),
-                pointer_button(outside, true),
+                egui::Event::PointerMoved(position),
+                pointer_button(position, true),
             ],
         )?;
-        assert!(
-            while_child_closed.dismissed,
-            "the production panel must dismiss on the outside press when its ComboBox is closed"
-        );
+        run_toolbar_frame(
+            ctx,
+            vec![
+                egui::Event::PointerMoved(position),
+                pointer_button(position, false),
+            ],
+        )
+    }
 
-        let open_ctx = egui::Context::default();
-        let _ = run_settings_frame(&open_ctx, Vec::new())?;
-        let (_, visible_frame) = run_settings_frame(&open_ctx, Vec::new())?;
-        let combo = visible_frame
+    fn direct_control_center(output: &egui::FullOutput, label: &str) -> anyhow::Result<egui::Pos2> {
+        output
             .shapes
             .iter()
             .find_map(|clipped| match &clipped.shape {
-                egui::epaint::Shape::Text(text) if text.galley.text() == "PLY" => {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => {
                     Some(text.visual_bounding_rect().center())
                 }
                 _ => None,
             })
-            .ok_or_else(|| anyhow::anyhow!("the production export-format control should render"))?;
+            .ok_or_else(|| anyhow::anyhow!("the production Settings popup should render {label}"))
+    }
 
-        let _ = run_settings_frame(&open_ctx, vec![egui::Event::PointerMoved(combo)])?;
-        let _ = run_settings_frame(
-            &open_ctx,
-            vec![
-                egui::Event::PointerMoved(combo),
-                pointer_button(combo, true),
-            ],
-        )?;
-        let (opened, _) = run_settings_frame(
-            &open_ctx,
-            vec![
-                egui::Event::PointerMoved(combo),
-                pointer_button(combo, false),
-            ],
-        )?;
-        assert!(!opened.dismissed);
-        assert!(
-            egui::Popup::is_any_open(&open_ctx),
-            "the production export-format ComboBox should be open"
+    fn popup_rect(ctx: &egui::Context, id: egui::Id) -> anyhow::Result<egui::Rect> {
+        ctx.memory(|memory| memory.area_rect(id))
+            .ok_or_else(|| anyhow::anyhow!("the production popup {id:?} should render"))
+    }
+
+    struct ModalFrame {
+        should_close: bool,
+        backdrop_clicked: bool,
+    }
+
+    fn run_modal_frame(ctx: &egui::Context, events: Vec<egui::Event>) -> ModalFrame {
+        let input = egui::RawInput {
+            screen_rect: Some(test_screen()),
+            events,
+            ..Default::default()
+        };
+        let mut should_close = false;
+        let mut backdrop_clicked = false;
+        ctx.run_ui(input, |ui| {
+            let response = egui::Modal::new(egui::Id::new("about-modal-close-contract")).show(
+                ui.ctx(),
+                |ui| {
+                    ui.set_min_size(egui::vec2(160.0, 96.0));
+                },
+            );
+            backdrop_clicked = response.backdrop_response.clicked();
+            should_close = response.should_close();
+        })
+        .drop_without_applying_deltas();
+        ModalFrame {
+            should_close,
+            backdrop_clicked,
+        }
+    }
+
+    #[test]
+    fn settings_segment_selects_direct_stl_without_closing() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let initial = run_toolbar_frame(&ctx, Vec::new())?;
+        let _ = click(&ctx, initial.settings_trigger.center())?;
+        let visible = run_toolbar_frame(&ctx, Vec::new())?;
+        let stl = direct_control_center(&visible.output, "STL")?;
+
+        let response = click(&ctx, stl)?;
+
+        assert_eq!(
+            response.action,
+            Some(SettingsAction::SetExportFormat(FallbackExportFormat::Stl))
         );
-        let (empty_open_frame, _) = run_settings_frame(&open_ctx, Vec::new())?;
+        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
+        Ok(())
+    }
+
+    #[test]
+    fn settings_toolbar_active_state_follows_popup_memory() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let initial = run_toolbar_frame(&ctx, Vec::new())?;
         assert!(
-            !empty_open_frame.dismissed,
-            "an open child must keep Settings alive across an empty frame"
-        );
-        let open_panel = rendered_panel_rect(&open_ctx)?;
-        assert!(
-            !open_panel.contains(outside),
-            "the same derived point must be outside the rendered open panel"
+            (initial.settings_trigger.height() - 22.0).abs() <= 0.01,
+            "inactive Settings toolbar height changed"
         );
 
-        let (while_child_open, _) = run_settings_frame(
-            &open_ctx,
-            vec![
-                egui::Event::PointerMoved(outside),
-                pointer_button(outside, true),
-            ],
-        )?;
+        let _ = click(&ctx, initial.settings_trigger.center())?;
+        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
 
+        let active = run_toolbar_frame(&ctx, Vec::new())?;
         assert!(
-            !while_child_open.dismissed,
-            "the first outside press belongs to the open child popup"
+            (active.settings_trigger.height() - 26.0).abs() <= 0.01,
+            "active Settings toolbar height changed"
         );
 
-        let (after_child_release, _) = run_settings_frame(
-            &open_ctx,
-            vec![
-                egui::Event::PointerMoved(outside),
-                pointer_button(outside, false),
-            ],
-        )?;
-        assert!(
-            !after_child_release.dismissed,
-            "closing the child must not also dismiss its Settings parent"
-        );
+        let _ = click(&ctx, active.settings_trigger.center())?;
+        assert!(!egui::Popup::is_id_open(&ctx, settings_popup_id()));
 
-        let (second_outside_press, _) = run_settings_frame(
-            &open_ctx,
-            vec![
-                egui::Event::PointerMoved(outside),
-                pointer_button(outside, true),
-            ],
-        )?;
+        let inactive = run_toolbar_frame(&ctx, Vec::new())?;
         assert!(
-            second_outside_press.dismissed,
-            "a later outside click must dismiss Settings once the child is closed"
+            (inactive.settings_trigger.height() - 22.0).abs() <= 0.01,
+            "inactive Settings toolbar height changed"
         );
         Ok(())
     }
 
     #[test]
-    fn production_settings_panel_fits_a_small_viewer_window() -> anyhow::Result<()> {
+    fn settings_switches_to_recent_popup() -> anyhow::Result<()> {
         let ctx = egui::Context::default();
-        let input = egui::RawInput {
-            screen_rect: Some(test_screen()),
-            safe_area_insets: Some(egui::SafeAreaInsets(egui::epaint::MarginF32::same(4.0))),
-            ..Default::default()
-        };
-        ctx.run_ui(input, |ui| {
-            let _ = show_settings_panel(
-                ui.ctx(),
-                test_anchor(),
-                &Settings::default(),
-                &UpdateCheckStatus::Failed("network unavailable".to_string()),
-                Some("read-only settings directory"),
-            );
-        })
-        .drop_without_applying_deltas();
+        let initial = run_toolbar_frame(&ctx, Vec::new())?;
+        let open_settings = click(&ctx, initial.settings_trigger.center())?;
+        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
 
-        let Some(rect) = ctx.memory(|memory| memory.area_rect(egui::Id::new(SETTINGS_PANEL_ID)))
-        else {
-            return Err(anyhow::anyhow!("the production panel should render"));
-        };
+        let _ = click(&ctx, open_settings.recent_trigger.center())?;
+
+        assert!(!egui::Popup::is_id_open(&ctx, settings_popup_id()));
+        assert!(egui::Popup::is_id_open(&ctx, recent_files_popup_id()));
+        Ok(())
+    }
+
+    #[test]
+    fn settings_dismisses_on_outside_click_and_escape() -> anyhow::Result<()> {
+        let click_ctx = egui::Context::default();
+        let initial = run_toolbar_frame(&click_ctx, Vec::new())?;
+        let _ = click(&click_ctx, initial.settings_trigger.center())?;
+        let settings = popup_rect(&click_ctx, settings_popup_id())?;
+        let outside = egui::pos2(4.0, test_screen().bottom() - 4.0);
+        assert!(!settings.contains(outside));
+        let _ = click(&click_ctx, outside)?;
+        assert!(!egui::Popup::is_id_open(&click_ctx, settings_popup_id()));
+
+        let escape_ctx = egui::Context::default();
+        let initial = run_toolbar_frame(&escape_ctx, Vec::new())?;
+        let _ = click(&escape_ctx, initial.settings_trigger.center())?;
+        let _ = run_toolbar_frame(
+            &escape_ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        )?;
+        assert!(!egui::Popup::is_id_open(&escape_ctx, settings_popup_id()));
+        Ok(())
+    }
+
+    #[test]
+    fn settings_fits_safe_content_at_312_points() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let initial = run_toolbar_frame(&ctx, Vec::new())?;
+        let _ = click(&ctx, initial.settings_trigger.center())?;
+        let _ = run_toolbar_frame(&ctx, Vec::new())?;
+        let rect = popup_rect(&ctx, settings_popup_id())?;
+        let allowed = ctx.content_rect();
+        let expected_content = test_screen().shrink(4.0);
+
         assert!(
-            (330.0..=360.0).contains(&rect.width()),
+            (311.0..=313.0).contains(&rect.width()),
             "width was {}",
             rect.width()
         );
-        assert!(rect.height() <= 290.0, "height was {}", rect.height());
-        let allowed = ctx.content_rect().shrink(8.0);
+        assert_eq!(
+            allowed, expected_content,
+            "the test harness must expose the safe content rect used for popup placement"
+        );
         assert!(
             allowed.contains_rect(rect),
-            "panel {rect:?} escaped safe content bounds {allowed:?}"
+            "popup {rect:?} escaped {allowed:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn modal_response_closes_on_a_backdrop_click() {
+        let ctx = egui::Context::default();
+        assert!(!run_modal_frame(&ctx, Vec::new()).should_close);
+        assert!(!run_modal_frame(&ctx, Vec::new()).should_close);
+
+        let backdrop = egui::pos2(4.0, 4.0);
+        assert!(
+            !run_modal_frame(
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(backdrop),
+                    pointer_button(backdrop, true),
+                ],
+            )
+            .should_close
+        );
+        let release = run_modal_frame(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(backdrop),
+                pointer_button(backdrop, false),
+            ],
+        );
+        assert!(
+            release.backdrop_clicked,
+            "the raw click should reach the modal backdrop"
+        );
+        assert!(release.should_close);
     }
 }

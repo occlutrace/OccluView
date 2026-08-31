@@ -90,7 +90,9 @@ fn toolbar_and_about_are_operator_focused() {
         "the screenshot action was removed; the toolbar should not reference it"
     );
     assert!(
-        toolbar.contains("Recent files") && toolbar.contains("Clear recent"),
+        toolbar.contains("Recent files")
+            && toolbar.contains("show_recent_files_popup")
+            && dialogs.contains("Clear recent"),
         "recent scans should stay reachable from a slim dropdown beside Open"
     );
     assert!(
@@ -111,16 +113,18 @@ fn toolbar_and_about_are_operator_focused() {
     assert!(
         dialogs.contains("AppIcon::Settings")
             && dialogs.contains("Open preferences")
-            && dialogs.contains("show_settings_popover"),
+            && toolbar.contains("self.information_dialog = InformationDialog::None;"),
         "the toolbar should open preferences from the settings button"
     );
     assert!(
-        settings.contains("egui::Window::new(\"About OccluView\")")
+        settings.contains("egui::Modal::new(id)")
+            && settings.contains("information_modal(")
+            && settings.contains("occluview-about-dialog-v2")
             && settings.contains("self.app_logo_texture(ctx)")
             && settings.contains("https://occlutrace.ai")
             && settings.contains("https://github.com/occlutrace/OccluView")
             && settings.contains("vertical_centered"),
-        "About should show the product, logo, and both project links"
+        "About should use the typed Modal surface while retaining the product, logo, and both project links"
     );
     assert!(
         !dialogs.contains("Dental Cloud") && !settings.contains("Dental Cloud"),
@@ -332,10 +336,28 @@ fn unsaved_mesh_edits_guard_the_window_close() {
 fn about_opens_the_embedded_third_party_notices() {
     let settings = repo_source_file("src/app/app_settings_window.rs");
     let notices = repo_source_file("src/app/app_third_party.rs");
+    let state = repo_source_file("src/app/state.rs");
 
     assert!(
         settings.contains("Third-party licenses"),
         "the About dialog should offer the third-party licenses view"
+    );
+    assert!(
+        settings.contains("self.information_dialog = InformationDialog::ThirdPartyNotices;")
+            && !settings.contains("InformationDialog::ThirdPartyNotices\n            ||"),
+        "About should replace its one typed route with ThirdPartyNotices, without an obsolete other-modal predicate"
+    );
+    assert!(
+        notices.contains("information_modal(")
+            && notices.contains("occluview-third-party-notices-v2"),
+        "third-party notices should use the same modal interaction model"
+    );
+    assert!(
+        state.contains("fn show_information_dialog(")
+            && state.contains("InformationDialog::About => self.show_about_dialog(ctx)")
+            && state.contains("InformationDialog::ThirdPartyNotices => self.show_third_party_window(ctx)")
+            && !state.contains("self.show_about_dialog(&ctx);\n        self.show_third_party_window(&ctx);"),
+        "one frame must render exactly one information route; switching from About to notices waits for the next frame"
     );
     assert!(
         notices.contains("include_str!(\"../../../../THIRD-PARTY-NOTICES.md\")"),
@@ -344,6 +366,18 @@ fn about_opens_the_embedded_third_party_notices() {
     assert!(
         notices.contains("show_rows"),
         "a quarter-megabyte of licenses must render lazily, not as one label"
+    );
+}
+
+#[test]
+fn settings_popup_avoids_legacy_container_paths() {
+    let settings = repo_source_file("src/app/app_settings_window.rs");
+
+    assert!(
+        !settings.contains("ComboBox")
+            && !settings.contains("egui::Area::new")
+            && !settings.contains("Popup::is_any_open"),
+        "Settings must not restore legacy container or global popup-state paths"
     );
 }
 

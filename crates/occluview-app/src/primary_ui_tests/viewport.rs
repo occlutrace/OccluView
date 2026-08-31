@@ -374,8 +374,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
     let ordered_surfaces = [
         "self.poll_gpu_errors();",
         "self.show_error_dialog(&ctx);",
-        "self.show_about_dialog(&ctx);",
-        "self.show_third_party_window(&ctx);",
+        "self.show_information_dialog(&ctx);",
         "self.repair_report.ui(&ctx);",
         "self.update_notice.show(&ctx);",
         "self.show_unsaved_close_guard(&ctx);",

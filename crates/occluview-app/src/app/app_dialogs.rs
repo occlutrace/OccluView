@@ -1,3 +1,5 @@
+use super::app_settings_window::settings_popup_id;
+use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
 use super::{
     load_app_logo_color_image, recent_scene_hover, recent_scene_label, status_overlay_rect,
@@ -6,8 +8,66 @@ use super::{
 use crate::icons::AppIcon;
 use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
 use crate::measure_tool::{self, MeasureMode};
+use crate::recent_files::RecentFiles;
 use crate::ui_theme;
 use eframe::egui;
+
+const RECENT_FILES_POPUP_ID: &str = "recent-files-dropdown-v1";
+
+pub(super) fn recent_files_popup_id() -> egui::Id {
+    egui::Id::new(RECENT_FILES_POPUP_ID)
+}
+
+pub(super) enum RecentFilesAction {
+    Open(Vec<PathBuf>),
+    Clear,
+}
+
+pub(super) fn show_recent_files_popup(
+    trigger: &egui::Response,
+    recent_files: &RecentFiles,
+) -> Option<RecentFilesAction> {
+    let action = egui::Popup::from_toggle_button_response(trigger)
+        .id(recent_files_popup_id())
+        .align(egui::RectAlign::BOTTOM_START)
+        .align_alternatives(&[])
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(220.0);
+            for entry in recent_files.entries() {
+                if ui
+                    .button(recent_scene_label(entry))
+                    .on_hover_text(recent_scene_hover(entry))
+                    .clicked()
+                {
+                    return Some(RecentFilesAction::Open(entry.paths().to_vec()));
+                }
+            }
+            ui.separator();
+            ui.button("Clear recent")
+                .clicked()
+                .then_some(RecentFilesAction::Clear)
+        })
+        .and_then(|response| response.inner);
+    if action.is_some() {
+        egui::Popup::close_id(&trigger.ctx, recent_files_popup_id());
+    }
+    action
+}
+
+pub(super) fn show_settings_toolbar_toggle(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    toolbar_toggle(
+        ui,
+        ToolbarToggle::new(
+            AppIcon::Settings,
+            "Settings",
+            enabled,
+            egui::Popup::is_id_open(ui.ctx(), settings_popup_id()),
+            "Open preferences",
+        ),
+    )
+}
 
 impl OccluViewApp {
     /// Draw the top toolbar and dispatch its actions after layout.
@@ -17,9 +77,9 @@ impl OccluViewApp {
         if self.close_guard_open
             || self.pending_replace_open.is_some()
             || self.app_error.is_some()
-            || self.third_party_window_open
+            || self.information_dialog.is_open()
         {
-            self.settings_window.open = false;
+            egui::Popup::close_id(&ctx, settings_popup_id());
         }
         // The only wired shortcut; its tooltip hint is therefore real.
         let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
@@ -30,7 +90,6 @@ impl OccluViewApp {
         let mut toggle_cut_view = false;
         let mut toggle_measure: Option<MeasureMode> = None;
         let mut toggle_align = false;
-        let mut settings_anchor = None;
 
         egui::Panel::top("toolbar")
             .exact_size(ui_theme::MENUBAR_HEIGHT_PX)
@@ -71,31 +130,13 @@ impl OccluViewApp {
                             },
                         );
                         let response = response.on_hover_text("Recent files");
-                        let popup_id = ui.make_persistent_id("recent_files_dropdown");
-                        egui::Popup::from_toggle_button_response(&response)
-                            .id(popup_id)
-                            .align(egui::RectAlign::BOTTOM_START)
-                            .align_alternatives(&[])
-                            .layout(egui::Layout::top_down_justified(egui::Align::Min))
-                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                            .show(|ui| {
-                                ui.set_min_width(220.0);
-                                for entry in self.recent_files.entries() {
-                                    if ui
-                                        .button(recent_scene_label(entry))
-                                        .on_hover_text(recent_scene_hover(entry))
-                                        .clicked()
-                                    {
-                                        recent_to_open = Some(entry.paths().to_vec());
-                                        egui::Popup::close_id(ui.ctx(), popup_id);
-                                    }
-                                }
-                                ui.separator();
-                                if ui.button("Clear recent").clicked() {
-                                    clear_recent = true;
-                                    egui::Popup::close_id(ui.ctx(), popup_id);
-                                }
-                            });
+                        if let Some(action) = show_recent_files_popup(&response, &self.recent_files)
+                        {
+                            match action {
+                                RecentFilesAction::Open(paths) => recent_to_open = Some(paths),
+                                RecentFilesAction::Clear => clear_recent = true,
+                            }
+                        }
                     });
                     ui.add_space(4.0);
                     if toolbar_toggle(
@@ -226,28 +267,14 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let response = toolbar_toggle(
-                            ui,
-                            ToolbarToggle::new(
-                                AppIcon::Settings,
-                                "Settings",
-                                !self.close_guard_open,
-                                self.settings_window.open,
-                                "Open preferences",
-                            ),
-                        );
-                        settings_anchor = Some(response.rect);
+                        let response = show_settings_toolbar_toggle(ui, !self.close_guard_open);
                         if response.clicked() {
-                            self.settings_window.about_open = false;
-                            self.settings_window.open = !self.settings_window.open;
+                            self.information_dialog = InformationDialog::None;
                         }
+                        self.show_settings_popup(&response);
                     });
                 });
             });
-
-        if let Some(anchor) = settings_anchor {
-            self.show_settings_popover(&ctx, anchor);
-        }
 
         if toggle_align {
             if self.align_active() {

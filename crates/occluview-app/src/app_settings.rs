@@ -9,12 +9,6 @@ use std::time::{Duration, Instant};
 const SETTINGS_FILE: &str = "settings.json";
 pub(crate) const SETTINGS_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct SettingsWindowState {
-    pub(crate) open: bool,
-    pub(crate) about_open: bool,
-}
-
 /// Format used only when the source format cannot be written.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum FallbackExportFormat {
