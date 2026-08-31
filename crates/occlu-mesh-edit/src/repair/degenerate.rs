@@ -15,7 +15,7 @@ const DEGENERATE_SIN: f64 = 1e-5;
 pub(super) fn remove_degenerate_triangles(mesh: &mut MeshEditBuffers, report: &mut RepairReport) {
     let mut kept = Vec::with_capacity(mesh.indices.len());
     let mut removed = 0_usize;
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         if is_degenerate_triangle(&mesh.vertices, tri) {
             removed += 1;
         } else {
@@ -63,7 +63,9 @@ pub(super) fn remove_duplicate_triangles(mesh: &mut MeshEditBuffers, report: &mu
 
     let mut keyed: Vec<([u32; 3], usize)> = mesh
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .enumerate()
         .map(|(triangle, tri)| {
             let mut key = [tri[0], tri[1], tri[2]];
@@ -86,7 +88,7 @@ pub(super) fn remove_duplicate_triangles(mesh: &mut MeshEditBuffers, report: &mu
     }
 
     let mut kept = Vec::with_capacity((triangle_count - removed) * 3);
-    for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         if !remove[triangle] {
             kept.extend_from_slice(tri);
         }

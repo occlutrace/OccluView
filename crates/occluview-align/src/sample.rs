@@ -43,7 +43,7 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
 pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
     let count = soup.vertex_count();
     let mut normals = vec![DVec3::ZERO; count];
-    for slice in soup.indices.chunks_exact(3) {
+    for slice in soup.indices.as_chunks::<3>().0 {
         let mut corners = [DVec3::ZERO; 3];
         let mut vertices = [0usize; 3];
         let mut usable = true;

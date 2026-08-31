@@ -238,9 +238,9 @@ fn linux_socket_handoff_repaints_until_background_window_consumes_request() {
 fn single_instance_load_raises_window_after_scene_is_ready() {
     let loading_source = app_loading_source();
     let app_source = app_module_source();
-    let update = function_source(
+    let logic = function_source(
         app_source,
-        "fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {",
+        "fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {",
     );
 
     assert!(
@@ -248,9 +248,30 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
         "scene load completion needs egui context so a background single-instance open can wake the existing window after data is ready"
     );
     assert!(
-        update.contains("self.process_scene_loads(ctx);"),
-        "the update loop should pass context into scene-load completion"
+        logic.contains("self.process_scene_loads(ctx);"),
+        "the nonvisual lifecycle pass should pass context into scene-load completion"
     );
+
+    let ordered_nonvisual_work = [
+        "self.persist_settings_if_due(ctx);",
+        "self.expire_status_message(ctx);",
+        "Self::schedule_linux_open_request_repaint(ctx);",
+        "self.process_scene_loads(ctx);",
+        "self.poll_sculpt_preparation(ctx);",
+        "self.poll_sculpt_worker(ctx);",
+        "self.handle_open_requests(ctx);",
+        "self.finish_foreground_pulse_if_due(ctx);",
+        "self.update_notice.poll(ctx);",
+        "self.intercept_unsaved_close(ctx);",
+    ];
+    for pair in ordered_nonvisual_work.windows(2) {
+        assert!(
+            appears_before(logic, pair[0], pair[1]),
+            "logic lifecycle order changed between {} and {}",
+            pair[0],
+            pair[1]
+        );
+    }
     assert!(
         loading_source.contains("let load_settled = self.queued_loads.is_empty();")
             && loading_source.contains("active.source == \"single-instance\" && load_settled")
@@ -343,8 +364,8 @@ fn replace_guard_suppresses_edit_shortcuts_and_runs_each_frame() {
         "edit hotkeys must not act behind the open-guard dialog"
     );
     assert!(
-        app_source.contains("self.guard_pending_replace_open(ctx);"),
-        "the update loop must drive the parked-open guard dialog"
+        app_source.contains("self.guard_pending_replace_open(&ctx);"),
+        "the visible lifecycle pass must drive the parked-open guard dialog"
     );
 }
 

@@ -162,7 +162,7 @@ impl GpuMesh {
 
 fn wireframe_indices_for_triangle_mesh(indices: &[u32]) -> Vec<u32> {
     let mut lines = Vec::with_capacity(indices.len() * 2);
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let a = tri[0];
         let b = tri[1];
         let c = tri[2];

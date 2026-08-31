@@ -14,7 +14,8 @@ updates:
           - "patch"
     ignore:
       - dependency-name: "image"
-        # image 0.25.10 raised MSRV to 1.88; OccluView is pinned to 1.86.
+        # Keep image below 0.25.10: decoder-graph changes require malformed-input,
+        # golden-thumbnail, and allocation-bound coverage.
         versions: [">=0.25.10"]
       - dependency-name: "*"
         update-types:

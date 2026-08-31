@@ -278,15 +278,12 @@ where
 /// Paint the rounded panel background and the header hairline. The live distance
 /// is drawn on the ruler line itself ([`CutRuler::draw`]), not in the header.
 fn draw_panel_frame(painter: &egui::Painter, panel_rect: egui::Rect) {
-    painter.rect_filled(
-        panel_rect,
-        egui::Rounding::same(8.0),
-        ui_theme::panel_fill(),
-    );
+    painter.rect_filled(panel_rect, 8.0, ui_theme::panel_fill());
     painter.rect_stroke(
         panel_rect,
-        egui::Rounding::same(8.0),
-        egui::Stroke::new(1.0, ui_theme::panel_stroke()),
+        8.0,
+        egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()),
+        egui::StrokeKind::Middle,
     );
     let header_baseline = panel_rect.top() + PANEL_PAD_PX + PANEL_HEADER_PX;
     painter.line_segment(
@@ -294,7 +291,7 @@ fn draw_panel_frame(painter: &egui::Painter, panel_rect: egui::Rect) {
             egui::pos2(panel_rect.left() + 6.0, header_baseline),
             egui::pos2(panel_rect.right() - 6.0, header_baseline),
         ],
-        egui::Stroke::new(1.0, ui_theme::hairline()),
+        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
     );
 }
 

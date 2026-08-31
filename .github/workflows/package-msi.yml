@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -86,7 +86,7 @@ jobs:
           }
 
           $testLog = Join-Path $env:RUNNER_TEMP "occluview-hps-provider-test.log"
-          cargo test -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
+          cargo test --locked -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
           $testExit = $LASTEXITCODE
           if (Select-String -Path $testLog -SimpleMatch -Pattern $env:OCCLUVIEW_HPS_EMBEDDED_KEY -Quiet) {
             Remove-Item -LiteralPath $testLog -Force
@@ -177,6 +177,7 @@ jobs:
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
           # The virtual workspace emits one SBOM beside each member manifest.
+          cargo metadata --locked --format-version 1
           cargo cyclonedx --format json --override-filename sbom-windows
           $sbom = "crates/occluview-app/sbom-windows.json"
           if (-not (Test-Path $sbom)) {
@@ -186,6 +187,7 @@ jobs:
           if ($described -ne "occluview-app") {
             throw "SBOM describes '$described', not the shipped viewer."
           }
+          git diff --exit-code -- Cargo.lock
           Move-Item $sbom ./dist/sbom-windows.json -Force
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -210,7 +212,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -257,7 +259,7 @@ jobs:
 
           test_log="$(mktemp)"
           set +e
-          cargo test -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
+          cargo test --locked -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
           test_status=$?
           set -e
           if printf '%s\n' "$OCCLUVIEW_HPS_EMBEDDED_KEY" | grep -Fq -f - "$test_log"; then
@@ -297,6 +299,7 @@ jobs:
       - name: Generate SBOM (Linux)
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
+          cargo metadata --locked --format-version 1
           cargo cyclonedx --format json --override-filename sbom-linux
           sbom=crates/occluview-app/sbom-linux.json
           if [[ ! -f "$sbom" ]]; then
@@ -309,6 +312,7 @@ jobs:
           if described != "occluview-app":
               raise SystemExit(f"SBOM describes {described!r}, not the shipped viewer.")
           PY
+          git diff --exit-code -- Cargo.lock
           cp "$sbom" target/deb/sbom-linux.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

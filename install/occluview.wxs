@@ -66,14 +66,16 @@
       ExeCommand="--shell-refresh"
       Execute="deferred"
       Return="check"
-      Impersonate="no" />
+      Impersonate="yes"
+      TerminalServerAware="yes" />
     <CustomAction
       Id="RefreshShellAssociationsUninstall"
       FileKey="filOccluViewExe"
       ExeCommand="--shell-refresh"
       Execute="deferred"
       Return="check"
-      Impersonate="no" />
+      Impersonate="yes"
+      TerminalServerAware="yes" />
     <InstallExecuteSequence>
       <Custom Action="RefreshShellAssociationsInstall" After="WriteRegistryValues">NOT REMOVE</Custom>
       <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL"</Custom>

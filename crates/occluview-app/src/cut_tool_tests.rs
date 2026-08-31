@@ -109,7 +109,7 @@ fn hover(point: Vec3) -> CutFrameInput {
 }
 
 fn slice_image() -> egui::ColorImage {
-    egui::ColorImage::new([4, 4], egui::Color32::WHITE)
+    egui::ColorImage::filled([4, 4], egui::Color32::WHITE)
 }
 
 fn slice_cam() -> SliceCam {
@@ -190,29 +190,27 @@ fn a_painted_slice_texture_is_never_freed_in_the_same_frame() {
     // the persistent texture in place, paint it, then a second in-frame render
     // updates it again in place — never reallocating.
     for _ in 0..2 {
-        let out = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                match handle.as_mut() {
-                    Some(existing) => {
-                        existing.set(slice_image(), egui::TextureOptions::LINEAR);
-                    }
-                    None => {
-                        handle = Some(ctx.load_texture(
-                            "slice",
-                            slice_image(),
-                            egui::TextureOptions::LINEAR,
-                        ));
-                    }
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            match handle.as_mut() {
+                Some(existing) => {
+                    existing.set(slice_image(), egui::TextureOptions::LINEAR);
                 }
-                let id = handle.as_ref().expect("handle").id();
-                ui.image((id, egui::vec2(4.0, 4.0)));
-                // Second render pass (mirrors the post-input render-pending
-                // pass): update in place, do NOT reallocate.
-                handle
-                    .as_mut()
-                    .expect("handle")
-                    .set(slice_image(), egui::TextureOptions::LINEAR);
-            });
+                None => {
+                    handle = Some(ui.ctx().load_texture(
+                        "slice",
+                        slice_image(),
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+            }
+            let id = handle.as_ref().expect("handle").id();
+            ui.image((id, egui::vec2(4.0, 4.0)));
+            // Second render pass (mirrors the post-input render-pending
+            // pass): update in place, do NOT reallocate.
+            handle
+                .as_mut()
+                .expect("handle")
+                .set(slice_image(), egui::TextureOptions::LINEAR);
         });
 
         let painted = painted_ids(&ctx, &out);
@@ -221,6 +219,7 @@ fn a_painted_slice_texture_is_never_freed_in_the_same_frame() {
             painted.is_disjoint(&freed),
             "a painted texture id was freed the same frame: painted={painted:?} freed={freed:?}"
         );
+        out.drop_without_applying_deltas();
     }
 }
 
@@ -236,15 +235,19 @@ fn load_texture_per_render_frees_the_painted_id_in_frame() {
 
     let ctx = egui::Context::default();
     let mut handle: Option<egui::TextureHandle> = None;
-    let out = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // First render + paint.
-            handle = Some(ctx.load_texture("slice", slice_image(), egui::TextureOptions::LINEAR));
-            let painted_id = handle.as_ref().expect("handle").id();
-            ui.image((painted_id, egui::vec2(4.0, 4.0)));
-            // Second render REALLOCATES: drops the just-painted handle -> free.
-            handle = Some(ctx.load_texture("slice", slice_image(), egui::TextureOptions::LINEAR));
-        });
+    let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        // Allocate and paint the first texture.
+        handle = Some(
+            ui.ctx()
+                .load_texture("slice", slice_image(), egui::TextureOptions::LINEAR),
+        );
+        let painted_id = handle.as_ref().expect("handle").id();
+        ui.image((painted_id, egui::vec2(4.0, 4.0)));
+        // Replacing it drops the texture that was painted in this frame.
+        handle = Some(
+            ui.ctx()
+                .load_texture("slice", slice_image(), egui::TextureOptions::LINEAR),
+        );
     });
 
     let painted: BTreeSet<_> = ctx
@@ -260,6 +263,7 @@ fn load_texture_per_render_frees_the_painted_id_in_frame() {
         !painted.is_disjoint(&freed),
         "pre-fix load_texture-per-render must free the painted id in-frame (repro sanity)"
     );
+    out.drop_without_applying_deltas();
 }
 
 #[test]

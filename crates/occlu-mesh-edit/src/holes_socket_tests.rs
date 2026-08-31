@@ -71,7 +71,9 @@ fn lasso_delete_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
         hit
     };
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| {
             let c = tri
                 .iter()
@@ -86,7 +88,7 @@ fn lasso_delete_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
 /// Faces incident to any boundary vertex — the operator lassoing the socket.
 fn rim_selection_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
     let mut directed: HashSet<(u32, u32)> = HashSet::new();
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         for e in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             directed.insert(e);
         }
@@ -99,7 +101,9 @@ fn rim_selection_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
         }
     }
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| tri.iter().any(|&i| boundary_vertex[i as usize]))
         .collect()
 }
@@ -108,7 +112,7 @@ fn rim_selection_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
 /// means the mesh is closed/watertight.
 fn open_edge_count(mesh: &MeshEditBuffers) -> usize {
     let mut directed: HashSet<(u32, u32)> = HashSet::new();
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         for e in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             directed.insert(e);
         }
@@ -375,7 +379,9 @@ fn large_rim_gets_interpolated_cap_without_spikes() {
     let (hole_x, hole_y, hole_r) = (0.15_f32 * 20.0, 0.0_f32, 3.4_f32);
     let mask: Vec<bool> = mesh
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| {
             let c = (Vec3::from_array(mesh.vertices[t[0] as usize].position)
                 + Vec3::from_array(mesh.vertices[t[1] as usize].position)
@@ -392,7 +398,7 @@ fn large_rim_gets_interpolated_cap_without_spikes() {
 
     // Sanity: the rim really is past the old ceiling (the regression trigger).
     let mut edge_use: HashMap<(u32, u32), i32> = HashMap::new();
-    for t in cut.indices.chunks_exact(3) {
+    for t in cut.indices.as_chunks::<3>().0 {
         for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
             *edge_use.entry((a.min(b), a.max(b))).or_default() += 1;
         }
@@ -443,7 +449,7 @@ fn large_rim_gets_interpolated_cap_without_spikes() {
         (b - a).cross(c - a).normalize_or_zero()
     };
     let mut owners: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
-    for (index, t) in result.mesh.indices.chunks_exact(3).enumerate() {
+    for (index, t) in result.mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
             owners.entry((a.min(b), a.max(b))).or_default().push(index);
         }

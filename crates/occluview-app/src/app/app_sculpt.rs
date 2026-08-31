@@ -34,6 +34,38 @@ struct DabParams {
     dt: f32,
 }
 
+pub(super) fn apply_sculpt_wheel_settings(ctx: &egui::Context) -> bool {
+    let raw_scroll = super::app_input::raw_wheel_delta(ctx);
+    let (shift, ctrl) = ctx.input(|input| {
+        (
+            input.modifiers.shift,
+            input.modifiers.ctrl || input.modifiers.command,
+        )
+    });
+    // Holding Shift makes many window managers deliver the wheel as
+    // HORIZONTAL scroll, so read whichever axis actually moved — otherwise
+    // Shift+wheel silently did nothing (only `.y` was read).
+    let scroll = if raw_scroll.y.abs() >= raw_scroll.x.abs() {
+        raw_scroll.y
+    } else {
+        raw_scroll.x
+    };
+    if scroll.abs() < f32::EPSILON || !(shift || ctrl) {
+        return false;
+    }
+    let delta = scroll.signum() * SCULPT_WHEEL_STEP;
+    if shift {
+        let next =
+            (mesh_editor_overlay::sculpt_size(ctx) + delta).clamp(SCULPT_SIZE_MIN, SCULPT_SIZE_MAX);
+        mesh_editor_overlay::set_sculpt_size(ctx, next);
+    } else {
+        let next = (mesh_editor_overlay::sculpt_intensity(ctx) + delta)
+            .clamp(SCULPT_INTENSITY_MIN, SCULPT_INTENSITY_MAX);
+        mesh_editor_overlay::set_sculpt_intensity(ctx, next);
+    }
+    true
+}
+
 /// Lay this frame's dabs on `session`, updating `stroke`'s scheduler state, and
 /// return the touched vertex ids. The spacing decision is the pure
 /// [`plan_dab_centers`]; this only converts to local space and applies.
@@ -178,7 +210,7 @@ impl OccluViewApp {
     /// Edit-Mesh-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
     /// Consumed only while a session is open and no text field has focus.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
-        if !self.edit_mode.has_active_session() || ctx.wants_keyboard_input() {
+        if !self.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
             return false;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)) {
@@ -462,34 +494,8 @@ impl OccluViewApp {
         if !over_viewport || self.sculpt.armed.is_none() || !self.edit_mode.has_active_session() {
             return false;
         }
-        let (scroll_x, scroll_y, shift, ctrl) = ctx.input(|input| {
-            (
-                input.raw_scroll_delta.x,
-                input.raw_scroll_delta.y,
-                input.modifiers.shift,
-                input.modifiers.ctrl || input.modifiers.command,
-            )
-        });
-        // Holding Shift makes many window managers deliver the wheel as
-        // HORIZONTAL scroll, so read whichever axis actually moved — otherwise
-        // Shift+wheel silently did nothing (only `.y` was read).
-        let scroll = if scroll_y.abs() >= scroll_x.abs() {
-            scroll_y
-        } else {
-            scroll_x
-        };
-        if scroll.abs() < f32::EPSILON || !(shift || ctrl) {
+        if !apply_sculpt_wheel_settings(ctx) {
             return false;
-        }
-        let delta = scroll.signum() * SCULPT_WHEEL_STEP;
-        if shift {
-            let next = (mesh_editor_overlay::sculpt_size(ctx) + delta)
-                .clamp(SCULPT_SIZE_MIN, SCULPT_SIZE_MAX);
-            mesh_editor_overlay::set_sculpt_size(ctx, next);
-        } else {
-            let next = (mesh_editor_overlay::sculpt_intensity(ctx) + delta)
-                .clamp(SCULPT_INTENSITY_MIN, SCULPT_INTENSITY_MAX);
-            mesh_editor_overlay::set_sculpt_intensity(ctx, next);
         }
         self.needs_render = true;
         ctx.request_repaint();
@@ -560,12 +566,12 @@ impl OccluViewApp {
             canvas.circle_stroke(
                 pointer,
                 radius_px,
-                egui::Stroke::new(1.0, color.gamma_multiply(0.58 + intensity * 0.18)),
+                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.58 + intensity * 0.18)),
             );
             canvas.circle_stroke(
                 pointer,
                 (radius_px - 2.0).max(1.0),
-                egui::Stroke::new(1.0, color.gamma_multiply(0.16)),
+                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.16)),
             );
             canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
         }

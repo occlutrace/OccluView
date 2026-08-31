@@ -95,7 +95,7 @@ fn to_upper_hex(bytes: &[u8]) -> String {
 
 fn scramble_key(key: &[u8]) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity(key.len()));
-    out.extend(key.iter().rev().map(|byte| byte ^ 123));
+    out.extend(key.iter().rev().map(|byte| byte ^ 0x7b));
     out
 }
 
@@ -116,7 +116,7 @@ fn blowfish_ecb_decrypt(encrypted: &[u8], key: &[u8]) -> Result<Zeroizing<Vec<u8
     let cipher: Blowfish = Blowfish::new_from_slice(key).map_err(|_| HpsError::InvalidKey {
         reason: "CE encryption key must be 4..56 bytes for Blowfish".to_string(),
     })?;
-    for chunk in padded.chunks_exact_mut(8) {
+    for chunk in padded.as_chunks_mut::<8>().0 {
         let mut block = Block::<Blowfish>::default();
         block.copy_from_slice(chunk);
         cipher.decrypt_block(&mut block);
@@ -128,7 +128,7 @@ fn blowfish_ecb_decrypt(encrypted: &[u8], key: &[u8]) -> Result<Zeroizing<Vec<u8
 }
 
 fn swap_32_bit_words_in_blocks(bytes: &mut [u8]) {
-    for block in bytes.chunks_exact_mut(8) {
+    for block in bytes.as_chunks_mut::<8>().0 {
         block[..4].reverse();
         block[4..8].reverse();
     }

@@ -73,7 +73,7 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, egui::Rounding::same(TAB_H * 0.5), fill);
+    painter.rect_filled(rect, TAB_H * 0.5, fill);
     let text = if active {
         egui::Color32::WHITE
     } else {
@@ -645,9 +645,9 @@ fn tall_text_button(
     let button = if primary {
         egui::Button::new(egui::RichText::new(label).color(PRIMARY_TEXT).strong())
             .fill(ACCENT)
-            .rounding(CELL_ROUNDING)
+            .corner_radius(CELL_ROUNDING)
     } else {
-        egui::Button::new(label).rounding(CELL_ROUNDING)
+        egui::Button::new(label).corner_radius(CELL_ROUNDING)
     }
     .min_size(egui::vec2(width, ROW_H));
     ui.add_enabled(enabled, button)

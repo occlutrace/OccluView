@@ -32,14 +32,14 @@ pub(super) fn make_fallback_texture_bind_group(
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &tex,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &[255, 255, 255, 255],
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4),
             rows_per_image: Some(1),
@@ -170,7 +170,10 @@ impl Offscreen {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = map_tx.send(result.map_err(|error| error.to_string()));
         });
-        let _ = self.renderer.device().poll(wgpu::Maintain::Wait);
+        let _ = self
+            .renderer
+            .device()
+            .poll(wgpu::PollType::wait_indefinitely());
         // Every offscreen frame -- thumbnail, preview, cut view -- lands here
         // after its submit, and the wait above is the point by which the
         // driver has reported anything it refused. The device's error handler
@@ -192,7 +195,9 @@ impl Offscreen {
         let row_bytes = usize::from(width_px) * 4;
         let row_count = usize::from(height_px);
         let pixels = {
-            let data = slice.get_mapped_range();
+            let data = slice
+                .get_mapped_range()
+                .map_err(|error| RenderError::Surface(error.to_string()))?;
             let mut out = Vec::with_capacity(row_bytes * row_count);
             for row in 0..row_count {
                 let start = row * padded_bytes_per_row as usize;

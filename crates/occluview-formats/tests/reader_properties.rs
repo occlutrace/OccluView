@@ -22,7 +22,7 @@ fn binary_stl(coordinates: &[f32]) -> Vec<u8> {
     let triangles = coordinates.len() / 12;
     let mut bytes = vec![0u8; 80];
     bytes.extend_from_slice(&u32::try_from(triangles).unwrap_or(0).to_le_bytes());
-    for triangle in coordinates.chunks_exact(12) {
+    for triangle in coordinates.as_chunks::<12>().0 {
         for value in triangle {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
@@ -36,10 +36,10 @@ fn binary_stl(coordinates: &[f32]) -> Vec<u8> {
 fn obj(vertices: &[f32], face_indices: &[u32]) -> String {
     use std::fmt::Write as _;
     let mut text = String::new();
-    for position in vertices.chunks_exact(3) {
+    for position in vertices.as_chunks::<3>().0 {
         let _ = writeln!(text, "v {} {} {}", position[0], position[1], position[2]);
     }
-    for face in face_indices.chunks_exact(3) {
+    for face in face_indices.as_chunks::<3>().0 {
         let _ = writeln!(text, "f {} {} {}", face[0], face[1], face[2]);
     }
     text

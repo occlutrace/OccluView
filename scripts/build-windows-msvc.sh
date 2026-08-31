@@ -82,12 +82,14 @@ if [[ -n "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
 fi
 
 cargo xwin build \
+  --locked \
   -p occluview-app \
   --target "$target" \
   "${app_profile_args[@]}" \
   "${feature_args[@]}"
 
 cargo xwin build \
+  --locked \
   -p occluview-shell \
   --target "$target" \
   "${shell_profile_args[@]}" \

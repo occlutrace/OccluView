@@ -155,8 +155,12 @@ fn rasterize(icon: AppIcon, px: usize, color: egui::Color32) -> Option<egui::Col
     );
     // tiny-skia stores premultiplied alpha; egui wants straight alpha.
     let mut rgba = pixmap.data().to_vec();
-    for p in rgba.chunks_exact_mut(4) {
+    for p in rgba.as_chunks_mut::<4>().0 {
         let a = u16::from(p[3]);
+        #[expect(
+            clippy::manual_checked_ops,
+            reason = "nonzero alpha guard precedes pixel division"
+        )]
         if a > 0 {
             for c in &mut p[..3] {
                 *c = ((u16::from(*c) * 255) / a) as u8;
@@ -204,7 +208,7 @@ pub(crate) fn texture(
         return texture;
     }
     let image = rasterize(icon, px, color)
-        .unwrap_or_else(|| egui::ColorImage::new([px, px], egui::Color32::TRANSPARENT));
+        .unwrap_or_else(|| egui::ColorImage::filled([px, px], egui::Color32::TRANSPARENT));
     let name = format!("icon/{icon:?}/{px}");
     let tex = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
     ctx.data_mut(|data| {

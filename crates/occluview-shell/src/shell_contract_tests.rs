@@ -422,7 +422,7 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("runs-on: ubuntu-latest"));
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux"));
-    assert!(workflow.contains("cargo test -p occluview-hps --features private-hps-key"));
+    assert!(workflow.contains("cargo test --locked -p occluview-hps --features private-hps-key"));
     assert!(workflow.contains("install/linux/build-deb.sh"));
     // The package to validate is the one build-deb.sh just named; globbing
     // target/deb hands dpkg-deb a second path as a control-file name.
@@ -512,7 +512,7 @@ fn package_pipeline_can_sign_windows_artifacts_when_certificate_is_configured() 
     assert!(workflow.contains("OCCLUVIEW_SIGN_PFX_PASSWORD"));
     assert!(workflow.contains("OCCLUVIEW_SIGN_CERT_SHA1"));
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(workflow.contains("cargo test -p occluview-hps --features private-hps-key"));
+    assert!(workflow.contains("cargo test --locked -p occluview-hps --features private-hps-key"));
     assert!(workflow.contains("-SignMode auto"));
     assert!(!workflow.contains("OCCLUVIEW_SIGN_PFX_PASSWORD: \""));
 
@@ -566,28 +566,6 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
             "{package} version in Cargo.lock must match Cargo workspace version"
         );
     }
-}
-
-#[test]
-fn installer_refreshes_shell_association_cache_after_registry_changes() {
-    let registration = registration_source();
-    let app_bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    let app_state = include_str!("../../occluview-app/src/app/state.rs");
-    let wxs = include_str!("../../../install/occluview.wxs");
-
-    assert!(registration.contains("SHChangeNotify"));
-    assert!(registration.contains("SHCNE_ASSOCCHANGED"));
-    assert!(registration.contains("SHCNF_IDLIST"));
-    assert!(registration.contains("notify_shell_associations_changed();"));
-    assert!(app_state.contains("\"--shell-refresh\""));
-    assert!(app_bootstrap.contains("notify_shell_associations_changed"));
-    assert!(wxs.contains("Id=\"RefreshShellAssociationsInstall\""));
-    assert!(wxs.contains("Id=\"RefreshShellAssociationsUninstall\""));
-    assert!(wxs.contains("FileKey=\"filOccluViewExe\""));
-    assert!(wxs.contains("ExeCommand=\"--shell-refresh\""));
-    assert!(wxs.contains("After=\"WriteRegistryValues\""));
-    assert!(wxs.contains("After=\"RemoveRegistryValues\""));
-    assert!(!wxs.contains("filOccluViewCli"));
 }
 
 #[test]

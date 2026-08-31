@@ -81,7 +81,7 @@ pub(crate) fn show_scene_context_menu(
         }
         if menu_item(ui, icon, label, enabled).clicked() {
             *request = Some(action);
-            ui.close_menu();
+            ui.close();
         }
     }
 }

@@ -133,6 +133,10 @@ pub(super) fn downsample_rgba_premultiplied(
             }
             let dst = ((y * target_size) + x) * 4;
             let alpha = alpha_sum / samples;
+            #[expect(
+                clippy::manual_checked_ops,
+                reason = "nonzero accumulated-alpha guard precedes pixel division"
+            )]
             if alpha_sum > 0 {
                 out[dst] = u8::try_from(red_sum / alpha_sum).unwrap_or(u8::MAX);
                 out[dst + 1] = u8::try_from(green_sum / alpha_sum).unwrap_or(u8::MAX);
@@ -151,7 +155,12 @@ fn boost_sparse_thumbnail_visibility(mut pixels: Vec<u8>, size_px: u16) -> Vec<u
     }
 
     let pixel_count = size * size;
-    let visible = pixels.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let visible = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     if visible == 0 || visible >= (pixel_count / 48).max(8) {
         return pixels;
     }
@@ -315,6 +324,10 @@ struct ProjectedMeshFrame {
     span: f32,
 }
 
+#[expect(
+    clippy::manual_midpoint,
+    reason = "preserve established thumbnail geometry output"
+)]
 fn projected_mesh_frame(mesh: &Mesh, camera: &Camera) -> Option<ProjectedMeshFrame> {
     let vertices = mesh.vertices();
     if vertices.is_empty() {
@@ -388,7 +401,7 @@ fn projected_triangle_area_score(mesh: &Mesh, camera: &Camera) -> f32 {
     let triangle_count = indices.len() / 3;
     let stride = (triangle_count / THUMBNAIL_AREA_SAMPLE_LIMIT).max(1);
     let mut area = 0.0_f32;
-    for triangle in indices.chunks_exact(3).step_by(stride) {
+    for triangle in indices.as_chunks::<3>().0.iter().step_by(stride) {
         let a = projected_vertex_uv(vertices[triangle[0] as usize].position, center, right, up);
         let b = projected_vertex_uv(vertices[triangle[1] as usize].position, center, right, up);
         let c = projected_vertex_uv(vertices[triangle[2] as usize].position, center, right, up);

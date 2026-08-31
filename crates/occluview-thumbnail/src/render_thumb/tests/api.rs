@@ -385,7 +385,9 @@ fn large_ply_streams_resurrect_fast_point_cloud_surrogate_and_render_non_black_p
     let pixels = render_thumbnail_or_placeholder(Some("ply"), &bytes, spec);
     assert_ne!(pixels, placeholder_thumbnail(spec));
     let has_visible_non_black_pixel = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .any(|px| px[3] > 0 && (px[0] > 0 || px[1] > 0 || px[2] > 0));
     assert!(
         has_visible_non_black_pixel,
@@ -450,7 +452,7 @@ fn large_stl_file_and_ply_stream_render_through_the_public_thumbnail_entry_point
     let ply_bytes = fixtures::large_binary_ply_point_grid(33 * 1024 * 1024);
     let ply_pixels = render_thumbnail_or_placeholder(Some("ply"), &ply_bytes, spec);
     assert_ne!(ply_pixels, placeholder_thumbnail(spec));
-    let has_opaque_pixel = ply_pixels.chunks_exact(4).any(|px| px[3] > 0);
+    let has_opaque_pixel = ply_pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0);
     assert!(
         has_opaque_pixel,
         "large PLY stream thumbnail through the public entry point should not be fully transparent"

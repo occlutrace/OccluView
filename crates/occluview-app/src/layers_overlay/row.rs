@@ -239,7 +239,7 @@ fn tint_swatch(
     let mut changed = false;
     let swatch = egui::Button::new("")
         .fill(color32_from_tint(*tint))
-        .stroke(egui::Stroke::new(1.0, ui_theme::panel_stroke()));
+        .stroke(egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()));
     let response = ui
         .add_enabled_ui(enabled, |ui| {
             ui.add_sized(
@@ -251,15 +251,13 @@ fn tint_swatch(
         .on_hover_text("Choose tint");
 
     let popup_id = ui.make_persistent_id(("layer_tint_palette", view.layer_id));
-    if response.clicked() {
-        ui.memory_mut(|memory| memory.toggle_popup(popup_id));
-    }
-    egui::popup::popup_below_widget(
-        ui,
-        popup_id,
-        &response,
-        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-        |ui| {
+    egui::Popup::from_toggle_button_response(&response)
+        .id(popup_id)
+        .align(egui::RectAlign::BOTTOM_START)
+        .align_alternatives(&[])
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
             ui.set_min_width(170.0);
             // Bounded and scrolling: the palette is two groups long now, and a
             // popup opening off a layer row near the bottom of the window would
@@ -301,7 +299,8 @@ fn tint_swatch(
                                     ui.painter().rect_stroke(
                                         swatch_rect,
                                         3.0,
-                                        egui::Stroke::new(1.0, ui_theme::hairline()),
+                                        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
+                                        egui::StrokeKind::Middle,
                                     );
                                     ui.selectable_label(is_current, name)
                                 })
@@ -313,8 +312,7 @@ fn tint_swatch(
                         }
                     }
                 });
-        },
-    );
+        });
     changed
 }
 
@@ -357,7 +355,7 @@ mod tests {
             .map_or(source.as_str(), |(source, _)| source);
 
         assert!(
-            production_source.contains("popup_below_widget")
+            production_source.contains("Popup::from_toggle_button_response")
                 && production_source.contains("LAYER_TINT_PRESETS"),
             "the tint swatch should open a named palette popup with the preset colors"
         );

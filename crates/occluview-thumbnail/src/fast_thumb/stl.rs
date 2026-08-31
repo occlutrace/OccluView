@@ -86,12 +86,11 @@ fn decode_stl_triangle(bytes: &[u8], triangle_index: usize) -> Result<StlTriangl
             got: bytes.len(),
         })?;
     let mut floats = [0.0_f32; 12];
-    for (slot, chunk) in floats.iter_mut().zip(record[..48].chunks_exact(4)) {
-        let arr: [u8; 4] = chunk.try_into().map_err(|_| FormatError::Malformed {
-            format: "STL (binary)",
-            offset: start,
-            reason: "float field is not 4 bytes".to_string(),
-        })?;
+    for (slot, chunk) in floats
+        .iter_mut()
+        .zip(record[..48].as_chunks::<4>().0.iter())
+    {
+        let arr = *chunk;
         *slot = f32::from_le_bytes(arr);
     }
     Ok((

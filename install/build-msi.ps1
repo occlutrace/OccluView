@@ -191,6 +191,7 @@ $msiPath = Join-Path $outputDir "$outputName.msi"
 if (-not $SkipBuild) {
     $cargoArgs = @(
         "build",
+        "--locked",
         "-p", "occluview-app",
         "--target", $Target
     )
@@ -199,6 +200,7 @@ if (-not $SkipBuild) {
     # blank every thumbnail in the folder.
     $shellCargoArgs = @(
         "build",
+        "--locked",
         "-p", "occluview-shell",
         "--target", $Target
     )

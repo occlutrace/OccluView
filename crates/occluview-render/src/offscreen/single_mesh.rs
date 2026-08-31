@@ -13,6 +13,10 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "preserve the lazy async renderer API and first-poll execution boundary"
+    )]
     #[allow(clippy::unused_async)]
     pub async fn render(
         &self,
@@ -59,15 +63,15 @@ impl Offscreen {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
                     rows_per_image: Some(size),
@@ -84,6 +88,10 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "preserve the lazy async renderer API and first-poll execution boundary"
+    )]
     #[allow(clippy::unused_async)]
     pub async fn render_clipped(
         &self,
@@ -117,6 +125,7 @@ impl Offscreen {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &color_view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: spec.background[0],
@@ -140,6 +149,7 @@ impl Offscreen {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         self.renderer.draw(
             &mut rpass,
@@ -160,15 +170,15 @@ impl Offscreen {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
                     rows_per_image: Some(size),
@@ -203,6 +213,10 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "preserve the lazy async renderer API and first-poll execution boundary"
+    )]
     #[allow(
         clippy::unused_async,
         clippy::too_many_arguments,
@@ -260,6 +274,7 @@ impl Offscreen {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &color_view,
                         resolve_target: None,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: color_load,
                             store: wgpu::StoreOp::Store,
@@ -278,6 +293,7 @@ impl Offscreen {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 rpass.set_pipeline(pipeline);
                 rpass.set_bind_group(0, &camera_bg, &[]);
@@ -323,6 +339,7 @@ impl Offscreen {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &color_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -341,6 +358,7 @@ impl Offscreen {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             rpass.set_pipeline(&self.renderer.cap_pipeline);
             rpass.set_bind_group(0, &camera_bg, &[]);
@@ -367,6 +385,7 @@ impl Offscreen {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &color_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: color_load,
                         store: wgpu::StoreOp::Store,
@@ -385,6 +404,7 @@ impl Offscreen {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             self.renderer.draw(
                 &mut rpass,
@@ -405,15 +425,15 @@ impl Offscreen {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
                     rows_per_image: Some(size),

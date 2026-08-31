@@ -249,7 +249,7 @@ fn layer_menu_button(
             layer_id: target.layer_id,
             action: button.action,
         });
-        ui.close_menu();
+        ui.close();
     }
 }
 
@@ -315,7 +315,7 @@ fn menu_title(ui: &mut egui::Ui, label: &str) {
     let measure = {
         let font = font.clone();
         move |text: &str| {
-            ctx.fonts(|fonts| {
+            ctx.fonts_mut(|fonts| {
                 fonts
                     .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
                     .size()
@@ -368,7 +368,7 @@ fn elide_middle(text: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> St
     let mut hi = n - 1;
     let mut best = 0usize;
     while lo <= hi {
-        let mid = (lo + hi) / 2;
+        let mid = lo.midpoint(hi);
         if measure(&build(mid)) <= max_width {
             best = mid;
             lo = mid + 1;

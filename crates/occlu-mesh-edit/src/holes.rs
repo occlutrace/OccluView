@@ -507,7 +507,7 @@ fn triangle_already_exists(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> b
     let mut rim = [0usize; 3];
     rim.copy_from_slice(boundary_loop);
     rim.sort_unstable();
-    mesh.indices.chunks_exact(3).any(|triangle| {
+    mesh.indices.as_chunks::<3>().0.iter().any(|triangle| {
         let mut triple = [
             triangle[0] as usize,
             triangle[1] as usize,

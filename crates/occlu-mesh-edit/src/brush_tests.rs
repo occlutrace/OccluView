@@ -293,7 +293,7 @@ fn guard_prevents_triangle_inversion_under_a_large_add_stroke() {
     }
     let result = session.finish();
 
-    for triangle in result.mesh.indices.chunks_exact(3) {
+    for triangle in result.mesh.indices.as_chunks::<3>().0 {
         let [a, b, c] = [
             triangle[0] as usize,
             triangle[1] as usize,
@@ -366,7 +366,7 @@ fn one_session_survives_hundred_add_and_smooth_dabs() {
             .iter()
             .all(|component| component.is_finite())
     }));
-    for triangle in result.mesh.indices.chunks_exact(3) {
+    for triangle in result.mesh.indices.as_chunks::<3>().0 {
         let [a, b, c] = [
             triangle[0] as usize,
             triangle[1] as usize,
@@ -621,7 +621,7 @@ fn coherent_push_keeps_a_genuinely_tiny_edge_valid() {
     assert!(step.is_finite() && step > 0.0);
 
     let result = session.finish();
-    for triangle in result.mesh.indices.chunks_exact(3) {
+    for triangle in result.mesh.indices.as_chunks::<3>().0 {
         let [a, b, c] = [
             triangle[0] as usize,
             triangle[1] as usize,

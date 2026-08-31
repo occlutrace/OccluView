@@ -74,7 +74,7 @@ pub(super) fn split_bowtie_vertices(
     report: &mut RepairReport,
 ) -> Result<(), MeshEditError> {
     let mut incidence: Vec<(u32, usize)> = Vec::with_capacity(mesh.indices.len());
-    for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         for &vertex in tri {
             incidence.push((vertex, triangle));
         }

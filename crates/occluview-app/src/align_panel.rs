@@ -189,7 +189,7 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
                 painter.hline(
                     egui::Rangef::new(rect.left() + 6.0, rect.right() - 6.0),
                     rect.bottom() - 1.0,
-                    egui::Stroke::new(1.6, ui_theme::ACCENT),
+                    egui::Stroke::new(1.6_f32, ui_theme::ACCENT),
                 );
             }
             if response.clicked() {
@@ -542,7 +542,11 @@ pub(crate) fn chip(
     painter.rect_stroke(
         rect,
         CHIP_ROUNDING,
-        egui::Stroke::new(1.0, ink.gamma_multiply(if active { 0.70 } else { 0.30 })),
+        egui::Stroke::new(
+            1.0_f32,
+            ink.gamma_multiply(if active { 0.70 } else { 0.30 }),
+        ),
+        egui::StrokeKind::Middle,
     );
     let font = egui::FontId::proportional(11.5);
     match (icon, label.is_empty()) {
@@ -615,7 +619,11 @@ fn fit_button(
     painter.rect_stroke(
         rect,
         CHIP_ROUNDING,
-        egui::Stroke::new(1.0, ink.gamma_multiply(if primary { 0.75 } else { 0.35 })),
+        egui::Stroke::new(
+            1.0_f32,
+            ink.gamma_multiply(if primary { 0.75 } else { 0.35 }),
+        ),
+        egui::StrokeKind::Middle,
     );
     let glyph = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 21.0, rect.center().y),
@@ -642,7 +650,7 @@ fn tall_button(ui: &mut egui::Ui, width: f32, label: &str, primary: bool) -> egu
                 .color(egui::Color32::WHITE),
         )
         .fill(ui_theme::ACCENT)
-        .rounding(egui::Rounding::same(CHIP_ROUNDING));
+        .corner_radius(CHIP_ROUNDING);
         ui.add(button.min_size(egui::vec2(width, 28.0)))
     } else {
         let text = egui::RichText::new(label).size(12.5).color(ui_theme::TEXT);

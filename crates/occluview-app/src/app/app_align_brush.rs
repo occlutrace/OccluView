@@ -36,6 +36,26 @@ fn marked_on(entry: &SceneMesh) -> MarkedOn {
     }
 }
 
+fn resize_align_brush_from_wheel(
+    brush: &mut crate::align_brush::AlignBrush,
+    ctx: &egui::Context,
+) -> bool {
+    // Some platforms turn a shifted wheel into HORIZONTAL scroll, so read
+    // whichever axis actually moved.
+    let raw = super::app_input::raw_wheel_delta(ctx);
+    let scroll = if raw.y.abs() >= raw.x.abs() {
+        raw.y
+    } else {
+        raw.x
+    };
+    let shift = ctx.input(|input| input.modifiers.shift);
+    if !shift || scroll.abs() < f32::EPSILON {
+        return false;
+    }
+    brush.nudge_radius(scroll.signum());
+    true
+}
+
 impl OccluViewApp {
     /// Paint or clear under the pointer. Returns whether the brush owns this
     /// frame's pointer.
@@ -156,21 +176,9 @@ impl OccluViewApp {
         if !over_viewport {
             return false;
         }
-        let (scroll, shift) = ctx.input(|input| {
-            // Some platforms turn a shifted wheel into HORIZONTAL scroll, so
-            // read whichever axis actually moved.
-            let raw = input.raw_scroll_delta;
-            let axis = if raw.y.abs() >= raw.x.abs() {
-                raw.y
-            } else {
-                raw.x
-            };
-            (axis, input.modifiers.shift)
-        });
-        if !shift || scroll.abs() < f32::EPSILON {
+        if !resize_align_brush_from_wheel(&mut self.align.brush, ctx) {
             return false;
         }
-        self.align.brush.nudge_radius(scroll.signum());
         self.align.status = Some(format!("Brush {:.1} mm", self.align.brush.radius_mm()));
         ctx.request_repaint();
         true
@@ -215,7 +223,7 @@ impl OccluViewApp {
         };
         let canvas = ui.painter();
         canvas.circle_filled(pointer, radius_px, ink.gamma_multiply(0.10));
-        canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.2, ink));
+        canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.2_f32, ink));
         canvas.circle_filled(pointer, 1.5, ink.gamma_multiply(0.7));
     }
 
@@ -482,6 +490,62 @@ fn region_color(
 
 #[cfg(test)]
 mod tests {
+    use super::resize_align_brush_from_wheel;
+    use crate::align_brush::AlignBrush;
+    use eframe::egui;
+
+    fn shift_input(mut events: Vec<egui::Event>) -> egui::RawInput {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        events.insert(0, egui::Event::ModifiersChanged(shift));
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn consumer_wheel_align_shift_resizes_once_from_horizontal_raw_event() {
+        let ctx = egui::Context::default();
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut brush = AlignBrush::default();
+        brush.set_radius_mm(2.0);
+        let mut first_changed = false;
+        ctx.run_ui(
+            shift_input(vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 50.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: shift,
+            }]),
+            |ui| first_changed = resize_align_brush_from_wheel(&mut brush, ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+
+        assert!(first_changed);
+        assert!((brush.radius_mm() - 2.25).abs() < f32::EPSILON);
+
+        let mut replayed = true;
+        ctx.run_ui(shift_input(Vec::new()), |ui| {
+            replayed = resize_align_brush_from_wheel(&mut brush, ui.ctx());
+        })
+        .drop_without_applying_deltas();
+
+        assert!(
+            !replayed,
+            "one physical notch must not replay from smoothing"
+        );
+        assert!((brush.radius_mm() - 2.25).abs() < f32::EPSILON);
+    }
 
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.

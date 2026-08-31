@@ -33,3 +33,8 @@ thiserror = { workspace = true }
 zeroize  = { workspace = true }
 tracing  = { workspace = true }
 zip      = { workspace = true }
+
+[dev-dependencies]
+# The production reader accepts only PNG/JPEG. Enable BMP in tests solely to
+# prove that the byte-level allowlist still refuses a valid, decodable BMP.
+image = { workspace = true, features = ["bmp"] }

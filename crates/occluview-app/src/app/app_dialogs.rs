@@ -12,7 +12,8 @@ use eframe::egui;
 impl OccluViewApp {
     /// Draw the top toolbar and dispatch its actions after layout.
     #[allow(clippy::too_many_lines)]
-    pub(super) fn show_toolbar(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_toolbar(&mut self, root_ui: &mut egui::Ui) {
+        let ctx = root_ui.ctx().clone();
         if self.close_guard_open
             || self.pending_replace_open.is_some()
             || self.app_error.is_some()
@@ -31,15 +32,15 @@ impl OccluViewApp {
         let mut toggle_align = false;
         let mut settings_anchor = None;
 
-        egui::TopBottomPanel::top("toolbar")
-            .exact_height(ui_theme::MENUBAR_HEIGHT_PX)
+        egui::Panel::top("toolbar")
+            .exact_size(ui_theme::MENUBAR_HEIGHT_PX)
             .frame(
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(247, 248, 250))
-                    .stroke(egui::Stroke::new(1.0, ui_theme::hairline()))
-                    .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
+                    .stroke(egui::Stroke::new(1.0_f32, ui_theme::hairline()))
+                    .inner_margin(egui::Margin::symmetric(8, 0)),
             )
-            .show(ctx, |ui| {
+            .show(root_ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
 
@@ -71,15 +72,13 @@ impl OccluViewApp {
                         );
                         let response = response.on_hover_text("Recent files");
                         let popup_id = ui.make_persistent_id("recent_files_dropdown");
-                        if response.clicked() {
-                            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
-                        }
-                        egui::popup::popup_below_widget(
-                            ui,
-                            popup_id,
-                            &response,
-                            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-                            |ui| {
+                        egui::Popup::from_toggle_button_response(&response)
+                            .id(popup_id)
+                            .align(egui::RectAlign::BOTTOM_START)
+                            .align_alternatives(&[])
+                            .layout(egui::Layout::top_down_justified(egui::Align::Min))
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
                                 ui.set_min_width(220.0);
                                 for entry in self.recent_files.entries() {
                                     if ui
@@ -88,16 +87,15 @@ impl OccluViewApp {
                                         .clicked()
                                     {
                                         recent_to_open = Some(entry.paths().to_vec());
-                                        ui.memory_mut(egui::Memory::close_popup);
+                                        egui::Popup::close_id(ui.ctx(), popup_id);
                                     }
                                 }
                                 ui.separator();
                                 if ui.button("Clear recent").clicked() {
                                     clear_recent = true;
-                                    ui.memory_mut(egui::Memory::close_popup);
+                                    egui::Popup::close_id(ui.ctx(), popup_id);
                                 }
-                            },
-                        );
+                            });
                     });
                     ui.add_space(4.0);
                     if toolbar_toggle(
@@ -248,16 +246,16 @@ impl OccluViewApp {
             });
 
         if let Some(anchor) = settings_anchor {
-            self.show_settings_popover(ctx, anchor);
+            self.show_settings_popover(&ctx, anchor);
         }
 
         if toggle_align {
             if self.align_active() {
                 // Turning the tool off is a close, and a close reverts. Done,
                 // inside the window, is what keeps an alignment.
-                self.cancel_align_session(ctx);
+                self.cancel_align_session(&ctx);
             } else {
-                self.arm_align_tool(ctx);
+                self.arm_align_tool(&ctx);
             }
         }
         if toggle_cut_view {
@@ -274,7 +272,7 @@ impl OccluViewApp {
         // Arming a measurement or the cut view closes Align, the same way
         // arming Align closes them. Two tools cannot share the primary click.
         if (toggle_measure.is_some() || toggle_cut_view) && self.align_active() {
-            self.cancel_align_session(ctx);
+            self.cancel_align_session(&ctx);
         }
         if let Some(clicked) = toggle_measure {
             let (next, disable_cut) = measure_tool::apply_menu_toggle(
@@ -337,14 +335,14 @@ impl OccluViewApp {
         }
         let rect = status_overlay_rect(viewport_rect);
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(egui::Color32::from_rgba_unmultiplied(248, 250, 252, 214))
                 .stroke(egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     egui::Color32::from_rgba_unmultiplied(26, 32, 44, 30),
                 ))
-                .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                .corner_radius(8)
+                .inner_margin(egui::Margin::symmetric(10, 7))
                 .show(ui, |ui| {
                     if let Some(message) = &self.status_message {
                         ui.label(message);
@@ -353,18 +351,20 @@ impl OccluViewApp {
         });
     }
 
-    /// Intercept window close while unsaved mesh edits exist: cancel the close
-    /// and ask. "Save…" walks each edited layer through the export dialog and
-    /// closes once everything is on disk; "Close without saving" re-issues the
-    /// close with consent given.
-    pub(super) fn guard_unsaved_close(&mut self, ctx: &egui::Context) {
-        if ctx.input(|input| input.viewport().close_requested())
-            && self.has_unsaved_mesh_edits()
-            && !self.close_confirmed
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.close_guard_open = true;
-        }
+    /// Cancel a window close before eframe can act on it without a visible UI pass.
+    pub(super) fn intercept_unsaved_close(&mut self, ctx: &egui::Context) {
+        intercept_unsaved_close_request(
+            ctx,
+            self.has_unsaved_mesh_edits(),
+            self.close_confirmed,
+            &mut self.close_guard_open,
+        );
+    }
+
+    /// Ask how to resolve an intercepted close with unsaved mesh edits.
+    /// "Save…" exports each edited layer before closing; the destructive path
+    /// re-issues the close only after explicit consent.
+    pub(super) fn show_unsaved_close_guard(&mut self, ctx: &egui::Context) {
         if !self.close_guard_open {
             return;
         }
@@ -543,6 +543,22 @@ impl OccluViewApp {
     }
 }
 
+fn intercept_unsaved_close_request(
+    ctx: &egui::Context,
+    has_unsaved_mesh_edits: bool,
+    close_confirmed: bool,
+    close_guard_open: &mut bool,
+) {
+    if ctx.input(|input| input.viewport().close_requested())
+        && has_unsaved_mesh_edits
+        && !close_confirmed
+    {
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        *close_guard_open = true;
+        ctx.request_repaint();
+    }
+}
+
 struct GuardDialogSpec<'a> {
     id: &'static str,
     title: &'a str,
@@ -570,7 +586,7 @@ fn show_guard_dialog(ctx: &egui::Context, spec: GuardDialogSpec<'_>) -> GuardDia
     egui::Window::new(spec.title)
         .id(egui::Id::new(spec.id))
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .constrain_to(ctx.screen_rect().shrink(8.0))
+        .constrain_to(ctx.content_rect().shrink(8.0))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -616,7 +632,7 @@ fn toolbar_divider(ui: &mut egui::Ui) {
     ui.painter().vline(
         rect.center().x,
         egui::Rangef::new(rect.top(), rect.bottom()),
-        egui::Stroke::new(1.0, ui_theme::hairline()),
+        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
     );
     ui.add_space(6.0);
 }
@@ -629,12 +645,38 @@ fn dialog_primary_button(label: &str) -> egui::Button<'_> {
             .color(egui::Color32::WHITE),
     )
     .fill(ui_theme::ACCENT)
-    .rounding(egui::Rounding::same(ui_theme::RADIUS_CONTROL))
+    .corner_radius(ui_theme::RADIUS_CONTROL)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_window_close_is_cancelled_before_ui_can_run() {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        let root_viewport = input.viewports.get_mut(&egui::ViewportId::ROOT);
+        assert!(root_viewport.is_some(), "root viewport exists");
+        let Some(root_viewport) = root_viewport else {
+            return;
+        };
+        root_viewport.events.push(egui::ViewportEvent::Close);
+        let mut close_guard_open = false;
+
+        let output = ctx.run_logic(&input, |ctx| {
+            intercept_unsaved_close_request(ctx, true, false, &mut close_guard_open);
+        });
+
+        assert!(close_guard_open, "unsaved close must open the guard");
+        assert!(
+            output
+                .viewport_commands
+                .get(&egui::ViewportId::ROOT)
+                .is_some_and(|commands| { commands.contains(&egui::ViewportCommand::CancelClose) }),
+            "logic-only close must be cancelled before eframe exits"
+        );
+    }
 
     #[test]
     fn production_guard_dialog_stays_content_sized() -> anyhow::Result<()> {
@@ -646,9 +688,9 @@ mod tests {
             )),
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        ctx.run_ui(input, |ui| {
             let _ = show_guard_dialog(
-                ctx,
+                ui.ctx(),
                 GuardDialogSpec {
                     id: "guard-size-contract",
                     title: "Unsaved mesh edits",
@@ -658,7 +700,8 @@ mod tests {
                     destructive_label: "Close without saving",
                 },
             );
-        });
+        })
+        .drop_without_applying_deltas();
 
         let Some(rect) =
             ctx.memory(|memory| memory.area_rect(egui::Id::new("guard-size-contract")))

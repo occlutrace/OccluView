@@ -173,7 +173,7 @@ fn affine_bits(transform: &Affine3A) -> [u32; 12] {
         transform.translation.to_array(),
     ];
     let mut bits = [0u32; 12];
-    for (col, chunk) in cols.iter().zip(bits.chunks_exact_mut(3)) {
+    for (col, chunk) in cols.iter().zip(bits.as_chunks_mut::<3>().0.iter_mut()) {
         for (value, slot) in col.iter().zip(chunk) {
             *slot = value.to_bits();
         }

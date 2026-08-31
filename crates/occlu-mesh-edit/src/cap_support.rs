@@ -17,7 +17,7 @@ const SUPPORT_RING_DEPTH: usize = 2;
 /// validation, so this stays infallible.
 pub(super) fn build_vertex_adjacency(mesh: &MeshEditBuffers) -> Vec<Vec<usize>> {
     let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); mesh.vertices.len()];
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         let [a, b, c] = [
             triangle[0] as usize,
             triangle[1] as usize,

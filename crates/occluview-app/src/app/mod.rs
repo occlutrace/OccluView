@@ -51,6 +51,7 @@ mod app_align_session;
 mod app_bridge_split;
 mod app_cut_measure;
 mod app_dialogs;
+mod app_input;
 mod app_layer_edits;
 mod app_layer_interaction;
 mod app_load_errors;
@@ -58,11 +59,15 @@ mod app_loading;
 mod app_mesh_editor;
 mod app_mesh_export;
 mod app_render;
+#[cfg(test)]
+mod app_render_characterization_tests;
 mod app_scale_bar;
 mod app_scene_commit;
 mod app_scene_export;
 mod app_scene_menu;
 mod app_sculpt;
+#[cfg(test)]
+mod app_sculpt_characterization_tests;
 mod app_sculpt_worker;
 mod app_settings_window;
 mod app_third_party;

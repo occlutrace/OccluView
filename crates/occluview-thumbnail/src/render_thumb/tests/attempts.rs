@@ -290,7 +290,7 @@ fn assert_burst_verdict(
                 "{label} must render real geometry, not the corrupt placeholder"
             );
             assert!(
-                pixels.chunks_exact(4).any(|px| px[3] > 0),
+                pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0),
                 "{label} rendered a fully transparent tile"
             );
         }

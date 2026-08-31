@@ -8,7 +8,7 @@ use crate::update_notice::UpdateCheckStatus;
 use eframe::egui;
 
 const PANEL_CONTENT_WIDTH: f32 = 320.0;
-const PANEL_MARGIN: f32 = 12.0;
+const PANEL_MARGIN: i8 = 12;
 const ROW_HEIGHT: f32 = 30.0;
 const SETTINGS_PANEL_ID: &str = "settings-popover-v2";
 
@@ -55,7 +55,7 @@ impl OccluViewApp {
                     self.settings.update_check_on_start = enabled;
                     self.settings_persistence.mark_dirty();
                 }
-                SettingsAction::CheckForUpdates => self.update_notice.request_check(),
+                SettingsAction::CheckForUpdates => self.update_notice.request_check(ctx),
                 SettingsAction::OpenAbout => {
                     self.settings_window.open = false;
                     self.settings_window.about_open = true;
@@ -86,7 +86,7 @@ impl OccluViewApp {
         egui::Window::new("About OccluView")
             .id(egui::Id::new("occluview-about-dialog-v2"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .constrain_to(ctx.screen_rect().shrink(8.0))
+            .constrain_to(ctx.content_rect().shrink(8.0))
             .open(&mut open)
             .movable(false)
             .resizable(false)
@@ -176,7 +176,7 @@ fn show_settings_panel(
     save_error: Option<&str>,
 ) -> SettingsPanelResponse {
     let mut actions = Vec::new();
-    let screen = ctx.screen_rect().shrink(8.0);
+    let screen = ctx.content_rect().shrink(8.0);
     let position = anchor.right_bottom() + egui::vec2(0.0, 4.0);
     let area = egui::Area::new(egui::Id::new(SETTINGS_PANEL_ID))
         .order(egui::Order::Foreground)
@@ -186,8 +186,8 @@ fn show_settings_panel(
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
                 .fill(egui::Color32::from_rgb(250, 251, 252))
-                .stroke(egui::Stroke::new(1.0, ui_theme::panel_stroke()))
-                .rounding(egui::Rounding::same(8.0))
+                .stroke(egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()))
+                .corner_radius(8)
                 .shadow(ui_theme::panel_shadow())
                 .inner_margin(egui::Margin::same(PANEL_MARGIN))
                 .show(ui, |ui| {
@@ -253,7 +253,7 @@ fn show_settings_panel(
         });
 
     let rect = area.response.rect;
-    let popup_open = ctx.memory(egui::Memory::any_popup_open);
+    let popup_open = egui::Popup::is_any_open(ctx);
     let escape = !popup_open && ctx.input(|input| input.key_pressed(egui::Key::Escape));
     let outside_press = ctx.input(|input| {
         input.pointer.any_pressed()
@@ -403,25 +403,189 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
 mod tests {
     use super::*;
 
+    fn test_screen() -> egui::Rect {
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 384.0))
+    }
+
+    fn test_anchor() -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(410.0, 4.0), egui::pos2(492.0, 30.0))
+    }
+
+    fn run_settings_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> anyhow::Result<(SettingsPanelResponse, egui::FullOutput)> {
+        let input = egui::RawInput {
+            screen_rect: Some(test_screen()),
+            events,
+            ..Default::default()
+        };
+        let mut response = None;
+        let mut output = ctx.run_ui(input, |ui| {
+            response = Some(show_settings_panel(
+                ui.ctx(),
+                test_anchor(),
+                &Settings::default(),
+                &UpdateCheckStatus::Idle,
+                None,
+            ));
+        });
+        let response = response
+            .ok_or_else(|| anyhow::anyhow!("the production settings panel should render"))?;
+        // These tests inspect shapes and widget state but intentionally do not
+        // mount an egui renderer. eframe applies these deltas in production.
+        output.textures_delta.clear();
+        Ok((response, output))
+    }
+
+    fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn rendered_panel_rect(ctx: &egui::Context) -> anyhow::Result<egui::Rect> {
+        ctx.memory(|memory| memory.area_rect(egui::Id::new(SETTINGS_PANEL_ID)))
+            .ok_or_else(|| anyhow::anyhow!("the production settings panel should render"))
+    }
+
+    fn point_outside_panel(panel: egui::Rect) -> anyhow::Result<egui::Pos2> {
+        let screen = test_screen();
+        let outside = egui::pos2(f32::midpoint(screen.left(), panel.left()), panel.center().y);
+        if !screen.contains(outside) || panel.contains(outside) || test_anchor().contains(outside) {
+            return Err(anyhow::anyhow!(
+                "derived outside point {outside:?} was invalid for panel {panel:?}"
+            ));
+        }
+        Ok(outside)
+    }
+
+    #[test]
+    fn settings_does_not_dismiss_while_child_combo_popup_is_open() -> anyhow::Result<()> {
+        let closed_ctx = egui::Context::default();
+        let _ = run_settings_frame(&closed_ctx, Vec::new())?;
+        let _ = run_settings_frame(&closed_ctx, Vec::new())?;
+        let closed_panel = rendered_panel_rect(&closed_ctx)?;
+        let outside = point_outside_panel(closed_panel)?;
+        assert!(!closed_panel.contains(outside));
+
+        let (while_child_closed, _) = run_settings_frame(
+            &closed_ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, true),
+            ],
+        )?;
+        assert!(
+            while_child_closed.dismissed,
+            "the production panel must dismiss on the outside press when its ComboBox is closed"
+        );
+
+        let open_ctx = egui::Context::default();
+        let _ = run_settings_frame(&open_ctx, Vec::new())?;
+        let (_, visible_frame) = run_settings_frame(&open_ctx, Vec::new())?;
+        let combo = visible_frame
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == "PLY" => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("the production export-format control should render"))?;
+
+        let _ = run_settings_frame(&open_ctx, vec![egui::Event::PointerMoved(combo)])?;
+        let _ = run_settings_frame(
+            &open_ctx,
+            vec![
+                egui::Event::PointerMoved(combo),
+                pointer_button(combo, true),
+            ],
+        )?;
+        let (opened, _) = run_settings_frame(
+            &open_ctx,
+            vec![
+                egui::Event::PointerMoved(combo),
+                pointer_button(combo, false),
+            ],
+        )?;
+        assert!(!opened.dismissed);
+        assert!(
+            egui::Popup::is_any_open(&open_ctx),
+            "the production export-format ComboBox should be open"
+        );
+        let (empty_open_frame, _) = run_settings_frame(&open_ctx, Vec::new())?;
+        assert!(
+            !empty_open_frame.dismissed,
+            "an open child must keep Settings alive across an empty frame"
+        );
+        let open_panel = rendered_panel_rect(&open_ctx)?;
+        assert!(
+            !open_panel.contains(outside),
+            "the same derived point must be outside the rendered open panel"
+        );
+
+        let (while_child_open, _) = run_settings_frame(
+            &open_ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, true),
+            ],
+        )?;
+
+        assert!(
+            !while_child_open.dismissed,
+            "the first outside press belongs to the open child popup"
+        );
+
+        let (after_child_release, _) = run_settings_frame(
+            &open_ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, false),
+            ],
+        )?;
+        assert!(
+            !after_child_release.dismissed,
+            "closing the child must not also dismiss its Settings parent"
+        );
+
+        let (second_outside_press, _) = run_settings_frame(
+            &open_ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, true),
+            ],
+        )?;
+        assert!(
+            second_outside_press.dismissed,
+            "a later outside click must dismiss Settings once the child is closed"
+        );
+        Ok(())
+    }
+
     #[test]
     fn production_settings_panel_fits_a_small_viewer_window() -> anyhow::Result<()> {
         let ctx = egui::Context::default();
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(500.0, 384.0),
-            )),
+            screen_rect: Some(test_screen()),
+            safe_area_insets: Some(egui::SafeAreaInsets(egui::epaint::MarginF32::same(4.0))),
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        ctx.run_ui(input, |ui| {
             let _ = show_settings_panel(
-                ctx,
-                egui::Rect::from_min_max(egui::pos2(410.0, 4.0), egui::pos2(492.0, 30.0)),
+                ui.ctx(),
+                test_anchor(),
                 &Settings::default(),
                 &UpdateCheckStatus::Failed("network unavailable".to_string()),
                 Some("read-only settings directory"),
             );
-        });
+        })
+        .drop_without_applying_deltas();
 
         let Some(rect) = ctx.memory(|memory| memory.area_rect(egui::Id::new(SETTINGS_PANEL_ID)))
         else {
@@ -433,9 +597,10 @@ mod tests {
             rect.width()
         );
         assert!(rect.height() <= 290.0, "height was {}", rect.height());
+        let allowed = ctx.content_rect().shrink(8.0);
         assert!(
-            rect.right() <= 492.0 && rect.bottom() <= 376.0,
-            "panel was {rect:?}"
+            allowed.contains_rect(rect),
+            "panel {rect:?} escaped safe content bounds {allowed:?}"
         );
         Ok(())
     }

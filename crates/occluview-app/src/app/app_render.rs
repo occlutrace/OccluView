@@ -517,8 +517,9 @@ impl OccluViewApp {
         self.section_cache.clear();
     }
 
-    pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub(super) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {
+        let ctx = root_ui.ctx().clone();
+        egui::CentralPanel::default().show(root_ui, |ui| {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(226, 230, 234));
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
@@ -529,7 +530,7 @@ impl OccluViewApp {
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
-                self.show_viewport_overlays(ui, &response, ctx);
+                self.show_viewport_overlays(ui, &response, &ctx);
             } else if let Some(texture) = self
                 .rendered
                 .as_ref()
@@ -542,7 +543,7 @@ impl OccluViewApp {
                     egui::Image::new((texture.id(), available))
                         .sense(egui::Sense::click_and_drag()),
                 );
-                self.show_viewport_overlays(ui, &response, ctx);
+                self.show_viewport_overlays(ui, &response, &ctx);
             } else if self.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);

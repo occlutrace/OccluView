@@ -162,10 +162,9 @@ impl SculptCommandQueue {
     }
 
     fn is_empty(&self) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.commands.is_empty() && !self.active.load(Ordering::Acquire))
-            .unwrap_or(true)
+        self.state.lock().map_or(true, |state| {
+            state.commands.is_empty() && !self.active.load(Ordering::Acquire)
+        })
     }
 }
 
@@ -269,8 +268,7 @@ impl SculptWorker {
         let worker_queue = Arc::clone(&queue);
         let worker_state = Arc::clone(&state);
         let pool_threads = thread::available_parallelism()
-            .map(|count| count.get().saturating_sub(1).clamp(1, 4))
-            .unwrap_or(1);
+            .map_or(1, |count| count.get().saturating_sub(1).clamp(1, 4));
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(pool_threads)
             .thread_name(|index| format!("occluview-sculpt-kernel-{index}"))
@@ -372,8 +370,7 @@ impl SculptWorker {
                 .state
                 .completions
                 .lock()
-                .map(|completions| completions.is_empty())
-                .unwrap_or(false)
+                .is_ok_and(|completions| completions.is_empty())
     }
 }
 

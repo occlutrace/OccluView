@@ -327,8 +327,18 @@ pub(super) fn write_mixed_folder_fixture(name: &str, bytes: &[u8]) -> PathBuf {
 pub(super) fn assert_burst_thumbnail_visible(path: &Path, pixels: &[u8], spec: ThumbnailSpec) {
     let pixel_count = usize::from(spec.size_px) * usize::from(spec.size_px);
     assert_eq!(pixels.len(), pixel_count * 4);
-    let transparent = pixels.chunks_exact(4).filter(|px| px[3] == 0).count();
-    let opaque = pixels.chunks_exact(4).filter(|px| px[3] == 255).count();
+    let transparent = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] == 0)
+        .count();
+    let opaque = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] == 255)
+        .count();
     assert!(
         transparent > pixel_count / 16,
         "thumbnail should keep transparent background pixels for {} (transparent={transparent}, opaque={opaque})",

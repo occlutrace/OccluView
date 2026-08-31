@@ -120,7 +120,7 @@ fn textured_render_preserves_channel_order() {
     let warm = render_uniform_textured(&uniform_texture([250, 240, 225, 255]));
     let mut warm_lit = 0usize;
     let mut warm_ok = 0usize;
-    for px in warm.chunks_exact(4) {
+    for px in warm.as_chunks::<4>().0 {
         if px[0] < 12 && px[1] < 12 && px[2] < 12 {
             continue; // background
         }
@@ -140,7 +140,7 @@ fn textured_render_preserves_channel_order() {
     let blue = render_uniform_textured(&uniform_texture([0, 0, 255, 255]));
     let mut blue_lit = 0usize;
     let mut blue_ok = 0usize;
-    for px in blue.chunks_exact(4) {
+    for px in blue.as_chunks::<4>().0 {
         if px[0] < 12 && px[1] < 12 && px[2] < 12 {
             continue;
         }
@@ -207,7 +207,9 @@ fn render_uniform_vertex_colored(rgba: [u8; 4]) -> Vec<u8> {
 
 fn brightest_lit_pixel(pixels: &[u8]) -> Option<[u8; 4]> {
     pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] >= 12 || px[1] >= 12 || px[2] >= 12)
         .max_by_key(|px| u32::from(px[0]) + u32::from(px[1]) + u32::from(px[2]))
         .map(|px| [px[0], px[1], px[2], px[3]])

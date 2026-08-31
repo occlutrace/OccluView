@@ -241,6 +241,10 @@ fn cholesky(matrix: &Matrix6) -> Option<Matrix6> {
     for row in 0..6 {
         for col in 0..=row {
             let mut sum = matrix[row][col];
+            #[expect(
+                clippy::needless_range_loop,
+                reason = "fixed 6x6 Cholesky indices preserve bit-repeatability"
+            )]
             for back in 0..col {
                 sum -= lower[row][back] * lower[col][back];
             }
@@ -327,6 +331,10 @@ fn jacobi(matrix: &Matrix6) -> ([f64; 6], Matrix6) {
                     row[p] = cosine * left - sine * right;
                     row[q] = sine * left + cosine * right;
                 }
+                #[expect(
+                    clippy::needless_range_loop,
+                    reason = "fixed 6x6 Jacobi indices preserve bit-repeatability"
+                )]
                 for slot in 0..6 {
                     let (left, right) = (work[p][slot], work[q][slot]);
                     work[p][slot] = cosine * left - sine * right;

@@ -363,8 +363,7 @@ fn print_usage_with_error() {
 }
 
 fn usage_text() -> &'static str {
-    concat!(
-        "occluview-cli - headless OccluView\n\
+    "occluview-cli - headless OccluView\n\
          \n\
          USAGE:\n    \
          occluview-cli <SUBCOMMAND> [ARGS]\n\
@@ -379,7 +378,6 @@ fn usage_text() -> &'static str {
          \n\
          Every subcommand takes its file first; -h or --help in that position\n\
          prints this message instead of naming a file."
-    )
 }
 
 #[cfg(test)]

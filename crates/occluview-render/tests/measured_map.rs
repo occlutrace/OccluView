@@ -147,7 +147,7 @@ fn a_measured_map_reaches_the_screen_in_the_colour_it_was_uploaded_in() {
     for uploaded in [COLD_END, HOT_END, [24, 200, 64, 255]] {
         let pixels = render_measured_dome(&colored_dome_mesh(uploaded));
         let mut covered = 0usize;
-        for px in pixels.chunks_exact(4) {
+        for px in pixels.as_chunks::<4>().0 {
             // A single-sample target leaves background pixels at exactly the
             // clear colour, so anything else is a fragment of the dome.
             if px[0].abs_diff(10) <= 1 && px[1].abs_diff(10) <= 1 && px[2].abs_diff(10) <= 1 {
@@ -192,7 +192,7 @@ fn a_swept_deviation_arrives_on_screen_as_a_transition() {
     let pixels = render_measured_dome(&ramped_dome_mesh(&stops));
 
     let (mut cold, mut nominal, mut hot) = (0usize, 0usize, 0usize);
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         if px[0].abs_diff(10) <= 1 && px[1].abs_diff(10) <= 1 && px[2].abs_diff(10) <= 1 {
             continue;
         }

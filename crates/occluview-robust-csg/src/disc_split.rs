@@ -268,7 +268,7 @@ fn cap_loop_count(part: &RobustMeshPart, disc: SeparatorDisc, side: f64) -> usiz
     let cap = side * disc.kerf_mm * 0.5;
     let tolerance = separator_extent_tolerance(disc);
     let mut cap_triangles = Vec::new();
-    for (triangle_index, triangle) in part.indices.chunks_exact(3).enumerate() {
+    for (triangle_index, triangle) in part.indices.as_chunks::<3>().0.iter().enumerate() {
         let Some(vertices) = triangle
             .iter()
             .map(|&index| {

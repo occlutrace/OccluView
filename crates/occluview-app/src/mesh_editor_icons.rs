@@ -40,14 +40,16 @@ pub(crate) fn icon_button(
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            egui::Stroke::new(1.2, ACCENT.gamma_multiply(0.90)),
+            egui::Stroke::new(1.2_f32, ACCENT.gamma_multiply(0.90)),
+            egui::StrokeKind::Middle,
         );
     } else if enabled && response.hovered() {
         painter.rect_filled(rect, CELL_ROUNDING, ACCENT.gamma_multiply(0.12));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            egui::Stroke::new(1.0, ACCENT.gamma_multiply(0.30)),
+            egui::Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.30)),
+            egui::StrokeKind::Middle,
         );
     }
 

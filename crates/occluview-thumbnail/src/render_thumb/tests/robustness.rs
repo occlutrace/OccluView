@@ -106,7 +106,12 @@ fn all_degenerate_stl_never_returns_a_transparent_tile() {
     );
 
     let pixels = render_thumbnail_or_placeholder(Some("stl"), &bytes, spec);
-    let visible = pixels.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let visible = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     assert!(
         visible > 0,
         "the public entry point returned a fully transparent tile for a degenerate file"

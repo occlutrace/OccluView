@@ -49,22 +49,40 @@ pub(crate) fn row_active_fill() -> egui::Color32 {
 /// Shadow for floating viewport panels.
 pub(crate) fn panel_shadow() -> egui::epaint::Shadow {
     egui::epaint::Shadow {
-        offset: egui::vec2(0.0, 4.0),
-        blur: 16.0,
-        spread: 0.0,
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
         color: egui::Color32::from_black_alpha(40),
     }
 }
 
 /// Shared frame for the floating overlays that sit over the 3D viewport.
 pub(crate) fn overlay_frame() -> egui::Frame {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(panel_fill())
-        .stroke(egui::Stroke::new(1.0, panel_stroke()))
+        .stroke(egui::Stroke::new(1.0_f32, panel_stroke()))
         .shadow(panel_shadow())
-        .rounding(egui::Rounding::same(RADIUS_PANEL))
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .corner_radius(RADIUS_PANEL)
+        .inner_margin(egui::Margin::symmetric(10, 8))
 }
 
 /// Fixed toolbar height.
 pub(crate) const MENUBAR_HEIGHT_PX: f32 = 34.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_frame_keeps_the_established_panel_geometry() {
+        let frame = overlay_frame();
+
+        assert_eq!(frame.corner_radius, egui::CornerRadius::same(10));
+        assert_eq!(frame.inner_margin, egui::Margin::symmetric(10, 8));
+        assert_eq!(frame.shadow.offset, [0, 4]);
+        assert_eq!(frame.shadow.blur, 16);
+        assert_eq!(frame.shadow.spread, 0);
+        assert!((frame.stroke.width - 1.0).abs() < f32::EPSILON);
+        assert_eq!(frame.stroke.color, panel_stroke());
+    }
+}

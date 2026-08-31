@@ -56,7 +56,7 @@ default-members = [
 [workspace.package]
 version = "1.1.0"
 edition = "2021"
-rust-version = "1.86"        # MSRV; matches rust-toolchain.toml
+rust-version = "1.98"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/occlutrace/occluview"
@@ -108,8 +108,9 @@ serde_json = "1.0"
 pollster   = "0.4"
 
 # Image encode/decode: PNG for golden tests + thumbnail output, JPEG for glTF
-# texture images (dental GLBs commonly embed JPEG textures). 0.25.10 raises
-# MSRV to 1.88; stay below it while rust-toolchain.toml pins 1.86.
+# texture images (dental GLBs commonly embed JPEG textures). The <0.25.10 bound
+# prevents decoder-graph changes without malformed-input, golden-thumbnail, and
+# allocation-bound coverage.
 image      = { version = ">=0.25.5, <0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 # Memory-mapped file loading for large meshes.
@@ -124,11 +125,11 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # GPU / rendering.
-wgpu = "22.0"               # pinned; bumps need tests and a changelog entry
+wgpu = "=30.0.1"             # pinned; bumps need tests and a changelog entry
 
 # Windowing / GUI.
-egui    = "0.29"
-eframe  = { version = "0.29", default-features = false, features = ["wgpu", "default_fonts"] }
+egui    = "=0.36.1"
+eframe  = { version = "=0.36.1", default-features = false, features = ["wgpu", "default_fonts", "links"] }
 rfd     = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
 
 # Linux window activation. The app uses the system Wayland connection exposed

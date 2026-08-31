@@ -15,7 +15,7 @@ pub(crate) fn center_square_on_canvas(
     let height = height.max(1) as usize;
     let side = usize::from(side_px).min(width).min(height).max(1);
     let mut canvas = vec![0u8; width * height * 4];
-    for pixel in canvas.chunks_exact_mut(4) {
+    for pixel in canvas.as_chunks_mut::<4>().0 {
         pixel.copy_from_slice(&background);
     }
     if square.len() < side * side * 4 {
@@ -60,8 +60,8 @@ mod tests {
         // square operators saw behind a file the viewer could not read.
         let square = vec![0u8; 2 * 2 * 4];
         let canvas = center_square_on_canvas(&square, 2, 4, 4, LIGHT);
-        for pixel in canvas.chunks_exact(4) {
-            assert_eq!(pixel, LIGHT, "a fully transparent square painted nothing");
+        for pixel in canvas.as_chunks::<4>().0 {
+            assert_eq!(*pixel, LIGHT, "a fully transparent square painted nothing");
         }
     }
 

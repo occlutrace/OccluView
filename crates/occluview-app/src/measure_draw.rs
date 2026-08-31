@@ -67,7 +67,12 @@ pub(crate) fn label_chip(
     let pad = egui::vec2(4.0, 2.0);
     let bg = egui::Rect::from_center_size(anchor, galley.size() + pad * 2.0);
     painter.rect_filled(bg, 3.0, ui_theme::panel_fill());
-    painter.rect_stroke(bg, 3.0, egui::Stroke::new(1.0, ui_theme::hairline()));
+    painter.rect_stroke(
+        bg,
+        3.0,
+        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
+        egui::StrokeKind::Middle,
+    );
     painter.text(
         anchor,
         egui::Align2::CENTER_CENTER,

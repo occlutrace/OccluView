@@ -110,7 +110,7 @@ pub fn accumulate_smooth_normals(
     position: impl Fn(usize) -> Option<Vec3>,
 ) -> Vec<Vec3> {
     let mut normals = vec![Vec3::ZERO; vertex_count];
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         let ia = triangle[0] as usize;
         let ib = triangle[1] as usize;
         let ic = triangle[2] as usize;

@@ -25,7 +25,7 @@ impl OccluViewApp {
             return;
         }
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-        let viewport = ctx.screen_rect();
+        let viewport = ctx.content_rect();
         egui::Window::new("Third-party licenses")
             .default_pos(viewport.center() - egui::vec2(280.0, 210.0))
             .constrain_to(viewport)
@@ -55,7 +55,8 @@ impl OccluViewApp {
                 // anchors scrolling by the declared height, so a mismatch
                 // slides the text against the scrollbar and leaves a blank
                 // band at the bottom of a six-thousand-line document.
-                let row_height = ui.fonts(|fonts| fonts.row_height(&egui::FontId::monospace(11.0)));
+                let row_height =
+                    ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::monospace(11.0)));
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show_rows(ui, row_height, lines.len(), |ui, rows| {

@@ -9,7 +9,7 @@ pub fn validate_triangle_mesh_data(
     vertices: &[EditVertex],
     indices: &[u32],
 ) -> Result<(), MeshEditError> {
-    if indices.len() % 3 != 0 {
+    if !indices.len().is_multiple_of(3) {
         return Err(MeshEditError::MalformedMesh {
             reason: format!("index count {} is not a multiple of 3", indices.len()),
         });

@@ -255,7 +255,7 @@ impl Mesh {
     }
 
     fn validate_shape(vertices: &[Vertex], indices: &[u32]) -> Result<(), CoreError> {
-        if indices.len() % 3 != 0 {
+        if !indices.len().is_multiple_of(3) {
             return Err(CoreError::IndexCountNotMultipleOfThree {
                 index_count: indices.len(),
             });

@@ -47,49 +47,49 @@ pub(crate) fn viewer_visuals() -> egui::Visuals {
     visuals.panel_fill = egui::Color32::from_rgb(243, 245, 248);
     visuals.faint_bg_color = egui::Color32::from_rgb(236, 239, 243);
     visuals.extreme_bg_color = egui::Color32::from_rgb(255, 255, 255);
-    visuals.window_rounding = egui::Rounding::same(7.0);
-    visuals.menu_rounding = egui::Rounding::same(7.0);
-    visuals.window_stroke = egui::Stroke::new(1.0, hairline());
+    visuals.window_corner_radius = egui::CornerRadius::same(7);
+    visuals.menu_corner_radius = egui::CornerRadius::same(7);
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, hairline());
     visuals.popup_shadow = egui::epaint::Shadow {
-        offset: egui::vec2(0.0, 3.0),
-        blur: 12.0,
-        spread: 0.0,
+        offset: [0, 3],
+        blur: 12,
+        spread: 0,
         color: egui::Color32::from_black_alpha(38),
     };
     visuals.selection.bg_fill = ACCENT.gamma_multiply(0.28);
-    visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    visuals.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
     visuals.hyperlink_color = ACCENT;
 
     // Static text and disabled chrome.
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, hairline());
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, hairline());
 
     // Resting interactive controls: flat, hairline outline, rounded.
     visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(236, 239, 243);
     visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(236, 239, 243);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, hairline());
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.inactive.rounding = egui::Rounding::same(4.0);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, hairline());
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
+    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
 
     // Hover: a light accent wash, accent hairline.
     visuals.widgets.hovered.weak_bg_fill = ACCENT.gamma_multiply(0.12);
     visuals.widgets.hovered.bg_fill = ACCENT.gamma_multiply(0.12);
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT.gamma_multiply(0.55));
-    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.hovered.rounding = egui::Rounding::same(4.0);
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.55));
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
 
     // Active / pressed: solid accent.
     visuals.widgets.active.weak_bg_fill = ACCENT;
     visuals.widgets.active.bg_fill = ACCENT;
-    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
-    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-    visuals.widgets.active.rounding = egui::Rounding::same(4.0);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, ACCENT);
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
+    visuals.widgets.active.corner_radius = egui::CornerRadius::same(4);
 
     // Open menus track the resting palette so dropdowns stay quiet.
     visuals.widgets.open.weak_bg_fill = ACCENT.gamma_multiply(0.12);
     visuals.widgets.open.bg_fill = ACCENT.gamma_multiply(0.12);
-    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, hairline());
-    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0_f32, hairline());
+    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
 
     visuals
 }
@@ -103,6 +103,24 @@ mod tests {
             (left - right).abs() < f32::EPSILON,
             "left={left}, right={right}"
         );
+    }
+
+    #[test]
+    fn viewer_visuals_keep_the_established_corner_and_shadow_geometry() {
+        let visuals = viewer_visuals();
+
+        assert_eq!(visuals.window_corner_radius, egui::CornerRadius::same(7));
+        assert_eq!(visuals.menu_corner_radius, egui::CornerRadius::same(7));
+        assert_eq!(visuals.popup_shadow.offset, [0, 3]);
+        assert_eq!(visuals.popup_shadow.blur, 12);
+        assert_eq!(visuals.popup_shadow.spread, 0);
+        for widget in [
+            visuals.widgets.inactive,
+            visuals.widgets.hovered,
+            visuals.widgets.active,
+        ] {
+            assert_eq!(widget.corner_radius, egui::CornerRadius::same(4));
+        }
     }
 
     #[test]

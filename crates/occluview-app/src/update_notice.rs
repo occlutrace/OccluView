@@ -13,6 +13,12 @@ use std::sync::mpsc;
 use eframe::egui;
 use occluview_update::AvailableUpdate;
 
+const WORKER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
+
+fn schedule_worker_poll(ctx: &egui::Context) {
+    ctx.request_repaint_after(WORKER_POLL_INTERVAL);
+}
+
 /// Path of the "skip this version" marker; one semver string, plain text.
 fn skipped_version_path() -> Option<PathBuf> {
     crate::app_paths::app_state_dir().map(|dir| dir.join("skipped-update"))
@@ -138,11 +144,14 @@ impl UpdateNotice {
         }
     }
 
-    pub(crate) fn request_check(&mut self) {
+    pub(crate) fn request_check(&mut self, ctx: &egui::Context) {
         if std::env::var_os("OCCLUVIEW_NO_UPDATE_CHECK").is_some() {
             self.check_status = UpdateCheckStatus::Disabled;
         } else if self.check_rx.is_none() {
             self.spawn_check();
+            if self.check_rx.is_some() {
+                schedule_worker_poll(ctx);
+            }
         }
     }
 
@@ -175,12 +184,16 @@ impl UpdateNotice {
         }
     }
 
-    /// Drain worker events and draw the notice when there is one.
-    pub(crate) fn show(&mut self, ctx: &egui::Context) {
+    /// Advance background update work without drawing UI.
+    pub(crate) fn poll(&mut self, ctx: &egui::Context) {
         self.drain_events(ctx);
         if self.check_status == UpdateCheckStatus::Checking {
-            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            schedule_worker_poll(ctx);
         }
+    }
+
+    /// Draw the current notice state without consuming worker events.
+    pub(crate) fn show(&mut self, ctx: &egui::Context) {
         match &self.phase {
             Phase::Idle | Phase::Dismissed => {}
             _ => self.draw_window(ctx),
@@ -216,7 +229,7 @@ impl UpdateNotice {
         }
         // A download in flight animates a progress bar: keep frames coming.
         if matches!(self.phase, Phase::Downloading { .. }) {
-            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            schedule_worker_poll(ctx);
         }
     }
 
@@ -248,6 +261,9 @@ impl UpdateNotice {
             });
         if let Some(update) = start_download {
             self.phase = self.start_download(update);
+            if self.download_rx.is_some() {
+                schedule_worker_poll(ctx);
+            }
         } else if let Some(phase) = next_phase {
             self.phase = phase;
         }
@@ -462,6 +478,82 @@ fn progress_fraction(received: u64, total: Option<u64>) -> f32 {
 #[cfg(test)]
 mod settings_status_tests {
     use super::*;
+
+    #[test]
+    fn worker_poll_schedule_requests_a_bounded_wakeup() {
+        let ctx = egui::Context::default();
+        let (sender, receiver) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |request| {
+            let _ = sender.send(request.delay);
+        });
+
+        schedule_worker_poll(&ctx);
+
+        let delay = receiver.recv_timeout(std::time::Duration::from_secs(1));
+        assert!(
+            delay.is_ok(),
+            "repaint callback receives the worker wakeup: {delay:?}"
+        );
+        let Ok(delay) = delay else {
+            return;
+        };
+        assert!(
+            delay <= WORKER_POLL_INTERVAL,
+            "the backend may wake sooner, but worker polling must never wait longer: {delay:?}"
+        );
+    }
+
+    fn pending_manual_check() -> UpdateNotice {
+        let (sender, receiver) = mpsc::channel();
+        assert!(
+            sender.send(Ok(None)).is_ok(),
+            "the test receiver remains connected"
+        );
+        let mut notice = UpdateNotice::idle();
+        notice.check_status = UpdateCheckStatus::Checking;
+        notice.check_rx = Some(receiver);
+        notice
+    }
+
+    #[test]
+    fn poll_finishes_a_manual_check_without_drawing() {
+        let ctx = egui::Context::default();
+        let mut notice = pending_manual_check();
+
+        notice.poll(&ctx);
+
+        assert_eq!(notice.check_status(), &UpdateCheckStatus::Current);
+        assert!(notice.check_rx.is_none());
+    }
+
+    #[test]
+    fn poll_turns_disconnected_download_into_failure() {
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        let mut notice = UpdateNotice::idle();
+        notice.download_rx = Some(receiver);
+
+        notice.poll(&egui::Context::default());
+
+        assert!(matches!(notice.phase, Phase::Failed(_)));
+        assert!(notice.download_rx.is_none());
+    }
+
+    #[test]
+    fn show_does_not_consume_worker_events() {
+        let ctx = egui::Context::default();
+        let mut notice = pending_manual_check();
+
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            notice.show(ui.ctx());
+        })
+        .drop_without_applying_deltas();
+
+        assert_eq!(notice.check_status(), &UpdateCheckStatus::Checking);
+        assert!(notice.check_rx.is_some());
+        notice.poll(&ctx);
+        assert_eq!(notice.check_status(), &UpdateCheckStatus::Current);
+    }
 
     #[test]
     fn a_failed_manual_check_remains_a_failure() {

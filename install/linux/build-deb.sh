@@ -38,7 +38,7 @@ if [[ "$build_release" -eq 1 ]]; then
     echo "Private HPS key embedding enabled for this build."
     feature_args=(--features occluview-formats/private-hps-key)
   fi
-  cargo build --release -p occluview-app -p occluview-cli "${feature_args[@]}"
+  cargo build --locked --release -p occluview-app -p occluview-cli "${feature_args[@]}"
 fi
 
 arch="$(dpkg --print-architecture 2>/dev/null || true)"

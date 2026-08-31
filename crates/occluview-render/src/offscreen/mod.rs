@@ -209,7 +209,7 @@ impl Offscreen {
         };
         self.render(&mesh, &camera, spec)
             .await
-            .is_ok_and(|pixels| pixels.chunks_exact(4).any(|pixel| pixel[3] != 0))
+            .is_ok_and(|pixels| pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0))
     }
 
     /// Access the underlying renderer (for callers that need device/queue).

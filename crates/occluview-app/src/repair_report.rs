@@ -223,7 +223,7 @@ fn group_thousands(n: usize) -> String {
     let len = bytes.len();
     let mut out = String::with_capacity(len + len / 3);
     for (i, byte) in bytes.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(' ');
         }
         out.push(char::from(*byte));
@@ -274,7 +274,7 @@ impl RepairReportDialog {
     }
 
     /// Whether a card is on screen. Test probe: production code draws the card
-    /// unconditionally in `update()` and never branches on its open state.
+    /// unconditionally in `ui()` and never branches on its open state.
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_open(&self) -> bool {
@@ -313,7 +313,7 @@ impl RepairReportDialog {
         let mut close_clicked = false;
         let mut copy_clicked = false;
 
-        let vp = ctx.screen_rect();
+        let vp = ctx.content_rect();
         egui::Window::new(title)
             .id(egui::Id::new("repair_report_card"))
             .open(&mut open)
@@ -531,19 +531,22 @@ mod tests {
         dialog.present("scan.stl", multi_report());
         assert!(dialog.is_open());
         assert_eq!(dialog.showing_clean(), Some(false));
-        let _ = ctx.run(egui::RawInput::default(), |ctx| dialog.ui(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
+            .drop_without_applying_deltas();
         assert!(dialog.is_open());
 
         // Clean: positive confirmation, still an open card.
         dialog.present("scan.stl", RepairReport::default());
         assert_eq!(dialog.showing_clean(), Some(true));
-        let _ = ctx.run(egui::RawInput::default(), |ctx| dialog.ui(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
+            .drop_without_applying_deltas();
         assert!(dialog.is_open());
 
         // Close clears it; drawing while closed is a no-op.
         dialog.close();
         assert!(!dialog.is_open());
-        let _ = ctx.run(egui::RawInput::default(), |ctx| dialog.ui(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
+            .drop_without_applying_deltas();
         assert!(!dialog.is_open());
     }
 }

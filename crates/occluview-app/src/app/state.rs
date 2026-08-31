@@ -116,7 +116,7 @@ pub(crate) struct OccluViewApp {
     /// The Third-party licenses window, opened from About.
     pub(super) third_party_window_open: bool,
     /// Persistent post-repair report card, populated by the Repair executor and
-    /// drawn in `update()`; shows what a repair changed (or that nothing did).
+    /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
     pub(super) app_logo: Option<egui::TextureHandle>,
     pub(super) foreground_pulse_until: Option<Instant>,
@@ -250,7 +250,7 @@ impl OccluViewApp {
             self.status_message_snapshot = None;
             self.status_message_since = None;
         } else {
-            ctx.request_repaint_after(STATUS_MESSAGE_TTL - elapsed);
+            ctx.request_repaint_after(STATUS_MESSAGE_TTL.saturating_sub(elapsed));
         }
     }
 
@@ -490,8 +490,7 @@ impl OccluViewApp {
 }
 
 impl eframe::App for OccluViewApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(super::viewer_visuals());
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.persist_settings_if_due(ctx);
         self.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
@@ -500,24 +499,31 @@ impl eframe::App for OccluViewApp {
         self.poll_sculpt_worker(ctx);
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);
-        self.handle_dropped_files(ctx);
-        self.release_viewport_orbit_cursor_if_inactive(ctx);
-        self.render_pending_frame(ctx);
-        self.handle_edit_shortcuts(ctx);
-        self.show_toolbar(ctx);
-        self.maybe_render_cut_view(ctx);
-        self.show_central_panel(ctx);
+        self.update_notice.poll(ctx);
+        self.intercept_unsaved_close(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        ctx.set_visuals(super::viewer_visuals());
+        self.handle_dropped_files(&ctx);
+        self.release_viewport_orbit_cursor_if_inactive(&ctx);
+        self.render_pending_frame(&ctx);
+        self.handle_edit_shortcuts(&ctx);
+        self.show_toolbar(ui);
+        self.maybe_render_cut_view(&ctx);
+        self.show_central_panel(ui);
         // Sync camera changes after viewport input so the live paint callback
         // uses the current frame's pose.
-        self.render_pending_frame(ctx);
+        self.render_pending_frame(&ctx);
         // Surface GPU faults before drawing the error dialog.
         self.poll_gpu_errors();
-        self.show_error_dialog(ctx);
-        self.show_about_dialog(ctx);
-        self.show_third_party_window(ctx);
-        self.repair_report.ui(ctx);
-        self.update_notice.show(ctx);
-        self.guard_unsaved_close(ctx);
-        self.guard_pending_replace_open(ctx);
+        self.show_error_dialog(&ctx);
+        self.show_about_dialog(&ctx);
+        self.show_third_party_window(&ctx);
+        self.repair_report.ui(&ctx);
+        self.update_notice.show(&ctx);
+        self.show_unsaved_close_guard(&ctx);
+        self.guard_pending_replace_open(&ctx);
     }
 }

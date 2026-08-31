@@ -43,6 +43,9 @@ features = ["Win32_Storage_FileSystem"]
 zip            = { workspace = true }
 proptest = { workspace = true }
 tempfile = "3"
+# The production reader accepts only PNG/JPEG. Enable BMP in tests solely to
+# prove that the byte-level allowlist still refuses a valid, decodable BMP.
+image = { workspace = true, features = ["bmp"] }
 
 [[example]]
 name = "smoke_real_files"

@@ -44,7 +44,7 @@ pub fn recompute_all_normals(
     }
 
     let mut normals = vec![Vec3::ZERO; vertices.len()];
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         let ia = triangle[0] as usize;
         let ib = triangle[1] as usize;
         let ic = triangle[2] as usize;

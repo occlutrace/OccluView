@@ -53,7 +53,7 @@ One `occluview-render` pipeline: one shader, one camera. Colour lives in gamma s
 ## Build and release
 
 - `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test --workspace`, `cargo doc --no-deps --all-features -D warnings`, `cargo deny` in CI.
-- `rust-toolchain.toml` pins `1.86.0`.
+- `rust-toolchain.toml` pins `1.98.0`.
 - `install/build-msi.ps1` builds `occluview-app` (release) and `occluview-shell` (release-unwind), optionally signs via `signtool.exe` (certstore or PFX), then builds the MSI with WiX v3.
 - `install/linux/build-deb.sh` + validation via `desktop-file-validate` / `appstreamcli` / `lintian`.
 - Publish verifies `Cargo.toml` version == tag, smoke-installs MSI, signs artifacts with minisign, writes `latest.json`, uploads to GitHub Release.

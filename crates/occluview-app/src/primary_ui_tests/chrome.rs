@@ -64,8 +64,10 @@ fn toolbar_and_about_are_operator_focused() {
     let toolbar = function_source(dialogs, "pub(super) fn show_toolbar");
 
     assert!(
-        dialogs.contains("egui::TopBottomPanel::top(\"toolbar\")")
-            && dialogs.contains(".exact_height(ui_theme::MENUBAR_HEIGHT_PX)"),
+        dialogs.contains("egui::Panel::top(\"toolbar\")")
+            && dialogs.contains(".exact_size(ui_theme::MENUBAR_HEIGHT_PX)")
+            && toolbar.contains("let ctx = root_ui.ctx().clone();")
+            && toolbar.contains(".show(root_ui, |ui|"),
         "top toolbar should be a compact fixed-height operator surface"
     );
     assert!(
@@ -255,7 +257,7 @@ fn edit_shortcut_stays_with_viewport_input_not_layer_mutation() {
 fn empty_state_is_blank_instead_of_showing_drop_copy() {
     let central = function_source(
         app_render_source(),
-        "pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {",
     );
 
     assert!(
@@ -299,12 +301,12 @@ fn app_errors_are_copyable_dialogs_not_only_status_text() {
 #[test]
 fn unsaved_mesh_edits_guard_the_window_close() {
     let dialogs = repo_source_file("src/app/app_dialogs.rs");
-    let guard = function_source(&dialogs, "pub(super) fn guard_unsaved_close(");
+    let intercept = function_source(&dialogs, "pub(super) fn intercept_unsaved_close(");
+    let guard = function_source(&dialogs, "pub(super) fn show_unsaved_close_guard(");
 
     assert!(
-        guard.contains("close_requested()")
-            && guard.contains("ViewportCommand::CancelClose")
-            && guard.contains("self.has_unsaved_mesh_edits()"),
+        intercept.contains("self.has_unsaved_mesh_edits()")
+            && intercept.contains("intercept_unsaved_close_request("),
         "closing with unsaved mesh edits must be intercepted, not silently lost"
     );
     assert!(

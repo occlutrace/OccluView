@@ -282,7 +282,7 @@ fn parse_position_bytes(bytes: &[u8], vertex_count: usize) -> Result<Vec<[f32; 3
     }
 
     let mut positions = Vec::with_capacity(vertex_count);
-    for chunk in bytes.chunks_exact(12) {
+    for chunk in bytes.as_chunks::<12>().0 {
         positions.push([
             f32::from_le_bytes(
                 chunk[0..4]
@@ -370,13 +370,17 @@ fn parse_color_bytes(bytes: &[u8], vertex_count: usize) -> Result<Vec<[u8; 4]>, 
 
     if bytes.len() == packed_rgb_len {
         return Ok(bytes
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
             .collect());
     }
     if bytes.len() == expanded_color_len {
         return Ok(bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| [rgba[0], rgba[1], rgba[2], rgba[3]])
             .collect());
     }

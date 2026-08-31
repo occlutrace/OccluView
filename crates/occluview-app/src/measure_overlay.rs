@@ -42,7 +42,7 @@ pub(crate) fn paint_measurements(
             if let Some(hover) = hover {
                 painter.extend(egui::Shape::dashed_line(
                     &[anchor, hover],
-                    egui::Stroke::new(1.1, ui_theme::ACCENT),
+                    egui::Stroke::new(1.1_f32, ui_theme::ACCENT),
                     5.0,
                     4.0,
                 ));
@@ -103,6 +103,10 @@ fn paint_ruler(
     measure_draw::segment(painter, a, b);
     measure_draw::anchor_dot(painter, a);
     measure_draw::anchor_dot(painter, b);
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "preserve established label-pixel output"
+    )]
     let mid = egui::pos2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5 - LABEL_LIFT_PX);
     measure_draw::label_chip(
         painter,
@@ -214,7 +218,8 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, ui_theme::ACCENT.gamma_multiply(0.75)),
+            egui::Stroke::new(1.0_f32, ui_theme::ACCENT.gamma_multiply(0.75)),
+            egui::StrokeKind::Middle,
         );
     } else if enabled && response.hovered() {
         painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.10));

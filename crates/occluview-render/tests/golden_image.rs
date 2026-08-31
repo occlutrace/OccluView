@@ -333,7 +333,7 @@ fn textured_triangle_renders_checkerboard() {
     let mut non_bg = 0usize;
     let mut red_dominant = 0usize;
     let mut green_dominant = 0usize;
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         if px[0] == bg[0] && px[1] == bg[1] && px[2] == bg[2] {
             continue;
         }
@@ -369,7 +369,9 @@ fn cut_triangle_discard_removes_pixels() {
     let spec = dark_thumbnail_spec();
     let full_pixels = pollster::block_on(offscreen.render(&mesh, &cam, spec)).expect("full render");
     let full_visible = full_pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
 
@@ -379,7 +381,9 @@ fn cut_triangle_discard_removes_pixels() {
     let cut_pixels =
         pollster::block_on(offscreen.render_clipped(&mesh, &cam, &clip, spec)).expect("cut render");
     let cut_visible = cut_pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
 
@@ -401,7 +405,9 @@ fn cut_triangle_discard_removes_pixels() {
         pollster::block_on(offscreen.render_clipped(&mesh, &cam, &disabled, spec))
             .expect("identity");
     let identity_visible = identity_pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert_eq!(
@@ -431,7 +437,9 @@ fn cut_triangle_capped_renders() {
         .expect("cut render");
 
     let non_bg = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(non_bg > 0, "capped cut rendered nothing visible");
@@ -455,7 +463,9 @@ fn render_cut_view_end_to_end() {
     let pixels =
         pollster::block_on(offscreen.render_cut_view(&mesh, &cut, spec)).expect("render_cut_view");
     let non_bg = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(non_bg > 0, "render_cut_view produced nothing visible");
@@ -474,7 +484,9 @@ fn render_point_cloud_to_pixels() -> Vec<u8> {
 fn point_cloud_renders_readable_splats() {
     let pixels = render_point_cloud_to_pixels();
     let non_bg = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(
@@ -563,7 +575,7 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
     let mut covered = 0usize;
     let mut brightest = 0u8;
     let mut darkest = 255u8;
-    for px in map_pixels.chunks_exact(4) {
+    for px in map_pixels.as_chunks::<4>().0 {
         if is_background(px) {
             continue;
         }
@@ -585,8 +597,10 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
     );
 
     let differs_from_plain_lit = lit_pixels
-        .chunks_exact(4)
-        .zip(map_pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(map_pixels.as_chunks::<4>().0.iter())
         .any(|(lit, mapped)| !is_background(mapped) && lit[..3] != mapped[..3]);
     assert!(
         differs_from_plain_lit,

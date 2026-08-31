@@ -209,7 +209,8 @@ impl FaceSelectionState {
         let mut changed = false;
 
         let vertices = entry.mesh.vertices();
-        for (triangle_index, triangle) in entry.mesh.indices().chunks_exact(3).enumerate() {
+        for (triangle_index, triangle) in entry.mesh.indices().as_chunks::<3>().0.iter().enumerate()
+        {
             let [a, b, c] = triangle_world_points(vertices, triangle, entry.transform)?;
 
             let Some((screen_a, depth_a)) = projector.project(a) else {
@@ -389,6 +390,10 @@ impl OrthoProjector {
         }
         let ndc_x = offset.dot(self.right) / self.half_width;
         let ndc_y = offset.dot(self.up) / self.half_height;
+        #[expect(
+            clippy::manual_midpoint,
+            reason = "preserve established last-bit screen geometry"
+        )]
         let screen = egui::pos2(
             self.left + (ndc_x + 1.0) * 0.5 * self.width,
             self.top + (1.0 - (ndc_y + 1.0) * 0.5) * self.height,
