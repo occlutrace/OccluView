@@ -3,10 +3,10 @@ use super::{
         extent, extent_rect, make_color_target, make_color_target_extent, make_depth_target,
         make_depth_target_extent, padded_bytes_per_row, RenderTargets,
     },
-    Offscreen, PreparedScene, RenderDeadline, SceneDrawEntry, ThumbnailSpec, ViewportSpec,
+    Offscreen, PreparedScene, PreparedSceneClipRequest, PreparedViewportClipRequest,
+    PreparedViewportRequest, RenderDeadline, SceneDrawEntry, ThumbnailSpec, ViewportSpec,
 };
 use crate::camera::GpuCamera;
-use crate::clipping::ClipPlane;
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
 use occluview_core::MeshKind;
@@ -137,12 +137,15 @@ impl Offscreen {
     #[allow(clippy::too_many_lines, clippy::unused_async)]
     pub async fn render_prepared_scene_with_clip_with_deadline(
         &self,
-        scene: &PreparedScene,
-        camera: &GpuCamera,
-        clip: &ClipPlane,
-        spec: ThumbnailSpec,
-        deadline: RenderDeadline,
+        request: PreparedSceneClipRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let PreparedSceneClipRequest {
+            scene,
+            camera,
+            clip,
+            spec,
+            deadline,
+        } = request;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();
@@ -244,9 +247,13 @@ impl Offscreen {
         spec: ViewportSpec,
         deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
-        self.render_prepared_viewport_with_overlay_with_deadline(
-            scene, None, camera, spec, deadline,
-        )
+        self.render_prepared_viewport_with_overlay_with_deadline(PreparedViewportRequest {
+            scene,
+            overlay: None,
+            camera,
+            spec,
+            deadline,
+        })
         .await
     }
 
@@ -263,12 +270,15 @@ impl Offscreen {
     #[allow(clippy::too_many_lines, clippy::unused_async)]
     pub async fn render_prepared_viewport_with_overlay_with_deadline(
         &self,
-        scene: &PreparedScene,
-        overlay: Option<&PreparedScene>,
-        camera: &GpuCamera,
-        spec: ViewportSpec,
-        deadline: RenderDeadline,
+        request: PreparedViewportRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let PreparedViewportRequest {
+            scene,
+            overlay,
+            camera,
+            spec,
+            deadline,
+        } = request;
         let [width_px, height_px] = spec.size_px;
         let width = u32::from(width_px);
         let height = u32::from(height_px);
@@ -372,20 +382,19 @@ impl Offscreen {
         clippy::unused_async_trait_impl,
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
-    #[allow(
-        clippy::too_many_arguments,
-        clippy::too_many_lines,
-        clippy::unused_async
-    )]
+    #[allow(clippy::too_many_lines, clippy::unused_async)]
     pub async fn render_prepared_viewport_with_clip_and_overlay_with_deadline(
         &self,
-        scene: &PreparedScene,
-        overlay: Option<&PreparedScene>,
-        camera: &GpuCamera,
-        clip: &ClipPlane,
-        spec: ViewportSpec,
-        deadline: RenderDeadline,
+        request: PreparedViewportClipRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let PreparedViewportClipRequest {
+            scene,
+            overlay,
+            camera,
+            clip,
+            spec,
+            deadline,
+        } = request;
         let [width_px, height_px] = spec.size_px;
         let width = u32::from(width_px);
         let height = u32::from(height_px);

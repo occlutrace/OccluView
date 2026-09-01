@@ -60,11 +60,16 @@ mod adapter_policy_tests {
 
     #[test]
     fn fallback_policy_records_the_renderer_class_without_driver_metadata() {
-        let offscreen = pollster::block_on(Offscreen::new_with_adapter_policy(
+        let result = pollster::block_on(Offscreen::new_with_adapter_policy(
             AdapterPolicy::FallbackOnly,
             RenderDeadline::after(Duration::from_secs(5)),
-        ))
-        .expect("the GPU test environment provides a fallback adapter");
+        ));
+        let error = result.as_ref().err();
+        assert!(
+            error.is_none(),
+            "the GPU test environment provides a fallback adapter: {error:?}"
+        );
+        let Some(offscreen) = result.ok() else { return };
 
         assert_eq!(offscreen.adapter_result(), AdapterResult::Fallback);
     }
@@ -234,6 +239,85 @@ pub struct ViewportSpec {
     pub size_px: [u16; 2],
     /// Background color (linear RGBA).
     pub background: [f64; 4],
+}
+
+/// Inputs for a prepared-scene render with one hard clipping plane.
+#[derive(Clone, Copy)]
+pub struct PreparedSceneClipRequest<'a> {
+    /// GPU scene prepared by this [`Offscreen`] instance.
+    pub scene: &'a PreparedScene,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Hard clipping plane for the frame.
+    pub clip: &'a crate::clipping::ClipPlane,
+    /// Square target size and background.
+    pub spec: ThumbnailSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for a prepared scene rendered into an app viewport.
+#[derive(Clone, Copy)]
+pub struct PreparedViewportRequest<'a> {
+    /// GPU scene prepared by this [`Offscreen`] instance.
+    pub scene: &'a PreparedScene,
+    /// Optional prepared selection overlay.
+    pub overlay: Option<&'a PreparedScene>,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Rectangular target size and background.
+    pub spec: ViewportSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for a prepared viewport render that also draws the cut-away ghost.
+#[derive(Clone, Copy)]
+pub struct PreparedViewportClipRequest<'a> {
+    /// GPU scene prepared by this [`Offscreen`] instance.
+    pub scene: &'a PreparedScene,
+    /// Optional prepared selection overlay.
+    pub overlay: Option<&'a PreparedScene>,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Clip plane shared with the interactive viewport.
+    pub clip: &'a crate::clipping::ClipPlane,
+    /// Rectangular target size and background.
+    pub spec: ViewportSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for rendering one mesh with a hard clipping plane.
+#[derive(Clone, Copy)]
+pub struct ClippedMeshRequest<'a> {
+    /// CPU mesh uploaded for this frame.
+    pub mesh: &'a Mesh,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Hard clipping plane for the frame.
+    pub clip: &'a crate::clipping::ClipPlane,
+    /// Square target size and background.
+    pub spec: ThumbnailSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for rendering one mesh with a solid cross-section cut.
+#[derive(Clone, Copy)]
+pub struct CutMeshRequest<'a> {
+    /// CPU mesh uploaded for this frame.
+    pub mesh: &'a Mesh,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Cut plane and cap policy.
+    pub cut: &'a crate::clipping::CutViewSpec,
+    /// Half extent of the generated cap quad in mesh coordinates.
+    pub half_extent: f32,
+    /// Square target size and background.
+    pub spec: ThumbnailSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
 }
 
 /// Offscreen renderer. Wraps a headless [`Renderer`].

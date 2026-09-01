@@ -27,8 +27,8 @@ mod common;
 use glam::{Mat4, Vec3};
 use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
 use occluview_render::{
-    ClipPlane, GpuCamera, GpuMeshUniform, Offscreen, PreparedScene, PreparedSceneSource,
-    RenderDeadline, ThumbnailSpec, ViewportSpec,
+    ClipPlane, GpuCamera, GpuMeshUniform, Offscreen, PreparedScene, PreparedSceneClipRequest,
+    PreparedSceneSource, PreparedViewportClipRequest, RenderDeadline, ThumbnailSpec, ViewportSpec,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -227,28 +227,32 @@ fn ghost_cut_view_fades_removed_side() {
 
     let ghost = pollster::block_on(
         offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
-            &scene,
-            None,
-            &cam,
-            &clip,
-            ViewportSpec {
-                size_px: [SIZE, SIZE],
-                background: DARK_BG,
+            PreparedViewportClipRequest {
+                scene: &scene,
+                overlay: None,
+                camera: &cam,
+                clip: &clip,
+                spec: ViewportSpec {
+                    size_px: [SIZE, SIZE],
+                    background: DARK_BG,
+                },
+                deadline: test_render_deadline(),
             },
-            test_render_deadline(),
         ),
     )
     .expect("ghost render");
 
     let hard = pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
-        &scene,
-        &cam,
-        &clip,
-        ThumbnailSpec {
-            size_px: SIZE,
-            background: DARK_BG,
+        PreparedSceneClipRequest {
+            scene: &scene,
+            camera: &cam,
+            clip: &clip,
+            spec: ThumbnailSpec {
+                size_px: SIZE,
+                background: DARK_BG,
+            },
+            deadline: test_render_deadline(),
         },
-        test_render_deadline(),
     ))
     .expect("hard-clip render");
 
@@ -303,12 +307,14 @@ fn disabled_clip_skips_ghost_and_matches_plain_render() {
     let disabled = ClipPlane::disabled();
     let ghost_path = pollster::block_on(
         offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
-            &scene,
-            None,
-            &cam,
-            &disabled,
-            spec,
-            test_render_deadline(),
+            PreparedViewportClipRequest {
+                scene: &scene,
+                overlay: None,
+                camera: &cam,
+                clip: &disabled,
+                spec,
+                deadline: test_render_deadline(),
+            },
         ),
     )
     .expect("ghost-path render");
@@ -347,12 +353,14 @@ fn textured_ghost_tracks_texture_not_flat_shell() {
         let scene = prepared_textured(&offscreen, &m);
         pollster::block_on(
             offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
-                &scene,
-                None,
-                &cam,
-                &clip,
-                spec,
-                test_render_deadline(),
+                PreparedViewportClipRequest {
+                    scene: &scene,
+                    overlay: None,
+                    camera: &cam,
+                    clip: &clip,
+                    spec,
+                    deadline: test_render_deadline(),
+                },
             ),
         )
         .expect("textured ghost render")
@@ -396,27 +404,31 @@ fn textured_cut_keeps_kept_side_identical() {
 
     let ghost = pollster::block_on(
         offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
-            &scene,
-            None,
-            &cam,
-            &clip,
-            ViewportSpec {
-                size_px: [SIZE, SIZE],
-                background: DARK_BG,
+            PreparedViewportClipRequest {
+                scene: &scene,
+                overlay: None,
+                camera: &cam,
+                clip: &clip,
+                spec: ViewportSpec {
+                    size_px: [SIZE, SIZE],
+                    background: DARK_BG,
+                },
+                deadline: test_render_deadline(),
             },
-            test_render_deadline(),
         ),
     )
     .expect("ghost render");
     let hard = pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
-        &scene,
-        &cam,
-        &clip,
-        ThumbnailSpec {
-            size_px: SIZE,
-            background: DARK_BG,
+        PreparedSceneClipRequest {
+            scene: &scene,
+            camera: &cam,
+            clip: &clip,
+            spec: ThumbnailSpec {
+                size_px: SIZE,
+                background: DARK_BG,
+            },
+            deadline: test_render_deadline(),
         },
-        test_render_deadline(),
     ))
     .expect("hard-clip render");
 
@@ -453,12 +465,14 @@ fn disabled_clip_on_textured_matches_plain() {
     let disabled = ClipPlane::disabled();
     let ghost_path = pollster::block_on(
         offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
-            &scene,
-            None,
-            &cam,
-            &disabled,
-            spec,
-            test_render_deadline(),
+            PreparedViewportClipRequest {
+                scene: &scene,
+                overlay: None,
+                camera: &cam,
+                clip: &disabled,
+                spec,
+                deadline: test_render_deadline(),
+            },
         ),
     )
     .expect("ghost-path render");

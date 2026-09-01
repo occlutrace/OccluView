@@ -18,8 +18,8 @@ mod common;
 use glam::{Mat4, Vec3};
 use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
 use occluview_render::{
-    ClipPlane, GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, PreparedSceneSource,
-    RenderDeadline, ThumbnailSpec, ViewportSpec,
+    ClipPlane, ClippedMeshRequest, CutMeshRequest, GpuCamera, GpuMeshUniform, GpuTexture,
+    Offscreen, PreparedSceneSource, RenderDeadline, ThumbnailSpec, ViewportSpec,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -414,14 +414,15 @@ fn cut_triangle_discard_removes_pixels() {
     // Render clipped: plane normal +Y, distance 0 — discards the top half
     // of the triangle (where world Y > 0).
     let clip = ClipPlane::new([0.0, 1.0, 0.0], 0.0);
-    let cut_pixels = pollster::block_on(offscreen.render_clipped_with_deadline(
-        &mesh,
-        &cam,
-        &clip,
-        spec,
-        test_render_deadline(),
-    ))
-    .expect("cut render");
+    let cut_pixels =
+        pollster::block_on(offscreen.render_clipped_with_deadline(ClippedMeshRequest {
+            mesh: &mesh,
+            camera: &cam,
+            clip: &clip,
+            spec,
+            deadline: test_render_deadline(),
+        }))
+        .expect("cut render");
     let cut_visible = cut_pixels
         .as_chunks::<4>()
         .0
@@ -443,14 +444,15 @@ fn cut_triangle_discard_removes_pixels() {
 
     // A disabled clip plane must reproduce the full render.
     let disabled = ClipPlane::disabled();
-    let identity_pixels = pollster::block_on(offscreen.render_clipped_with_deadline(
-        &mesh,
-        &cam,
-        &disabled,
-        spec,
-        test_render_deadline(),
-    ))
-    .expect("identity");
+    let identity_pixels =
+        pollster::block_on(offscreen.render_clipped_with_deadline(ClippedMeshRequest {
+            mesh: &mesh,
+            camera: &cam,
+            clip: &disabled,
+            spec,
+            deadline: test_render_deadline(),
+        }))
+        .expect("identity");
     let identity_visible = identity_pixels
         .as_chunks::<4>()
         .0
@@ -480,14 +482,14 @@ fn cut_triangle_capped_renders() {
         show_hollow: false,
     };
     let spec = dark_thumbnail_spec();
-    let pixels = pollster::block_on(offscreen.render_with_cut_with_deadline(
-        &mesh,
-        &cam,
-        &cut,
-        10.0,
+    let pixels = pollster::block_on(offscreen.render_with_cut_with_deadline(CutMeshRequest {
+        mesh: &mesh,
+        camera: &cam,
+        cut: &cut,
+        half_extent: 10.0,
         spec,
-        test_render_deadline(),
-    ))
+        deadline: test_render_deadline(),
+    }))
     .expect("cut render");
 
     let non_bg = pixels

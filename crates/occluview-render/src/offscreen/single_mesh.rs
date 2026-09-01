@@ -1,9 +1,9 @@
 use super::{
     helpers::{extent, make_color_target, make_depth_target, padded_bytes_per_row, RenderTargets},
-    Offscreen, RenderDeadline, ThumbnailSpec,
+    ClippedMeshRequest, CutMeshRequest, Offscreen, RenderDeadline, ThumbnailSpec,
 };
 use crate::camera::GpuCamera;
-use crate::clipping::{cap_quad, ClipPlane, CutViewSpec};
+use crate::clipping::{cap_quad, CutViewSpec};
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
 use occluview_core::Mesh;
@@ -98,12 +98,15 @@ impl Offscreen {
     #[allow(clippy::unused_async)]
     pub async fn render_clipped_with_deadline(
         &self,
-        mesh: &Mesh,
-        camera: &GpuCamera,
-        clip: &ClipPlane,
-        spec: ThumbnailSpec,
-        deadline: RenderDeadline,
+        request: ClippedMeshRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let ClippedMeshRequest {
+            mesh,
+            camera,
+            clip,
+            spec,
+            deadline,
+        } = request;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();
@@ -211,8 +214,15 @@ impl Offscreen {
         let bbox = mesh.bbox_uncached();
         let camera = crate::cut_camera::cut_view_camera(&cut.plane, bbox);
         let half_extent = bbox.half_diagonal() * 2.0;
-        self.render_with_cut_with_deadline(mesh, &camera, cut, half_extent, spec, deadline)
-            .await
+        self.render_with_cut_with_deadline(CutMeshRequest {
+            mesh,
+            camera: &camera,
+            cut,
+            half_extent,
+            spec,
+            deadline,
+        })
+        .await
     }
 
     /// Render `mesh` with a solid cross-section cut (stencil-capped).
@@ -224,20 +234,19 @@ impl Offscreen {
         clippy::unused_async_trait_impl,
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
-    #[allow(
-        clippy::unused_async,
-        clippy::too_many_arguments,
-        clippy::too_many_lines
-    )]
+    #[allow(clippy::unused_async, clippy::too_many_lines)]
     pub async fn render_with_cut_with_deadline(
         &self,
-        mesh: &Mesh,
-        camera: &GpuCamera,
-        cut: &CutViewSpec,
-        half_extent: f32,
-        spec: ThumbnailSpec,
-        deadline: RenderDeadline,
+        request: CutMeshRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let CutMeshRequest {
+            mesh,
+            camera,
+            cut,
+            half_extent,
+            spec,
+            deadline,
+        } = request;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();

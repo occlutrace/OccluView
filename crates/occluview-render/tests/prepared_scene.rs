@@ -8,7 +8,8 @@ use glam::{Mat4, Vec3};
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, PreparedScene, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, RenderDeadline, Renderer, ViewportSpec,
+    PreparedSceneTopology, PreparedSceneUpdate, PreparedViewportRequest, RenderDeadline, Renderer,
+    ViewportSpec,
 };
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -518,13 +519,13 @@ fn prepared_viewport_can_draw_selection_overlay_after_base_scene() {
     ))
     .expect("render base scene");
     let overlay_pixels = pollster::block_on(
-        offscreen.render_prepared_viewport_with_overlay_with_deadline(
-            &base,
-            Some(&overlay_scene),
-            &cam,
+        offscreen.render_prepared_viewport_with_overlay_with_deadline(PreparedViewportRequest {
+            scene: &base,
+            overlay: Some(&overlay_scene),
+            camera: &cam,
             spec,
-            test_render_deadline(),
-        ),
+            deadline: test_render_deadline(),
+        }),
     )
     .expect("render scene with overlay");
 

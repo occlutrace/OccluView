@@ -19,7 +19,10 @@ use super::{
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
 };
-use occluview_render::{AdapterPolicy, RenderDeadline};
+use occluview_render::{
+    AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
+    RenderDeadline,
+};
 use std::time::Duration;
 
 const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -168,11 +171,13 @@ impl OccluViewApp {
                 background: VIEWPORT_BACKGROUND_LINEAR,
             };
             match pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
-                prepared,
-                &camera,
-                &plane,
-                spec,
-                RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                PreparedSceneClipRequest {
+                    scene: prepared,
+                    camera: &camera,
+                    clip: &plane,
+                    spec,
+                    deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                },
             )) {
                 Ok(p) => p,
                 Err(e) => {
@@ -295,22 +300,26 @@ impl OccluViewApp {
         let pixels = if clip_plane.enabled != 0 {
             pollster::block_on(
                 offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
-                    prepared,
-                    selection_overlay,
-                    &gpu_cam,
-                    &clip_plane,
-                    spec,
-                    RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                    PreparedViewportClipRequest {
+                        scene: prepared,
+                        overlay: selection_overlay,
+                        camera: &gpu_cam,
+                        clip: &clip_plane,
+                        spec,
+                        deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                    },
                 ),
             )
         } else {
             pollster::block_on(
                 offscreen.render_prepared_viewport_with_overlay_with_deadline(
-                    prepared,
-                    selection_overlay,
-                    &gpu_cam,
-                    spec,
-                    RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                    PreparedViewportRequest {
+                        scene: prepared,
+                        overlay: selection_overlay,
+                        camera: &gpu_cam,
+                        spec,
+                        deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                    },
                 ),
             )
         }
