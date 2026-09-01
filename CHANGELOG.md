@@ -7,6 +7,16 @@ remain in the Git history.
 
 ### Windows
 
+- Moved the Explorer Preview Pane handler into an OccluView-owned preview host,
+  so a failed preview is isolated from Windows' shared host.
+- Made installer upgrades strictly forward-only: a newer installation cannot be
+  replaced by an older package with the same visible version number.
+- Refreshed Explorer file associations after install or upgrade so STL and OBJ
+  thumbnails update without restarting Explorer.
+- Fixed MSI rollback on workstations without a separately installed Microsoft
+  Visual C++ runtime.
+- Made same-version installs and failed major upgrades preserve a working
+  existing installation.
 - Rebuilt Explorer preview delivery so the first frame is rendered before the
   Preview Pane reports success, eliminating the deferred-message path that
   could leave the pane loading indefinitely.
@@ -14,26 +24,6 @@ remain in the Git history.
   across stream copies, renderer setup, rendering, and readback.
 - Added a private `Prevhost.exe` smoke check that verifies the real surrogate
   paints pixels, while retaining low-integrity isolation.
-
-## 1.1.2 - 2026-08-31
-
-### Windows
-
-- Moved the Explorer Preview Pane handler into an OccluView-owned preview host,
-  so a failed preview is isolated from Windows' shared host.
-- Made installer upgrades strictly forward-only: a newer installation cannot be
-  replaced by an older package with the same visible version number.
-
-## 1.1.1 - 2026-08-31
-
-### Windows
-
-- Refreshed Explorer file associations after install or upgrade so STL and OBJ
-  thumbnails update without restarting Explorer.
-- Fixed MSI rollback on workstations without a separately installed Microsoft
-  Visual C++ runtime.
-- Made same-version installs and failed major upgrades preserve a working
-  existing installation.
 
 ## 1.1.0 - 2026-08-24
 
