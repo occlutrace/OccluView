@@ -28,11 +28,15 @@ mod preview_canvas;
 #[cfg(any(windows, test))]
 mod preview_menu;
 mod preview_scene;
+#[cfg(test)]
+mod shell_adapter_contract_tests;
 mod shell_contract;
 #[cfg(test)]
 mod shell_contract_tests;
 #[cfg(any(test, all(windows, feature = "diagnostic-logs")))]
 mod shell_diagnostics;
+#[cfg(test)]
+mod shell_preview_render_tests;
 #[cfg(test)]
 mod shell_preview_tests;
 #[cfg(any(windows, test))]
