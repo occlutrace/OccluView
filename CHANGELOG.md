@@ -3,6 +3,18 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.1.3 - 2026-08-31
+
+### Windows
+
+- Rebuilt Explorer preview delivery so the first frame is rendered before the
+  Preview Pane reports success, eliminating the deferred-message path that
+  could leave the pane loading indefinitely.
+- Made Explorer thumbnail and Preview Pane work consume caller-owned deadlines
+  across stream copies, renderer setup, rendering, and readback.
+- Added a private `Prevhost.exe` smoke check that verifies the real surrogate
+  paints pixels, while retaining low-integrity isolation.
+
 ## 1.1.2 - 2026-08-31
 
 ### Windows
