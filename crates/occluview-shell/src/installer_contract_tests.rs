@@ -6,6 +6,10 @@
 
 use super::{owns_extension, OFFERED_ONLY_EXTENSIONS};
 
+const WINDOWS_DEFAULT_PREVHOST_APPID: &str = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
+const OCCLUVIEW_PREVHOST_APPID: &str = "{FD67C578-DBCC-4E10-8E47-63A8E48F7654}";
+const OCCLUVIEW_PREVHOST_COMPONENT_GUID: &str = "{79955DD2-8C4F-4C1B-8E63-435AB43125DA}";
+
 /// Assert that neither installer surface claims `dot_ext` machine-wide.
 ///
 /// Used from `shell_contract_tests` too, which walks every supported extension.
@@ -177,12 +181,6 @@ fn preview_handler_uses_a_private_prevhost_surrogate_without_relaxing_low_integr
     let wxs = include_str!("../../../install/occluview.wxs");
     let reg = include_str!("../../../install/occluview-shell-registration.reg");
     let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
-    // This is the Windows-owned default Preview Handler Surrogate Host AppID,
-    // not an AppID a third-party handler may own or remove.
-    const WINDOWS_DEFAULT_PREVHOST_APPID: &str = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
-    const OCCLUVIEW_PREVHOST_APPID: &str = "{FD67C578-DBCC-4E10-8E47-63A8E48F7654}";
-    const OCCLUVIEW_PREVHOST_COMPONENT_GUID: &str = "{79955DD2-8C4F-4C1B-8E63-435AB43125DA}";
-
     assert!(registration.contains("register_preview_handler_appid()?;"));
     assert!(registration.contains("unregister_preview_handler_appid"));
     assert!(registration.contains("PREVHOST_APPID_KEY"));
@@ -245,51 +243,35 @@ fn legacy_preview_host_migration_is_opt_in_and_checksum_pinned() {
     assert!(lifecycle.contains("Migrating pinned legacy MSI:"));
 }
 
-#[test]
-fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path_unchanged() {
-    // A diagnostic installer is a non-release investigation tool, not a
-    // second customer release channel. It must carry symbols and the opt-in
-    // shell feature, while the ordinary release/debug profile names and
-    // payloads continue through their existing path.
-    let cargo = include_str!("../../../Cargo.toml");
-    let native_build = include_str!("../../../scripts/build-windows-msvc.sh");
-    let msi_build = include_str!("../../../install/build-msi.ps1");
-    let wxs = include_str!("../../../install/occluview.wxs");
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
-    let repo_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let enable = std::fs::read_to_string(format!(
-        "{repo_root}/install/diagnostics/Enable-PreviewDiagnostics.ps1"
-    ))
-    .unwrap_or_default();
-    let collect = std::fs::read_to_string(format!(
-        "{repo_root}/install/diagnostics/Collect-PreviewDiagnostics.ps1"
-    ))
-    .unwrap_or_default();
-
+fn assert_diagnostic_package_sources(cargo: &str, native_build: &str, msi_build: &str, wxs: &str) {
     assert!(cargo.contains("[profile.release-diagnostic]"));
     assert!(cargo.contains("debug = 2"));
     assert!(cargo.contains("strip = \"none\""));
     assert!(cargo.contains("[profile.release-diagnostic-unwind]"));
     assert!(cargo.contains("inherits = \"release-diagnostic\""));
     assert!(cargo.contains("panic = \"unwind\""));
-
     for source in [native_build, msi_build] {
         assert!(source.contains("diagnostic"));
         assert!(source.contains("release-diagnostic-unwind"));
         assert!(source.contains("diagnostic-logs"));
         assert!(source.contains("target-feature=+crt-static"));
     }
-    assert!(msi_build.contains("-diagnostic.msi"));
-    assert!(msi_build.contains("-diagnostic.manifest.json"));
-    assert!(msi_build.contains("IncludeDiagnostics=1"));
-    assert!(msi_build.contains("Get-FileHash -Algorithm SHA256"));
-    assert!(msi_build.contains("downloadable to repository readers"));
-    assert!(msi_build.contains("never published as a GitHub Release asset"));
-    assert!(msi_build.contains("occluview_shell.pdb"));
-    assert!(msi_build.contains("occluview.pdb"));
-    assert!(msi_build.contains("README.txt"));
-
+    for required in [
+        "-diagnostic.msi",
+        "-diagnostic.manifest.json",
+        "IncludeDiagnostics=1",
+        "Get-FileHash -Algorithm SHA256",
+        "downloadable to repository readers",
+        "never published as a GitHub Release asset",
+        "occluview_shell.pdb",
+        "occluview.pdb",
+        "README.txt",
+    ] {
+        assert!(
+            msi_build.contains(required),
+            "diagnostic MSI lacks {required}"
+        );
+    }
     assert!(wxs.contains("<?if $(var.IncludeDiagnostics) = 1 ?>"));
     for component in [
         "cmpDiagnosticAppSymbols",
@@ -313,53 +295,77 @@ fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path
             "the diagnostic MSI must not change a system-wide diagnostics or Prevhost policy: {forbidden}"
         );
     }
+}
 
+fn assert_diagnostic_collection_contract(
+    enable: &str,
+    collect: &str,
+    diagnostic_readme: &str,
+    lifecycle: &str,
+) {
     assert!(enable.contains("HKCU:\\Software\\OccluTrace\\OccluView\\Diagnostics"));
     assert!(enable.contains("ShellEventLogEnabled"));
-    assert!(
-        !enable.contains("HKLM:"),
-        "the installer must not enable per-user diagnostics from an elevated context"
-    );
-    assert!(collect.contains("shell-events.jsonl"));
-    assert!(collect.contains("preview-failures.jsonl"));
-    assert!(collect.contains("shell-registration.txt"));
-    assert!(collect.contains("$arguments = @(\"query\", $Key, \"/s\")"));
-    assert!(collect.contains("& reg.exe @arguments"));
+    assert!(!enable.contains("HKLM:"), "diagnostics must stay per-user");
+    for required in [
+        "shell-events.jsonl",
+        "preview-failures.jsonl",
+        "shell-registration.txt",
+        "$arguments = @(\"query\", $Key, \"/s\")",
+        "& reg.exe @arguments",
+        "Compress-Archive",
+    ] {
+        assert!(
+            collect.contains(required),
+            "diagnostic collector lacks {required}"
+        );
+    }
     for forbidden in ["reg.exe add", "reg.exe delete", "regsvr32", "ie4uinit"] {
         assert!(
             !collect.contains(forbidden),
-            "diagnostic collection must remain read-only: {forbidden}"
+            "collector must remain read-only: {forbidden}"
         );
     }
-    assert!(collect.contains("Compress-Archive"));
-    assert!(
-        !collect.contains("Start-Process -Verb RunAs"),
-        "collecting safe diagnostic JSONL must not require elevation"
-    );
-    let diagnostic_readme =
-        std::fs::read_to_string(format!("{repo_root}/install/diagnostics/README.txt"))
-            .unwrap_or_default();
-    assert!(diagnostic_readme.contains("no admin"));
-    assert!(diagnostic_readme.contains("$env:USERPROFILE\\Desktop"));
-    assert!(diagnostic_readme.contains("no source mesh/path"));
-    assert!(diagnostic_readme.contains("No dumps are collected automatically"));
-    assert!(lifecycle.contains("[switch]$Diagnostic"));
-    assert!(lifecycle.contains("function Assert-DiagnosticPayload"));
-    assert!(lifecycle.contains("function Assert-DiagnosticSwitchUnchanged"));
-    assert!(lifecycle.contains("README.txt"));
+    assert!(!collect.contains("Start-Process -Verb RunAs"));
+    for required in [
+        "no admin",
+        "$env:USERPROFILE\\Desktop",
+        "no source mesh/path",
+        "No dumps are collected automatically",
+    ] {
+        assert!(
+            diagnostic_readme.contains(required),
+            "diagnostic readme lacks {required}"
+        );
+    }
+    for required in [
+        "[switch]$Diagnostic",
+        "function Assert-DiagnosticPayload",
+        "function Assert-DiagnosticSwitchUnchanged",
+        "README.txt",
+    ] {
+        assert!(
+            lifecycle.contains(required),
+            "lifecycle contract lacks {required}"
+        );
+    }
+}
 
-    assert!(workflow.contains("windows_configuration:"));
-    assert!(workflow.contains("diagnostic"));
-    assert!(workflow.contains("-Configuration $configuration"));
-    assert!(workflow.contains("$configuration = \"release\""));
-    assert!(
-        workflow.contains("$env:GITHUB_EVENT_NAME -eq \"workflow_dispatch\""),
-        "a tag build must remain on the release configuration"
-    );
-    assert!(
-        workflow.contains("inputs.windows_configuration != 'diagnostic'"),
-        "a manual diagnostic run must not relabel the normal portable/upgrade artifacts"
-    );
+fn assert_diagnostic_workflow(workflow: &str) {
+    for required in [
+        "windows_configuration:",
+        "diagnostic",
+        "-Configuration $configuration",
+        "$configuration = \"release\"",
+        "$env:GITHUB_EVENT_NAME -eq \"workflow_dispatch\"",
+        "inputs.windows_configuration != 'diagnostic'",
+        "Diagnostic MSI lifecycle smoke",
+        "-MsiPath $diagnosticMsi.FullName -Diagnostic",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "diagnostic workflow lacks {required}"
+        );
+    }
     let linux_job = workflow
         .split_once("  linux-package:\n")
         .map(|(_, remaining)| {
@@ -371,13 +377,38 @@ fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path
     let Some(linux_job) = linux_job else { return };
     assert!(
         linux_job.contains("if: inputs.windows_configuration != 'diagnostic'"),
-        "a diagnostic dispatch must remain Windows-only and not produce a Debian package"
+        "a diagnostic dispatch must remain Windows-only"
     );
-    assert!(
-        workflow.contains("Diagnostic MSI lifecycle smoke")
-            && workflow.contains("-MsiPath $diagnosticMsi.FullName -Diagnostic"),
-        "the diagnostic MSI must be installed and uninstalled in Windows CI"
-    );
+}
+
+#[test]
+fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path_unchanged() {
+    // A diagnostic installer is a non-release investigation tool, not a
+    // second customer release channel. It must carry symbols and the opt-in
+    // shell feature, while the ordinary release/debug profile names and
+    // payloads continue through their existing path.
+    let cargo = include_str!("../../../Cargo.toml");
+    let native_build = include_str!("../../../scripts/build-windows-msvc.sh");
+    let msi_build = include_str!("../../../install/build-msi.ps1");
+    let wxs = include_str!("../../../install/occluview.wxs");
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let lifecycle = include_str!("../../../install/test-msi-lifecycle.ps1");
+    let repo_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let enable = std::fs::read_to_string(format!(
+        "{repo_root}/install/diagnostics/Enable-PreviewDiagnostics.ps1"
+    ))
+    .unwrap_or_default();
+    let collect = std::fs::read_to_string(format!(
+        "{repo_root}/install/diagnostics/Collect-PreviewDiagnostics.ps1"
+    ))
+    .unwrap_or_default();
+
+    let diagnostic_readme =
+        std::fs::read_to_string(format!("{repo_root}/install/diagnostics/README.txt"))
+            .unwrap_or_default();
+    assert_diagnostic_package_sources(cargo, native_build, msi_build, wxs);
+    assert_diagnostic_collection_contract(&enable, &collect, &diagnostic_readme, lifecycle);
+    assert_diagnostic_workflow(workflow);
 }
 
 #[test]

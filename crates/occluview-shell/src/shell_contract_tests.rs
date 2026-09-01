@@ -434,7 +434,7 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("actions/download-artifact"));
     assert!(workflow.contains("*.deb"));
     assert!(workflow.contains("*.sha256"));
-    assert!(workflow.contains(r#"Download \`OccluView-Linux.deb\` for the native Linux viewer,"#));
+    assert!(workflow.contains(r"Download \`OccluView-Linux.deb\` for the native Linux viewer,"));
     assert!(workflow.contains("launcher, MIME registration, and thumbnailer."));
 
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));

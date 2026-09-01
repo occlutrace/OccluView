@@ -251,10 +251,7 @@ fn preview_pane_has_a_native_right_click_context_menu() {
     assert!(com.contains("GetModuleFileNameW") && com.contains("APP_EXE_NAME"));
 }
 
-#[test]
-fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() {
-    let smoke = include_str!("../../../install/test-preview-handler.ps1");
-
+fn assert_preview_smoke_abi(smoke: &str) {
     assert!(smoke.contains("ApartmentState.STA"));
     assert!(smoke.contains("CoCreateInstance"));
     assert!(smoke.contains("CLSCTX_LOCAL_SERVER = 0x4"));
@@ -319,17 +316,21 @@ fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() 
         smoke.contains("useStream") && smoke.contains("ProbeFromItem"),
         "preview smoke should execute file, stream, and shell-item initialization paths"
     );
-    let offset = |needle: &str| {
-        let pos = smoke.find(needle);
-        assert!(pos.is_some(), "missing preview ABI marker: {needle}");
-        pos.unwrap_or_default()
-    };
-    let do_preview = offset("void DoPreview();");
-    let unload = offset("void Unload();");
-    let set_focus = offset("void SetFocus();");
-    let query_focus = offset("IntPtr QueryFocus();");
-    let translate = offset("int TranslateAccelerator(ref MSG pmsg);");
-    let resize = offset("preview.SetRect(ref resizedRect);");
+}
+
+fn preview_smoke_offset(smoke: &str, needle: &str) -> usize {
+    let position = smoke.find(needle);
+    assert!(position.is_some(), "missing preview ABI marker: {needle}");
+    position.unwrap_or_default()
+}
+
+fn assert_preview_smoke_interaction_abi_order(smoke: &str) {
+    let do_preview = preview_smoke_offset(smoke, "void DoPreview();");
+    let unload = preview_smoke_offset(smoke, "void Unload();");
+    let set_focus = preview_smoke_offset(smoke, "void SetFocus();");
+    let query_focus = preview_smoke_offset(smoke, "IntPtr QueryFocus();");
+    let translate = preview_smoke_offset(smoke, "int TranslateAccelerator(ref MSG pmsg);");
+    let resize = preview_smoke_offset(smoke, "preview.SetRect(ref resizedRect);");
     assert!(
         smoke[resize..].contains("WaitForVisibleFrame(child, \"initial resized preview frame\")"),
         "the asynchronous Preview Handler smoke must wait for the resized frame instead of capturing it immediately"
@@ -350,9 +351,11 @@ fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() 
     assert!(unload < set_focus);
     assert!(set_focus < query_focus);
     assert!(query_focus < translate);
+}
 
-    let private_start = offset("public static string ProbePrivateSurrogate(");
-    let private_end = offset("public static string Probe(");
+fn assert_private_surrogate_preview_contract(smoke: &str) {
+    let private_start = preview_smoke_offset(smoke, "public static string ProbePrivateSurrogate(");
+    let private_end = preview_smoke_offset(smoke, "public static string Probe(");
     let private_surrogate = &smoke[private_start..private_end];
     for required in [
         "CreateLocalServerPreviewHandler(previewClsid)",
@@ -382,9 +385,11 @@ fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() 
             "private-surrogate first-frame probe must not wait for deferred work: {forbidden}"
         );
     }
+}
 
-    let detailed_start = offset("public static string Probe(");
-    let detailed_end = offset("public static string ProbeFromItem(");
+fn assert_in_process_preview_contract(smoke: &str) {
+    let detailed_start = preview_smoke_offset(smoke, "public static string Probe(");
+    let detailed_end = preview_smoke_offset(smoke, "public static string ProbeFromItem(");
     let detailed_probe = &smoke[detailed_start..detailed_end];
     assert!(
         detailed_probe.contains("CreateInProcessPreviewHandler(previewClsid)"),
@@ -398,8 +403,8 @@ fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() 
         !detailed_probe.contains("EnsurePreviewHostProcess(child)"),
         "the detailed in-process contract must not assert that its own child belongs to Prevhost"
     );
-    let item_start = offset("public static string ProbeFromItem(");
-    let item_end = offset("private static IntPtr WaitForPreviewChild(");
+    let item_start = preview_smoke_offset(smoke, "public static string ProbeFromItem(");
+    let item_end = preview_smoke_offset(smoke, "private static IntPtr WaitForPreviewChild(");
     let item_probe = &smoke[item_start..item_end];
     assert!(
         item_probe.contains("CreateInProcessPreviewHandler(previewClsid)"),
@@ -413,14 +418,29 @@ fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() 
         !item_probe.contains("EnsurePreviewHostProcess(child)"),
         "the shell-item in-process contract must not assert that its own child belongs to Prevhost"
     );
+}
 
-    let private_call =
-        offset("$surrogateResult = [OccluViewShellPreviewSmoke]::ProbePrivateSurrogate(");
-    let file_call = offset("$fileResult = [OccluViewShellPreviewSmoke]::Probe(");
+fn assert_private_surrogate_runs_before_interaction(smoke: &str) {
+    let private_call = preview_smoke_offset(
+        smoke,
+        "$surrogateResult = [OccluViewShellPreviewSmoke]::ProbePrivateSurrogate(",
+    );
+    let file_call =
+        preview_smoke_offset(smoke, "$fileResult = [OccluViewShellPreviewSmoke]::Probe(");
     assert!(
         private_call < file_call,
         "the private Prevhost first-frame probe must run before detailed in-process rendering"
     );
+}
+
+#[test]
+fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() {
+    let smoke = include_str!("../../../install/test-preview-handler.ps1");
+    assert_preview_smoke_abi(smoke);
+    assert_preview_smoke_interaction_abi_order(smoke);
+    assert_private_surrogate_preview_contract(smoke);
+    assert_in_process_preview_contract(smoke);
+    assert_private_surrogate_runs_before_interaction(smoke);
 }
 
 #[test]
@@ -721,17 +741,22 @@ fn the_preview_window_and_the_com_object_die_together() {
 fn diagnostic_events_are_fixed_field_and_cover_both_shell_components() {
     use crate::shell_diagnostics::{
         ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticEvent,
-        ShellDiagnosticOutcome, ShellDiagnosticStage,
+        ShellDiagnosticEventInput, ShellDiagnosticOutcome, ShellDiagnosticProcess,
+        ShellDiagnosticStage,
     };
 
-    let preview = ShellDiagnosticEvent::new(
-        ShellDiagnosticComponent::Preview,
-        ShellDiagnosticStage::BitmapPublish,
+    let preview = ShellDiagnosticEvent::normal(
+        ShellDiagnosticEventInput {
+            component: ShellDiagnosticComponent::Preview,
+            stage: ShellDiagnosticStage::BitmapPublish,
+            adapter: ShellDiagnosticAdapter::Hardware,
+            elapsed_ms: 18,
+        },
         ShellDiagnosticOutcome::Completed,
-        ShellDiagnosticAdapter::Hardware,
-        18,
-        1_725_000_001,
-        42,
+        ShellDiagnosticProcess {
+            timestamp_unix_ms: 1_725_000_001,
+            process_id: 42,
+        },
     )
     .json_line();
     assert!(preview.contains("\"component\":\"preview\""));
