@@ -1,4 +1,3 @@
-use crate::render_thumb::DEFAULT_THUMBNAIL_TIMEOUT;
 use crate::ThumbnailError;
 use occluview_render::{AdapterPolicy, Offscreen, RenderDeadline};
 
@@ -13,7 +12,7 @@ pub(crate) const fn test_adapter_policy() -> AdapterPolicy {
     AdapterPolicy::FallbackOnly
 }
 
-const fn thumbnail_adapter_policy() -> AdapterPolicy {
+pub(crate) const fn default_thumbnail_adapter_policy() -> AdapterPolicy {
     if cfg!(test) {
         test_adapter_policy()
     } else {
@@ -21,12 +20,12 @@ const fn thumbnail_adapter_policy() -> AdapterPolicy {
     }
 }
 
-pub(crate) fn create_thumbnail_offscreen() -> Result<Offscreen, ThumbnailError> {
-    pollster::block_on(Offscreen::new_with_adapter_policy(
-        thumbnail_adapter_policy(),
-        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
-    ))
-    .map_err(Into::into)
+pub(crate) fn create_thumbnail_offscreen(
+    deadline: RenderDeadline,
+    adapter_policy: AdapterPolicy,
+) -> Result<Offscreen, ThumbnailError> {
+    pollster::block_on(Offscreen::new_with_adapter_policy(adapter_policy, deadline))
+        .map_err(Into::into)
 }
 
 #[cfg(test)]

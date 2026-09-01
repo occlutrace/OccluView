@@ -215,39 +215,33 @@ fn a_timed_out_worker_keeps_its_lane_until_it_really_finishes() {
     );
 }
 #[test]
-fn file_backed_thumbnail_timeout_is_one_end_to_end_budget() {
-    let timeout = Duration::from_millis(75);
+fn file_preflight_returns_only_file_metadata_and_cache_identity() {
     let path = fixtures::write_temp_fixture("obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
-    let plan = prepare_file_thumbnail_render(&path, timeout)
+    let plan = prepare_file_thumbnail_render(&path)
         .expect("supported mesh file should produce a render plan");
     assert_eq!(
-        plan.wait_timeout, timeout,
-        "file thumbnail callers must receive one wall-clock budget"
+        plan.cache_key,
+        ThumbnailFileCacheKey::new(&path, &plan.metadata),
+        "preflight owns cache identity; the request object owns the deadline"
     );
 }
 
 #[test]
-fn stream_thumbnail_timeout_is_one_end_to_end_budget() {
-    let timeout = Duration::from_millis(90);
-    let plan = prepare_stream_thumbnail_render(
-        Some("obj"),
-        b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
-        timeout,
-    )
-    .expect("supported thumbnail stream should produce a render plan");
+fn stream_preflight_returns_only_format_and_cache_identity() {
+    let plan =
+        prepare_stream_thumbnail_render(Some("obj"), b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+            .expect("supported thumbnail stream should produce a render plan");
     assert_eq!(
-        plan.wait_timeout, timeout,
-        "stream thumbnail callers must receive one wall-clock budget"
+        plan.kind,
+        occluview_formats::FormatKind::Obj,
+        "preflight owns format inference; the request object owns the deadline"
     );
 }
 
 #[test]
 fn mixed_folder_noise_is_rejected_before_thumbnail_worker_startup() {
     assert!(matches!(
-        prepare_file_thumbnail_render(
-            Path::new("mixed-folder/readme.txt"),
-            Duration::from_millis(50)
-        ),
+        prepare_file_thumbnail_render(Path::new("mixed-folder/readme.txt")),
         Err(FileThumbnailPreflightError::UnsupportedExtension)
     ));
 }
@@ -354,16 +348,13 @@ pub(super) fn assert_burst_thumbnail_visible(path: &Path, pixels: &[u8], spec: T
 #[test]
 fn stream_thumbnail_format_preflight_runs_before_worker_startup() {
     assert!(matches!(
-        prepare_stream_thumbnail_render(None, b"not a mesh", Duration::from_millis(50)),
+        prepare_stream_thumbnail_render(None, b"not a mesh"),
         Err(StreamThumbnailPreflightError::Format(_))
     ));
 
-    let plan = prepare_stream_thumbnail_render(
-        Some("obj"),
-        b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
-        Duration::from_millis(50),
-    )
-    .expect("supported OBJ bytes should infer before worker startup");
+    let plan =
+        prepare_stream_thumbnail_render(Some("obj"), b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+            .expect("supported OBJ bytes should infer before worker startup");
     assert_eq!(plan.kind, occluview_formats::FormatKind::Obj);
 }
 

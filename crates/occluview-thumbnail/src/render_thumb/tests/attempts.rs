@@ -11,6 +11,81 @@ fn spec_64() -> ThumbnailSpec {
 }
 
 #[test]
+fn shell_request_anchors_response_and_cache_warm_deadlines_at_entry() {
+    let started_at = Instant::now();
+    let request = ThumbnailRenderRequest::from_started_at(
+        started_at,
+        Duration::from_millis(20),
+        AdapterPolicy::HardwareThenFallback,
+    );
+
+    assert_eq!(
+        request.response_deadline(),
+        started_at + Duration::from_millis(20),
+        "queueing, decoding, adapter creation, and readback must share the Shell response deadline"
+    );
+    assert_eq!(
+        request.cache_warm_deadline(),
+        started_at + DEFAULT_THUMBNAIL_TIMEOUT,
+        "a detached cache warmer is bounded from request entry, not from when rendering starts"
+    );
+    assert_eq!(
+        request.adapter_policy(),
+        AdapterPolicy::HardwareThenFallback
+    );
+}
+
+#[test]
+fn expired_shell_request_never_starts_a_fresh_file_render_budget() {
+    let spec = spec_64();
+    let mut bytes = fixtures::binary_stl_cube();
+    bytes[..8].copy_from_slice(b"deadline");
+    let path = write_verdict_fixture("deadline-file-request.stl", &bytes);
+    let started_at = Instant::now() - Duration::from_millis(10);
+    let request = ThumbnailRenderRequest::from_started_at(
+        started_at,
+        Duration::from_millis(1),
+        AdapterPolicy::HardwareThenFallback,
+    );
+
+    let attempt = try_render_thumbnail_file_with_request(&path, spec, request);
+
+    assert_eq!(attempt, ThumbnailAttempt::TransientFailure);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn expired_shell_stream_request_cannot_reserve_a_new_lane() {
+    let request = ThumbnailRenderRequest::from_started_at(
+        Instant::now() - Duration::from_millis(10),
+        Duration::from_millis(1),
+        AdapterPolicy::HardwareThenFallback,
+    );
+
+    assert!(reserve_thumbnail_stream_job_for_request(request).is_none());
+}
+
+#[test]
+fn expired_shell_stream_request_never_starts_a_fresh_render_budget() {
+    let mut bytes = fixtures::binary_stl_cube();
+    bytes[..8].copy_from_slice(b"deadline");
+    let request = ThumbnailRenderRequest::from_started_at(
+        Instant::now() - Duration::from_millis(10),
+        Duration::from_millis(1),
+        AdapterPolicy::HardwareThenFallback,
+    );
+
+    let attempt = try_render_thumbnail_shared_with_request(
+        Some("stl".to_string()),
+        Arc::<[u8]>::from(bytes),
+        spec_64(),
+        request,
+    );
+
+    assert_eq!(attempt, ThumbnailAttempt::TransientFailure);
+}
+
+#[test]
 fn missing_file_is_a_transient_failure_not_a_cacheable_placeholder() {
     let attempt = try_render_thumbnail_file(
         Path::new("/nonexistent/occluview-transient-probe.stl"),

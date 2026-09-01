@@ -47,9 +47,9 @@ use crate::ShellError;
 use glam::Vec2;
 use occluview_render::ThumbnailSpec;
 use occluview_thumbnail::render_thumb::{
-    placeholder_for_oversize_input, reserve_thumbnail_stream_job, try_render_thumbnail_file,
-    try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, DEFAULT_THUMBNAIL_TIMEOUT,
-    MAX_THUMBNAIL_INPUT_BYTES,
+    placeholder_for_oversize_input, reserve_thumbnail_stream_job_for_request,
+    try_render_thumbnail_file_with_request, try_render_thumbnail_shared_with_reservation,
+    ThumbnailAttempt, ThumbnailRenderRequest, DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_INPUT_BYTES,
 };
 use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};

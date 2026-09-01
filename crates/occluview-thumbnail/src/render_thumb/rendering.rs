@@ -2,7 +2,8 @@ use super::{ThumbnailError, ThumbnailRendererPool};
 use glam::{Mat4, Vec2, Vec3};
 use occluview_core::{Aabb, Camera, CameraPreset, Mesh, DEFAULT_UNTEXTURED_MESH_TINT};
 use occluview_render::{
-    GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, RenderDeadline, SceneDrawEntry, ThumbnailSpec,
+    AdapterPolicy, GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, RenderDeadline,
+    SceneDrawEntry, ThumbnailSpec,
 };
 
 const THUMBNAIL_PROJECTED_BBOX_FILL: f32 = 0.86;
@@ -18,11 +19,25 @@ pub(super) fn render_mesh_thumbnail(
     spec: ThumbnailSpec,
     deadline: RenderDeadline,
 ) -> Result<Vec<u8>, ThumbnailError> {
+    render_mesh_thumbnail_with_adapter_policy(
+        mesh,
+        spec,
+        deadline,
+        crate::offscreen_factory::default_thumbnail_adapter_policy(),
+    )
+}
+
+pub(super) fn render_mesh_thumbnail_with_adapter_policy(
+    mesh: Mesh,
+    spec: ThumbnailSpec,
+    deadline: RenderDeadline,
+    adapter_policy: AdapterPolicy,
+) -> Result<Vec<u8>, ThumbnailError> {
     #[cfg(test)]
     let _guard = crate::acquire_render_test_guard();
 
     let pool = ThumbnailRendererPool::shared();
-    match pool.with_renderer(|offscreen| {
+    match pool.with_renderer(deadline, adapter_policy, |offscreen| {
         render_mesh_thumbnail_with_offscreen(&mesh, spec, deadline, offscreen)
     }) {
         Ok(pixels) => Ok(pixels),
@@ -31,7 +46,7 @@ pub(super) fn render_mesh_thumbnail(
                 ?error,
                 "thumbnail renderer failed; retrying once with a fresh device"
             );
-            pool.with_renderer(|offscreen| {
+            pool.with_renderer(deadline, adapter_policy, |offscreen| {
                 render_mesh_thumbnail_with_offscreen(&mesh, spec, deadline, offscreen)
             })
         }

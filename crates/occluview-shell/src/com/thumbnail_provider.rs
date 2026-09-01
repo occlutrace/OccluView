@@ -7,15 +7,15 @@
 
 use super::{
     com_entry, e_fail, e_pointer, implement, path_extension, pixels_to_hbitmap, read_capped_stream,
-    reserve_thumbnail_stream_job, try_render_thumbnail_file,
+    reserve_thumbnail_stream_job_for_request, try_render_thumbnail_file_with_request,
     try_render_thumbnail_shared_with_reservation, Arc, AssertUnwindSafe, CoTaskMemFree,
     DeferredSource, IClassFactory, IClassFactory_Impl, IInitializeWithFile,
     IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
     IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider, IThumbnailProvider_Impl,
-    IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead, ThumbnailAttempt, ThumbnailSpec,
-    ACTIVE_COM_OBJECTS, BOOL, CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP,
-    MAX_OFFSCREEN_EDGE, MAX_THUMBNAIL_INPUT_BYTES, PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET,
-    WTSAT_ARGB, WTS_ALPHATYPE,
+    IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead, ThumbnailAttempt,
+    ThumbnailRenderRequest, ThumbnailSpec, ACTIVE_COM_OBJECTS, BOOL, CLASS_E_NOAGGREGATION,
+    DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP, MAX_OFFSCREEN_EDGE, MAX_THUMBNAIL_INPUT_BYTES,
+    PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET, WTSAT_ARGB, WTS_ALPHATYPE,
 };
 use super::{placeholder_for_oversize_input, STATFLAG, STATSTG};
 use std::panic::catch_unwind;
@@ -204,6 +204,7 @@ impl ThumbnailProvider {
     /// hiccup), while over-budget and decode verdicts are deterministic
     /// placeholders the shell may cache.
     fn render_attempt(&self, spec: ThumbnailSpec) -> ThumbnailAttempt {
+        let request = ThumbnailRenderRequest::new(DEFAULT_THUMBNAIL_TIMEOUT);
         if let Some(byte_len) = self.oversize_stream_len.get() {
             return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
         }
@@ -211,10 +212,10 @@ impl ThumbnailProvider {
         // `ensure_stream_bytes` may borrow it mutably.
         let source_path = self.source.borrow().path().map(PathBuf::from);
         if let Some(path) = source_path {
-            return try_render_thumbnail_file(&path, spec, DEFAULT_THUMBNAIL_TIMEOUT);
+            return try_render_thumbnail_file_with_request(&path, spec, request);
         }
         let _stream_bytes_guard = ThumbnailStreamBytesGuard::new(&self.bytes);
-        let Some(reservation) = reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT) else {
+        let Some(reservation) = reserve_thumbnail_stream_job_for_request(request) else {
             tracing::warn!(
                 "thumbnail stream budget was busy; reporting transient failure instead of overcommitting dllhost"
             );
@@ -244,13 +245,7 @@ impl ThumbnailProvider {
         if let Some(byte_len) = self.oversize_stream_len.get() {
             ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len))
         } else {
-            try_render_thumbnail_shared_with_reservation(
-                ext,
-                bytes,
-                spec,
-                DEFAULT_THUMBNAIL_TIMEOUT,
-                reservation,
-            )
+            try_render_thumbnail_shared_with_reservation(ext, bytes, spec, reservation)
         }
     }
 

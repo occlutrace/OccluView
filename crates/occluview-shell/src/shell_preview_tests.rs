@@ -162,7 +162,7 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
         .expect("thumbnail render_attempt");
     let body = &com[start..];
     let reserve = body
-        .find("reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT)")
+        .find("reserve_thumbnail_stream_job_for_request(request)")
         .expect("stream reservation");
     let read = body
         .find("self.ensure_stream_bytes()")

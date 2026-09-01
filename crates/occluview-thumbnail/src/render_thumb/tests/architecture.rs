@@ -12,7 +12,8 @@ fn thumbnail_render_path_uses_parallel_renderer_pool_for_shell_bursts() {
     // does not own. Both need a way out: an unwind out of device creation must
     // give the slot back, and the wait must expire rather than park the decode
     // lane it is holding until the surrogate dies.
-    assert!(concurrency_source().contains("panic::catch_unwind(AssertUnwindSafe(self.create))"));
+    assert!(concurrency_source().contains("panic::catch_unwind(AssertUnwindSafe(|| {"));
+    assert!(concurrency_source().contains("(self.create)(deadline, adapter_policy)"));
     assert!(concurrency_source().contains(".wait_timeout(state, remaining)"));
     let legacy_single_renderer_gate = ["Mutex", "<Option<Offscreen>>"].concat();
     assert!(!render_path.contains(&legacy_single_renderer_gate));
@@ -40,6 +41,32 @@ fn timeout_thumbnail_workers_join_render_test_guard() {
     assert!(
         rendering.contains("#[cfg(test)]")
             && rendering.contains("let _guard = crate::acquire_render_test_guard();")
+    );
+}
+
+#[test]
+fn thumbnail_preflight_carries_no_restartable_timeout_state() {
+    assert!(
+        !cache_source().contains("wait_timeout"),
+        "the request object, not a preflight plan, owns the one end-to-end deadline"
+    );
+}
+
+#[test]
+fn thumbnail_renderer_factory_receives_the_request_deadline() {
+    let factory = offscreen_factory_source();
+    let concurrency = concurrency_source();
+    assert!(
+        factory.contains("fn create_thumbnail_offscreen(\n    deadline: RenderDeadline,"),
+        "adapter/device creation must be given the request deadline"
+    );
+    assert!(
+        !factory.contains("RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT)"),
+        "the factory must not restart a six-second renderer budget"
+    );
+    assert!(
+        !concurrency.contains("RENDERER_WAIT_CEILING"),
+        "renderer checkout must use the caller deadline, not a hidden thirty-second ceiling"
     );
 }
 

@@ -196,8 +196,13 @@ fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
         content: None,
     };
 
-    let settled =
-        render_file_thumbnail_job(path.clone(), measured, keys(), spec, Duration::from_secs(6));
+    let settled = render_file_thumbnail_job(
+        path.clone(),
+        measured,
+        keys(),
+        spec,
+        ThumbnailRenderRequest::new(Duration::from_secs(6)),
+    );
     assert!(
         matches!(settled, ThumbnailAttempt::Bitmap(_)),
         "a file that is simply short is a verdict about the file"
@@ -207,8 +212,13 @@ fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
         byte_len: measured.byte_len + 1024,
         modified_nanos: measured.modified_nanos,
     };
-    let moving =
-        render_file_thumbnail_job(path.clone(), stale, keys(), spec, Duration::from_secs(6));
+    let moving = render_file_thumbnail_job(
+        path.clone(),
+        stale,
+        keys(),
+        spec,
+        ThumbnailRenderRequest::new(Duration::from_secs(6)),
+    );
     assert!(
         matches!(moving, ThumbnailAttempt::TransientFailure),
         "a file that changed while it was read must be asked about again"

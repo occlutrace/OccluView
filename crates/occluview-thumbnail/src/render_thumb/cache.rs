@@ -1,7 +1,6 @@
 use super::{
-    rendering, Duration, Mutex, Path, ThumbnailError, MAX_THUMBNAIL_FILE_BYTES,
-    MAX_THUMBNAIL_INPUT_BYTES, THUMBNAIL_FILE_CACHE, THUMBNAIL_FILE_CONTENT_CACHE,
-    THUMBNAIL_STREAM_CACHE,
+    rendering, Mutex, Path, ThumbnailError, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
+    THUMBNAIL_FILE_CACHE, THUMBNAIL_FILE_CONTENT_CACHE, THUMBNAIL_STREAM_CACHE,
 };
 use occluview_formats::{FormatError, FormatKind};
 use sha2::{Digest, Sha256};
@@ -102,7 +101,6 @@ pub(super) struct ThumbnailFileMetadata {
 pub(super) struct FileThumbnailRenderPlan {
     pub(super) metadata: ThumbnailFileMetadata,
     pub(super) cache_key: ThumbnailFileCacheKey,
-    pub(super) wait_timeout: Duration,
 }
 
 #[derive(Debug)]
@@ -121,7 +119,6 @@ pub(super) enum FileThumbnailPreflightError {
 pub(super) struct StreamThumbnailRenderPlan {
     pub(super) kind: FormatKind,
     pub(super) cache_key: ThumbnailStreamCacheKey,
-    pub(super) wait_timeout: Duration,
 }
 
 #[derive(Debug)]

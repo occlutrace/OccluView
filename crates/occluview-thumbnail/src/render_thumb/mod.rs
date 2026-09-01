@@ -22,7 +22,7 @@
 use crate::placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind, PlaceholderKind};
 use crate::ThumbnailError;
 use occluview_formats::FormatError;
-use occluview_render::{RenderDeadline, ThumbnailSpec};
+use occluview_render::{AdapterPolicy, RenderDeadline, ThumbnailSpec};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -41,8 +41,10 @@ use cache::{
     FileThumbnailPreflightError, StreamThumbnailPreflightError, ThumbnailFileCacheKey,
     ThumbnailFileContentKey, ThumbnailFileMetadata, ThumbnailRequestKey,
 };
+#[cfg(test)]
+use concurrency::render_coalesced_thumbnail;
 use concurrency::{
-    render_coalesced_thumbnail, run_thumbnail_job_by, run_thumbnail_job_with_deadline,
+    render_coalesced_thumbnail_by, run_thumbnail_job_by, run_thumbnail_job_by_deadline,
     ThumbnailJobOutcome, ThumbnailJobPermit, ThumbnailJobProgress, ThumbnailRendererPool,
 };
 use loading::{
@@ -59,6 +61,77 @@ pub const DEFAULT_THUMBNAIL_TIMEOUT: Duration = Duration::from_millis(6_000);
 /// second-paint cache behaviour without silently extending an Explorer COM
 /// call or leaving an unbounded worker behind.
 const BACKGROUND_CACHE_WARM_TIMEOUT: Duration = DEFAULT_THUMBNAIL_TIMEOUT;
+
+/// Immutable timing and adapter policy for one thumbnail request.
+///
+/// Both absolute deadlines are fixed when the Shell request enters the
+/// pipeline. The response deadline bounds everything that may answer COM. A
+/// worker that outlives that response may write only to the process cache,
+/// using the separately bounded cache-warm deadline captured at the same
+/// instant.
+#[derive(Clone, Copy, Debug)]
+pub struct ThumbnailRenderRequest {
+    response_deadline: Instant,
+    cache_warm_deadline: Instant,
+    response_timeout: Duration,
+    adapter_policy: AdapterPolicy,
+}
+
+impl ThumbnailRenderRequest {
+    /// Create a normal Shell request at the current instant.
+    #[must_use]
+    pub fn new(timeout: Duration) -> Self {
+        Self::from_started_at(
+            Instant::now(),
+            timeout,
+            crate::offscreen_factory::default_thumbnail_adapter_policy(),
+        )
+    }
+
+    /// Create a request from a known entry instant.
+    ///
+    /// This is public to make the end-to-end deadline contract directly
+    /// testable by callers that own the Shell boundary.
+    #[must_use]
+    pub fn from_started_at(
+        started_at: Instant,
+        response_timeout: Duration,
+        adapter_policy: AdapterPolicy,
+    ) -> Self {
+        let cache_warm_timeout = response_timeout.max(BACKGROUND_CACHE_WARM_TIMEOUT);
+        Self {
+            response_deadline: started_at + response_timeout,
+            cache_warm_deadline: started_at + cache_warm_timeout,
+            response_timeout,
+            adapter_policy,
+        }
+    }
+
+    /// Absolute cutoff for the COM response.
+    #[must_use]
+    pub const fn response_deadline(self) -> Instant {
+        self.response_deadline
+    }
+
+    /// Absolute cutoff for an already-detached cache worker.
+    #[must_use]
+    pub const fn cache_warm_deadline(self) -> Instant {
+        self.cache_warm_deadline
+    }
+
+    /// The configured COM-response budget, retained only for fixed-category
+    /// diagnostics. Timing decisions use the absolute deadline above.
+    #[must_use]
+    pub const fn response_timeout(self) -> Duration {
+        self.response_timeout
+    }
+
+    /// Renderer selection policy fixed for this request.
+    #[must_use]
+    pub const fn adapter_policy(self) -> AdapterPolicy {
+        self.adapter_policy
+    }
+}
 /// Maximum stream size the shell thumbnail path will parse.
 pub const MAX_THUMBNAIL_INPUT_BYTES: usize = 192 * 1024 * 1024;
 /// Maximum local-file thumbnail input size. File-backed thumbnails use mmap,
@@ -128,17 +201,25 @@ pub struct ThumbnailJobReservation {
     /// used to take a budget each: eight seconds for the slot, an unbounded
     /// copy, then a fresh six for the render -- and under Apartment hosting
     /// the whole folder queues behind that.
-    deadline: Instant,
+    request: ThumbnailRenderRequest,
 }
 
 #[must_use]
 #[cfg_attr(not(windows), allow(dead_code))]
 /// Reserve one bounded stream thumbnail job before copying shell bytes.
 pub fn reserve_thumbnail_stream_job(timeout: Duration) -> Option<ThumbnailJobReservation> {
-    let deadline = Instant::now() + timeout;
+    reserve_thumbnail_stream_job_for_request(ThumbnailRenderRequest::new(timeout))
+}
+
+/// Reserve a stream lane under a request deadline fixed at Shell entry.
+#[must_use]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn reserve_thumbnail_stream_job_for_request(
+    request: ThumbnailRenderRequest,
+) -> Option<ThumbnailJobReservation> {
     concurrency::ThumbnailJobGate::shared()
-        .acquire_by(deadline)
-        .map(|permit| ThumbnailJobReservation { permit, deadline })
+        .acquire_by(request.response_deadline())
+        .map(|permit| ThumbnailJobReservation { permit, request })
 }
 
 /// Load `bytes` (a file with the given lowercase extension, no dot) and render
@@ -258,7 +339,17 @@ pub fn try_render_thumbnail_file(
     spec: ThumbnailSpec,
     timeout: Duration,
 ) -> ThumbnailAttempt {
-    let plan = match prepare_file_thumbnail_render(path, timeout) {
+    try_render_thumbnail_file_with_request(path, spec, ThumbnailRenderRequest::new(timeout))
+}
+
+/// Render a local file for a Shell request whose deadline was fixed at entry.
+#[must_use]
+pub fn try_render_thumbnail_file_with_request(
+    path: &Path,
+    spec: ThumbnailSpec,
+    request: ThumbnailRenderRequest,
+) -> ThumbnailAttempt {
+    let plan = match prepare_file_thumbnail_render(path) {
         Ok(plan) => plan,
         Err(FileThumbnailPreflightError::UnsupportedExtension) => {
             // Deterministic: the extension is simply not ours. This repeats on
@@ -317,14 +408,13 @@ pub fn try_render_thumbnail_file(
     };
     let path_cache_key = plan.cache_key;
     let metadata = plan.metadata;
-    let wait_timeout = plan.wait_timeout;
     let path = path.to_path_buf();
     let cache_keys = FileThumbnailCacheKeys {
         path: path_cache_key,
         content: content_key,
     };
-    render_coalesced_thumbnail(inflight_key, wait_timeout, move || {
-        render_file_thumbnail_job(path, metadata, cache_keys, spec, timeout)
+    render_coalesced_thumbnail_by(inflight_key, request.response_deadline(), move || {
+        render_file_thumbnail_job(path, metadata, cache_keys, spec, request)
     })
 }
 
@@ -369,17 +459,18 @@ fn render_file_thumbnail_job(
     metadata: ThumbnailFileMetadata,
     cache_keys: FileThumbnailCacheKeys,
     spec: ThumbnailSpec,
-    timeout: Duration,
+    request: ThumbnailRenderRequest,
 ) -> ThumbnailAttempt {
     let measured_path = path.clone();
-    let result = run_thumbnail_job_with_deadline(timeout, move |progress| {
+    let result = run_thumbnail_job_by_deadline(request.response_deadline(), move |progress| {
         let result = (|| -> Result<Vec<u8>, ThumbnailError> {
             let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
             let _ = progress.send(ThumbnailJobProgress::Prepared);
-            rendering::render_mesh_thumbnail(
+            rendering::render_mesh_thumbnail_with_adapter_policy(
                 mesh,
                 spec,
-                RenderDeadline::after(BACKGROUND_CACHE_WARM_TIMEOUT),
+                RenderDeadline::at(request.cache_warm_deadline()),
+                request.adapter_policy(),
             )
         })();
         if let Ok(pixels) = &result {
@@ -411,7 +502,7 @@ fn render_file_thumbnail_job(
             return ThumbnailAttempt::TransientFailure;
         }
     }
-    thumbnail_attempt_for_job_outcome(result, spec, timeout, "file")
+    thumbnail_attempt_for_job_outcome(result, spec, request.response_timeout(), "file")
 }
 
 /// Translate a worker outcome into the cache-safety split: decode verdicts
@@ -527,8 +618,13 @@ pub fn render_thumbnail_shared_or_placeholder_with_timeout(
     spec: ThumbnailSpec,
     timeout: Duration,
 ) -> Vec<u8> {
-    try_render_thumbnail_shared_impl(extension, bytes, spec, timeout, None)
-        .into_pixels_or_placeholder(spec)
+    try_render_thumbnail_shared_with_request(
+        extension,
+        bytes,
+        spec,
+        ThumbnailRenderRequest::new(timeout),
+    )
+    .into_pixels_or_placeholder(spec)
 }
 
 #[must_use]
@@ -540,7 +636,24 @@ pub fn try_render_thumbnail_shared(
     spec: ThumbnailSpec,
     timeout: Duration,
 ) -> ThumbnailAttempt {
-    try_render_thumbnail_shared_impl(extension, bytes, spec, timeout, None)
+    try_render_thumbnail_shared_with_request(
+        extension,
+        bytes,
+        spec,
+        ThumbnailRenderRequest::new(timeout),
+    )
+}
+
+/// Render shared stream bytes for a Shell request whose deadline was fixed at
+/// entry, reporting transient failures instead of cacheable placeholder pixels.
+#[must_use]
+pub fn try_render_thumbnail_shared_with_request(
+    extension: Option<String>,
+    bytes: Arc<[u8]>,
+    spec: ThumbnailSpec,
+    request: ThumbnailRenderRequest,
+) -> ThumbnailAttempt {
+    try_render_thumbnail_shared_impl(extension, bytes, spec, request, None)
 }
 
 #[must_use]
@@ -551,21 +664,25 @@ pub fn try_render_thumbnail_shared_with_reservation(
     extension: Option<String>,
     bytes: Arc<[u8]>,
     spec: ThumbnailSpec,
-    timeout: Duration,
     reservation: ThumbnailJobReservation,
 ) -> ThumbnailAttempt {
-    try_render_thumbnail_shared_impl(extension, bytes, spec, timeout, Some(reservation))
+    try_render_thumbnail_shared_impl(
+        extension,
+        bytes,
+        spec,
+        reservation.request,
+        Some(reservation),
+    )
 }
 
 fn try_render_thumbnail_shared_impl(
     extension: Option<String>,
     bytes: Arc<[u8]>,
     spec: ThumbnailSpec,
-    timeout: Duration,
+    request: ThumbnailRenderRequest,
     reservation: Option<ThumbnailJobReservation>,
 ) -> ThumbnailAttempt {
-    let plan = match prepare_stream_thumbnail_render(extension.as_deref(), bytes.as_ref(), timeout)
-    {
+    let plan = match prepare_stream_thumbnail_render(extension.as_deref(), bytes.as_ref()) {
         Ok(plan) => plan,
         Err(StreamThumbnailPreflightError::Oversize { byte_len }) => {
             return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
@@ -595,7 +712,7 @@ fn try_render_thumbnail_shared_impl(
         size_px: spec.size_px,
         background: thumbnail_background_key(spec.background),
     };
-    render_coalesced_thumbnail(inflight_key, plan.wait_timeout, move || {
+    render_coalesced_thumbnail_by(inflight_key, request.response_deadline(), move || {
         let cache_key_for_store = plan.cache_key.clone();
         let kind = plan.kind;
         let work = move |progress: std::sync::mpsc::SyncSender<
@@ -604,10 +721,11 @@ fn try_render_thumbnail_shared_impl(
             let result = (|| -> Result<Vec<u8>, ThumbnailError> {
                 let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
                 let _ = progress.send(ThumbnailJobProgress::Prepared);
-                rendering::render_mesh_thumbnail(
+                rendering::render_mesh_thumbnail_with_adapter_policy(
                     mesh,
                     spec,
-                    RenderDeadline::after(BACKGROUND_CACHE_WARM_TIMEOUT),
+                    RenderDeadline::at(request.cache_warm_deadline()),
+                    request.adapter_policy(),
                 )
             })();
             // See the file path: cache from the worker so a render that
@@ -626,13 +744,21 @@ fn try_render_thumbnail_shared_impl(
             let _ = progress.send(ThumbnailJobProgress::Finished(result));
         };
         let result = match reservation {
-            Some(ThumbnailJobReservation { permit, deadline }) => {
-                run_thumbnail_job_by(permit, deadline, work)
+            Some(ThumbnailJobReservation {
+                permit,
+                request: reserved_request,
+            }) => {
+                debug_assert_eq!(
+                    request.response_deadline(),
+                    reserved_request.response_deadline(),
+                    "the copied stream must keep the reservation's original response deadline"
+                );
+                run_thumbnail_job_by(permit, reserved_request.response_deadline(), work)
             }
-            None => run_thumbnail_job_with_deadline(timeout, work),
+            None => run_thumbnail_job_by_deadline(request.response_deadline(), work),
         };
 
-        thumbnail_attempt_for_job_outcome(result, spec, timeout, "stream")
+        thumbnail_attempt_for_job_outcome(result, spec, request.response_timeout(), "stream")
     })
 }
 
