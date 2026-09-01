@@ -429,6 +429,7 @@ public static class OccluViewShellPreviewSmoke
                 Marshal.ThrowExceptionForHR(coinit);
             }
             coInitialized = true;
+            Console.WriteLine("PREVIEW_SURROGATE_STEP=com-initialized");
 
             try
             {
@@ -438,29 +439,37 @@ public static class OccluViewShellPreviewSmoke
                     throw new InvalidOperationException("CreateWindowExW failed for private-surrogate smoke host parent window.");
                 }
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=parent-created");
 
                 instance = CreateLocalServerPreviewHandler(previewClsid);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=handler-activated");
                 var preview = (IPreviewHandler)instance;
                 var initialRect = new RECT { left = 0, top = 0, right = width, bottom = height };
                 ((IInitializeWithFile)instance).Initialize(path, 0);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=handler-initialized");
                 preview.SetWindow(parent, ref initialRect);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=window-set");
                 preview.DoPreview();
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=first-frame-returned");
 
                 IntPtr child = WaitForPreviewChild(parent, "private surrogate preview");
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=child-found");
                 EnsurePreviewHostProcess(child);
                 EnsurePreviewChild(child, width, height, "private-surrogate preview host size");
-                if (!UpdateWindow(child))
-                {
-                    throw new InvalidOperationException("UpdateWindow failed for private-surrogate preview child.");
-                }
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=child-verified");
                 var initialFrame = CaptureFrame(child);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=frame-captured");
                 EnsureFrameVisible(initialFrame, "private-surrogate first frame");
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=frame-verified");
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=unload-started");
                 preview.Unload();
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=unload-returned");
                 if (IsWindow(child))
                 {
                     throw new InvalidOperationException("Private-surrogate preview handler left the child window alive after Unload.");
                 }
                 result = "private Prevhost first frame[" + initialFrame.Summary() + "]";
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=probe-complete");
             }
             catch (Exception ex)
             {
@@ -470,15 +479,21 @@ public static class OccluViewShellPreviewSmoke
             {
                 if (instance != null && Marshal.IsComObject(instance))
                 {
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=release-started");
                     Marshal.FinalReleaseComObject(instance);
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=release-returned");
                 }
                 if (parent != IntPtr.Zero && IsWindow(parent))
                 {
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=parent-destroy-started");
                     DestroyWindow(parent);
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=parent-destroy-returned");
                 }
                 if (coInitialized)
                 {
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=com-uninitialize-started");
                     CoUninitialize();
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=com-uninitialize-returned");
                 }
             }
         });
@@ -493,7 +508,11 @@ public static class OccluViewShellPreviewSmoke
             throw new InvalidOperationException("Private-surrogate preview smoke failed: " + failure, failure);
         }
 
-        return result ?? throw new InvalidOperationException("Private-surrogate preview smoke produced no result.");
+        if (result == null)
+        {
+            throw new InvalidOperationException("Private-surrogate preview smoke produced no result.");
+        }
+        return result;
     }
 
     // The detailed pixel, resize, focus, and input contract is intentionally
@@ -711,7 +730,11 @@ public static class OccluViewShellPreviewSmoke
             throw new InvalidOperationException("Preview smoke failed: " + failure, failure);
         }
 
-        return result ?? throw new InvalidOperationException("Preview smoke produced no result.");
+        if (result == null)
+        {
+            throw new InvalidOperationException("Preview smoke produced no result.");
+        }
+        return result;
     }
 
     public static string ProbeFromItem(
@@ -864,7 +887,11 @@ public static class OccluViewShellPreviewSmoke
             throw new InvalidOperationException("Preview smoke failed: " + failure, failure);
         }
 
-        return result ?? throw new InvalidOperationException("Preview smoke produced no result.");
+        if (result == null)
+        {
+            throw new InvalidOperationException("Preview smoke produced no result.");
+        }
+        return result;
     }
 
     private static IntPtr WaitForPreviewChild(IntPtr parent, string label)
@@ -932,7 +959,8 @@ public static class OccluViewShellPreviewSmoke
 
     private static void EnsureClientRect(IntPtr hwnd, int expectedWidth, int expectedHeight, string label)
     {
-        if (!GetClientRect(hwnd, out RECT rect))
+        RECT rect;
+        if (!GetClientRect(hwnd, out rect))
         {
             throw new InvalidOperationException(label + " GetClientRect failed.");
         }
@@ -1046,7 +1074,8 @@ public static class OccluViewShellPreviewSmoke
 
     private static FrameProbe CaptureFrame(IntPtr hwnd)
     {
-        if (!GetClientRect(hwnd, out RECT rect))
+        RECT rect;
+        if (!GetClientRect(hwnd, out rect))
         {
             throw new InvalidOperationException("GetClientRect failed while capturing preview frame.");
         }

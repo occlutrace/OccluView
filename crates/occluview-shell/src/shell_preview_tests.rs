@@ -363,7 +363,6 @@ fn assert_private_surrogate_preview_contract(smoke: &str) {
         "preview.DoPreview();",
         "WaitForPreviewChild(parent, \"private surrogate preview\")",
         "EnsurePreviewHostProcess(child);",
-        "if (!UpdateWindow(child))",
         "var initialFrame = CaptureFrame(child);",
         "EnsureFrameVisible(initialFrame, \"private-surrogate first frame\");",
         "preview.Unload();",
@@ -379,6 +378,7 @@ fn assert_private_surrogate_preview_contract(smoke: &str) {
         "WaitForChangedFrame",
         "PumpMessages",
         "Thread.Sleep",
+        "UpdateWindow(",
     ] {
         assert!(
             !private_surrogate.contains(forbidden),

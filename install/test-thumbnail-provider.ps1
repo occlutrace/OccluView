@@ -9,11 +9,8 @@ $ErrorActionPreference = "Stop"
 
 $thumbnailProviderClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
 
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-} catch {
-    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
-}
+Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
 
 function New-SmokeStl {
     param([Parameter(Mandatory = $true)][string]$Directory)
@@ -173,6 +170,7 @@ function New-NoisyObj {
     $builder = [Text.StringBuilder]::new($MinimumBytes + 4096)
     [void]$builder.AppendLine("mtllib missing-materials.mtl")
     [void]$builder.AppendLine("usemtl scan")
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
     $baseIndex = 1
     $tile = 0
     while ($builder.Length -lt $MinimumBytes) {
@@ -180,12 +178,17 @@ function New-NoisyObj {
         $x = ($tile % 192) * 0.25
         $y = [Math]::Floor($tile / 192) * 0.25
         $z = ($tile % 17) * 0.02
+        $xText = ([double]$x).ToString("R", $invariant)
+        $yText = ([double]$y).ToString("R", $invariant)
+        $zText = ([double]$z).ToString("R", $invariant)
+        $xInsetText = ([double]($x + 0.18)).ToString("R", $invariant)
+        $yInsetText = ([double]($y + 0.18)).ToString("R", $invariant)
         [void]$builder.AppendLine(("vt 0 0"))
-        [void]$builder.AppendLine(("v {0:R} {1:R} {2:R} 220 180 105" -f $x, $y, $z))
+        [void]$builder.AppendLine("v $xText $yText $zText 220 180 105")
         [void]$builder.AppendLine(("vt 0.18 0"))
-        [void]$builder.AppendLine(("v {0:R} {1:R} {2:R} 215 170 96" -f ($x + 0.18), $y, $z))
+        [void]$builder.AppendLine("v $xInsetText $yText $zText 215 170 96")
         [void]$builder.AppendLine(("vt 0 0.18"))
-        [void]$builder.AppendLine(("v {0:R} {1:R} {2:R} 235 196 122" -f $x, ($y + 0.18), $z))
+        [void]$builder.AppendLine("v $xText $yInsetText $zText 235 196 122")
         $baseIndex += 3
         $tile += 1
     }

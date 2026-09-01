@@ -166,7 +166,23 @@ fn installer_metadata_tracks_supported_shell_extensions() {
     assert!(wxs.contains("<MajorUpgrade"));
     assert!(!wxs.contains("AllowSameVersionUpgrades=\"yes\""));
     assert!(wxs.contains("DowngradeErrorMessage="));
-    assert!(wxs.contains("<RemoveFolder Id=\"rmProgramMenuDir\" On=\"uninstall\""));
+    assert!(wxs.contains(
+        "<Component Id=\"cmpOccluViewExe\" Guid=\"{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}\" Win64=\"yes\" Location=\"local\">"
+    ));
+    assert!(wxs.contains("<Component Id=\"cmpStartMenuShortcut\""));
+    assert!(wxs.contains(
+        "<RegistryValue\n              Root=\"HKCU\"\n              Key=\"Software\\OccluTrace\\OccluView\"\n              Name=\"StartMenuShortcut\"\n              Type=\"integer\"\n              Value=\"1\"\n              KeyPath=\"yes\""
+    ));
+    let executable_component = wxs
+        .split("<Component Id=\"cmpOccluViewExe\"")
+        .nth(1)
+        .expect("OccluView executable component must exist")
+        .split("<Component Id=\"cmpOccluViewShellDll\"")
+        .next()
+        .expect("OccluView shell component must follow the executable");
+    assert!(!executable_component.contains("<Shortcut"));
+    assert!(wxs.contains("Target=\"[INSTALLFOLDER]occluview.exe\""));
+    assert!(!wxs.contains("Target=\"[#filOccluViewExe]\""));
     assert!(wxs.contains("&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;"));
     assert!(wxs.contains("Software\\RegisteredApplications"));
     assert!(wxs.contains("Software\\OccluTrace\\OccluView\\Capabilities"));
@@ -351,6 +367,7 @@ fn package_workflow_runs_installer_lifecycle_smoke() {
 
     let smoke = include_str!("../../../install/test-msi-lifecycle.ps1");
     let thumbnail_smoke = include_str!("../../../install/test-thumbnail-provider.ps1");
+    let preview_smoke = include_str!("../../../install/test-preview-handler.ps1");
     assert!(smoke.contains("msiexec.exe"));
     assert!(smoke.contains("UpgradeMsiPath"));
     assert!(smoke.contains("Assert-InstalledRegistry"));
@@ -373,7 +390,23 @@ fn package_workflow_runs_installer_lifecycle_smoke() {
     assert!(thumbnail_smoke.contains("New-SmokeObj"));
     assert!(thumbnail_smoke.contains("New-SmokeHps"));
     assert!(thumbnail_smoke.contains("New-SmokeLegacyHps"));
+    assert!(thumbnail_smoke.contains(
+        "Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop\nAdd-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop"
+    ));
     assert!(thumbnail_smoke.contains("Assert-ShellProbeSucceeded"));
+    assert!(!preview_smoke.contains("?? throw"));
+    assert!(!preview_smoke.contains("out RECT rect"));
+    let private_surrogate_probe = preview_smoke
+        .split("public static string ProbePrivateSurrogate")
+        .nth(1)
+        .and_then(|probe| probe.split("// The detailed pixel").next())
+        .expect("private Prevhost liveness probe must remain separately scoped");
+    assert!(private_surrogate_probe.contains("CaptureFrame(child)"));
+    assert!(private_surrogate_probe.contains("EnsureFrameVisible(initialFrame"));
+    assert!(
+        !private_surrogate_probe.contains("UpdateWindow("),
+        "the low-integrity Prevhost probe must not synchronously dispatch WM_PAINT into another process"
+    );
     assert!(thumbnail_smoke.contains("Assert-MixedFolderBurst"));
     assert!(thumbnail_smoke.contains("occluview-thumbnail-mixed"));
     assert!(thumbnail_smoke.contains("ProbeShellForced"));

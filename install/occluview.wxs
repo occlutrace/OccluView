@@ -88,7 +88,7 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="OccluView">
-          <Component Id="cmpOccluViewExe" Guid="{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}" Win64="yes">
+          <Component Id="cmpOccluViewExe" Guid="{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}" Win64="yes" Location="local">
             <File Id="filOccluViewExe" Source="$(var.BuildDir)\occluview.exe" KeyPath="yes" />
           </Component>
           <Component Id="cmpOccluViewShellDll" Guid="{5F834B2B-71E8-444D-82F7-4F683AAF70DB}" Win64="yes">
@@ -529,7 +529,7 @@
               Id="shcOccluView"
               Name="$(var.ProductName)"
               Description="Open the OccluView 3D scan viewer"
-              Target="[#filOccluViewExe]"
+              Target="[INSTALLFOLDER]occluview.exe"
               WorkingDirectory="INSTALLFOLDER"
               Icon="OccluViewIcon.ico">
               <ShortcutProperty Key="System.AppUserModel.ID" Value="OccluTrace.OccluView" />
