@@ -543,7 +543,7 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
     );
     assert!(
         app_render.contains("self.active_viewport_clip_plane(scene.bbox())")
-            && app_render.contains("render_prepared_viewport_with_clip_and_overlay("),
+            && app_render.contains("render_prepared_viewport_with_clip_and_overlay_with_deadline("),
         "main viewport should render the active clipping plane, not only the small preview"
     );
     assert!(
