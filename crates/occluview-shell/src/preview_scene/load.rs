@@ -8,19 +8,27 @@ use occluview_formats::dispatch::{
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::FormatKind;
+use occluview_render::RenderDeadline;
 use occluview_thumbnail::fast_thumb::{
     try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
 };
 use occluview_thumbnail::thumbnail_format::infer_thumbnail_format;
 use std::path::Path;
+#[cfg(test)]
+use std::time::Duration;
 
 const PREVIEW_FULL_FIDELITY_SURFACE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const PREVIEW_FULL_FIDELITY_STL_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const PREVIEW_FOV_RADIANS: f32 = 45.0_f32.to_radians();
+#[cfg(test)]
+const PREVIEW_SCENE_DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 
 impl PreviewSceneState {
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub(crate) fn from_file(path: &Path) -> Result<Self, ShellError> {
+    pub(crate) fn from_file_with_deadline(
+        path: &Path,
+        deadline: RenderDeadline,
+    ) -> Result<Self, ShellError> {
+        let _ = deadline.remaining()?;
         let metadata = std::fs::metadata(path).map_err(|error| {
             ShellError::Win32(format!(
                 "preview metadata read failed for {}: {error}",
@@ -28,23 +36,44 @@ impl PreviewSceneState {
             ))
         })?;
         let mesh = load_preview_mesh_from_file(path, metadata.len())?;
-        Self::from_scene(single_mesh_scene(mesh))
+        let _ = deadline.remaining()?;
+        Self::from_scene_with_deadline(single_mesh_scene(mesh), deadline)
     }
 
+    #[cfg(test)]
     pub(crate) fn from_bytes(extension: Option<&str>, bytes: &[u8]) -> Result<Self, ShellError> {
+        Self::from_bytes_with_deadline(
+            extension,
+            bytes,
+            RenderDeadline::after(PREVIEW_SCENE_DEFAULT_TIMEOUT),
+        )
+    }
+
+    pub(crate) fn from_bytes_with_deadline(
+        extension: Option<&str>,
+        bytes: &[u8],
+        deadline: RenderDeadline,
+    ) -> Result<Self, ShellError> {
+        let _ = deadline.remaining()?;
         let kind = infer_thumbnail_format(extension, bytes)?;
         let mesh = load_preview_mesh_from_bytes_kind(kind, bytes)?;
-        Self::from_scene(single_mesh_scene(mesh))
+        let _ = deadline.remaining()?;
+        Self::from_scene_with_deadline(single_mesh_scene(mesh), deadline)
     }
 
-    fn from_scene(scene: Scene) -> Result<Self, ShellError> {
+    fn from_scene_with_deadline(
+        scene: Scene,
+        deadline: RenderDeadline,
+    ) -> Result<Self, ShellError> {
         #[cfg(test)]
         let _guard = crate::acquire_render_test_guard();
 
+        let _ = deadline.remaining()?;
         let bbox = scene.bbox();
         let camera = Camera::default().frame_occlusal(bbox, PREVIEW_FOV_RADIANS);
-        let offscreen = shared_shell_offscreen()?;
+        let offscreen = shared_shell_offscreen(deadline)?;
         let prepared_scene = offscreen.prepare_scene(&prepared_scene_sources(&scene));
+        let _ = deadline.remaining()?;
         Ok(Self {
             scene,
             camera,
@@ -138,6 +167,22 @@ mod tests {
     use crate::preview_scene::test_support::{
         noisy_obj_with_early_faces, obj_with_early_faces, valid_obj_tiles,
     };
+    use occluview_render::RenderError;
+    use std::time::Instant;
+
+    #[test]
+    fn expired_preview_deadline_rejects_stream_data_before_parsing() {
+        let result = PreviewSceneState::from_bytes_with_deadline(
+            Some("stl"),
+            b"not parsed after deadline",
+            RenderDeadline::at(Instant::now()),
+        );
+
+        assert!(matches!(
+            result,
+            Err(ShellError::Render(RenderError::ReadbackTimeout { .. }))
+        ));
+    }
 
     #[test]
     fn preview_scene_detects_stream_backed_obj_without_extension() {

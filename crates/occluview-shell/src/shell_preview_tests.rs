@@ -165,7 +165,7 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
         .find("reserve_thumbnail_stream_job_for_request(request)")
         .expect("stream reservation");
     let read = body
-        .find("self.ensure_stream_bytes()")
+        .find("self.ensure_stream_bytes(request)")
         .expect("shell stream read");
     let reserved_render = body
         .find("try_render_thumbnail_shared_with_reservation(")
@@ -192,7 +192,7 @@ fn thumbnail_provider_releases_full_stream_bytes_after_each_request() {
         .find("ThumbnailStreamBytesGuard::new(&self.bytes)")
         .expect("stream byte release guard");
     let read = body
-        .find("self.ensure_stream_bytes()")
+        .find("self.ensure_stream_bytes(request)")
         .expect("shell stream read");
 
     assert!(
@@ -251,7 +251,7 @@ fn preview_pane_has_a_native_right_click_context_menu() {
 }
 
 #[test]
-fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering() {
+fn preview_smokes_private_surrogate_first_frame_before_in_process_interaction() {
     let smoke = include_str!("../../../install/test-preview-handler.ps1");
 
     assert!(smoke.contains("ApartmentState.STA"));
@@ -359,26 +359,26 @@ fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering(
         "preview.DoPreview();",
         "WaitForPreviewChild(parent, \"private surrogate preview\")",
         "EnsurePreviewHostProcess(child);",
+        "if (!UpdateWindow(child))",
+        "var initialFrame = CaptureFrame(child);",
+        "EnsureFrameVisible(initialFrame, \"private-surrogate first frame\");",
         "preview.Unload();",
         "if (IsWindow(child))",
     ] {
         assert!(
             private_surrogate.contains(required),
-            "private-surrogate liveness probe missing {required}"
+            "private-surrogate first-frame probe missing {required}"
         );
     }
     for forbidden in [
-        "GetClientRect",
-        "UpdateWindow",
-        "CaptureFrame",
-        "BitBlt",
-        "SendMessageW",
-        "preview.SetRect",
-        "preview.SetFocus",
+        "WaitForVisibleFrame",
+        "WaitForChangedFrame",
+        "PumpMessages",
+        "Thread.Sleep",
     ] {
         assert!(
             !private_surrogate.contains(forbidden),
-            "private-surrogate liveness probe must not drive a low-integrity child: {forbidden}"
+            "private-surrogate first-frame probe must not wait for deferred work: {forbidden}"
         );
     }
 
@@ -391,7 +391,7 @@ fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering(
     );
     assert!(
         !detailed_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
-        "the detailed render and interaction contract must not pretend it can drive Prevhost's low-integrity child"
+        "interaction coverage is separate from the private-surrogate first-frame contract"
     );
     assert!(
         !detailed_probe.contains("EnsurePreviewHostProcess(child)"),
@@ -418,7 +418,7 @@ fn preview_smokes_separate_private_surrogate_liveness_from_in_process_rendering(
     let file_call = offset("$fileResult = [OccluViewShellPreviewSmoke]::Probe(");
     assert!(
         private_call < file_call,
-        "the private Prevhost liveness probe must run before detailed in-process rendering"
+        "the private Prevhost first-frame probe must run before detailed in-process rendering"
     );
 }
 
@@ -431,23 +431,75 @@ fn com_lazy_stream_paths_release_source_borrow_before_rendering() {
 }
 
 #[test]
-fn preview_render_invalidates_without_a_synchronous_paint_round_trip() {
-    let com = combined_com_source();
-    let start = com
-        .find("fn render_scheduled_preview(&self")
-        .expect("missing deferred preview render");
-    let end = com[start..]
-        .find("fn replace_preview_bitmap(&self")
-        .expect("missing replace_preview_bitmap after deferred preview render");
-    let render_now = &com[start..start + end];
+fn do_preview_installs_a_first_paintable_bitmap_before_success() {
+    let preview = include_str!("com/preview.rs");
+    let do_preview_start = preview.find("fn DoPreview(").expect("DoPreview impl");
+    let do_preview_end = preview[do_preview_start..]
+        .find("fn Unload(")
+        .map(|offset| do_preview_start + offset)
+        .expect("Unload follows DoPreview");
+    let do_preview = &preview[do_preview_start..do_preview_end];
+    let first_frame_start = preview
+        .find("fn render_first_preview_frame(")
+        .expect("first-frame renderer");
+    let first_frame_end = preview[first_frame_start..]
+        .find("fn render_preview_now(&self")
+        .map(|offset| first_frame_start + offset)
+        .expect("interactive render follows first-frame renderer");
+    let first_frame = &preview[first_frame_start..first_frame_end];
 
+    assert!(do_preview.contains("let hwnd = self.this.ensure_preview_window()?;"));
+    assert!(do_preview.contains("self.this.render_first_preview_frame("));
+    assert!(do_preview.contains("RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT)"));
+    assert!(first_frame.contains("self.replace_preview_bitmap(hbmp);"));
+    assert!(first_frame.contains("InvalidateRect(Some(hwnd), None, false)"));
     assert!(
-        render_now.contains("InvalidateRect(Some(hwnd), None, false)"),
-        "the deferred render should request an ordinary later paint"
+        !first_frame.contains("RDW_UPDATENOW"),
+        "first-frame rendering installs pixels but lets the normal window paint them"
     );
+}
+
+#[test]
+fn shell_stream_copies_consume_the_callers_original_deadline() {
+    let thumbnail = include_str!("com/thumbnail_provider.rs");
+    let preview = include_str!("com/preview.rs");
+
+    assert!(thumbnail.contains("fn read_stream_until("));
+    assert!(thumbnail.contains("deadline: Instant,"));
+    assert!(thumbnail.contains("read_capped_stream_until("));
+    assert!(thumbnail.contains("self.ensure_stream_bytes(request)"));
+    assert!(thumbnail.contains("read_stream_until(&stream, request.response_deadline())"));
+    assert!(preview.contains("read_stream_until(&stream, deadline.expires_at())"));
     assert!(
-        !render_now.contains("RDW_UPDATENOW"),
-        "a Preview Handler must never synchronously paint while servicing a shell callback"
+        !thumbnail.contains("ThumbnailProvider::read_stream(&stream)"),
+        "Shell stream reads must not start an independent timeout policy"
+    );
+}
+
+#[test]
+fn low_integrity_preview_forwards_unhandled_accelerators_to_the_host_frame() {
+    let com = include_str!("com.rs");
+    let preview = include_str!("com/preview.rs");
+
+    assert!(com.contains("IPreviewHandlerFrame"));
+    let handler_start = preview
+        .find("fn TranslateAccelerator(")
+        .expect("TranslateAccelerator implementation");
+    let handler_end = preview[handler_start..]
+        .find("impl IOleWindow_Impl")
+        .map(|offset| handler_start + offset)
+        .expect("IOleWindow follows IPreviewHandler");
+    let handler = &preview[handler_start..handler_end];
+
+    assert!(handler.contains("pmsg.is_null()"));
+    assert!(handler.contains("site.cast::<IPreviewHandlerFrame>()"));
+    assert!(handler.contains("Interface::vtable(&frame).TranslateAccelerator"));
+    assert!(handler.contains("Interface::as_raw(&frame)"));
+    assert!(handler.contains("if hresult == S_OK"));
+    assert!(handler.contains("return Err(s_false());"));
+    assert!(
+        !handler.contains("fn TranslateAccelerator(&self, _pmsg"),
+        "the preview handler must not discard all host keyboard accelerators"
     );
 }
 
@@ -462,25 +514,25 @@ fn preview_reuses_one_process_shared_offscreen_renderer() {
     let load = include_str!("preview_scene/load.rs");
     let render = include_str!("preview_scene/render.rs");
 
-    assert!(factory.contains("fn shared_shell_offscreen()"));
+    assert!(factory.contains("fn shared_shell_offscreen("));
+    assert!(factory.contains("deadline: RenderDeadline"));
     assert!(factory.contains("fn discard_shared_shell_offscreen("));
     assert!(
         !factory.contains("fn prewarm_shared_shell_offscreen()"),
-        "preview renderer initialization must have exactly one deferred owner, not a competing activation prewarm"
+        "preview renderer initialization must have exactly one request owner, not a competing activation prewarm"
     );
-    assert!(load.contains("let offscreen = shared_shell_offscreen()?;"));
+    assert!(load.contains("let offscreen = shared_shell_offscreen(deadline)?;"));
+    assert!(load.contains("fn from_file_with_deadline("));
+    assert!(render.contains("fn render_rgba_with_background_with_deadline("));
     assert!(
-        !load.contains("create_shell_offscreen()"),
+        !factory.contains("RenderDeadline::after(PREVIEW_RENDERER_SETUP_TIMEOUT)"),
         "preview loads must not create a per-file wgpu device"
     );
     assert!(render.contains("discard_shared_shell_offscreen(&self.offscreen)"));
 }
 
 #[test]
-fn preview_callbacks_coalesce_work_onto_a_private_window_message() {
-    // MoveWindow synchronously delivers WM_SIZE when the size changed. The
-    // handler must return to Explorer before it parses or renders, then make
-    // one later, coalesced render request for the final geometry.
+fn preview_callbacks_refresh_through_the_explicit_frame_helper() {
     let preview = include_str!("com/preview.rs");
     let window = include_str!("com/preview/window.rs");
 
@@ -497,16 +549,16 @@ fn preview_callbacks_coalesce_work_onto_a_private_window_message() {
 
     assert!(
         !preview[set_rect_start..set_rect_end].contains("render_scheduled_preview"),
-        "SetRect must not render synchronously"
+        "SetRect must not use a deferred render callback"
     );
     assert!(
         !preview[set_window_start..set_window_end].contains("render_scheduled_preview"),
-        "SetWindow must not render synchronously"
+        "SetWindow must not use a deferred render callback"
     );
     let wm_size = window.find("WM_SIZE =>").expect("WM_SIZE arm");
     assert!(
-        window[wm_size..].contains("schedule_preview_render"),
-        "WM_SIZE must schedule, rather than perform, the resize render"
+        window[wm_size..].contains("handler.render_preview_now("),
+        "WM_SIZE must refresh through the explicit bounded frame helper"
     );
     let do_preview_start = preview.find("fn DoPreview(").expect("DoPreview impl");
     let do_preview_end = preview[do_preview_start..]
@@ -514,48 +566,57 @@ fn preview_callbacks_coalesce_work_onto_a_private_window_message() {
         .map(|offset| do_preview_start + offset)
         .expect("Unload follows DoPreview");
     assert!(
-        preview[do_preview_start..do_preview_end].contains("schedule_preview_render"),
-        "DoPreview must return before parsing or rendering the source"
+        preview[do_preview_start..do_preview_end].contains("render_first_preview_frame"),
+        "DoPreview must load and render its first frame before returning success"
     );
 }
 
 #[test]
-fn preview_render_messages_cannot_outlive_the_window_owner() {
+fn preview_refreshes_use_one_deadline_for_load_and_render() {
+    let preview = include_str!("com/preview.rs");
+    let context_menu = include_str!("com/preview/context_menu.rs");
+
+    assert!(preview.contains("fn render_preview_now(&self, deadline: RenderDeadline)"));
+    assert!(
+        !preview.contains("fn render_preview_now(&self)"),
+        "interactive work must not create a second render budget after scene loading"
+    );
+    let drag_start = preview.find("fn update_drag(").expect("drag update");
+    let drag_end = preview[drag_start..]
+        .find("fn end_drag(")
+        .map(|offset| drag_start + offset)
+        .expect("drag end");
+    let drag = &preview[drag_start..drag_end];
+    assert!(
+        drag.contains("let deadline = RenderDeadline::after(PREVIEW_INTERACTION_FRAME_TIMEOUT);")
+    );
+    assert!(drag.contains("self.ensure_preview_scene_loaded(deadline)"));
+    assert!(drag.contains("self.render_preview_now(deadline)?;"));
+
+    assert!(context_menu.contains("let deadline = RenderDeadline::after("));
+    assert!(context_menu.contains("self.ensure_preview_scene_loaded(deadline)"));
+    assert!(context_menu.contains("self.render_preview_now(deadline)?;"));
+    assert!(context_menu.contains("theme.canvas_rgba(),\n                deadline,"));
+}
+
+#[test]
+fn preview_has_no_deferred_message_delivery_protocol() {
     let preview = include_str!("com/preview.rs");
     let window = include_str!("com/preview/window.rs");
 
-    assert!(preview.contains("pending_render_token"));
-    assert!(preview.contains("fn clear_pending_preview_render(&self)"));
-    assert!(preview.contains("self.clear_pending_preview_render();"));
-    let compact_preview = preview.split_whitespace().collect::<String>();
-    assert!(compact_preview.contains("PostMessageW(Some(hwnd),WM_OCCLUVIEW_RENDER_PREVIEW"));
-    assert!(window.contains("WM_OCCLUVIEW_RENDER_PREVIEW"));
-    assert!(window.contains("render_scheduled_preview(hwnd, wparam)"));
-    let nc_destroy = window.find("WM_NCDESTROY =>").expect("WM_NCDESTROY arm");
-    assert!(
-        window[nc_destroy..].contains("handler.clear_pending_preview_render();"),
-        "a parent-driven child destruction must clear the pending token before a new window can schedule work"
-    );
-    assert!(
-        window.contains("window_owns_handler(hwnd, std::ptr::from_ref(handler))"),
-        "a deferred message must check that the current HWND still belongs to the handler before dereferencing it"
-    );
-    let deferred_start = preview
-        .find("fn render_scheduled_preview(&self")
-        .expect("missing deferred render method");
-    let deferred_end = preview[deferred_start..]
-        .find("fn clear_pending_preview_render(&self)")
-        .map(|offset| deferred_start + offset)
-        .expect("missing pending-render cleanup after deferred render method");
-    let deferred = &preview[deferred_start..deferred_end];
-    assert!(
-        deferred.contains("self.pending_render_token.get() != Some(token)"),
-        "a stale message must compare its token without clearing a newer render request"
-    );
-    assert!(
-        deferred.contains("self.pending_render_token.set(None);"),
-        "only the matching render message may consume the pending token"
-    );
+    for forbidden in [
+        "WM_OCCLUVIEW_RENDER_PREVIEW",
+        "pending_render_token",
+        "schedule_preview_render",
+        "render_scheduled_preview",
+        "PostMessageW",
+        "NEXT_PREVIEW_RENDER_TOKEN",
+    ] {
+        assert!(
+            !preview.contains(forbidden) && !window.contains(forbidden),
+            "preview delivery must not depend on the retired deferred protocol: {forbidden}"
+        );
+    }
 }
 
 #[test]

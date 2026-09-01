@@ -17,6 +17,10 @@
 - Use `HardwareThenFallback` for Windows Shell rendering only after a nonempty known-triangle probe; no unchecked hardware output may enter Explorer's cache.
 - The thumbnail request budget is exactly `DEFAULT_THUMBNAIL_TIMEOUT` (6 seconds) from first queue reservation through final readback; retries consume its remaining time.
 - Preview's first-frame deadline is `PREVIEW_FIRST_FRAME_TIMEOUT` (8 seconds); a failure produces a paintable deterministic placeholder and never a pending spinner.
+- A Preview deadline also bounds each next 1 MiB shell-stream copy and is
+  shared by scene loading, renderer initialization, and frame rendering. An
+  explicit interaction refresh creates one fresh deadline for the entire
+  refresh, not a fresh render deadline after loading.
 - `occluview-render` owns no Shell-specific timeout. Every offscreen call receives an explicit absolute `RenderDeadline`.
 - Normal MSI installation is the only supported Shell registration path. Do not ship the manual `.reg` fallback or document `regsvr32` as a recovery path.
 - HKCU repair may remove only OccluView's two implementation CLSIDs, its private AppID, and ShellEx values equal to those CLSIDs. It must not modify `UserChoice`, foreign CLSIDs, or default applications.
@@ -318,7 +322,7 @@ fn DoPreview(&self) -> windows::core::Result<()> {
 }
 ~~~
 
-`render_first_frame` loads the initialized path or stream, prepares the scene, renders it, converts pixels to HBITMAP, replaces the previous bitmap, and calls `InvalidateRect`. Parsing, adapter, and readback failures create the existing deterministic placeholder at pane dimensions, publish it, invalidate the child, and emit a classified diagnostic event. `ensure_preview_window` failure remains an HRESULT failure. No `S_OK` path may leave no bitmap.
+`render_first_frame` loads the initialized path or stream, prepares the scene, renders it, converts pixels to HBITMAP, replaces the previous bitmap, and calls `InvalidateRect`. One absolute deadline is carried through the bounded stream copy, renderer setup, scene preparation checks, render, and readback. Parsing, adapter, and readback failures create the existing deterministic placeholder at pane dimensions, publish it, invalidate the child, and emit a classified diagnostic event. `ensure_preview_window` failure remains an HRESULT failure. No `S_OK` path may leave no bitmap.
 
 - [ ] **Step 4: Delete the obsolete scheduler completely**
 
@@ -326,7 +330,7 @@ Delete `NEXT_PREVIEW_RENDER_TOKEN`, `pending_render_token`, `schedule_preview_re
 
 - [ ] **Step 5: Implement refresh after a valid first frame**
 
-`refresh_preview_bitmap` uses a fresh `RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT)` for an explicit resize completion or user interaction. On failure retain the last valid HBITMAP; if there is no valid bitmap, publish the deterministic placeholder. `Unload` continues to destroy the child and release source/scene state. Do not move COM `IStream` across a worker thread.
+`refresh_preview_bitmap` receives the one fresh `RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT)` created for an explicit resize completion or user interaction. Loading and rendering consume that same deadline. On failure retain the last valid HBITMAP; if there is no valid bitmap, publish the deterministic placeholder. `Unload` continues to destroy the child and release source/scene state. Do not move COM `IStream` across a worker thread.
 
 - [ ] **Step 6: Run test to verify it passes**
 

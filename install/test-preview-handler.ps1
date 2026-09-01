@@ -404,9 +404,11 @@ public static class OccluViewShellPreviewSmoke
         }
     }
 
-    // Prevhost runs the handler at low integrity. This liveness probe only
-    // proves the private surrogate can create a child and return from Unload;
-    // it deliberately does not control, resize, or capture that foreign child.
+    // Prevhost runs the handler at low integrity. This probe talks to the
+    // actual CLSCTX_LOCAL_SERVER proxy and proves that DoPreview has installed
+    // a paintable first frame before it returns. It deliberately does not
+    // retry or pump a private message queue: a later frame would hide the
+    // exact regression this guard exists to catch.
     public static string ProbePrivateSurrogate(
         string previewClsid,
         string path,
@@ -446,12 +448,19 @@ public static class OccluViewShellPreviewSmoke
 
                 IntPtr child = WaitForPreviewChild(parent, "private surrogate preview");
                 EnsurePreviewHostProcess(child);
+                EnsurePreviewChild(child, width, height, "private-surrogate preview host size");
+                if (!UpdateWindow(child))
+                {
+                    throw new InvalidOperationException("UpdateWindow failed for private-surrogate preview child.");
+                }
+                var initialFrame = CaptureFrame(child);
+                EnsureFrameVisible(initialFrame, "private-surrogate first frame");
                 preview.Unload();
                 if (IsWindow(child))
                 {
                     throw new InvalidOperationException("Private-surrogate preview handler left the child window alive after Unload.");
                 }
-                result = "private Prevhost child created and unloaded";
+                result = "private Prevhost first frame[" + initialFrame.Summary() + "]";
             }
             catch (Exception ex)
             {

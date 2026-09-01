@@ -6,21 +6,22 @@ use super::{
     GetKeyboardFocus, IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl,
     IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
     IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
-    IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface,
-    InvalidateRect, MoveWindow, Ordering, PathBuf, PostMessageW, PreviewSceneState, Ref,
-    SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead, ThumbnailProvider,
-    ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP, HGDIOBJ,
-    HINSTANCE, HRESULT, HWND, LPARAM, MAX_OFFSCREEN_EDGE, MSG, NEXT_PREVIEW_RENDER_TOKEN,
-    PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RECT, SIGDN_FILESYSPATH, SRCCOPY,
-    WINDOW_EX_STYLE, WPARAM, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    IPreviewHandler, IPreviewHandlerFrame, IPreviewHandler_Impl, IShellItem, IStream, IUnknown,
+    Interface, InvalidateRect, MoveWindow, Ordering, PathBuf, PreviewSceneState, Ref,
+    RenderDeadline, SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead,
+    ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP,
+    HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT,
+    PREVIEW_WINDOW_CLASS_NAME, RECT, SIGDN_FILESYSPATH, SRCCOPY, S_OK, WINDOW_EX_STYLE, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_VISIBLE,
 };
+use std::time::Duration;
 
 mod context_menu;
 mod theme;
 mod window;
 
 use theme::preview_theme;
-use window::{ensure_preview_window_class, WM_OCCLUVIEW_RENDER_PREVIEW};
+use window::ensure_preview_window_class;
 
 #[cfg(feature = "diagnostic-logs")]
 use crate::preview_diagnostics::{
@@ -34,6 +35,9 @@ enum PreviewDragMode {
     Orbit,
     Pan,
 }
+
+const PREVIEW_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
+const PREVIEW_INTERACTION_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Explorer Preview Pane handler.
 ///
@@ -61,7 +65,6 @@ pub struct PreviewHandler {
     drag_mode: std::cell::Cell<PreviewDragMode>,
     last_pointer: std::cell::Cell<POINT>,
     drag_moved: std::cell::Cell<bool>,
-    pending_render_token: std::cell::Cell<Option<usize>>,
 }
 
 impl PreviewHandler {
@@ -79,7 +82,6 @@ impl PreviewHandler {
             drag_mode: std::cell::Cell::new(PreviewDragMode::None),
             last_pointer: std::cell::Cell::new(POINT::default()),
             drag_moved: std::cell::Cell::new(false),
-            pending_render_token: std::cell::Cell::new(None),
         }
     }
 
@@ -107,7 +109,12 @@ impl PreviewHandler {
         ]
     }
 
-    fn preview_render_to_hbitmap(&self, width: u32, height: u32) -> windows::core::Result<HBITMAP> {
+    fn preview_render_to_hbitmap(
+        &self,
+        width: u32,
+        height: u32,
+        deadline: RenderDeadline,
+    ) -> windows::core::Result<HBITMAP> {
         let width = width.clamp(1, MAX_OFFSCREEN_EDGE);
         let height = height.clamp(1, MAX_OFFSCREEN_EDGE);
         let theme = preview_theme();
@@ -115,6 +122,7 @@ impl PreviewHandler {
             [width as u16, height as u16],
             theme.background_linear(),
             theme.canvas_rgba(),
+            deadline,
         ) {
             Ok(pixels) => pixels,
             Err(error) => {
@@ -147,7 +155,14 @@ impl PreviewHandler {
                 )
             }
         };
-        pixels_to_hbitmap(&pixels, width, height)
+        match pixels_to_hbitmap(&pixels, width, height) {
+            Ok(bitmap) => Ok(bitmap),
+            Err(error) => {
+                #[cfg(feature = "diagnostic-logs")]
+                record_preview_bitmap_failure();
+                Err(error)
+            }
+        }
     }
 
     fn render_preview_pixels(
@@ -155,6 +170,7 @@ impl PreviewHandler {
         size_px: [u16; 2],
         background_linear: [f64; 4],
         canvas_rgba: [u8; 4],
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, ShellError> {
         if let Some(byte_len) = self.oversize_stream_len.get() {
             let preview_edge_px = u32::from(size_px[0]).min(u32::from(size_px[1])) as u16;
@@ -172,22 +188,22 @@ impl PreviewHandler {
             ));
         }
 
-        self.ensure_preview_scene_loaded()?;
+        self.ensure_preview_scene_loaded(deadline)?;
         let preview = self.preview_scene.borrow();
         let state = preview
             .as_ref()
             .ok_or_else(|| ShellError::Win32("preview scene unavailable".to_string()))?;
-        state.render_rgba_with_background(size_px, background_linear)
+        state.render_rgba_with_background_with_deadline(size_px, background_linear, deadline)
     }
 
-    fn ensure_preview_scene_loaded(&self) -> Result<(), ShellError> {
+    fn ensure_preview_scene_loaded(&self, deadline: RenderDeadline) -> Result<(), ShellError> {
         if self.preview_scene.borrow().is_some() || self.oversize_stream_len.get().is_some() {
             return Ok(());
         }
 
         let source_path = self.source.borrow().path().map(PathBuf::from);
         let state = if let Some(path) = source_path {
-            PreviewSceneState::from_file(&path)?
+            PreviewSceneState::from_file_with_deadline(&path, deadline)?
         } else if let Some(stream_result) =
             self.source
                 .borrow_mut()
@@ -195,15 +211,20 @@ impl PreviewHandler {
                     ThumbnailProvider::rewind_stream(&stream).map_err(|_| {
                         ShellError::Win32("rewinding preview stream failed".to_string())
                     })?;
-                    let read = ThumbnailProvider::read_stream(&stream).map_err(|_| {
-                        ShellError::Win32("reading preview stream failed".to_string())
-                    })?;
+                    let read = ThumbnailProvider::read_stream_until(&stream, deadline.expires_at())
+                        .map_err(|_| {
+                            ShellError::Win32("reading preview stream failed".to_string())
+                        })?;
                     Ok::<_, ShellError>((read, extension.map(str::to_owned)))
                 })
         {
             match stream_result? {
                 (StreamRead::Complete(bytes), extension) => {
-                    PreviewSceneState::from_bytes(extension.as_deref(), &bytes)?
+                    PreviewSceneState::from_bytes_with_deadline(
+                        extension.as_deref(),
+                        &bytes,
+                        deadline,
+                    )?
                 }
                 (StreamRead::OverCap { byte_len }, _extension) => {
                     self.oversize_stream_len.set(Some(byte_len));
@@ -213,6 +234,12 @@ impl PreviewHandler {
                     return Err(ShellError::Win32(
                         "reading preview stream failed".to_string(),
                     ));
+                }
+                (StreamRead::TimedOut, _extension) => {
+                    return Err(deadline
+                        .remaining()
+                        .map(|_| ShellError::Win32("preview stream deadline elapsed".to_string()))
+                        .unwrap_or_else(ShellError::from));
                 }
             }
         } else {
@@ -224,70 +251,41 @@ impl PreviewHandler {
         Ok(())
     }
 
-    /// Queue one render for this window, collapsing resize and interaction
-    /// bursts into the latest scene state. This stays small enough to call
-    /// from COM methods and the window procedure.
-    fn schedule_preview_render(&self) -> windows::core::Result<()> {
-        let hwnd = self.preview_hwnd.get();
-        if hwnd.0.is_null() {
-            return Err(e_fail());
-        }
-        if self.pending_render_token.get().is_some() {
-            return Ok(());
-        }
-        let token = NEXT_PREVIEW_RENDER_TOKEN
-            .fetch_add(1, Ordering::AcqRel)
-            .max(1);
-        self.pending_render_token.set(Some(token));
-        // SAFETY: `hwnd` is the child preview window owned by this handler.
-        if let Err(error) = unsafe {
-            PostMessageW(
-                Some(hwnd),
-                WM_OCCLUVIEW_RENDER_PREVIEW,
-                WPARAM(token),
-                LPARAM::default(),
-            )
-        } {
-            self.pending_render_token.set(None);
-            return Err(error);
+    /// Render and publish the first bitmap required before `DoPreview` returns.
+    fn render_first_preview_frame(
+        &self,
+        hwnd: HWND,
+        deadline: RenderDeadline,
+    ) -> windows::core::Result<()> {
+        self.refresh_preview_bitmap(hwnd, deadline)
+    }
+
+    /// Render one updated scene state and publish its bitmap to the child.
+    fn refresh_preview_bitmap(
+        &self,
+        hwnd: HWND,
+        deadline: RenderDeadline,
+    ) -> windows::core::Result<()> {
+        #[cfg(feature = "diagnostic-logs")]
+        prepare_preview_diagnostics();
+        let (width, height) = self.preview_size();
+        let hbmp = self.preview_render_to_hbitmap(width, height, deadline)?;
+        self.replace_preview_bitmap(hbmp);
+        // SAFETY: `hwnd` is the child window owned by this handler. The bitmap
+        // is already installed, so normal painting cannot show a spinner.
+        if unsafe { InvalidateRect(Some(hwnd), None, false) }.0 == 0 {
+            tracing::warn!("could not invalidate preview frame");
         }
         Ok(())
     }
 
-    /// Compatibility choke point for scene mutations in the context-menu
-    /// module. It schedules work; it never performs a render on the caller's
-    /// COM or window-procedure stack.
-    fn render_preview_now(&self) -> windows::core::Result<()> {
-        self.schedule_preview_render()
-    }
-
-    fn render_scheduled_preview(&self, hwnd: HWND, wparam: WPARAM) {
-        let token = wparam.0;
-        if self.preview_hwnd.get() != hwnd || self.pending_render_token.get() != Some(token) {
-            return;
+    /// Compatibility choke point for interactive scene mutations.
+    fn render_preview_now(&self, deadline: RenderDeadline) -> windows::core::Result<()> {
+        let hwnd = self.preview_hwnd.get();
+        if hwnd.0.is_null() {
+            return Err(e_fail());
         }
-        self.pending_render_token.set(None);
-        #[cfg(feature = "diagnostic-logs")]
-        prepare_preview_diagnostics();
-        let (width, height) = self.preview_size();
-        match self.preview_render_to_hbitmap(width, height) {
-            Ok(hbmp) => self.replace_preview_bitmap(hbmp),
-            Err(_error) => {
-                #[cfg(feature = "diagnostic-logs")]
-                record_preview_bitmap_failure();
-                tracing::warn!("deferred preview render failed");
-                return;
-            }
-        }
-        // SAFETY: `hwnd` is still owned by this handler and a normal invalidation
-        // lets the host paint only after the render callback has returned.
-        if unsafe { InvalidateRect(Some(hwnd), None, false) }.0 == 0 {
-            tracing::warn!("could not invalidate deferred preview frame");
-        }
-    }
-
-    fn clear_pending_preview_render(&self) {
-        self.pending_render_token.set(None);
+        self.refresh_preview_bitmap(hwnd, deadline)
     }
 
     fn replace_preview_bitmap(&self, hbmp: HBITMAP) {
@@ -348,7 +346,6 @@ impl PreviewHandler {
     }
 
     fn destroy_preview_window(&self) {
-        self.clear_pending_preview_render();
         let hwnd = self.preview_hwnd.replace(HWND::default());
         if !hwnd.0.is_null() {
             // Cut the window's link to this object BEFORE destroying it, and do
@@ -396,7 +393,8 @@ impl PreviewHandler {
             return Ok(());
         }
         self.drag_moved.set(true);
-        self.ensure_preview_scene_loaded()
+        let deadline = RenderDeadline::after(PREVIEW_INTERACTION_FRAME_TIMEOUT);
+        self.ensure_preview_scene_loaded(deadline)
             .map_err(shell_error_to_hresult)?;
         let size_px = self.preview_size_u16();
         let changed = {
@@ -413,7 +411,7 @@ impl PreviewHandler {
             }
         };
         if changed {
-            self.render_preview_now()?;
+            self.render_preview_now(deadline)?;
         }
         Ok(())
     }
@@ -423,7 +421,8 @@ impl PreviewHandler {
     }
 
     fn zoom_preview(&self, scroll_y: f32) -> windows::core::Result<()> {
-        self.ensure_preview_scene_loaded()
+        let deadline = RenderDeadline::after(PREVIEW_INTERACTION_FRAME_TIMEOUT);
+        self.ensure_preview_scene_loaded(deadline)
             .map_err(shell_error_to_hresult)?;
         let changed = {
             let mut preview = self.preview_scene.borrow_mut();
@@ -432,13 +431,14 @@ impl PreviewHandler {
                 .is_some_and(|state| state.zoom_scroll(scroll_y))
         };
         if changed {
-            self.render_preview_now()?;
+            self.render_preview_now(deadline)?;
         }
         Ok(())
     }
 
     fn focus_preview_point(&self, pointer: POINT) -> windows::core::Result<()> {
-        self.ensure_preview_scene_loaded()
+        let deadline = RenderDeadline::after(PREVIEW_INTERACTION_FRAME_TIMEOUT);
+        self.ensure_preview_scene_loaded(deadline)
             .map_err(shell_error_to_hresult)?;
         let changed = {
             let mut preview = self.preview_scene.borrow_mut();
@@ -450,7 +450,7 @@ impl PreviewHandler {
             })
         };
         if changed {
-            self.render_preview_now()?;
+            self.render_preview_now(deadline)?;
         }
         Ok(())
     }
@@ -575,8 +575,11 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
             "IPreviewHandler::DoPreview",
             || Err(e_fail()),
             || {
-                let _ = self.this.ensure_preview_window()?;
-                self.this.schedule_preview_render()
+                let hwnd = self.this.ensure_preview_window()?;
+                self.this.render_first_preview_frame(
+                    hwnd,
+                    RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT),
+                )
             },
         )
     }
@@ -615,8 +618,30 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
         Ok(unsafe { GetKeyboardFocus() })
     }
 
-    fn TranslateAccelerator(&self, _pmsg: *const MSG) -> windows::core::Result<()> {
-        Err(s_false())
+    fn TranslateAccelerator(&self, pmsg: *const MSG) -> windows::core::Result<()> {
+        if pmsg.is_null() {
+            return Err(e_pointer());
+        }
+        // Low-integrity preview handlers must send unhandled accelerators back
+        // to their host frame. The smoke harness has no site, in which case
+        // S_FALSE correctly tells its caller the key was not consumed.
+        let Some(site) = self.this.site.borrow().as_ref().cloned() else {
+            return Err(s_false());
+        };
+        let frame = site.cast::<IPreviewHandlerFrame>().map_err(|_| s_false())?;
+        // Preserve the host frame's exact HRESULT. The generated windows-rs
+        // convenience method maps every non-negative result to `Ok(())`, which
+        // would accidentally turn a host S_FALSE into S_OK at this COM boundary.
+        // SAFETY: `frame` is a live IPreviewHandlerFrame and `pmsg` was checked
+        // non-null; its lifetime is the caller's IPreviewHandler contract.
+        let hresult = unsafe {
+            (Interface::vtable(&frame).TranslateAccelerator)(Interface::as_raw(&frame), pmsg)
+        };
+        if hresult == S_OK {
+            Ok(())
+        } else {
+            Err(windows::core::Error::from_hresult(hresult))
+        }
     }
 }
 

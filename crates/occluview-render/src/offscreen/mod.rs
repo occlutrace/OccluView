@@ -102,6 +102,15 @@ impl RenderDeadline {
         }
     }
 
+    /// Return the absolute instant at which this render request expires.
+    ///
+    /// Shell stream copies use this to share the render request's original
+    /// budget instead of starting a separate I/O timeout.
+    #[must_use]
+    pub const fn expires_at(self) -> Instant {
+        self.deadline
+    }
+
     /// Return the remaining budget, or a structured timeout once it expires.
     pub fn remaining(self) -> Result<Duration, RenderError> {
         self.deadline

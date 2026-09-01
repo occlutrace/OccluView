@@ -6,19 +6,21 @@
 //! provider's state machine from `Initialize` through `GetThumbnail`.
 
 use super::{
-    com_entry, e_fail, e_pointer, implement, path_extension, pixels_to_hbitmap, read_capped_stream,
-    reserve_thumbnail_stream_job_for_request, try_render_thumbnail_file_with_request,
-    try_render_thumbnail_shared_with_reservation, Arc, AssertUnwindSafe, CoTaskMemFree,
-    DeferredSource, IClassFactory, IClassFactory_Impl, IInitializeWithFile,
-    IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
-    IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider, IThumbnailProvider_Impl,
-    IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead, ThumbnailAttempt,
-    ThumbnailRenderRequest, ThumbnailSpec, ACTIVE_COM_OBJECTS, BOOL, CLASS_E_NOAGGREGATION,
-    DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP, MAX_OFFSCREEN_EDGE, MAX_THUMBNAIL_INPUT_BYTES,
-    PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET, WTSAT_ARGB, WTS_ALPHATYPE,
+    com_entry, e_fail, e_pointer, implement, path_extension, pixels_to_hbitmap,
+    read_capped_stream_until, reserve_thumbnail_stream_job_for_request,
+    try_render_thumbnail_file_with_request, try_render_thumbnail_shared_with_reservation, Arc,
+    AssertUnwindSafe, CoTaskMemFree, DeferredSource, IClassFactory, IClassFactory_Impl,
+    IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl,
+    IInitializeWithStream, IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider,
+    IThumbnailProvider_Impl, IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead,
+    ThumbnailAttempt, ThumbnailRenderRequest, ThumbnailSpec, ACTIVE_COM_OBJECTS, BOOL,
+    CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP, MAX_OFFSCREEN_EDGE,
+    MAX_THUMBNAIL_INPUT_BYTES, PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET, WTSAT_ARGB,
+    WTS_ALPHATYPE,
 };
 use super::{placeholder_for_oversize_input, STATFLAG, STATSTG};
 use std::panic::catch_unwind;
+use std::time::Instant;
 
 /// The COM class. Holds the bytes read from the shell-provided stream between
 /// `Initialize` and `GetThumbnail`.
@@ -94,8 +96,14 @@ impl ThumbnailProvider {
         Ok(())
     }
 
-    /// Reads the stream into a byte buffer, capped for shell safety.
-    pub(super) fn read_stream(stream: &IStream) -> windows::core::Result<StreamRead> {
+    /// Reads the stream into a byte buffer under the caller's absolute budget.
+    pub(super) fn read_stream_until(
+        stream: &IStream,
+        deadline: Instant,
+    ) -> windows::core::Result<StreamRead> {
+        if Instant::now() >= deadline {
+            return Ok(StreamRead::TimedOut);
+        }
         // SAFETY: `stat` is a stack-local zeroed STATSTG owned by us; the
         // STATFLAG_NONAME flag avoids an internal allocation we'd have to free.
         let mut stat: STATSTG = unsafe { std::mem::zeroed() };
@@ -109,11 +117,12 @@ impl ThumbnailProvider {
         } else {
             0
         };
-        Ok(read_capped_stream(
+        Ok(read_capped_stream_until(
             (declared != 0).then_some(declared),
             MAX_THUMBNAIL_INPUT_BYTES,
             Self::MIN_STREAM_BUFFER_BYTES,
             Self::STREAM_READ_CHUNK_BYTES,
+            deadline,
             |buf| {
                 let mut read = 0u32;
                 // SAFETY: `buf` is a valid write region; `read` is a stack out-param.
@@ -222,7 +231,7 @@ impl ThumbnailProvider {
             return ThumbnailAttempt::TransientFailure;
         };
         let ext = self.source.borrow().extension().map(str::to_owned);
-        let bytes = match self.ensure_stream_bytes() {
+        let bytes = match self.ensure_stream_bytes(request) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => {
                 // The stream was already consumed (a repeat GetThumbnail on an
@@ -256,7 +265,10 @@ impl ThumbnailProvider {
     /// read failed partway) — except the over-cap case, which sets
     /// `oversize_stream_len` and returns empty bytes for the caller's
     /// deterministic oversize placeholder.
-    fn ensure_stream_bytes(&self) -> windows::core::Result<Option<Arc<[u8]>>> {
+    fn ensure_stream_bytes(
+        &self,
+        request: ThumbnailRenderRequest,
+    ) -> windows::core::Result<Option<Arc<[u8]>>> {
         if !self.bytes.borrow().is_empty() {
             return Ok(Some(self.bytes.borrow().clone()));
         }
@@ -264,7 +276,7 @@ impl ThumbnailProvider {
         let Some(stream_result) = self.source.borrow_mut().consume_pending_stream(
             |stream, _extension| -> windows::core::Result<StreamRead> {
                 ThumbnailProvider::rewind_stream(&stream)?;
-                ThumbnailProvider::read_stream(&stream)
+                ThumbnailProvider::read_stream_until(&stream, request.response_deadline())
             },
         ) else {
             return Ok(None);
@@ -282,7 +294,7 @@ impl ThumbnailProvider {
                 self.oversize_stream_len.set(Some(byte_len));
                 Ok(Some(Arc::<[u8]>::from([])))
             }
-            StreamRead::ReadFailed => {
+            StreamRead::ReadFailed | StreamRead::TimedOut => {
                 *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
                 Ok(None)
             }

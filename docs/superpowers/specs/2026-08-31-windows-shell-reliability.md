@@ -15,7 +15,7 @@ state.
 The 1.1.2 package has three separate defects. They must not be collapsed into
 one speculative fix.
 
-1. `IPreviewHandler::DoPreview` creates a child window, posts
+1. In 1.1.2, `IPreviewHandler::DoPreview` creates a child window, posts
    `WM_OCCLUVIEW_RENDER_PREVIEW`, and returns success. The render occurs only
    if that private message is later dispatched. In the actual private
    `Prevhost.exe` path the test currently proves only window creation and
@@ -46,6 +46,8 @@ therefore retained, not rolled back.
 - `IInitializeWithStream` remains the primary initialization path. It stores
   the stream but does not load it. `DoPreview` creates the child window, loads
   the source, begins rendering, and owns painting the supplied rectangle.
+- A low-integrity handler forwards an unhandled accelerator to the host's
+  `IPreviewHandlerFrame`; it does not silently consume the keyboard path.
 - `IThumbnailProvider` is stream-initialized on the normal out-of-process
   Shell path and must return a valid 32-bpp DIB with `S_OK`, or a real failure
   HRESULT. A transient renderer fault must never be turned into a cacheable
@@ -65,10 +67,18 @@ Sources: [Microsoft: Building Preview Handlers](https://learn.microsoft.com/en-u
 1. validate its initialized source and create the child window after
    `SetWindow`;
 2. load the preview scene and create/prepare the renderer;
-3. render the first frame under a preview-specific deadline;
+3. render the first frame under one preview-specific absolute deadline;
 4. install an HBITMAP and invalidate the child only after pixels exist; or
 5. install a deterministic, visibly degraded placeholder if source loading or
    rendering fails inside that deadline.
+
+The same first-frame deadline is passed to bounded shell-stream copying,
+renderer initialization, scene preparation checks, frame render, and readback.
+A synchronous COM `IStream::Read` that has already begun cannot safely be
+cancelled, but the stream is copied in bounded 1 MiB chunks and no new chunk
+may start after that absolute deadline. A resize, menu command, or gesture
+creates one fresh deadline for its complete load-and-render operation; it does
+not receive a new render budget after loading has consumed time.
 
 It returns `S_OK` only after the child has paintable pixels. It returns a
 documented HRESULT for invalid initialization, corrupt source, inaccessible
@@ -185,9 +195,11 @@ in the diagnostic mode only.
 - Preview tests prove that `DoPreview` creates a window and produces an HBITMAP
   before returning `S_OK`; no `WM_APP` render protocol or pending token remains.
 - Windows integration uses `CLSCTX_LOCAL_SERVER` for the private
-  `Prevhost.exe` handler and captures non-background pixels from its child
-  window. In-process tests remain supplemental tests for input and geometry,
-  not proof of the private host path.
+  `Prevhost.exe` handler, forces the normal first `WM_PAINT`, and captures
+  non-background pixels from its child immediately after `DoPreview`. The
+  private-host check does not pump or retry a deferred render. In-process
+  tests remain supplemental tests for input and geometry, not proof of the
+  private host path.
 - Windows thumbnail integration invokes the actual Shell image factory and a
   forced `IThumbnailCache` extraction, validates an ARGB DIB with nonempty
   geometry, records cold and warm duration, and runs a mixed-folder burst.

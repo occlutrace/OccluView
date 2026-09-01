@@ -5,8 +5,10 @@ use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, PreparedSceneSource, RenderDeadline, ViewportSpec,
 };
+#[cfg(test)]
 use std::time::Duration;
 
+#[cfg(test)]
 const PREVIEW_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[cfg(test)]
@@ -45,10 +47,24 @@ impl PreviewSceneState {
             .is_some_and(|entry| entry.wireframe)
     }
 
+    #[cfg(test)]
     pub(crate) fn render_rgba_with_background(
         &self,
         size_px: [u16; 2],
         background: [f64; 4],
+    ) -> Result<Vec<u8>, ShellError> {
+        self.render_rgba_with_background_with_deadline(
+            size_px,
+            background,
+            RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT),
+        )
+    }
+
+    pub(crate) fn render_rgba_with_background_with_deadline(
+        &self,
+        size_px: [u16; 2],
+        background: [f64; 4],
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, ShellError> {
         #[cfg(test)]
         let _guard = crate::acquire_render_test_guard();
@@ -71,7 +87,7 @@ impl PreviewSceneState {
                 size_px: [width, height],
                 background,
             },
-            RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT),
+            deadline,
         ))
         .inspect_err(|_| {
             // A failed render means the shared device may be lost (driver

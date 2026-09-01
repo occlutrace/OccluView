@@ -1,9 +1,6 @@
 use crate::ShellError;
 use occluview_render::{AdapterPolicy, Offscreen, RenderDeadline};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
-
-const PREVIEW_RENDERER_SETUP_TIMEOUT: Duration = Duration::from_secs(8);
 
 const fn shell_adapter_policy() -> AdapterPolicy {
     AdapterPolicy::HardwareThenFallback
@@ -17,10 +14,10 @@ const fn preview_adapter_policy() -> AdapterPolicy {
     }
 }
 
-pub(crate) fn create_shell_offscreen() -> Result<Offscreen, ShellError> {
+pub(crate) fn create_shell_offscreen(deadline: RenderDeadline) -> Result<Offscreen, ShellError> {
     pollster::block_on(Offscreen::new_with_adapter_policy(
         preview_adapter_policy(),
-        RenderDeadline::after(PREVIEW_RENDERER_SETUP_TIMEOUT),
+        deadline,
     ))
     .map_err(Into::into)
 }
@@ -33,7 +30,9 @@ fn shared_shell_offscreen_slot() -> &'static Mutex<Option<Arc<Offscreen>>> {
     SHARED_SHELL_OFFSCREEN.get_or_init(|| Mutex::new(None))
 }
 
-pub(crate) fn shared_shell_offscreen() -> Result<Arc<Offscreen>, ShellError> {
+pub(crate) fn shared_shell_offscreen(
+    deadline: RenderDeadline,
+) -> Result<Arc<Offscreen>, ShellError> {
     let existing = shared_shell_offscreen_slot()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -43,7 +42,7 @@ pub(crate) fn shared_shell_offscreen() -> Result<Arc<Offscreen>, ShellError> {
         return Ok(offscreen.clone());
     }
 
-    let offscreen = Arc::new(create_shell_offscreen()?);
+    let offscreen = Arc::new(create_shell_offscreen(deadline)?);
     let mut slot = shared_shell_offscreen_slot()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

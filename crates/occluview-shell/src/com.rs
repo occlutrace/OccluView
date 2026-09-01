@@ -42,10 +42,10 @@
 
 use crate::deferred_source::DeferredSource;
 use crate::preview_scene::{win32_preview_orbit_delta, PreviewSceneState};
-use crate::stream_read::{read_capped_stream, StreamRead};
+use crate::stream_read::{read_capped_stream_until, StreamRead};
 use crate::ShellError;
 use glam::Vec2;
-use occluview_render::ThumbnailSpec;
+use occluview_render::{RenderDeadline, ThumbnailSpec};
 use occluview_thumbnail::render_thumb::{
     placeholder_for_oversize_input, reserve_thumbnail_stream_job_for_request,
     try_render_thumbnail_file_with_request, try_render_thumbnail_shared_with_reservation,
@@ -88,16 +88,16 @@ use windows::Win32::UI::Shell::PropertiesSystem::{
     IInitializeWithStream_Impl,
 };
 use windows::Win32::UI::Shell::{
-    IInitializeWithItem, IInitializeWithItem_Impl, IPreviewHandler, IPreviewHandler_Impl,
-    IShellItem, IThumbnailProvider, IThumbnailProvider_Impl, SIGDN_FILESYSPATH, WTSAT_ARGB,
-    WTS_ALPHATYPE,
+    IInitializeWithItem, IInitializeWithItem_Impl, IPreviewHandler, IPreviewHandlerFrame,
+    IPreviewHandler_Impl, IShellItem, IThumbnailProvider, IThumbnailProvider_Impl,
+    SIGDN_FILESYSPATH, WTSAT_ARGB, WTS_ALPHATYPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, PostMessageW, RegisterClassW,
-    SetParent, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG,
-    WINDOW_EX_STYLE, WM_APP, WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, RegisterClassW, SetParent,
+    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG, WINDOW_EX_STYLE,
+    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod thumbnail_provider;
@@ -132,7 +132,6 @@ const ERROR_FILE_NOT_FOUND: u32 = 2;
 static ACTIVE_COM_OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);
 static PREVIEW_WINDOW_CLASS: OnceLock<Result<(), HRESULT>> = OnceLock::new();
-static NEXT_PREVIEW_RENDER_TOKEN: AtomicUsize = AtomicUsize::new(1);
 
 /// This DLL's own module handle, pinned into the process.
 ///

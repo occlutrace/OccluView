@@ -21,6 +21,7 @@ use crate::preview_menu::dib::pack_clipboard_dib;
 use crate::preview_menu::icons::PreviewMenuIcon;
 use crate::preview_menu::{PreviewMenuCommand, PreviewMenuEntry, PREVIEW_MENU_LAYOUT};
 use crate::preview_scene::PreviewSceneState;
+use occluview_render::RenderDeadline;
 use std::mem::size_of;
 use std::path::PathBuf;
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
@@ -233,14 +234,15 @@ impl PreviewHandler {
         &self,
         change: impl FnOnce(&mut PreviewSceneState) -> bool,
     ) -> windows::core::Result<()> {
-        self.ensure_preview_scene_loaded()
+        let deadline = RenderDeadline::after(super::PREVIEW_INTERACTION_FRAME_TIMEOUT);
+        self.ensure_preview_scene_loaded(deadline)
             .map_err(super::shell_error_to_hresult)?;
         let changed = {
             let mut scene = self.preview_scene.borrow_mut();
             scene.as_mut().is_some_and(change)
         };
         if changed {
-            self.render_preview_now()?;
+            self.render_preview_now(deadline)?;
         }
         Ok(())
     }
@@ -283,12 +285,18 @@ impl PreviewHandler {
     }
 
     fn copy_preview_to_clipboard(&self, hwnd: HWND) -> windows::core::Result<()> {
-        self.ensure_preview_scene_loaded()
+        let deadline = RenderDeadline::after(super::PREVIEW_INTERACTION_FRAME_TIMEOUT);
+        self.ensure_preview_scene_loaded(deadline)
             .map_err(super::shell_error_to_hresult)?;
         let size = self.preview_size_u16();
         let theme = super::theme::preview_theme();
         let pixels = self
-            .render_preview_pixels(size, theme.background_linear(), theme.canvas_rgba())
+            .render_preview_pixels(
+                size,
+                theme.background_linear(),
+                theme.canvas_rgba(),
+                deadline,
+            )
             .map_err(super::shell_error_to_hresult)?;
         copy_rgba_to_clipboard(hwnd, &pixels, u32::from(size[0]), u32::from(size[1]))
     }

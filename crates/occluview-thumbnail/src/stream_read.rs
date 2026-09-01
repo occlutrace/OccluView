@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 #[derive(Debug, PartialEq, Eq)]
 /// Result of a bounded stream copy.
 pub enum StreamRead {
@@ -10,6 +12,9 @@ pub enum StreamRead {
     },
     /// A read operation failed before the stream completed.
     ReadFailed,
+    /// The caller's absolute request deadline elapsed before another bounded
+    /// shell-stream read could begin.
+    TimedOut,
 }
 
 /// Read a stream in bounded chunks without exceeding `max_bytes`.
@@ -25,6 +30,48 @@ pub fn read_capped_stream(
     max_bytes: usize,
     min_buffer_bytes: usize,
     chunk_bytes: usize,
+    read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
+) -> StreamRead {
+    read_capped_stream_inner(
+        declared_len,
+        max_bytes,
+        min_buffer_bytes,
+        chunk_bytes,
+        None,
+        read_chunk,
+    )
+}
+
+/// Read a stream in bounded chunks until `deadline` expires.
+///
+/// The caller owns the absolute budget. A synchronous COM `Read` that is
+/// already in progress cannot be safely cancelled, but this helper prevents a
+/// slow or cloud-backed stream from beginning another chunk after its request
+/// has expired.
+pub fn read_capped_stream_until(
+    declared_len: Option<u64>,
+    max_bytes: usize,
+    min_buffer_bytes: usize,
+    chunk_bytes: usize,
+    deadline: Instant,
+    read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
+) -> StreamRead {
+    read_capped_stream_inner(
+        declared_len,
+        max_bytes,
+        min_buffer_bytes,
+        chunk_bytes,
+        Some(deadline),
+        read_chunk,
+    )
+}
+
+fn read_capped_stream_inner(
+    declared_len: Option<u64>,
+    max_bytes: usize,
+    min_buffer_bytes: usize,
+    chunk_bytes: usize,
+    deadline: Option<Instant>,
     mut read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
 ) -> StreamRead {
     let declared_cap = match declared_len {
@@ -45,6 +92,9 @@ pub fn read_capped_stream(
     };
     let mut buf = Vec::with_capacity(initial_capacity);
     while buf.len() <= max_bytes {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return StreamRead::TimedOut;
+        }
         let want = (max_bytes + 1 - buf.len()).min(chunk_bytes);
         let write_offset = buf.len();
         buf.resize(write_offset + want, 0);
@@ -67,7 +117,17 @@ pub fn read_capped_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{read_capped_stream, StreamRead};
+    use super::{read_capped_stream, read_capped_stream_until, StreamRead};
+    use std::time::Instant;
+
+    #[test]
+    fn expired_deadline_prevents_the_next_shell_stream_read() {
+        let result = read_capped_stream_until(Some(8), 1024, 4, 8, Instant::now(), |_buf| {
+            panic!("an expired request must not issue a shell stream read")
+        });
+
+        assert_eq!(result, StreamRead::TimedOut);
+    }
 
     #[test]
     fn unknown_length_stream_reads_to_completion_instead_of_overcap() {

@@ -748,6 +748,8 @@ fn com_thumbnail_provider_creates_one_request_before_selecting_its_source() {
 
     assert!(request < file_render);
     assert!(request < stream_reservation);
+    assert!(body.contains("self.ensure_stream_bytes(request)"));
+    assert!(body.contains("read_stream_until(&stream, request.response_deadline())"));
 }
 
 fn workspace_package_version(cargo_toml: &str) -> Option<&str> {
