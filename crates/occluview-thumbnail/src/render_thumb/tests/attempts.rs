@@ -1,6 +1,7 @@
 //! Thumbnail attempt classification and retry behaviour.
 
 use super::*;
+use crate::placeholder::PlaceholderKind;
 use std::thread;
 
 fn spec_64() -> ThumbnailSpec {

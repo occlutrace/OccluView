@@ -19,7 +19,7 @@
     )
 )]
 
-use crate::placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind, PlaceholderKind};
+use crate::placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind};
 use crate::ThumbnailError;
 use occluview_formats::FormatError;
 use occluview_render::{AdapterPolicy, RenderDeadline, ThumbnailSpec};
@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 
 mod cache;
 mod concurrency;
+mod fallback;
 mod loading;
 mod rendering;
 
@@ -47,6 +48,8 @@ use concurrency::{
     render_coalesced_thumbnail_by, run_thumbnail_job_by, run_thumbnail_job_by_deadline,
     ThumbnailJobOutcome, ThumbnailJobPermit, ThumbnailJobProgress, ThumbnailRendererPool,
 };
+pub use fallback::placeholder_for_oversize_input;
+use fallback::placeholder_kind_for_error;
 use loading::{
     load_thumbnail_mesh_from_bytes, load_thumbnail_mesh_from_bytes_kind,
     load_thumbnail_mesh_from_file, prepare_file_thumbnail_render, prepare_stream_thumbnail_render,
@@ -760,46 +763,4 @@ fn try_render_thumbnail_shared_impl(
 
         thumbnail_attempt_for_job_outcome(result, spec, request.response_timeout(), "stream")
     })
-}
-
-/// Return the policy placeholder for an input that exceeds the size ceiling.
-pub fn placeholder_for_oversize_input(spec: ThumbnailSpec, byte_len: usize) -> Vec<u8> {
-    let error = oversize_input_error(byte_len);
-    tracing::warn!(
-        ?error,
-        byte_len,
-        "thumbnail input exceeded size policy; returning placeholder"
-    );
-    // Over-budget is a policy decision, not a broken file: quiet plain cube.
-    placeholder_thumbnail(spec)
-}
-
-/// Pick the placeholder flavor for a thumbnail failure.
-///
-/// A *recognized* format that fails to decode (truncated / malformed / bad
-/// signature / core-geometry error) gets the [`PlaceholderKind::Corrupt`] badge
-/// — the file itself looks broken. Everything else (unsupported payloads,
-/// encrypted HPS without a key = [`FormatError::Deferred`], oversize sentinel
-/// errors, I/O, and GPU/renderer/timeout failures) gets the quiet
-/// [`PlaceholderKind::Plain`] cube.
-fn placeholder_kind_for_error(error: &ThumbnailError) -> PlaceholderKind {
-    match error {
-        ThumbnailError::Format(format_error) => match format_error {
-            // Oversize inputs surface as a synthetic `Malformed` with a
-            // "thumbnail …" format tag; that is a budget decision, not a broken
-            // file, so keep it plain.
-            FormatError::Malformed { format, .. } if format.starts_with("thumbnail") => {
-                PlaceholderKind::Plain
-            }
-            FormatError::BadSignature { .. }
-            | FormatError::Truncated { .. }
-            | FormatError::Malformed { .. }
-            | FormatError::Core(_) => PlaceholderKind::Corrupt,
-            FormatError::Unsupported { .. }
-            | FormatError::Deferred { .. }
-            | FormatError::UnsafePath { .. }
-            | FormatError::Io(_) => PlaceholderKind::Plain,
-        },
-        ThumbnailError::Render(_) => PlaceholderKind::Plain,
-    }
 }
