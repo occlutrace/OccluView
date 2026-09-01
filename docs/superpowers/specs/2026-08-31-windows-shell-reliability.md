@@ -91,6 +91,9 @@ out of scope.
 offscreen entry points accept an explicit `RenderDeadline` that is created by
 the caller from one absolute `Instant`. Rendering, GPU polling, map callback,
 and retry all consume the same deadline; none receives a fresh nested timeout.
+The one deliberate exception is an already-detached thumbnail cache warmer:
+it has its own explicit six-second worker deadline, retains a bounded worker
+slot, and is prohibited from returning a result to the expired Shell call.
 
 The renderer exposes `AdapterPolicy`:
 
@@ -125,12 +128,14 @@ cap is deleted.
 
 Normal Shell thumbnails use `HardwareThenFallback`; Windows normally isolates
 the provider out of process. The existing renderer-pool retry discards an
-unhealthy device, but every retry consumes the request's remaining absolute
-deadline. The global `use_software_renderer_only` flag and class-activation
-prewarm side effect are deleted. A returned bitmap is a real render or a
-deterministic file verdict only. Timeout, adapter fault, queue saturation, and
-stream I/O fault return a failure HRESULT so Explorer retries instead of
-caching a false thumbnail.
+unhealthy device, but every retry that can answer the active Shell request
+consumes its remaining absolute deadline. A response-timeout continuation may
+finish only as a separately bounded cache warmer; it remains inside its worker
+lane and cannot answer the original COM call. The global
+`use_software_renderer_only` flag and class-activation prewarm side effect are
+deleted. A returned bitmap is a real render or a deterministic file verdict
+only. Timeout, adapter fault, queue saturation, and stream I/O fault return a
+failure HRESULT so Explorer retries instead of caching a false thumbnail.
 
 ### 4. Diagnostics designed for support, not for hope
 

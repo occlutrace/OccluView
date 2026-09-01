@@ -239,7 +239,7 @@ Expected: FAIL because `ThumbnailRenderRequest` and `thumbnail_attempt_for_timeo
 
 - [ ] **Step 3: Build one request object at the Shell boundary**
 
-Replace separate duration arguments in Shell-facing `try_render_thumbnail_*` functions with `ThumbnailRenderRequest`. `reserve_thumbnail_stream_job` builds it before a stream is copied; file and stream paths carry the same absolute deadline into gate acquisition, renderer checkout, adapter creation, render, readback, and one retry. `render_mesh_thumbnail_with_offscreen` calls `render_scene_with_deadline` with that deadline.
+Replace separate duration arguments in Shell-facing `try_render_thumbnail_*` functions with `ThumbnailRenderRequest`. `reserve_thumbnail_stream_job` builds it before a stream is copied; file and stream paths carry the same absolute deadline into gate acquisition, renderer checkout, adapter creation, render, readback, and one retry. `render_mesh_thumbnail_with_offscreen` calls `render_scene_with_deadline` with that deadline. If the response deadline has already elapsed, an in-flight worker may complete only under a separately named, bounded cache-warm deadline while it retains its lane; its pixels must be stored in the process cache and never returned to the expired COM request.
 
 - [ ] **Step 4: Preserve cache-safe failure semantics**
 

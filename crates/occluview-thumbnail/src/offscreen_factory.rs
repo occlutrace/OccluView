@@ -1,48 +1,45 @@
+use crate::render_thumb::DEFAULT_THUMBNAIL_TIMEOUT;
 use crate::ThumbnailError;
-use occluview_render::{Offscreen, RenderDeadline};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use occluview_render::{AdapterPolicy, Offscreen, RenderDeadline};
 
-/// Whether this build should ask wgpu for a hardware adapter. Tests use the
-/// software fallback so they do not depend on the host GPU.
-///
-/// The shell crate has the same per-crate definition because `cfg!(test)` is
-/// evaluated independently for each crate.
-pub(crate) const fn should_prefer_hardware_offscreen() -> bool {
-    !cfg!(test)
+/// The production Shell policy: verify hardware output before it is allowed
+/// to enter Explorer's cache, then use the software adapter when it cannot.
+pub(crate) const fn shell_adapter_policy() -> AdapterPolicy {
+    AdapterPolicy::HardwareThenFallback
 }
 
-/// Set once by a process that renders a single thumbnail and exits.
-static SOFTWARE_RENDERER_ONLY: AtomicBool = AtomicBool::new(false);
+/// Deterministic GPU fixtures never depend on a workstation's hardware.
+pub(crate) const fn test_adapter_policy() -> AdapterPolicy {
+    AdapterPolicy::FallbackOnly
+}
 
-/// Keep a short-lived thumbnail process on the software rasteriser. Long-lived
-/// shell and viewer processes may continue to use a hardware adapter.
-pub fn use_software_renderer_only() {
-    SOFTWARE_RENDERER_ONLY.store(true, Ordering::Relaxed);
+const fn thumbnail_adapter_policy() -> AdapterPolicy {
+    if cfg!(test) {
+        test_adapter_policy()
+    } else {
+        shell_adapter_policy()
+    }
 }
 
 pub(crate) fn create_thumbnail_offscreen() -> Result<Offscreen, ThumbnailError> {
-    if let Some(offscreen) = hardware_offscreen_that_draws() {
-        return Ok(offscreen);
-    }
-    pollster::block_on(Offscreen::new()).map_err(Into::into)
+    pollster::block_on(Offscreen::new_with_adapter_policy(
+        thumbnail_adapter_policy(),
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    ))
+    .map_err(Into::into)
 }
 
-/// A hardware renderer, but only if it can put a triangle on the screen.
-///
-/// A device that accepts commands and renders nothing would otherwise answer
-/// every scan with a blank tile -- which Explorer caches against the file's
-/// timestamp and never asks about again.
-fn hardware_offscreen_that_draws() -> Option<Offscreen> {
-    if !should_prefer_hardware_offscreen() || SOFTWARE_RENDERER_ONLY.load(Ordering::Relaxed) {
-        return None;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_factory_requests_hardware_then_fallback() {
+        assert_eq!(shell_adapter_policy(), AdapterPolicy::HardwareThenFallback);
     }
-    let offscreen = pollster::block_on(Offscreen::new_prefer_hardware()).ok()?;
-    if pollster::block_on(
-        offscreen.can_draw_with_deadline(RenderDeadline::after(Duration::from_secs(2))),
-    ) {
-        return Some(offscreen);
+
+    #[test]
+    fn test_fixture_uses_only_the_fallback_adapter() {
+        assert_eq!(test_adapter_policy(), AdapterPolicy::FallbackOnly);
     }
-    tracing::warn!("hardware adapter drew nothing; falling back to the software rasteriser");
-    None
 }

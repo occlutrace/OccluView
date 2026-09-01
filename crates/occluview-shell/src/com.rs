@@ -132,17 +132,13 @@ const ERROR_FILE_NOT_FOUND: u32 = 2;
 static ACTIVE_COM_OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);
 static PREVIEW_WINDOW_CLASS: OnceLock<Result<(), HRESULT>> = OnceLock::new();
-static THUMBNAIL_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
 static NEXT_PREVIEW_RENDER_TOKEN: AtomicUsize = AtomicUsize::new(1);
 
 /// This DLL's own module handle, pinned into the process.
 ///
-/// Two kinds of code in this DLL outlive COM's refcount view of it: the
-/// preview window class's wndproc (a raw function pointer registered with
-/// USER32), and the thumbnail prewarm thread. `DllCanUnloadNow` counts only
-/// live COM objects, so without the pin COM could unmap the image while either
-/// still executes inside it. A pinned module is a small, bounded cost: the
-/// shell recycles its surrogate hosts anyway.
+/// The preview window class stores a raw wndproc function pointer into this
+/// DLL. `DllCanUnloadNow` counts only live COM objects, so pin the module
+/// before registering that class to keep the callback address valid.
 pub(crate) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
 {
     // An address inside our own mapped image, used to find the DLL's module.
@@ -155,29 +151,6 @@ pub(crate) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::F
     // SAFETY: `address` lies within this DLL; `module` is a valid out-param.
     unsafe { GetModuleHandleExW(flags, address, &mut module) }?;
     Ok(module)
-}
-
-/// Start renderer creation the moment the host activates one of our classes.
-///
-/// Thumbnail hosts activate the class before their first render. Warming the
-/// thumbnail renderer overlaps that fixed cost with stream initialization.
-/// Preview hosts deliberately do not prewarm: their renderer creation must be
-/// serialized by the preview window's deferred message, never raced from class
-/// activation while Explorer is entering a handler call.
-fn spawn_renderer_prewarm(class: &GUID) {
-    // Pin before the first background thread exists (see
-    // `own_pinned_dll_module`); a failed pin only means we skip the warmup.
-    if own_pinned_dll_module().is_err() {
-        return;
-    }
-    if *class == OCCLUVIEW_THUMBNAIL_GUID {
-        occluview_thumbnail::use_software_renderer_only();
-        THUMBNAIL_RENDERER_PREWARM.get_or_init(|| {
-            let _ = std::thread::Builder::new()
-                .name("occluview-thumbnail-prewarm".to_string())
-                .spawn(occluview_thumbnail::render_thumb::prewarm_thumbnail_renderer);
-        });
-    }
 }
 
 fn path_extension(path: &Path) -> Option<String> {
@@ -375,7 +348,6 @@ pub extern "system" fn DllGetClassObject(
             // SAFETY: `rclsid` is supplied by COM and points to a GUID for the
             // activation request.
             let requested = unsafe { *(rclsid as *const GUID) };
-            spawn_renderer_prewarm(&requested);
             let factory: IUnknown = if requested == OCCLUVIEW_THUMBNAIL_GUID {
                 ThumbnailProvider::new().into()
             } else if requested == OCCLUVIEW_PREVIEW_GUID {

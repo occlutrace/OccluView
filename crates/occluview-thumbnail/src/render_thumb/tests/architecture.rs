@@ -17,13 +17,17 @@ fn thumbnail_render_path_uses_parallel_renderer_pool_for_shell_bursts() {
     let legacy_single_renderer_gate = ["Mutex", "<Option<Offscreen>>"].concat();
     assert!(!render_path.contains(&legacy_single_renderer_gate));
     let factory = offscreen_factory_source();
-    // Hardware where there is hardware, the software rasteriser where there is
-    // not -- and a device that accepts commands while drawing nothing counts as
-    // the second case, which is why the preference is checked and not assumed.
-    assert!(factory.contains("!cfg!(test)"));
-    assert!(factory.contains("Offscreen::new_prefer_hardware()"));
-    assert!(factory.contains("offscreen.can_draw_with_deadline("));
-    assert!(factory.contains("Offscreen::new()"));
+    // Production Shell requests verified hardware first, while deterministic
+    // test fixtures select the fallback explicitly. The offscreen policy owns
+    // the triangle probe and fallback -- no process-global mode can silently
+    // change a request after it has entered Explorer's cache path.
+    assert!(factory.contains("fn shell_adapter_policy() -> AdapterPolicy"));
+    assert!(factory.contains("AdapterPolicy::HardwareThenFallback"));
+    assert!(factory.contains("fn test_adapter_policy() -> AdapterPolicy"));
+    assert!(factory.contains("AdapterPolicy::FallbackOnly"));
+    assert!(factory.contains("Offscreen::new_with_adapter_policy("));
+    assert!(!factory.contains("SOFTWARE_RENDERER_ONLY"));
+    assert!(!render_path.contains("prewarm_thumbnail_renderer"));
     assert!(concurrency_source().contains("impl Drop for ThumbnailRendererPool"));
     assert!(concurrency_source().contains("std::mem::forget(offscreen)"));
 }

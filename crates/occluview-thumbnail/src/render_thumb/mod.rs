@@ -52,6 +52,13 @@ use loading::{
 
 /// Default maximum wall-clock wait for a shell thumbnail request.
 pub const DEFAULT_THUMBNAIL_TIMEOUT: Duration = Duration::from_millis(6_000);
+/// Maximum GPU/render time for an already-detached cache warmer.
+///
+/// A caller that has exhausted its response budget must never receive the
+/// warmer's result. Keeping this separately bounded preserves the useful
+/// second-paint cache behaviour without silently extending an Explorer COM
+/// call or leaving an unbounded worker behind.
+const BACKGROUND_CACHE_WARM_TIMEOUT: Duration = DEFAULT_THUMBNAIL_TIMEOUT;
 /// Maximum stream size the shell thumbnail path will parse.
 pub const MAX_THUMBNAIL_INPUT_BYTES: usize = 192 * 1024 * 1024;
 /// Maximum local-file thumbnail input size. File-backed thumbnails use mmap,
@@ -132,16 +139,6 @@ pub fn reserve_thumbnail_stream_job(timeout: Duration) -> Option<ThumbnailJobRes
     concurrency::ThumbnailJobGate::shared()
         .acquire_by(deadline)
         .map(|permit| ThumbnailJobReservation { permit, deadline })
-}
-
-/// Create the pooled offscreen renderer ahead of the first request.
-///
-/// Call from a background thread at shell activation so device creation
-/// overlaps Initialize instead of stalling the first `GetThumbnail` (see
-/// `concurrency::prewarm_renderer_pool` for the full rationale). Blocking:
-/// runs the wgpu adapter/device acquisition to completion.
-pub fn prewarm_thumbnail_renderer() {
-    concurrency::prewarm_renderer_pool();
 }
 
 /// Load `bytes` (a file with the given lowercase extension, no dot) and render
@@ -379,7 +376,11 @@ fn render_file_thumbnail_job(
         let result = (|| -> Result<Vec<u8>, ThumbnailError> {
             let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
             let _ = progress.send(ThumbnailJobProgress::Prepared);
-            rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(timeout))
+            rendering::render_mesh_thumbnail(
+                mesh,
+                spec,
+                RenderDeadline::after(BACKGROUND_CACHE_WARM_TIMEOUT),
+            )
         })();
         if let Ok(pixels) = &result {
             cache_file_thumbnail(
@@ -603,7 +604,11 @@ fn try_render_thumbnail_shared_impl(
             let result = (|| -> Result<Vec<u8>, ThumbnailError> {
                 let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
                 let _ = progress.send(ThumbnailJobProgress::Prepared);
-                rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(timeout))
+                rendering::render_mesh_thumbnail(
+                    mesh,
+                    spec,
+                    RenderDeadline::after(BACKGROUND_CACHE_WARM_TIMEOUT),
+                )
             })();
             // See the file path: cache from the worker so a render that
             // outran the caller's deadline still lands in the cache for the

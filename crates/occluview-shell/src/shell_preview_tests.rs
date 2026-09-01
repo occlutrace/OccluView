@@ -610,15 +610,11 @@ fn every_com_boundary_is_panic_guarded() {
 }
 
 #[test]
-fn class_activation_prewarms_only_the_thumbnail_renderer() {
-    // Thumbnail activation is a throughput problem: it runs outside Explorer
-    // and has a separate renderer. Preview activation must not race a private
-    // preview message with a background device creation thread.
+fn class_activation_does_not_create_or_preconfigure_a_renderer() {
     let com = include_str!("com.rs");
 
-    assert!(com.contains("fn spawn_renderer_prewarm(class: &GUID)"));
-    assert!(com.contains("spawn_renderer_prewarm(&requested);"));
-    assert!(com.contains("prewarm_thumbnail_renderer"));
+    assert!(!com.contains("spawn_renderer_prewarm"));
+    assert!(!com.contains("prewarm_thumbnail_renderer"));
     assert!(!com.contains("prewarm_shared_shell_offscreen"));
 }
 

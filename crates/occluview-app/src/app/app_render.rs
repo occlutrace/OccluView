@@ -19,10 +19,11 @@ use super::{
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
 };
-use occluview_render::RenderDeadline;
+use occluview_render::{AdapterPolicy, RenderDeadline};
 use std::time::Duration;
 
 const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
+const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
 
 impl OccluViewApp {
     pub(super) fn render_now(&mut self, ctx: &egui::Context) {
@@ -224,8 +225,11 @@ impl OccluViewApp {
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if self.offscreen.is_none() {
             self.offscreen = Some(
-                pollster::block_on(Offscreen::new_prefer_hardware())
-                    .context("initializing offscreen")?,
+                pollster::block_on(Offscreen::new_with_adapter_policy(
+                    AdapterPolicy::HardwareThenFallback,
+                    RenderDeadline::after(APP_OFFSCREEN_INITIALIZATION_TIMEOUT),
+                ))
+                .context("initializing offscreen")?,
             );
         }
         Ok(())

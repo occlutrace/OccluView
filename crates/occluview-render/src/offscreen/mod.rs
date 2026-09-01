@@ -14,6 +14,62 @@ mod prepared_scene;
 mod scene_render;
 mod single_mesh;
 
+/// Adapter-selection policy for one headless offscreen renderer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdapterPolicy {
+    /// Verify a hardware device with a known-pixel probe, then fall back if it
+    /// cannot provide a complete frame inside the caller's deadline.
+    HardwareThenFallback,
+    /// Use only the deterministic software adapter.
+    FallbackOnly,
+}
+
+/// The adapter class that produced an offscreen renderer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdapterResult {
+    /// A verified hardware adapter supplied the renderer.
+    Hardware,
+    /// The deterministic software fallback supplied the renderer.
+    Fallback,
+}
+
+pub(crate) const fn adapter_result_for_device_type(device_type: wgpu::DeviceType) -> AdapterResult {
+    match device_type {
+        wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::DiscreteGpu => AdapterResult::Hardware,
+        wgpu::DeviceType::Other | wgpu::DeviceType::VirtualGpu | wgpu::DeviceType::Cpu => {
+            AdapterResult::Fallback
+        }
+    }
+}
+
+#[cfg(test)]
+mod adapter_policy_tests {
+    use super::*;
+
+    #[test]
+    fn cpu_and_virtual_adapters_are_not_accepted_as_verified_hardware() {
+        assert_eq!(
+            adapter_result_for_device_type(wgpu::DeviceType::Cpu),
+            AdapterResult::Fallback
+        );
+        assert_eq!(
+            adapter_result_for_device_type(wgpu::DeviceType::VirtualGpu),
+            AdapterResult::Fallback
+        );
+    }
+
+    #[test]
+    fn fallback_policy_records_the_renderer_class_without_driver_metadata() {
+        let offscreen = pollster::block_on(Offscreen::new_with_adapter_policy(
+            AdapterPolicy::FallbackOnly,
+            RenderDeadline::after(Duration::from_secs(5)),
+        ))
+        .expect("the GPU test environment provides a fallback adapter");
+
+        assert_eq!(offscreen.adapter_result(), AdapterResult::Fallback);
+    }
+}
+
 /// Absolute deadline supplied by the caller that owns an offscreen render.
 ///
 /// Renderer consumers have different liveness contracts: an Explorer
@@ -169,6 +225,7 @@ pub struct ViewportSpec {
 /// Offscreen renderer. Wraps a headless [`Renderer`].
 pub struct Offscreen {
     renderer: Renderer,
+    adapter_result: AdapterResult,
     /// Cached identity mesh bind group (group 1). The thumbnail path renders
     /// one mesh at the origin, so the model matrix is identity. The uniform
     /// buffer behind it is owned by the bind group and never read back.
@@ -188,22 +245,57 @@ impl Offscreen {
     #[allow(clippy::unused_async)]
     pub async fn new() -> Result<Self, RenderError> {
         let renderer = Renderer::new_headless(wgpu::TextureFormat::Rgba8Unorm).await?;
-        Ok(Self::from_renderer(renderer))
+        Ok(Self::from_renderer(renderer, AdapterResult::Fallback))
     }
 
-    /// Create a headless renderer for the interactive desktop viewer, preferring
-    /// a hardware adapter before falling back.
+    /// Create an offscreen renderer with a verified, caller-selected policy.
     ///
     /// # Errors
-    /// Returns [`RenderError::NoAdapter`] if no compatible adapter is available.
-    #[allow(clippy::unused_async)]
-    pub async fn new_prefer_hardware() -> Result<Self, RenderError> {
-        let renderer =
-            Renderer::new_headless_prefer_hardware(wgpu::TextureFormat::Rgba8Unorm).await?;
-        Ok(Self::from_renderer(renderer))
+    /// Returns the fallback error when no verified adapter can produce a
+    /// renderer inside `deadline`.
+    pub async fn new_with_adapter_policy(
+        policy: AdapterPolicy,
+        deadline: RenderDeadline,
+    ) -> Result<Self, RenderError> {
+        match policy {
+            AdapterPolicy::FallbackOnly => {
+                Self::new_on_adapter(AdapterResult::Fallback, deadline).await
+            }
+            AdapterPolicy::HardwareThenFallback => {
+                if let Ok(hardware) = Self::new_on_adapter(AdapterResult::Hardware, deadline).await
+                {
+                    if hardware.can_draw_with_deadline(deadline).await
+                        && deadline.remaining().is_ok()
+                    {
+                        return Ok(hardware);
+                    }
+                }
+                tracing::warn!(
+                    "hardware offscreen renderer could not provide a verified frame; using fallback"
+                );
+                Self::new_on_adapter(AdapterResult::Fallback, deadline).await
+            }
+        }
     }
 
-    fn from_renderer(renderer: Renderer) -> Self {
+    async fn new_on_adapter(
+        adapter_result: AdapterResult,
+        deadline: RenderDeadline,
+    ) -> Result<Self, RenderError> {
+        let _ = deadline.remaining()?;
+        let (renderer, actual_result) = Renderer::new_headless_on_adapter(
+            wgpu::TextureFormat::Rgba8Unorm,
+            matches!(adapter_result, AdapterResult::Fallback),
+        )
+        .await?;
+        if actual_result != adapter_result {
+            return Err(RenderError::NoAdapter);
+        }
+        let _ = deadline.remaining()?;
+        Ok(Self::from_renderer(renderer, adapter_result))
+    }
+
+    fn from_renderer(renderer: Renderer, adapter_result: AdapterResult) -> Self {
         let device = renderer.device();
         let queue = renderer.queue();
 
@@ -218,6 +310,7 @@ impl Offscreen {
 
         Self {
             renderer,
+            adapter_result,
             mesh_bind_group,
             texture_bind_group,
         }
@@ -262,6 +355,12 @@ impl Offscreen {
     /// Access the underlying renderer (for callers that need device/queue).
     pub fn renderer(&self) -> &Renderer {
         &self.renderer
+    }
+
+    /// Return the verified adapter class without exposing host driver details.
+    #[must_use]
+    pub const fn adapter_result(&self) -> AdapterResult {
+        self.adapter_result
     }
 
     /// Upload a multi-mesh scene once so camera-only redraws can reuse GPU

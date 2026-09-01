@@ -21,55 +21,36 @@ impl Renderer {
     /// - [`RenderError::NoAdapter`] when no adapter is available (incl. WARP-less sandboxes).
     /// - [`RenderError::Surface`] for device-creation failure.
     pub async fn new_headless(target_format: wgpu::TextureFormat) -> Result<Self, RenderError> {
-        Self::new_headless_with_adapter_preference(target_format, false).await
+        let (renderer, _adapter_result) =
+            Self::new_headless_on_adapter(target_format, true).await?;
+        Ok(renderer)
     }
 
-    /// Create a headless renderer preferring a real GPU before falling back.
+    /// Create a headless renderer on one explicit adapter kind.
     ///
-    /// This is for user-facing viewer/thumbnail paths. Tests can keep using
-    /// [`Self::new_headless`] so CI/headless machines stay on the stable
-    /// fallback-adapter path.
-    ///
-    /// # Errors
-    /// - [`RenderError::NoAdapter`] when no compatible adapter is available.
-    /// - [`RenderError::Surface`] for device-creation failure.
-    pub async fn new_headless_prefer_hardware(
+    /// The offscreen policy layer owns fallback and verification. This lower
+    /// layer deliberately makes one adapter request only, so a consumer cannot
+    /// mistake a successful device allocation for a verified hardware frame.
+    pub(crate) async fn new_headless_on_adapter(
         target_format: wgpu::TextureFormat,
-    ) -> Result<Self, RenderError> {
-        Self::new_headless_with_adapter_preference(target_format, true).await
-    }
-
-    async fn new_headless_with_adapter_preference(
-        target_format: wgpu::TextureFormat,
-        prefer_hardware: bool,
-    ) -> Result<Self, RenderError> {
+        force_fallback_adapter: bool,
+    ) -> Result<(Self, crate::offscreen::AdapterResult), RenderError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = if prefer_hardware {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    force_fallback_adapter: false,
-                    compatible_surface: None,
-                    apply_limit_buckets: false,
-                })
-                .await
-                .ok()
-        } else {
-            None
-        };
-        let adapter = if let Some(adapter) = adapter {
-            adapter
-        } else {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    force_fallback_adapter: true,
-                    compatible_surface: None,
-                    apply_limit_buckets: false,
-                })
-                .await
-                .map_err(|_| RenderError::NoAdapter)?
-        };
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: if force_fallback_adapter {
+                    wgpu::PowerPreference::LowPower
+                } else {
+                    wgpu::PowerPreference::HighPerformance
+                },
+                force_fallback_adapter,
+                compatible_surface: None,
+                apply_limit_buckets: false,
+            })
+            .await
+            .map_err(|_| RenderError::NoAdapter)?;
+        let adapter_result =
+            crate::offscreen::adapter_result_for_device_type(adapter.get_info().device_type);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -96,7 +77,10 @@ impl Renderer {
             .await
             .map_err(|e| RenderError::Surface(e.to_string()))?;
 
-        Self::with_device(device, queue, target_format)
+        Ok((
+            Self::with_device(device, queue, target_format)?,
+            adapter_result,
+        ))
     }
 
     /// Build the pipeline against an externally-created device/queue (used by
