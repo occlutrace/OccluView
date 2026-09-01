@@ -164,68 +164,54 @@ pub(crate) struct ShellDiagnosticEvent {
     elapsed_ms: u64,
 }
 
+/// Stable event fields supplied by the shell callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ShellDiagnosticEventInput {
+    pub(crate) component: ShellDiagnosticComponent,
+    pub(crate) stage: ShellDiagnosticStage,
+    pub(crate) adapter: ShellDiagnosticAdapter,
+    pub(crate) elapsed_ms: u64,
+}
+
+/// Process identity captured once for one diagnostic event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ShellDiagnosticProcess {
+    pub(crate) timestamp_unix_ms: u128,
+    pub(crate) process_id: u32,
+}
+
 impl ShellDiagnosticEvent {
-    #[cfg(test)]
-    pub(crate) const fn new(
-        component: ShellDiagnosticComponent,
-        stage: ShellDiagnosticStage,
+    pub(crate) const fn normal(
+        input: ShellDiagnosticEventInput,
         outcome: ShellDiagnosticOutcome,
-        adapter: ShellDiagnosticAdapter,
-        elapsed_ms: u64,
-        timestamp_unix_ms: u128,
-        process_id: u32,
+        process: ShellDiagnosticProcess,
     ) -> Self {
         Self {
-            timestamp_unix_ms,
-            process_id,
-            component,
-            stage,
+            timestamp_unix_ms: process.timestamp_unix_ms,
+            process_id: process.process_id,
+            component: input.component,
+            stage: input.stage,
             outcome,
-            adapter,
+            adapter: input.adapter,
             error_class: ShellDiagnosticErrorClass::None,
-            elapsed_ms,
+            elapsed_ms: input.elapsed_ms,
         }
     }
 
-    const fn failure(
-        component: ShellDiagnosticComponent,
-        stage: ShellDiagnosticStage,
-        adapter: ShellDiagnosticAdapter,
+    pub(crate) const fn failure(
+        input: ShellDiagnosticEventInput,
         error_class: ShellDiagnosticErrorClass,
-        elapsed_ms: u64,
-        timestamp_unix_ms: u128,
-        process_id: u32,
+        process: ShellDiagnosticProcess,
     ) -> Self {
         Self {
-            timestamp_unix_ms,
-            process_id,
-            component,
-            stage,
+            timestamp_unix_ms: process.timestamp_unix_ms,
+            process_id: process.process_id,
+            component: input.component,
+            stage: input.stage,
             outcome: ShellDiagnosticOutcome::Failed,
-            adapter,
+            adapter: input.adapter,
             error_class,
-            elapsed_ms,
-        }
-    }
-
-    const fn normal(
-        component: ShellDiagnosticComponent,
-        stage: ShellDiagnosticStage,
-        outcome: ShellDiagnosticOutcome,
-        adapter: ShellDiagnosticAdapter,
-        elapsed_ms: u64,
-        timestamp_unix_ms: u128,
-        process_id: u32,
-    ) -> Self {
-        Self {
-            timestamp_unix_ms,
-            process_id,
-            component,
-            stage,
-            outcome,
-            adapter,
-            error_class: ShellDiagnosticErrorClass::None,
-            elapsed_ms,
+            elapsed_ms: input.elapsed_ms,
         }
     }
 
@@ -314,13 +300,14 @@ pub(crate) fn record_shell_event(
     elapsed_ms: u64,
 ) {
     record_event(ShellDiagnosticEvent::normal(
-        component,
-        stage,
+        ShellDiagnosticEventInput {
+            component,
+            stage,
+            adapter,
+            elapsed_ms,
+        },
         outcome,
-        adapter,
-        elapsed_ms,
-        current_unix_ms(),
-        std::process::id(),
+        current_diagnostic_process(),
     ));
 }
 
@@ -352,13 +339,14 @@ pub(crate) fn record_shell_failure(
     elapsed_ms: u64,
 ) {
     record_event(ShellDiagnosticEvent::failure(
-        component,
-        stage,
-        adapter,
+        ShellDiagnosticEventInput {
+            component,
+            stage,
+            adapter,
+            elapsed_ms,
+        },
         error_class,
-        elapsed_ms,
-        current_unix_ms(),
-        std::process::id(),
+        current_diagnostic_process(),
     ));
 }
 
@@ -419,11 +407,14 @@ fn write_shell_event(event: ShellDiagnosticEvent) {
 }
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
-fn current_unix_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
+fn current_diagnostic_process() -> ShellDiagnosticProcess {
+    ShellDiagnosticProcess {
+        timestamp_unix_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        process_id: std::process::id(),
+    }
 }
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
@@ -509,13 +500,17 @@ mod tests {
             timeout: Duration::from_secs(2),
         });
         let event = ShellDiagnosticEvent::failure(
-            ShellDiagnosticComponent::Preview,
-            ShellDiagnosticStage::Render,
-            ShellDiagnosticAdapter::Fallback,
+            ShellDiagnosticEventInput {
+                component: ShellDiagnosticComponent::Preview,
+                stage: ShellDiagnosticStage::Render,
+                adapter: ShellDiagnosticAdapter::Fallback,
+                elapsed_ms: 2000,
+            },
             error_class_for_shell_error(&error),
-            2000,
-            1,
-            2,
+            ShellDiagnosticProcess {
+                timestamp_unix_ms: 1,
+                process_id: 2,
+            },
         );
         assert_eq!(
             event.json_line(),
@@ -535,16 +530,22 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).expect("temporary diagnostic directory");
         let log = root.join("shell-events.jsonl");
-        std::fs::write(&log, vec![b'x'; MAX_DIAGNOSTIC_LOG_BYTES as usize - 1])
-            .expect("seed bounded diagnostic log");
-        let event = ShellDiagnosticEvent::new(
-            ShellDiagnosticComponent::Thumbnail,
-            ShellDiagnosticStage::ComReturn,
+        let seed_len = usize::try_from(MAX_DIAGNOSTIC_LOG_BYTES)
+            .expect("diagnostic log ceiling fits in usize")
+            - 1;
+        std::fs::write(&log, vec![b'x'; seed_len]).expect("seed bounded diagnostic log");
+        let event = ShellDiagnosticEvent::normal(
+            ShellDiagnosticEventInput {
+                component: ShellDiagnosticComponent::Thumbnail,
+                stage: ShellDiagnosticStage::ComReturn,
+                adapter: ShellDiagnosticAdapter::NotObserved,
+                elapsed_ms: 1,
+            },
             ShellDiagnosticOutcome::Completed,
-            ShellDiagnosticAdapter::NotObserved,
-            1,
-            1,
-            2,
+            ShellDiagnosticProcess {
+                timestamp_unix_ms: 1,
+                process_id: 2,
+            },
         );
 
         append_diagnostic_line(&log, &event.json_line()).expect("full log is a no-op");
