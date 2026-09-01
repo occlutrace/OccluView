@@ -19,6 +19,12 @@ use super::{
     WTS_ALPHATYPE,
 };
 use super::{placeholder_for_oversize_input, STATFLAG, STATSTG};
+#[cfg(feature = "diagnostic-logs")]
+use crate::shell_diagnostics::{
+    elapsed_ms_since, prepare_shell_diagnostics, record_shell_event, record_shell_failure,
+    ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticErrorClass,
+    ShellDiagnosticOutcome, ShellDiagnosticStage,
+};
 use std::panic::catch_unwind;
 use std::time::Instant;
 
@@ -158,7 +164,11 @@ impl ThumbnailProvider {
     /// itself changes. A failed extraction shows the format icon for this
     /// browse and stays eligible for re-extraction — usually served instantly
     /// from the process cache the background worker populated meanwhile.
-    fn render_to_hbitmap(&self, size: u32) -> windows::core::Result<HBITMAP> {
+    fn render_to_hbitmap(
+        &self,
+        size: u32,
+        #[cfg(feature = "diagnostic-logs")] started: Instant,
+    ) -> windows::core::Result<HBITMAP> {
         let size_px = size.clamp(1, MAX_OFFSCREEN_EDGE) as u16;
         let spec = ThumbnailSpec {
             size_px,
@@ -166,9 +176,38 @@ impl ThumbnailProvider {
         };
         match self.thumbnail_attempt(spec) {
             ThumbnailAttempt::Bitmap(pixels) => {
-                pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px))
+                let bitmap = pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px));
+                #[cfg(feature = "diagnostic-logs")]
+                if bitmap.is_ok() {
+                    record_shell_event(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::BitmapPublish,
+                        ShellDiagnosticOutcome::Completed,
+                        ShellDiagnosticAdapter::NotObserved,
+                        elapsed_ms_since(started),
+                    );
+                } else {
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::BitmapPublish,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Windows,
+                        elapsed_ms_since(started),
+                    );
+                }
+                bitmap
             }
-            ThumbnailAttempt::TransientFailure => Err(e_fail()),
+            ThumbnailAttempt::TransientFailure => {
+                #[cfg(feature = "diagnostic-logs")]
+                record_shell_failure(
+                    ShellDiagnosticComponent::Thumbnail,
+                    ShellDiagnosticStage::Render,
+                    ShellDiagnosticAdapter::NotObserved,
+                    ShellDiagnosticErrorClass::Transient,
+                    elapsed_ms_since(started),
+                );
+                Err(e_fail())
+            }
         }
     }
 
@@ -323,16 +362,60 @@ impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
             "IThumbnailProvider::GetThumbnail",
             || Err(e_fail()),
             || {
+                #[cfg(feature = "diagnostic-logs")]
+                let started = Instant::now();
+                #[cfg(feature = "diagnostic-logs")]
+                prepare_shell_diagnostics();
+                #[cfg(feature = "diagnostic-logs")]
+                record_shell_event(
+                    ShellDiagnosticComponent::Thumbnail,
+                    ShellDiagnosticStage::Activation,
+                    ShellDiagnosticOutcome::Started,
+                    ShellDiagnosticAdapter::NotObserved,
+                    0,
+                );
                 if phbmp.is_null() || pdwalpha.is_null() {
+                    #[cfg(feature = "diagnostic-logs")]
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Windows,
+                        elapsed_ms_since(started),
+                    );
                     return Err(e_pointer());
                 }
-                let hbmp = self.this.render_to_hbitmap(cx)?;
-                // SAFETY: phbmp is a caller-provided out-pointer; the shell owns
-                // the handle we write through it.
-                unsafe { *phbmp = hbmp };
-                // SAFETY: pdwalpha is a caller-provided out-pointer.
-                unsafe { *pdwalpha = WTSAT_ARGB };
-                Ok(())
+                let result = self.this.render_to_hbitmap(
+                    cx,
+                    #[cfg(feature = "diagnostic-logs")]
+                    started,
+                );
+                if let Ok(hbmp) = &result {
+                    // SAFETY: phbmp is a caller-provided out-pointer; the shell owns
+                    // the handle we write through it.
+                    unsafe { *phbmp = *hbmp };
+                    // SAFETY: pdwalpha is a caller-provided out-pointer.
+                    unsafe { *pdwalpha = WTSAT_ARGB };
+                }
+                #[cfg(feature = "diagnostic-logs")]
+                if result.is_ok() {
+                    record_shell_event(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticOutcome::Completed,
+                        ShellDiagnosticAdapter::NotObserved,
+                        elapsed_ms_since(started),
+                    );
+                } else {
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Transient,
+                        elapsed_ms_since(started),
+                    );
+                }
+                result.map(|_| ())
             },
         )
     }

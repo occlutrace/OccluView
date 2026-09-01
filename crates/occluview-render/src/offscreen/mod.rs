@@ -112,6 +112,11 @@ impl RenderDeadline {
     }
 
     /// Return the remaining budget, or a structured timeout once it expires.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::ReadbackTimeout`] when this request's absolute
+    /// deadline has elapsed.
     pub fn remaining(self) -> Result<Duration, RenderError> {
         self.deadline
             .checked_duration_since(Instant::now())

@@ -304,7 +304,7 @@ fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path
         );
     }
     for forbidden in [
-        "PreviewFailureLogEnabled",
+        "ShellEventLogEnabled",
         "LocalDumps",
         "DisableLowILProcessIsolation",
     ] {
@@ -315,12 +315,22 @@ fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path
     }
 
     assert!(enable.contains("HKCU:\\Software\\OccluTrace\\OccluView\\Diagnostics"));
-    assert!(enable.contains("PreviewFailureLogEnabled"));
+    assert!(enable.contains("ShellEventLogEnabled"));
     assert!(
         !enable.contains("HKLM:"),
         "the installer must not enable per-user diagnostics from an elevated context"
     );
+    assert!(collect.contains("shell-events.jsonl"));
     assert!(collect.contains("preview-failures.jsonl"));
+    assert!(collect.contains("shell-registration.txt"));
+    assert!(collect.contains("$arguments = @(\"query\", $Key, \"/s\")"));
+    assert!(collect.contains("& reg.exe @arguments"));
+    for forbidden in ["reg.exe add", "reg.exe delete", "regsvr32", "ie4uinit"] {
+        assert!(
+            !collect.contains(forbidden),
+            "diagnostic collection must remain read-only: {forbidden}"
+        );
+    }
     assert!(collect.contains("Compress-Archive"));
     assert!(
         !collect.contains("Start-Process -Verb RunAs"),

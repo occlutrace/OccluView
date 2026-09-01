@@ -25,14 +25,14 @@ mod installer_contract_tests;
 mod offscreen_factory;
 #[cfg(any(windows, test))]
 mod preview_canvas;
-#[cfg(any(test, all(windows, feature = "diagnostic-logs")))]
-mod preview_diagnostics;
 #[cfg(any(windows, test))]
 mod preview_menu;
 mod preview_scene;
 mod shell_contract;
 #[cfg(test)]
 mod shell_contract_tests;
+#[cfg(any(test, all(windows, feature = "diagnostic-logs")))]
+mod shell_diagnostics;
 #[cfg(test)]
 mod shell_preview_tests;
 #[cfg(any(windows, test))]

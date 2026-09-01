@@ -14,6 +14,8 @@ use super::{
     PREVIEW_WINDOW_CLASS_NAME, RECT, SIGDN_FILESYSPATH, SRCCOPY, S_OK, WINDOW_EX_STYLE, WS_CHILD,
     WS_CLIPSIBLINGS, WS_VISIBLE,
 };
+#[cfg(feature = "diagnostic-logs")]
+use occluview_render::AdapterResult;
 use std::time::Duration;
 
 mod context_menu;
@@ -24,8 +26,10 @@ use theme::preview_theme;
 use window::ensure_preview_window_class;
 
 #[cfg(feature = "diagnostic-logs")]
-use crate::preview_diagnostics::{
-    prepare_preview_diagnostics, record_preview_bitmap_failure, record_preview_render_failure,
+use crate::shell_diagnostics::{
+    elapsed_ms_since, prepare_shell_diagnostics, record_shell_error, record_shell_event,
+    record_shell_failure, ShellDiagnosticAdapter, ShellDiagnosticComponent,
+    ShellDiagnosticErrorClass, ShellDiagnosticOutcome, ShellDiagnosticStage,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,6 +42,14 @@ enum PreviewDragMode {
 
 const PREVIEW_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
 const PREVIEW_INTERACTION_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
+
+#[cfg(feature = "diagnostic-logs")]
+const fn diagnostic_adapter(adapter: AdapterResult) -> ShellDiagnosticAdapter {
+    match adapter {
+        AdapterResult::Hardware => ShellDiagnosticAdapter::Hardware,
+        AdapterResult::Fallback => ShellDiagnosticAdapter::Fallback,
+    }
+}
 
 /// Explorer Preview Pane handler.
 ///
@@ -114,6 +126,7 @@ impl PreviewHandler {
         width: u32,
         height: u32,
         deadline: RenderDeadline,
+        #[cfg(feature = "diagnostic-logs")] started: std::time::Instant,
     ) -> windows::core::Result<HBITMAP> {
         let width = width.clamp(1, MAX_OFFSCREEN_EDGE);
         let height = height.clamp(1, MAX_OFFSCREEN_EDGE);
@@ -127,7 +140,13 @@ impl PreviewHandler {
             Ok(pixels) => pixels,
             Err(error) => {
                 #[cfg(feature = "diagnostic-logs")]
-                record_preview_render_failure(&error);
+                record_shell_error(
+                    &error,
+                    ShellDiagnosticComponent::Preview,
+                    ShellDiagnosticStage::Render,
+                    ShellDiagnosticAdapter::NotObserved,
+                    elapsed_ms_since(started),
+                );
                 #[cfg(not(feature = "diagnostic-logs"))]
                 let _ = error;
                 tracing::warn!("preview render failed; returning placeholder");
@@ -159,7 +178,13 @@ impl PreviewHandler {
             Ok(bitmap) => Ok(bitmap),
             Err(error) => {
                 #[cfg(feature = "diagnostic-logs")]
-                record_preview_bitmap_failure();
+                record_shell_failure(
+                    ShellDiagnosticComponent::Preview,
+                    ShellDiagnosticStage::BitmapPublish,
+                    ShellDiagnosticAdapter::NotObserved,
+                    ShellDiagnosticErrorClass::Windows,
+                    elapsed_ms_since(started),
+                );
                 Err(error)
             }
         }
@@ -193,13 +218,57 @@ impl PreviewHandler {
         let state = preview
             .as_ref()
             .ok_or_else(|| ShellError::Win32("preview scene unavailable".to_string()))?;
-        state.render_rgba_with_background_with_deadline(size_px, background_linear, deadline)
+        #[cfg(feature = "diagnostic-logs")]
+        let adapter = diagnostic_adapter(state.adapter_result());
+        #[cfg(feature = "diagnostic-logs")]
+        let render_started = std::time::Instant::now();
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::Adapter,
+            ShellDiagnosticOutcome::Completed,
+            adapter,
+            0,
+        );
+        let pixels = state.render_rgba_with_background_with_deadline(
+            size_px,
+            background_linear,
+            deadline,
+        )?;
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::Render,
+            ShellDiagnosticOutcome::Completed,
+            adapter,
+            elapsed_ms_since(render_started),
+        );
+        Ok(pixels)
     }
 
     fn ensure_preview_scene_loaded(&self, deadline: RenderDeadline) -> Result<(), ShellError> {
         if self.preview_scene.borrow().is_some() || self.oversize_stream_len.get().is_some() {
             return Ok(());
         }
+
+        #[cfg(feature = "diagnostic-logs")]
+        let load_started = std::time::Instant::now();
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::Source,
+            ShellDiagnosticOutcome::Started,
+            ShellDiagnosticAdapter::NotObserved,
+            0,
+        );
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::SceneLoad,
+            ShellDiagnosticOutcome::Started,
+            ShellDiagnosticAdapter::NotObserved,
+            0,
+        );
 
         let source_path = self.source.borrow().path().map(PathBuf::from);
         let state = if let Some(path) = source_path {
@@ -248,6 +317,22 @@ impl PreviewHandler {
             ));
         };
         *self.preview_scene.borrow_mut() = Some(state);
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::Source,
+            ShellDiagnosticOutcome::Completed,
+            ShellDiagnosticAdapter::NotObserved,
+            elapsed_ms_since(load_started),
+        );
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::SceneLoad,
+            ShellDiagnosticOutcome::Completed,
+            ShellDiagnosticAdapter::NotObserved,
+            elapsed_ms_since(load_started),
+        );
         Ok(())
     }
 
@@ -267,10 +352,34 @@ impl PreviewHandler {
         deadline: RenderDeadline,
     ) -> windows::core::Result<()> {
         #[cfg(feature = "diagnostic-logs")]
-        prepare_preview_diagnostics();
+        let started = std::time::Instant::now();
+        #[cfg(feature = "diagnostic-logs")]
+        prepare_shell_diagnostics();
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::Render,
+            ShellDiagnosticOutcome::Started,
+            ShellDiagnosticAdapter::NotObserved,
+            0,
+        );
         let (width, height) = self.preview_size();
-        let hbmp = self.preview_render_to_hbitmap(width, height, deadline)?;
+        let hbmp = self.preview_render_to_hbitmap(
+            width,
+            height,
+            deadline,
+            #[cfg(feature = "diagnostic-logs")]
+            started,
+        )?;
         self.replace_preview_bitmap(hbmp);
+        #[cfg(feature = "diagnostic-logs")]
+        record_shell_event(
+            ShellDiagnosticComponent::Preview,
+            ShellDiagnosticStage::BitmapPublish,
+            ShellDiagnosticOutcome::Completed,
+            ShellDiagnosticAdapter::NotObserved,
+            elapsed_ms_since(started),
+        );
         // SAFETY: `hwnd` is the child window owned by this handler. The bitmap
         // is already installed, so normal painting cannot show a spinner.
         if unsafe { InvalidateRect(Some(hwnd), None, false) }.0 == 0 {
@@ -575,11 +684,43 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
             "IPreviewHandler::DoPreview",
             || Err(e_fail()),
             || {
-                let hwnd = self.this.ensure_preview_window()?;
-                self.this.render_first_preview_frame(
-                    hwnd,
-                    RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT),
-                )
+                #[cfg(feature = "diagnostic-logs")]
+                let started = std::time::Instant::now();
+                #[cfg(feature = "diagnostic-logs")]
+                prepare_shell_diagnostics();
+                #[cfg(feature = "diagnostic-logs")]
+                record_shell_event(
+                    ShellDiagnosticComponent::Preview,
+                    ShellDiagnosticStage::Activation,
+                    ShellDiagnosticOutcome::Started,
+                    ShellDiagnosticAdapter::NotObserved,
+                    0,
+                );
+                let result = self.this.ensure_preview_window().and_then(|hwnd| {
+                    self.this.render_first_preview_frame(
+                        hwnd,
+                        RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT),
+                    )
+                });
+                #[cfg(feature = "diagnostic-logs")]
+                if result.is_ok() {
+                    record_shell_event(
+                        ShellDiagnosticComponent::Preview,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticOutcome::Completed,
+                        ShellDiagnosticAdapter::NotObserved,
+                        elapsed_ms_since(started),
+                    );
+                } else {
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Preview,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Windows,
+                        elapsed_ms_since(started),
+                    );
+                }
+                result
             },
         )
     }

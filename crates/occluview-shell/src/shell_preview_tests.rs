@@ -448,7 +448,7 @@ fn do_preview_installs_a_first_paintable_bitmap_before_success() {
         .expect("interactive render follows first-frame renderer");
     let first_frame = &preview[first_frame_start..first_frame_end];
 
-    assert!(do_preview.contains("let hwnd = self.this.ensure_preview_window()?;"));
+    assert!(do_preview.contains("self.this.ensure_preview_window().and_then(|hwnd| {"));
     assert!(do_preview.contains("self.this.render_first_preview_frame("));
     assert!(do_preview.contains("RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT)"));
     assert!(first_frame.contains("self.replace_preview_bitmap(hbmp);"));
@@ -897,6 +897,36 @@ fn the_preview_window_and_the_com_object_die_together() {
         smoke.contains("Release without Unload left the child preview window alive"),
         "the preview smoke should cover a host that releases without Unload"
     );
+}
+
+#[test]
+fn diagnostic_events_are_fixed_field_and_cover_both_shell_components() {
+    use crate::shell_diagnostics::{
+        ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticEvent,
+        ShellDiagnosticOutcome, ShellDiagnosticStage,
+    };
+
+    let preview = ShellDiagnosticEvent::new(
+        ShellDiagnosticComponent::Preview,
+        ShellDiagnosticStage::BitmapPublish,
+        ShellDiagnosticOutcome::Completed,
+        ShellDiagnosticAdapter::Hardware,
+        18,
+        1_725_000_001,
+        42,
+    )
+    .json_line();
+    assert!(preview.contains("\"component\":\"preview\""));
+    assert!(preview.contains("\"stage\":\"bitmap_publish\""));
+    assert!(preview.contains("\"outcome\":\"completed\""));
+    assert!(preview.contains("\"adapter\":\"hardware\""));
+    assert!(preview.contains("\"elapsed_ms\":18"));
+    for forbidden in ["path", "filename", "driver", "error.to_string"] {
+        assert!(
+            !preview.contains(forbidden),
+            "diagnostic payload must not retain private or unstable data: {forbidden}"
+        );
+    }
 }
 
 /// The COM boundary guard has to catch, not merely be spelled at every site.

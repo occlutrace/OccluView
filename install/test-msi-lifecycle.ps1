@@ -281,7 +281,7 @@ function Assert-RegistryNamedValueAbsent {
 function Get-DiagnosticSwitchState {
     $keyExists = Test-Path $diagnosticRegistryPath
     $value = if ($keyExists) {
-        Get-RegistryNamedValue $diagnosticRegistryPath "PreviewFailureLogEnabled"
+        Get-RegistryNamedValue $diagnosticRegistryPath "ShellEventLogEnabled"
     } else {
         $null
     }
@@ -296,7 +296,7 @@ function Assert-DiagnosticSwitchUnchanged {
 
     $actual = Get-DiagnosticSwitchState
     if ($actual.KeyExists -ne $Expected.KeyExists -or $actual.Value -ne $Expected.Value) {
-        throw "Diagnostic MSI changed the current user's PreviewFailureLogEnabled switch."
+        throw "Diagnostic MSI changed the current user's ShellEventLogEnabled switch."
     }
 }
 
