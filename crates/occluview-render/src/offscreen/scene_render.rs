@@ -3,7 +3,7 @@ use super::{
         extent, extent_rect, make_color_target, make_color_target_extent, make_depth_target,
         make_depth_target_extent, padded_bytes_per_row, RenderTargets,
     },
-    Offscreen, PreparedScene, SceneDrawEntry, ThumbnailSpec, ViewportSpec,
+    Offscreen, PreparedScene, RenderDeadline, SceneDrawEntry, ThumbnailSpec, ViewportSpec,
 };
 use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
@@ -22,11 +22,12 @@ impl Offscreen {
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
     #[allow(clippy::unused_async)]
-    pub async fn render_scene(
+    pub async fn render_scene_with_deadline(
         &self,
         entries: &[SceneDrawEntry<'_>],
         camera: &GpuCamera,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
@@ -121,7 +122,7 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Render an already-uploaded scene with a clipping plane.
@@ -134,12 +135,13 @@ impl Offscreen {
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
     #[allow(clippy::too_many_lines, clippy::unused_async)]
-    pub async fn render_prepared_scene_with_clip(
+    pub async fn render_prepared_scene_with_clip_with_deadline(
         &self,
         scene: &PreparedScene,
         camera: &GpuCamera,
         clip: &ClipPlane,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
@@ -226,7 +228,7 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Render an already-uploaded scene into a rectangular app viewport.
@@ -235,14 +237,17 @@ impl Offscreen {
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
     /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[allow(clippy::too_many_lines, clippy::unused_async)]
-    pub async fn render_prepared_viewport(
+    pub async fn render_prepared_viewport_with_deadline(
         &self,
         scene: &PreparedScene,
         camera: &GpuCamera,
         spec: ViewportSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
-        self.render_prepared_viewport_with_overlay(scene, None, camera, spec)
-            .await
+        self.render_prepared_viewport_with_overlay_with_deadline(
+            scene, None, camera, spec, deadline,
+        )
+        .await
     }
 
     /// Render an already-uploaded scene and optional overlay into a
@@ -256,12 +261,13 @@ impl Offscreen {
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
     #[allow(clippy::too_many_lines, clippy::unused_async)]
-    pub async fn render_prepared_viewport_with_overlay(
+    pub async fn render_prepared_viewport_with_overlay_with_deadline(
         &self,
         scene: &PreparedScene,
         overlay: Option<&PreparedScene>,
         camera: &GpuCamera,
         spec: ViewportSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let [width_px, height_px] = spec.size_px;
         let width = u32::from(width_px);
@@ -353,7 +359,7 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back_extent(&output_buffer, padded, spec.size_px)
+        self.read_back_extent(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Render an already-uploaded scene and optional overlay into a
@@ -371,13 +377,14 @@ impl Offscreen {
         clippy::too_many_lines,
         clippy::unused_async
     )]
-    pub async fn render_prepared_viewport_with_clip_and_overlay(
+    pub async fn render_prepared_viewport_with_clip_and_overlay_with_deadline(
         &self,
         scene: &PreparedScene,
         overlay: Option<&PreparedScene>,
         camera: &GpuCamera,
         clip: &ClipPlane,
         spec: ViewportSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let [width_px, height_px] = spec.size_px;
         let width = u32::from(width_px);
@@ -485,7 +492,7 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back_extent(&output_buffer, padded, spec.size_px)
+        self.read_back_extent(&output_buffer, padded, spec.size_px, deadline)
     }
 
     #[allow(clippy::too_many_arguments)]

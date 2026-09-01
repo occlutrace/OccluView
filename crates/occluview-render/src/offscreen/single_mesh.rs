@@ -1,6 +1,6 @@
 use super::{
     helpers::{extent, make_color_target, make_depth_target, padded_bytes_per_row, RenderTargets},
-    Offscreen, ThumbnailSpec,
+    Offscreen, RenderDeadline, ThumbnailSpec,
 };
 use crate::camera::GpuCamera;
 use crate::clipping::{cap_quad, ClipPlane, CutViewSpec};
@@ -19,11 +19,12 @@ impl Offscreen {
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
     #[allow(clippy::unused_async)]
-    pub async fn render(
+    pub async fn render_with_deadline(
         &self,
         mesh: &Mesh,
         camera: &GpuCamera,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
@@ -82,7 +83,7 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Render `mesh` with an active clip plane.
@@ -95,12 +96,13 @@ impl Offscreen {
         reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
     #[allow(clippy::unused_async)]
-    pub async fn render_clipped(
+    pub async fn render_clipped_with_deadline(
         &self,
         mesh: &Mesh,
         camera: &GpuCamera,
         clip: &ClipPlane,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
@@ -190,7 +192,7 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Convenience: render a cut view with an auto-framed orthographic camera.
@@ -199,16 +201,17 @@ impl Offscreen {
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
     /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[allow(clippy::unused_async)]
-    pub async fn render_cut_view(
+    pub async fn render_cut_view_with_deadline(
         &self,
         mesh: &Mesh,
         cut: &CutViewSpec,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let bbox = mesh.bbox_uncached();
         let camera = crate::cut_camera::cut_view_camera(&cut.plane, bbox);
         let half_extent = bbox.half_diagonal() * 2.0;
-        self.render_with_cut(mesh, &camera, cut, half_extent, spec)
+        self.render_with_cut_with_deadline(mesh, &camera, cut, half_extent, spec, deadline)
             .await
     }
 
@@ -226,13 +229,14 @@ impl Offscreen {
         clippy::too_many_arguments,
         clippy::too_many_lines
     )]
-    pub async fn render_with_cut(
+    pub async fn render_with_cut_with_deadline(
         &self,
         mesh: &Mesh,
         camera: &GpuCamera,
         cut: &CutViewSpec,
         half_extent: f32,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
@@ -447,6 +451,6 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 }

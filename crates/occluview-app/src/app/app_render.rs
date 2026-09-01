@@ -19,6 +19,10 @@ use super::{
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
 };
+use occluview_render::RenderDeadline;
+use std::time::Duration;
+
+const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl OccluViewApp {
     pub(super) fn render_now(&mut self, ctx: &egui::Context) {
@@ -162,9 +166,13 @@ impl OccluViewApp {
                 size_px: CutTool::preview_size_px(),
                 background: VIEWPORT_BACKGROUND_LINEAR,
             };
-            match pollster::block_on(
-                offscreen.render_prepared_scene_with_clip(prepared, &camera, &plane, spec),
-            ) {
+            match pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
+                prepared,
+                &camera,
+                &plane,
+                spec,
+                RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+            )) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(error = ?e, "section-view render failed");
@@ -281,20 +289,26 @@ impl OccluViewApp {
         let selection_overlay = self.prepared_selection_overlay.as_ref();
         let clip_plane = self.active_viewport_clip_plane(scene.bbox());
         let pixels = if clip_plane.enabled != 0 {
-            pollster::block_on(offscreen.render_prepared_viewport_with_clip_and_overlay(
-                prepared,
-                selection_overlay,
-                &gpu_cam,
-                &clip_plane,
-                spec,
-            ))
+            pollster::block_on(
+                offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
+                    prepared,
+                    selection_overlay,
+                    &gpu_cam,
+                    &clip_plane,
+                    spec,
+                    RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                ),
+            )
         } else {
-            pollster::block_on(offscreen.render_prepared_viewport_with_overlay(
-                prepared,
-                selection_overlay,
-                &gpu_cam,
-                spec,
-            ))
+            pollster::block_on(
+                offscreen.render_prepared_viewport_with_overlay_with_deadline(
+                    prepared,
+                    selection_overlay,
+                    &gpu_cam,
+                    spec,
+                    RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                ),
+            )
         }
         .context("rendering viewport")?;
         Ok((spec, pixels))

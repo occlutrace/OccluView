@@ -1,6 +1,7 @@
 use crate::ThumbnailError;
-use occluview_render::Offscreen;
+use occluview_render::{Offscreen, RenderDeadline};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 /// Whether this build should ask wgpu for a hardware adapter. Tests use the
 /// software fallback so they do not depend on the host GPU.
@@ -37,7 +38,9 @@ fn hardware_offscreen_that_draws() -> Option<Offscreen> {
         return None;
     }
     let offscreen = pollster::block_on(Offscreen::new_prefer_hardware()).ok()?;
-    if pollster::block_on(offscreen.can_draw()) {
+    if pollster::block_on(
+        offscreen.can_draw_with_deadline(RenderDeadline::after(Duration::from_secs(2))),
+    ) {
         return Some(offscreen);
     }
     tracing::warn!("hardware adapter drew nothing; falling back to the software rasteriser");

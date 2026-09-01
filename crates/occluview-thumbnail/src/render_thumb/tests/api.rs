@@ -181,8 +181,12 @@ fn moderate_surface_files_match_full_fidelity_file_parse() {
             render_thumbnail_file(&path, spec).expect("file-backed thumbnail should render");
         let full_mesh = read_file_with_key_provider(&path, &RuntimeHpsKeyProvider)
             .expect("full parser should load moderate surface fixture");
-        let full_pixels = rendering::render_mesh_thumbnail(full_mesh, spec)
-            .expect("full parsed mesh should render");
+        let full_pixels = rendering::render_mesh_thumbnail(
+            full_mesh,
+            spec,
+            RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+        )
+        .expect("full parsed mesh should render");
         assert_eq!(
             direct_pixels, full_pixels,
             "moderate .{extension} thumbnails should prefer the full-fidelity parser instead of a lossy fast-path surrogate"
@@ -309,8 +313,12 @@ fn a_thirty_two_megabyte_obj_is_read_in_full_not_decimated() {
         occluview_formats::MeshShading::AsWritten,
     )
     .expect("the canonical reader should load the OBJ fixture");
-    let full_pixels =
-        rendering::render_mesh_thumbnail(full_mesh, spec).expect("full parsed OBJ should render");
+    let full_pixels = rendering::render_mesh_thumbnail(
+        full_mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("full parsed OBJ should render");
 
     assert_eq!(
         direct_pixels, full_pixels,
@@ -330,8 +338,12 @@ fn dense_large_stl_files_still_prefer_full_fidelity_parse() {
         render_thumbnail_file(&path, spec).expect("large STL thumbnail should render");
     let full_mesh = read_file_with_key_provider(&path, &RuntimeHpsKeyProvider)
         .expect("full parser should load dense large STL fixture");
-    let full_pixels = rendering::render_mesh_thumbnail(full_mesh, spec)
-        .expect("full parsed large STL should render");
+    let full_pixels = rendering::render_mesh_thumbnail(
+        full_mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("full parsed large STL should render");
     assert_eq!(
         direct_pixels, full_pixels,
         "large STL thumbnails inside the STL-specific fidelity budget should stay on the canonical parser"
@@ -354,8 +366,12 @@ fn stl_files_above_the_fidelity_cutoff_use_fast_surrogate_policy() {
     let fast_mesh =
         crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
             .expect("fast STL surrogate should parse");
-    let fast_pixels = rendering::render_mesh_thumbnail(fast_mesh, spec)
-        .expect("fast STL surrogate should render");
+    let fast_pixels = rendering::render_mesh_thumbnail(
+        fast_mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("fast STL surrogate should render");
     assert_eq!(
         direct_pixels, fast_pixels,
         "file-backed large STL thumbnails should use the fast decimated surrogate once over the fidelity cutoff"
@@ -472,8 +488,12 @@ fn fast_path_dense_surface_thumbnail_has_no_see_through_holes() {
             crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
                 .expect("dense STL sphere should parse through the fast path");
         assert!(!fast_mesh.is_point_cloud(), "a dense STL stays a surface");
-        let pixels = rendering::render_mesh_thumbnail(fast_mesh, spec)
-            .expect("clustered fast-path mesh should render");
+        let pixels = rendering::render_mesh_thumbnail(
+            fast_mesh,
+            spec,
+            RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+        )
+        .expect("clustered fast-path mesh should render");
         let holes = interior_hole_count(&pixels, usize::from(spec.size_px));
         assert_eq!(
             holes,

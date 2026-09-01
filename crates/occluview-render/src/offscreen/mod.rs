@@ -7,11 +7,58 @@ use crate::mesh_uniform::GpuMeshUniform;
 use crate::pipeline::Renderer;
 use crate::texture::GpuTexture;
 use occluview_core::{Mesh, MeshKind};
+use std::time::{Duration, Instant};
 
 mod helpers;
 mod prepared_scene;
 mod scene_render;
 mod single_mesh;
+
+/// Absolute deadline supplied by the caller that owns an offscreen render.
+///
+/// Renderer consumers have different liveness contracts: an Explorer
+/// thumbnail request has a small end-to-end budget, while a preview pane and
+/// a desktop export have their own bounded operation. Keeping this deadline
+/// explicit prevents one consumer from silently imposing its timeout on all
+/// others.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderDeadline {
+    deadline: Instant,
+    requested_timeout: Duration,
+}
+
+impl RenderDeadline {
+    /// Create a deadline relative to the current instant.
+    #[must_use]
+    pub fn after(timeout: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + timeout,
+            requested_timeout: timeout,
+        }
+    }
+
+    /// Wrap an existing absolute deadline.
+    #[must_use]
+    pub const fn at(deadline: Instant) -> Self {
+        Self {
+            deadline,
+            requested_timeout: Duration::ZERO,
+        }
+    }
+
+    /// Return the remaining budget, or a structured timeout once it expires.
+    pub fn remaining(self) -> Result<Duration, RenderError> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(|| self.timeout_error())
+    }
+
+    pub(crate) fn timeout_error(self) -> RenderError {
+        RenderError::ReadbackTimeout {
+            timeout: self.requested_timeout,
+        }
+    }
+}
 
 use helpers::make_fallback_texture_bind_group;
 
@@ -185,7 +232,7 @@ impl Offscreen {
     /// device that cannot draw, before it is handed a scan and answers with a
     /// blank picture.
     #[must_use]
-    pub async fn can_draw(&self) -> bool {
+    pub async fn can_draw_with_deadline(&self, deadline: RenderDeadline) -> bool {
         use glam::Vec3;
         use occluview_core::{MeshBuilder, Vertex};
 
@@ -207,7 +254,7 @@ impl Offscreen {
             size_px: 16,
             ..ThumbnailSpec::default()
         };
-        self.render(&mesh, &camera, spec)
+        self.render_with_deadline(&mesh, &camera, spec, deadline)
             .await
             .is_ok_and(|pixels| pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0))
     }

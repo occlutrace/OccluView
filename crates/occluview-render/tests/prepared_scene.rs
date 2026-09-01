@@ -8,9 +8,10 @@ use glam::{Mat4, Vec3};
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, PreparedScene, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, Renderer, ViewportSpec,
+    PreparedSceneTopology, PreparedSceneUpdate, RenderDeadline, Renderer, ViewportSpec,
 };
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 const SHARED_WIDTH: u32 = 32;
 const SHARED_HEIGHT: u32 = 24;
@@ -23,6 +24,10 @@ fn gpu_test_lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .expect("prepared-scene GPU test lock is not poisoned")
+}
+
+fn test_render_deadline() -> RenderDeadline {
+    RenderDeadline::after(Duration::from_secs(5))
 }
 
 fn triangle_mesh() -> Mesh {
@@ -505,14 +510,22 @@ fn prepared_viewport_can_draw_selection_overlay_after_base_scene() {
         background: [0.78, 0.80, 0.82, 1.0],
     };
 
-    let base_pixels = pollster::block_on(offscreen.render_prepared_viewport(&base, &cam, spec))
-        .expect("render base scene");
-    let overlay_pixels = pollster::block_on(offscreen.render_prepared_viewport_with_overlay(
+    let base_pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &base,
-        Some(&overlay_scene),
         &cam,
         spec,
+        test_render_deadline(),
     ))
+    .expect("render base scene");
+    let overlay_pixels = pollster::block_on(
+        offscreen.render_prepared_viewport_with_overlay_with_deadline(
+            &base,
+            Some(&overlay_scene),
+            &cam,
+            spec,
+            test_render_deadline(),
+        ),
+    )
     .expect("render scene with overlay");
 
     assert!(
@@ -533,13 +546,14 @@ fn studio_material_lights_opposite_normals_evenly() {
         visible: true,
         wireframe: false,
     }]);
-    let pixels = pollster::block_on(offscreen.render_prepared_viewport(
+    let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &prepared,
         &cam,
         ViewportSpec {
             size_px: [96, 64],
             background: [0.78, 0.80, 0.82, 1.0],
         },
+        test_render_deadline(),
     ))
     .expect("render opposite normals");
 
@@ -569,13 +583,14 @@ fn studio_material_draws_reversed_winding_meshes() {
         visible: true,
         wireframe: false,
     }]);
-    let pixels = pollster::block_on(offscreen.render_prepared_viewport(
+    let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &prepared,
         &cam,
         ViewportSpec {
             size_px: [96, 64],
             background: [0.78, 0.80, 0.82, 1.0],
         },
+        test_render_deadline(),
     ))
     .expect("render reversed winding");
 
@@ -598,13 +613,14 @@ fn prepared_scene_point_cloud_uses_readable_splats() {
         visible: true,
         wireframe: false,
     }]);
-    let pixels = pollster::block_on(offscreen.render_prepared_viewport(
+    let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &prepared,
         &cam,
         ViewportSpec {
             size_px: [96, 64],
             background: [0.039, 0.039, 0.039, 1.0],
         },
+        test_render_deadline(),
     ))
     .expect("render prepared point cloud");
 

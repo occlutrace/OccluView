@@ -22,7 +22,7 @@
 use crate::placeholder::{placeholder_thumbnail, placeholder_thumbnail_kind, PlaceholderKind};
 use crate::ThumbnailError;
 use occluview_formats::FormatError;
-use occluview_render::ThumbnailSpec;
+use occluview_render::{RenderDeadline, ThumbnailSpec};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -177,7 +177,7 @@ pub fn render_thumbnail_bytes(
     spec: ThumbnailSpec,
 ) -> Result<Vec<u8>, ThumbnailError> {
     let mesh = load_thumbnail_mesh_from_bytes(extension, bytes)?;
-    rendering::render_mesh_thumbnail(mesh, spec)
+    rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT))
 }
 
 /// Load a local file via the shared mmap-backed reader and render a thumbnail.
@@ -192,7 +192,7 @@ pub fn render_thumbnail_bytes(
 pub fn render_thumbnail_file(path: &Path, spec: ThumbnailSpec) -> Result<Vec<u8>, ThumbnailError> {
     let metadata = cache::thumbnail_file_metadata(path)?;
     let mesh = load_thumbnail_mesh_from_file(path, metadata)?;
-    rendering::render_mesh_thumbnail(mesh, spec)
+    rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT))
 }
 
 /// Render a thumbnail or return the deterministic fallback placeholder.
@@ -379,7 +379,7 @@ fn render_file_thumbnail_job(
         let result = (|| -> Result<Vec<u8>, ThumbnailError> {
             let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
             let _ = progress.send(ThumbnailJobProgress::Prepared);
-            rendering::render_mesh_thumbnail(mesh, spec)
+            rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(timeout))
         })();
         if let Ok(pixels) = &result {
             cache_file_thumbnail(
@@ -603,7 +603,7 @@ fn try_render_thumbnail_shared_impl(
             let result = (|| -> Result<Vec<u8>, ThumbnailError> {
                 let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
                 let _ = progress.send(ThumbnailJobProgress::Prepared);
-                rendering::render_mesh_thumbnail(mesh, spec)
+                rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(timeout))
             })();
             // See the file path: cache from the worker so a render that
             // outran the caller's deadline still lands in the cache for the

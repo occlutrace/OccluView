@@ -22,7 +22,7 @@ fn thumbnail_render_path_uses_parallel_renderer_pool_for_shell_bursts() {
     // the second case, which is why the preference is checked and not assumed.
     assert!(factory.contains("!cfg!(test)"));
     assert!(factory.contains("Offscreen::new_prefer_hardware()"));
-    assert!(factory.contains("pollster::block_on(offscreen.can_draw())"));
+    assert!(factory.contains("offscreen.can_draw_with_deadline("));
     assert!(factory.contains("Offscreen::new()"));
     assert!(concurrency_source().contains("impl Drop for ThumbnailRendererPool"));
     assert!(concurrency_source().contains("std::mem::forget(offscreen)"));

@@ -58,7 +58,12 @@ fn stl_nonfinite_corners_thumbnail_stays_visible_and_solid() {
         "non-finite poisoned bbox"
     );
 
-    let pixels = rendering::render_mesh_thumbnail(mesh, spec).expect("render");
+    let pixels = rendering::render_mesh_thumbnail(
+        mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("render");
     assert_visible_thumbnail_pixels(&pixels, spec);
     let holes = interior_hole_count(&pixels, usize::from(spec.size_px));
     assert_eq!(holes, 0, "non-finite handling left {holes} interior holes");
@@ -71,7 +76,12 @@ fn stl_huge_coordinate_range_thumbnail_stays_visible() {
     let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
         .expect("huge-range STL should cluster its mm-scale bulk");
     assert!(mesh.bbox_uncached().size().is_finite());
-    let pixels = rendering::render_mesh_thumbnail(mesh, spec).expect("render");
+    let pixels = rendering::render_mesh_thumbnail(
+        mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("render");
     assert_visible_thumbnail_pixels(&pixels, spec);
 }
 
@@ -85,7 +95,12 @@ fn obj_far_outlier_thumbnails_solid() {
     assert!(mesh.triangle_count() > 0);
     assert!(mesh.bbox_uncached().size().is_finite());
 
-    let pixels = rendering::render_mesh_thumbnail(mesh, spec).expect("render");
+    let pixels = rendering::render_mesh_thumbnail(
+        mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("render");
     assert_visible_thumbnail_pixels(&pixels, spec);
     let holes = interior_hole_count(&pixels, usize::from(spec.size_px));
     assert_eq!(holes, 0, "OBJ outlier left {holes} interior holes");

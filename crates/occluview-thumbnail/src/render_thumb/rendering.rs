@@ -2,7 +2,7 @@ use super::{ThumbnailError, ThumbnailRendererPool};
 use glam::{Mat4, Vec2, Vec3};
 use occluview_core::{Aabb, Camera, CameraPreset, Mesh, DEFAULT_UNTEXTURED_MESH_TINT};
 use occluview_render::{
-    GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, SceneDrawEntry, ThumbnailSpec,
+    GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, RenderDeadline, SceneDrawEntry, ThumbnailSpec,
 };
 
 const THUMBNAIL_PROJECTED_BBOX_FILL: f32 = 0.86;
@@ -16,14 +16,15 @@ const EDGE_ON_FALLBACK_AREA_GAIN: f32 = 2.5;
 pub(super) fn render_mesh_thumbnail(
     mesh: Mesh,
     spec: ThumbnailSpec,
+    deadline: RenderDeadline,
 ) -> Result<Vec<u8>, ThumbnailError> {
     #[cfg(test)]
     let _guard = crate::acquire_render_test_guard();
 
     let pool = ThumbnailRendererPool::shared();
-    match pool
-        .with_renderer(|offscreen| render_mesh_thumbnail_with_offscreen(&mesh, spec, offscreen))
-    {
+    match pool.with_renderer(|offscreen| {
+        render_mesh_thumbnail_with_offscreen(&mesh, spec, deadline, offscreen)
+    }) {
         Ok(pixels) => Ok(pixels),
         Err(error) => {
             tracing::warn!(
@@ -31,7 +32,7 @@ pub(super) fn render_mesh_thumbnail(
                 "thumbnail renderer failed; retrying once with a fresh device"
             );
             pool.with_renderer(|offscreen| {
-                render_mesh_thumbnail_with_offscreen(&mesh, spec, offscreen)
+                render_mesh_thumbnail_with_offscreen(&mesh, spec, deadline, offscreen)
             })
         }
     }
@@ -40,6 +41,7 @@ pub(super) fn render_mesh_thumbnail(
 pub(super) fn render_mesh_thumbnail_with_offscreen(
     mesh: &Mesh,
     spec: ThumbnailSpec,
+    deadline: RenderDeadline,
     offscreen: &Offscreen,
 ) -> Result<Vec<u8>, ThumbnailError> {
     let cam = thumbnail_camera_for_mesh(mesh);
@@ -62,7 +64,12 @@ pub(super) fn render_mesh_thumbnail_with_offscreen(
         texture: texture.as_ref(),
     }];
     let render_spec = supersampled_thumbnail_spec(spec);
-    let pixels = pollster::block_on(offscreen.render_scene(&entries, &gpu_cam, render_spec))?;
+    let pixels = pollster::block_on(offscreen.render_scene_with_deadline(
+        &entries,
+        &gpu_cam,
+        render_spec,
+        deadline,
+    ))?;
     let pixels = if render_spec.size_px == spec.size_px {
         pixels
     } else {

@@ -2,7 +2,12 @@ use super::PreviewSceneState;
 use crate::ShellError;
 use glam::{Mat4, Vec3};
 use occluview_core::{Camera, Scene, SceneMesh};
-use occluview_render::{GpuCamera, GpuMeshUniform, PreparedSceneSource, ViewportSpec};
+use occluview_render::{
+    GpuCamera, GpuMeshUniform, PreparedSceneSource, RenderDeadline, ViewportSpec,
+};
+use std::time::Duration;
+
+const PREVIEW_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[cfg(test)]
 const PREVIEW_DARK_BACKGROUND_LINEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -59,13 +64,14 @@ impl PreviewSceneState {
             camera_studio_light_dir(&camera),
             camera.eye(),
         );
-        let rgba = pollster::block_on(self.offscreen.render_prepared_viewport(
+        let rgba = pollster::block_on(self.offscreen.render_prepared_viewport_with_deadline(
             &self.prepared_scene,
             &gpu_camera,
             ViewportSpec {
                 size_px: [width, height],
                 background,
             },
+            RenderDeadline::after(PREVIEW_FIRST_FRAME_TIMEOUT),
         ))
         .inspect_err(|_| {
             // A failed render means the shared device may be lost (driver

@@ -548,9 +548,7 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
     );
     assert!(
         app_render.contains("fn render_section_pixels(")
-            && app_render.contains(
-                "offscreen.render_prepared_scene_with_clip(prepared, &camera, &plane, spec)"
-            ),
+            && app_render.contains("offscreen.render_prepared_scene_with_clip_with_deadline("),
         "section previews should reuse prepared GPU scene data instead of re-uploading meshes"
     );
     assert!(
