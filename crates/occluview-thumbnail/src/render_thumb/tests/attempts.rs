@@ -11,6 +11,12 @@ fn spec_64() -> ThumbnailSpec {
     }
 }
 
+fn expired_request_start() -> Instant {
+    Instant::now()
+        .checked_sub(Duration::from_millis(10))
+        .expect("the process lifetime exceeds ten milliseconds")
+}
+
 #[test]
 fn shell_request_anchors_response_and_cache_warm_deadlines_at_entry() {
     let started_at = Instant::now();
@@ -42,7 +48,7 @@ fn expired_shell_request_never_starts_a_fresh_file_render_budget() {
     let mut bytes = fixtures::binary_stl_cube();
     bytes[..8].copy_from_slice(b"deadline");
     let path = write_verdict_fixture("deadline-file-request.stl", &bytes);
-    let started_at = Instant::now() - Duration::from_millis(10);
+    let started_at = expired_request_start();
     let request = ThumbnailRenderRequest::from_started_at(
         started_at,
         Duration::from_millis(1),
@@ -58,7 +64,7 @@ fn expired_shell_request_never_starts_a_fresh_file_render_budget() {
 #[test]
 fn expired_shell_stream_request_cannot_reserve_a_new_lane() {
     let request = ThumbnailRenderRequest::from_started_at(
-        Instant::now() - Duration::from_millis(10),
+        expired_request_start(),
         Duration::from_millis(1),
         AdapterPolicy::HardwareThenFallback,
     );
@@ -71,7 +77,7 @@ fn expired_shell_stream_request_never_starts_a_fresh_render_budget() {
     let mut bytes = fixtures::binary_stl_cube();
     bytes[..8].copy_from_slice(b"deadline");
     let request = ThumbnailRenderRequest::from_started_at(
-        Instant::now() - Duration::from_millis(10),
+        expired_request_start(),
         Duration::from_millis(1),
         AdapterPolicy::HardwareThenFallback,
     );

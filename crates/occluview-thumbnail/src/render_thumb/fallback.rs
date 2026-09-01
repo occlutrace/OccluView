@@ -1,8 +1,11 @@
 //! Cache-safe placeholder verdicts for thumbnail requests.
 
-use super::*;
-use crate::placeholder::PlaceholderKind;
+use crate::placeholder::{placeholder_thumbnail, PlaceholderKind};
+use crate::ThumbnailError;
 use occluview_formats::FormatError;
+use occluview_render::ThumbnailSpec;
+
+use super::cache::oversize_input_error;
 
 /// Return the policy placeholder for an input that exceeds the size ceiling.
 pub fn placeholder_for_oversize_input(spec: ThumbnailSpec, byte_len: usize) -> Vec<u8> {

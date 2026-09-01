@@ -13,8 +13,8 @@ use super::{
     IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl,
     IInitializeWithStream, IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider,
     IThumbnailProvider_Impl, IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead,
-    ThumbnailAttempt, ThumbnailRenderRequest, ThumbnailSpec, ACTIVE_COM_OBJECTS, BOOL,
-    CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP, MAX_OFFSCREEN_EDGE,
+    StreamReadBounds, ThumbnailAttempt, ThumbnailRenderRequest, ThumbnailSpec, ACTIVE_COM_OBJECTS,
+    BOOL, CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP, MAX_OFFSCREEN_EDGE,
     MAX_THUMBNAIL_INPUT_BYTES, PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET, WTSAT_ARGB,
     WTS_ALPHATYPE,
 };
@@ -124,10 +124,12 @@ impl ThumbnailProvider {
             0
         };
         Ok(read_capped_stream_until(
-            (declared != 0).then_some(declared),
-            MAX_THUMBNAIL_INPUT_BYTES,
-            Self::MIN_STREAM_BUFFER_BYTES,
-            Self::STREAM_READ_CHUNK_BYTES,
+            StreamReadBounds {
+                declared_len: (declared != 0).then_some(declared),
+                max_bytes: MAX_THUMBNAIL_INPUT_BYTES,
+                min_buffer_bytes: Self::MIN_STREAM_BUFFER_BYTES,
+                chunk_bytes: Self::STREAM_READ_CHUNK_BYTES,
+            },
             deadline,
             |buf| {
                 let mut read = 0u32;
