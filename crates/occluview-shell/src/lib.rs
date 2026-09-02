@@ -31,12 +31,16 @@ mod preview_scene;
 mod shell_contract;
 #[cfg(test)]
 mod shell_contract_tests;
+#[cfg(any(test, all(windows, feature = "diagnostic-logs")))]
+mod shell_diagnostics;
 #[cfg(test)]
 mod shell_preview_tests;
 #[cfg(any(windows, test))]
 mod stream_read {
     #[allow(unused_imports)]
-    pub(crate) use occluview_thumbnail::stream_read::{read_capped_stream, StreamRead};
+    pub(crate) use occluview_thumbnail::stream_read::{
+        read_capped_stream, read_capped_stream_until, StreamRead, StreamReadBounds,
+    };
 }
 #[cfg(test)]
 mod test_support;

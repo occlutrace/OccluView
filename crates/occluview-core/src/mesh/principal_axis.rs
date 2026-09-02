@@ -171,6 +171,10 @@ fn jacobi_eigen_symmetric_3x3(mut a: [[f64; 3]; 3]) -> Option<([f64; 3], [[f64; 
             a[q][q] = diag_q + t * off_diag;
             a[p][q] = 0.0;
             a[q][p] = 0.0;
+            #[expect(
+                clippy::needless_range_loop,
+                reason = "fixed 3x3 Jacobi indices preserve bit-repeatability"
+            )]
             for i in 0..3 {
                 if i != p && i != q {
                     let row_p = a[i][p];

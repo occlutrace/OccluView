@@ -166,10 +166,13 @@ pub(crate) fn paint_separator_disc(
         egui::Stroke::NONE,
     ));
     for rim in [&front, &back] {
-        painter.add(egui::Shape::line(rim.clone(), egui::Stroke::new(3.8, HALO)));
+        painter.add(egui::Shape::line(
+            rim.clone(),
+            egui::Stroke::new(3.8_f32, HALO),
+        ));
         painter.extend(egui::Shape::dashed_line(
             rim,
-            egui::Stroke::new(1.5, color),
+            egui::Stroke::new(1.5_f32, color),
             6.0,
             4.0,
         ));
@@ -177,7 +180,7 @@ pub(crate) fn paint_separator_disc(
     if let Some((center, depth)) = project_world_to_viewport(camera, viewport_rect, pose.center) {
         if depth > 0.0 {
             painter.circle_filled(center, 4.0, color.gamma_multiply(0.35));
-            painter.circle_stroke(center, 4.0, egui::Stroke::new(1.2, color));
+            painter.circle_stroke(center, 4.0, egui::Stroke::new(1.2_f32, color));
         }
     }
 }

@@ -57,19 +57,18 @@ fn run_panel_frame(
         ..Default::default()
     };
     let mut captured = None;
-    let _full = ctx.run(raw, |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let render = SectionRender {
-                mode: SectionDisplay::Lines,
-                measure_mode: SliceMeasureMode::Distance,
-                magnet: false, // raw placement, so we can count anchors exactly
-                texture: None,
-                section: None,
-                color_for: |_id: SceneMeshId| ui_theme::TEXT,
-            };
-            captured = Some(show_section_panel(ui, vp, flat_cam(), ruler, render));
-        });
-    });
+    ctx.run_ui(raw, |ui| {
+        let render = SectionRender {
+            mode: SectionDisplay::Lines,
+            measure_mode: SliceMeasureMode::Distance,
+            magnet: false, // raw placement, so we can count anchors exactly
+            texture: None,
+            section: None,
+            color_for: |_id: SceneMeshId| ui_theme::TEXT,
+        };
+        captured = Some(show_section_panel(ui, vp, flat_cam(), ruler, render));
+    })
+    .drop_without_applying_deltas();
     captured.expect("panel ran")
 }
 

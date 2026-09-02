@@ -133,9 +133,10 @@ fn gpu_error_latch_poison_is_ignored_not_fatal() {
 #[test]
 #[allow(clippy::expect_used)]
 fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() {
-    use crate::{GpuCamera, Offscreen, ThumbnailSpec};
+    use crate::{GpuCamera, Offscreen, RenderDeadline, ThumbnailSpec};
     use glam::{Mat4, Vec3};
     use occluview_core::{MeshBuilder, Vertex};
+    use std::time::Duration;
 
     // Like the crate's other GPU suites, this one needs an adapter -- the
     // software fallback counts, and CI provides one.
@@ -158,7 +159,12 @@ fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() 
         ..ThumbnailSpec::default()
     };
 
-    let clean = pollster::block_on(offscreen.render(&mesh, &camera, spec));
+    let clean = pollster::block_on(offscreen.render_with_deadline(
+        &mesh,
+        &camera,
+        spec,
+        RenderDeadline::after(Duration::from_secs(2)),
+    ));
     assert!(clean.is_ok(), "a triangle renders: {clean:?}");
 
     super::record_gpu_error(
@@ -167,8 +173,13 @@ fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() 
     );
     // Map the pixels away before asserting: a failure here must print the
     // reason, not thirty-two rows of RGBA.
-    let faulted = pollster::block_on(offscreen.render(&mesh, &camera, spec))
-        .map(|pixels| format!("{} pixels", pixels.len()));
+    let faulted = pollster::block_on(offscreen.render_with_deadline(
+        &mesh,
+        &camera,
+        spec,
+        RenderDeadline::after(Duration::from_secs(2)),
+    ))
+    .map(|pixels| format!("{} pixels", pixels.len()));
     let error = faulted.expect_err("a recorded fault must not return pixels");
     assert!(
         format!("{error}").contains("buffer allocation refused"),

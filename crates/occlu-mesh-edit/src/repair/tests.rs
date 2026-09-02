@@ -126,7 +126,7 @@ fn edge_runs(buffers: &MeshEditBuffers) -> Vec<usize> {
 /// Every shared edge must be traversed in opposite directions by its faces.
 fn directed_edges_opposed(buffers: &MeshEditBuffers) -> bool {
     let mut directed = Vec::with_capacity(buffers.indices.len());
-    for tri in buffers.indices.chunks_exact(3) {
+    for tri in buffers.indices.as_chunks::<3>().0 {
         for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             directed.push((a, b));
         }
@@ -137,7 +137,7 @@ fn directed_edges_opposed(buffers: &MeshEditBuffers) -> bool {
 
 fn signed_volume(buffers: &MeshEditBuffers) -> f64 {
     let mut six_volume = 0.0_f64;
-    for tri in buffers.indices.chunks_exact(3) {
+    for tri in buffers.indices.as_chunks::<3>().0 {
         let p = |index: u32| {
             let position = buffers.vertices[index as usize].position;
             DVec3::new(
@@ -171,7 +171,9 @@ fn triangle_position_set(buffers: &MeshEditBuffers) -> Vec<[[i64; 3]; 3]> {
     };
     let mut set: Vec<[[i64; 3]; 3]> = buffers
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| {
             let mut corners = [quantize(tri[0]), quantize(tri[1]), quantize(tri[2])];
             corners.sort_unstable();
@@ -376,7 +378,7 @@ fn repair_is_deterministic_and_shuffle_invariant() {
 
     // Index-shuffled clone: reversed triangle order, same content.
     let mut shuffled_indices = Vec::with_capacity(messy.indices.len());
-    for tri in messy.indices.chunks_exact(3).rev() {
+    for tri in messy.indices.as_chunks::<3>().0.iter().rev() {
         shuffled_indices.extend_from_slice(tri);
     }
     let shuffled = mesh(messy.vertices.clone(), shuffled_indices);

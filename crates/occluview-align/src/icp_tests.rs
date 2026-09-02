@@ -80,7 +80,9 @@ fn soup<'a>(positions: &'a [f32], indices: &'a [u32]) -> Soup<'a> {
 #[allow(clippy::cast_possible_truncation)]
 fn requoted(positions: &[f32], delta: DVec3) -> Vec<f32> {
     positions
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|vertex| {
             [
                 (f64::from(vertex[0]) + delta.x) as f32,

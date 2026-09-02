@@ -40,13 +40,25 @@ fn section_panel_docks_bottom_right_clear_of_left_chrome() {
         panel.left() > vp.center().x,
         "panel must stay in the right half, clear of the bottom-left chrome: {panel:?}"
     );
-    // The square image sub-rect is the required ~340 px.
+    // The image is square and capped on a large viewport.
     let image = section_image_rect(panel);
     assert!(
         (image.width() - image.height()).abs() < 0.5,
         "image must be square"
     );
-    assert!(image.width() > 320.0, "image should be the bigger ~340 px");
+    assert!((image.width() - MAX_IMAGE_SIDE_PX).abs() < 0.5);
+}
+
+#[test]
+fn section_panel_scales_with_a_compact_viewport() {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    let panel = section_panel_rect(viewport).unwrap();
+    let image = section_image_rect(panel);
+
+    assert!(
+        image.width() <= 280.5,
+        "section image should use at most 40% of the shorter viewport side: {image:?}"
+    );
 }
 
 #[test]

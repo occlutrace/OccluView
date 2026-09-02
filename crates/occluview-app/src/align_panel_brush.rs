@@ -13,7 +13,7 @@ use eframe::egui;
 use crate::align_brush::AlignBrush;
 use crate::align_markings::MaskCommand;
 use crate::align_panel::chip;
-use crate::mesh_editor_icons::{self, EditorIcon};
+use crate::icons::AppIcon;
 use crate::ui_theme;
 
 /// Fixed window width. Narrower than the main window: it holds one slider's
@@ -107,23 +107,28 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
     let mut action = None;
     ui.horizontal(|ui| {
         let glyph = ui
-            .allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover())
+            .allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover())
             .0;
-        mesh_editor_icons::paint(
-            ui.painter(),
-            glyph,
-            EditorIcon::MaskBrush,
-            ui_theme::ACCENT,
-            true,
-        );
+        crate::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::ACCENT);
         ui.label(
             egui::RichText::new("Brush tool")
-                .size(12.0)
+                .size(13.0)
                 .color(ui_theme::TEXT),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add(egui::Button::new("✕").min_size(egui::vec2(22.0, 20.0)))
+            let (close_rect, close_response) =
+                ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
+            crate::icons::paint(
+                ui.painter(),
+                close_rect,
+                AppIcon::Close,
+                if close_response.hovered() {
+                    ui_theme::TEXT
+                } else {
+                    ui_theme::TEXT_WEAK
+                },
+            );
+            if close_response
                 .on_hover_text("Close the brush — the markings are kept")
                 .clicked()
             {
@@ -143,10 +148,10 @@ fn commands(ui: &mut egui::Ui, enabled: bool) -> Option<BrushPanelAction> {
         // A match rather than a lookup table: a new command stops the build here
         // instead of quietly rendering without a picture.
         let icon = match command {
-            MaskCommand::FitEverywhere => EditorIcon::SelectNone,
-            MaskCommand::FitNowhere => EditorIcon::SelectAll,
-            MaskCommand::InvertMarkings => EditorIcon::SelectInvert,
-            MaskCommand::MarkAutomatic => EditorIcon::AlignFit,
+            MaskCommand::FitEverywhere => AppIcon::SelectNone,
+            MaskCommand::FitNowhere => AppIcon::SelectAll,
+            MaskCommand::InvertMarkings => AppIcon::SelectInvert,
+            MaskCommand::MarkAutomatic => AppIcon::AlignFit,
         };
         if chip(
             ui,

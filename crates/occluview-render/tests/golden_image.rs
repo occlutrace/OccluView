@@ -18,10 +18,11 @@ mod common;
 use glam::{Mat4, Vec3};
 use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
 use occluview_render::{
-    ClipPlane, GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, PreparedSceneSource,
-    ThumbnailSpec, ViewportSpec,
+    ClipPlane, ClippedMeshRequest, CutMeshRequest, GpuCamera, GpuMeshUniform, GpuTexture,
+    Offscreen, PreparedSceneSource, RenderDeadline, ThumbnailSpec, ViewportSpec,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 const SIZE: u16 = 64;
 const TOLERANCE: u8 = 8; // per-channel diff allowed
@@ -34,6 +35,10 @@ fn gpu_test_lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .expect("golden-image GPU test lock is not poisoned")
+}
+
+fn test_render_deadline() -> RenderDeadline {
+    RenderDeadline::after(Duration::from_secs(5))
 }
 
 fn triangle_mesh() -> Mesh {
@@ -61,7 +66,13 @@ fn render_to_pixels() -> Vec<u8> {
     let mesh = triangle_mesh();
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
-    pollster::block_on(offscreen.render(&mesh, &cam, dark_thumbnail_spec())).expect("render")
+    pollster::block_on(offscreen.render_with_deadline(
+        &mesh,
+        &cam,
+        dark_thumbnail_spec(),
+        test_render_deadline(),
+    ))
+    .expect("render")
 }
 
 fn dark_thumbnail_spec() -> ThumbnailSpec {
@@ -178,8 +189,13 @@ fn prepared_viewport_renders_rectangular_extent() {
         background: [0.78, 0.80, 0.82, 1.0],
     };
 
-    let pixels = pollster::block_on(offscreen.render_prepared_viewport(&prepared, &cam, spec))
-        .expect("render prepared viewport");
+    let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
+        &prepared,
+        &cam,
+        spec,
+        test_render_deadline(),
+    ))
+    .expect("render prepared viewport");
 
     assert_eq!(pixels.len(), 96 * 48 * 4);
 }
@@ -202,8 +218,13 @@ fn prepared_scene_opacity_blends_with_background() {
         visible: true,
         wireframe: false,
     }]);
-    let opaque_pixels = pollster::block_on(offscreen.render_prepared_viewport(&opaque, &cam, spec))
-        .expect("render opaque");
+    let opaque_pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
+        &opaque,
+        &cam,
+        spec,
+        test_render_deadline(),
+    ))
+    .expect("render opaque");
 
     let transparent_uniform = identity_uniform([1.0, 0.0, 0.0, 1.0], 0.5);
     let transparent = offscreen.prepare_scene(&[PreparedSceneSource {
@@ -212,9 +233,13 @@ fn prepared_scene_opacity_blends_with_background() {
         visible: true,
         wireframe: false,
     }]);
-    let transparent_pixels =
-        pollster::block_on(offscreen.render_prepared_viewport(&transparent, &cam, spec))
-            .expect("render transparent");
+    let transparent_pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
+        &transparent,
+        &cam,
+        spec,
+        test_render_deadline(),
+    ))
+    .expect("render transparent");
 
     let opaque_center = pixel_at(&opaque_pixels, usize::from(SIZE), 32, 32);
     let transparent_center = pixel_at(&transparent_pixels, usize::from(SIZE), 32, 32);
@@ -321,8 +346,13 @@ fn textured_triangle_renders_checkerboard() {
         texture: Some(&gpu_tex),
     }];
     let spec = dark_thumbnail_spec();
-    let pixels =
-        pollster::block_on(offscreen.render_scene(&entries, &cam, spec)).expect("render scene");
+    let pixels = pollster::block_on(offscreen.render_scene_with_deadline(
+        &entries,
+        &cam,
+        spec,
+        test_render_deadline(),
+    ))
+    .expect("render scene");
 
     // The triangle covers the center of the frame. With a 2x2 checker and
     // linear filtering, sampled colors range between red and green. Assert:
@@ -333,7 +363,7 @@ fn textured_triangle_renders_checkerboard() {
     let mut non_bg = 0usize;
     let mut red_dominant = 0usize;
     let mut green_dominant = 0usize;
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         if px[0] == bg[0] && px[1] == bg[1] && px[2] == bg[2] {
             continue;
         }
@@ -367,9 +397,17 @@ fn cut_triangle_discard_removes_pixels() {
 
     // Render unclipped first to count the baseline pixels.
     let spec = dark_thumbnail_spec();
-    let full_pixels = pollster::block_on(offscreen.render(&mesh, &cam, spec)).expect("full render");
+    let full_pixels = pollster::block_on(offscreen.render_with_deadline(
+        &mesh,
+        &cam,
+        spec,
+        test_render_deadline(),
+    ))
+    .expect("full render");
     let full_visible = full_pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
 
@@ -377,9 +415,18 @@ fn cut_triangle_discard_removes_pixels() {
     // of the triangle (where world Y > 0).
     let clip = ClipPlane::new([0.0, 1.0, 0.0], 0.0);
     let cut_pixels =
-        pollster::block_on(offscreen.render_clipped(&mesh, &cam, &clip, spec)).expect("cut render");
+        pollster::block_on(offscreen.render_clipped_with_deadline(ClippedMeshRequest {
+            mesh: &mesh,
+            camera: &cam,
+            clip: &clip,
+            spec,
+            deadline: test_render_deadline(),
+        }))
+        .expect("cut render");
     let cut_visible = cut_pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
 
@@ -398,10 +445,18 @@ fn cut_triangle_discard_removes_pixels() {
     // A disabled clip plane must reproduce the full render.
     let disabled = ClipPlane::disabled();
     let identity_pixels =
-        pollster::block_on(offscreen.render_clipped(&mesh, &cam, &disabled, spec))
-            .expect("identity");
+        pollster::block_on(offscreen.render_clipped_with_deadline(ClippedMeshRequest {
+            mesh: &mesh,
+            camera: &cam,
+            clip: &disabled,
+            spec,
+            deadline: test_render_deadline(),
+        }))
+        .expect("identity");
     let identity_visible = identity_pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert_eq!(
@@ -427,11 +482,20 @@ fn cut_triangle_capped_renders() {
         show_hollow: false,
     };
     let spec = dark_thumbnail_spec();
-    let pixels = pollster::block_on(offscreen.render_with_cut(&mesh, &cam, &cut, 10.0, spec))
-        .expect("cut render");
+    let pixels = pollster::block_on(offscreen.render_with_cut_with_deadline(CutMeshRequest {
+        mesh: &mesh,
+        camera: &cam,
+        cut: &cut,
+        half_extent: 10.0,
+        spec,
+        deadline: test_render_deadline(),
+    }))
+    .expect("cut render");
 
     let non_bg = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(non_bg > 0, "capped cut rendered nothing visible");
@@ -452,10 +516,17 @@ fn render_cut_view_end_to_end() {
         show_hollow: false,
     };
     let spec = dark_thumbnail_spec();
-    let pixels =
-        pollster::block_on(offscreen.render_cut_view(&mesh, &cut, spec)).expect("render_cut_view");
+    let pixels = pollster::block_on(offscreen.render_cut_view_with_deadline(
+        &mesh,
+        &cut,
+        spec,
+        test_render_deadline(),
+    ))
+    .expect("render_cut_view");
     let non_bg = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(non_bg > 0, "render_cut_view produced nothing visible");
@@ -467,14 +538,17 @@ fn render_point_cloud_to_pixels() -> Vec<u8> {
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     let spec = dark_thumbnail_spec();
-    pollster::block_on(offscreen.render(&mesh, &cam, spec)).expect("render")
+    pollster::block_on(offscreen.render_with_deadline(&mesh, &cam, spec, test_render_deadline()))
+        .expect("render")
 }
 
 #[test]
 fn point_cloud_renders_readable_splats() {
     let pixels = render_point_cloud_to_pixels();
     let non_bg = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(
@@ -547,8 +621,13 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
             uniform: &uniform,
             texture: None,
         }];
-        pollster::block_on(offscreen.render_scene(&entries, &cam, dark_thumbnail_spec()))
-            .expect("render scene")
+        pollster::block_on(offscreen.render_scene_with_deadline(
+            &entries,
+            &cam,
+            dark_thumbnail_spec(),
+            test_render_deadline(),
+        ))
+        .expect("render scene")
     };
 
     let map_pixels = render(1);
@@ -563,7 +642,7 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
     let mut covered = 0usize;
     let mut brightest = 0u8;
     let mut darkest = 255u8;
-    for px in map_pixels.chunks_exact(4) {
+    for px in map_pixels.as_chunks::<4>().0 {
         if is_background(px) {
             continue;
         }
@@ -585,8 +664,10 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
     );
 
     let differs_from_plain_lit = lit_pixels
-        .chunks_exact(4)
-        .zip(map_pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(map_pixels.as_chunks::<4>().0.iter())
         .any(|(lit, mapped)| !is_background(mapped) && lit[..3] != mapped[..3]);
     assert!(
         differs_from_plain_lit,

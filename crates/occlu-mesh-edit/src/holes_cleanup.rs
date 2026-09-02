@@ -109,7 +109,7 @@ pub(crate) fn heal_boundary_rims(mesh: &MeshEditBuffers) -> Option<RimHealOutcom
     // that the weld collapsed to a degenerate (two ids equal).
     let mut indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
     let mut keep = vec![false; triangle_count];
-    for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         if !alive[triangle] {
             continue;
         }
@@ -145,7 +145,7 @@ fn boundary_edge_set(
 ) -> std::collections::HashSet<(u32, u32)> {
     let mut directed: std::collections::HashSet<(u32, u32)> =
         std::collections::HashSet::with_capacity(mesh.indices.len());
-    for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         if !alive[triangle] {
             continue;
         }
@@ -165,7 +165,7 @@ fn dangling_triangles(mesh: &MeshEditBuffers, alive: &[bool]) -> Vec<usize> {
     let is_boundary = |a: u32, b: u32| !directed.contains(&(b, a));
 
     let mut doomed = Vec::new();
-    for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         if !alive[triangle] {
             continue;
         }

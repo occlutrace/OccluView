@@ -100,16 +100,12 @@ fn decode_triangle_record(bytes: &[u8], start: usize) -> Result<(Vec3, [Vec3; 3]
             got: bytes.len(),
         })?;
 
-    // Decode 12 little-endian f32: normal + 3 vertices. `chunks_exact(4)`
-    // gives us exactly 12 4-byte slices (50 bytes includes a 2-byte
-    // attribute trailer we ignore).
+    // Decode 12 little-endian f32: normal + 3 vertices. `as_chunks::<4>().0`
+    // gives us exactly 12 4-byte arrays; the 50-byte record's final two-byte
+    // attribute trailer is intentionally ignored.
     let mut floats = [0.0_f32; 12];
-    for (slot, chunk) in floats.iter_mut().zip(rec.chunks_exact(4)) {
-        let arr: [u8; 4] = chunk.try_into().map_err(|_| FormatError::Malformed {
-            format: "STL (binary)",
-            offset: start,
-            reason: "float field is not 4 bytes".to_string(),
-        })?;
+    for (slot, chunk) in floats.iter_mut().zip(rec.as_chunks::<4>().0.iter()) {
+        let arr = *chunk;
         *slot = f32::from_le_bytes(arr);
     }
     let normal = Vec3::from_array([floats[0], floats[1], floats[2]]);
@@ -177,7 +173,7 @@ mod tests {
 
     /// Build an in-memory binary STL from explicit triangles for tests.
     fn build_binary_stl(header: &[u8; 80], triangles: &[[f32; 12]]) -> Vec<u8> {
-        assert!(header.len() == 80);
+        assert_eq!(header.len(), 80);
         let mut out = Vec::with_capacity(84 + triangles.len() * 50);
         out.extend_from_slice(header);
         out.extend_from_slice(&(triangles.len() as u32).to_le_bytes());

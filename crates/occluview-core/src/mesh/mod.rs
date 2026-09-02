@@ -18,7 +18,7 @@ mod builder;
 mod bvh;
 mod edit_adapter;
 mod normals;
-pub use normals::accumulate_smooth_normals;
+pub use occlu_geometry_math::accumulate_smooth_normals;
 mod principal_axis;
 mod texture;
 mod vertex;
@@ -255,7 +255,7 @@ impl Mesh {
     }
 
     fn validate_shape(vertices: &[Vertex], indices: &[u32]) -> Result<(), CoreError> {
-        if indices.len() % 3 != 0 {
+        if !indices.len().is_multiple_of(3) {
             return Err(CoreError::IndexCountNotMultipleOfThree {
                 index_count: indices.len(),
             });

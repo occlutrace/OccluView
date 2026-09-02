@@ -11,7 +11,7 @@ pub(crate) type EdgeIncidence = ((u32, u32), usize);
 /// triangle order.
 pub(crate) fn edge_incidence(indices: &[u32]) -> Vec<EdgeIncidence> {
     let mut incidence = Vec::with_capacity(indices.len());
-    for (triangle, face) in indices.chunks_exact(3).enumerate() {
+    for (triangle, face) in indices.as_chunks::<3>().0.iter().enumerate() {
         for edge in triangle_edge_keys(face) {
             incidence.push((edge, triangle));
         }
@@ -115,7 +115,7 @@ fn triangle_uses_edge_forward(indices: &[u32], triangle: usize, edge: (u32, u32)
 
 fn count_non_manifold_vertices(indices: &[u32]) -> usize {
     let mut vertex_faces: Vec<(u32, usize)> = Vec::with_capacity(indices.len());
-    for (triangle, face) in indices.chunks_exact(3).enumerate() {
+    for (triangle, face) in indices.as_chunks::<3>().0.iter().enumerate() {
         for &vertex in face {
             vertex_faces.push((vertex, triangle));
         }

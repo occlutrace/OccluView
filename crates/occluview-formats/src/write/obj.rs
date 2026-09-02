@@ -73,7 +73,7 @@ pub(super) fn write_mesh<W: Write>(
     }
 
     if mesh.kind() == MeshKind::TriangleMesh {
-        for triangle in mesh.indices().chunks_exact(3) {
+        for triangle in mesh.indices().as_chunks::<3>().0 {
             let a = triangle[0] + 1;
             let b = triangle[1] + 1;
             let c = triangle[2] + 1;

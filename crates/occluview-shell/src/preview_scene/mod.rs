@@ -32,6 +32,14 @@ pub(crate) struct PreviewSceneState {
     pub(super) prepared_scene: PreparedScene,
 }
 
+impl PreviewSceneState {
+    /// Class of the verified offscreen adapter retained for this scene.
+    #[cfg(feature = "diagnostic-logs")]
+    pub(crate) fn adapter_result(&self) -> occluview_render::AdapterResult {
+        self.offscreen.adapter_result()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

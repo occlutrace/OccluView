@@ -29,7 +29,7 @@ fn wavy_fan_mesh(rim_color: [u8; 4]) -> MeshEditBuffers {
 
 fn boundary_edge_count(indices: &[u32]) -> usize {
     let mut directed = std::collections::HashSet::new();
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -61,7 +61,7 @@ fn fill_holes_interpolated_cap_is_watertight_and_manifold() {
     assert_eq!(boundary_edge_count(&result.mesh.indices), 0);
     // Reverse-twin invariant: no directed edge is emitted twice (manifold).
     let mut directed = std::collections::HashSet::new();
-    for triangle in result.mesh.indices.chunks_exact(3) {
+    for triangle in result.mesh.indices.as_chunks::<3>().0 {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -85,7 +85,7 @@ fn fill_holes_interpolated_cap_has_no_sliver_fan_hub() {
 
     let mut valence = vec![0usize; result.mesh.vertices.len()];
     let mut counted = std::collections::HashSet::new();
-    for triangle in result.mesh.indices.chunks_exact(3) {
+    for triangle in result.mesh.indices.as_chunks::<3>().0 {
         let t: [usize; 3] = [
             triangle[0] as usize,
             triangle[1] as usize,
@@ -224,7 +224,7 @@ fn fill_holes_interpolated_cap_seam_is_smooth() {
 
     let mut edge_faces: std::collections::HashMap<(u32, u32), Vec<usize>> =
         std::collections::HashMap::new();
-    for (ti, triangle) in result.mesh.indices.chunks_exact(3).enumerate() {
+    for (ti, triangle) in result.mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -256,7 +256,7 @@ fn fill_holes_interpolated_cap_seam_is_smooth() {
 
 fn boundary_edges_undirected(indices: &[u32]) -> Vec<(u32, u32)> {
     let mut directed = std::collections::HashSet::new();
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         for e in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),

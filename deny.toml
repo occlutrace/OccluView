@@ -28,7 +28,6 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "Unlicense",
-    "CC0-1.0",
     # Mozilla CA-bundle data shipped by webpki-roots (rustls trust anchors for
     # the updater's HTTPS): a permissive data license, not a code license.
     "CDLA-Permissive-2.0",
@@ -37,7 +36,7 @@ allow = [
 # Confidence threshold for license detection.
 confidence-threshold = 0.93
 exceptions = [
-    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "LicenseRef-UFL-1.0"] },
+    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
 ]
 
 [[licenses.clarify]]

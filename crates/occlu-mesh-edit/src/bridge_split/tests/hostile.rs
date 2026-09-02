@@ -120,7 +120,7 @@ fn split_welds_payload_seams_on_the_new_cut_rim() {
 
 fn cut_boundary_edge_count(mesh: &MeshEditBuffers, plane_x: f32) -> usize {
     let mut edges = BTreeMap::<(u32, u32), usize>::new();
-    for face in mesh.indices.chunks_exact(3) {
+    for face in mesh.indices.as_chunks::<3>().0 {
         for [first, second] in [[face[0], face[1]], [face[1], face[2]], [face[2], face[0]]] {
             let edge = if first < second {
                 (first, second)

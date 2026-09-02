@@ -13,7 +13,7 @@ use occluview_align::{DeviationStats, Orientation};
 use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
-use crate::mesh_editor_icons::{self, EditorIcon};
+use crate::icons::AppIcon;
 use crate::{align_panel_map, ui_theme};
 
 /// Fixed window width, matching the mesh editor so the two read as one family.
@@ -134,6 +134,12 @@ pub(crate) fn show(
 /// The window body: the open tab, then the commit row both tabs share.
 fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
     let enabled = !view.busy;
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+        crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::ACCENT);
+        ui.label(egui::RichText::new("Align Scans").strong().size(14.0));
+    });
+    ui.add_space(2.0);
     tab_strip(ui, view.tab);
     // The brush is available only on the automatic tab.
     if *view.tab != AlignTab::Automatically {
@@ -183,7 +189,7 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
                 painter.hline(
                     egui::Rangef::new(rect.left() + 6.0, rect.right() - 6.0),
                     rect.bottom() - 1.0,
-                    egui::Stroke::new(1.6, ui_theme::ACCENT),
+                    egui::Stroke::new(1.6_f32, ui_theme::ACCENT),
                 );
             }
             if response.clicked() {
@@ -264,7 +270,7 @@ fn manually(
         if chip(
             ui,
             width,
-            Some(EditorIcon::Undo),
+            Some(AppIcon::Undo),
             "Undo",
             enabled && can_undo,
             false,
@@ -277,7 +283,7 @@ fn manually(
         if chip(
             ui,
             width,
-            Some(EditorIcon::Redo),
+            Some(AppIcon::Redo),
             "Redo",
             enabled && can_redo,
             false,
@@ -320,7 +326,7 @@ fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         if chip(
             ui,
             width,
-            Some(EditorIcon::Undo),
+            Some(AppIcon::Undo),
             "Back",
             enabled && placed,
             false,
@@ -350,7 +356,7 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
     if fit_button(
         ui,
         width,
-        EditorIcon::AlignFit,
+        AppIcon::AlignFit,
         "Perform alignment",
         tool.can_align() && enabled,
         false,
@@ -363,7 +369,7 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
     if fit_button(
         ui,
         width,
-        EditorIcon::AlignRefine,
+        AppIcon::AlignRefine,
         "Best fit matching",
         tool.can_measure() && enabled,
         true,
@@ -507,7 +513,7 @@ fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
 pub(crate) fn chip(
     ui: &mut egui::Ui,
     width: f32,
-    icon: Option<EditorIcon>,
+    icon: Option<AppIcon>,
     label: &str,
     enabled: bool,
     active: bool,
@@ -536,13 +542,17 @@ pub(crate) fn chip(
     painter.rect_stroke(
         rect,
         CHIP_ROUNDING,
-        egui::Stroke::new(1.0, ink.gamma_multiply(if active { 0.70 } else { 0.30 })),
+        egui::Stroke::new(
+            1.0_f32,
+            ink.gamma_multiply(if active { 0.70 } else { 0.30 }),
+        ),
+        egui::StrokeKind::Middle,
     );
     let font = egui::FontId::proportional(11.5);
     match (icon, label.is_empty()) {
         (Some(icon), true) => {
             let glyph = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(16.0));
-            mesh_editor_icons::paint(painter, glyph, icon, ink, active);
+            crate::icons::paint(painter, glyph, icon, ink);
         }
         (Some(icon), false) => {
             let text_width = painter
@@ -556,7 +566,7 @@ pub(crate) fn chip(
                 egui::pos2(left + glyph_side / 2.0, rect.center().y),
                 egui::Vec2::splat(glyph_side),
             );
-            mesh_editor_icons::paint(painter, glyph, icon, ink, active);
+            crate::icons::paint(painter, glyph, icon, ink);
             painter.text(
                 egui::pos2(glyph.right() + 5.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -579,7 +589,7 @@ pub(crate) fn chip(
 fn fit_button(
     ui: &mut egui::Ui,
     width: f32,
-    icon: EditorIcon,
+    icon: AppIcon,
     label: &str,
     enabled: bool,
     primary: bool,
@@ -609,13 +619,17 @@ fn fit_button(
     painter.rect_stroke(
         rect,
         CHIP_ROUNDING,
-        egui::Stroke::new(1.0, ink.gamma_multiply(if primary { 0.75 } else { 0.35 })),
+        egui::Stroke::new(
+            1.0_f32,
+            ink.gamma_multiply(if primary { 0.75 } else { 0.35 }),
+        ),
+        egui::StrokeKind::Middle,
     );
     let glyph = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 21.0, rect.center().y),
         egui::Vec2::splat(17.0),
     );
-    mesh_editor_icons::paint(painter, glyph, icon, ink, primary);
+    crate::icons::paint(painter, glyph, icon, ink);
     painter.text(
         egui::pos2(glyph.right() + 9.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -628,12 +642,20 @@ fn fit_button(
 
 /// A tall commit button.
 fn tall_button(ui: &mut egui::Ui, width: f32, label: &str, primary: bool) -> egui::Response {
-    let text = egui::RichText::new(label).size(12.5).color(if primary {
-        ui_theme::ACCENT
+    if primary {
+        let button = egui::Button::new(
+            egui::RichText::new(label)
+                .size(12.5)
+                .strong()
+                .color(egui::Color32::WHITE),
+        )
+        .fill(ui_theme::ACCENT)
+        .corner_radius(CHIP_ROUNDING);
+        ui.add(button.min_size(egui::vec2(width, 28.0)))
     } else {
-        ui_theme::TEXT
-    });
-    ui.add(egui::Button::new(text).min_size(egui::vec2(width, 28.0)))
+        let text = egui::RichText::new(label).size(12.5).color(ui_theme::TEXT);
+        ui.add(egui::Button::new(text).min_size(egui::vec2(width, 28.0)))
+    }
 }
 
 #[cfg(test)]
@@ -744,7 +766,7 @@ mod tests {
     #[test]
     fn the_window_never_asks_which_surface_carries_the_map() {
         let source = production();
-        for gone in ["SwapMapped", "EditorIcon::Swap", "other scan instead"] {
+        for gone in ["SwapMapped", "AppIcon::Swap", "other scan instead"] {
             assert!(!source.contains(gone), "{gone} is back in the window");
         }
     }

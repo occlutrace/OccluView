@@ -12,7 +12,7 @@ impl OccluViewApp {
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
         // Drop an active drag before restoring session poses so Cancel cannot
         // record the discarded gesture as an undo step.
-        self.align_drag = None;
+        self.align.drag = None;
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.status_message = Some(if restored {
@@ -28,7 +28,8 @@ impl OccluViewApp {
         // Read before teardown cancels the worker so the status can report a
         // fit that was still running when the session closed.
         let running = self
-            .align_worker
+            .align
+            .worker
             .as_ref()
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
@@ -60,7 +61,8 @@ impl OccluViewApp {
 
     /// The pose a layer had when the session opened, if it was there.
     fn session_pose_of(&self, layer: SceneMeshId) -> Option<Affine3A> {
-        self.align_session_poses
+        self.align
+            .session_poses
             .iter()
             .find(|(id, _)| *id == layer)
             .map(|(_, pose)| *pose)

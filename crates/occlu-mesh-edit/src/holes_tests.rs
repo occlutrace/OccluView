@@ -18,7 +18,7 @@ fn tri_mesh(vertices: Vec<EditVertex>, indices: Vec<u32>) -> MeshEditBuffers {
 /// Count directed edges left without their reverse twin: 0 means watertight.
 fn boundary_edge_count(indices: &[u32]) -> usize {
     let mut directed = std::collections::HashSet::new();
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         for edge in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),

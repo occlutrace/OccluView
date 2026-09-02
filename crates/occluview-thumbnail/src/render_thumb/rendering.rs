@@ -2,7 +2,8 @@ use super::{ThumbnailError, ThumbnailRendererPool};
 use glam::{Mat4, Vec2, Vec3};
 use occluview_core::{Aabb, Camera, CameraPreset, Mesh, DEFAULT_UNTEXTURED_MESH_TINT};
 use occluview_render::{
-    GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, SceneDrawEntry, ThumbnailSpec,
+    AdapterPolicy, GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, RenderDeadline,
+    SceneDrawEntry, ThumbnailSpec,
 };
 
 const THUMBNAIL_PROJECTED_BBOX_FILL: f32 = 0.86;
@@ -16,22 +17,37 @@ const EDGE_ON_FALLBACK_AREA_GAIN: f32 = 2.5;
 pub(super) fn render_mesh_thumbnail(
     mesh: Mesh,
     spec: ThumbnailSpec,
+    deadline: RenderDeadline,
+) -> Result<Vec<u8>, ThumbnailError> {
+    render_mesh_thumbnail_with_adapter_policy(
+        mesh,
+        spec,
+        deadline,
+        crate::offscreen_factory::default_thumbnail_adapter_policy(),
+    )
+}
+
+pub(super) fn render_mesh_thumbnail_with_adapter_policy(
+    mesh: Mesh,
+    spec: ThumbnailSpec,
+    deadline: RenderDeadline,
+    adapter_policy: AdapterPolicy,
 ) -> Result<Vec<u8>, ThumbnailError> {
     #[cfg(test)]
     let _guard = crate::acquire_render_test_guard();
 
     let pool = ThumbnailRendererPool::shared();
-    match pool
-        .with_renderer(|offscreen| render_mesh_thumbnail_with_offscreen(&mesh, spec, offscreen))
-    {
+    match pool.with_renderer(deadline, adapter_policy, |offscreen| {
+        render_mesh_thumbnail_with_offscreen(&mesh, spec, deadline, offscreen)
+    }) {
         Ok(pixels) => Ok(pixels),
         Err(error) => {
             tracing::warn!(
                 ?error,
                 "thumbnail renderer failed; retrying once with a fresh device"
             );
-            pool.with_renderer(|offscreen| {
-                render_mesh_thumbnail_with_offscreen(&mesh, spec, offscreen)
+            pool.with_renderer(deadline, adapter_policy, |offscreen| {
+                render_mesh_thumbnail_with_offscreen(&mesh, spec, deadline, offscreen)
             })
         }
     }
@@ -40,6 +56,7 @@ pub(super) fn render_mesh_thumbnail(
 pub(super) fn render_mesh_thumbnail_with_offscreen(
     mesh: &Mesh,
     spec: ThumbnailSpec,
+    deadline: RenderDeadline,
     offscreen: &Offscreen,
 ) -> Result<Vec<u8>, ThumbnailError> {
     let cam = thumbnail_camera_for_mesh(mesh);
@@ -62,7 +79,12 @@ pub(super) fn render_mesh_thumbnail_with_offscreen(
         texture: texture.as_ref(),
     }];
     let render_spec = supersampled_thumbnail_spec(spec);
-    let pixels = pollster::block_on(offscreen.render_scene(&entries, &gpu_cam, render_spec))?;
+    let pixels = pollster::block_on(offscreen.render_scene_with_deadline(
+        &entries,
+        &gpu_cam,
+        render_spec,
+        deadline,
+    ))?;
     let pixels = if render_spec.size_px == spec.size_px {
         pixels
     } else {
@@ -133,6 +155,10 @@ pub(super) fn downsample_rgba_premultiplied(
             }
             let dst = ((y * target_size) + x) * 4;
             let alpha = alpha_sum / samples;
+            #[expect(
+                clippy::manual_checked_ops,
+                reason = "nonzero accumulated-alpha guard precedes pixel division"
+            )]
             if alpha_sum > 0 {
                 out[dst] = u8::try_from(red_sum / alpha_sum).unwrap_or(u8::MAX);
                 out[dst + 1] = u8::try_from(green_sum / alpha_sum).unwrap_or(u8::MAX);
@@ -151,7 +177,12 @@ fn boost_sparse_thumbnail_visibility(mut pixels: Vec<u8>, size_px: u16) -> Vec<u
     }
 
     let pixel_count = size * size;
-    let visible = pixels.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let visible = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     if visible == 0 || visible >= (pixel_count / 48).max(8) {
         return pixels;
     }
@@ -315,6 +346,10 @@ struct ProjectedMeshFrame {
     span: f32,
 }
 
+#[expect(
+    clippy::manual_midpoint,
+    reason = "preserve established thumbnail geometry output"
+)]
 fn projected_mesh_frame(mesh: &Mesh, camera: &Camera) -> Option<ProjectedMeshFrame> {
     let vertices = mesh.vertices();
     if vertices.is_empty() {
@@ -388,7 +423,7 @@ fn projected_triangle_area_score(mesh: &Mesh, camera: &Camera) -> f32 {
     let triangle_count = indices.len() / 3;
     let stride = (triangle_count / THUMBNAIL_AREA_SAMPLE_LIMIT).max(1);
     let mut area = 0.0_f32;
-    for triangle in indices.chunks_exact(3).step_by(stride) {
+    for triangle in indices.as_chunks::<3>().0.iter().step_by(stride) {
         let a = projected_vertex_uv(vertices[triangle[0] as usize].position, center, right, up);
         let b = projected_vertex_uv(vertices[triangle[1] as usize].position, center, right, up);
         let c = projected_vertex_uv(vertices[triangle[2] as usize].position, center, right, up);

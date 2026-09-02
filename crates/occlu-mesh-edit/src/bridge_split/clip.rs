@@ -232,7 +232,7 @@ fn clip_bridge_open_with_topology(
     let area_epsilon = epsilon.max(f64::EPSILON * 64.0);
     let mut part_a = MeshBuilder::new(mesh.vertices.len(), area_epsilon);
     let mut part_b = MeshBuilder::new(mesh.vertices.len(), area_epsilon);
-    for (triangle, source_face) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, source_face) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         let canonical_face = &topology.indices()[triangle * 3..triangle * 3 + 3];
         let positive = clip_triangle(
             mesh,
@@ -397,7 +397,7 @@ fn required_disc_radius(
     epsilon: f64,
 ) -> f64 {
     let mut radial_extent = 0.0_f64;
-    for face in mesh.indices.chunks_exact(3) {
+    for face in mesh.indices.as_chunks::<3>().0 {
         let mut polygon: Vec<DVec3> = face
             .iter()
             .map(|&index| DVec3::from_array(mesh.vertices[index as usize].position.map(f64::from)))

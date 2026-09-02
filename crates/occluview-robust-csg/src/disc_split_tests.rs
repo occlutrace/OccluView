@@ -67,7 +67,7 @@ fn empty_mesh() -> RobustMesh {
 }
 
 fn reverse_faces(mesh: &mut RobustMesh, indices: Range<usize>) {
-    for triangle in mesh.indices[indices].chunks_exact_mut(3) {
+    for triangle in mesh.indices[indices].as_chunks_mut::<3>().0 {
         triangle.swap(1, 2);
     }
 }

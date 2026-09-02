@@ -6,24 +6,27 @@
 /// four and six terms, which is how Escape came to tear down the tool behind
 /// an open dialog. Named once, it is enumerable -- and testable without an
 /// egui context, which the call sites are not.
-// Five independent bools rather than a state enum because the dialogs are
-// independent: an error can arrive while the unsaved-changes prompt is up,
-// and the licences window can sit over either. Collapsing them would lose
-// exactly the combinations Escape has to survive.
+// The independent guards remain bools because an error can arrive while the
+// unsaved-changes prompt is up. Information surfaces are mutually exclusive,
+// so their enum is already reduced to one bool at this boundary.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy)]
 pub(super) struct OpenDialogs {
     pub(super) close_guard: bool,
     pub(super) pending_replace: bool,
     pub(super) error: bool,
-    pub(super) about: bool,
-    pub(super) third_party: bool,
+    pub(super) settings_popup: bool,
+    pub(super) information_dialog: bool,
 }
 
 impl OpenDialogs {
     /// True when anything modal is in front of the viewport.
     pub(super) fn any(self) -> bool {
-        self.close_guard || self.pending_replace || self.error || self.about || self.third_party
+        self.close_guard
+            || self.pending_replace
+            || self.error
+            || self.settings_popup
+            || self.information_dialog
     }
 
     /// Every flag, paired with the name a failing test should print.
@@ -33,8 +36,8 @@ impl OpenDialogs {
             ("close_guard", self.close_guard),
             ("pending_replace", self.pending_replace),
             ("error", self.error),
-            ("about", self.about),
-            ("third_party", self.third_party),
+            ("settings_popup", self.settings_popup),
+            ("information_dialog", self.information_dialog),
         ]
     }
 
@@ -44,8 +47,8 @@ impl OpenDialogs {
             close_guard: false,
             pending_replace: false,
             error: false,
-            about: false,
-            third_party: false,
+            settings_popup: false,
+            information_dialog: false,
         }
     }
 
@@ -56,8 +59,8 @@ impl OpenDialogs {
             0 => dialogs.close_guard = true,
             1 => dialogs.pending_replace = true,
             2 => dialogs.error = true,
-            3 => dialogs.about = true,
-            _ => dialogs.third_party = true,
+            3 => dialogs.settings_popup = true,
+            _ => dialogs.information_dialog = true,
         }
         dialogs
     }

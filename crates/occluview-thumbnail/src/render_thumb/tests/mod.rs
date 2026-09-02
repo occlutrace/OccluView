@@ -81,8 +81,18 @@ fn assert_transparent_thumbnail_with_mesh_pixels(pixels: &[u8], spec: ThumbnailS
     let expected_len = pixel_count * 4;
     assert_eq!(pixels.len(), expected_len);
 
-    let transparent = pixels.chunks_exact(4).filter(|px| px[3] == 0).count();
-    let opaque = pixels.chunks_exact(4).filter(|px| px[3] == 255).count();
+    let transparent = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] == 0)
+        .count();
+    let opaque = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] == 255)
+        .count();
 
     assert!(
         transparent > pixel_count / 16,
@@ -107,8 +117,18 @@ fn assert_visible_thumbnail_pixels(pixels: &[u8], spec: ThumbnailSpec) {
     let expected_len = pixel_count * 4;
     assert_eq!(pixels.len(), expected_len);
 
-    let transparent = pixels.chunks_exact(4).filter(|px| px[3] == 0).count();
-    let visible = pixels.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let transparent = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] == 0)
+        .count();
+    let visible = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
 
     assert!(
         transparent > pixel_count / 16,

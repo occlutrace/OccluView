@@ -484,6 +484,10 @@ impl BrushSession {
 
     /// Midpoint attributes: normal averaged, color and UV blended 50/50 from
     /// the welded endpoints, matching Dyntopo's `BM_data_interp_from_verts`.
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "preserve established last-bit UV output"
+    )]
     fn blend_endpoints(&self, first: u32, second: u32) -> EditVertex {
         let (Some(a), Some(b)) = (
             self.vertices.get(first as usize),
@@ -495,7 +499,7 @@ impl BrushSession {
         let blend_channel = |left: u8, right: u8| -> u8 {
             #[allow(clippy::cast_possible_truncation)]
             {
-                ((u16::from(left) + u16::from(right)) / 2) as u8
+                u16::midpoint(u16::from(left), u16::from(right)) as u8
             }
         };
         EditVertex {

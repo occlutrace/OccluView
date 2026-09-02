@@ -60,7 +60,7 @@ pub(super) fn emit_primitive(
                 "indexed primitive with index count not divisible by 3",
             ));
         }
-        for chunk in indices.chunks_exact(3) {
+        for chunk in indices.as_chunks::<3>().0 {
             let (a, b, c) = (chunk[0], chunk[1], chunk[2]);
             builder.push_triangle(base + a, base + b, base + c);
         }

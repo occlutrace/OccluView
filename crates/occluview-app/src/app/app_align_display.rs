@@ -66,10 +66,10 @@ impl OccluViewApp {
         }
         entry.set_deviation(Some(Arc::clone(&shared)));
         self.set_overlay_colors(layer, shared);
-        self.align_overlay = kind;
+        self.align.overlay = kind;
         // Change only the material data; preserve the prepared scene.
         self.mark_scene_materials_changed();
-        self.deviation_push_pending = true;
+        self.align.deviation_push_pending = true;
         true
     }
 
@@ -92,13 +92,14 @@ impl OccluViewApp {
         let count = entry.mesh.vertices().len();
         // The stored colours and scratch buffer must match this mesh.
         let Some(slot) = self
-            .align_overlay_colors
+            .align
+            .overlay_colors
             .iter_mut()
             .find(|(id, colors)| *id == layer && colors.len() == count)
         else {
             return false;
         };
-        if !self.align_painted.holds(&entry.mesh, count) {
+        if !self.align.painted.holds(&entry.mesh, count) {
             return false;
         }
 
@@ -117,7 +118,8 @@ impl OccluViewApp {
         // Finish reads through the cloned scene before editing the live scene.
         let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
         let painted = self
-            .align_painted
+            .align
+            .painted
             .patch(&entry.mesh, &shared, touched)
             .map(<[_]>::to_vec);
         drop(scene);
@@ -146,12 +148,13 @@ impl OccluViewApp {
     /// Remember one layer's colours, replacing whatever it had.
     fn set_overlay_colors(&mut self, layer: SceneMeshId, colors: Arc<Vec<[u8; 4]>>) {
         match self
-            .align_overlay_colors
+            .align
+            .overlay_colors
             .iter_mut()
             .find(|(id, _)| *id == layer)
         {
             Some(slot) => slot.1 = colors,
-            None => self.align_overlay_colors.push((layer, colors)),
+            None => self.align.overlay_colors.push((layer, colors)),
         }
     }
 
@@ -167,10 +170,10 @@ impl OccluViewApp {
         else {
             return false;
         };
-        if self.align_overlay_colors.is_empty() {
+        if self.align.overlay_colors.is_empty() {
             return false;
         }
-        let pending = self.align_overlay_colors.clone();
+        let pending = self.align.overlay_colors.clone();
         let mut wrote = true;
         for (layer, colors) in pending {
             let Some(entry) = layer_of(&scene, layer) else {
@@ -178,7 +181,7 @@ impl OccluViewApp {
             };
             let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
             // Reuse the existing buffer; only vertex colours changed.
-            let Some(painted) = self.align_painted.repaint(&entry.mesh, &colors) else {
+            let Some(painted) = self.align.painted.repaint(&entry.mesh, &colors) else {
                 wrote = false;
                 continue;
             };
@@ -193,16 +196,16 @@ impl OccluViewApp {
 
     /// Drop every overlay and restore the meshes' own colours.
     pub(super) fn clear_deviation_overlay(&mut self) {
-        self.align_overlay = AlignOverlay::Nothing;
+        self.align.overlay = AlignOverlay::Nothing;
         // Restore the other layer even when no colour array remains.
         self.unghost_layers();
-        if self.align_overlay_colors.is_empty() {
+        if self.align.overlay_colors.is_empty() {
             return;
         }
-        self.align_overlay_colors.clear();
+        self.align.overlay_colors.clear();
         // A push still standing would chase colours that no longer exist.
-        self.deviation_push_pending = false;
-        self.align_painted.clear();
+        self.align.deviation_push_pending = false;
+        self.align.painted.clear();
         let Some(live) = self.live_scene_mut() else {
             return;
         };
@@ -217,13 +220,13 @@ impl OccluViewApp {
             .collect();
         self.mark_scene_materials_changed();
         self.restore_layer_colors(&overlaid);
-        self.align_stats = None;
+        self.align.stats = None;
         self.needs_render = true;
     }
 
     /// Whether anything is currently overlaid.
     pub(super) fn align_overlay_is_up(&self) -> bool {
-        !self.align_overlay_colors.is_empty()
+        !self.align.overlay_colors.is_empty()
     }
 
     /// Put the meshes' own vertex colours back on the GPU, for the layers that
@@ -253,12 +256,12 @@ impl OccluViewApp {
     // Display helpers.
     /// The moving layer carries the map.
     pub(super) fn align_mapped_layer(&self) -> Option<SceneMeshId> {
-        self.align.moving_layer()
+        self.align.tool.moving_layer()
     }
 
     /// The fixed layer, which is ghosted while the map is shown.
     fn align_other_layer(&self) -> Option<SceneMeshId> {
-        self.align.fixed_layer()
+        self.align.tool.fixed_layer()
     }
 
     /// Fade the other scan while the map is up.
@@ -267,7 +270,7 @@ impl OccluViewApp {
     /// the coloured one is then only visible in patches. Lab software shows one
     /// clean coloured surface; this is how.
     pub(super) fn ghost_other_layer(&mut self) {
-        if !self.align_ghosted.is_empty() {
+        if !self.align.ghosted.is_empty() {
             return;
         }
         let Some(other) = self.align_other_layer() else {
@@ -287,16 +290,16 @@ impl OccluViewApp {
         if remembered.is_empty() {
             return;
         }
-        self.align_ghosted = remembered;
+        self.align.ghosted = remembered;
         self.mark_scene_materials_changed();
     }
 
     /// Bring the faded scan back.
     pub(super) fn unghost_layers(&mut self) {
-        if self.align_ghosted.is_empty() {
+        if self.align.ghosted.is_empty() {
             return;
         }
-        let restore = std::mem::take(&mut self.align_ghosted);
+        let restore = std::mem::take(&mut self.align.ghosted);
         let Some(live) = self.live_scene_mut() else {
             return;
         };
@@ -360,11 +363,11 @@ mod tests {
     fn the_upload_buffer_is_repainted_not_rebuilt() {
         let source = production();
         assert!(
-            source.contains("self.align_painted.repaint("),
+            source.contains("self.align.painted.repaint("),
             "the vertex upload must reuse its buffer"
         );
         assert!(
-            source.contains("self.align_painted.clear()"),
+            source.contains("self.align.painted.clear()"),
             "dropping the overlay must drop the scratch buffer with it"
         );
     }
@@ -380,7 +383,7 @@ mod tests {
             .and_then(|rest| rest.split_once("\n    /// Remember one layer"))
             .map(|(body, _)| body)
             .expect("a sparse patch path");
-        assert!(patch.contains(".align_painted") && patch.contains(".patch("));
+        assert!(patch.contains(".align.painted") && patch.contains(".patch("));
         assert!(patch.contains("write_scene_vertices_sparse("));
         // Same rule as above: release the cloned handle before the in-place
         // edit.
@@ -389,7 +392,7 @@ mod tests {
             "the cloned scene handle must be dropped before the in-place edit"
         );
         assert!(
-            !patch.contains("self.align_painted.repaint("),
+            !patch.contains("self.align.painted.repaint("),
             "the sparse path must not fall back to a full repaint silently"
         );
     }
@@ -405,7 +408,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .expect("one place that attaches colours");
         assert!(
-            attach.contains("self.align_overlay = kind"),
+            attach.contains("self.align.overlay = kind"),
             "attaching colours must record what they mean"
         );
         let clear = source
@@ -413,7 +416,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .expect("one place that drops colours");
         assert!(
-            clear.contains("self.align_overlay = AlignOverlay::Nothing"),
+            clear.contains("self.align.overlay = AlignOverlay::Nothing"),
             "dropping colours must clear what they meant"
         );
     }

@@ -117,7 +117,7 @@ pub(crate) fn paint_disc(
                 5.0,
                 egui::Color32::from_rgba_unmultiplied(15, 23, 42, 51),
             );
-            painter.circle_stroke(center, 5.0, egui::Stroke::new(1.5, SLATE));
+            painter.circle_stroke(center, 5.0, egui::Stroke::new(1.5_f32, SLATE));
         }
     }
 

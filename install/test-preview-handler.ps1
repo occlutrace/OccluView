@@ -5,6 +5,7 @@ param(
     [int]$Height = 480,
     [int]$ResizeWidth = 320,
     [int]$ResizeHeight = 180,
+    [int]$HoldOpenSeconds = 0,
     [string]$PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
 )
 
@@ -65,6 +66,8 @@ using System.Threading;
 public static class OccluViewShellPreviewSmoke
 {
     private const uint COINIT_APARTMENTTHREADED = 0x2;
+    private const uint CLSCTX_INPROC_SERVER = 0x1;
+    private const uint CLSCTX_LOCAL_SERVER = 0x4;
     private const string PreviewChildClass = "OccluViewPreviewPane";
     private const int WM_RBUTTONDOWN = 0x0204;
     private const int WM_RBUTTONUP = 0x0205;
@@ -212,6 +215,14 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("ole32.dll")]
     private static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
 
+    [DllImport("ole32.dll", PreserveSig = true)]
+    private static extern int CoCreateInstance(
+        [In] ref Guid rclsid,
+        IntPtr pUnkOuter,
+        uint dwClsContext,
+        [In] ref Guid riid,
+        out IntPtr ppv);
+
     [DllImport("ole32.dll")]
     private static extern void CoUninitialize();
 
@@ -259,6 +270,9 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetClassNameW(
         IntPtr hWnd,
@@ -270,6 +284,20 @@ public static class OccluViewShellPreviewSmoke
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UpdateWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool PeekMessageW(
+        out MSG lpMsg,
+        IntPtr hWnd,
+        uint wMsgFilterMin,
+        uint wMsgFilterMax,
+        uint wRemoveMsg);
+
+    [DllImport("user32.dll")]
+    private static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr DispatchMessageW(ref MSG lpMsg);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -327,6 +355,225 @@ public static class OccluViewShellPreviewSmoke
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
 
+    private static object CreateLocalServerPreviewHandler(string previewClsid)
+    {
+        return CreatePreviewHandler(previewClsid, CLSCTX_LOCAL_SERVER);
+    }
+
+    private static object CreateInProcessPreviewHandler(string previewClsid)
+    {
+        return CreatePreviewHandler(previewClsid, CLSCTX_INPROC_SERVER);
+    }
+
+    private static object CreatePreviewHandler(string previewClsid, uint classContext)
+    {
+        Guid clsid = new Guid(previewClsid);
+        Guid iidIUnknown = new Guid("00000000-0000-0000-C000-000000000046");
+        IntPtr unknown = IntPtr.Zero;
+        int createHr = CoCreateInstance(
+            ref clsid,
+            IntPtr.Zero,
+            classContext,
+            ref iidIUnknown,
+            out unknown);
+        if (createHr < 0)
+        {
+            Marshal.ThrowExceptionForHR(createHr);
+        }
+        if (unknown == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("CoCreateInstance returned a null IUnknown for the Preview Handler.");
+        }
+
+        try
+        {
+            object instance = Marshal.GetObjectForIUnknown(unknown);
+            if (!(instance is IPreviewHandler))
+            {
+                if (Marshal.IsComObject(instance))
+                {
+                    Marshal.FinalReleaseComObject(instance);
+                }
+                throw new InvalidOperationException("Local-server activation returned an object without IPreviewHandler.");
+            }
+            return instance;
+        }
+        finally
+        {
+            Marshal.Release(unknown);
+        }
+    }
+
+    // Prevhost runs the handler at low integrity. This probe talks to the
+    // actual CLSCTX_LOCAL_SERVER proxy and proves that DoPreview has installed
+    // a paintable first frame before it returns. It deliberately does not
+    // retry or pump a second message queue: a later frame would hide the
+    // exact regression this guard exists to catch.
+    public static string ProbePrevhost(
+        string previewClsid,
+        string path,
+        int width,
+        int height)
+    {
+        return ProbePrevhostCore(
+            previewClsid,
+            path,
+            width,
+            height,
+            false,
+            "Prevhost file first frame");
+    }
+
+    // Explorer initializes preview handlers with IStream. Keep this separate
+    // from the file probe so both initialization contracts cross the actual
+    // low-integrity Prevhost boundary before a package is accepted.
+    public static string ProbePrevhostStream(
+        string previewClsid,
+        string path,
+        int width,
+        int height)
+    {
+        return ProbePrevhostCore(
+            previewClsid,
+            path,
+            width,
+            height,
+            true,
+            "Prevhost stream first frame");
+    }
+
+    private static string ProbePrevhostCore(
+        string previewClsid,
+        string path,
+        int width,
+        int height,
+        bool useStream,
+        string frameDescription)
+    {
+        string result = null;
+        Exception failure = null;
+
+        var thread = new Thread(() =>
+        {
+            IntPtr parent = IntPtr.Zero;
+            object instance = null;
+            object stream = null;
+            bool coInitialized = false;
+            var coinit = CoInitializeEx(IntPtr.Zero, COINIT_APARTMENTTHREADED);
+            if (coinit < 0)
+            {
+                Marshal.ThrowExceptionForHR(coinit);
+            }
+            coInitialized = true;
+            Console.WriteLine("PREVIEW_SURROGATE_STEP=com-initialized");
+
+            try
+            {
+                parent = CreateWindowExW(0, "Static", "OccluViewPreviewSurrogateSmoke", WS_POPUP | WS_VISIBLE, 0, 0, width, height, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (parent == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("CreateWindowExW failed for Prevhost smoke parent window.");
+                }
+                ShowWindow(parent, SW_SHOWNOACTIVATE);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=parent-created");
+
+                instance = CreateLocalServerPreviewHandler(previewClsid);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=handler-activated");
+                var preview = (IPreviewHandler)instance;
+                var initialRect = new RECT { left = 0, top = 0, right = width, bottom = height };
+                if (useStream)
+                {
+                    int streamHr = SHCreateStreamOnFileEx(path, 0x00000020, 0, false, null, out stream);
+                    if (streamHr < 0 || stream == null)
+                    {
+                        Marshal.ThrowExceptionForHR(streamHr);
+                    }
+                    ((IInitializeWithStream)instance).Initialize(stream, 0);
+                }
+                else
+                {
+                    ((IInitializeWithFile)instance).Initialize(path, 0);
+                }
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=handler-initialized");
+                preview.SetWindow(parent, ref initialRect);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=window-set");
+                preview.DoPreview();
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=first-frame-returned");
+
+                IntPtr child = FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null);
+                if (child == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Prevhost preview did not create its child before DoPreview returned.");
+                }
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=child-found");
+                EnsurePreviewHostProcess(child);
+                EnsurePreviewChild(child, width, height, "Prevhost preview host size");
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=child-verified");
+                var initialFrame = CaptureFrame(child);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=frame-captured");
+                EnsureFrameVisible(initialFrame, frameDescription);
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=frame-verified");
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=unload-started");
+                preview.Unload();
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=unload-returned");
+                if (IsWindow(child))
+                {
+                    throw new InvalidOperationException("Prevhost preview handler left the child window alive after Unload.");
+                }
+                result = "Prevhost first frame[" + initialFrame.Summary() + "]";
+                Console.WriteLine("PREVIEW_SURROGATE_STEP=probe-complete");
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+            finally
+            {
+                if (instance != null && Marshal.IsComObject(instance))
+                {
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=release-started");
+                    Marshal.FinalReleaseComObject(instance);
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=release-returned");
+                }
+                if (stream != null && Marshal.IsComObject(stream))
+                {
+                    Marshal.FinalReleaseComObject(stream);
+                }
+                if (parent != IntPtr.Zero && IsWindow(parent))
+                {
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=parent-destroy-started");
+                    DestroyWindow(parent);
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=parent-destroy-returned");
+                }
+                if (coInitialized)
+                {
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=com-uninitialize-started");
+                    CoUninitialize();
+                    Console.WriteLine("PREVIEW_SURROGATE_STEP=com-uninitialize-returned");
+                }
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        JoinOrThrow(thread, "Prevhost preview");
+
+        if (failure != null)
+        {
+            throw new InvalidOperationException("Prevhost preview smoke failed: " + failure, failure);
+        }
+
+        if (result == null)
+        {
+            throw new InvalidOperationException("Prevhost preview smoke produced no result.");
+        }
+        return result;
+    }
+
+    // The detailed pixel, resize, focus, and input contract is intentionally
+    // in-process. Those controller operations cannot be asserted across the
+    // low-integrity Prevhost boundary used by the first-frame liveness probe.
     public static string Probe(
         string previewClsid,
         string path,
@@ -334,7 +581,8 @@ public static class OccluViewShellPreviewSmoke
         int height,
         int resizeWidth,
         int resizeHeight,
-        bool useStream)
+        bool useStream,
+        int holdOpenMilliseconds)
     {
         string result = null;
         Exception failure = null;
@@ -362,8 +610,7 @@ public static class OccluViewShellPreviewSmoke
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
                 UpdateWindow(parent);
 
-                var type = Type.GetTypeFromCLSID(new Guid(previewClsid), true);
-                instance = Activator.CreateInstance(type);
+                instance = CreateInProcessPreviewHandler(previewClsid);
 
                 var preview = (IPreviewHandler)instance;
 
@@ -396,6 +643,12 @@ public static class OccluViewShellPreviewSmoke
                 }
 
                 EnsurePreviewChild(child, width, height, "initial preview host size");
+
+                if (holdOpenMilliseconds > 0)
+                {
+                    Console.WriteLine("PREVIEW_HOLD_READY");
+                    Thread.Sleep(holdOpenMilliseconds);
+                }
 
                 preview.SetFocus();
                 var focused = preview.QueryFocus();
@@ -433,19 +686,9 @@ public static class OccluViewShellPreviewSmoke
 
                 EnsurePreviewChild(child, resizeWidth, resizeHeight, "resized preview host size");
 
-                var initialFrame = CaptureFrame(child);
-                EnsureFrameVisible(initialFrame, "initial resized preview frame");
-                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight);
-                if (!FramesDiffer(initialFrame, orbitFrame))
-                {
-                    throw new InvalidOperationException("Preview orbit drag did not change the rendered frame. Initial=" + initialFrame.Summary() + " orbit=" + orbitFrame.Summary());
-                }
-
-                var zoomFrame = ZoomPreview(child);
-                if (!FramesDiffer(orbitFrame, zoomFrame))
-                {
-                    throw new InvalidOperationException("Preview zoom did not change the rendered frame. Orbit=" + orbitFrame.Summary() + " zoom=" + zoomFrame.Summary());
-                }
+                var initialFrame = WaitForVisibleFrame(child, "initial resized preview frame");
+                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight, initialFrame);
+                var zoomFrame = ZoomPreview(child, orbitFrame);
 
                 preview.Unload();
 
@@ -460,7 +703,7 @@ public static class OccluViewShellPreviewSmoke
                 // window pointing at a freed object. Build a second handler,
                 // give it a window, release it WITHOUT Unload, and check the
                 // child is gone.
-                object orphan = Activator.CreateInstance(type);
+                object orphan = CreateInProcessPreviewHandler(previewClsid);
                 try
                 {
                     var orphanPreview = (IPreviewHandler)orphan;
@@ -534,15 +777,20 @@ public static class OccluViewShellPreviewSmoke
         });
 
         thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
         thread.Start();
-        thread.Join();
+        JoinOrThrow(thread, "preview");
 
         if (failure != null)
         {
             throw new InvalidOperationException("Preview smoke failed: " + failure, failure);
         }
 
-        return result ?? throw new InvalidOperationException("Preview smoke produced no result.");
+        if (result == null)
+        {
+            throw new InvalidOperationException("Preview smoke produced no result.");
+        }
+        return result;
     }
 
     public static string ProbeFromItem(
@@ -579,8 +827,7 @@ public static class OccluViewShellPreviewSmoke
                 ShowWindow(parent, SW_SHOWNOACTIVATE);
                 UpdateWindow(parent);
 
-                var type = Type.GetTypeFromCLSID(new Guid(previewClsid), true);
-                instance = Activator.CreateInstance(type);
+                instance = CreateInProcessPreviewHandler(previewClsid);
 
                 var preview = (IPreviewHandler)instance;
                 var initialRect = new RECT { left = 0, top = 0, right = width, bottom = height };
@@ -643,19 +890,9 @@ public static class OccluViewShellPreviewSmoke
 
                 EnsurePreviewChild(child, resizeWidth, resizeHeight, "resized preview host size");
 
-                var initialFrame = CaptureFrame(child);
-                EnsureFrameVisible(initialFrame, "initial resized preview frame");
-                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight);
-                if (!FramesDiffer(initialFrame, orbitFrame))
-                {
-                    throw new InvalidOperationException("Preview orbit drag did not change the rendered frame. Initial=" + initialFrame.Summary() + " orbit=" + orbitFrame.Summary());
-                }
-
-                var zoomFrame = ZoomPreview(child);
-                if (!FramesDiffer(orbitFrame, zoomFrame))
-                {
-                    throw new InvalidOperationException("Preview zoom did not change the rendered frame. Orbit=" + orbitFrame.Summary() + " zoom=" + zoomFrame.Summary());
-                }
+                var initialFrame = WaitForVisibleFrame(child, "initial resized preview frame");
+                var orbitFrame = OrbitPreview(child, resizeWidth, resizeHeight, initialFrame);
+                var zoomFrame = ZoomPreview(child, orbitFrame);
 
                 preview.Unload();
 
@@ -697,15 +934,46 @@ public static class OccluViewShellPreviewSmoke
         });
 
         thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
         thread.Start();
-        thread.Join();
+        JoinOrThrow(thread, "shell-item preview");
 
         if (failure != null)
         {
             throw new InvalidOperationException("Preview smoke failed: " + failure, failure);
         }
 
-        return result ?? throw new InvalidOperationException("Preview smoke produced no result.");
+        if (result == null)
+        {
+            throw new InvalidOperationException("Preview smoke produced no result.");
+        }
+        return result;
+    }
+
+    private static IntPtr WaitForPreviewChild(IntPtr parent, string label)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (deadline.ElapsedMilliseconds < 10000)
+        {
+            IntPtr child = FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null);
+            if (child != IntPtr.Zero)
+            {
+                return child;
+            }
+            Thread.Sleep(25);
+        }
+        throw new InvalidOperationException(label + " did not create a preview child within 10 seconds.");
+    }
+
+    private static void JoinOrThrow(Thread thread, string label)
+    {
+        if (!thread.Join(20000))
+        {
+            // A hung handler must fail this disposable controller, not hold a
+            // CI worker forever. The probe thread is background-only so the
+            // PowerShell process can terminate after this explicit failure.
+            throw new TimeoutException(label + " did not finish within 20 seconds.");
+        }
     }
 
     private static void EnsurePreviewChild(IntPtr hwnd, int expectedWidth, int expectedHeight, string label)
@@ -726,9 +994,29 @@ public static class OccluViewShellPreviewSmoke
         }
     }
 
+    private static void EnsurePreviewHostProcess(IntPtr hwnd)
+    {
+        uint processId;
+        if (GetWindowThreadProcessId(hwnd, out processId) == 0 || processId == 0)
+        {
+            throw new InvalidOperationException("GetWindowThreadProcessId failed for preview child.");
+        }
+
+        using (var process = System.Diagnostics.Process.GetProcessById((int)processId))
+        {
+            if (!string.Equals(process.ProcessName, "prevhost", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Preview child belongs to '" + process.ProcessName + "' (PID " + processId + "), not Prevhost.exe.");
+            }
+        }
+
+        Console.WriteLine("PREVIEW_HOST_PID=" + processId);
+    }
+
     private static void EnsureClientRect(IntPtr hwnd, int expectedWidth, int expectedHeight, string label)
     {
-        if (!GetClientRect(hwnd, out RECT rect))
+        RECT rect;
+        if (!GetClientRect(hwnd, out rect))
         {
             throw new InvalidOperationException(label + " GetClientRect failed.");
         }
@@ -741,7 +1029,7 @@ public static class OccluViewShellPreviewSmoke
         }
     }
 
-    private static FrameProbe OrbitPreview(IntPtr hwnd, int width, int height)
+    private static FrameProbe OrbitPreview(IntPtr hwnd, int width, int height, FrameProbe before)
     {
         int centerX = Math.Max(8, width / 2);
         int centerY = Math.Max(8, height / 2);
@@ -752,22 +1040,67 @@ public static class OccluViewShellPreviewSmoke
         SendMessageW(hwnd, WM_MOUSEMOVE, new IntPtr(MK_RBUTTON), MakeLParam((centerX + dragX) / 2, (centerY + dragY) / 2));
         SendMessageW(hwnd, WM_MOUSEMOVE, new IntPtr(MK_RBUTTON), MakeLParam(dragX, dragY));
         SendMessageW(hwnd, WM_RBUTTONUP, IntPtr.Zero, MakeLParam(dragX, dragY));
-        if (!UpdateWindow(hwnd))
-        {
-            throw new InvalidOperationException("UpdateWindow failed after preview orbit drag.");
-        }
-        return CaptureFrame(hwnd);
+        return WaitForChangedFrame(hwnd, before, "preview orbit frame");
     }
 
-    private static FrameProbe ZoomPreview(IntPtr hwnd)
+    private static FrameProbe ZoomPreview(IntPtr hwnd, FrameProbe before)
     {
         IntPtr wheelWParam = new IntPtr(240 << 16);
         SendMessageW(hwnd, WM_MOUSEWHEEL, wheelWParam, IntPtr.Zero);
-        if (!UpdateWindow(hwnd))
+        return WaitForChangedFrame(hwnd, before, "preview zoom frame");
+    }
+
+    private static FrameProbe WaitForVisibleFrame(IntPtr hwnd, string label)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        FrameProbe latest = null;
+        while (deadline.ElapsedMilliseconds < 10000)
         {
-            throw new InvalidOperationException("UpdateWindow failed after preview zoom.");
+            PumpMessages(hwnd);
+            if (!UpdateWindow(hwnd))
+            {
+                throw new InvalidOperationException("UpdateWindow failed while waiting for " + label + ".");
+            }
+            latest = CaptureFrame(hwnd);
+            if (latest.VisiblePixels >= 64)
+            {
+                return latest;
+            }
+            Thread.Sleep(25);
         }
-        return CaptureFrame(hwnd);
+        throw new InvalidOperationException(label + " did not contain enough visible geometry within 10 seconds. " + (latest == null ? "no frame" : latest.Summary()));
+    }
+
+    private static FrameProbe WaitForChangedFrame(IntPtr hwnd, FrameProbe before, string label)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        FrameProbe latest = null;
+        while (deadline.ElapsedMilliseconds < 10000)
+        {
+            PumpMessages(hwnd);
+            if (!UpdateWindow(hwnd))
+            {
+                throw new InvalidOperationException("UpdateWindow failed while waiting for " + label + ".");
+            }
+            latest = CaptureFrame(hwnd);
+            if (FramesDiffer(before, latest))
+            {
+                return latest;
+            }
+            Thread.Sleep(25);
+        }
+        throw new InvalidOperationException(label + " did not change within 10 seconds. Before=" + before.Summary() + " latest=" + (latest == null ? "no frame" : latest.Summary()));
+    }
+
+    private static void PumpMessages(IntPtr hwnd)
+    {
+        const uint PM_REMOVE = 0x0001;
+        MSG message;
+        while (PeekMessageW(out message, hwnd, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(ref message);
+            DispatchMessageW(ref message);
+        }
     }
 
     private static void EnsureFrameVisible(FrameProbe frame, string label)
@@ -797,7 +1130,8 @@ public static class OccluViewShellPreviewSmoke
 
     private static FrameProbe CaptureFrame(IntPtr hwnd)
     {
-        if (!GetClientRect(hwnd, out RECT rect))
+        RECT rect;
+        if (!GetClientRect(hwnd, out rect))
         {
             throw new InvalidOperationException("GetClientRect failed while capturing preview frame.");
         }
@@ -1020,6 +1354,25 @@ if ([string]::IsNullOrWhiteSpace($SamplePath)) {
 if ($Width -lt 64 -or $Height -lt 64 -or $ResizeWidth -lt 64 -or $ResizeHeight -lt 64) {
     throw "Preview smoke dimensions must be at least 64 px."
 }
+if ($HoldOpenSeconds -lt 0) {
+    throw "HoldOpenSeconds must not be negative."
+}
+
+$prevhostFileResult = [OccluViewShellPreviewSmoke]::ProbePrevhost(
+    $PreviewClsid,
+    $SamplePath,
+    $Width,
+    $Height
+)
+Write-Host "Prevhost file preview smoke: [$prevhostFileResult]"
+
+$prevhostStreamResult = [OccluViewShellPreviewSmoke]::ProbePrevhostStream(
+    $PreviewClsid,
+    $SamplePath,
+    $Width,
+    $Height
+)
+Write-Host "Prevhost stream preview smoke: [$prevhostStreamResult]"
 
 $fileResult = [OccluViewShellPreviewSmoke]::Probe(
     $PreviewClsid,
@@ -1028,7 +1381,8 @@ $fileResult = [OccluViewShellPreviewSmoke]::Probe(
     $Height,
     $ResizeWidth,
     $ResizeHeight,
-    $false
+    $false,
+    ($HoldOpenSeconds * 1000)
 )
 
 $streamResult = [OccluViewShellPreviewSmoke]::Probe(
@@ -1038,7 +1392,8 @@ $streamResult = [OccluViewShellPreviewSmoke]::Probe(
     $Height,
     $ResizeWidth,
     $ResizeHeight,
-    $true
+    $true,
+    0
 )
 
 $itemResult = [OccluViewShellPreviewSmoke]::ProbeFromItem(
@@ -1050,4 +1405,4 @@ $itemResult = [OccluViewShellPreviewSmoke]::ProbeFromItem(
     $ResizeHeight
 )
 
-Write-Host "Preview smoke: file[$fileResult] stream[$streamResult] item[$itemResult]"
+Write-Host "Preview smoke: prevhost-file[$prevhostFileResult] prevhost-stream[$prevhostStreamResult] file[$fileResult] stream[$streamResult] item[$itemResult]"

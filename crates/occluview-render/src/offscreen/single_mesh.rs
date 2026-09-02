@@ -1,9 +1,9 @@
 use super::{
     helpers::{extent, make_color_target, make_depth_target, padded_bytes_per_row, RenderTargets},
-    Offscreen, ThumbnailSpec,
+    ClippedMeshRequest, CutMeshRequest, Offscreen, RenderDeadline, ThumbnailSpec,
 };
 use crate::camera::GpuCamera;
-use crate::clipping::{cap_quad, ClipPlane, CutViewSpec};
+use crate::clipping::{cap_quad, CutViewSpec};
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
 use occluview_core::Mesh;
@@ -13,12 +13,18 @@ impl Offscreen {
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "preserve the lazy async renderer API and first-poll execution boundary"
+    )]
     #[allow(clippy::unused_async)]
-    pub async fn render(
+    pub async fn render_with_deadline(
         &self,
         mesh: &Mesh,
         camera: &GpuCamera,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
@@ -59,15 +65,15 @@ impl Offscreen {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
                     rows_per_image: Some(size),
@@ -77,21 +83,30 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Render `mesh` with an active clip plane.
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "preserve the lazy async renderer API and first-poll execution boundary"
+    )]
     #[allow(clippy::unused_async)]
-    pub async fn render_clipped(
+    pub async fn render_clipped_with_deadline(
         &self,
-        mesh: &Mesh,
-        camera: &GpuCamera,
-        clip: &ClipPlane,
-        spec: ThumbnailSpec,
+        request: ClippedMeshRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let ClippedMeshRequest {
+            mesh,
+            camera,
+            clip,
+            spec,
+            deadline,
+        } = request;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();
@@ -117,6 +132,7 @@ impl Offscreen {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &color_view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: spec.background[0],
@@ -140,6 +156,7 @@ impl Offscreen {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         self.renderer.draw(
             &mut rpass,
@@ -160,15 +177,15 @@ impl Offscreen {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
                     rows_per_image: Some(size),
@@ -178,44 +195,58 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 
     /// Convenience: render a cut view with an auto-framed orthographic camera.
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
     #[allow(clippy::unused_async)]
-    pub async fn render_cut_view(
+    pub async fn render_cut_view_with_deadline(
         &self,
         mesh: &Mesh,
         cut: &CutViewSpec,
         spec: ThumbnailSpec,
+        deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
         let bbox = mesh.bbox_uncached();
         let camera = crate::cut_camera::cut_view_camera(&cut.plane, bbox);
         let half_extent = bbox.half_diagonal() * 2.0;
-        self.render_with_cut(mesh, &camera, cut, half_extent, spec)
-            .await
+        self.render_with_cut_with_deadline(CutMeshRequest {
+            mesh,
+            camera: &camera,
+            cut,
+            half_extent,
+            spec,
+            deadline,
+        })
+        .await
     }
 
     /// Render `mesh` with a solid cross-section cut (stencil-capped).
     ///
     /// # Errors
     /// - [`RenderError::Surface`] on device loss or buffer-map failure.
-    #[allow(
-        clippy::unused_async,
-        clippy::too_many_arguments,
-        clippy::too_many_lines
+    /// - [`RenderError::ReadbackTimeout`] when the GPU does not complete the frame in time.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "preserve the lazy async renderer API and first-poll execution boundary"
     )]
-    pub async fn render_with_cut(
+    #[allow(clippy::unused_async, clippy::too_many_lines)]
+    pub async fn render_with_cut_with_deadline(
         &self,
-        mesh: &Mesh,
-        camera: &GpuCamera,
-        cut: &CutViewSpec,
-        half_extent: f32,
-        spec: ThumbnailSpec,
+        request: CutMeshRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        let CutMeshRequest {
+            mesh,
+            camera,
+            cut,
+            half_extent,
+            spec,
+            deadline,
+        } = request;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();
@@ -260,6 +291,7 @@ impl Offscreen {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &color_view,
                         resolve_target: None,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: color_load,
                             store: wgpu::StoreOp::Store,
@@ -278,6 +310,7 @@ impl Offscreen {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 rpass.set_pipeline(pipeline);
                 rpass.set_bind_group(0, &camera_bg, &[]);
@@ -323,6 +356,7 @@ impl Offscreen {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &color_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -341,6 +375,7 @@ impl Offscreen {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             rpass.set_pipeline(&self.renderer.cap_pipeline);
             rpass.set_bind_group(0, &camera_bg, &[]);
@@ -367,6 +402,7 @@ impl Offscreen {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &color_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: color_load,
                         store: wgpu::StoreOp::Store,
@@ -385,6 +421,7 @@ impl Offscreen {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             self.renderer.draw(
                 &mut rpass,
@@ -405,15 +442,15 @@ impl Offscreen {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &output_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
                     rows_per_image: Some(size),
@@ -423,6 +460,6 @@ impl Offscreen {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
-        self.read_back(&output_buffer, padded, spec.size_px)
+        self.read_back(&output_buffer, padded, spec.size_px, deadline)
     }
 }

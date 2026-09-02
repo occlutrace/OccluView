@@ -68,7 +68,7 @@ pub(super) fn write_mesh<W: Write>(
     }
 
     if mesh.kind() == MeshKind::TriangleMesh {
-        for triangle in mesh.indices().chunks_exact(3) {
+        for triangle in mesh.indices().as_chunks::<3>().0 {
             writer.write_all(&[3])?;
             for index in triangle {
                 write_i32_le(

@@ -320,7 +320,14 @@ where
             reason: format!("cannot skip unknown list element {name:?}"),
         });
     }
-    let tokens_to_skip = element.count * element.properties.len();
+    let tokens_to_skip = element
+        .count
+        .checked_mul(element.properties.len())
+        .ok_or_else(|| FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("unknown scalar element {name:?} declares too many values"),
+        })?;
     for _ in 0..tokens_to_skip {
         if tokens.next().is_none() {
             return Err(FormatError::Truncated {
@@ -618,5 +625,18 @@ end_header
         let ply = b"ply\nformat ascii 1.0\nelement vertex 0\nend_header\n";
         let mesh = crate::ply::read(ply).expect("an empty scan is empty, not malformed");
         assert_eq!(mesh.vertices().len(), 0);
+    }
+
+    #[test]
+    fn an_unknown_scalar_element_with_an_overflowing_token_count_is_malformed() {
+        let ply = b"ply\nformat ascii 1.0\nelement edge 18446744073709551615\nproperty float weight\nproperty float confidence\nend_header\n";
+
+        let error = crate::ply::read(ply)
+            .expect_err("an unknown element count must be rejected before it can overflow");
+
+        assert!(
+            format!("{error}").contains("too many values"),
+            "unexpected refusal: {error}"
+        );
     }
 }

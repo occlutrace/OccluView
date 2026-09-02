@@ -45,7 +45,7 @@ pub(super) fn write_mesh<W: Write>(
     writer.write_all(&header)?;
     writer.write_all(&triangle_count.to_le_bytes())?;
 
-    for triangle in mesh.indices().chunks_exact(3) {
+    for triangle in mesh.indices().as_chunks::<3>().0 {
         let a = mesh_vertex_position(mesh, triangle[0])?;
         let b = mesh_vertex_position(mesh, triangle[1])?;
         let c = mesh_vertex_position(mesh, triangle[2])?;

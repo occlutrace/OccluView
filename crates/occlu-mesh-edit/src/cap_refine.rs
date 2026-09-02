@@ -84,6 +84,10 @@ pub(super) fn refine_and_relax(
     let uv: Vec<Vec2> = rim_positions.iter().map(|&p| surface.local_ab(p)).collect();
     let attrs: Vec<EditVertex> = rim.to_vec();
     // Target edge scale per vertex: rim vertices average their two rim edges.
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "preserve established last-bit cap geometry"
+    )]
     let mut scale: Vec<f32> = (0..rim_len)
         .map(|index| {
             let prev = uv[(index + rim_len - 1) % rim_len];
@@ -200,6 +204,10 @@ fn bisect_pass(
             continue;
         };
         let (u, v) = key;
+        #[expect(
+            clippy::manual_midpoint,
+            reason = "preserve established last-bit cap geometry"
+        )]
         let target = (scale[u] + scale[v]) * 0.5;
         if uv[u].distance(uv[v]) <= ALPHA * target {
             continue;

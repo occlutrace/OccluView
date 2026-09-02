@@ -1,9 +1,9 @@
 //! Whole-scene export with each visible layer's pose baked into its geometry.
 
 use super::app_mesh_export::{
-    default_layer_export_directory, default_layer_export_format, layer_export_file_dialog,
-    mesh_export_format_from_path, mesh_write_extension, normalize_layer_export_path,
-    sanitize_filename_stem,
+    default_layer_export_directory, default_layer_export_format, fallback_mesh_write_format,
+    layer_export_file_dialog, mesh_export_format_from_path, mesh_write_extension,
+    normalize_layer_export_path, sanitize_filename_stem,
 };
 use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
@@ -112,6 +112,7 @@ impl OccluViewApp {
             .enumerate()
             .filter(|(_, entry)| entry.visible)
             .collect();
+        let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
             .map(|(index, entry)| {
@@ -119,7 +120,7 @@ impl OccluViewApp {
                     sanitize_filename_stem(&crate::layers_overlay::layer_label(
                         &paths, entry, *index,
                     )),
-                    default_layer_export_format(&paths, *index),
+                    default_layer_export_format(&paths, *index, fallback),
                 )
             })
             .collect();

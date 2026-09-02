@@ -32,7 +32,7 @@ impl BoundaryOwners {
     /// edge -- which is what the hash map it replaces did.
     fn from_mesh(mesh: &MeshEditBuffers) -> Result<Self, MeshEditError> {
         let mut edges = Vec::with_capacity(mesh.triangle_count() * 3);
-        for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
+        for (triangle_index, triangle) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
             let [a, b, c] = triangle_vertices(triangle, triangle_index)?;
             let owner = u32::try_from(triangle_index).unwrap_or(u32::MAX);
             for (from, to) in [(a, b), (b, c), (c, a)] {
