@@ -4,10 +4,10 @@
 
 ## Testing
 
-- [ ] `cargo fmt --all --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace --all-targets`
-- [ ] `cargo doc --workspace --no-deps --all-features` (no warnings)
+- [ ] `cargo fmt --all -- --check`
+- [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- [ ] `cargo test --workspace --all-targets --locked`
+- [ ] `cargo doc --workspace --no-deps --all-features --locked` (no warnings)
 
 ## Checklist
 

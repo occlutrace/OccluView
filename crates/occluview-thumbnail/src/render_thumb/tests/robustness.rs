@@ -58,7 +58,12 @@ fn stl_nonfinite_corners_thumbnail_stays_visible_and_solid() {
         "non-finite poisoned bbox"
     );
 
-    let pixels = rendering::render_mesh_thumbnail(mesh, spec).expect("render");
+    let pixels = rendering::render_mesh_thumbnail(
+        mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("render");
     assert_visible_thumbnail_pixels(&pixels, spec);
     let holes = interior_hole_count(&pixels, usize::from(spec.size_px));
     assert_eq!(holes, 0, "non-finite handling left {holes} interior holes");
@@ -71,7 +76,12 @@ fn stl_huge_coordinate_range_thumbnail_stays_visible() {
     let mesh = try_read_fast_thumbnail_mesh_for_kind(FormatKind::Stl, &bytes)
         .expect("huge-range STL should cluster its mm-scale bulk");
     assert!(mesh.bbox_uncached().size().is_finite());
-    let pixels = rendering::render_mesh_thumbnail(mesh, spec).expect("render");
+    let pixels = rendering::render_mesh_thumbnail(
+        mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("render");
     assert_visible_thumbnail_pixels(&pixels, spec);
 }
 
@@ -85,7 +95,12 @@ fn obj_far_outlier_thumbnails_solid() {
     assert!(mesh.triangle_count() > 0);
     assert!(mesh.bbox_uncached().size().is_finite());
 
-    let pixels = rendering::render_mesh_thumbnail(mesh, spec).expect("render");
+    let pixels = rendering::render_mesh_thumbnail(
+        mesh,
+        spec,
+        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+    )
+    .expect("render");
     assert_visible_thumbnail_pixels(&pixels, spec);
     let holes = interior_hole_count(&pixels, usize::from(spec.size_px));
     assert_eq!(holes, 0, "OBJ outlier left {holes} interior holes");
@@ -106,7 +121,12 @@ fn all_degenerate_stl_never_returns_a_transparent_tile() {
     );
 
     let pixels = render_thumbnail_or_placeholder(Some("stl"), &bytes, spec);
-    let visible = pixels.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let visible = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     assert!(
         visible > 0,
         "the public entry point returned a fully transparent tile for a degenerate file"
@@ -176,8 +196,13 @@ fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
         content: None,
     };
 
-    let settled =
-        render_file_thumbnail_job(path.clone(), measured, keys(), spec, Duration::from_secs(6));
+    let settled = render_file_thumbnail_job(
+        path.clone(),
+        measured,
+        keys(),
+        spec,
+        ThumbnailRenderRequest::new(Duration::from_secs(6)),
+    );
     assert!(
         matches!(settled, ThumbnailAttempt::Bitmap(_)),
         "a file that is simply short is a verdict about the file"
@@ -187,8 +212,13 @@ fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
         byte_len: measured.byte_len + 1024,
         modified_nanos: measured.modified_nanos,
     };
-    let moving =
-        render_file_thumbnail_job(path.clone(), stale, keys(), spec, Duration::from_secs(6));
+    let moving = render_file_thumbnail_job(
+        path.clone(),
+        stale,
+        keys(),
+        spec,
+        ThumbnailRenderRequest::new(Duration::from_secs(6)),
+    );
     assert!(
         matches!(moving, ThumbnailAttempt::TransientFailure),
         "a file that changed while it was read must be asked about again"

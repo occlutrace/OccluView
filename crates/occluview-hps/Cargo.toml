@@ -25,9 +25,16 @@ private-hps-key = []
 [dependencies]
 adler2   = { workspace = true }
 blowfish = { workspace = true }
+glam     = { workspace = true }
 image    = { workspace = true }
 md-5     = { workspace = true }
+occlu-geometry-math = { workspace = true }
 thiserror = { workspace = true }
 zeroize  = { workspace = true }
 tracing  = { workspace = true }
 zip      = { workspace = true }
+
+[dev-dependencies]
+# The production reader accepts only PNG/JPEG. Enable BMP in tests solely to
+# prove that the byte-level allowlist still refuses a valid, decodable BMP.
+image = { workspace = true, features = ["bmp"] }

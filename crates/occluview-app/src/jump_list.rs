@@ -5,13 +5,18 @@
 use super::APP_USER_MODEL_ID;
 use crate::jump_list_model::JumpListItem;
 use crate::recent_files::RecentFiles;
+use std::mem::ManuallyDrop;
 use std::path::Path;
-use windows::core::{Interface, HSTRING};
+use windows::core::{Interface, BSTR, HSTRING};
 use windows::Win32::Storage::EnhancedStorage::PKEY_Title;
+use windows::Win32::System::Com::StructuredStorage::{
+    PropVariantClear, PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
+use windows::Win32::System::Variant::VT_BSTR;
 use windows::Win32::UI::Shell::Common::{IObjectArray, IObjectCollection};
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 use windows::Win32::UI::Shell::{
@@ -33,10 +38,15 @@ pub(crate) fn publish_recent_files(recent: &RecentFiles) -> windows::core::Resul
             destination_list.DeleteList(&HSTRING::from(APP_USER_MODEL_ID))?;
             return Ok(());
         }
-        let exe_path = std::env::current_exe().map_err(|_| windows::core::Error::from_win32())?;
+        let exe_path = std::env::current_exe().map_err(|error| {
+            windows::core::Error::new(
+                windows::Win32::Foundation::E_FAIL,
+                format!("could not determine the OccluView executable path: {error}"),
+            )
+        })?;
         destination_list.SetAppID(&HSTRING::from(APP_USER_MODEL_ID))?;
         let mut min_slots = 0;
-        let _removed: IObjectArray = destination_list.BeginList(&mut min_slots)?;
+        let _removed: IObjectArray = destination_list.BeginList(&raw mut min_slots)?;
 
         let collection: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
@@ -68,15 +78,46 @@ fn shell_link_for_item(exe_path: &Path, item: &JumpListItem) -> windows::core::R
     }
 
     let property_store: IPropertyStore = link.cast()?;
-    let title = windows::core::PROPVARIANT::from(item.title.as_str());
-    // SAFETY: PKEY_Title is a stable shell property key; the PROPVARIANT owns
-    // its BSTR until SetValue returns.
+    let title = OwnedPropVariant::from_bstr(&item.title);
+    // SAFETY: PKEY_Title is a stable shell property key; `title` owns the
+    // PROPVARIANT allocation until this function returns.
     unsafe {
-        property_store.SetValue(&PKEY_Title, &title)?;
+        property_store.SetValue(&PKEY_Title, title.as_raw())?;
         property_store.Commit()?;
     }
 
     Ok(link)
+}
+
+struct OwnedPropVariant(PROPVARIANT);
+
+impl OwnedPropVariant {
+    fn from_bstr(value: &str) -> Self {
+        Self(PROPVARIANT {
+            Anonymous: PROPVARIANT_0 {
+                Anonymous: ManuallyDrop::new(PROPVARIANT_0_0 {
+                    vt: VT_BSTR,
+                    wReserved1: 0,
+                    wReserved2: 0,
+                    wReserved3: 0,
+                    Anonymous: PROPVARIANT_0_0_0 {
+                        bstrVal: ManuallyDrop::new(BSTR::from(value)),
+                    },
+                }),
+            },
+        })
+    }
+
+    fn as_raw(&self) -> &PROPVARIANT {
+        &self.0
+    }
+}
+
+impl Drop for OwnedPropVariant {
+    fn drop(&mut self) {
+        // SAFETY: this value was constructed with a BSTR in PROPVARIANT form.
+        let _ = unsafe { PropVariantClear(&raw mut self.0) };
+    }
 }
 
 struct ComApartment;

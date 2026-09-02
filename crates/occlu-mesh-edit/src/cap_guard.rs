@@ -47,7 +47,7 @@ impl VertexTriangleIncidence {
         }
         let mut data = vec![0_usize; *counts.last().unwrap_or(&0)];
         let mut cursor = counts.clone();
-        for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+        for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
             for &index in tri {
                 let vertex = index as usize;
                 if vertex < vertex_count {

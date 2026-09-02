@@ -25,13 +25,13 @@ pub(crate) fn build_ghost_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: "vs_main",
-            buffers: &[GpuMesh::vertex_layout()],
+            entry_point: Some("vs_main"),
+            buffers: &[Some(GpuMesh::vertex_layout())],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: "fs_ghost",
+            entry_point: Some("fs_ghost"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: target_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -48,13 +48,13 @@ pub(crate) fn build_ghost_pipeline(
         // ghost, but do not write depth: the ghost must never block anything.
         depth_stencil: Some(wgpu::DepthStencilState {
             format: depth_format,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample,
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }

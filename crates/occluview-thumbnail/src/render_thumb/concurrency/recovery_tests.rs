@@ -127,7 +127,7 @@ mod poison_recovery_tests {
         // A poisoned pool must still create/serve a renderer instead of failing
         // every checkout for the rest of the process.
         let renderer = pool
-            .checkout_renderer()
+            .checkout_renderer_within(Duration::from_secs(20))
             .expect("a poisoned renderer pool must still serve a renderer");
         {
             let lease = ThumbnailRendererLease::new(&pool, renderer);
@@ -157,16 +157,23 @@ mod poison_recovery_tests {
 }
 
 mod renderer_pool_recovery_tests {
-    use super::{ThumbnailError, ThumbnailRendererPool, RENDERER_WAIT_CEILING};
+    use super::{ThumbnailError, ThumbnailRendererPool};
+    use occluview_render::{AdapterPolicy, RenderDeadline};
     use std::time::{Duration, Instant};
 
-    fn refuses() -> Result<occluview_render::Offscreen, ThumbnailError> {
+    fn refuses(
+        _deadline: RenderDeadline,
+        _adapter_policy: AdapterPolicy,
+    ) -> Result<occluview_render::Offscreen, ThumbnailError> {
         Err(ThumbnailError::Render(
             occluview_render::RenderError::NoAdapter,
         ))
     }
 
-    fn panics() -> Result<occluview_render::Offscreen, ThumbnailError> {
+    fn panics(
+        _deadline: RenderDeadline,
+        _adapter_policy: AdapterPolicy,
+    ) -> Result<occluview_render::Offscreen, ThumbnailError> {
         panic!("a driver reset during device creation");
     }
 
@@ -224,10 +231,6 @@ mod renderer_pool_recovery_tests {
             waited >= Duration::from_millis(100) && waited < Duration::from_secs(5),
             "expired at the budget, not early and not never: {waited:?}"
         );
-        assert!(
-            RENDERER_WAIT_CEILING >= Duration::from_secs(10),
-            "the production ceiling is a backstop, not a request budget"
-        );
     }
 
     /// A render that panics must not park its device back in the pool.
@@ -247,9 +250,11 @@ mod renderer_pool_recovery_tests {
         drop(super::ThumbnailRendererLease::new(&pool, renderer));
 
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pool.with_renderer(|_| -> Result<(), ThumbnailError> {
-                panic!("a device fault mid-render")
-            })
+            pool.with_renderer(
+                RenderDeadline::after(Duration::from_secs(20)),
+                AdapterPolicy::FallbackOnly,
+                |_| -> Result<(), ThumbnailError> { panic!("a device fault mid-render") },
+            )
         }));
         assert!(panicked.is_err(), "the panic must reach the caller");
 

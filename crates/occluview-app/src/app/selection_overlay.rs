@@ -87,7 +87,7 @@ fn selection_overlay_for_layer(
 
     let mut vertices = Vec::with_capacity(selection.selected_count() * 3);
     let mut indices = Vec::with_capacity(selection.selected_count() * 3);
-    for (triangle_index, triangle) in entry.mesh.indices().chunks_exact(3).enumerate() {
+    for (triangle_index, triangle) in entry.mesh.indices().as_chunks::<3>().0.iter().enumerate() {
         if !selection.as_slice()[triangle_index] {
             continue;
         }

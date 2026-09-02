@@ -529,6 +529,10 @@ fn solve_cholesky(matrix: &[[f64; 6]; 6], gradient: &[f64; 6]) -> Option<[f64; 6
     for row in 0..6 {
         for column in 0..=row {
             let mut sum = matrix[row][column];
+            #[expect(
+                clippy::needless_range_loop,
+                reason = "fixed 6x6 Cholesky indices preserve bit-repeatability"
+            )]
             for inner in 0..column {
                 sum -= lower[row][inner] * lower[column][inner];
             }

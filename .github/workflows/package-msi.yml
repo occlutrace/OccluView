@@ -9,15 +9,46 @@ on:
           latest.json, release notes) without creating a GitHub Release.
         type: boolean
         default: false
+      windows_configuration:
+        description: >-
+          Windows package profile. Diagnostic is a non-release,
+          symbol-carrying MSI and never enters the release path.
+        type: choice
+        options:
+          - release
+          - diagnostic
+        default: release
+      windows_msi_version:
+        description: >-
+          Optional private diagnostic MSI product version. This permits a
+          monotonic install-over test without relabeling a public release.
+        type: string
+        default: ""
+      legacy_msi_run_id:
+        description: >-
+          Optional Actions run ID containing one known legacy MSI to exercise
+          a checksum-pinned migration before package verification.
+        type: string
+        default: ""
+      legacy_msi_sha256:
+        description: >-
+          Required SHA-256 for legacy_msi_run_id's MSI; leave blank unless the
+          run ID is also supplied.
+        type: string
+        default: ""
   push:
     tags:
       - "v*.*.*"
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: package-${{ github.ref }}
+  # A non-release diagnostic run must not cancel an ordinary package
+  # verification for the same commit. Tag and normal manual runs still share
+  # the release lane.
+  group: package-${{ github.ref }}-${{ inputs.windows_configuration || 'release' }}
   cancel-in-progress: true
 
 env:
@@ -30,6 +61,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: read
     env:
       OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
       OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
@@ -38,9 +70,10 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -86,7 +119,7 @@ jobs:
           }
 
           $testLog = Join-Path $env:RUNNER_TEMP "occluview-hps-provider-test.log"
-          cargo test -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
+          cargo test --locked -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
           $testExit = $LASTEXITCODE
           if (Select-String -Path $testLog -SimpleMatch -Pattern $env:OCCLUVIEW_HPS_EMBEDDED_KEY -Quiet) {
             Remove-Item -LiteralPath $testLog -Force
@@ -101,8 +134,25 @@ jobs:
         shell: pwsh
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: ./install/build-msi.ps1 -SignMode auto
+        run: |
+          $configuration = "release"
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and "${{ inputs.windows_configuration }}" -eq "diagnostic") {
+            $configuration = "diagnostic"
+          }
+          $buildArgs = @{
+            Configuration = $configuration
+            SignMode = "auto"
+          }
+          $requestedMsiVersion = "${{ inputs.windows_msi_version }}".Trim()
+          if (-not [string]::IsNullOrWhiteSpace($requestedMsiVersion)) {
+            if ($configuration -ne "diagnostic") {
+              throw "windows_msi_version is reserved for private diagnostic packages."
+            }
+            $buildArgs.Version = $requestedMsiVersion
+          }
+          & ./install/build-msi.ps1 @buildArgs
       - name: Build portable ZIP
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $cargoText = Get-Content ./Cargo.toml -Raw
@@ -124,7 +174,7 @@ jobs:
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
       - name: Verify Authenticode signatures when configured
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run) && inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
@@ -146,7 +196,8 @@ jobs:
             if ($sig.Status -ne "Valid") { throw "Authenticode signature for $path is $($sig.Status): $($sig.StatusMessage)" }
             Write-Host "Authenticode valid: $path ($($sig.SignerCertificate.Subject))"
           }
-      - name: Build upgrade smoke MSI
+      - name: Build upgrade smoke MSIs
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         env:
           OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
@@ -159,12 +210,64 @@ jobs:
           $upgradeVersion = "{0}.{1}.{2}" -f $version.Major, $version.Minor, ($version.Build + 1)
           $smokeDir = Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade"
           ./install/build-msi.ps1 -Version $upgradeVersion -OutputDir $smokeDir -SkipBuild -SignMode auto
+      - name: Validate optional legacy MSI migration inputs
+        if: inputs.windows_configuration != 'diagnostic'
+        shell: pwsh
+        env:
+          OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}
+          OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}
+        run: |
+          $runId = $env:OCCLUVIEW_LEGACY_MSI_RUN_ID.Trim()
+          $sha256 = $env:OCCLUVIEW_LEGACY_MSI_SHA256.Trim()
+          if ([string]::IsNullOrWhiteSpace($runId) -xor [string]::IsNullOrWhiteSpace($sha256)) {
+            throw "Legacy MSI migration inputs must be supplied together."
+          }
+      - name: Download optional legacy MSI migration artifact
+        if: inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: occluview-windows-package
+          path: ${{ runner.temp }}/occluview-legacy-migration
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.legacy_msi_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify optional legacy MSI migration artifact
+        if: inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''
+        shell: pwsh
+        env:
+          OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}
+          OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}
+        run: |
+          $legacyRoot = Join-Path $env:RUNNER_TEMP "occluview-legacy-migration"
+          $runId = $env:OCCLUVIEW_LEGACY_MSI_RUN_ID.Trim()
+          $legacyMsis = @(Get-ChildItem -Path $legacyRoot -Filter *.msi -File -Recurse)
+          if ($legacyMsis.Count -ne 1) {
+            throw "Expected exactly one legacy MSI from run $runId, found $($legacyMsis.Count)."
+          }
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $legacyMsis[0].FullName).Hash.ToLowerInvariant()
+          $expectedSha256 = $env:OCCLUVIEW_LEGACY_MSI_SHA256.Trim().ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Legacy MSI SHA-256 mismatch: expected $expectedSha256, got $actualSha256."
+          }
+          "OCCLUVIEW_LEGACY_MSI_PATH=$($legacyMsis[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Smoke install and uninstall
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $upgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName
+          if (-not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_LEGACY_MSI_PATH)) {
+            ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -LegacyUpgradeMsiPath $env:OCCLUVIEW_LEGACY_MSI_PATH -UpgradeMsiPath $upgradeMsi.FullName -DowngradeMsiPath $releaseMsi.FullName
+          } else {
+            ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName -DowngradeMsiPath $releaseMsi.FullName
+          }
+      - name: Diagnostic MSI lifecycle smoke
+        if: inputs.windows_configuration == 'diagnostic'
+        shell: pwsh
+        run: |
+          $diagnosticMsi = Get-ChildItem ./dist -Filter "*-diagnostic.msi" -File | Select-Object -First 1
+          if ($null -eq $diagnosticMsi) { throw "Diagnostic MSI artifact missing." }
+          ./install/test-msi-lifecycle.ps1 -MsiPath $diagnosticMsi.FullName -Diagnostic
       - name: Write Windows checksums
         shell: pwsh
         run: |
@@ -177,6 +280,7 @@ jobs:
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
           # The virtual workspace emits one SBOM beside each member manifest.
+          cargo metadata --locked --format-version 1
           cargo cyclonedx --format json --override-filename sbom-windows
           $sbom = "crates/occluview-app/sbom-windows.json"
           if (-not (Test-Path $sbom)) {
@@ -186,6 +290,7 @@ jobs:
           if ($described -ne "occluview-app") {
             throw "SBOM describes '$described', not the shipped viewer."
           }
+          git diff --exit-code -- Cargo.lock
           Move-Item $sbom ./dist/sbom-windows.json -Force
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -200,6 +305,7 @@ jobs:
 
   linux-package:
     name: build linux deb
+    if: inputs.windows_configuration != 'diagnostic'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -210,7 +316,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -257,7 +363,7 @@ jobs:
 
           test_log="$(mktemp)"
           set +e
-          cargo test -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
+          cargo test --locked -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
           test_status=$?
           set -e
           if printf '%s\n' "$OCCLUVIEW_HPS_EMBEDDED_KEY" | grep -Fq -f - "$test_log"; then
@@ -297,6 +403,7 @@ jobs:
       - name: Generate SBOM (Linux)
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
+          cargo metadata --locked --format-version 1
           cargo cyclonedx --format json --override-filename sbom-linux
           sbom=crates/occluview-app/sbom-linux.json
           if [[ ! -f "$sbom" ]]; then
@@ -309,6 +416,7 @@ jobs:
           if described != "occluview-app":
               raise SystemExit(f"SBOM describes {described!r}, not the shipped viewer.")
           PY
+          git diff --exit-code -- Cargo.lock
           cp "$sbom" target/deb/sbom-linux.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -322,7 +430,7 @@ jobs:
 
   publish:
     name: publish github release
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run
+    if: (startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run) && inputs.windows_configuration != 'diagnostic'
     timeout-minutes: 20
     needs:
       - windows-package
@@ -365,16 +473,40 @@ jobs:
           cat > dist/release-notes.md <<NOTES
           OccluView $RELEASE_TAG
 
-          Assets:
-          - MSI installer: installs the Windows viewer, Explorer thumbnails, live Preview Pane handler, file associations, and the shared 3D file icon.
-          - Portable ZIP: manual Windows launch only; it does not install Explorer thumbnails or file associations.
-          - Debian package: installs the native Linux viewer, freedesktop launcher, MIME registration, icon, and thumbnailer.
+          ## Start here
+
+          ### Windows installer — recommended
+
+          Download \`OccluView-Windows-Setup.msi\`. It installs the
+          viewer, Explorer thumbnails, the live Preview Pane, and file
+          associations. For a normal Windows workstation, this is the only file
+          to choose.
+
+          ### Windows portable (.zip)
+
+          Use \`OccluView-Windows-Portable.zip\` only when software cannot be
+          installed. It opens OccluView manually and does not add Explorer
+          previews or file associations.
+
+          ### Debian / Ubuntu (.deb)
+
+          Download \`OccluView-Linux.deb\` for the native Linux viewer,
+          launcher, MIME registration, and thumbnailer.
+
+          <details>
+          <summary>For IT and verification</summary>
+
+          The \`OccluView-${RELEASE_TAG#v}-verification.zip\` download contains
+          checksums, signature material, the signed update manifest, public key,
+          and SBOMs for verification and audit. GitHub build provenance remains
+          attached to each normal package. Normal users do not need this archive.
 
           All packages install LICENSE, NOTICE, THIRD-PARTY-NOTICES.md and
           THIRD-PARTY-NOTICES-NATIVE.md (the statically linked C++ components,
           which no Cargo-derived document covers).
 
-          Verify what you downloaded (run from the download directory):
+          Extract the verification archive beside the package, then verify if
+          your clinic IT team requires it:
 
           \`\`\`
           sha256sum -c <asset>.sha256
@@ -385,6 +517,8 @@ jobs:
           The same key is published as occluview.pub in the repository and is
           compiled into the updater. sbom-windows.json and sbom-linux.json list
           every third-party component in the binaries.
+
+          </details>
           NOTES
           # The changelog section for this version, verbatim, so the release
           # page states what changed without a second hop.
@@ -420,6 +554,23 @@ jobs:
             echo "Missing release artifact (msi='$msi' zip='$zip' deb='$deb')." >&2
             exit 1
           fi
+
+          rename_release_asset() {
+            local source="$1"
+            local destination="$2"
+            mv "$source" "$destination"
+            rm -f "$source.sha256"
+            (
+              cd ./dist
+              sha256sum "$(basename "$destination")" > "$(basename "$destination").sha256"
+            )
+          }
+          rename_release_asset "$msi" "./dist/OccluView-Windows-Setup.msi"
+          rename_release_asset "$zip" "./dist/OccluView-Windows-Portable.zip"
+          rename_release_asset "$deb" "./dist/OccluView-Linux.deb"
+          msi="./dist/OccluView-Windows-Setup.msi"
+          zip="./dist/OccluView-Windows-Portable.zip"
+          deb="./dist/OccluView-Linux.deb"
 
           sign_and_hash() {
             local file="$1"
@@ -475,6 +626,20 @@ jobs:
             minisign -V -P "$pubkey" -m "$file"
             echo "Verified against the shipped public key: $file"
           done
+      - name: Bundle verification material
+        run: |
+          version="${RELEASE_TAG#v}"
+          cp ./occluview.pub ./dist/occluview.pub
+          (
+            cd ./dist
+            shopt -s nullglob
+            material=( *.sha256 *.minisig latest.json sbom-*.json occluview.pub )
+            if [[ "${#material[@]}" -eq 0 ]]; then
+              echo "No verification material was produced." >&2
+              exit 1
+            fi
+            zip -q "OccluView-${version}-verification.zip" "${material[@]}"
+          )
       - name: Attest build provenance
         if: ${{ !inputs.release_dry_run }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -494,7 +659,7 @@ jobs:
         run: |
           tag="$RELEASE_TAG"
           release_flags=()
-          mapfile -d '' assets < <(find ./dist -type f \( -name '*.msi' -o -name '*.zip' -o -name '*.deb' -o -name '*.sha256' -o -name '*.minisig' -o -name '*.json' \) -print0 | sort -z)
+          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name '*-verification.zip' -o -name 'latest.json' -o -name 'latest.json.minisig' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1

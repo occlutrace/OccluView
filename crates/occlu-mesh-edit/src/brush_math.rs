@@ -77,7 +77,7 @@ pub(crate) fn boundary_mask(
     vertex_count: usize,
 ) -> Vec<bool> {
     let mut edge_uses: HashMap<(u32, u32), u32> = HashMap::with_capacity(indices.len());
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -155,6 +155,10 @@ pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[u32], here
         .map(|&position| position.distance(here))
         .filter(|length| length.is_finite() && *length > 0.0)
         .fold(f32::MAX, f32::min);
+    #[expect(
+        clippy::float_cmp,
+        reason = "f32::MAX is an exact no-neighbor sentinel"
+    )]
     if shortest == f32::MAX {
         return 1.0;
     }

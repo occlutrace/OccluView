@@ -1,5 +1,5 @@
 # clippy configuration.
-# Enforced in CI: `cargo clippy --workspace --all-targets -- -D warnings`.
+# Enforced in CI: `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 
 # Cognitive complexity per function.
 cognitive-complexity-threshold = 15
@@ -23,7 +23,7 @@ too-many-arguments-threshold = 5
 enum-variant-size-threshold = 256
 
 # Prefer MSRV-aware lints. Matches rust-toolchain.toml.
-msrv = "1.86"
+msrv = "1.98"
 
 # Allow certain words in identifiers that clippy's `doc_markdown` flags
 # incorrectly for our domain.

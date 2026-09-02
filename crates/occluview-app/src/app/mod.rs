@@ -43,14 +43,15 @@ const LINUX_OPEN_REQUEST_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 
 mod app_align;
 mod app_align_brush;
-mod app_align_display;
-mod app_align_drag;
+pub(crate) mod app_align_display;
+pub(crate) mod app_align_drag;
 mod app_align_panel;
 mod app_align_results;
 mod app_align_session;
 mod app_bridge_split;
 mod app_cut_measure;
 mod app_dialogs;
+mod app_input;
 mod app_layer_edits;
 mod app_layer_interaction;
 mod app_load_errors;
@@ -58,15 +59,21 @@ mod app_loading;
 mod app_mesh_editor;
 mod app_mesh_export;
 mod app_render;
+#[cfg(test)]
+mod app_render_characterization_tests;
 mod app_scale_bar;
 mod app_scene_commit;
 mod app_scene_export;
 mod app_scene_menu;
 mod app_sculpt;
+#[cfg(test)]
+mod app_sculpt_characterization_tests;
 mod app_sculpt_worker;
+mod app_settings_window;
 mod app_third_party;
 mod app_viewport;
 mod disc_frame;
+mod information_dialog;
 mod open_dialogs;
 mod selection_overlay;
 mod state;
@@ -79,9 +86,7 @@ use app_layer_edits::{
 use app_load_errors::load_error_dialog;
 use app_scale_bar::paint_scale_bar;
 pub(crate) use state::{parse_args, OccluViewApp, StartupHandles};
-use state::{
-    AboutWindowState, AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame,
-};
+use state::{AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame};
 
 #[cfg(test)]
 mod tests {

@@ -1,17 +1,18 @@
 # OccluView — Cargo workspace root.
 #
 # Workspace layering:
-#   mesh-edit ← (nothing)
-#   hps       ← (no OccluView crates)
-#   align     ← (nothing; plain slices in, plain values out)
-#   core      → mesh-edit (+ optional robust-csg bridge fallback)
-#   formats   → core + hps
-#   render    → core
-#   thumbnail → core + render + formats
-#   shell     → core + render + formats + thumbnail
-#   app       → core + formats + render + align + update (+ shell on Windows for installer refresh)
-#   cli       → core + formats + render + thumbnail
-#   update    → (nothing)
+#   geometry-math ← (nothing; shared constants + trivial pure math)
+#   mesh-edit     → geometry-math
+#   hps           → geometry-math (no other OccluView crates)
+#   align         ← (nothing OccluView; plain slices in, plain values out)
+#   core          → mesh-edit + geometry-math (+ optional robust-csg bridge fallback)
+#   formats       → core + hps
+#   render        → core
+#   thumbnail     → core + render + formats
+#   shell         → core + render + formats + thumbnail
+#   app           → core + formats + render + align + update (+ shell on Windows for installer refresh)
+#   cli           → core + formats + render + thumbnail
+#   update        → (nothing)
 # Cycles are P0. Never add an upward dependency.
 #
 # License: Apache-2.0 (NOTICE + LICENSE).
@@ -19,6 +20,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/occlu-geometry-math",
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
     "crates/occluview-align",
@@ -52,9 +54,9 @@ default-members = [
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.1.0"
+version = "1.1.4"
 edition = "2021"
-rust-version = "1.86"        # MSRV; matches rust-toolchain.toml
+rust-version = "1.98"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/occlutrace/occluview"
@@ -65,6 +67,7 @@ publish = false              # we are not on crates.io yet
 # `dep = { workspace = true }` in each crate's [dependencies].
 [workspace.dependencies]
 # Internal crates.
+occlu-geometry-math = { path = "crates/occlu-geometry-math" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-align   = { path = "crates/occluview-align" }
@@ -105,8 +108,9 @@ serde_json = "1.0"
 pollster   = "0.4"
 
 # Image encode/decode: PNG for golden tests + thumbnail output, JPEG for glTF
-# texture images (dental GLBs commonly embed JPEG textures). 0.25.10 raises
-# MSRV to 1.88; stay below it while rust-toolchain.toml pins 1.86.
+# texture images (dental GLBs commonly embed JPEG textures). The <0.25.10 bound
+# prevents decoder-graph changes without malformed-input, golden-thumbnail, and
+# allocation-bound coverage.
 image      = { version = ">=0.25.5, <0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 # Memory-mapped file loading for large meshes.
@@ -121,11 +125,11 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # GPU / rendering.
-wgpu = "22.0"               # pinned; bumps need tests and a changelog entry
+wgpu = "=30.0.1"             # pinned; bumps need tests and a changelog entry
 
 # Windowing / GUI.
-egui    = "0.29"
-eframe  = { version = "0.29", default-features = false, features = ["wgpu", "default_fonts"] }
+egui    = "=0.36.1"
+eframe  = { version = "=0.36.1", default-features = false, features = ["wgpu", "default_fonts", "links"] }
 rfd     = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
 
 # Linux window activation. The app uses the system Wayland connection exposed
@@ -135,7 +139,7 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 # NOTE: the windows-rs dependency is declared per crate, not here. A workspace
 # entry used to carry a tidy commented feature list that neither consumer read
-# -- it pinned `version = "0"` while both real declarations pin 0.58 -- so
+# -- it pinned `version = "0"` while both real declarations pin 0.62 -- so
 # adding a feature to it changed nothing and cost an afternoon to work out. The
 # feature sets live in `crates/occluview-shell/Cargo.toml`,
 # `crates/occluview-app/Cargo.toml` and `crates/occluview-formats/Cargo.toml`,
@@ -190,6 +194,19 @@ panic = "abort"
 # profile is what makes those catches able to catch at all.
 [profile.release-unwind]
 inherits = "release"
+panic = "unwind"
+
+# Non-release diagnostic packages retain optimized code generation while
+# carrying PDBs. The app still aborts on panic; the Explorer-hosted shell DLL
+# gets the matching unwind profile below so its COM entry guards can contain a
+# panic.
+[profile.release-diagnostic]
+inherits = "release"
+debug = 2
+strip = "none"
+
+[profile.release-diagnostic-unwind]
+inherits = "release-diagnostic"
 panic = "unwind"
 
 [profile.dev]

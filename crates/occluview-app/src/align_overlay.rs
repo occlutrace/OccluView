@@ -23,7 +23,7 @@ const MARKER_FILL: egui::Color32 = egui::Color32::from_rgb(246, 247, 249);
 
 /// The colour a rejected pair is drawn in. It is shown, not hidden: the
 /// operator needs to see which click the fit threw away.
-const REJECTED_INK: egui::Color32 = egui::Color32::from_rgb(198, 64, 48);
+const REJECTED_INK: egui::Color32 = ui_theme::DANGER;
 
 /// Everything one paint pass needs.
 pub(crate) struct PairPaint<'a> {
@@ -83,7 +83,7 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         // each correspondence an arrow and its Back button undoes one, so the
         // operator counts arrows; the head sits at the FIXED end, which is
         // where the surface is going.
-        let stroke = egui::Stroke::new(1.1, ink.gamma_multiply(0.7));
+        let stroke = egui::Stroke::new(1.1_f32, ink.gamma_multiply(0.7));
         painter.line_segment([moving, fixed], stroke);
         arrowhead(painter, moving, fixed, stroke);
         marker(painter, moving, ink, index + 1);
@@ -95,7 +95,7 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
             if let Some(hover) = hover {
                 painter.extend(egui::Shape::dashed_line(
                     &[anchor, hover],
-                    egui::Stroke::new(1.1, ui_theme::ACCENT),
+                    egui::Stroke::new(1.1_f32, ui_theme::ACCENT),
                     5.0,
                     4.0,
                 ));
@@ -135,7 +135,7 @@ fn arrowhead(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: 
 /// One numbered marker.
 fn marker(painter: &egui::Painter, at: egui::Pos2, ink: egui::Color32, number: usize) {
     painter.circle_filled(at, MARKER_RADIUS_PX, MARKER_FILL);
-    painter.circle_stroke(at, MARKER_RADIUS_PX, egui::Stroke::new(1.6, ink));
+    painter.circle_stroke(at, MARKER_RADIUS_PX, egui::Stroke::new(1.6_f32, ink));
     painter.text(
         at,
         egui::Align2::CENTER_CENTER,

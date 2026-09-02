@@ -504,3 +504,9 @@ FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
+
+## Vendored icon assets
+
+| Component | Version | License | How it gets here |
+| --- | --- | --- | --- |
+| Lucide icons | 0.544.0 | ISC | 52 SVG files vendored under `crates/occluview-app/assets/icons/`, rasterized at draw time by `src/icons.rs`; their license text ships beside them (`LICENSE-LUCIDE.txt`) |

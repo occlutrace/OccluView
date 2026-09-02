@@ -36,13 +36,16 @@ image          = { workspace = true }
 # `GetDriveTypeW`, to refuse memory-mapping a network share or removable drive
 # whose disappearance would raise EXCEPTION_IN_PAGE_ERROR instead of an error.
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.58"
+version = "0.62"
 features = ["Win32_Storage_FileSystem"]
 
 [dev-dependencies]
 zip            = { workspace = true }
 proptest = { workspace = true }
 tempfile = "3"
+# The production reader accepts only PNG/JPEG. Enable BMP in tests solely to
+# prove that the byte-level allowlist still refuses a valid, decodable BMP.
+image = { workspace = true, features = ["bmp"] }
 
 [[example]]
 name = "smoke_real_files"

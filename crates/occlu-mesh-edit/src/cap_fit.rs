@@ -291,6 +291,7 @@ impl OverhangClassifier {
         // (conservative: only clearly-interior samples are dropped there).
         if global_min < f32::MAX {
             for slot in &mut min_radius_by_bin {
+                #[expect(clippy::float_cmp, reason = "f32::MAX is an exact empty-bin sentinel")]
                 if *slot == f32::MAX {
                     *slot = global_min;
                 }
@@ -353,6 +354,10 @@ fn solve6(mut m: [[f32; 6]; 6], mut b: [f32; 6]) -> Option<[f32; 6]> {
             if factor == 0.0 {
                 continue;
             }
+            #[expect(
+                clippy::needless_range_loop,
+                reason = "fixed 6x6 elimination indices preserve bit-repeatability"
+            )]
             for k in col..6 {
                 m[row][k] -= factor * m[col][k];
             }

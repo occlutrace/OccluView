@@ -29,6 +29,11 @@
     clippy::not_unsafe_ptr_arg_deref,
     clippy::ptr_as_ptr,
     clippy::borrow_as_ptr,
+    // `windows::core::implement` generates COM vtable adapters using these
+    // patterns. Keep the exception at the FFI boundary rather than weakening
+    // Clippy for the rest of the workspace.
+    clippy::ref_as_ptr,
+    clippy::inline_always,
     clippy::unnecessary_cast,
     clippy::cast_precision_loss,
     clippy::doc_markdown,
@@ -37,28 +42,30 @@
 
 use crate::deferred_source::DeferredSource;
 use crate::preview_scene::{win32_preview_orbit_delta, PreviewSceneState};
-use crate::stream_read::{read_capped_stream, StreamRead};
+use crate::stream_read::{
+    read_capped_stream, read_capped_stream_until, StreamRead, StreamReadBounds,
+};
 use crate::ShellError;
 use glam::Vec2;
 use occluview_render::ThumbnailSpec;
 use occluview_thumbnail::render_thumb::{
-    placeholder_for_oversize_input, reserve_thumbnail_stream_job, try_render_thumbnail_file,
-    try_render_thumbnail_shared_with_reservation, ThumbnailAttempt, DEFAULT_THUMBNAIL_TIMEOUT,
-    MAX_THUMBNAIL_INPUT_BYTES,
+    placeholder_for_oversize_input, reserve_thumbnail_stream_job_for_request,
+    try_render_thumbnail_file_with_request, try_render_thumbnail_shared_with_reservation,
+    ThumbnailAttempt, ThumbnailRenderRequest, DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_INPUT_BYTES,
 };
 use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
-use windows::core::{implement, w, IUnknown, Interface, GUID, HRESULT, PCWSTR};
+use windows::core::{implement, w, IUnknown, Interface, Ref, BOOL, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    BOOL, CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_NOTIMPL, E_POINTER, HANDLE,
-    HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, S_FALSE, S_OK, WPARAM,
+    CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_NOTIMPL, E_POINTER, HINSTANCE,
+    HWND, LPARAM, LRESULT, POINT, RECT, S_FALSE, S_OK, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, EndPaint,
-    RedrawWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
+    RedrawWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
     HGDIOBJ, PAINTSTRUCT, RDW_INVALIDATE, RDW_UPDATENOW, SRCCOPY,
 };
 use windows::Win32::System::Com::STREAM_SEEK_SET;
@@ -89,7 +96,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, MoveWindow, RegisterClassW, SetParent,
-    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, MSG, WINDOW_EX_STYLE,
+    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG, WINDOW_EX_STYLE,
     WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
     WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
@@ -127,19 +134,15 @@ const ERROR_FILE_NOT_FOUND: u32 = 2;
 static ACTIVE_COM_OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);
 static PREVIEW_WINDOW_CLASS: OnceLock<Result<(), HRESULT>> = OnceLock::new();
-static THUMBNAIL_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
-static PREVIEW_RENDERER_PREWARM: OnceLock<()> = OnceLock::new();
+static THUMBNAIL_RENDERER_WARMUP: OnceLock<()> = OnceLock::new();
+static PREVIEW_RENDERER_WARMUP: OnceLock<()> = OnceLock::new();
 
 /// This DLL's own module handle, pinned into the process.
 ///
-/// Two kinds of code in this DLL outlive COM's refcount view of it: the
-/// preview window class's wndproc (a raw function pointer registered with
-/// USER32), and the background threads — prewarm, and render workers that
-/// keep going after a caller times out. `DllCanUnloadNow` counts only live
-/// COM objects, so without the pin COM could unmap the image while any of
-/// those still execute inside it. A pinned module is a small, bounded cost:
-/// the shell recycles its surrogate hosts anyway.
-pub(super) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
+/// The preview window class stores a raw wndproc function pointer into this
+/// DLL. `DllCanUnloadNow` counts only live COM objects, so pin the module
+/// before registering that class to keep the callback address valid.
+pub(crate) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::Foundation::HMODULE>
 {
     // An address inside our own mapped image, used to find the DLL's module.
     // Typed as `u16` so it can become a `PCWSTR` (an opaque address here,
@@ -153,32 +156,27 @@ pub(super) fn own_pinned_dll_module() -> windows::core::Result<windows::Win32::F
     Ok(module)
 }
 
-/// Start renderer creation the moment the host activates one of our classes.
-///
-/// Both surrogate hosts activate the class well before the first heavy call
-/// (`GetThumbnail` in `dllhost`, `DoPreview` in `prevhost`), and wgpu
-/// instance + adapter + device + pipeline creation is a fixed cost of one to
-/// several hundred milliseconds. Warming on a background thread overlaps that
-/// cost with the shell's Initialize / stream-copy phase; the per-class gates
-/// keep it to a single attempt per process, and only the requested class's
-/// renderer warms so a thumbnail host never builds the preview device (or
-/// vice versa).
-fn spawn_renderer_prewarm(class: &GUID) {
-    // Pin before the first background thread exists (see
-    // `own_pinned_dll_module`); a failed pin only means we skip the warmup.
+/// Start renderer creation when Explorer activates our class rather than on
+/// its first file request. The worker owns no COM callback and each real
+/// request retains its independent deadline while it waits for the shared
+/// renderer.
+fn spawn_renderer_warmup(class: &GUID) {
+    // A warmup thread executes code in this DLL after `DllGetClassObject`
+    // returns. Keep the image mapped before it can exist.
     if own_pinned_dll_module().is_err() {
         return;
     }
+
     if *class == OCCLUVIEW_THUMBNAIL_GUID {
-        THUMBNAIL_RENDERER_PREWARM.get_or_init(|| {
+        THUMBNAIL_RENDERER_WARMUP.get_or_init(|| {
             let _ = std::thread::Builder::new()
-                .name("occluview-thumbnail-prewarm".to_string())
+                .name("occluview-thumbnail-warmup".to_string())
                 .spawn(occluview_thumbnail::render_thumb::prewarm_thumbnail_renderer);
         });
     } else if *class == OCCLUVIEW_PREVIEW_GUID {
-        PREVIEW_RENDERER_PREWARM.get_or_init(|| {
+        PREVIEW_RENDERER_WARMUP.get_or_init(|| {
             let _ = std::thread::Builder::new()
-                .name("occluview-preview-prewarm".to_string())
+                .name("occluview-preview-warmup".to_string())
                 .spawn(crate::offscreen_factory::prewarm_shared_shell_offscreen);
         });
     }
@@ -203,11 +201,19 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
         return Err(e_fail());
     }
     let mut bgra = vec![0u8; pixels.len()];
-    for (dst, src) in bgra.chunks_exact_mut(4).zip(pixels.chunks_exact(4)) {
-        dst[0] = src[2]; // B
-        dst[1] = src[1]; // G
-        dst[2] = src[0]; // R
-        dst[3] = src[3]; // A
+    {
+        let (bgra_pixels, []) = bgra.as_chunks_mut::<4>() else {
+            return Err(e_fail());
+        };
+        let (rgba_pixels, []) = pixels.as_chunks::<4>() else {
+            return Err(e_fail());
+        };
+        for (dst, src) in bgra_pixels.iter_mut().zip(rgba_pixels) {
+            dst[0] = src[2]; // B
+            dst[1] = src[1]; // G
+            dst[2] = src[0]; // R
+            dst[3] = src[3]; // A
+        }
     }
     create_top_down_bgra_dib(width, height, &bgra)
 }
@@ -249,16 +255,7 @@ fn create_top_down_bgra_dib(
     // SAFETY: `bitmap_info` is a valid 32bpp BI_RGB DIB descriptor, `bits`
     // is an out-pointer written by GDI, and the returned handle is owned by
     // the caller.
-    let hbmp = unsafe {
-        CreateDIBSection(
-            HDC::default(),
-            &bitmap_info,
-            DIB_RGB_COLORS,
-            &mut bits,
-            HANDLE::default(),
-            0,
-        )
-    }?;
+    let hbmp = unsafe { CreateDIBSection(None, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0) }?;
     if bits.is_null() {
         // CreateDIBSection succeeded and handed us a bitmap handle even
         // though the pixel buffer pointer came back null; free it here so we
@@ -277,7 +274,7 @@ fn create_top_down_bgra_dib(
 impl IClassFactory_Impl for PreviewHandler_Impl {
     fn CreateInstance(
         &self,
-        punkouter: Option<&IUnknown>,
+        punkouter: Ref<'_, IUnknown>,
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
@@ -288,7 +285,7 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
                 if ppvobject.is_null() {
                     return Err(e_pointer());
                 }
-                if punkouter.is_some() {
+                if !punkouter.is_null() {
                     return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
                 }
                 let provider = PreviewHandler::new();
@@ -380,7 +377,7 @@ pub extern "system" fn DllGetClassObject(
             // SAFETY: `rclsid` is supplied by COM and points to a GUID for the
             // activation request.
             let requested = unsafe { *(rclsid as *const GUID) };
-            spawn_renderer_prewarm(&requested);
+            spawn_renderer_warmup(&requested);
             let factory: IUnknown = if requested == OCCLUVIEW_THUMBNAIL_GUID {
                 ThumbnailProvider::new().into()
             } else if requested == OCCLUVIEW_PREVIEW_GUID {

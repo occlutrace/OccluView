@@ -146,6 +146,10 @@ impl FitBounds {
     /// allowed for the two bounding spheres to overlap.
     fn miss(&self, rigid: &Rigid) -> Option<(f64, f64)> {
         let separation = (rigid.apply(self.moving_center) - self.fixed_center).length();
+        #[expect(
+            clippy::manual_midpoint,
+            reason = "preserve established last-bit overlap threshold"
+        )]
         let allowed = ((self.moving_extent + self.fixed_extent) * 0.5).max(MIN_OVERLAP_MM);
         // Non-finite bounds cannot be judged. The comparison below would
         // quietly answer "no miss" for a NaN either way; making the pass

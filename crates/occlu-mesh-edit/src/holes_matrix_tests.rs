@@ -22,7 +22,7 @@ fn tri_mesh(vertices: Vec<EditVertex>, indices: Vec<u32>) -> MeshEditBuffers {
 
 fn boundary_edge_count(indices: &[u32]) -> usize {
     let mut directed = HashSet::new();
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         for edge in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -215,7 +215,7 @@ fn hps_like_default_closes_all_interior_holes_and_protects_the_border() {
 /// coincident-position copies are invisible and intentionally tolerated).
 fn positive_length_boundary_edges(mesh: &MeshEditBuffers) -> usize {
     let mut directed = HashSet::new();
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         for edge in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -265,6 +265,10 @@ fn three_fans_meeting_at_one_vertex_all_close() {
         for corner in corners {
             vertices.push(v(corner));
         }
+        #[expect(
+            clippy::manual_midpoint,
+            reason = "preserve established last-bit geometry fixture"
+        )]
         vertices.push(v([0.5 * (c - s), 0.5 * (s + c), 1.0])); // apex
         let apex = base + 3;
         let ring = [0, base, base + 1, base + 2];
@@ -402,8 +406,10 @@ fn unwelded_duplicate_position_seam_closes_watertight() {
     // Triangle (apex, 1, 2) becomes (apex, dup, 2).
     let slot = mesh
         .indices
-        .chunks_exact(3)
-        .position(|t| t == [4, 1, 2])
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .position(|t| *t == [4, 1, 2])
         .expect("triangle present")
         * 3
         + 1;

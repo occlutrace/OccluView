@@ -30,8 +30,8 @@ impl LiveViewport {
         render_state: &egui_wgpu::RenderState,
     ) -> Result<SharedLiveViewport, RenderError> {
         let renderer = Renderer::with_shared_device_sample_count(
-            render_state.device.clone(),
-            render_state.queue.clone(),
+            Arc::new(render_state.device.clone()),
+            Arc::new(render_state.queue.clone()),
             render_state.target_format,
             u32::from(LIVE_VIEWPORT_SAMPLE_COUNT),
         )?;

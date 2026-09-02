@@ -5,7 +5,7 @@ use windows::Win32::Storage::FileSystem::GetFileAttributesW;
 /// Resolve the app exe path: same directory as `dll_path`, with
 /// [`APP_EXE_NAME`]. Returns `None` if the file does not exist.
 pub(super) fn app_exe_path(dll_path: &HSTRING) -> Option<HSTRING> {
-    let wide = dll_path.as_wide();
+    let wide: &[u16] = dll_path;
     // Find the last path separator (backslash).
     let sep = wide.iter().rposition(|&c| c == u16::from(b'\\'))?;
     let dir = &wide[..=sep];
@@ -15,7 +15,7 @@ pub(super) fn app_exe_path(dll_path: &HSTRING) -> Option<HSTRING> {
         .collect();
     let mut full = dir.to_vec();
     full.extend_from_slice(&exe_name);
-    let full = HSTRING::from_wide(&full[..full.len() - 1]).ok()?;
+    let full = HSTRING::from_wide(&full[..full.len() - 1]);
     // Existence check via GetFileAttributesW (avoid pulling std::fs for cfg).
     // SAFETY: full is a valid NUL-terminated wide path.
     let attrs = unsafe { GetFileAttributesW(PCWSTR(full.as_ptr())) };
@@ -27,13 +27,13 @@ pub(super) fn app_exe_path(dll_path: &HSTRING) -> Option<HSTRING> {
 }
 
 pub(super) fn sibling_path(path: &HSTRING, filename: &str) -> Option<HSTRING> {
-    let wide = path.as_wide();
+    let wide: &[u16] = path;
     let sep = wide.iter().rposition(|&c| c == u16::from(b'\\'))?;
     let dir = &wide[..=sep];
     let filename: Vec<u16> = filename.encode_utf16().collect();
     let mut full = dir.to_vec();
     full.extend_from_slice(&filename);
-    HSTRING::from_wide(&full).ok()
+    Some(HSTRING::from_wide(&full))
 }
 
 pub(super) fn path_exists(path: &HSTRING) -> bool {
@@ -47,5 +47,5 @@ pub(super) fn path_exists(path: &HSTRING) -> bool {
 /// diagnostics/assembly path; the actual registration uses the original
 /// HSTRING bytes when it matters.
 pub(super) fn utf16_to_string(s: &HSTRING) -> String {
-    String::from_utf16_lossy(s.as_wide())
+    s.to_string_lossy()
 }

@@ -14,6 +14,39 @@ use super::*;
 use crate::tests::{append_packed_uv, cc_fixture, encode_base64, red_png_bytes, small_jpeg_bytes};
 use std::io::Cursor;
 
+fn embedded_raster_hps(raster: &[u8]) -> Vec<u8> {
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        raster.len(),
+        encode_base64(raster)
+    );
+    cc_fixture(3, 1, &[4], &extra)
+}
+
+fn solid_raster(format: image::ImageFormat) -> Vec<u8> {
+    let image = image::RgbaImage::from_raw(1, 1, vec![255, 0, 0, 255]).expect("image dims");
+    let mut output = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut output, format)
+        .expect("encode test raster");
+    output.into_inner()
+}
+
+fn assert_whitelist_rejection(result: Result<DecodedSurface, HpsError>) {
+    let Err(HpsError::TextureMalformed { reason }) = result else {
+        unreachable!("non-PNG/JPEG texture must be rejected, got {result:?}");
+    };
+    assert!(
+        reason.contains("only PNG and JPEG are accepted"),
+        "the rejection must be the raster allowlist, not a decoder accident: {reason}"
+    );
+}
+
 #[test]
 fn texture_data_preserves_source_topology_and_corner_uvs() {
     let mut uv_bytes = Vec::new();
@@ -57,8 +90,33 @@ fn texture_data_preserves_source_topology_and_corner_uvs() {
     assert_eq!(texture.height(), 2);
     assert!(texture
         .rgba()
-        .chunks_exact(4)
-        .all(|pixel| pixel == [255, 0, 0, 255]));
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|pixel| *pixel == [255, 0, 0, 255]));
+}
+
+#[test]
+fn embedded_png_and_jpeg_remain_accepted() {
+    for format in [image::ImageFormat::Png, image::ImageFormat::Jpeg] {
+        let surface = read(&embedded_raster_hps(&solid_raster(format)));
+        assert!(
+            surface.is_ok(),
+            "{format:?} texture should remain accepted: {surface:?}"
+        );
+    }
+}
+
+#[test]
+fn valid_bmp_is_rejected_by_whitelist_before_decode() {
+    assert_whitelist_rejection(read(&embedded_raster_hps(&solid_raster(
+        image::ImageFormat::Bmp,
+    ))));
+}
+
+#[test]
+fn malformed_bmp_magic_is_rejected_by_whitelist_before_decode() {
+    assert_whitelist_rejection(read(&embedded_raster_hps(b"BM")));
 }
 
 #[test]
@@ -254,7 +312,7 @@ fn raw_texture_image_without_format_defaults_to_bgra_swap() {
         texture.rgba(),
         vec![205, 164, 118, 255, 194, 151, 105, 255, 184, 144, 101, 255, 218, 176, 132, 255]
     );
-    for pixel in texture.rgba().chunks_exact(4) {
+    for pixel in texture.rgba().as_chunks::<4>().0 {
         assert!(
             pixel[0] > pixel[2],
             "format-less HPS enamel must stay warm (R>B), never blue: {pixel:?}"
@@ -293,7 +351,7 @@ fn raw_texture_image_cool_dominant_atlas_keeps_enamel_warm() {
 
     // Enamel pixels are the last three; they must be warm (R>B), not blue.
     let enamel = &texture.rgba()[13 * 4..];
-    for pixel in enamel.chunks_exact(4) {
+    for pixel in enamel.as_chunks::<4>().0 {
         assert!(
             pixel[0] > pixel[2],
             "warm-white enamel rendered blue under a cool-dominant atlas: {pixel:?}"
@@ -326,9 +384,9 @@ fn raw_a8r8g8b8_directx_name_decodes_as_bgra() {
     let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("raw-textured HPS should read");
     let texture = mesh.texture().expect("raw HPS texture should be attached");
 
-    for pixel in texture.rgba().chunks_exact(4) {
+    for pixel in texture.rgba().as_chunks::<4>().0 {
         assert_eq!(
-            pixel,
+            *pixel,
             [248, 244, 236, 255],
             "A8R8G8B8 must decode to warm BGRA"
         );
@@ -372,10 +430,10 @@ fn embedded_png_with_swapped_dental_chroma_is_corrected_to_warm() {
     let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
     let texture = mesh.texture().expect("HPS texture should be attached");
 
-    let opaque_pixels: Vec<&[u8]> = texture.rgba().chunks_exact(4).skip(1).collect();
+    let opaque_pixels: Vec<&[u8; 4]> = texture.rgba().as_chunks::<4>().0.iter().skip(1).collect();
     for pixel in opaque_pixels {
         assert_eq!(
-            pixel,
+            *pixel,
             [150, 117, 107, 255],
             "swapped dental chroma must be corrected back to warm (R>B)"
         );
@@ -405,9 +463,9 @@ fn embedded_png_with_a_mild_cool_tint_is_left_untouched() {
     let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
     let texture = mesh.texture().expect("HPS texture should be attached");
 
-    for decoded in texture.rgba().chunks_exact(4) {
+    for decoded in texture.rgba().as_chunks::<4>().0 {
         assert_eq!(
-            decoded, pixel,
+            *decoded, pixel,
             "a mild cool tint must not be treated as a channel-order bug"
         );
     }

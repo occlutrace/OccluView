@@ -85,7 +85,7 @@ pub(crate) fn split_boundary_pinch_vertices(
     // vertex's incident faces in ascending triangle order (mirrors repair's
     // bowtie sweep so the split is deterministic).
     let mut incidence: Vec<(u32, usize)> = Vec::with_capacity(work.indices.len());
-    for (triangle, tri) in work.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in work.indices.as_chunks::<3>().0.iter().enumerate() {
         for &vertex in tri {
             incidence.push((vertex, triangle));
         }
@@ -122,7 +122,7 @@ pub(crate) fn split_boundary_pinch_vertices(
 /// so the boundary walk cannot pick a unique successor and both rims stall.
 fn boundary_junction_vertices(mesh: &MeshEditBuffers) -> HashSet<u32> {
     let mut directed: HashSet<(u32, u32)> = HashSet::with_capacity(mesh.indices.len());
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         for edge in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             directed.insert(edge);
         }

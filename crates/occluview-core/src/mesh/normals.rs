@@ -1,29 +1,16 @@
 use super::Vertex;
 use glam::Vec3;
+use occlu_geometry_math::{
+    accumulate_smooth_normals, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS,
+    MAX_PAIRWISE_DUPLICATE_GROUP,
+};
 use rayon::prelude::*;
 
-const SMOOTH_DUPLICATE_NORMAL_DOT: f32 = 0.5;
-
-/// Above this many vertices sharing one position, normal agreement is judged
-/// against the group mean rather than pairwise.
-///
-/// Well past any real vertex valence -- a fan around one point is tens of
-/// triangles, not hundreds -- so no scan reaches it, and a crafted file cannot
-/// spend minutes here.
-const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
-// The welding tolerance and its key function live in `occlu-mesh-edit`. One
-// number has to decide which vertices share a normal at load and after every
-// edit, or a scan changes shading the first time it is touched. See
-// `occlu_mesh_edit::COINCIDENT_POSITION_EPS_MM`.
-use occlu_mesh_edit::coincident_position_key as position_key;
-/// A facet is degenerate when its area falls below this fraction of its own
-/// longest edge squared -- a scale-invariant test, so a 7 um lab-scanner facet
-/// is judged by its shape rather than by an absolute epsilon.
-///
-/// Four crates need the rule. `occlu-mesh-edit` and `occluview-hps` sit below
-/// this one in the layering and cannot depend on it, so they keep their own
-/// copy and say so. `occluview-formats` uses this definition.
-pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
+/// The welding tolerance and its key function live in `occlu-geometry-math`,
+/// shared with `occlu-mesh-edit`. One number has to decide which vertices
+/// share a normal at load and after every edit, or a scan changes shading the
+/// first time it is touched.
+use occlu_geometry_math::coincident_position_key as position_key;
 
 fn normal_is_usable(normal: [f32; 3]) -> bool {
     let n = Vec3::from_array(normal);
@@ -121,45 +108,6 @@ fn smooth_normals(vertices: &[Vertex], indices: &[u32]) -> Vec<Vec3> {
             .get(index)
             .map(|vertex| Vec3::from_array(vertex.position))
     })
-}
-
-/// Area-weighted vertex normals, from a triangle list and a position lookup.
-///
-/// The lookup is a closure rather than a `&[Vec3]` so a caller holding
-/// interleaved vertices does not have to copy every position out first -- on a
-/// six-million-vertex scan that copy would be seventy megabytes to avoid one
-/// duplicated loop.
-///
-/// A triangle with an out-of-range corner is skipped rather than trusted.
-#[must_use]
-pub fn accumulate_smooth_normals(
-    vertex_count: usize,
-    indices: &[u32],
-    position: impl Fn(usize) -> Option<Vec3>,
-) -> Vec<Vec3> {
-    let mut normals = vec![Vec3::ZERO; vertex_count];
-    for triangle in indices.chunks_exact(3) {
-        let ia = triangle[0] as usize;
-        let ib = triangle[1] as usize;
-        let ic = triangle[2] as usize;
-        let (Some(a), Some(b), Some(c)) = (position(ia), position(ib), position(ic)) else {
-            continue;
-        };
-        let face_normal = (b - a).cross(c - a);
-        let longest_edge_sq = (b - a)
-            .length_squared()
-            .max((c - b).length_squared())
-            .max((a - c).length_squared());
-        if face_normal.is_finite()
-            && face_normal.length_squared()
-                > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
-        {
-            normals[ia] += face_normal;
-            normals[ib] += face_normal;
-            normals[ic] += face_normal;
-        }
-    }
-    normals
 }
 
 fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
@@ -278,25 +226,15 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     }
 }
 
-/// How many directions one coincident group may hold before it is left alone.
-///
-/// A pile that genuinely points sixteen ways is not a surface any averaging can
-/// help, and the pass costs one dot product per member per cluster.
-const MAX_DUPLICATE_CLUSTERS: usize = 16;
-
 /// Average a large coincident group by clustering it, not by one global mean.
 ///
 /// A single mean is right while the group points one way and wrong the moment
-/// it does not. K coincident vertices at a hard crease in a triangle soup form
-/// two clusters ninety degrees apart; the mean lands on the bisector, both
-/// clusters agree with it to within sixty degrees, and every member is welded
-/// to the bisector. The crease is gone. Measured on a 400-member pile split in
-/// two: 45 degrees of error on all 400. Exactly opposed clusters are worse
-/// still -- the mean cancels and the group is skipped entirely.
-///
-/// Members join the first cluster they agree with, so a coherent group forms
-/// one cluster and gets what the mean would have given it while a crease keeps
-/// its two. Cost stays linear in the group for any bounded cluster count.
+/// it does not: K coincident vertices at a hard crease form two clusters ninety
+/// degrees apart; the mean lands on the bisector, both clusters agree with it
+/// to within sixty degrees, and the crease is welded flat. Measured on a
+/// 400-member pile split in two: 45 degrees of error on all 400. Members join
+/// the first cluster they agree with instead, so a crease keeps its two. Cost
+/// stays linear in the group for any bounded cluster count.
 fn average_by_cluster(members: &[([i32; 3], u32)], source_normals: &[Vec3], out: &mut [Vec3]) {
     let mut sums: Vec<Vec3> = Vec::new();
     let mut assigned: Vec<Option<usize>> = vec![None; members.len()];
@@ -308,7 +246,7 @@ fn average_by_cluster(members: &[([i32; 3], u32)], source_normals: &[Vec3], out:
         }
         let existing = sums
             .iter()
-            .position(|sum| sum.normalize_or_zero().dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT);
+            .position(|sum| sum.normalize_or_zero().dot(current) >= DUPLICATE_NORMAL_DOT);
         if let Some(cluster) = existing {
             sums[cluster] += current;
             assigned[slot] = Some(cluster);
@@ -361,7 +299,7 @@ fn average_duplicate_run(members: &[([i32; 3], u32)], source_normals: &[Vec3], o
         for &(_, neighbor) in members {
             let candidate = source_normals[neighbor as usize];
             if candidate.length_squared() > f32::EPSILON
-                && candidate.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
+                && candidate.dot(current) >= DUPLICATE_NORMAL_DOT
             {
                 normal += candidate;
             }
@@ -506,7 +444,7 @@ mod tests {
                 for &neighbor in indices {
                     let candidate = source_normals[neighbor];
                     if candidate.length_squared() > f32::EPSILON
-                        && candidate.dot(current) >= SMOOTH_DUPLICATE_NORMAL_DOT
+                        && candidate.dot(current) >= DUPLICATE_NORMAL_DOT
                     {
                         normal += candidate;
                     }

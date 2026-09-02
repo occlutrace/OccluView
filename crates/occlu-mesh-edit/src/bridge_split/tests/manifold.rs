@@ -30,7 +30,7 @@ fn assert_result_manufacturable(result: &BridgeSplitResult) {
     assert!(!result.part_a.indices.is_empty());
     assert!(!result.part_b.indices.is_empty());
     for mesh in [&result.part_a, &result.part_b] {
-        for face in mesh.indices.chunks_exact(3) {
+        for face in mesh.indices.as_chunks::<3>().0 {
             assert_ne!(face[0], face[1]);
             assert_ne!(face[1], face[2]);
             assert_ne!(face[2], face[0]);
@@ -68,7 +68,9 @@ fn opposite_caps_face_outward() {
     let result = split_bridge(&closed_cube(), request()).expect("cube splits and caps");
     let cap_normal_x = |mesh: &MeshEditBuffers, boundary_x: f32| -> Vec<f32> {
         mesh.indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .filter_map(|face| {
                 let points = [
                     Vec3::from_array(mesh.vertices[face[0] as usize].position),

@@ -10,11 +10,12 @@
 use eframe::egui;
 
 use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
-use crate::mesh_editor_icons::{self, EditorIcon, CELL_ROUNDING};
+use crate::icons::AppIcon;
+use crate::mesh_editor_icons::{self, CELL_ROUNDING};
 use crate::sculpt_tool::{
     SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
 };
-use crate::ui_theme::{ACCENT, TEXT, TEXT_WEAK};
+use crate::ui_theme::{self, ACCENT, TEXT, TEXT_WEAK};
 
 /// Height of the tab strip / its pills.
 const TAB_H: f32 = 28.0;
@@ -72,7 +73,7 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, egui::Rounding::same(TAB_H * 0.5), fill);
+    painter.rect_filled(rect, TAB_H * 0.5, fill);
     let text = if active {
         egui::Color32::WHITE
     } else {
@@ -92,25 +93,13 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
 /// `Done`; closing a native-looking editor must never silently commit changes.
 fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, TAB_H), egui::Sense::click());
-    let color = if response.hovered() { TEXT } else { TEXT_WEAK };
-    let arm = 4.0;
-    let center = rect.center();
-    let stroke = egui::Stroke::new(1.4, color);
-    ui.painter().line_segment(
-        [
-            center + egui::vec2(-arm, -arm),
-            center + egui::vec2(arm, arm),
-        ],
-        stroke,
+    crate::icons::paint(
+        ui.painter(),
+        rect.shrink(3.0),
+        AppIcon::Close,
+        if response.hovered() { TEXT } else { TEXT_WEAK },
     );
-    ui.painter().line_segment(
-        [
-            center + egui::vec2(arm, -arm),
-            center + egui::vec2(-arm, arm),
-        ],
-        stroke,
-    );
-    response
+    response.on_hover_text("Cancel the session (edits are reverted)")
 }
 
 /// Selection mode (lasso + surface/through radio pair) and the dental CAD
@@ -130,7 +119,7 @@ pub(super) fn selection(
         if icon(
             ui,
             width,
-            EditorIcon::Lasso,
+            AppIcon::Lasso,
             "Lasso",
             "Freehand outline: click to place points, double-click to close · Shift unmarks",
             enabled,
@@ -145,7 +134,7 @@ pub(super) fn selection(
         if icon(
             ui,
             width,
-            EditorIcon::Object,
+            AppIcon::Object,
             "Object",
             "Click a whole object of a multi-part STL to select it · Shift unmarks",
             enabled,
@@ -160,7 +149,7 @@ pub(super) fn selection(
         if icon(
             ui,
             width,
-            EditorIcon::SurfaceMode,
+            AppIcon::SurfaceMode,
             "Surface",
             "Mark only the visible front-facing surface",
             depth_enabled,
@@ -174,7 +163,7 @@ pub(super) fn selection(
         if icon(
             ui,
             width,
-            EditorIcon::ThroughMode,
+            AppIcon::ThroughMode,
             "Through",
             "Mark straight through the mesh, including hidden backsides",
             depth_enabled,
@@ -198,7 +187,7 @@ fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> 
         if icon(
             ui,
             width,
-            EditorIcon::SelectAll,
+            AppIcon::SelectAll,
             "All",
             "Mark every face (Ctrl+A)",
             enabled,
@@ -211,7 +200,7 @@ fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> 
         if icon(
             ui,
             width,
-            EditorIcon::SelectNone,
+            AppIcon::SelectNone,
             "None",
             "Clear the marking",
             enabled,
@@ -224,7 +213,7 @@ fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> 
         if icon(
             ui,
             width,
-            EditorIcon::SelectInvert,
+            AppIcon::SelectInvert,
             "Invert",
             "Swap marked and unmarked faces",
             enabled,
@@ -253,7 +242,7 @@ pub(super) fn edit_selection(
         if icon(
             ui,
             width,
-            EditorIcon::Delete,
+            AppIcon::Delete,
             "Delete",
             "Delete the marked faces",
             selection_enabled,
@@ -266,7 +255,7 @@ pub(super) fn edit_selection(
         if icon(
             ui,
             width,
-            EditorIcon::Keep,
+            AppIcon::Keep,
             "Crop",
             "Keep only the marked area, remove the rest",
             selection_enabled,
@@ -279,7 +268,7 @@ pub(super) fn edit_selection(
         if icon(
             ui,
             width,
-            EditorIcon::Cut,
+            AppIcon::Cut,
             "Cut",
             "Move the marked faces to a new mesh — the original stays put",
             selection_enabled,
@@ -292,7 +281,7 @@ pub(super) fn edit_selection(
         if icon(
             ui,
             width,
-            EditorIcon::Separate,
+            AppIcon::Separate,
             "Separate",
             "Split the marked region into one mesh per connected part",
             selection_enabled,
@@ -319,7 +308,7 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
         if icon(
             ui,
             cell_width,
-            EditorIcon::CloseHoles,
+            AppIcon::CloseHoles,
             "Close holes",
             "Close holes only when the surrounding faces are selected. Scan borders stay open.",
             enabled,
@@ -355,7 +344,7 @@ pub(super) fn sculpt(
         if icon(
             ui,
             width,
-            EditorIcon::SculptAdd,
+            AppIcon::SculptAdd,
             "Add / Remove  [1]",
             "Build material up by dragging on the scan; hold Shift to carve it away. \
              Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 1.",
@@ -369,7 +358,7 @@ pub(super) fn sculpt(
         if icon(
             ui,
             width,
-            EditorIcon::Smooth,
+            AppIcon::Smooth,
             "Smooth  [2]",
             "Relax the surface by dragging on the scan; hold Shift to force maximum smoothing. \
              Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 2.",
@@ -487,11 +476,17 @@ pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
     if state.busy {
         ui.spinner();
     } else if state.dirty {
-        ui.label(
-            egui::RichText::new("● unsaved")
-                .color(egui::Color32::from_rgb(0xb5, 0x6a, 0x00))
-                .size(11.0),
-        )
+        ui.horizontal(|ui| {
+            let (icon_rect, _) =
+                ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
+            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::WARNING);
+            ui.label(
+                egui::RichText::new("Unsaved edits")
+                    .color(ui_theme::WARNING)
+                    .size(11.0),
+            );
+        })
+        .response
         .on_hover_text("Uncommitted edits: Done to apply, Cancel to revert");
     }
     let hint = if state.sculpt_armed.is_some() {
@@ -524,7 +519,7 @@ pub(super) fn session(
         if icon(
             ui,
             history_w,
-            EditorIcon::Undo,
+            AppIcon::Undo,
             "Undo",
             "Undo the last mesh edit (Ctrl+Z)",
             state.can_undo && enabled,
@@ -537,7 +532,7 @@ pub(super) fn session(
         if icon(
             ui,
             history_w,
-            EditorIcon::Redo,
+            AppIcon::Redo,
             "Redo",
             "Redo the undone mesh edit (Ctrl+Y)",
             state.can_redo && enabled,
@@ -566,14 +561,21 @@ pub(super) fn session(
     action
 }
 
-/// A calm section caption: a small, muted label followed by a thin hairline
-/// filling the row. Replaces the old bold header + full-width separator with a
-/// single quiet cue (dental CAD tool windows keep almost no section chrome).
+/// Draw a tool-panel header.
+pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+        crate::icons::paint(ui.painter(), rect, icon, ACCENT);
+        ui.label(egui::RichText::new(title).strong().size(14.0));
+    });
+    ui.add_space(2.0);
+}
+
 fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let label_color = ui.visuals().weak_text_color();
-        ui.label(egui::RichText::new(title).size(9.5).color(label_color));
+        ui.label(egui::RichText::new(title).size(10.0).color(label_color));
         let avail = ui.available_width();
         if avail > 6.0 {
             let hairline = ui.visuals().widgets.noninteractive.bg_stroke;
@@ -613,7 +615,7 @@ fn row(ui: &mut egui::Ui, count: usize, add_contents: impl FnOnce(&mut egui::Ui,
 fn icon(
     ui: &mut egui::Ui,
     width: f32,
-    glyph: EditorIcon,
+    glyph: AppIcon,
     label: &str,
     tooltip: &str,
     enabled: bool,
@@ -643,9 +645,9 @@ fn tall_text_button(
     let button = if primary {
         egui::Button::new(egui::RichText::new(label).color(PRIMARY_TEXT).strong())
             .fill(ACCENT)
-            .rounding(CELL_ROUNDING)
+            .corner_radius(CELL_ROUNDING)
     } else {
-        egui::Button::new(label).rounding(CELL_ROUNDING)
+        egui::Button::new(label).corner_radius(CELL_ROUNDING)
     }
     .min_size(egui::vec2(width, ROW_H));
     ui.add_enabled(enabled, button)

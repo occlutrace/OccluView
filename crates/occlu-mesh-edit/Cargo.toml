@@ -16,5 +16,6 @@ workspace = true
 [dependencies]
 earcutr = { workspace = true }
 glam = { workspace = true }
+occlu-geometry-math = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }

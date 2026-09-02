@@ -50,8 +50,10 @@ pub use error::RenderError;
 pub use gpu::GpuMesh;
 pub use mesh_uniform::GpuMeshUniform;
 pub use offscreen::{
-    Offscreen, PreparedScene, PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate,
-    SceneDrawEntry, ThumbnailSpec, ViewportSpec,
+    AdapterPolicy, AdapterResult, ClippedMeshRequest, CutMeshRequest, Offscreen, PreparedScene,
+    PreparedSceneClipRequest, PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate,
+    PreparedViewportClipRequest, PreparedViewportRequest, RenderDeadline, SceneDrawEntry,
+    ThumbnailSpec, ViewportSpec,
 };
 pub use pipeline::Renderer;
 pub use texture::GpuTexture;

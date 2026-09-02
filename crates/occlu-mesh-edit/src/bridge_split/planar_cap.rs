@@ -254,7 +254,7 @@ fn triangulate_region(
     }
 
     let mut indices = Vec::with_capacity(local_indices.len());
-    for triangle in local_indices.chunks_exact(3) {
+    for triangle in local_indices.as_chunks::<3>().0 {
         let mut triangle = [
             *global_vertices
                 .get(triangle[0])

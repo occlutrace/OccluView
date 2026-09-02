@@ -303,7 +303,7 @@ fn check_offset(case: &Offset<'_>) {
 fn rms_displacement(positions: &[f32], pose: Rigid) -> f64 {
     let mut squares = 0.0;
     let mut count = 0usize;
-    for point in positions.chunks_exact(3) {
+    for point in positions.as_chunks::<3>().0 {
         let local = DVec3::new(
             f64::from(point[0]),
             f64::from(point[1]),

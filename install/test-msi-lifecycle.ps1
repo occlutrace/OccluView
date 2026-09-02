@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [string]$MsiPath = "",
-    [string]$UpgradeMsiPath = ""
+    [string]$LegacyUpgradeMsiPath = "",
+    [string]$UpgradeMsiPath = "",
+    [string]$DowngradeMsiPath = "",
+    [switch]$Diagnostic
 )
 
 Set-StrictMode -Version Latest
@@ -54,6 +57,8 @@ $previewHandlersPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\PreviewH
 $installDir = Join-Path ${env:ProgramFiles} "OccluView"
 $appExe = Join-Path $installDir "occluview.exe"
 $shellDll = Join-Path $installDir "occluview_shell.dll"
+$diagnosticDir = Join-Path $installDir "Diagnostics"
+$diagnosticRegistryPath = "HKCU:\Software\OccluTrace\OccluView\Diagnostics"
 $formatIconFiles = @{
     stl = Join-Path $installDir "occluview-3d.ico"
     ply = Join-Path $installDir "occluview-3d.ico"
@@ -102,6 +107,94 @@ function Invoke-MsiExec {
         }
         throw "msiexec failed with exit code $($process.ExitCode). Log: $LogPath"
     }
+}
+
+function Invoke-MsiExecExpectFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$Arguments,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "$Arguments /l*v `"$LogPath`"" -Wait -PassThru
+    if ($process.ExitCode -ne 1603) {
+        if (Test-Path $LogPath) {
+            Get-Content $LogPath -Tail 120 | Write-Host
+        }
+        throw "Expected Windows Installer downgrade block 1603, got $($process.ExitCode). Log: $LogPath"
+    }
+    Write-Host "Blocked downgrade exited as expected with 1603."
+}
+
+function Start-ActivePreviewHost {
+    $readyMarker = "PREVIEW_HOLD_READY"
+    $workDir = Join-Path $env:TEMP ("occluview-preview-upgrade-" + [guid]::NewGuid().ToString("N"))
+    $stdoutPath = Join-Path $workDir "preview.stdout.log"
+    $stderrPath = Join-Path $workDir "preview.stderr.log"
+    $process = $null
+    New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+
+    try {
+        $currentHost = Get-Process -Id $PID -ErrorAction Stop
+        $previewSmokePath = Join-Path $PSScriptRoot "test-preview-handler.ps1"
+        $startArgs = @{
+            FilePath = $currentHost.Path
+            ArgumentList = @("-NoLogo", "-NoProfile", "-NonInteractive", "-File", ('"{0}"' -f $previewSmokePath), "-HoldOpenSeconds", "90")
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError = $stderrPath
+            PassThru = $true
+        }
+        $process = Start-Process @startArgs
+
+        $deadline = [Diagnostics.Stopwatch]::StartNew()
+        while ($deadline.Elapsed.TotalSeconds -lt 45) {
+            $process.Refresh()
+            if ($process.HasExited) {
+                $stdout = if (Test-Path $stdoutPath) { Get-Content -Raw $stdoutPath } else { "" }
+                $stderr = if (Test-Path $stderrPath) { Get-Content -Raw $stderrPath } else { "" }
+                throw "Preview-holder exited before activation (exit $($process.ExitCode)). stdout: $stdout stderr: $stderr"
+            }
+            if ((Test-Path $stdoutPath) -and (Select-String -Path $stdoutPath -SimpleMatch -Quiet $readyMarker)) {
+                return [pscustomobject]@{
+                    Process = $process
+                    WorkDir = $workDir
+                    StdoutPath = $stdoutPath
+                    StderrPath = $stderrPath
+                }
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        throw "Preview-holder did not report $readyMarker within 45 seconds."
+    } catch {
+        if ($null -ne $process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force
+        }
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
+function Assert-ActivePreviewHost {
+    param([Parameter(Mandatory = $true)]$Holder)
+
+    $Holder.Process.Refresh()
+    if ($Holder.Process.HasExited) {
+        $stdout = if (Test-Path $Holder.StdoutPath) { Get-Content -Raw $Holder.StdoutPath } else { "" }
+        $stderr = if (Test-Path $Holder.StderrPath) { Get-Content -Raw $Holder.StderrPath } else { "" }
+        throw "Preview-holder exited during the MSI upgrade (exit $($Holder.Process.ExitCode)). stdout: $stdout stderr: $stderr"
+    }
+}
+
+function Stop-ActivePreviewHost {
+    param([Parameter(Mandatory = $true)]$Holder)
+
+    if ($null -ne $Holder.Process) {
+        $Holder.Process.Refresh()
+        if (-not $Holder.Process.HasExited) {
+            Stop-Process -Id $Holder.Process.Id -Force
+            $Holder.Process.WaitForExit()
+        }
+    }
+    Remove-Item -LiteralPath $Holder.WorkDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 function Get-RegistryDefault {
@@ -183,6 +276,40 @@ function Assert-RegistryNamedValueAbsent {
     }
 }
 
+function Get-DiagnosticSwitchState {
+    $keyExists = Test-Path $diagnosticRegistryPath
+    $value = if ($keyExists) {
+        Get-RegistryNamedValue $diagnosticRegistryPath "ShellEventLogEnabled"
+    } else {
+        $null
+    }
+    return [pscustomobject]@{
+        KeyExists = $keyExists
+        Value = $value
+    }
+}
+
+function Assert-DiagnosticSwitchUnchanged {
+    param([Parameter(Mandatory = $true)]$Expected)
+
+    $actual = Get-DiagnosticSwitchState
+    if ($actual.KeyExists -ne $Expected.KeyExists -or $actual.Value -ne $Expected.Value) {
+        throw "Diagnostic MSI changed the current user's ShellEventLogEnabled switch."
+    }
+}
+
+function Assert-DiagnosticPayload {
+    foreach ($path in @(
+        (Join-Path $diagnosticDir "occluview.pdb"),
+        (Join-Path $diagnosticDir "occluview_shell.pdb"),
+        (Join-Path $diagnosticDir "Enable-PreviewDiagnostics.ps1"),
+        (Join-Path $diagnosticDir "Collect-PreviewDiagnostics.ps1"),
+        (Join-Path $diagnosticDir "README.txt")
+    )) {
+        Assert-PathExists $path
+    }
+}
+
 function Find-InstalledProductCode {
     $codes = @(Find-InstalledProductCodes)
     if ($codes.Count -eq 0) {
@@ -242,6 +369,7 @@ function Assert-InstalledRegistry {
     Assert-Equals (Get-RegistryNamedValue $approvedShellExtensionsPath $shellClsid) "OccluView Thumbnail Provider" "approved shell extension"
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$previewClsid") "OccluView Preview Handler" "preview CLSID friendly name"
     Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid" "AppID") $prevhostAppId "preview CLSID AppID"
+    Assert-RegistryNamedValueAbsent "HKLM:\Software\Classes\CLSID\$previewClsid" "DisableLowILProcessIsolation" "preview low-integrity isolation override"
     Assert-Equals (Get-RegistryDefault "HKLM:\Software\Classes\CLSID\$previewClsid\InprocServer32") $shellDll "preview CLSID InprocServer32"
     Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid\InprocServer32" "ThreadingModel") "Apartment" "preview CLSID threading model"
     Assert-Equals (Get-RegistryNamedValue $approvedShellExtensionsPath $previewClsid) "OccluView Preview Handler" "approved preview shell extension"
@@ -315,6 +443,13 @@ function Assert-InstalledRegistry {
     }
 }
 
+function Assert-LegacyPreviewHostRegistration {
+    # The pinned legacy MSI already used Windows' generic preview host. Keep
+    # this migration assertion narrow: it proves the old product starts on the
+    # same AppID without treating the Windows-owned key as ours.
+    Assert-Equals (Get-RegistryNamedValue "HKLM:\Software\Classes\CLSID\$previewClsid" "AppID") $prevhostAppId "legacy preview CLSID AppID"
+}
+
 function Assert-UninstalledRegistry {
     Assert-PathAbsent $installDir
     Assert-PathAbsent $startMenuDir
@@ -357,35 +492,88 @@ function Assert-UninstalledRegistry {
 }
 
 $resolvedMsi = Resolve-MsiPath $MsiPath
+$resolvedLegacyUpgradeMsi = if ([string]::IsNullOrWhiteSpace($LegacyUpgradeMsiPath)) {
+    ""
+} else {
+    (Resolve-Path $LegacyUpgradeMsiPath).Path
+}
 $resolvedUpgradeMsi = if ([string]::IsNullOrWhiteSpace($UpgradeMsiPath)) {
     ""
 } else {
     (Resolve-Path $UpgradeMsiPath).Path
 }
+$resolvedDowngradeMsi = if ([string]::IsNullOrWhiteSpace($DowngradeMsiPath)) {
+    ""
+} else {
+    (Resolve-Path $DowngradeMsiPath).Path
+}
 $installLog = Join-Path $env:TEMP "occluview-msi-install.log"
+$legacyInstallLog = Join-Path $env:TEMP "occluview-msi-legacy-install.log"
 $upgradeLog = Join-Path $env:TEMP "occluview-msi-upgrade.log"
+$downgradeLog = Join-Path $env:TEMP "occluview-msi-downgrade.log"
 $uninstallLog = Join-Path $env:TEMP "occluview-msi-uninstall.log"
-
-Write-Host "Installing MSI: $resolvedMsi"
-Invoke-MsiExec -Arguments "/i `"$resolvedMsi`" /qn /norestart" -LogPath $installLog
+$diagnosticSwitchBefore = if ($Diagnostic) { Get-DiagnosticSwitchState } else { $null }
+$legacyProductCode = $null
 try {
+    if (-not [string]::IsNullOrWhiteSpace($resolvedLegacyUpgradeMsi)) {
+        Write-Host "Installing pinned legacy MSI: $resolvedLegacyUpgradeMsi"
+        Invoke-MsiExec -Arguments "/i `"$resolvedLegacyUpgradeMsi`" /qn /norestart" -LogPath $legacyInstallLog
+        Assert-LegacyPreviewHostRegistration
+        $legacyProductCode = Assert-OneInstalledProduct
+        Write-Host "Migrating pinned legacy MSI: $resolvedLegacyUpgradeMsi -> $resolvedMsi"
+    } else {
+        Write-Host "Installing MSI: $resolvedMsi"
+    }
+    Invoke-MsiExec -Arguments "/i `"$resolvedMsi`" /qn /norestart" -LogPath $installLog
     Assert-InstalledRegistry
+    if ($Diagnostic) {
+        Assert-DiagnosticPayload
+        Assert-DiagnosticSwitchUnchanged $diagnosticSwitchBefore
+    }
     & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
     & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
     $productCode = Assert-OneInstalledProduct
+    if ($null -ne $legacyProductCode -and $productCode -eq $legacyProductCode) {
+        throw "Legacy MSI upgrade kept product code $productCode instead of completing a major upgrade."
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($resolvedUpgradeMsi)) {
         Write-Host "Upgrading MSI: $resolvedUpgradeMsi"
-        Invoke-MsiExec -Arguments "/i `"$resolvedUpgradeMsi`" /qn /norestart" -LogPath $upgradeLog
+        $previousProductCode = $productCode
+        $previewHolder = Start-ActivePreviewHost
+        try {
+            Assert-ActivePreviewHost $previewHolder
+            Invoke-MsiExec -Arguments "/i `"$resolvedUpgradeMsi`" /qn /norestart" -LogPath $upgradeLog
+            Assert-ActivePreviewHost $previewHolder
+        } finally {
+            Stop-ActivePreviewHost $previewHolder
+        }
         Assert-InstalledRegistry
         & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
         & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
         $productCode = Assert-OneInstalledProduct
+        if ($productCode -eq $previousProductCode) {
+            throw "Major upgrade kept product code $productCode instead of replacing the prior product."
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($resolvedDowngradeMsi)) {
+        Write-Host "Attempting blocked downgrade MSI: $resolvedDowngradeMsi"
+        $productCodeBeforeDowngrade = $productCode
+        Invoke-MsiExecExpectFailure -Arguments "/i `"$resolvedDowngradeMsi`" /qn /norestart" -LogPath $downgradeLog
+        Assert-InstalledRegistry
+        $productCode = Assert-OneInstalledProduct
+        if ($productCode -ne $productCodeBeforeDowngrade) {
+            throw "Blocked downgrade replaced product code $productCodeBeforeDowngrade with $productCode."
+        }
     }
 
     Write-Host "Uninstalling MSI product: $productCode"
     Invoke-MsiExec -Arguments "/x `"$productCode`" /qn /norestart" -LogPath $uninstallLog
     Assert-UninstalledRegistry
+    if ($Diagnostic) {
+        Assert-DiagnosticSwitchUnchanged $diagnosticSwitchBefore
+    }
     Assert-NoInstalledProducts
 } catch {
     $productCode = Find-InstalledProductCode

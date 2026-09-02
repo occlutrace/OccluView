@@ -315,12 +315,8 @@ pub fn read_files_with_key_provider(
         .collect::<Vec<_>>();
 
     for result in meshes {
-        match result {
-            Ok(mesh) => {
-                scene.add(SceneMesh::new(mesh));
-            }
-            Err(e) => return Err(e),
-        }
+        let mesh = result?;
+        scene.add(SceneMesh::new(mesh));
     }
     Ok(scene)
 }

@@ -91,13 +91,20 @@ fn hollow_cube_with_payload() -> MeshEditBuffers {
     }));
 
     let mut indices = outer.indices.clone();
-    indices.extend(outer.indices.chunks_exact(3).flat_map(|triangle| {
-        [
-            inner_offset + triangle[0],
-            inner_offset + triangle[2],
-            inner_offset + triangle[1],
-        ]
-    }));
+    indices.extend(
+        outer
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|triangle| {
+                [
+                    inner_offset + triangle[0],
+                    inner_offset + triangle[2],
+                    inner_offset + triangle[1],
+                ]
+            }),
+    );
     MeshEditBuffers {
         vertices,
         indices,

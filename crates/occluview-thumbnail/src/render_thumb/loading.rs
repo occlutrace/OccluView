@@ -1,7 +1,6 @@
 use super::{
-    cache, oversize_input_error, Duration, FileThumbnailPreflightError, Path,
-    StreamThumbnailPreflightError, ThumbnailError, MAX_THUMBNAIL_FILE_BYTES,
-    MAX_THUMBNAIL_INPUT_BYTES,
+    cache, oversize_input_error, FileThumbnailPreflightError, Path, StreamThumbnailPreflightError,
+    ThumbnailError, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
 };
 use crate::fast_thumb::{
     try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
@@ -190,7 +189,7 @@ fn thumbnail_mesh_is_renderable(mesh: &Mesh) -> bool {
 
 fn mesh_has_drawable_triangle(mesh: &Mesh) -> bool {
     let vertices = mesh.vertices();
-    for triangle in mesh.indices().chunks_exact(3) {
+    for triangle in mesh.indices().as_chunks::<3>().0 {
         let a = Vec3::from_array(vertices[triangle[0] as usize].position);
         let b = Vec3::from_array(vertices[triangle[1] as usize].position);
         let c = Vec3::from_array(vertices[triangle[2] as usize].position);
@@ -236,7 +235,6 @@ fn path_has_supported_thumbnail_extension(path: &Path) -> bool {
 
 pub(super) fn prepare_file_thumbnail_render(
     path: &Path,
-    timeout: Duration,
 ) -> Result<cache::FileThumbnailRenderPlan, FileThumbnailPreflightError> {
     if !path_has_supported_thumbnail_extension(path) {
         return Err(FileThumbnailPreflightError::UnsupportedExtension);
@@ -256,17 +254,12 @@ pub(super) fn prepare_file_thumbnail_render(
     Ok(cache::FileThumbnailRenderPlan {
         metadata,
         cache_key: cache::ThumbnailFileCacheKey::new(path, &metadata),
-        // The shell gets one wall-clock budget for queueing, decoding, and
-        // rendering. Adding setup and render budgets made a mixed folder wait
-        // up to fourteen seconds per request before Explorer gave up.
-        wait_timeout: timeout,
     })
 }
 
 pub(super) fn prepare_stream_thumbnail_render(
     extension: Option<&str>,
     bytes: &[u8],
-    timeout: Duration,
 ) -> Result<cache::StreamThumbnailRenderPlan, StreamThumbnailPreflightError> {
     if bytes.len() > MAX_THUMBNAIL_INPUT_BYTES {
         return Err(StreamThumbnailPreflightError::Oversize {
@@ -279,7 +272,6 @@ pub(super) fn prepare_stream_thumbnail_render(
     Ok(cache::StreamThumbnailRenderPlan {
         kind,
         cache_key: cache::ThumbnailStreamCacheKey::new(kind, bytes),
-        wait_timeout: timeout,
     })
 }
 

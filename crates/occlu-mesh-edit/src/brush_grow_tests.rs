@@ -103,7 +103,9 @@ fn vertices_within(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> usize {
 
 fn triangles_reaching(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> usize {
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .filter(|triangle| {
             triangle
                 .iter()
@@ -124,7 +126,7 @@ fn face_normal(mesh: &MeshEditBuffers, triangle: &[u32]) -> Vec3 {
 /// count)`. This is the "is the crease still sharp" measurement.
 fn dihedral_stats(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> (f32, f32, usize) {
     let mut edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
-    for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle_index, triangle) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -162,7 +164,9 @@ fn dihedral_stats(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> (f32, f3
 
 fn surface_area(mesh: &MeshEditBuffers) -> f64 {
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|triangle| f64::from(face_normal(mesh, triangle).length()) * 0.5)
         .sum()
 }
@@ -201,7 +205,9 @@ fn point_triangle_distance(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
 
 fn distance_to_surface(point: Vec3, mesh: &MeshEditBuffers) -> f32 {
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|triangle| {
             point_triangle_distance(
                 point,
@@ -217,7 +223,7 @@ fn distance_to_surface(point: Vec3, mesh: &MeshEditBuffers) -> f32 {
 fn sample_surface(mesh: &MeshEditBuffers) -> Vec<Vec3> {
     const STEPS: usize = 4;
     let mut samples = Vec::new();
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         let a = position(mesh, triangle[0]);
         let b = position(mesh, triangle[1]);
         let c = position(mesh, triangle[2]);
@@ -249,7 +255,7 @@ fn session_bits(session: &BrushSession) -> Vec<u32> {
 /// a T-junction.
 fn edge_use_histogram(mesh: &MeshEditBuffers) -> HashMap<usize, usize> {
     let mut uses: HashMap<(u32, u32), usize> = HashMap::new();
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -269,7 +275,7 @@ fn edge_use_histogram(mesh: &MeshEditBuffers) -> HashMap<usize, usize> {
 /// Open-boundary edges of `mesh`, as endpoint index pairs.
 fn border_edges(mesh: &MeshEditBuffers) -> Vec<(u32, u32)> {
     let mut uses: HashMap<(u32, u32), usize> = HashMap::new();
-    for triangle in mesh.indices.chunks_exact(3) {
+    for triangle in mesh.indices.as_chunks::<3>().0 {
         for (a, b) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),

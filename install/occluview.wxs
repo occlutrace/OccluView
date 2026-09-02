@@ -8,10 +8,13 @@
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.1.0" ?>
+<?define ProductVersion = "1.1.4" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>
+<?endif?>
+<?ifndef IncludeDiagnostics?>
+<?define IncludeDiagnostics = "0" ?>
 <?endif?>
 
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
@@ -26,11 +29,12 @@
     <!--
       ProductVersion is passed in from build-msi.ps1 (-dProductVersion) and
       defaults to the value defined at the top of this file. MSI ProductVersion
-      is X.Y.Z only; the Product/@Id is "*" so every build gets a fresh
-      ProductCode while the fixed UpgradeCode below drives MajorUpgrade.
+      is X.Y.Z only; each released build increments one of those fields.
+      Product/@Id is "*" so every package gets a fresh ProductCode while the
+      fixed UpgradeCode below drives a monotonic MajorUpgrade.
     -->
     <MajorUpgrade
-      AllowSameVersionUpgrades="yes"
+      Schedule="afterInstallInitialize"
       DowngradeErrorMessage="A newer version of OccluView is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
@@ -66,23 +70,25 @@
       ExeCommand="--shell-refresh"
       Execute="deferred"
       Return="check"
-      Impersonate="no" />
+      Impersonate="yes"
+      TerminalServerAware="yes" />
     <CustomAction
       Id="RefreshShellAssociationsUninstall"
       FileKey="filOccluViewExe"
       ExeCommand="--shell-refresh"
       Execute="deferred"
       Return="check"
-      Impersonate="no" />
+      Impersonate="yes"
+      TerminalServerAware="yes" />
     <InstallExecuteSequence>
       <Custom Action="RefreshShellAssociationsInstall" After="WriteRegistryValues">NOT REMOVE</Custom>
-      <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL"</Custom>
+      <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="OccluView">
-          <Component Id="cmpOccluViewExe" Guid="{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}" Win64="yes">
+          <Component Id="cmpOccluViewExe" Guid="{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}" Win64="yes" Location="local">
             <File Id="filOccluViewExe" Source="$(var.BuildDir)\occluview.exe" KeyPath="yes" />
           </Component>
           <Component Id="cmpOccluViewShellDll" Guid="{5F834B2B-71E8-444D-82F7-4F683AAF70DB}" Win64="yes">
@@ -91,6 +97,43 @@
               Source="$(var.BuildDir)\occluview_shell.dll"
               KeyPath="yes" />
           </Component>
+          <?if $(var.IncludeDiagnostics) = 1 ?>
+          <!-- Non-release diagnostic packages carry symbols and two per-user
+               helpers. No installer action enables diagnostics or changes a
+               preview-host policy; the operator opts in after installation. -->
+          <Directory Id="DIAGNOSTICSFOLDER" Name="Diagnostics">
+            <Component Id="cmpDiagnosticAppSymbols" Guid="{E5A1E369-9B65-46E0-94D3-9E23D1FB3844}" Win64="yes">
+              <File
+                Id="filDiagnosticAppPdb"
+                Source="$(var.BuildDir)\occluview.pdb"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpDiagnosticShellSymbols" Guid="{7CA22B5F-5DC1-4CBE-95CB-B2543BFB0C34}" Win64="yes">
+              <File
+                Id="filDiagnosticShellPdb"
+                Source="$(var.BuildDir)\occluview_shell.pdb"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpEnablePreviewDiagnostics" Guid="{BFAE8A05-1146-4B16-B2BB-6726B9339721}" Win64="yes">
+              <File
+                Id="filEnablePreviewDiagnostics"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\Enable-PreviewDiagnostics.ps1"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpCollectPreviewDiagnostics" Guid="{82A415B2-A31E-4EA0-B2C1-3A5B18B1E5DA}" Win64="yes">
+              <File
+                Id="filCollectPreviewDiagnostics"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\Collect-PreviewDiagnostics.ps1"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpDiagnosticReadme" Guid="{9D0C8B25-6DE3-4B1C-B092-E50706B0D30E}" Win64="yes">
+              <File
+                Id="filDiagnosticReadme"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\README.txt"
+                KeyPath="yes" />
+            </Component>
+          </Directory>
+          <?endif?>
           <Component Id="cmpFormatIcon3d" Guid="{4B39EB44-2AA6-4908-9A69-94361855695C}" Win64="yes">
             <File
               Id="filFormatIcon3d"
@@ -474,7 +517,7 @@
               Id="shcOccluView"
               Name="$(var.ProductName)"
               Description="Open the OccluView 3D scan viewer"
-              Target="[#filOccluViewExe]"
+              Target="[INSTALLFOLDER]occluview.exe"
               WorkingDirectory="INSTALLFOLDER"
               Icon="OccluViewIcon.ico">
               <ShortcutProperty Key="System.AppUserModel.ID" Value="OccluTrace.OccluView" />
@@ -495,6 +538,13 @@
     <Feature Id="featOccluView" Title="$(var.ProductName)" Level="1">
       <ComponentRef Id="cmpOccluViewExe" />
       <ComponentRef Id="cmpOccluViewShellDll" />
+      <?if $(var.IncludeDiagnostics) = 1 ?>
+      <ComponentRef Id="cmpDiagnosticAppSymbols" />
+      <ComponentRef Id="cmpDiagnosticShellSymbols" />
+      <ComponentRef Id="cmpEnablePreviewDiagnostics" />
+      <ComponentRef Id="cmpCollectPreviewDiagnostics" />
+      <ComponentRef Id="cmpDiagnosticReadme" />
+      <?endif?>
       <ComponentRef Id="cmpFormatIcon3d" />
       <ComponentRef Id="cmpLicenseFile" />
       <ComponentRef Id="cmpNoticeFile" />

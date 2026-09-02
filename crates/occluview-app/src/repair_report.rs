@@ -14,7 +14,7 @@
 use eframe::egui;
 use occluview_core::RepairReport;
 
-use crate::mesh_editor_icons::{self, EditorIcon};
+use crate::icons::AppIcon;
 use crate::ui_theme;
 
 /// Headline shown when Repair ran but found nothing to fix.
@@ -223,7 +223,7 @@ fn group_thousands(n: usize) -> String {
     let len = bytes.len();
     let mut out = String::with_capacity(len + len / 3);
     for (i, byte) in bytes.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(' ');
         }
         out.push(char::from(*byte));
@@ -274,7 +274,7 @@ impl RepairReportDialog {
     }
 
     /// Whether a card is on screen. Test probe: production code draws the card
-    /// unconditionally in `update()` and never branches on its open state.
+    /// unconditionally in `ui()` and never branches on its open state.
     #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_open(&self) -> bool {
@@ -313,7 +313,7 @@ impl RepairReportDialog {
         let mut close_clicked = false;
         let mut copy_clicked = false;
 
-        let vp = ctx.screen_rect();
+        let vp = ctx.content_rect();
         egui::Window::new(title)
             .id(egui::Id::new("repair_report_card"))
             .open(&mut open)
@@ -349,7 +349,7 @@ impl RepairReportDialog {
 
                 ui.add_space(10.0);
                 ui.separator();
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         close_clicked = true;
                     }
@@ -386,40 +386,13 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
     let painter = ui.painter();
     match icon {
         LineIcon::Removed => {
-            mesh_editor_icons::paint(
-                painter,
-                rect,
-                EditorIcon::Delete,
-                ui_theme::TEXT_WEAK,
-                false,
-            );
+            crate::icons::paint(painter, rect, AppIcon::Delete, ui_theme::TEXT_WEAK);
         }
         LineIcon::Closed => {
-            mesh_editor_icons::paint(
-                painter,
-                rect,
-                EditorIcon::CloseHoles,
-                ui_theme::TEXT_WEAK,
-                false,
-            );
+            crate::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::TEXT_WEAK);
         }
-        LineIcon::Fixed => paint_check(painter, rect, ui_theme::ACCENT),
+        LineIcon::Fixed => crate::icons::paint(painter, rect, AppIcon::Check, ui_theme::ACCENT),
     }
-}
-
-/// A small check mark ("done") for topology fixes without a natural glyph.
-fn paint_check(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    let stroke = egui::Stroke::new(1.6, color);
-    let point = |x: f32, y: f32| {
-        egui::pos2(
-            rect.min.x + x * rect.width(),
-            rect.min.y + y * rect.height(),
-        )
-    };
-    painter.add(egui::Shape::line(
-        vec![point(0.22, 0.52), point(0.42, 0.72), point(0.80, 0.30)],
-        stroke,
-    ));
 }
 
 #[cfg(test)]
@@ -558,19 +531,22 @@ mod tests {
         dialog.present("scan.stl", multi_report());
         assert!(dialog.is_open());
         assert_eq!(dialog.showing_clean(), Some(false));
-        let _ = ctx.run(egui::RawInput::default(), |ctx| dialog.ui(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
+            .drop_without_applying_deltas();
         assert!(dialog.is_open());
 
         // Clean: positive confirmation, still an open card.
         dialog.present("scan.stl", RepairReport::default());
         assert_eq!(dialog.showing_clean(), Some(true));
-        let _ = ctx.run(egui::RawInput::default(), |ctx| dialog.ui(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
+            .drop_without_applying_deltas();
         assert!(dialog.is_open());
 
         // Close clears it; drawing while closed is a no-op.
         dialog.close();
         assert!(!dialog.is_open());
-        let _ = ctx.run(egui::RawInput::default(), |ctx| dialog.ui(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
+            .drop_without_applying_deltas();
         assert!(!dialog.is_open());
     }
 }

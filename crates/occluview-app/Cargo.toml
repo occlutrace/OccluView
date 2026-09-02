@@ -36,6 +36,10 @@ egui              = { workspace = true }
 eframe            = { workspace = true, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 rfd               = { workspace = true }
 image             = { workspace = true }
+# Lucide icon rasterization: SVG -> RGBA at draw size, see src/icons.rs.
+resvg             = { version = "0.48", default-features = false }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
 # Read the top-level window handle for the single-instance file handoff (used
 # to raise the running window). The X11-specific raise lives behind a Linux
 # target dep (x11rb); this crate only provides the handle type, so it stays
@@ -51,13 +55,14 @@ wayland-protocols = { workspace = true }
 
 # Windows shell and windowing integration.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Threading",
@@ -65,4 +70,5 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Variant",
 ] }
