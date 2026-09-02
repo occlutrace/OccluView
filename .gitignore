@@ -25,8 +25,6 @@ flamegraph.svg
 /target/doc
 
 # Internal planning docs
-docs/plans/
-docs/specs/
 
 # OS junk
 ehthumbs.db

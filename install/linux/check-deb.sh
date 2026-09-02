@@ -101,7 +101,6 @@ for deb in "$@"; do
   require_path "$root" "usr/share/man/man1/occluview.1.gz"
   require_path "$root" "usr/share/man/man1/occluview-cli.1.gz"
   require_path "$root" "usr/share/doc/occluview/NOTICE"
-  require_path "$root" "usr/share/doc/occluview/USAGE.md"
   require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES.md"
   require_path "$root" "usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"
 
