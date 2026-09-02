@@ -286,7 +286,10 @@ impl OccluViewApp {
                     self.camera.is_none()
                 } else {
                     self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                    true
+                    // The "Frame a scene when it opens" preference only owns the
+                    // replacement path; a first-ever load always frames (there is
+                    // no pose worth keeping yet) and appends never steal the view.
+                    self.settings.frame_scene_on_open
                 };
                 self.set_scene(scene, reset_camera);
                 if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains

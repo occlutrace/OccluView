@@ -36,7 +36,7 @@ impl OccluViewApp {
                     ui.label(
                         egui::RichText::new("Third-party licenses")
                             .strong()
-                            .color(ui_theme::TEXT),
+                            .color(ui_theme::text()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Close").clicked() {
@@ -66,7 +66,7 @@ impl OccluViewApp {
                                 egui::RichText::new(*line)
                                     .monospace()
                                     .size(11.0)
-                                    .color(ui_theme::TEXT_WEAK),
+                                    .color(ui_theme::text_weak()),
                             );
                         }
                     });

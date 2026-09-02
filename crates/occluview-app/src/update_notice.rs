@@ -367,7 +367,7 @@ fn draw_available(
         ui.painter(),
         icon_rect,
         crate::icons::AppIcon::InstallUpdate,
-        crate::ui_theme::TEXT,
+        crate::ui_theme::text(),
     );
     ui.label(egui::RichText::new(format!("OccluView {} is available", update.version)).strong());
     ui.label(

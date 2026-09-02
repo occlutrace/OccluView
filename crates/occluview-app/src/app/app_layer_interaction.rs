@@ -15,7 +15,61 @@ fn discard_lasso_outline(drag: &mut Option<MeshSelectionDrag>) -> bool {
 
 const TRANSLUCENT_OPACITY: f32 = 0.35;
 
+/// Ceiling for the automatic window growth, so a pathological layer count on
+/// a small monitor does not ask the platform for an ever-taller window. The
+/// compositor clamps to the monitor anyway; this keeps the request sane.
+const LAYER_WINDOW_MAX_HEIGHT_PX: f32 = 1200.0;
+
 impl OccluViewApp {
+    /// Grow the OS window so the Layers panel fits every layer without
+    /// scrolling.
+    ///
+    /// Fires only when the layer count changes and only ever grows: the panel
+    /// stretches with the viewport for free, so a deficit means the operator
+    /// added more layers than the current window shows. A manual shrink is
+    /// never fought again until the count changes, and the in-panel scrollbar
+    /// stays as the fallback for tiny screens (and Wayland compositors, which
+    /// may ignore the programmatic resize).
+    fn grow_window_for_layers(
+        &mut self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+        layer_count: usize,
+    ) {
+        if self.layers_window_layer_count == Some(layer_count) {
+            return;
+        }
+        let wanted = layers_overlay::layer_overlay_desired_height(layer_count)
+            + layers_overlay::LAYER_OVERLAY_TOP_OFFSET_PX
+            + layers_overlay::LAYER_OVERLAY_BOTTOM_RESERVE_PX;
+        let deficit = wanted - viewport_rect.height();
+        if deficit <= 0.0 {
+            self.layers_window_layer_count = Some(layer_count);
+            return;
+        }
+        // A maximized/fullscreen window shrinks back out of its state if a
+        // programmatic size arrives; the operator's window state wins, and the
+        // in-panel scrollbar covers the difference.
+        let viewport_info = ctx.input(|input| input.viewport().clone());
+        if viewport_info.maximized == Some(true) || viewport_info.fullscreen == Some(true) {
+            self.layers_window_layer_count = Some(layer_count);
+            return;
+        }
+        // screen_rect unavailable (first frame): leave the count unrecorded so
+        // the next frame retries instead of silently dropping the request.
+        let Some(screen) = ctx.input(|input| input.raw.screen_rect) else {
+            return;
+        };
+        self.layers_window_layer_count = Some(layer_count);
+        let target_height = (screen.height() + deficit).min(LAYER_WINDOW_MAX_HEIGHT_PX);
+        if target_height > screen.height() + 1.0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                screen.width(),
+                target_height,
+            )));
+        }
+    }
+
     pub(super) fn show_layers_overlay(
         &mut self,
         ui: &mut egui::Ui,
@@ -25,6 +79,7 @@ impl OccluViewApp {
         let Some(scene) = self.scene.clone() else {
             return;
         };
+        self.grow_window_for_layers(ctx, viewport_rect, scene.meshes().len());
 
         let paths = self.current_paths.clone();
         let active_layer_id = self.edit_mode.selected_layer_id();
@@ -201,6 +256,21 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
         let menu_id = Self::viewport_menu_target_id();
+        // A target removed or reordered since the click must not keep serving
+        // stale menu actions: validate the stashed index/id pair against the
+        // live scene every frame the menu (or its next open) is served.
+        let stored =
+            ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
+        if let Some(target) = &stored {
+            let still_valid = self
+                .scene
+                .as_ref()
+                .and_then(|scene| scene.meshes().get(target.index))
+                .is_some_and(|entry| entry.id() == target.layer_id);
+            if !still_valid {
+                ctx.data_mut(|data| data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id));
+            }
+        }
         if response.secondary_clicked() {
             let picked = self.pick_viewport_menu_target(response);
             ctx.data_mut(|data| match picked {

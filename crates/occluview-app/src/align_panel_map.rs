@@ -56,9 +56,9 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
             glyph,
             AppIcon::Heatmap,
             if settings.show_deviation {
-                ui_theme::ACCENT
+                ui_theme::accent()
             } else {
-                ui_theme::TEXT_MUTED
+                ui_theme::text_muted()
             },
         );
         let mut shown = settings.show_deviation;
@@ -96,7 +96,7 @@ fn presets(
         ui.label(
             egui::RichText::new("range")
                 .size(11.0)
-                .color(ui_theme::TEXT_MUTED),
+                .color(ui_theme::text_muted()),
         );
         let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 3.0;
         for (max_mm, min_mm) in crate::align_worker::CLINICAL_RANGES {
@@ -179,7 +179,7 @@ fn range(
 /// it. The colours are not wrong — the range is — and nothing on screen said so.
 fn saturation(ui: &mut egui::Ui, stats: DeviationStats, settings: AlignSettings) {
     if let Some(text) = saturation_advice(stats, settings) {
-        ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::TEXT));
+        ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::text()));
     }
 }
 
@@ -225,7 +225,7 @@ fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
                 stats.measured.saturating_add(stats.unmeasured.total())
             ))
             .size(11.0)
-            .color(ui_theme::TEXT),
+            .color(ui_theme::text()),
         );
         grey_note(ui, stats);
         return;
@@ -237,13 +237,13 @@ fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
                 summary.within_tolerance * 100.0
             ))
             .size(11.0)
-            .color(ui_theme::TEXT),
+            .color(ui_theme::text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(format!("rms {:.3}", summary.rms))
                     .size(11.0)
-                    .color(ui_theme::TEXT_MUTED),
+                    .color(ui_theme::text_muted()),
             );
         });
     });
@@ -262,7 +262,7 @@ fn grey_note(ui: &mut egui::Ui, stats: DeviationStats) {
         ui.label(
             egui::RichText::new(text)
                 .size(10.0)
-                .color(ui_theme::TEXT_MUTED),
+                .color(ui_theme::text_muted()),
         )
         .on_hover_text(
             "Grey is not a measurement. Surface with no counterpart within reach \
@@ -320,7 +320,7 @@ fn colours(ui: &mut egui::Ui, mode: &mut RampMode) -> bool {
         ui.label(
             egui::RichText::new("Colours")
                 .size(11.0)
-                .color(ui_theme::TEXT_MUTED),
+                .color(ui_theme::text_muted()),
         );
         for (value, label, hint) in [
             (

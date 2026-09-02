@@ -198,15 +198,19 @@ fn the_readme_documents_the_shortcuts_the_build_implements() {
 /// build reads and README never names leaves an operator guessing, and a key
 /// it names that nothing reads is an invention.
 const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
-    ("A", &["**Ctrl+A**"]),
+    ("A", &["**A**", "**Ctrl+A**"]),
     ("Backspace", &["**Backspace**"]),
+    ("C", &["**C**"]),
     ("Delete", &["**Delete**"]),
+    ("E", &["**E**"]),
     ("Enter", &["**Enter**"]),
     ("Escape", &["**Esc**"]),
     ("F", &["**F**"]),
+    ("M", &["**M**"]),
     ("Num1", &["**1**"]),
     ("Num2", &["**2**"]),
     ("O", &["**Ctrl+O**"]),
+    ("T", &["**T**"]),
     ("Y", &["**Ctrl+Y**"]),
     ("Z", &["**Ctrl+Z**", "**Ctrl+Shift+Z**"]),
 ];

@@ -367,7 +367,7 @@ impl CutRuler {
                         painter,
                         mid,
                         &format!("{distance:.2} mm"),
-                        ui_theme::TEXT,
+                        ui_theme::text(),
                     );
                 }
             }

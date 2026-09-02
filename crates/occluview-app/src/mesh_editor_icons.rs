@@ -3,7 +3,7 @@
 use eframe::egui::{self, FontId, Pos2, Rect, Response, Sense, Ui, Vec2};
 
 use crate::icons::AppIcon;
-use crate::ui_theme::ACCENT;
+use crate::ui_theme;
 
 /// Shared corner radius for tool cells and commit buttons.
 pub(crate) const CELL_ROUNDING: f32 = 4.0;
@@ -29,26 +29,26 @@ pub(crate) fn icon_button(
     let fg = if !enabled {
         ui.visuals().weak_text_color()
     } else if active {
-        ACCENT
+        ui_theme::accent()
     } else {
         ui.visuals().widgets.inactive.fg_stroke.color
     };
 
     let painter = ui.painter();
     if active {
-        painter.rect_filled(rect, CELL_ROUNDING, ACCENT.gamma_multiply(0.20));
+        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::accent().gamma_multiply(0.20));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            egui::Stroke::new(1.2_f32, ACCENT.gamma_multiply(0.90)),
+            egui::Stroke::new(1.2_f32, ui_theme::accent().gamma_multiply(0.90)),
             egui::StrokeKind::Middle,
         );
     } else if enabled && response.hovered() {
-        painter.rect_filled(rect, CELL_ROUNDING, ACCENT.gamma_multiply(0.12));
+        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::accent().gamma_multiply(0.12));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            egui::Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.30)),
+            egui::Stroke::new(1.0_f32, ui_theme::accent().gamma_multiply(0.30)),
             egui::StrokeKind::Middle,
         );
     }

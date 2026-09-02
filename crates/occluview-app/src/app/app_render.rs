@@ -17,7 +17,7 @@ use super::{
     paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, Context, CutTool, GpuCamera,
     GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
-    ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
+    ThumbnailSpec, ViewportSpec,
 };
 use occluview_render::{
     AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
@@ -168,7 +168,7 @@ impl OccluViewApp {
             );
             let spec = ThumbnailSpec {
                 size_px: CutTool::preview_size_px(),
-                background: VIEWPORT_BACKGROUND_LINEAR,
+                background: self.settings.viewport_background.linear(),
             };
             match pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
                 PreparedSceneClipRequest {
@@ -256,7 +256,7 @@ impl OccluViewApp {
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let spec = ViewportSpec {
             size_px: self.render_extent_px,
-            background: VIEWPORT_BACKGROUND_LINEAR,
+            background: self.settings.viewport_background.linear(),
         };
 
         let offscreen = self.offscreen.as_ref().context("offscreen unavailable")?;
@@ -306,6 +306,7 @@ impl OccluViewApp {
                         camera: &gpu_cam,
                         clip: &clip_plane,
                         spec,
+                        show_ghost: self.settings.show_cut_ghost,
                         deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
                     },
                 ),
@@ -357,6 +358,7 @@ impl OccluViewApp {
 
         let repush = match live_viewport.lock() {
             Ok(mut viewport) => {
+                viewport.set_show_ghost(self.settings.show_cut_ghost);
                 viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);
                 let mut rebuilt = false;
                 if self.live_viewport_scene_dirty {
@@ -548,7 +550,7 @@ impl OccluViewApp {
         let ctx = root_ui.ctx().clone();
         egui::CentralPanel::default().show(root_ui, |ui| {
             ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(226, 230, 234));
+                .rect_filled(ui.max_rect(), 0.0, self.settings.viewport_background.srgb());
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
             let live_viewport = self.live_viewport.clone();
             if let Some(live_viewport) = live_viewport {
@@ -574,7 +576,9 @@ impl OccluViewApp {
             } else if self.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
-                let _response = ui.allocate_rect(viewport_rect, egui::Sense::hover());
+                let response = ui.allocate_rect(viewport_rect, egui::Sense::click());
+                Self::show_drop_hover_frame_if_hovering(ui, response.rect, &ctx);
+                self.show_empty_state(ui, &response, &ctx);
                 self.show_status_overlay(ui, viewport_rect);
             } else {
                 ui.spinner();
@@ -598,9 +602,24 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) {
+        // While files hover anywhere over the window the whole viewport frames
+        // itself as the drop target, whatever the scene is showing.
+        Self::show_drop_hover_frame_if_hovering(ui, response.rect, ctx);
+        if self.scene.is_none() {
+            // No scene yet: a quiet centered call to action over the clear
+            // color. The overlays below are all camera/scene-gated, so the
+            // right-click scene menu keeps working untouched.
+            self.show_empty_state(ui, response, ctx);
+        }
         let mut axis_snap = None;
         if let Some(camera) = self.camera.as_ref() {
-            paint_scale_bar(ui, response.rect, camera);
+            paint_scale_bar(
+                ui,
+                response.rect,
+                camera,
+                self.settings.unit_display,
+                self.settings.viewport_background,
+            );
         }
         if let Some(camera) = self.camera.as_ref() {
             // Lift the gizmo above the docked Section panel while cutting so it

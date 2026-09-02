@@ -26,7 +26,7 @@ use windows::Win32::UI::Shell::{
 const CATEGORY: &str = "Recent scans";
 
 pub(crate) fn publish_recent_files(recent: &RecentFiles) -> windows::core::Result<()> {
-    let items = recent.jump_list_items(RecentFiles::DEFAULT_LIMIT);
+    let items = recent.jump_list_items(recent.entries().len().max(1));
     let _apartment = ComApartment::init()?;
 
     // SAFETY: COM is initialized for this thread and the CLSIDs/IIDs are the

@@ -325,6 +325,9 @@ pub struct PreparedViewportClipRequest<'a> {
     pub clip: &'a crate::clipping::ClipPlane,
     /// Rectangular target size and background.
     pub spec: ViewportSpec,
+    /// Whether the cut-away ghost pass may draw (the operator's preference;
+    /// the clip plane itself stays authoritative for when a section exists).
+    pub show_ghost: bool,
     /// Caller-owned budget for the entire render and readback.
     pub deadline: RenderDeadline,
 }

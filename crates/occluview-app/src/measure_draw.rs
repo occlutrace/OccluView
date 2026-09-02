@@ -36,19 +36,19 @@ pub(crate) fn segment(painter: &egui::Painter, a: egui::Pos2, b: egui::Pos2) {
     );
     painter.line_segment(
         [a, b],
-        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::ACCENT),
+        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::accent()),
     );
 }
 
 /// Endpoint anchor: white halo + accent dot (the primary end of a measurement).
 pub(crate) fn anchor_dot(painter: &egui::Painter, pos: egui::Pos2) {
     painter.circle_filled(pos, ANCHOR_HALO_PX, egui::Color32::WHITE);
-    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::ACCENT);
+    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::accent());
 }
 
 /// Bare accent dot for the far end of a thickness chord (the ray's exit point).
 pub(crate) fn accent_dot(painter: &egui::Painter, pos: egui::Pos2) {
-    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::ACCENT);
+    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::accent());
 }
 
 /// High-contrast label chip: frosted pill + hairline ring + ink text, centered
@@ -98,7 +98,7 @@ pub(crate) fn thickness_ray(
         painter,
         egui::pos2(entry.x, entry.y - LABEL_LIFT_PX),
         label,
-        ui_theme::TEXT,
+        ui_theme::text(),
     );
 }
 
@@ -125,16 +125,16 @@ mod tests {
                 segment(painter, a, b);
                 anchor_dot(painter, a);
                 accent_dot(painter, b);
-                label_chip(painter, a, "1.23 mm", ui_theme::TEXT);
+                label_chip(painter, a, "1.23 mm", ui_theme::text());
                 thickness_ray(painter, a, b, "1.23 mm");
             }
             // Empty and long labels must not panic the galley layout either.
-            label_chip(painter, egui::pos2(50.0, 50.0), "", ui_theme::TEXT);
+            label_chip(painter, egui::pos2(50.0, 50.0), "", ui_theme::text());
             label_chip(
                 painter,
                 egui::pos2(50.0, 50.0),
                 "open: no opposite wall",
-                ui_theme::TEXT_WEAK,
+                ui_theme::text_weak(),
             );
         });
     }

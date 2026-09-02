@@ -1,6 +1,7 @@
 //! Persistent viewer preferences and their retry state.
 
 use anyhow::{Context as _, Result};
+use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,106 @@ impl FallbackExportFormat {
     }
 }
 
+/// Preset for the 3D viewport clear color.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ViewportBackground {
+    /// The established neutral studio gray.
+    #[default]
+    Gray,
+    White,
+    Dark,
+}
+
+impl ViewportBackground {
+    pub(crate) const OPTIONS: [Self; 3] = [Self::Gray, Self::White, Self::Dark];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Gray => "Gray",
+            Self::White => "White",
+            Self::Dark => "Dark",
+        }
+    }
+
+    /// Whether the clear color reads as dark. Overlays painted directly on the
+    /// render (scale bar) pick their ink by this — not by the chrome theme,
+    /// which is an independent setting.
+    pub(crate) const fn is_dark(self) -> bool {
+        matches!(self, Self::Dark)
+    }
+
+    /// The sRGB-encoded clear color, for UI surfaces painted around the render.
+    /// This is the source of truth for the preset's appearance.
+    pub(crate) const fn srgb(self) -> egui::Color32 {
+        match self {
+            Self::Gray => egui::Color32::from_rgb(226, 230, 234),
+            Self::White => egui::Color32::from_rgb(247, 247, 247),
+            Self::Dark => egui::Color32::from_rgb(32, 35, 40),
+        }
+    }
+
+    /// The clear color in the renderer's linear space, converted from the
+    /// sRGB intent so the two representations can never drift apart (they once
+    /// did: the dark preset's linear values encoded back to a medium gray).
+    pub(crate) fn linear(self) -> [f64; 4] {
+        let color = self.srgb();
+        [
+            srgb_to_linear_channel(color.r()),
+            srgb_to_linear_channel(color.g()),
+            srgb_to_linear_channel(color.b()),
+            1.0,
+        ]
+    }
+}
+
+/// The inverse sRGB piecewise curve for one 0..255 channel.
+fn srgb_to_linear_channel(value: u8) -> f64 {
+    let c = f64::from(value) / 255.0;
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Length unit for every measurement readout (ruler, thickness, scale bar).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum UnitDisplay {
+    #[default]
+    Millimeters,
+    Inches,
+}
+
+impl UnitDisplay {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::Millimeters, Self::Inches];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Millimeters => "mm",
+            Self::Inches => "in",
+        }
+    }
+}
+
+/// UI chrome theme.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ThemePreference {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::Light, Self::Dark];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+}
+
 fn deserialize_export_format<'de, D>(deserializer: D) -> Result<FallbackExportFormat, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -42,7 +143,10 @@ where
     })
 }
 
-/// The three durable choices exposed by the compact preferences panel.
+/// The durable choices exposed by the preferences panel. Many independent
+/// toggles is the shape of a preferences document; collapsing them into enums
+/// would be the over-engineering here.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -54,6 +158,32 @@ pub(crate) struct Settings {
     pub(crate) remember_export_dir: bool,
     pub(crate) last_export_dir: Option<String>,
     pub(crate) update_check_on_start: bool,
+    /// Frame (fit) a scene to the home view when it opens, instead of keeping
+    /// the current camera pose.
+    pub(crate) frame_scene_on_open: bool,
+    /// Double primary click on the viewport resets the camera to the home view.
+    pub(crate) double_click_resets_camera: bool,
+    /// Multiplier on the fixed orbit drag gain, clamped at use to 0.25..=4.
+    pub(crate) orbit_sensitivity: f32,
+    /// Exponent on the scroll zoom factor, clamped at use to 0.25..=4.
+    pub(crate) zoom_sensitivity: f32,
+    /// How many recent scenes the Open chevron keeps, clamped at use to 4..=20.
+    pub(crate) recent_files_limit: usize,
+    pub(crate) viewport_background: ViewportBackground,
+    /// Draw the cut-away side as a translucent ghost during a cut view.
+    pub(crate) show_cut_ghost: bool,
+    pub(crate) unit_display: UnitDisplay,
+    /// UI scale multiplier on the system pixel density, clamped at use to
+    /// 0.85..=1.5 (1.0 keeps the platform default).
+    pub(crate) ui_scale: f32,
+    pub(crate) theme: ThemePreference,
+    /// Keep the sculpt-brush size/intensity sliders across sessions instead of
+    /// resetting them to the built-in defaults.
+    pub(crate) remember_sculpt_brush: bool,
+    /// Last used sculpt size, honored only while `remember_sculpt_brush`.
+    pub(crate) sculpt_size: f32,
+    /// Last used sculpt intensity, honored only while `remember_sculpt_brush`.
+    pub(crate) sculpt_intensity: f32,
 }
 
 impl Default for Settings {
@@ -63,11 +193,39 @@ impl Default for Settings {
             remember_export_dir: false,
             last_export_dir: None,
             update_check_on_start: true,
+            frame_scene_on_open: true,
+            double_click_resets_camera: true,
+            orbit_sensitivity: 1.0,
+            zoom_sensitivity: 1.0,
+            recent_files_limit: 8,
+            viewport_background: ViewportBackground::default(),
+            show_cut_ghost: true,
+            unit_display: UnitDisplay::default(),
+            ui_scale: 1.0,
+            theme: ThemePreference::default(),
+            remember_sculpt_brush: true,
+            sculpt_size: 40.0,
+            sculpt_intensity: 50.0,
         }
     }
 }
 
 impl Settings {
+    pub(crate) fn orbit_sensitivity(&self) -> f32 {
+        self.orbit_sensitivity.clamp(0.25, 4.0)
+    }
+
+    pub(crate) fn zoom_sensitivity(&self) -> f32 {
+        self.zoom_sensitivity.clamp(0.25, 4.0)
+    }
+
+    pub(crate) fn recent_files_limit(&self) -> usize {
+        self.recent_files_limit.clamp(4, 20)
+    }
+
+    pub(crate) fn ui_scale(&self) -> f32 {
+        self.ui_scale.clamp(0.85, 1.5)
+    }
     fn path() -> Option<PathBuf> {
         crate::app_paths::app_state_dir().map(|dir| dir.join(SETTINGS_FILE))
     }
@@ -77,10 +235,22 @@ impl Settings {
             return Self::default();
         };
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                tracing::warn!(%error, "settings.json is invalid; using defaults");
-                Self::default()
-            }),
+            Ok(bytes) => match serde_json::from_slice::<Self>(&bytes) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    tracing::warn!(%error, "settings.json is invalid; using defaults");
+                    // Preserve the broken file for diagnosis instead of letting
+                    // the next dirty write silently overwrite it.
+                    let backup = path.with_extension("json.bak");
+                    if let Err(backup_error) = std::fs::rename(&path, &backup) {
+                        tracing::warn!(
+                            %backup_error,
+                            "could not preserve the invalid settings file"
+                        );
+                    }
+                    Self::default()
+                }
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(error) => {
                 tracing::warn!(%error, "settings.json could not be read; using defaults");
@@ -233,7 +403,6 @@ mod tests {
         let legacy = br#"{
             "schema_version": 1,
             "reset_camera_on_open": false,
-            "recent_files_limit": 20,
             "default_export_format": "Stl",
             "remember_export_dir": false,
             "last_export_dir": null,
@@ -246,7 +415,12 @@ mod tests {
         assert!(rewritten.get("default_export_format").is_none());
         assert!(rewritten.get("schema_version").is_none());
         assert!(rewritten.get("reset_camera_on_open").is_none());
-        assert!(rewritten.get("recent_files_limit").is_none());
+        // `recent_files_limit` used to be obsolete and was stripped on rewrite;
+        // it is a live preference again, so a rewritten document keeps it.
+        assert_eq!(
+            rewritten["recent_files_limit"],
+            Settings::default().recent_files_limit
+        );
         Ok(())
     }
 

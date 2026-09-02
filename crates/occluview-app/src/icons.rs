@@ -155,6 +155,7 @@ fn rasterize(icon: AppIcon, px: usize, color: egui::Color32) -> Option<egui::Col
     );
     // tiny-skia stores premultiplied alpha; egui wants straight alpha.
     let mut rgba = pixmap.data().to_vec();
+    let tint_alpha = u16::from(color.a());
     for p in rgba.as_chunks_mut::<4>().0 {
         let a = u16::from(p[3]);
         #[expect(
@@ -166,6 +167,10 @@ fn rasterize(icon: AppIcon, px: usize, color: egui::Color32) -> Option<egui::Col
                 *c = ((u16::from(*c) * 255) / a) as u8;
             }
         }
+        // The glyph is monochrome, so tinting its alpha by the ink's alpha is
+        // exact — semi-transparent inks (e.g. `accent().gamma_multiply(..)`)
+        // stay semi-transparent instead of rendering opaque.
+        p[3] = ((a * tint_alpha) / 255) as u8;
     }
     Some(egui::ColorImage::from_rgba_unmultiplied([px, px], &rgba))
 }
@@ -175,8 +180,9 @@ fn usvg_tree(svg: &str) -> Option<resvg::usvg::Tree> {
     resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).ok()
 }
 
-/// Cache key: icon, physical pixel size, and ink color.
-type TextureCacheKey = (AppIcon, u32, [u8; 3]);
+/// Cache key: icon, physical pixel size, and full ink color (RGBA — two
+/// tints that share RGB but differ in alpha must not collide).
+type TextureCacheKey = (AppIcon, u32, egui::Color32);
 
 #[derive(Clone, Default)]
 struct TextureCache(HashMap<TextureCacheKey, egui::TextureHandle>);
@@ -198,7 +204,7 @@ pub(crate) fn texture(
 ) -> egui::TextureHandle {
     let ppi = ctx.pixels_per_point();
     let px = ((logical_size * ppi).round() as usize).clamp(8, 256);
-    let key = (icon, px as u32, [color.r(), color.g(), color.b()]);
+    let key = (icon, px as u32, color);
     if let Some(texture) = ctx.data_mut(|data| {
         data.get_temp_mut_or_default::<TextureCache>(egui::Id::new(TEXTURE_CACHE_ID))
             .0
@@ -209,7 +215,16 @@ pub(crate) fn texture(
     }
     let image = rasterize(icon, px, color)
         .unwrap_or_else(|| egui::ColorImage::filled([px, px], egui::Color32::TRANSPARENT));
-    let name = format!("icon/{icon:?}/{px}");
+    // The name must distinguish ink colors: `load_texture` with a repeated
+    // name replaces the image under the same TextureId, which would corrupt
+    // the cache-hit path for a second tint of the same icon and size.
+    let name = format!(
+        "icon/{icon:?}/{px}/{:02x}{:02x}{:02x}{:02x}",
+        color.r(),
+        color.g(),
+        color.b(),
+        color.a()
+    );
     let tex = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
     ctx.data_mut(|data| {
         data.get_temp_mut_or_default::<TextureCache>(egui::Id::new(TEXTURE_CACHE_ID))

@@ -29,7 +29,7 @@ fn consumer_wheel_section_drain_prevents_camera_zoom() {
             true,
             false,
         ));
-        camera_changed = super::app_viewport::zoom_camera_from_wheel(&mut camera, ui.ctx());
+        camera_changed = super::app_viewport::zoom_camera_from_wheel(&mut camera, ui.ctx(), 1.0);
     })
     .drop_without_applying_deltas();
 

@@ -418,6 +418,7 @@ impl Offscreen {
             camera,
             clip,
             spec,
+            show_ghost,
             deadline,
         } = request;
         let [width_px, height_px] = spec.size_px;
@@ -490,14 +491,17 @@ impl Offscreen {
         }
         // Main-viewport cut view: fade the cut-away side instead of deleting it.
         // (The small slice preview, `render_prepared_scene_with_clip`, keeps its
-        // hard clip and never calls this.)
-        scene.draw_ghost_side(
-            &self.renderer,
-            &mut rpass,
-            &camera_bg,
-            &self.texture_bind_group,
-            &clip_bg,
-        );
+        // hard clip and never calls this.) The preference gate mirrors the live
+        // viewport's ghost toggle.
+        if show_ghost {
+            scene.draw_ghost_side(
+                &self.renderer,
+                &mut rpass,
+                &camera_bg,
+                &self.texture_bind_group,
+                &clip_bg,
+            );
+        }
         drop(rpass);
 
         let padded = padded_bytes_per_row(width);

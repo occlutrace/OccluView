@@ -1,21 +1,15 @@
-//! Compact preferences popover and the product-information modals.
+//! Preferences dispatch and the product-information modals. The popover
+//! surface itself (sections, rows, action vocabulary) lives in
+//! `app_settings_panel`.
 
+use super::app_settings_panel::{settings_popup_id, show_settings_popup, SettingsAction};
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
-use crate::app_settings::{FallbackExportFormat, Settings};
 use crate::icons::AppIcon;
 use crate::ui_theme;
-use crate::update_notice::UpdateCheckStatus;
 use eframe::egui;
 
-const PANEL_MARGIN: i8 = 12;
-const ROW_HEIGHT: f32 = 30.0;
-const SETTINGS_PANEL_ID: &str = "settings-popover-v2";
 const INFORMATION_MODAL_BACKDROP_ALPHA: u8 = 48;
-
-pub(super) fn settings_popup_id() -> egui::Id {
-    egui::Id::new(SETTINGS_PANEL_ID)
-}
 
 pub(super) fn show_information_modal<T>(
     ctx: &egui::Context,
@@ -46,15 +40,6 @@ pub(super) fn show_information_modal<T>(
         })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum SettingsAction {
-    SetExportFormat(FallbackExportFormat),
-    SetRememberExportDir(bool),
-    SetUpdateCheckOnStart(bool),
-    CheckForUpdates,
-    OpenAbout,
-}
-
 impl OccluViewApp {
     pub(super) fn show_settings_popup(&mut self, trigger: &egui::Response) {
         let Some(action) = show_settings_popup(
@@ -78,6 +63,65 @@ impl OccluViewApp {
             }
             SettingsAction::SetUpdateCheckOnStart(enabled) => {
                 self.settings.update_check_on_start = enabled;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetFrameSceneOnOpen(enabled) => {
+                self.settings.frame_scene_on_open = enabled;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetDoubleClickFocus(enabled) => {
+                self.settings.double_click_resets_camera = enabled;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetOrbitSensitivity(value) => {
+                self.settings.orbit_sensitivity = value;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetZoomSensitivity(value) => {
+                self.settings.zoom_sensitivity = value;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetRecentFilesLimit(limit) => {
+                self.settings.recent_files_limit = limit;
+                // Re-trim the live list so an operator shrinking the limit sees
+                // the chevron shorten immediately, not after a restart.
+                let stored = self.recent_files.serialize();
+                self.recent_files = crate::recent_files::RecentFiles::deserialize(
+                    self.settings.recent_files_limit(),
+                    &stored,
+                );
+                self.settings_persistence.mark_dirty();
+                self.save_recent_files();
+            }
+            SettingsAction::SetViewportBackground(background) => {
+                self.settings.viewport_background = background;
+                // The clear color is baked into the prepared scene specs, so
+                // both render paths must rebuild before the change is visible.
+                self.mark_scene_materials_changed();
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetShowCutGhost(enabled) => {
+                self.settings.show_cut_ghost = enabled;
+                // Both render paths bake the ghost decision into the frame they
+                // draw; force the next one so a stationary cut view answers at
+                // once instead of waiting for the next camera move.
+                self.needs_render = true;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetUnitDisplay(unit) => {
+                self.settings.unit_display = unit;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetTheme(theme) => {
+                self.settings.theme = theme;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetUiScale(scale) => {
+                self.settings.ui_scale = scale;
+                self.settings_persistence.mark_dirty();
+            }
+            SettingsAction::SetRememberSculptBrush(enabled) => {
+                self.settings.remember_sculpt_brush = enabled;
                 self.settings_persistence.mark_dirty();
             }
             SettingsAction::CheckForUpdates => self.update_notice.request_check(&trigger.ctx),
@@ -112,18 +156,18 @@ impl OccluViewApp {
                         egui::RichText::new("OccluView")
                             .size(19.0)
                             .strong()
-                            .color(ui_theme::TEXT),
+                            .color(ui_theme::text()),
                     );
                     ui.label(
                         egui::RichText::new("3D viewer for dental scans")
                             .size(12.0)
-                            .color(ui_theme::TEXT_WEAK),
+                            .color(ui_theme::text_weak()),
                     );
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
                             .size(11.0)
-                            .color(ui_theme::TEXT_MUTED),
+                            .color(ui_theme::text_muted()),
                     );
                 });
 
@@ -154,7 +198,7 @@ impl OccluViewApp {
                     ui.label(
                         egui::RichText::new("Apache License 2.0")
                             .size(10.5)
-                            .color(ui_theme::TEXT_MUTED),
+                            .color(ui_theme::text_muted()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Close").clicked() {
@@ -176,213 +220,26 @@ impl OccluViewApp {
     }
 }
 
-fn show_settings_popup(
-    trigger: &egui::Response,
-    settings: &Settings,
-    update_status: &UpdateCheckStatus,
-    save_error: Option<&str>,
-) -> Option<SettingsAction> {
-    egui::Popup::from_toggle_button_response(trigger)
-        .id(settings_popup_id())
-        .align(egui::RectAlign::BOTTOM_END)
-        .align_alternatives(&[])
-        .gap(4.0)
-        .layout(egui::Layout::top_down_justified(egui::Align::Min))
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .width(312.0)
-        .frame(
-            egui::Frame::new()
-                .fill(egui::Color32::WHITE)
-                .stroke(egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()))
-                .corner_radius(6)
-                .shadow(ui_theme::panel_shadow())
-                .inner_margin(egui::Margin::same(PANEL_MARGIN)),
-        )
-        .show(|ui| {
-            let mut action = None;
-            ui.set_width(286.0);
-            panel_header(ui);
-            ui.add_space(7.0);
-            section_label(ui, "Files");
-            export_format_row(ui, settings, &mut action);
-
-            let mut remember = settings.remember_export_dir;
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), ROW_HEIGHT),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    if ui
-                        .checkbox(&mut remember, "Remember export folder")
-                        .on_hover_text("Use the same folder after restarting OccluView")
-                        .changed()
-                    {
-                        action = Some(SettingsAction::SetRememberExportDir(remember));
-                    }
-                },
-            );
-
-            ui.add_space(3.0);
-            ui.separator();
-            ui.add_space(5.0);
-            section_label(ui, "Updates");
-            let mut check_on_start = settings.update_check_on_start;
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), ROW_HEIGHT),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    if ui
-                        .checkbox(&mut check_on_start, "Check automatically at startup")
-                        .changed()
-                    {
-                        action = Some(SettingsAction::SetUpdateCheckOnStart(check_on_start));
-                    }
-                },
-            );
-            update_row(ui, update_status, &mut action);
-
-            if save_error.is_some() {
-                ui.label(
-                    egui::RichText::new("Preferences could not be saved. Retrying…")
-                        .size(10.5)
-                        .color(ui_theme::DANGER),
-                )
-                .on_hover_text("The settings file is currently unavailable");
-            }
-
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(3.0);
-            if ui
-                .add(egui::Button::new("About OccluView").frame(false))
-                .clicked()
-            {
-                action = Some(SettingsAction::OpenAbout);
-            }
-            action
-        })
-        .and_then(|response| response.inner)
-}
-
-fn panel_header(ui: &mut egui::Ui) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), 22.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let (icon_rect, _) =
-                ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover());
-            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::TEXT);
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("Settings")
-                    .size(14.0)
-                    .strong()
-                    .color(ui_theme::TEXT),
-            );
-        },
-    );
-}
-
-fn section_label(ui: &mut egui::Ui, label: &str) {
-    ui.label(
-        egui::RichText::new(label)
-            .size(10.5)
-            .strong()
-            .color(ui_theme::TEXT_MUTED),
-    );
-}
-
-fn export_format_row(ui: &mut egui::Ui, settings: &Settings, action: &mut Option<SettingsAction>) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.label("Export format")
-                .on_hover_text("Used when the source format cannot be exported");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                for format in FallbackExportFormat::OPTIONS.into_iter().rev() {
-                    if ui
-                        .selectable_label(settings.fallback_export_format == format, format.label())
-                        .clicked()
-                    {
-                        *action = Some(SettingsAction::SetExportFormat(format));
-                    }
-                }
-            });
-        },
-    );
-}
-
-fn update_row(ui: &mut egui::Ui, status: &UpdateCheckStatus, action: &mut Option<SettingsAction>) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let enabled = !matches!(
-                status,
-                UpdateCheckStatus::Disabled | UpdateCheckStatus::Checking
-            );
-            if ui
-                .add_enabled(enabled, egui::Button::new("Check now"))
-                .on_disabled_hover_text(match status {
-                    UpdateCheckStatus::Disabled => "Update checks are disabled by the environment",
-                    _ => "An update check is already running",
-                })
-                .clicked()
-            {
-                *action = Some(SettingsAction::CheckForUpdates);
-            }
-            ui.add_space(5.0);
-            let (text, color, detail) = update_status_text(status);
-            if !text.is_empty() {
-                let response = ui.label(egui::RichText::new(text).size(10.5).color(color));
-                if let Some(detail) = detail {
-                    response.on_hover_text(detail);
-                }
-            }
-        },
-    );
-}
-
-fn update_status_text(status: &UpdateCheckStatus) -> (&str, egui::Color32, Option<&str>) {
-    match status {
-        UpdateCheckStatus::Idle => ("", ui_theme::TEXT_WEAK, None),
-        UpdateCheckStatus::Disabled => ("Disabled by environment", ui_theme::TEXT_MUTED, None),
-        UpdateCheckStatus::Checking => ("Checking…", ui_theme::TEXT_WEAK, None),
-        UpdateCheckStatus::Current => ("Up to date", ui_theme::TEXT_WEAK, None),
-        UpdateCheckStatus::Available(version) => {
-            ("Update available", ui_theme::TEXT, Some(version.as_str()))
-        }
-        UpdateCheckStatus::Skipped(version) => (
-            "Version skipped",
-            ui_theme::TEXT_MUTED,
-            Some(version.as_str()),
-        ),
-        UpdateCheckStatus::Failed(error) => {
-            ("Couldn’t check", ui_theme::DANGER, Some(error.as_str()))
-        }
-    }
-}
-
 fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 27.0), egui::Sense::click());
     if response.hovered() {
         ui.painter().rect_filled(
             rect,
             ui_theme::RADIUS_CONTROL,
-            ui_theme::ACCENT.gamma_multiply(0.08),
+            ui_theme::accent().gamma_multiply(0.08),
         );
     }
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 13.0, rect.center().y),
         egui::vec2(14.0, 14.0),
     );
-    crate::icons::paint(ui.painter(), icon_rect, icon, ui_theme::TEXT_WEAK);
+    crate::icons::paint(ui.painter(), icon_rect, icon, ui_theme::text_weak());
     ui.painter().text(
         egui::pos2(icon_rect.right() + 7.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(12.0),
-        ui_theme::TEXT,
+        ui_theme::text(),
     );
     response.clicked()
 }
@@ -393,7 +250,9 @@ mod tests {
     use crate::app::app_dialogs::{
         recent_files_popup_id, show_recent_files_popup, show_settings_toolbar_toggle,
     };
+    use crate::app_settings::Settings;
     use crate::recent_files::RecentFiles;
+    use crate::update_notice::UpdateCheckStatus;
 
     fn test_screen() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 384.0))
@@ -561,7 +420,9 @@ mod tests {
 
         assert_eq!(
             response.action,
-            Some(SettingsAction::SetExportFormat(FallbackExportFormat::Stl))
+            Some(SettingsAction::SetExportFormat(
+                crate::app_settings::FallbackExportFormat::Stl
+            ))
         );
         assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
         Ok(())
