@@ -35,10 +35,15 @@ impl ScaleBar {
         })
     }
 
-    /// Label text for the UI.
+    /// Label text for the UI, in the operator's chosen unit.
     #[must_use]
-    pub fn label(self) -> String {
-        format!("{:.0} mm", self.length_mm)
+    pub fn label(self, unit: crate::app_settings::UnitDisplay) -> String {
+        match unit {
+            crate::app_settings::UnitDisplay::Millimeters => format!("{:.0} mm", self.length_mm),
+            crate::app_settings::UnitDisplay::Inches => {
+                format!("{:.2} in", f64::from(self.length_mm) / 25.4)
+            }
+        }
     }
 }
 
@@ -89,7 +94,14 @@ mod tests {
 
         assert_eq!(bar.length_mm, 20.0);
         assert!((bar.width_px - 128.0).abs() < 0.01);
-        assert_eq!(bar.label(), "20 mm");
+        assert_eq!(
+            bar.label(crate::app_settings::UnitDisplay::Millimeters),
+            "20 mm"
+        );
+        assert_eq!(
+            bar.label(crate::app_settings::UnitDisplay::Inches),
+            "0.79 in"
+        );
     }
 
     #[test]
@@ -105,7 +117,10 @@ mod tests {
 
         assert_eq!(bar.length_mm, 1.0);
         assert!((bar.width_px - 128.0).abs() < 0.01);
-        assert_eq!(bar.label(), "1 mm");
+        assert_eq!(
+            bar.label(crate::app_settings::UnitDisplay::Millimeters),
+            "1 mm"
+        );
     }
 
     #[test]
@@ -114,6 +129,9 @@ mod tests {
 
         assert_eq!(bar.length_mm, 100.0);
         assert!((bar.width_px - 102.4).abs() < 0.01);
-        assert_eq!(bar.label(), "100 mm");
+        assert_eq!(
+            bar.label(crate::app_settings::UnitDisplay::Millimeters),
+            "100 mm"
+        );
     }
 }

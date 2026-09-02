@@ -88,9 +88,9 @@ pub(crate) fn show(ui: &mut egui::Ui, roles: Option<&AlignRoles>, enabled: bool)
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(roles.sentence()).size(11.5).color(
                         if roles.implied {
-                            ui_theme::TEXT_MUTED
+                            ui_theme::text_muted()
                         } else {
-                            ui_theme::TEXT
+                            ui_theme::text()
                         },
                     ))
                     .on_hover_text(roles.hint());

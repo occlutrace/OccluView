@@ -44,9 +44,6 @@ pub struct RecentFiles {
 }
 
 impl RecentFiles {
-    /// Default number of entries shown in the app.
-    pub const DEFAULT_LIMIT: usize = 8;
-
     /// Construct an empty recent-file list.
     #[must_use]
     pub fn new(limit: usize) -> Self {

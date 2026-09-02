@@ -364,9 +364,9 @@ fn draw_section_header(
                     close_rect,
                     crate::icons::AppIcon::Close,
                     if close_hovered {
-                        ui_theme::TEXT
+                        ui_theme::text()
                     } else {
-                        ui_theme::TEXT_WEAK
+                        ui_theme::text_weak()
                     },
                 );
                 let close_clicked = close.on_hover_text("Close section").clicked();
@@ -412,13 +412,38 @@ fn handle_panel_gesture(
     );
     let mut pan_delta = Vec3::ZERO;
     let mut panned = false;
+    // Park the RMB press position for the stationary-click test: by the time a
+    // click fires, `press_origin` is already cleared (egui wipes it on every
+    // release), so the release position must be compared against this.
+    let rmb_press_id = ui.id().with("cut-section-ruler-rmb-press");
+    if ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Secondary)) {
+        if let Some(press) = ui.input(|input| input.pointer.latest_pos()) {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(rmb_press_id, press));
+        }
+    }
     if response.dragged() {
         if let Some(pointer) = response.interact_pointer_pos() {
             pan_delta = map.pan_delta_for_drag(pointer, response.drag_delta());
             panned = true;
         }
     } else if response.secondary_clicked() {
-        ruler.clear();
+        // RMB also pans this panel. Only a near-static right-click clears the
+        // ruler -- the same tolerance the viewport measure tool applies, so a
+        // short pan the platform reports as a click cannot wipe measurements
+        // (the "Thickness exits on rotation" bug class).
+        const RMB_CLEAR_MAX_MOVE_PX: f32 = 3.0;
+        let press = ui
+            .ctx()
+            .data(|data| data.get_temp::<egui::Pos2>(rmb_press_id));
+        ui.ctx()
+            .data_mut(|data| data.remove::<egui::Pos2>(rmb_press_id));
+        let static_click = press
+            .zip(response.interact_pointer_pos())
+            .is_some_and(|(origin, release)| (origin - release).length() <= RMB_CLEAR_MAX_MOVE_PX);
+        if static_click {
+            ruler.clear();
+        }
     } else if response.clicked() {
         if let Some(pos) = response.interact_pointer_pos() {
             place_measurement(pos, &map, ruler, &placement);
@@ -573,7 +598,7 @@ fn draw_empty_state(painter: &egui::Painter, image_rect: egui::Rect) {
         egui::Align2::CENTER_CENTER,
         "No intersection",
         egui::FontId::proportional(12.0),
-        ui_theme::TEXT_MUTED,
+        ui_theme::text_muted(),
     );
 }
 
@@ -597,7 +622,7 @@ fn draw_section_footer(
         egui::Align2::CENTER_BOTTOM,
         hint,
         egui::FontId::proportional(9.5),
-        ui_theme::TEXT_MUTED,
+        ui_theme::text_muted(),
     );
 }
 

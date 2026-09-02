@@ -15,7 +15,7 @@ use crate::mesh_editor_icons::{self, CELL_ROUNDING};
 use crate::sculpt_tool::{
     SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
 };
-use crate::ui_theme::{self, ACCENT, TEXT, TEXT_WEAK};
+use crate::ui_theme;
 
 /// Height of the tab strip / its pills.
 const TAB_H: f32 = 28.0;
@@ -25,10 +25,6 @@ const TAB_H: f32 = 28.0;
 /// height so the bottom row aligns. Trimmed to keep the palette compact
 /// while the glyphs stay legible.
 const ROW_H: f32 = 46.0;
-
-/// Text color for the primary `Done` button: high contrast on the accent fill
-/// in both the light and dark themes dental CAD software offers.
-const PRIMARY_TEXT: egui::Color32 = egui::Color32::WHITE;
 
 /// The Sculpt / Edit Mesh tab strip plus the window close button. Doubles as
 /// the window's top bar (the native title bar is off).
@@ -66,18 +62,18 @@ pub(super) fn tab_strip(
 fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TAB_H), egui::Sense::click());
     let fill = if active {
-        ACCENT
+        ui_theme::accent()
     } else if response.hovered() {
-        ACCENT.gamma_multiply(0.16)
+        ui_theme::accent().gamma_multiply(0.16)
     } else {
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
     painter.rect_filled(rect, TAB_H * 0.5, fill);
     let text = if active {
-        egui::Color32::WHITE
+        ui_theme::on_accent()
     } else {
-        TEXT_WEAK
+        ui_theme::text_weak()
     };
     painter.text(
         rect.center(),
@@ -97,7 +93,11 @@ fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
         ui.painter(),
         rect.shrink(3.0),
         AppIcon::Close,
-        if response.hovered() { TEXT } else { TEXT_WEAK },
+        if response.hovered() {
+            ui_theme::text()
+        } else {
+            ui_theme::text_weak()
+        },
     );
     response.on_hover_text("Cancel the session (edits are reverted)")
 }
@@ -479,10 +479,10 @@ pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
         ui.horizontal(|ui| {
             let (icon_rect, _) =
                 ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
-            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::WARNING);
+            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
             ui.label(
                 egui::RichText::new("Unsaved edits")
-                    .color(ui_theme::WARNING)
+                    .color(ui_theme::warning())
                     .size(11.0),
             );
         })
@@ -565,7 +565,7 @@ pub(super) fn session(
 pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-        crate::icons::paint(ui.painter(), rect, icon, ACCENT);
+        crate::icons::paint(ui.painter(), rect, icon, ui_theme::accent());
         ui.label(egui::RichText::new(title).strong().size(14.0));
     });
     ui.add_space(2.0);
@@ -643,9 +643,13 @@ fn tall_text_button(
     primary: bool,
 ) -> egui::Response {
     let button = if primary {
-        egui::Button::new(egui::RichText::new(label).color(PRIMARY_TEXT).strong())
-            .fill(ACCENT)
-            .corner_radius(CELL_ROUNDING)
+        egui::Button::new(
+            egui::RichText::new(label)
+                .color(ui_theme::on_accent())
+                .strong(),
+        )
+        .fill(ui_theme::accent())
+        .corner_radius(CELL_ROUNDING)
     } else {
         egui::Button::new(label).corner_radius(CELL_ROUNDING)
     }

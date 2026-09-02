@@ -18,27 +18,47 @@ pub(super) const LAYER_ROW_CONTROL_WIDTH_PX: f32 = LAYER_ROW_EYE_WIDTH_PX
     + LAYER_ROW_GAP_PX * 3.0
     + LAYER_ROW_ACTION_GAP_PX;
 
-/// The panel sizes itself to its content: it grows one row per layer until it
-/// would cover this fraction of the viewport height, and only then scrolls.
-/// No absolute pixel cap — a taller window shows more layers, dynamically.
-const LAYER_OVERLAY_MAX_VIEWPORT_FRACTION: f32 = 0.72;
+/// The overlay's own chrome stacked on top of its rows: the frame's vertical
+/// inner margins (2 × 8 px) plus the header block (`LAYER_OVERLAY_HEADER_
+/// HEIGHT_PX`) the row list lives under. Both the wanted height and the
+/// scroll-area budget derive from it, so the rows a panel was sized for never
+/// overflow into a scrollbar.
+pub(crate) const LAYER_OVERLAY_CHROME_HEIGHT_PX: f32 = 16.0 + LAYER_OVERLAY_HEADER_HEIGHT_PX;
+/// Top offset of the panel inside the viewport (see `layer_overlay_rect`).
+pub(crate) const LAYER_OVERLAY_TOP_OFFSET_PX: f32 = 14.0;
+/// Height kept clear at the bottom of the viewport when the panel stretches
+/// to its maximum: the scale-bar band (40 px), the gap above it, and the
+/// status pill — all bottom-left, under the panel's own corner.
+pub(crate) const LAYER_OVERLAY_BOTTOM_RESERVE_PX: f32 = 82.0;
 
+/// Full height the panel wants to show `layer_count` rows without scrolling.
+/// Derived from the layer count alone — never from the current viewport — so
+/// the window-growth hint in the app layer can be computed from it directly.
+pub(crate) fn layer_overlay_desired_height(layer_count: usize) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    let rows = layer_count.max(1) as f32;
+    LAYER_OVERLAY_CHROME_HEIGHT_PX + LAYER_ROW_HEIGHT_PX * rows
+}
+
+/// The panel sizes itself to its content: it grows one row per layer until it
+/// reaches the space between the viewport's top edge and the bottom overlay
+/// band, and only then scrolls. The app grows the OS window past that point.
 pub(crate) fn layer_overlay_rect(viewport_rect: egui::Rect, layer_count: usize) -> egui::Rect {
     let max_width = (viewport_rect.width() - 28.0).max(180.0);
     let width = (viewport_rect.width() * 0.22)
         .clamp(236.0, 320.0)
-        .min(max_width);
-    let max_height = (viewport_rect.height() * LAYER_OVERLAY_MAX_VIEWPORT_FRACTION).max(86.0);
-    let rows_that_fit = ((max_height - LAYER_OVERLAY_HEADER_HEIGHT_PX) / LAYER_ROW_HEIGHT_PX)
-        .floor()
-        .max(1.0);
-    #[allow(clippy::cast_precision_loss)]
-    let requested_rows = layer_count.clamp(1, 4096) as f32;
-    let visible_rows = requested_rows.min(rows_that_fit);
-    let height = (LAYER_OVERLAY_HEADER_HEIGHT_PX + LAYER_ROW_HEIGHT_PX * visible_rows)
-        .clamp(86.0, max_height);
+        .min(max_width)
+        // The floors above are aspirations; on a tiny window the viewport wins
+        // so the panel never pokes past the window edge.
+        .min((viewport_rect.width() - LAYER_OVERLAY_TOP_OFFSET_PX).max(0.0));
+    let max_height =
+        (viewport_rect.height() - LAYER_OVERLAY_TOP_OFFSET_PX - LAYER_OVERLAY_BOTTOM_RESERVE_PX)
+            .max(86.0);
+    let height = layer_overlay_desired_height(layer_count)
+        .clamp(86.0, max_height)
+        .min((viewport_rect.height() - LAYER_OVERLAY_TOP_OFFSET_PX).max(0.0));
     egui::Rect::from_min_size(
-        viewport_rect.min + egui::vec2(14.0, 14.0),
+        viewport_rect.min + egui::vec2(LAYER_OVERLAY_TOP_OFFSET_PX, LAYER_OVERLAY_TOP_OFFSET_PX),
         egui::vec2(width, height),
     )
 }
@@ -71,6 +91,54 @@ mod tests {
         assert_near(rect.top(), 14.0);
         assert!(rect.width() <= 300.0);
         assert!(rect.height() <= 420.0);
+        assert!(viewport.contains_rect(rect));
+    }
+
+    #[test]
+    fn the_panel_wants_one_row_per_layer_without_scrolling() {
+        assert_near(
+            layer_overlay_desired_height(1),
+            LAYER_OVERLAY_CHROME_HEIGHT_PX + LAYER_ROW_HEIGHT_PX,
+        );
+        assert_near(
+            layer_overlay_desired_height(0),
+            layer_overlay_desired_height(1),
+        );
+        assert_near(
+            layer_overlay_desired_height(30),
+            LAYER_OVERLAY_CHROME_HEIGHT_PX + LAYER_ROW_HEIGHT_PX * 30.0,
+        );
+    }
+
+    #[test]
+    fn a_tall_viewport_shows_every_layer_without_a_cap() {
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 1100.0));
+
+        let rect = layer_overlay_rect(viewport, 30);
+
+        assert_near(rect.height(), layer_overlay_desired_height(30));
+        assert!(viewport.contains_rect(rect));
+    }
+
+    #[test]
+    fn a_short_viewport_caps_the_panel_above_the_bottom_band() {
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 500.0));
+
+        let rect = layer_overlay_rect(viewport, 30);
+
+        assert_near(
+            rect.height(),
+            500.0 - LAYER_OVERLAY_TOP_OFFSET_PX - LAYER_OVERLAY_BOTTOM_RESERVE_PX,
+        );
+        assert!(viewport.contains_rect(rect));
+    }
+
+    #[test]
+    fn a_tiny_viewport_keeps_the_panel_inside_instead_of_honoring_the_floors() {
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(120.0, 60.0));
+
+        let rect = layer_overlay_rect(viewport, 30);
+
         assert!(viewport.contains_rect(rect));
     }
 

@@ -80,7 +80,7 @@ fn body(
     ui.label(
         egui::RichText::new("Paint the surface best-fit matching must ignore, on either mesh")
             .size(11.0)
-            .color(ui_theme::TEXT),
+            .color(ui_theme::text()),
     );
     ui.label(
         egui::RichText::new(if brush.is_inverse() {
@@ -89,7 +89,7 @@ fn body(
             "Drag marks · hold Shift to clear · Shift+wheel resizes"
         })
         .size(11.0)
-        .color(ui_theme::TEXT_MUTED),
+        .color(ui_theme::text_muted()),
     );
     ui.add_space(4.0);
 
@@ -109,11 +109,11 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
         let glyph = ui
             .allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover())
             .0;
-        crate::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::ACCENT);
+        crate::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::accent());
         ui.label(
             egui::RichText::new("Brush tool")
                 .size(13.0)
-                .color(ui_theme::TEXT),
+                .color(ui_theme::text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (close_rect, close_response) =
@@ -123,9 +123,9 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
                 close_rect,
                 AppIcon::Close,
                 if close_response.hovered() {
-                    ui_theme::TEXT
+                    ui_theme::text()
                 } else {
-                    ui_theme::TEXT_WEAK
+                    ui_theme::text_weak()
                 },
             );
             if close_response
@@ -229,11 +229,11 @@ fn coverage(ui: &mut egui::Ui, marked: Option<f32>) {
             MARKED_OUT_INK,
         )
     } else if marked <= 0.0 {
-        ("Nothing marked".to_owned(), ui_theme::TEXT_MUTED)
+        ("Nothing marked".to_owned(), ui_theme::text_muted())
     } else {
         (
             format!("{percent:.0}% marked out of the match"),
-            ui_theme::TEXT_MUTED,
+            ui_theme::text_muted(),
         )
     };
     ui.add_space(2.0);

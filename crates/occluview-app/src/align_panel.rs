@@ -136,7 +136,7 @@ fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAct
     let enabled = !view.busy;
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-        crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::ACCENT);
+        crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
         ui.label(egui::RichText::new("Align Scans").strong().size(14.0));
     });
     ui.add_space(2.0);
@@ -168,15 +168,15 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
             let ink = if active {
-                ui_theme::ACCENT
+                ui_theme::accent()
             } else {
-                ui_theme::TEXT_WEAK
+                ui_theme::text_weak()
             };
             let painter = ui.painter();
             if active {
-                painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.14));
+                painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.14));
             } else if response.hovered() {
-                painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.07));
+                painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.07));
             }
             painter.text(
                 rect.center(),
@@ -189,7 +189,7 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
                 painter.hline(
                     egui::Rangef::new(rect.left() + 6.0, rect.right() - 6.0),
                     rect.bottom() - 1.0,
-                    egui::Stroke::new(1.6_f32, ui_theme::ACCENT),
+                    egui::Stroke::new(1.6_f32, ui_theme::accent()),
                 );
             }
             if response.clicked() {
@@ -312,7 +312,7 @@ fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
             if placed == 1 { "" } else { "s" }
         )
     };
-    ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::TEXT));
+    ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::text()));
     ui.add_space(2.0);
 }
 
@@ -450,7 +450,7 @@ fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(
         egui::RichText::new(text)
             .size(11.0)
-            .color(ui_theme::TEXT_MUTED),
+            .color(ui_theme::text_muted()),
     );
 }
 
@@ -463,7 +463,7 @@ fn status(ui: &mut egui::Ui, status: Option<&str>) {
     ui.label(
         egui::RichText::new(status)
             .size(11.0)
-            .color(ui_theme::TEXT_WEAK),
+            .color(ui_theme::text_weak()),
     );
 }
 
@@ -526,18 +526,18 @@ pub(crate) fn chip(
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), sense);
     let ink = if enabled {
         if active {
-            ui_theme::ACCENT
+            ui_theme::accent()
         } else {
-            ui_theme::TEXT
+            ui_theme::text()
         }
     } else {
         ui.visuals().weak_text_color()
     };
     let painter = ui.painter();
     if enabled && active {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.16));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.16));
     } else if enabled && response.hovered() {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.08));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.08));
     }
     painter.rect_stroke(
         rect,
@@ -602,19 +602,19 @@ fn fit_button(
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, FIT_BUTTON_HEIGHT), sense);
     let ink = if enabled {
         if primary {
-            ui_theme::ACCENT
+            ui_theme::accent()
         } else {
-            ui_theme::TEXT
+            ui_theme::text()
         }
     } else {
         ui.visuals().weak_text_color()
     };
     let painter = ui.painter();
     if enabled && primary {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.14));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.14));
     }
     if enabled && response.hovered() {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.10));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.10));
     }
     painter.rect_stroke(
         rect,
@@ -647,13 +647,15 @@ fn tall_button(ui: &mut egui::Ui, width: f32, label: &str, primary: bool) -> egu
             egui::RichText::new(label)
                 .size(12.5)
                 .strong()
-                .color(egui::Color32::WHITE),
+                .color(ui_theme::on_accent()),
         )
-        .fill(ui_theme::ACCENT)
+        .fill(ui_theme::accent())
         .corner_radius(CHIP_ROUNDING);
         ui.add(button.min_size(egui::vec2(width, 28.0)))
     } else {
-        let text = egui::RichText::new(label).size(12.5).color(ui_theme::TEXT);
+        let text = egui::RichText::new(label)
+            .size(12.5)
+            .color(ui_theme::text());
         ui.add(egui::Button::new(text).min_size(egui::vec2(width, 28.0)))
     }
 }

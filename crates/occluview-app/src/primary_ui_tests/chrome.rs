@@ -92,7 +92,7 @@ fn toolbar_and_about_are_operator_focused() {
     assert!(
         toolbar.contains("Recent files")
             && toolbar.contains("show_recent_files_popup")
-            && dialogs.contains("Clear recent"),
+            && repo_source_file("src/app/app_recent_popup.rs").contains("Clear recent"),
         "recent scans should stay reachable from a slim dropdown beside Open"
     );
     assert!(

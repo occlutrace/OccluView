@@ -232,6 +232,21 @@ pub(crate) fn format_mm(mm: f64) -> String {
     }
 }
 
+/// A measurement readout in the operator's chosen unit. Non-finite input keeps
+/// the mm path's `n/a` label in both units.
+pub(crate) fn format_length(mm: f64, unit: crate::app_settings::UnitDisplay) -> String {
+    match unit {
+        crate::app_settings::UnitDisplay::Millimeters => format_mm(mm),
+        crate::app_settings::UnitDisplay::Inches => {
+            if mm.is_finite() {
+                format!("{:.3} in", mm / 25.4)
+            } else {
+                "n/a".to_string()
+            }
+        }
+    }
+}
+
 /// Local wall thickness at a picked surface point of `entry`.
 ///
 /// Casts a ray from `point` opposite the interpolated surface normal of

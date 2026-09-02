@@ -27,10 +27,14 @@ fn secondary_pointer_sample(ctx: &egui::Context) -> SecondaryPointerSample {
 pub(super) fn zoom_camera_from_wheel(
     camera: &mut occluview_core::Camera,
     ctx: &egui::Context,
+    zoom_sensitivity: f32,
 ) -> bool {
     let zoom = zoom_factor_from_scroll(super::app_input::raw_wheel_delta(ctx).y);
     if (zoom - 1.0).abs() > f32::EPSILON {
-        camera.zoom_by(zoom);
+        // Sensitivity is an exponent on the zoom factor: 1.0 keeps the fixed
+        // gain, values below soften it, values above sharpen it, and any
+        // factor stays a pure multiplicative zoom.
+        camera.zoom_by(zoom.powf(zoom_sensitivity));
         return true;
     }
     false
@@ -168,20 +172,21 @@ impl OccluViewApp {
             }
         }
 
-        let scene_pick =
-            if response.double_clicked() || response.clicked_by(egui::PointerButton::Middle) {
-                let camera = self.camera;
-                let scene = self.scene.as_ref();
-                response
-                    .interact_pointer_pos()
-                    .zip(camera)
-                    .zip(scene)
-                    .and_then(|((pointer, camera), scene)| {
-                        pick_scene_point(&camera, response.rect, pointer, scene)
-                    })
-            } else {
-                None
-            };
+        let scene_pick = if (self.settings.double_click_resets_camera && response.double_clicked())
+            || response.clicked_by(egui::PointerButton::Middle)
+        {
+            let camera = self.camera;
+            let scene = self.scene.as_ref();
+            response
+                .interact_pointer_pos()
+                .zip(camera)
+                .zip(scene)
+                .and_then(|((pointer, camera), scene)| {
+                    pick_scene_point(&camera, response.rect, pointer, scene)
+                })
+        } else {
+            None
+        };
 
         let pan_drag_active = viewport_pan_drag_active(ctx, response);
         let orbit_drag_active =
@@ -250,16 +255,19 @@ impl OccluViewApp {
         }
 
         if orbit_drag_active {
-            if let Some(orbit_delta) =
+            if let Some(mut orbit_delta) =
                 orbit_delta_from_drag(secondary_pointer.motion, viewport_rect.size())
             {
+                let sensitivity = self.settings.orbit_sensitivity();
+                orbit_delta.x *= sensitivity;
+                orbit_delta.y *= sensitivity;
                 camera.orbit_view_by(orbit_delta.x, orbit_delta.y);
                 changed = true;
             }
         }
 
         if response.hovered() && !sculpt_wheel_used {
-            changed |= zoom_camera_from_wheel(camera, ctx);
+            changed |= zoom_camera_from_wheel(camera, ctx, self.settings.zoom_sensitivity());
         }
 
         if changed {
@@ -294,7 +302,7 @@ mod tests {
         let mut camera = Camera::default();
         let mut changed = false;
         ctx.run_ui(input, |ui| {
-            changed = zoom_camera_from_wheel(&mut camera, ui.ctx());
+            changed = zoom_camera_from_wheel(&mut camera, ui.ctx(), 1.0);
         })
         .drop_without_applying_deltas();
         (changed, camera.orthographic_height)

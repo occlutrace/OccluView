@@ -8,8 +8,11 @@ mod scene_menu;
 use crate::layer_actions::LayerContextRequest;
 use crate::ui_theme;
 use eframe::egui;
-pub(crate) use layout::layer_overlay_rect;
-use layout::{LAYER_OVERLAY_HEADER_HEIGHT_PX, LAYER_ROW_HEIGHT_PX};
+pub(crate) use layout::{
+    layer_overlay_desired_height, layer_overlay_rect, LAYER_OVERLAY_BOTTOM_RESERVE_PX,
+    LAYER_OVERLAY_TOP_OFFSET_PX,
+};
+use layout::{LAYER_OVERLAY_CHROME_HEIGHT_PX, LAYER_ROW_HEIGHT_PX};
 use occluview_core::{Scene, SceneMeshId};
 use row::{show_layer_row, LayerRowState, LayerRowView};
 use std::path::PathBuf;
@@ -44,8 +47,11 @@ pub(crate) fn show(
             ui.set_max_width(overlay_inner_width);
             show_header(ui, overlay_inner_width, layer_count);
 
+            // The row budget mirrors what `layer_overlay_rect` reserved for
+            // rows (chrome minus header), so a panel sized for N rows shows
+            // exactly N rows with no scrollbar on the boundary.
             let rows_height =
-                (overlay_rect.height() - LAYER_OVERLAY_HEADER_HEIGHT_PX).max(LAYER_ROW_HEIGHT_PX);
+                (overlay_rect.height() - LAYER_OVERLAY_CHROME_HEIGHT_PX).max(LAYER_ROW_HEIGHT_PX);
             egui::ScrollArea::vertical()
                 .max_height(rows_height)
                 .auto_shrink([false, false])
@@ -99,14 +105,14 @@ fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Layers")
-                .color(ui_theme::TEXT)
+                .color(ui_theme::text())
                 .size(12.0)
                 .strong(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(count_text)
-                    .color(ui_theme::TEXT_WEAK)
+                    .color(ui_theme::text_weak())
                     .size(11.0),
             );
         });
