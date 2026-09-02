@@ -5592,8 +5592,6 @@ Used by:
 - emath 0.36.1 (https://github.com/emilk/egui/tree/main/crates/emath)
 - epaint 0.36.1 (https://github.com/emilk/egui/tree/main/crates/epaint)
 - libm 0.2.16 (https://github.com/rust-lang/compiler-builtins)
-- manifold-csg-sys 3.5.103 (https://github.com/zmerlynn/manifold-csg)
-- manifold-csg 0.3.3 (https://github.com/zmerlynn/manifold-csg)
 - minisign-verify 0.2.5 (https://github.com/jedisct1/rust-minisign-verify)
 - profiling 1.0.18 (https://github.com/aclysma/profiling)
 - siphasher 1.0.3 (https://github.com/jedisct1/rust-siphash)
@@ -5786,6 +5784,8 @@ Used by:
 - color 0.3.3 (https://github.com/linebender/color)
 - half 2.7.1 (https://github.com/VoidStarKat/half-rs)
 - linebender_resource_handle 0.1.1 (https://github.com/linebender/raw_resource_handle)
+- manifold-csg-sys 3.5.104 (https://github.com/zmerlynn/manifold-csg)
+- manifold-csg 0.3.4 (https://github.com/zmerlynn/manifold-csg)
 
 ```
 MIT License
