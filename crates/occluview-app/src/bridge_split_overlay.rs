@@ -4,6 +4,7 @@ use crate::bridge_split::{
     BridgeSplitMode, BridgeSplitToolError, MAX_BRIDGE_SPLIT_KERF_MM, MIN_BRIDGE_SPLIT_KERF_MM,
 };
 use crate::cut_manipulator::{DiscPose, MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM};
+use crate::ui_theme;
 use crate::viewer::project_world_to_viewport;
 use eframe::egui;
 use glam::Vec3;
@@ -72,7 +73,7 @@ pub(crate) fn show_panel(
             if let Some(error) = state.failure {
                 ui.label(
                     egui::RichText::new(error_label(error))
-                        .color(egui::Color32::from_rgb(158, 58, 50))
+                        .color(ui_theme::danger())
                         .size(11.0),
                 );
             }

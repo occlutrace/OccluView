@@ -332,7 +332,7 @@ impl RepairReportDialog {
                 } else {
                     ui.horizontal(|ui| {
                         gutter_icon(ui, LineIcon::Fixed);
-                        ui.label(egui::RichText::new(CLEAN_HEADLINE).color(ui_theme::TEXT));
+                        ui.label(egui::RichText::new(CLEAN_HEADLINE).color(ui_theme::text()));
                     });
                 }
 
@@ -342,7 +342,7 @@ impl RepairReportDialog {
                         ui.label(
                             egui::RichText::new(info)
                                 .size(11.0)
-                                .color(ui_theme::TEXT_WEAK),
+                                .color(ui_theme::text_weak()),
                         );
                     }
                 }
@@ -376,7 +376,7 @@ impl RepairReportDialog {
 fn line_row(ui: &mut egui::Ui, icon: LineIcon, text: &str) {
     ui.horizontal(|ui| {
         gutter_icon(ui, icon);
-        ui.label(egui::RichText::new(text).color(ui_theme::TEXT));
+        ui.label(egui::RichText::new(text).color(ui_theme::text()));
     });
 }
 
@@ -386,12 +386,12 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
     let painter = ui.painter();
     match icon {
         LineIcon::Removed => {
-            crate::icons::paint(painter, rect, AppIcon::Delete, ui_theme::TEXT_WEAK);
+            crate::icons::paint(painter, rect, AppIcon::Delete, ui_theme::text_weak());
         }
         LineIcon::Closed => {
-            crate::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::TEXT_WEAK);
+            crate::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::text_weak());
         }
-        LineIcon::Fixed => crate::icons::paint(painter, rect, AppIcon::Check, ui_theme::ACCENT),
+        LineIcon::Fixed => crate::icons::paint(painter, rect, AppIcon::Check, ui_theme::accent()),
     }
 }
 

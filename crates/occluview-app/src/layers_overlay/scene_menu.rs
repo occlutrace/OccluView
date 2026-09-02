@@ -41,7 +41,7 @@ pub(crate) fn show_scene_context_menu(
     ui.add_space(4.0);
     ui.label(
         egui::RichText::new("Scene")
-            .color(ui_theme::TEXT_WEAK)
+            .color(ui_theme::text_weak())
             .size(11.0),
     );
     ui.add_space(2.0);

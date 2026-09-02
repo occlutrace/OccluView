@@ -19,11 +19,21 @@ use crate::viewer::project_world_to_viewport;
 const MARKER_RADIUS_PX: f32 = 6.0;
 
 /// Fill behind a marker's number, so a digit stays legible over any scan.
-const MARKER_FILL: egui::Color32 = egui::Color32::from_rgb(246, 247, 249);
+/// Paired with the theme-aware ink: the pale light fill would wash out the
+/// pale dark-theme accent.
+fn marker_fill() -> egui::Color32 {
+    if ui_theme::is_dark() {
+        egui::Color32::from_rgb(44, 49, 58)
+    } else {
+        egui::Color32::from_rgb(246, 247, 249)
+    }
+}
 
 /// The colour a rejected pair is drawn in. It is shown, not hidden: the
 /// operator needs to see which click the fit threw away.
-const REJECTED_INK: egui::Color32 = ui_theme::DANGER;
+fn rejected_ink() -> egui::Color32 {
+    ui_theme::danger()
+}
 
 /// Everything one paint pass needs.
 pub(crate) struct PairPaint<'a> {
@@ -75,9 +85,9 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         // A rejected pair is drawn in the error colour rather than hidden: the
         // operator needs to see which click the fit threw away.
         let ink = if outlier {
-            REJECTED_INK
+            rejected_ink()
         } else {
-            ui_theme::ACCENT
+            ui_theme::accent()
         };
         // An arrow, not a bare line. The operator's dental CAD software calls
         // each correspondence an arrow and its Back button undoes one, so the
@@ -95,7 +105,7 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
             if let Some(hover) = hover {
                 painter.extend(egui::Shape::dashed_line(
                     &[anchor, hover],
-                    egui::Stroke::new(1.1_f32, ui_theme::ACCENT),
+                    egui::Stroke::new(1.1_f32, ui_theme::accent()),
                     5.0,
                     4.0,
                 ));
@@ -134,7 +144,7 @@ fn arrowhead(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: 
 
 /// One numbered marker.
 fn marker(painter: &egui::Painter, at: egui::Pos2, ink: egui::Color32, number: usize) {
-    painter.circle_filled(at, MARKER_RADIUS_PX, MARKER_FILL);
+    painter.circle_filled(at, MARKER_RADIUS_PX, marker_fill());
     painter.circle_stroke(at, MARKER_RADIUS_PX, egui::Stroke::new(1.6_f32, ink));
     painter.text(
         at,
@@ -213,7 +223,7 @@ pub(crate) fn paint_legend(ui: &mut egui::Ui, settings: AlignSettings) {
             ui.label(
                 egui::RichText::new(text)
                     .size(10.0)
-                    .color(ui_theme::TEXT_MUTED),
+                    .color(ui_theme::text_muted()),
             );
         };
         let (low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm);
@@ -246,7 +256,7 @@ fn no_data_key(ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new("not measured")
                 .size(10.0)
-                .color(ui_theme::TEXT_MUTED),
+                .color(ui_theme::text_muted()),
         )
         .on_hover_text(
             "No surface on the other scan within reach of these vertices. A tooth \

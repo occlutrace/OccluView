@@ -29,6 +29,7 @@ OccluView opens STL, PLY, OBJ, GLB, and HPS; it exports STL, PLY, and OBJ.
 ## Controls
 
 - Open a scan with **Ctrl+O**. Opening another file adds a layer; toolbar Open replaces the scene.
+- Toolbar tools: **C** cut view, **M** ruler, **T** thickness, **A** align scans, **E** edit mesh.
 - Orbit with right-drag; pan with middle-drag; zoom with the wheel; recenter on a surface with middle-click or double-click.
 - In Mesh Editor: **Ctrl+A** selects; **Delete** or **Backspace** removes; **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** undo and redo; **Enter** closes an outline; **Esc** cancels it.
 - In Sculpt: **1** chooses Add/Remove, **2** chooses Smooth, and holding **Shift** inverts or strengthens the active brush.

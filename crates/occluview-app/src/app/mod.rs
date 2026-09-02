@@ -36,7 +36,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const OPEN_DIALOG_EXTENSIONS: &[&str] = occluview_formats::V1_OPEN_EXTENSIONS;
-const VIEWPORT_BACKGROUND_LINEAR: [f64; 4] = [0.80, 0.82, 0.84, 1.0];
 const FOREGROUND_PULSE_DURATION: Duration = Duration::from_millis(250);
 #[cfg(not(windows))]
 const LINUX_OPEN_REQUEST_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
@@ -51,6 +50,7 @@ mod app_align_session;
 mod app_bridge_split;
 mod app_cut_measure;
 mod app_dialogs;
+mod app_empty_state;
 mod app_input;
 mod app_layer_edits;
 mod app_layer_interaction;
@@ -58,6 +58,7 @@ mod app_load_errors;
 mod app_loading;
 mod app_mesh_editor;
 mod app_mesh_export;
+mod app_recent_popup;
 mod app_render;
 #[cfg(test)]
 mod app_render_characterization_tests;
@@ -69,6 +70,7 @@ mod app_sculpt;
 #[cfg(test)]
 mod app_sculpt_characterization_tests;
 mod app_sculpt_worker;
+mod app_settings_panel;
 mod app_settings_window;
 mod app_third_party;
 mod app_viewport;

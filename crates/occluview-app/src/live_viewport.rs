@@ -21,6 +21,9 @@ pub(super) struct LiveViewport {
     /// Whether the current clip plane is active. Drives the extra ghost pass
     /// so it runs only while a cross-section is placed.
     clip_enabled: bool,
+    /// Whether the cut-away ghost pass may draw at all (a preference; the clip
+    /// plane itself stays authoritative for when a section exists).
+    show_ghost: bool,
     prepared_scene: Option<PreparedScene>,
     selection_overlay: Option<PreparedScene>,
 }
@@ -49,9 +52,15 @@ impl LiveViewport {
             clip_buffer,
             clip_bind_group,
             clip_enabled: false,
+            show_ghost: true,
             prepared_scene: None,
             selection_overlay: None,
         })))
+    }
+
+    /// Preference gate for the cut-away ghost pass (see `paint`).
+    pub(super) fn set_show_ghost(&mut self, show_ghost: bool) {
+        self.show_ghost = show_ghost;
     }
 
     pub(super) fn update_view(
@@ -157,7 +166,7 @@ impl LiveViewport {
         );
         // Cut view: re-draw the cut-away side as a translucent ghost so the
         // cross-section fades geometry instead of deleting half the model.
-        if self.clip_enabled {
+        if self.clip_enabled && self.show_ghost {
             scene.draw_ghost_side(
                 &self.renderer,
                 render_pass,

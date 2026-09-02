@@ -14,10 +14,11 @@
 use eframe::egui;
 use occluview_core::Camera;
 
+use crate::app_settings::UnitDisplay;
 use crate::icons::AppIcon;
 use crate::measure_draw::{self, LABEL_LIFT_PX};
 use crate::measure_tool::{
-    format_mm, MeasureTool, RulerAnchorRef, RulerEndpoint, RulerMeasurement, ThicknessProbe,
+    format_length, MeasureTool, RulerAnchorRef, RulerEndpoint, RulerMeasurement, ThicknessProbe,
     ThicknessReading,
 };
 use crate::ui_theme;
@@ -27,22 +28,24 @@ const RULER_ANCHOR_GRAB_RADIUS_PX: f32 = 10.0;
 
 /// Paint every live measurement overlay: completed ruler segments, the pending
 /// anchor with its rubber band to the hover position, and the thickness probe.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_measurements(
     painter: &egui::Painter,
     camera: &Camera,
     viewport_rect: egui::Rect,
     tool: &MeasureTool,
+    unit: UnitDisplay,
     hover: Option<egui::Pos2>,
 ) {
     for ruler in tool.rulers() {
-        paint_ruler(painter, camera, viewport_rect, ruler);
+        paint_ruler(painter, camera, viewport_rect, ruler, unit);
     }
     if let Some(pending) = tool.pending_anchor() {
         if let Some((anchor, _)) = project_world_to_viewport(camera, viewport_rect, pending) {
             if let Some(hover) = hover {
                 painter.extend(egui::Shape::dashed_line(
                     &[anchor, hover],
-                    egui::Stroke::new(1.1_f32, ui_theme::ACCENT),
+                    egui::Stroke::new(1.1_f32, ui_theme::accent()),
                     5.0,
                     4.0,
                 ));
@@ -51,7 +54,7 @@ pub(crate) fn paint_measurements(
         }
     }
     if let Some(probe) = tool.probe() {
-        paint_probe(painter, camera, viewport_rect, probe);
+        paint_probe(painter, camera, viewport_rect, probe, unit);
     }
 }
 
@@ -94,6 +97,7 @@ fn paint_ruler(
     camera: &Camera,
     viewport_rect: egui::Rect,
     ruler: &RulerMeasurement,
+    unit: UnitDisplay,
 ) {
     let a = project_world_to_viewport(camera, viewport_rect, ruler.a);
     let b = project_world_to_viewport(camera, viewport_rect, ruler.b);
@@ -111,8 +115,8 @@ fn paint_ruler(
     measure_draw::label_chip(
         painter,
         mid,
-        &format_mm(ruler.distance_mm()),
-        ui_theme::TEXT,
+        &format_length(ruler.distance_mm(), unit),
+        ui_theme::text(),
     );
 }
 
@@ -123,6 +127,7 @@ fn paint_probe(
     camera: &Camera,
     viewport_rect: egui::Rect,
     probe: &ThicknessProbe,
+    unit: UnitDisplay,
 ) {
     let Some((entry, _)) = project_world_to_viewport(camera, viewport_rect, probe.entry) else {
         return;
@@ -138,8 +143,8 @@ fn paint_probe(
             measure_draw::label_chip(
                 painter,
                 label_anchor,
-                &format_mm(f64::from(thickness_mm)),
-                ui_theme::TEXT,
+                &format_length(f64::from(thickness_mm), unit),
+                ui_theme::text(),
             );
         }
         ThicknessReading::Open => {
@@ -148,7 +153,7 @@ fn paint_probe(
                 painter,
                 label_anchor,
                 "open: no opposite wall",
-                ui_theme::TEXT_WEAK,
+                ui_theme::text_weak(),
             );
         }
     }
@@ -192,7 +197,7 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
     let ink = if !enabled {
         ui.visuals().weak_text_color()
     } else if active {
-        ui_theme::ACCENT
+        ui_theme::accent()
     } else {
         ui.visuals().widgets.inactive.fg_stroke.color
     };
@@ -214,15 +219,15 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
     let (rect, response) = ui.allocate_exact_size(size, sense);
     let painter = ui.painter();
     if active {
-        painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.16));
+        painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.16));
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0_f32, ui_theme::ACCENT.gamma_multiply(0.75)),
+            egui::Stroke::new(1.0_f32, ui_theme::accent().gamma_multiply(0.75)),
             egui::StrokeKind::Middle,
         );
     } else if enabled && response.hovered() {
-        painter.rect_filled(rect, 4.0, ui_theme::ACCENT.gamma_multiply(0.10));
+        painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.10));
     }
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 7.0 + icon_side * 0.5, rect.center().y),
@@ -346,18 +351,33 @@ mod tests {
                 &camera(),
                 rect,
                 &tool,
+                UnitDisplay::Millimeters,
                 Some(egui::pos2(100.0, 100.0)),
             );
             tool.set_probe(ThicknessProbe {
                 entry: Vec3::new(2.0, 0.0, 0.0),
                 reading: ThicknessReading::Open,
             });
-            paint_measurements(painter, &camera(), rect, &tool, None);
+            paint_measurements(
+                painter,
+                &camera(),
+                rect,
+                &tool,
+                UnitDisplay::Millimeters,
+                None,
+            );
             // Zero-length ruler (same point twice) labels 0.00 mm, never NaN.
             tool.clear_measurements();
             tool.place_ruler_point(Vec3::X);
             tool.place_ruler_point(Vec3::X);
-            paint_measurements(painter, &camera(), rect, &tool, None);
+            paint_measurements(
+                painter,
+                &camera(),
+                rect,
+                &tool,
+                UnitDisplay::Millimeters,
+                None,
+            );
         });
     }
 

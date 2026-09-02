@@ -281,14 +281,14 @@ pub(super) fn menu_item(
     let fg = if !enabled {
         ui.visuals().weak_text_color()
     } else if hovered {
-        ui_theme::ACCENT
+        ui_theme::accent()
     } else {
-        ui_theme::TEXT
+        ui_theme::text()
     };
 
     let painter = ui.painter();
     if hovered {
-        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::ACCENT.gamma_multiply(0.12));
+        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::accent().gamma_multiply(0.12));
     }
     let icon_center = egui::pos2(rect.left() + PAD_L + GUTTER * 0.5, rect.center().y);
     let icon_rect = egui::Rect::from_center_size(icon_center, egui::vec2(ICON, ICON));

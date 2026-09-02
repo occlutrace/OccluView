@@ -297,7 +297,10 @@ impl OccluViewApp {
                 });
                 self.status_message = Some(format!(
                     "Wall thickness: {}",
-                    measure_tool::format_mm(f64::from(probe.thickness_mm))
+                    measure_tool::format_length(
+                        f64::from(probe.thickness_mm),
+                        self.settings.unit_display
+                    )
                 ));
             } else {
                 self.measure.clear_probe();
@@ -391,6 +394,7 @@ impl OccluViewApp {
                 &camera,
                 viewport_rect,
                 &self.measure,
+                self.settings.unit_display,
                 hover,
             );
         }
@@ -437,9 +441,10 @@ impl OccluViewApp {
 
     /// Route the frame's stationary clicks: LMB on the model places a ruler
     /// anchor or probes thickness (off-mesh clicks do nothing — no floating
-    /// air-points); RMB clears every measurement and never opens the layer
-    /// menu. Click detection is egui's press+release-without-drag, so a drag
-    /// still orbits.
+    /// air-points); RMB clears every measurement, and a stationary RMB with
+    /// nothing left to clear falls through to the shared scene menu, so
+    /// saving stays reachable while the tool is up. Click detection is egui's
+    /// press+release-without-drag, so a drag still orbits.
     fn handle_measure_pointer(
         &mut self,
         response: &egui::Response,
@@ -462,7 +467,10 @@ impl OccluViewApp {
                         if let Some(distance_mm) = self.measure.update_ruler_drag(hit.point) {
                             self.status_message = Some(format!(
                                 "Distance: {}",
-                                measure_tool::format_mm(distance_mm)
+                                measure_tool::format_length(
+                                    distance_mm,
+                                    self.settings.unit_display
+                                )
                             ));
                             ctx.request_repaint();
                         }
@@ -492,31 +500,31 @@ impl OccluViewApp {
             }
         }
         if response.secondary_clicked() {
-            // RMB is also the orbit button. Only a near-static right-click
-            // clears; a small orbit gesture (which the platform may report as a
-            // click) must NOT drop the probe — the "Thickness exits on rotation"
-            // bug. Movement above the tolerance means it was an orbit, not a clear.
-            const RMB_CLEAR_MAX_MOVE_PX: f32 = 3.0;
-            let static_click = ctx
-                .input(|input| input.pointer.press_origin())
-                .zip(response.interact_pointer_pos())
-                .is_some_and(|(origin, release)| {
-                    (origin - release).length() <= RMB_CLEAR_MAX_MOVE_PX
-                });
-            if !static_click {
+            // RMB is also the orbit button. Only a truly stationary right-click
+            // clears: `viewport_secondary_gesture_moved_since_press` is armed by
+            // ANY pointer motion during the press (including sub-threshold
+            // motion the platform may classify as a click), which is exactly
+            // the "Thickness exits on rotation" guard. Note `press_origin()`
+            // cannot be used here — egui wipes it on every release, so on the
+            // click frame it is always None.
+            if self.viewport_secondary_gesture_moved_since_press {
                 return false;
             }
-            if self.measure.clear_measurements() {
+            let cleared_anything = self.measure.clear_measurements();
+            if cleared_anything {
                 self.status_message = Some("Measurements cleared".to_string());
             }
             // Clearing the measurement also closes the cut view it drove — the
             // section reflects the current probe or nothing at all.
-            if self.cut_view.is_probe_linked() {
+            let probe_linked = self.cut_view.is_probe_linked();
+            if probe_linked {
                 self.cut_view.disable();
                 self.needs_render = true;
             }
             ctx.request_repaint();
-            return true;
+            // Nothing was cleared: the stationary RMB was not a tool gesture,
+            // so let the shared layer/scene menu open instead of eating it.
+            return cleared_anything || probe_linked;
         }
         if suppress_click || !response.clicked_by(egui::PointerButton::Primary) {
             return false;
@@ -540,7 +548,7 @@ impl OccluViewApp {
                 if let Some(distance_mm) = self.measure.place_ruler_point(hit.point) {
                     self.status_message = Some(format!(
                         "Distance: {}",
-                        measure_tool::format_mm(distance_mm)
+                        measure_tool::format_length(distance_mm, self.settings.unit_display)
                     ));
                 }
             }
@@ -562,7 +570,10 @@ impl OccluViewApp {
                 self.status_message = Some(match probe.reading {
                     ThicknessReading::Wall { thickness_mm, .. } => format!(
                         "Wall thickness: {}",
-                        measure_tool::format_mm(f64::from(thickness_mm))
+                        measure_tool::format_length(
+                            f64::from(thickness_mm),
+                            self.settings.unit_display
+                        )
                     ),
                     ThicknessReading::Open => {
                         "Open surface: no opposite wall along the inward normal".to_string()

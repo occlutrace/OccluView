@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 
 const RECENT_FILES_FILE: &str = "recent-files.txt";
 
-pub(crate) fn load_recent_files() -> RecentFiles {
+pub(crate) fn load_recent_files(limit: usize) -> RecentFiles {
     let Some(path) = recent_files_path() else {
-        return RecentFiles::new(RecentFiles::DEFAULT_LIMIT);
+        return RecentFiles::new(limit);
     };
     match std::fs::read_to_string(path) {
-        Ok(stored) => RecentFiles::deserialize(RecentFiles::DEFAULT_LIMIT, &stored),
-        Err(_) => RecentFiles::new(RecentFiles::DEFAULT_LIMIT),
+        Ok(stored) => RecentFiles::deserialize(limit, &stored),
+        Err(_) => RecentFiles::new(limit),
     }
 }
 

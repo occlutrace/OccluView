@@ -5,6 +5,26 @@ remain in the Git history.
 
 ## 1.1.4 - Unreleased
 
+### Viewer
+
+- The Layers panel now sizes itself to the scene, and the window grows with
+  the panel: every layer stays visible without scrolling. Manually shrinking
+  the window brings the scrollbar back.
+- Fixed right-click behavior: a stationary right-click clears measurements and
+  the Section-panel ruler reliably again, right-clicking the color swatch or
+  the gaps in a layer row opens the layer menu, and saving remains reachable
+  while the measure tool is armed.
+- Added preferences: frame a scene when it opens, double-click refocus,
+  orbit and zoom speed, recent-scene count, viewport background (gray, white,
+  dark), cut-away ghost toggle, millimeter or inch readouts, UI scale, a dark
+  theme, and remembered sculpt brush settings.
+- Added an empty-viewport welcome screen with an Open call to action, drag-over
+  feedback for dropped files, and a loading spinner in the status pill.
+- Toolbar tools gained keyboard shortcuts (C, M, T, A, E) shown in their
+  tooltips; icons now tint correctly with transparency.
+- A broken settings file is preserved as `settings.json.bak` instead of being
+  silently overwritten.
+
 ### Windows
 
 - Restored the Explorer Preview Pane's synchronous first-frame path: render a
