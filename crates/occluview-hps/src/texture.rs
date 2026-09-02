@@ -17,6 +17,9 @@ pub const MAX_TEXTURE_DIMENSION_PX: u32 = 8_192;
 /// Together with the edge limit, this also bounds lopsided images.
 pub const MAX_TEXTURE_RGBA_BYTES: u64 = 256 * 1024 * 1024;
 
+const EMBEDDED_RASTER_FORMAT_POLICY: &str =
+    "embedded texture format is not permitted; only PNG and JPEG are accepted";
+
 #[derive(Debug, Default)]
 pub(super) struct SurfaceTexture {
     pub(super) corner_uvs: Option<Vec<Option<[f32; 2]>>>,
@@ -99,7 +102,7 @@ fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTe
     let (width, height, mut rgba) = texture.into_parts();
     if texture_is_implausibly_blue(&rgba) {
         tracing::debug!("texture channel correction: swapping R/B (implausibly blue)");
-        for pixel in rgba.chunks_exact_mut(4) {
+        for pixel in rgba.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
     }
@@ -131,7 +134,7 @@ fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
     let mut blue_sum: u64 = 0;
     let mut blue_biased: u64 = 0;
     let mut sampled: u64 = 0;
-    for pixel in rgba.chunks_exact(4).step_by(stride) {
+    for pixel in rgba.as_chunks::<4>().0.iter().step_by(stride) {
         let [r, _g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
         if a < MIN_ALPHA {
             continue;
@@ -160,9 +163,8 @@ fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
 }
 
 fn decode_embedded_raster(bytes: &[u8]) -> Result<DecodedTexture, HpsError> {
-    let mut reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|error| texture_malformed(format!("texture format detection failed: {error}")))?;
+    let image_format = accepted_embedded_raster_format(bytes)?;
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), image_format);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_TEXTURE_DIMENSION_PX);
     limits.max_image_height = Some(MAX_TEXTURE_DIMENSION_PX);
@@ -174,6 +176,17 @@ fn decode_embedded_raster(bytes: &[u8]) -> Result<DecodedTexture, HpsError> {
     let (width, height) = decoded.dimensions();
     validate_texture_dimensions(width, height)?;
     DecodedTexture::new(width, height, decoded.to_rgba8().into_raw())
+}
+
+fn accepted_embedded_raster_format(bytes: &[u8]) -> Result<image::ImageFormat, HpsError> {
+    let image_format = image::guess_format(bytes)
+        .map_err(|error| texture_malformed(format!("texture format detection failed: {error}")))?;
+    match image_format {
+        image::ImageFormat::Png | image::ImageFormat::Jpeg => Ok(image_format),
+        unsupported => Err(texture_malformed(format!(
+            "{EMBEDDED_RASTER_FORMAT_POLICY}: {unsupported:?}"
+        ))),
+    }
 }
 
 fn validate_texture_dimensions(width: u32, height: u32) -> Result<(), HpsError> {

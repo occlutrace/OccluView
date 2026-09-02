@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
           components: rustfmt
       - name: rustfmt check
         run: cargo fmt --all -- --check
@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: clippy --workspace --all-targets
@@ -65,7 +65,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
           targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install mingw
@@ -85,7 +85,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo check (shell + app)
         run: cargo check -p occluview-shell -p occluview-app --locked
@@ -100,7 +100,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install Lavapipe Vulkan adapter
         run: |
@@ -130,7 +130,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo test --workspace (without WARP pixel suites)
         run: >
@@ -148,7 +148,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo doc (no warnings)
         env:
@@ -177,7 +177,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Cache cargo-about
         id: cache-cargo-about
@@ -205,7 +205,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install packaging tools
         run: |
@@ -257,7 +257,7 @@ jobs:
       - name: List fuzz targets
         run: cargo fuzz list
       - name: Restore fuzz corpus
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
           key: fuzz-corpus-smoke-${{ github.run_id }}
@@ -295,7 +295,7 @@ jobs:
         if: steps.cache-cargo-fuzz.outputs.cache-hit != 'true'
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       - name: Restore fuzz corpus
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
           key: fuzz-corpus-deep-${{ github.run_id }}

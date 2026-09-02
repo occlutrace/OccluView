@@ -355,6 +355,10 @@ impl CutRuler {
                 measure_draw::anchor_dot(painter, *a);
                 measure_draw::anchor_dot(painter, *b);
                 if let Some(distance) = self.distance_mm() {
+                    #[expect(
+                        clippy::manual_midpoint,
+                        reason = "preserve established label-pixel output"
+                    )]
                     let mid = egui::pos2(
                         (a.x + b.x) * 0.5,
                         (a.y + b.y) * 0.5 - measure_draw::LABEL_LIFT_PX,

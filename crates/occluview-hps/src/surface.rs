@@ -130,7 +130,7 @@ impl DecodedSurface {
         {
             return Err(bad_container("surface positions must be finite"));
         }
-        if indices.len() % 3 != 0 {
+        if !indices.len().is_multiple_of(3) {
             return Err(bad_container(
                 "surface index count must contain complete triangles",
             ));

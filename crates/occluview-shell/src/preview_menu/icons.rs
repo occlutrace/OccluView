@@ -172,6 +172,10 @@ fn paint_copy(r: &mut Raster, hw: f32) {
     r.fill_poly(&[(0.44, 0.80), (0.60, 0.56), (0.78, 0.80)]);
 }
 
+#[expect(
+    clippy::manual_midpoint,
+    reason = "preserve established icon-pixel output"
+)]
 fn midpoint(a: P, b: P) -> P {
     ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5)
 }
@@ -406,7 +410,7 @@ mod tests {
     fn drawn_pixels_are_white_with_coverage_in_alpha() {
         for icon in ALL_ICONS {
             let pixels = icon.rasterize(16);
-            for chunk in pixels.chunks_exact(4) {
+            for chunk in pixels.as_chunks::<4>().0 {
                 if chunk[3] > 0 {
                     assert_eq!(
                         [chunk[0], chunk[1], chunk[2]],

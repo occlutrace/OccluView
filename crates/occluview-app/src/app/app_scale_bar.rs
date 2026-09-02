@@ -26,10 +26,13 @@ pub(super) fn paint_scale_bar(ui: &egui::Ui, image_rect: egui::Rect, camera: &Ca
     let tick = 6.0;
     let painter = ui.painter();
     let shadow = egui::Stroke::new(
-        4.0,
+        4.0_f32,
         egui::Color32::from_rgba_unmultiplied(248, 250, 252, 190),
     );
-    let line = egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(15, 23, 42, 210));
+    let line = egui::Stroke::new(
+        2.0_f32,
+        egui::Color32::from_rgba_unmultiplied(15, 23, 42, 210),
+    );
     for stroke in [shadow, line] {
         painter.line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], stroke);
         painter.line_segment([egui::pos2(x0, y - tick), egui::pos2(x0, y + tick)], stroke);

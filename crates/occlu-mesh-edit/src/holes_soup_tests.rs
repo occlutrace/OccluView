@@ -76,7 +76,7 @@ fn explode_to_soup(mesh: &MeshEditBuffers) -> MeshEditBuffers {
 fn punch_holes(mesh: &MeshEditBuffers, holes: &[(Vec3, f32)]) -> MeshEditBuffers {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         let c = tri
             .iter()
             .map(|&i| Vec3::from_array(mesh.vertices[i as usize].position))
@@ -101,7 +101,7 @@ fn punch_holes(mesh: &MeshEditBuffers, holes: &[(Vec3, f32)]) -> MeshEditBuffers
 /// watertight.
 fn open_edge_count(mesh: &MeshEditBuffers) -> usize {
     let mut directed: HashSet<(u32, u32)> = HashSet::with_capacity(mesh.indices.len());
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         for e in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             directed.insert(e);
         }
@@ -279,7 +279,9 @@ fn soup_close_holes_with_mm_limit_closes_small_curved_holes() {
 /// lassoing the socket region around a hole.
 fn select_faces_near(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> Vec<bool> {
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| {
             let c = tri
                 .iter()

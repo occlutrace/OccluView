@@ -41,7 +41,7 @@ const PIPE_NAME: &str = "OccluTrace.OccluView.OpenRequests";
 fn current_user_sid_string() -> Option<String> {
     let mut token = HANDLE::default();
     // SAFETY: `token` is an out-parameter this function owns and closes below.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) }.is_err() {
         return None;
     }
     let sid_text = read_token_user_sid(token);
@@ -53,7 +53,7 @@ fn current_user_sid_string() -> Option<String> {
 fn read_token_user_sid(token: HANDLE) -> Option<String> {
     let mut needed = 0u32;
     // SAFETY: the probing call is documented to fail with the required size.
-    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
+    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &raw mut needed) };
     if needed == 0 {
         return None;
     }
@@ -68,7 +68,7 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
             TokenUser,
             Some(buffer.as_mut_ptr().cast()),
             needed,
-            &mut needed,
+            &raw mut needed,
         )
     }
     .ok()?;
@@ -79,11 +79,13 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
     let mut sid_text = windows::core::PWSTR::null();
     // SAFETY: `sid` is a valid SID from the token; `sid_text` receives a
     // LocalAlloc'd string that is freed below.
-    unsafe { ConvertSidToStringSidW(sid, &mut sid_text) }.ok()?;
+    unsafe { ConvertSidToStringSidW(sid, &raw mut sid_text) }.ok()?;
     let owned = unsafe { sid_text.to_string() }.ok();
     // SAFETY: `sid_text` was allocated by ConvertSidToStringSidW.
     let _ = unsafe {
-        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(sid_text.0.cast()))
+        windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+            sid_text.0.cast(),
+        )))
     };
     owned
 }
@@ -128,7 +130,7 @@ fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             &sddl,
             SDDL_REVISION_1,
-            &mut descriptor,
+            &raw mut descriptor,
             None,
         )
     };
@@ -240,7 +242,7 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
             None,
             OPEN_EXISTING,
             SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-            HANDLE::default(),
+            None,
         )
     }
     .context("opening single-instance pipe")?;
@@ -252,7 +254,7 @@ pub(super) fn send_pipe_open_request(request: &OpenRequest) -> Result<()> {
         WriteFile(
             pipe,
             Some(payload.as_slice()),
-            Some(&mut bytes_written),
+            Some(&raw mut bytes_written),
             None,
         )
     };
@@ -316,7 +318,9 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
     // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
     // which allocates with LocalAlloc, and CreateNamedPipeW has copied what it needs.
     let _ = unsafe {
-        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(descriptor.0))
+        windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+            descriptor.0,
+        )))
     };
     if pipe.is_invalid() {
         // Transient, or someone already holds the name. Report either; do not
@@ -368,7 +372,7 @@ fn read_pipe_message(pipe: HANDLE) -> Result<Vec<u8>> {
             ReadFile(
                 pipe,
                 Some(chunk.as_mut_slice()),
-                Some(&mut bytes_read),
+                Some(&raw mut bytes_read),
                 None,
             )
         };

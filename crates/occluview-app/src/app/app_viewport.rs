@@ -24,6 +24,18 @@ fn secondary_pointer_sample(ctx: &egui::Context) -> SecondaryPointerSample {
     })
 }
 
+pub(super) fn zoom_camera_from_wheel(
+    camera: &mut occluview_core::Camera,
+    ctx: &egui::Context,
+) -> bool {
+    let zoom = zoom_factor_from_scroll(super::app_input::raw_wheel_delta(ctx).y);
+    if (zoom - 1.0).abs() > f32::EPSILON {
+        camera.zoom_by(zoom);
+        return true;
+    }
+    false
+}
+
 impl OccluViewApp {
     pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
         if self.viewport_orbit_cursor_grabbed {
@@ -247,15 +259,63 @@ impl OccluViewApp {
         }
 
         if response.hovered() && !sculpt_wheel_used {
-            let zoom = zoom_factor_from_scroll(ctx.input(|i| i.raw_scroll_delta.y));
-            if (zoom - 1.0).abs() > f32::EPSILON {
-                camera.zoom_by(zoom);
-                changed = true;
-            }
+            changed |= zoom_camera_from_wheel(camera, ctx);
         }
 
         if changed {
             self.request_camera_repaint(ctx);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::float_cmp)]
+
+    use super::zoom_camera_from_wheel;
+    use eframe::egui;
+    use occluview_core::Camera;
+
+    fn camera_after_wheel(delta_y: f32) -> (bool, f32) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events: vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, delta_y),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        let mut changed = false;
+        ctx.run_ui(input, |ui| {
+            changed = zoom_camera_from_wheel(&mut camera, ui.ctx());
+        })
+        .drop_without_applying_deltas();
+        (changed, camera.orthographic_height)
+    }
+
+    #[test]
+    fn consumer_wheel_camera_uses_vertical_delta_and_preserves_direction() {
+        let (inward_changed, inward_height) = camera_after_wheel(120.0);
+        let (outward_changed, outward_height) = camera_after_wheel(-120.0);
+
+        assert!(inward_changed && inward_height < 100.0);
+        assert!(outward_changed && outward_height > 100.0);
+    }
+
+    #[test]
+    fn consumer_wheel_camera_nan_is_ignored_without_change() {
+        let initial_height = Camera::default().orthographic_height;
+
+        let (changed, height) = camera_after_wheel(f32::NAN);
+
+        assert!(!changed);
+        assert_eq!(height, initial_height);
     }
 }

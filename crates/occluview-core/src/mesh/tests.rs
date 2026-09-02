@@ -1,5 +1,5 @@
 use super::*;
-use crate::mesh::normals::DEGENERATE_AREA_SIN;
+use occlu_geometry_math::DEGENERATE_AREA_SIN;
 use occlu_mesh_edit::{FaceSelection, MeshEditOptions, MeshTopology};
 use std::{mem::size_of, ptr::addr_of};
 
@@ -652,56 +652,50 @@ fn core_repair_cleans_defective_mesh_and_preserves_name() {
 
 #[test]
 fn every_facet_degeneracy_copy_holds_the_same_number() {
-    // Four crates carry this rule and two of them cannot import it: the
-    // layering keeps `occlu-mesh-edit` and `occluview-hps` off every other
-    // OccluView crate. So the copies stay and this test is what keeps them
-    // equal -- the fix of 2026-07-25 landed in one crate and reached the
-    // others on 2026-08-22, and for those four weeks every scan opened through
-    // the other paths lost shading on facets under 20 um.
-    // Core owns the definition, so pin its value rather than its spelling:
-    // this is the copy the other three are compared against, and the one a
-    // future change would edit first.
+    // The facet-degeneracy rule, the coincident-group bound and the welding
+    // tolerance live in `occlu-geometry-math` since 2026-08-29. Before that
+    // they were copied across `occlu-mesh-edit`, `occluview-core` and
+    // `occluview-hps`, and the fix of 2026-07-25 landed in one crate and
+    // reached the others four weeks later -- for those four weeks every scan
+    // opened through the other paths lost shading on facets under 20 um.
+    // This test is what keeps the copies from coming back: the crates below
+    // must import the shared definitions and must not redefine them.
     assert!(
         (DEGENERATE_AREA_SIN - 1e-10).abs() < 1e-16,
-        "core's threshold moved; the copies below are now measured against \
-         a number this test no longer knows"
+        "the shared threshold moved; anything comparing against a local \
+         constant is now measuring the wrong thing"
     );
 
-    let expected = format!("{}: f32 = 1e-10;", "const DEGENERATE_AREA_SIN");
+    let mesh_edit = include_str!("../../../occlu-mesh-edit/src/normals.rs");
+    let hps = include_str!("../../../occluview-hps/src/parser.rs");
+    let own = include_str!("normals.rs");
     for (crate_name, source) in [
-        (
-            "occlu-mesh-edit",
-            include_str!("../../../occlu-mesh-edit/src/normals.rs"),
-        ),
-        (
-            "occluview-hps",
-            include_str!("../../../occluview-hps/src/parser.rs"),
-        ),
+        ("occlu-mesh-edit", mesh_edit),
+        ("occluview-hps", hps),
+        ("occluview-core", own),
     ] {
         assert!(
-            source.contains(&expected),
-            "{crate_name} holds a different facet-degeneracy threshold"
+            source.contains("use occlu_geometry_math::")
+                || source.contains("occlu_geometry_math::"),
+            "{crate_name} must import the shared geometry tolerances rather \
+             than hold local copies"
         );
-    }
-    // The duplicate-group bound is the same story: core bounded its loader
-    // path first, occlu-mesh-edit stayed pairwise for a while, and the two
-    // paths disagreed about how much work one pile of coincident vertices is
-    // worth. Both hold 256; neither can import the other.
-    let bound = format!("{}: usize = 256;", "const MAX_PAIRWISE_DUPLICATE_GROUP");
-    for (crate_name, source) in [
-        ("occluview-core", include_str!("normals.rs")),
-        (
-            "occlu-mesh-edit",
-            include_str!("../../../occlu-mesh-edit/src/normals.rs"),
-        ),
-    ] {
-        assert!(
-            source.contains(&bound),
-            "{crate_name} holds a different coincident-group bound"
-        );
+        for redefinition in [
+            "const DEGENERATE_AREA_SIN",
+            "const MAX_PAIRWISE_DUPLICATE_GROUP",
+            "const MAX_DUPLICATE_CLUSTERS",
+            "const DUPLICATE_NORMAL_DOT",
+            "const SMOOTH_DUPLICATE_NORMAL_DOT",
+        ] {
+            assert!(
+                !source.contains(redefinition),
+                "{crate_name} must not keep a local copy of `{redefinition}`: \
+                 that is how the two shadings drifted apart"
+            );
+        }
     }
 
-    // And the one crate that CAN import it must not carry a copy.
+    // The one crate that CAN import the accumulation must not carry a copy.
     let formats = include_str!("../../../occluview-formats/src/hps/mesh.rs");
     assert!(
         !formats.contains("DEGENERATE_AREA_SIN"),

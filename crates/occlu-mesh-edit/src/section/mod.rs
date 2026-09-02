@@ -122,7 +122,7 @@ pub fn plane_section(
     let normal = plane.normal_f64();
     let offset = f64::from(plane.distance);
     let mut segments = Vec::new();
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         if let Some(segment) = triangle_segment(positions, [tri[0], tri[1], tri[2]], normal, offset)
         {
             segments.push(segment);
@@ -497,7 +497,9 @@ mod property_tests {
             let v = pos[i as usize];
             DVec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2]))
         };
-        idx.chunks_exact(3)
+        idx.as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| tri_dist_sq(p, d(t[0]), d(t[1]), d(t[2])))
             .fold(f64::INFINITY, f64::min)
             .sqrt()

@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 #[derive(Debug, PartialEq, Eq)]
 /// Result of a bounded stream copy.
 pub enum StreamRead {
@@ -10,6 +12,22 @@ pub enum StreamRead {
     },
     /// A read operation failed before the stream completed.
     ReadFailed,
+    /// The caller's absolute request deadline elapsed before another bounded
+    /// shell-stream read could begin.
+    TimedOut,
+}
+
+/// Size policy and allocation limits for one shell stream copy.
+#[derive(Clone, Copy, Debug)]
+pub struct StreamReadBounds {
+    /// Length reported by the shell, if it supplied a usable value.
+    pub declared_len: Option<u64>,
+    /// Largest accepted payload, in bytes.
+    pub max_bytes: usize,
+    /// Smallest initial allocation for a size-silent stream.
+    pub min_buffer_bytes: usize,
+    /// Largest synchronous read issued to the shell stream.
+    pub chunk_bytes: usize,
 }
 
 /// Read a stream in bounded chunks without exceeding `max_bytes`.
@@ -21,16 +39,35 @@ pub enum StreamRead {
 /// Treating "unknown" as "infinite" here once turned every size-silent stream
 /// into a permanent oversize placeholder.
 pub fn read_capped_stream(
-    declared_len: Option<u64>,
-    max_bytes: usize,
-    min_buffer_bytes: usize,
-    chunk_bytes: usize,
+    bounds: StreamReadBounds,
+    read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
+) -> StreamRead {
+    read_capped_stream_inner(bounds, None, read_chunk)
+}
+
+/// Read a stream in bounded chunks until `deadline` expires.
+///
+/// The caller owns the absolute budget. A synchronous COM `Read` that is
+/// already in progress cannot be safely cancelled, but this helper prevents a
+/// slow or cloud-backed stream from beginning another chunk after its request
+/// has expired.
+pub fn read_capped_stream_until(
+    bounds: StreamReadBounds,
+    deadline: Instant,
+    read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
+) -> StreamRead {
+    read_capped_stream_inner(bounds, Some(deadline), read_chunk)
+}
+
+fn read_capped_stream_inner(
+    bounds: StreamReadBounds,
+    deadline: Option<Instant>,
     mut read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
 ) -> StreamRead {
-    let declared_cap = match declared_len {
+    let declared_cap = match bounds.declared_len {
         Some(len) => {
             let len = usize::try_from(len).unwrap_or(usize::MAX);
-            if len > max_bytes {
+            if len > bounds.max_bytes {
                 return StreamRead::OverCap { byte_len: len };
             }
             len
@@ -39,13 +76,16 @@ pub fn read_capped_stream(
     };
 
     let initial_capacity = if declared_cap == 0 {
-        min_buffer_bytes
+        bounds.min_buffer_bytes
     } else {
-        declared_cap.clamp(min_buffer_bytes, max_bytes)
+        declared_cap.clamp(bounds.min_buffer_bytes, bounds.max_bytes)
     };
     let mut buf = Vec::with_capacity(initial_capacity);
-    while buf.len() <= max_bytes {
-        let want = (max_bytes + 1 - buf.len()).min(chunk_bytes);
+    while buf.len() <= bounds.max_bytes {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return StreamRead::TimedOut;
+        }
+        let want = (bounds.max_bytes + 1 - buf.len()).min(bounds.chunk_bytes);
         let write_offset = buf.len();
         buf.resize(write_offset + want, 0);
         let Ok(read) = read_chunk(&mut buf[write_offset..write_offset + want]) else {
@@ -56,7 +96,7 @@ pub fn read_capped_stream(
             break;
         }
         buf.truncate(write_offset + read);
-        if buf.len() > max_bytes {
+        if buf.len() > bounds.max_bytes {
             return StreamRead::OverCap {
                 byte_len: buf.len(),
             };
@@ -67,34 +107,71 @@ pub fn read_capped_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{read_capped_stream, StreamRead};
+    use super::{read_capped_stream, read_capped_stream_until, StreamRead, StreamReadBounds};
+    use std::time::Instant;
+
+    const BOUNDS: StreamReadBounds = StreamReadBounds {
+        declared_len: Some(8),
+        max_bytes: 1024,
+        min_buffer_bytes: 4,
+        chunk_bytes: 8,
+    };
+
+    #[test]
+    fn expired_deadline_prevents_the_next_shell_stream_read() {
+        let mut read_started = false;
+        let result = read_capped_stream_until(BOUNDS, Instant::now(), |_buf| {
+            read_started = true;
+            Ok(0)
+        });
+
+        assert_eq!(result, StreamRead::TimedOut);
+        assert!(
+            !read_started,
+            "an expired request must not issue a shell read"
+        );
+    }
 
     #[test]
     fn unknown_length_stream_reads_to_completion_instead_of_overcap() {
         // Some shell streams report zero bytes; read them until EOF or the cap.
         let data = *b"stream without a declared size";
         let mut cursor = 0usize;
-        let result = read_capped_stream(None, 1024, 4, 8, |buf| {
-            if cursor >= data.len() {
-                return Ok(0);
-            }
-            let take = (data.len() - cursor).min(buf.len());
-            buf[..take].copy_from_slice(&data[cursor..cursor + take]);
-            cursor += take;
-            Ok(take)
-        });
+        let result = read_capped_stream(
+            StreamReadBounds {
+                declared_len: None,
+                ..BOUNDS
+            },
+            |buf| {
+                if cursor >= data.len() {
+                    return Ok(0);
+                }
+                let take = (data.len() - cursor).min(buf.len());
+                buf[..take].copy_from_slice(&data[cursor..cursor + take]);
+                cursor += take;
+                Ok(take)
+            },
+        );
 
         assert_eq!(result, StreamRead::Complete(data.to_vec()));
     }
 
     #[test]
     fn unknown_length_stream_still_detects_overcap_while_reading() {
-        let result = read_capped_stream(None, 32, 8, 16, |buf| {
-            for byte in buf.iter_mut() {
-                *byte = 9;
-            }
-            Ok(buf.len())
-        });
+        let result = read_capped_stream(
+            StreamReadBounds {
+                declared_len: None,
+                max_bytes: 32,
+                min_buffer_bytes: 8,
+                chunk_bytes: 16,
+            },
+            |buf| {
+                for byte in buf.iter_mut() {
+                    *byte = 9;
+                }
+                Ok(buf.len())
+            },
+        );
 
         assert_eq!(result, StreamRead::OverCap { byte_len: 33 });
     }
@@ -102,10 +179,18 @@ mod tests {
     #[test]
     fn declared_oversize_stream_returns_overcap_without_reading() {
         let mut called = false;
-        let result = read_capped_stream(Some(1025), 1024, 16, 64, |_buf| {
-            called = true;
-            Ok(0)
-        });
+        let result = read_capped_stream(
+            StreamReadBounds {
+                declared_len: Some(1025),
+                max_bytes: 1024,
+                min_buffer_bytes: 16,
+                chunk_bytes: 64,
+            },
+            |_buf| {
+                called = true;
+                Ok(0)
+            },
+        );
 
         assert_eq!(result, StreamRead::OverCap { byte_len: 1025 });
         assert!(!called, "oversize declaration should fail before any read");
@@ -114,16 +199,24 @@ mod tests {
     #[test]
     fn mid_stream_read_error_does_not_become_truncated_success() {
         let mut reads = 0;
-        let result = read_capped_stream(Some(32), 1024, 16, 16, |buf| {
-            reads += 1;
-            match reads {
-                1 => {
-                    buf[..4].copy_from_slice(&[1, 2, 3, 4]);
-                    Ok(4)
+        let result = read_capped_stream(
+            StreamReadBounds {
+                declared_len: Some(32),
+                max_bytes: 1024,
+                min_buffer_bytes: 16,
+                chunk_bytes: 16,
+            },
+            |buf| {
+                reads += 1;
+                match reads {
+                    1 => {
+                        buf[..4].copy_from_slice(&[1, 2, 3, 4]);
+                        Ok(4)
+                    }
+                    _ => Err(()),
                 }
-                _ => Err(()),
-            }
-        });
+            },
+        );
 
         assert_eq!(result, StreamRead::ReadFailed);
     }
@@ -131,17 +224,25 @@ mod tests {
     #[test]
     fn chunked_stream_that_crosses_limit_returns_overcap() {
         let mut remaining = 33usize;
-        let result = read_capped_stream(Some(0), 32, 8, 16, |buf| {
-            if remaining == 0 {
-                return Ok(0);
-            }
-            let take = remaining.min(buf.len());
-            for byte in &mut buf[..take] {
-                *byte = 7;
-            }
-            remaining -= take;
-            Ok(take)
-        });
+        let result = read_capped_stream(
+            StreamReadBounds {
+                declared_len: Some(0),
+                max_bytes: 32,
+                min_buffer_bytes: 8,
+                chunk_bytes: 16,
+            },
+            |buf| {
+                if remaining == 0 {
+                    return Ok(0);
+                }
+                let take = remaining.min(buf.len());
+                for byte in &mut buf[..take] {
+                    *byte = 7;
+                }
+                remaining -= take;
+                Ok(take)
+            },
+        );
 
         assert_eq!(result, StreamRead::OverCap { byte_len: 33 });
     }
@@ -150,15 +251,23 @@ mod tests {
     fn successful_stream_returns_complete_bytes() {
         let data = *b"hello mesh";
         let mut cursor = 0usize;
-        let result = read_capped_stream(Some(data.len() as u64), 1024, 4, 5, |buf| {
-            if cursor >= data.len() {
-                return Ok(0);
-            }
-            let take = (data.len() - cursor).min(buf.len());
-            buf[..take].copy_from_slice(&data[cursor..cursor + take]);
-            cursor += take;
-            Ok(take)
-        });
+        let result = read_capped_stream(
+            StreamReadBounds {
+                declared_len: Some(data.len() as u64),
+                max_bytes: 1024,
+                min_buffer_bytes: 4,
+                chunk_bytes: 5,
+            },
+            |buf| {
+                if cursor >= data.len() {
+                    return Ok(0);
+                }
+                let take = (data.len() - cursor).min(buf.len());
+                buf[..take].copy_from_slice(&data[cursor..cursor + take]);
+                cursor += take;
+                Ok(take)
+            },
+        );
 
         assert_eq!(result, StreamRead::Complete(data.to_vec()));
     }

@@ -379,7 +379,9 @@ mod tests {
     fn placeholder_does_not_look_like_a_blue_rendered_cube() {
         let pixels = placeholder_thumbnail(spec(32));
         let saturated_blue_pixels = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[3] > 0)
             .filter(|px| px[2] > px[0].saturating_add(45) && px[2] > px[1].saturating_add(25))
             .count();
@@ -391,7 +393,7 @@ mod tests {
         for size in [1u16, 2, 4, 8] {
             let pixels = placeholder_thumbnail(spec(size));
             assert_eq!(pixels.len(), usize::from(size) * usize::from(size) * 4);
-            let any_opaque = pixels.chunks_exact(4).any(|px| px[3] > 0);
+            let any_opaque = pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0);
             assert!(any_opaque, "size {size} placeholder rendered nothing");
         }
     }

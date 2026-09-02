@@ -32,6 +32,72 @@ fn one_triangle_glb() -> Vec<u8> {
     glb::build_glb(json, &bin)
 }
 
+/// Build one textured triangle with its raster embedded in the GLB BIN chunk.
+/// `declared_mime` deliberately remains separate from the bytes so callers can
+/// verify that input policy is based on the raster signature, not metadata.
+fn textured_triangle_glb(raster: &[u8], declared_mime: &str) -> Vec<u8> {
+    let position_start = 0usize;
+    let uv_start = position_start + 36;
+    let index_start = uv_start + 24;
+    // glTF bufferViews begin on four-byte boundaries. The two padding bytes
+    // between U16 indices and the image are intentionally not part of a view.
+    let image_start = 68usize;
+    let total = image_start + raster.len();
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},
+"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"TEXCOORD_0":1}},"indices":2,"material":0}}]}}],
+"materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}}],
+"textures":[{{"source":0}}],"images":[{{"bufferView":3,"mimeType":"{declared_mime}"}}],
+"accessors":[{{"bufferView":0,"count":3,"type":"VEC3","componentType":5126}},
+             {{"bufferView":1,"count":3,"type":"VEC2","componentType":5126}},
+             {{"bufferView":2,"count":3,"type":"SCALAR","componentType":5123}}],
+"bufferViews":[{{"buffer":0,"byteOffset":{position_start},"byteLength":36}},
+               {{"buffer":0,"byteOffset":{uv_start},"byteLength":24}},
+               {{"buffer":0,"byteOffset":{index_start},"byteLength":6}},
+               {{"buffer":0,"byteOffset":{image_start},"byteLength":{image_len}}}],
+"buffers":[{{"byteLength":{total}}}]}}"#,
+        image_len = raster.len(),
+    );
+    let mut bin = Vec::with_capacity(total);
+    for position in [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for component in position {
+            bin.extend_from_slice(&component.to_le_bytes());
+        }
+    }
+    for uv in [[0.0_f32, 0.0], [1.0, 0.0], [0.0, 1.0]] {
+        for component in uv {
+            bin.extend_from_slice(&component.to_le_bytes());
+        }
+    }
+    for index in [0_u16, 1, 2] {
+        bin.extend_from_slice(&index.to_le_bytes());
+    }
+    bin.resize(image_start, 0);
+    bin.extend_from_slice(raster);
+    assert_eq!(bin.len(), total);
+    glb::build_glb(json.as_bytes(), &bin)
+}
+
+fn solid_raster(format: image::ImageFormat) -> Vec<u8> {
+    let image = image::RgbaImage::from_raw(1, 1, vec![255, 0, 0, 255]).expect("image dims");
+    let mut output = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut output, format)
+        .expect("encode test raster");
+    output.into_inner()
+}
+
+fn assert_whitelist_rejection(result: Result<Mesh, FormatError>) {
+    let Err(FormatError::Malformed { reason, .. }) = result else {
+        unreachable!("non-PNG/JPEG texture must be rejected, got {result:?}");
+    };
+    assert!(
+        reason.contains("only PNG and JPEG are accepted"),
+        "the rejection must be the raster allowlist, not a decoder accident: {reason}"
+    );
+}
+
 #[test]
 fn reads_minimal_triangle() {
     let bytes = one_triangle_glb();
@@ -214,7 +280,35 @@ fn textured_glb_round_trips_uvs_and_texture() {
     assert_eq!(tex.width, 2);
     assert_eq!(tex.height, 2);
     // Every pixel is red.
-    assert!(tex.rgba.chunks_exact(4).all(|p| p == [255, 0, 0, 255]));
+    assert!(tex
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| *p == [255, 0, 0, 255]));
+}
+
+#[test]
+fn embedded_png_and_jpeg_remain_accepted() {
+    for format in [image::ImageFormat::Png, image::ImageFormat::Jpeg] {
+        let mesh = read(&textured_triangle_glb(&solid_raster(format), "image/png"));
+        assert!(
+            mesh.is_ok(),
+            "{format:?} texture should remain accepted: {mesh:?}"
+        );
+    }
+}
+
+#[test]
+fn valid_bmp_is_rejected_by_whitelist_before_decode() {
+    let bmp = solid_raster(image::ImageFormat::Bmp);
+    // Claiming a supported MIME type must not widen the real byte-level policy.
+    assert_whitelist_rejection(read(&textured_triangle_glb(&bmp, "image/png")));
+}
+
+#[test]
+fn malformed_bmp_magic_is_rejected_by_whitelist_before_decode() {
+    assert_whitelist_rejection(read(&textured_triangle_glb(b"BM", "image/png")));
 }
 
 /// A parent whose own mesh carries no primitives must not hide the material of

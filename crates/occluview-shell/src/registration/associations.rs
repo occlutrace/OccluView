@@ -254,7 +254,7 @@ fn delete_default_icon_if_occluview(subkey: &HSTRING) -> windows::core::Result<(
         if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
             Ok(())
         } else {
-            Err(windows::core::Error::from_win32())
+            Err(windows::core::Error::from_thread())
         }
     } else {
         Ok(())
@@ -302,10 +302,7 @@ mod tests {
         fs::write(&icon_path, b"icon").expect("icon fixture should be written");
 
         let value = format_icon_value(&HSTRING::from(app_path.to_string_lossy().as_ref()));
-        assert_eq!(
-            value.as_wide(),
-            HSTRING::from(icon_path.to_string_lossy().as_ref()).as_wide()
-        );
+        assert_eq!(value, HSTRING::from(icon_path.to_string_lossy().as_ref()));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
@@ -314,8 +311,8 @@ mod tests {
     fn format_icon_value_falls_back_to_executable_when_sibling_icon_is_missing() {
         let app_path = HSTRING::from(r"C:\Program Files\OccluView\occluview.exe");
         assert_eq!(
-            format_icon_value(&app_path).as_wide(),
-            HSTRING::from(r"C:\Program Files\OccluView\occluview.exe,0").as_wide()
+            format_icon_value(&app_path),
+            HSTRING::from(r"C:\Program Files\OccluView\occluview.exe,0")
         );
     }
 

@@ -6,7 +6,8 @@ use crate::{
 };
 
 pub(crate) fn validate_mesh(mesh: &RobustMesh) -> Result<(), RobustCsgError> {
-    if mesh.positions.is_empty() || mesh.indices.is_empty() || mesh.indices.len() % 3 != 0 {
+    if mesh.positions.is_empty() || mesh.indices.is_empty() || !mesh.indices.len().is_multiple_of(3)
+    {
         return Err(invalid_input("mesh must contain indexed triangles"));
     }
     if mesh

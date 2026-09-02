@@ -94,14 +94,14 @@ impl GpuTexture {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             &[255, 255, 255, 255],
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: Some(1),
@@ -189,14 +189,14 @@ impl GpuTexture {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             &tex.rgba,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(tex.width * 4),
                 rows_per_image: Some(tex.height),
@@ -215,7 +215,7 @@ impl GpuTexture {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -264,7 +264,7 @@ mod tests {
         let Some(start) = start else {
             return;
         };
-        let end = source[start..].find("mipmap_filter: wgpu::FilterMode::Nearest");
+        let end = source[start..].find("mipmap_filter: wgpu::MipmapFilterMode::Nearest");
         assert!(end.is_some(), "missing mesh sampler mipmap filter");
         let Some(end) = end else {
             return;

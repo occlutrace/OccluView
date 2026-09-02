@@ -65,6 +65,10 @@ fn failure_without_paths(error: &anyhow::Error, paths: &[PathBuf]) -> String {
     text
 }
 
+fn native_drop_paths(files: &[egui::DroppedFileHandle]) -> Vec<PathBuf> {
+    files.iter().map(|file| file.path().to_path_buf()).collect()
+}
+
 impl OccluViewApp {
     /// Guarded entry for every REPLACE open (menu Open, recent, drop/handoff
     /// classified as replace). If a live session is dirty or unsaved edits
@@ -352,12 +356,7 @@ impl OccluViewApp {
 
     pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         ctx.input(|i| {
-            let paths: Vec<PathBuf> = i
-                .raw
-                .dropped_files
-                .iter()
-                .filter_map(|file| file.path.clone())
-                .collect();
+            let paths = native_drop_paths(&i.raw.dropped_files);
             if !paths.is_empty() {
                 self.open_paths_from_external_source(&paths, "drop");
             }
@@ -457,8 +456,40 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
-    use super::failure_without_paths;
-    use std::path::PathBuf;
+    use super::{failure_without_paths, native_drop_paths};
+    use eframe::egui;
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    #[derive(Debug)]
+    struct NativeDroppedFile {
+        path: PathBuf,
+    }
+
+    impl egui::DroppedFile for NativeDroppedFile {
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Err("native path routing must not read dropped-file bytes".to_owned())
+        }
+    }
+
+    fn native_drop(path: PathBuf) -> egui::DroppedFileHandle {
+        Arc::new(NativeDroppedFile { path })
+    }
+
+    #[test]
+    fn native_drop_paths_preserve_backend_order() {
+        let first = PathBuf::from("/cases/first.stl");
+        let second = PathBuf::from("/cases/second.obj");
+        let dropped = vec![native_drop(first.clone()), native_drop(second.clone())];
+
+        assert_eq!(native_drop_paths(&dropped), vec![first, second]);
+    }
 
     #[test]
     fn a_failed_load_reaches_the_log_without_the_path_it_failed_on() {

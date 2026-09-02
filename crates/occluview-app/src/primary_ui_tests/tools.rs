@@ -24,18 +24,18 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        "self.align_drag = None;",
+        "self.align.drag = None;",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
-        "self.align_geometry.clear();",
-        "self.align.disarm();",
-        "self.align_status = None;",
-        "self.align_stats = None;",
-        "self.align_rejected.clear();",
-        "self.align_session_poses.clear();",
-        "self.align_brush.set_armed(false);",
-        "self.align_tab = crate::align_panel::AlignTab::default();",
-        "self.align_constraint = crate::align_drag::DragConstraint::default();",
+        "self.align.geometry.clear();",
+        "self.align.tool.disarm();",
+        "self.align.status = None;",
+        "self.align.stats = None;",
+        "self.align.rejected.clear();",
+        "self.align.session_poses.clear();",
+        "self.align.brush.set_armed(false);",
+        "self.align.tab = crate::align_panel::AlignTab::default();",
+        "self.align.constraint = crate::align_drag::DragConstraint::default();",
     ] {
         assert!(
             disarm.contains(reset),
@@ -133,8 +133,8 @@ fn the_one_guarded_forwarder_is_not_named_like_the_others() {
         "self.close_guard_open",
         "self.pending_replace_open.is_some()",
         "self.app_error.is_some()",
-        "self.about_window == AboutWindowState::Open",
-        "self.third_party_window_open",
+        "settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id())",
+        "information_dialog: self.information_dialog.is_open()",
     ] {
         assert!(
             state.contains(dialog),
@@ -178,8 +178,8 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
         "self.close_guard_open",
         "self.pending_replace_open.is_some()",
         "self.app_error.is_some()",
-        "self.about_window == AboutWindowState::Open",
-        "self.third_party_window_open",
+        "settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id())",
+        "information_dialog: self.information_dialog.is_open()",
     ] {
         assert!(state.contains(dialog), "the predicate must count {dialog}");
     }

@@ -56,7 +56,7 @@ fn edit_faces(
     let mut surviving_vertex_indices = Vec::new();
     let mut vertex_seen = vec![false; mesh.vertices.len()];
 
-    for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle_index, triangle) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         let selected = selection.as_slice()[triangle_index];
         let keep_triangle = if keep_selected { selected } else { !selected };
 

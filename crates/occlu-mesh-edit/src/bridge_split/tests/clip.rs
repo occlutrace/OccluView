@@ -64,7 +64,7 @@ fn near_face_cut_does_not_emit_degenerate_triangles() {
     let result = clip_bridge_open(&closed_cube(), request).expect("thin side remains valid");
 
     for mesh in [&result.part_a, &result.part_b] {
-        for face in mesh.indices.chunks_exact(3) {
+        for face in mesh.indices.as_chunks::<3>().0 {
             assert_ne!(face[0], face[1]);
             assert_ne!(face[1], face[2]);
             assert_ne!(face[2], face[0]);
@@ -109,6 +109,10 @@ fn clipping_is_deterministic_and_does_not_mutate_source() {
 fn generated_vertices_interpolate_color_and_uv() {
     let mut mesh = closed_cube();
     for vertex in &mut mesh.vertices {
+        #[expect(
+            clippy::manual_midpoint,
+            reason = "preserve established last-bit fixture output"
+        )]
         let t = (vertex.position[0] + 1.0) * 0.5;
         vertex.color = [if vertex.position[0] < 0.0 { 0 } else { 200 }, 20, 40, 255];
         vertex.uv = [t, 1.0 - t];

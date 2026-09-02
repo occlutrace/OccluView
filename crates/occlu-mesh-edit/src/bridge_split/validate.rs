@@ -147,7 +147,9 @@ fn validate_topology(
 fn degenerate_face_count(topology: &crate::topology::CanonicalTopology) -> usize {
     topology
         .indices()
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .filter(|face| face[0] == face[1] || face[1] == face[2] || face[2] == face[0])
         .count()
 }

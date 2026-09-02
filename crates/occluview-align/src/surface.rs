@@ -129,7 +129,7 @@ impl SurfaceIndex {
         let mut max = DVec3::splat(f64::NEG_INFINITY);
         let mut edge_total = 0.0f64;
 
-        for (triangle, slice) in soup.indices.chunks_exact(3).enumerate() {
+        for (triangle, slice) in soup.indices.as_chunks::<3>().0.iter().enumerate() {
             // Any masked corner takes the whole triangle out. A triangle with
             // one corner inside a painted region straddles the boundary, and
             // half a triangle is not a surface a query can land on.

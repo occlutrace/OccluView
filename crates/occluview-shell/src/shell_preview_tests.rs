@@ -2,7 +2,10 @@
 
 #![allow(clippy::panic, clippy::expect_used)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+#[path = "shell_preview_tests/platform_contracts.rs"]
+mod platform_contracts;
 
 fn registration_source() -> String {
     [
@@ -103,7 +106,7 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
     assert!(com.contains("impl IOleWindow_Impl for PreviewHandler_Impl"));
     assert!(com.contains("IObjectWithSite"));
     assert!(com.contains("impl IObjectWithSite_Impl for PreviewHandler_Impl"));
-    assert!(com.contains("SetParent(preview, hwnd)"));
+    assert!(com.contains("SetParent(preview, Some(hwnd))"));
     assert!(com.contains("SetKeyboardFocus"));
     assert!(com.contains("GetKeyboardFocus()"));
     assert!(com.contains("Err(e_fail())"));
@@ -131,12 +134,21 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
     assert!(registration.contains("OCCLUVIEW_PREVIEW_CLSID"));
     assert!(registration.contains("PREVHOST_APPID"));
     assert!(registration.contains("set_string(hk, Some(h!(\"AppID\")), PREVHOST_APPID)?;"));
+    assert!(
+        !registration.contains("register_preview_handler_appid"),
+        "the working main registration must use Windows' standard Prevhost AppID, not an owned surrogate"
+    );
 
     assert!(wxs.contains(
         "<?define PreviewHandlerCategory = \"{8895B1C6-B41F-4C1C-A562-0D564250836F}\" ?>"
     ));
     assert!(wxs.contains("<?define PreviewClsid = "));
     assert!(wxs.contains("<?define PrevhostAppId = "));
+    assert!(wxs.contains("{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"));
+    assert!(
+        !wxs.contains("cmpPreviewHostRegistration"),
+        "the MSI must not create a private Prevhost AppID component"
+    );
     assert!(wxs.contains("OccluView Preview Handler"));
     assert!(wxs.contains("Name=\"AppID\" Type=\"string\" Value=\"$(var.PrevhostAppId)\""));
     assert!(wxs.contains("Software\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers"));
@@ -144,6 +156,7 @@ fn shell_extension_registers_preview_handler_for_explorer_preview_pane() {
 
     assert!(reg.contains("OccluView Preview Handler"));
     assert!(reg.contains("\"AppID\"=\"{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}\""));
+    assert!(!reg.contains("{FD67C578-DBCC-4E10-8E47-63A8E48F7654}"));
     assert!(reg.contains("PreviewHandlers"));
     assert!(reg.contains("ShellEx\\{8895B1C6-B41F-4C1C-A562-0D564250836F}"));
     assert!(smoke.contains("$previewCategory"));
@@ -161,10 +174,10 @@ fn thumbnail_stream_reserves_capacity_before_copying_shell_bytes() {
         .expect("thumbnail render_attempt");
     let body = &com[start..];
     let reserve = body
-        .find("reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT)")
+        .find("reserve_thumbnail_stream_job_for_request(request)")
         .expect("stream reservation");
     let read = body
-        .find("self.ensure_stream_bytes()")
+        .find("self.ensure_stream_bytes(request)")
         .expect("shell stream read");
     let reserved_render = body
         .find("try_render_thumbnail_shared_with_reservation(")
@@ -191,7 +204,7 @@ fn thumbnail_provider_releases_full_stream_bytes_after_each_request() {
         .find("ThumbnailStreamBytesGuard::new(&self.bytes)")
         .expect("stream byte release guard");
     let read = body
-        .find("self.ensure_stream_bytes()")
+        .find("self.ensure_stream_bytes(request)")
         .expect("shell stream read");
 
     assert!(
@@ -249,12 +262,20 @@ fn preview_pane_has_a_native_right_click_context_menu() {
     assert!(com.contains("GetModuleFileNameW") && com.contains("APP_EXE_NAME"));
 }
 
-#[test]
-fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
-    let smoke = include_str!("../../../install/test-preview-handler.ps1");
-
+fn assert_preview_smoke_abi(smoke: &str) {
     assert!(smoke.contains("ApartmentState.STA"));
-    assert!(smoke.contains("Type.GetTypeFromCLSID"));
+    assert!(smoke.contains("CoCreateInstance"));
+    assert!(smoke.contains("CLSCTX_LOCAL_SERVER = 0x4"));
+    assert!(smoke.contains("CLSCTX_INPROC_SERVER = 0x1"));
+    assert!(smoke.contains("CreateLocalServerPreviewHandler"));
+    assert!(smoke.contains("CreateInProcessPreviewHandler"));
+    assert!(smoke.contains("JoinOrThrow(thread, \"Prevhost preview\")"));
+    assert!(smoke.contains("JoinOrThrow(thread, \"preview\")"));
+    assert!(smoke.contains("JoinOrThrow(thread, \"shell-item preview\")"));
+    assert!(smoke.contains("Marshal.GetObjectForIUnknown"));
+    assert!(smoke.contains("Marshal.Release(unknown)"));
+    assert!(!smoke.contains("Activator.CreateInstance"));
+    assert!(!smoke.contains("Type.GetTypeFromCLSID"));
     assert!(smoke.contains("IInitializeWithFile"));
     assert!(smoke.contains("IInitializeWithStream"));
     assert!(smoke.contains("IInitializeWithItem"));
@@ -278,6 +299,23 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     assert!(smoke.contains("WM_RBUTTONDOWN"));
     assert!(smoke.contains("WM_MOUSEWHEEL"));
     assert!(smoke.contains("CaptureFrame"));
+    assert!(smoke.contains("WaitForVisibleFrame"));
+    assert!(smoke.contains("WaitForChangedFrame"));
+    assert!(smoke.contains("PumpMessages"));
+    assert!(smoke.contains("PeekMessageW"));
+    assert!(smoke.contains("GetWindowThreadProcessId"));
+    assert!(smoke.contains("EnsurePreviewHostProcess(child)"));
+    assert!(smoke.contains("PREVIEW_HOST_PID="));
+    assert!(smoke.contains("ProbePrevhost"));
+    assert!(smoke.contains("WaitForPreviewChild"));
+    assert!(
+        smoke.contains("private static void PumpMessages(IntPtr hwnd)"),
+        "the smoke message pump must receive the preview child handle explicitly"
+    );
+    assert!(
+        smoke.contains("PeekMessageW(out message, hwnd"),
+        "the smoke pump must service only the test preview child, not consume unrelated STA messages"
+    );
     assert!(smoke.contains("FramesDiffer"));
     assert!(smoke.contains("VisiblePixels"));
     assert!(smoke.contains("OrbitPreview"));
@@ -289,21 +327,24 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
         smoke.contains("useStream") && smoke.contains("ProbeFromItem"),
         "preview smoke should execute file, stream, and shell-item initialization paths"
     );
-    let offset = |needle: &str| {
-        let pos = smoke.find(needle);
-        assert!(pos.is_some(), "missing preview ABI marker: {needle}");
-        pos.unwrap_or_default()
-    };
-    let do_preview = offset("void DoPreview();");
-    let unload = offset("void Unload();");
-    let set_focus = offset("void SetFocus();");
-    let query_focus = offset("IntPtr QueryFocus();");
-    let translate = offset("int TranslateAccelerator(ref MSG pmsg);");
-    let resize = offset("preview.SetRect(ref resizedRect);");
-    let update_after_resize = smoke[resize..].find("UpdateWindow(child)");
+}
+
+fn preview_smoke_offset(smoke: &str, needle: &str) -> usize {
+    let position = smoke.find(needle);
+    assert!(position.is_some(), "missing preview ABI marker: {needle}");
+    position.unwrap_or_default()
+}
+
+fn assert_preview_smoke_interaction_abi_order(smoke: &str) {
+    let do_preview = preview_smoke_offset(smoke, "void DoPreview();");
+    let unload = preview_smoke_offset(smoke, "void Unload();");
+    let set_focus = preview_smoke_offset(smoke, "void SetFocus();");
+    let query_focus = preview_smoke_offset(smoke, "IntPtr QueryFocus();");
+    let translate = preview_smoke_offset(smoke, "int TranslateAccelerator(ref MSG pmsg);");
+    let resize = preview_smoke_offset(smoke, "preview.SetRect(ref resizedRect);");
     assert!(
-        update_after_resize.is_some(),
-        "missing UpdateWindow(child) call after preview resize"
+        smoke[resize..].contains("WaitForVisibleFrame(child, \"initial resized preview frame\")"),
+        "the asynchronous Preview Handler smoke must wait for the resized frame instead of capturing it immediately"
     );
     assert!(
         smoke.contains("preview.SetFocus();"),
@@ -323,85 +364,189 @@ fn preview_smoke_runs_preview_handler_inside_sta_and_checks_resize() {
     assert!(query_focus < translate);
 }
 
+fn assert_prevhost_preview_contract(smoke: &str) {
+    let prevhost_start = preview_smoke_offset(smoke, "public static string ProbePrevhost(");
+    let prevhost_end = preview_smoke_offset(smoke, "public static string Probe(");
+    let prevhost = &smoke[prevhost_start..prevhost_end];
+    for required in [
+        "CreateLocalServerPreviewHandler(previewClsid)",
+        "IInitializeWithFile",
+        "preview.DoPreview();",
+        "FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null)",
+        "if (child == IntPtr.Zero)",
+        "EnsurePreviewHostProcess(child);",
+        "var initialFrame = CaptureFrame(child);",
+        "EnsureFrameVisible(initialFrame, frameDescription);",
+        "preview.Unload();",
+        "if (IsWindow(child))",
+    ] {
+        assert!(
+            prevhost.contains(required),
+            "Prevhost first-frame probe missing {required}"
+        );
+    }
+    assert!(
+        prevhost.contains("\"Prevhost file first frame\""),
+        "the file probe must identify its own captured first frame"
+    );
+    for forbidden in [
+        "WaitForPreviewChild",
+        "WaitForVisibleFrame",
+        "WaitForVisibleFrame(child",
+        "WaitForChangedFrame",
+        "PumpMessages",
+        "UpdateWindow(",
+        "Thread.Sleep",
+    ] {
+        assert!(
+            !prevhost.contains(forbidden),
+            "Prevhost first-frame probe must not wait for deferred work: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn prevhost_smoke_exercises_the_stream_contract_used_by_explorer() {
+    let smoke = include_str!("../../../install/test-preview-handler.ps1");
+    let stream_start = preview_smoke_offset(smoke, "public static string ProbePrevhostStream(");
+    let stream_end = preview_smoke_offset(smoke, "public static string Probe(");
+    let stream_probe = &smoke[stream_start..stream_end];
+
+    for required in [
+        "CreateLocalServerPreviewHandler(previewClsid)",
+        "SHCreateStreamOnFileEx(path",
+        "((IInitializeWithStream)instance).Initialize(stream, 0);",
+        "preview.DoPreview();",
+        "EnsurePreviewHostProcess(child);",
+        "EnsureFrameVisible(initialFrame, frameDescription);",
+        "preview.Unload();",
+    ] {
+        assert!(
+            stream_probe.contains(required),
+            "Prevhost stream probe missing {required}"
+        );
+    }
+    assert!(
+        stream_probe.contains("\"Prevhost stream first frame\""),
+        "the stream probe must identify its own captured first frame"
+    );
+    assert!(
+        smoke
+            .contains("$prevhostStreamResult = [OccluViewShellPreviewSmoke]::ProbePrevhostStream("),
+        "the lifecycle smoke must execute the cross-Prevhost stream probe"
+    );
+}
+
+fn assert_in_process_preview_contract(smoke: &str) {
+    let detailed_start = preview_smoke_offset(smoke, "public static string Probe(");
+    let detailed_end = preview_smoke_offset(smoke, "public static string ProbeFromItem(");
+    let detailed_probe = &smoke[detailed_start..detailed_end];
+    assert!(
+        detailed_probe.contains("CreateInProcessPreviewHandler(previewClsid)"),
+        "the detailed render and interaction contract must run in-process"
+    );
+    assert!(
+        !detailed_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
+        "interaction coverage is separate from the Prevhost first-frame contract"
+    );
+    assert!(
+        !detailed_probe.contains("EnsurePreviewHostProcess(child)"),
+        "the detailed in-process contract must not assert that its own child belongs to Prevhost"
+    );
+    let item_start = preview_smoke_offset(smoke, "public static string ProbeFromItem(");
+    let item_end = preview_smoke_offset(smoke, "private static IntPtr WaitForPreviewChild(");
+    let item_probe = &smoke[item_start..item_end];
+    assert!(
+        item_probe.contains("CreateInProcessPreviewHandler(previewClsid)"),
+        "shell-item rendering must use the same intentional in-process contract"
+    );
+    assert!(
+        !item_probe.contains("CreateLocalServerPreviewHandler(previewClsid)"),
+        "shell-item rendering must not drive a Prevhost child"
+    );
+    assert!(
+        !item_probe.contains("EnsurePreviewHostProcess(child)"),
+        "the shell-item in-process contract must not assert that its own child belongs to Prevhost"
+    );
+}
+
+fn assert_prevhost_runs_before_interaction(smoke: &str) {
+    let prevhost_call = preview_smoke_offset(
+        smoke,
+        "$prevhostFileResult = [OccluViewShellPreviewSmoke]::ProbePrevhost(",
+    );
+    let file_call =
+        preview_smoke_offset(smoke, "$fileResult = [OccluViewShellPreviewSmoke]::Probe(");
+    assert!(
+        prevhost_call < file_call,
+        "the Prevhost first-frame probe must run before detailed in-process rendering"
+    );
+}
+
+#[test]
+fn preview_smokes_prevhost_first_frame_before_in_process_interaction() {
+    let smoke = include_str!("../../../install/test-preview-handler.ps1");
+    assert_preview_smoke_abi(smoke);
+    assert_preview_smoke_interaction_abi_order(smoke);
+    assert_prevhost_preview_contract(smoke);
+    assert_in_process_preview_contract(smoke);
+    assert_prevhost_runs_before_interaction(smoke);
+}
+
+#[test]
+fn preview_pane_returns_only_after_the_first_frame_is_painted() {
+    let preview = include_str!("com/preview.rs");
+    let window = include_str!("com/preview/window.rs");
+    let factory = include_str!("offscreen_factory.rs");
+
+    let render_start = preview
+        .find("fn render_preview_now(&self) -> windows::core::Result<()>")
+        .expect("synchronous preview renderer");
+    let render_end = preview[render_start..]
+        .find("fn replace_preview_bitmap(&self")
+        .map(|offset| render_start + offset)
+        .expect("bitmap replacement follows the synchronous renderer");
+    let render = &preview[render_start..render_end];
+    assert!(
+        render.contains("self.preview_render_to_hbitmap(width, height)?")
+            && render.contains("self.replace_preview_bitmap(hbmp)")
+            && render
+                .contains("RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW)"),
+        "DoPreview must render, publish, and paint the first bitmap before returning success"
+    );
+
+    let do_preview_start = preview
+        .find("fn DoPreview(")
+        .expect("DoPreview implementation");
+    let do_preview_end = preview[do_preview_start..]
+        .find("fn Unload(")
+        .map(|offset| do_preview_start + offset)
+        .expect("Unload follows DoPreview");
+    let do_preview = &preview[do_preview_start..do_preview_end];
+    assert!(
+        do_preview.contains("let _ = self.this.ensure_preview_window()?;")
+            && do_preview.contains("self.this.render_preview_now()")
+            && !do_preview.contains("RenderDeadline"),
+        "DoPreview must not defer, deadline, or wait for its first frame"
+    );
+    assert!(
+        window.contains("let _ = handler.render_preview_now();"),
+        "WM_SIZE must use the same immediate preview renderer"
+    );
+    assert!(
+        !factory.contains("RenderDeadline")
+            && !factory.contains("Condvar")
+            && !factory.contains("wait_timeout"),
+        "the Preview Pane renderer must not inherit deadline-based startup waiting"
+    );
+}
+
 #[test]
 fn com_lazy_stream_paths_release_source_borrow_before_rendering() {
     let com = combined_com_source();
 
     assert!(com.contains("let source_path = self.source.borrow().path().map(PathBuf::from);"));
     assert!(!com.contains("if let Some(path) = self.source.borrow().path().map(PathBuf::from)"));
-}
-
-#[test]
-fn preview_render_forces_paint_after_bitmap_refresh() {
-    let com = combined_com_source();
-    let start = com
-        .find("fn render_preview_now(&self)")
-        .expect("missing render_preview_now");
-    let end = com[start..]
-        .find("fn replace_preview_bitmap(&self")
-        .expect("missing replace_preview_bitmap after render_preview_now");
-    let render_now = &com[start..start + end];
-
-    assert!(
-            render_now.contains("RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW)"),
-            "preview render should synchronously invalidate and paint after resize/interaction so preview captures are never a blank host background"
-        );
-}
-
-#[test]
-fn preview_reuses_one_process_shared_offscreen_renderer() {
-    // prevhost keeps the handler process alive between file clicks; creating a
-    // fresh wgpu device + compiling shaders per click was the dominant fixed
-    // cost of first paint. The scene loader must borrow the process-shared
-    // renderer, and the render path must retire it on failure so a lost device
-    // heals instead of failing every later preview.
-    let factory = include_str!("offscreen_factory.rs");
-    let load = include_str!("preview_scene/load.rs");
-    let render = include_str!("preview_scene/render.rs");
-
-    assert!(factory.contains("fn shared_shell_offscreen()"));
-    assert!(factory.contains("fn discard_shared_shell_offscreen("));
-    assert!(factory.contains("fn prewarm_shared_shell_offscreen()"));
-    assert!(load.contains("let offscreen = shared_shell_offscreen()?;"));
-    assert!(
-        !load.contains("create_shell_offscreen()"),
-        "preview loads must not create a per-file wgpu device"
-    );
-    assert!(render.contains("discard_shared_shell_offscreen(&self.offscreen)"));
-}
-
-#[test]
-fn preview_resize_renders_once_through_wm_size() {
-    // MoveWindow synchronously delivers WM_SIZE when the size changed, and the
-    // WM_SIZE handler re-renders. A second explicit render in SetRect/SetWindow
-    // made every host resize pay two full GPU renders and readbacks.
-    let preview = include_str!("com/preview.rs");
-    let window = include_str!("com/preview/window.rs");
-
-    let set_rect_start = preview.find("fn SetRect(").expect("SetRect impl");
-    let set_rect_end = preview[set_rect_start..]
-        .find("fn DoPreview(")
-        .map(|offset| set_rect_start + offset)
-        .expect("DoPreview follows SetRect");
-    let set_window_start = preview.find("fn SetWindow(").expect("SetWindow impl");
-    let set_window_end = preview[set_window_start..]
-        .find("fn SetRect(")
-        .map(|offset| set_window_start + offset)
-        .expect("SetRect follows SetWindow");
-
-    assert!(
-        !preview[set_rect_start..set_rect_end].contains("render_preview_now"),
-        "SetRect must leave the re-render to the WM_SIZE handler"
-    );
-    assert!(
-        !preview[set_window_start..set_window_end].contains("render_preview_now"),
-        "SetWindow must leave the re-render to the WM_SIZE handler"
-    );
-    let wm_size = window.find("WM_SIZE =>").expect("WM_SIZE arm");
-    assert!(
-        window[wm_size..].contains("render_preview_now"),
-        "the WM_SIZE handler owns the resize re-render"
-    );
 }
 
 #[test]
@@ -453,262 +598,4 @@ fn every_com_boundary_is_panic_guarded() {
     // decimal literals (which once drifted into 0x8000FF85-style non-codes).
     assert!(!com.contains("HRESULT(-2_147_4"));
     assert!(!registration.contains("HRESULT(-2_147_4"));
-}
-
-#[test]
-fn class_activation_prewarms_the_matching_renderer() {
-    // Under Apartment hosting the first GetThumbnail serializes in front of a
-    // whole folder's queue; starting device creation at class activation
-    // overlaps it with Initialize instead. Each host warms only its own path.
-    let com = include_str!("com.rs");
-
-    assert!(com.contains("fn spawn_renderer_prewarm(class: &GUID)"));
-    assert!(com.contains("spawn_renderer_prewarm(&requested);"));
-    assert!(com.contains("prewarm_thumbnail_renderer"));
-    assert!(com.contains("prewarm_shared_shell_offscreen"));
-}
-
-#[test]
-fn linux_host_has_windows_msvc_build_script() {
-    let script_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-windows-msvc.sh");
-    assert!(script_path.exists());
-
-    let script = include_str!("../../../scripts/build-windows-msvc.sh");
-    assert!(script.contains("cargo xwin build"));
-    assert!(script.contains("x86_64-pc-windows-msvc"));
-    assert!(script.contains("-p occluview-app"));
-    assert!(script.contains("-p occluview-shell"));
-    assert!(script.contains("occluview.exe"));
-    assert!(script.contains("occluview_shell.dll"));
-    assert!(script.contains("CARGO_ENCODED_RUSTFLAGS"));
-    assert!(script.contains("cargo xwin env --target \"$target\""));
-    assert!(script.contains("export CMAKE_TOOLCHAIN_FILE="));
-    assert!(script.contains("manifold-csg-sys-*/out/build/CMakeCache.txt"));
-    // The shell DLL lives inside Explorer's dllhost.exe: the release profile's
-    // panic = "abort" would kill the surrogate on any panic and blank every
-    // thumbnail in the folder. The script must build it with release-unwind,
-    // matching install/build-msi.ps1.
-    assert!(script.contains("--profile release-unwind"));
-    assert!(!script.contains("-p occluview-cli"));
-    assert!(!script.contains("occluview-cli.exe"));
-}
-
-#[test]
-fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let linux = repo.join("install/linux");
-
-    assert!(linux.join("ai.occlutrace.OccluView.desktop").exists());
-    assert!(linux.join("ai.occlutrace.OccluView.metainfo.xml").exists());
-    assert!(linux.join("ai.occlutrace.OccluView.thumbnailer").exists());
-    assert!(linux.join("occluview-mime.xml").exists());
-    assert!(linux.join("build-deb.sh").exists());
-    assert!(linux.join("check-deb.sh").exists());
-    assert!(linux.join("copyright").exists());
-
-    let desktop = std::fs::read_to_string(linux.join("ai.occlutrace.OccluView.desktop"))
-        .expect("desktop file should be readable");
-    assert!(desktop.contains("Exec=occluview %F"));
-    assert!(desktop.contains("MimeType=model/stl;model/obj;model/gltf-binary;"));
-    // The launcher searches Name, GenericName and Keywords. Without keywords a
-    // technician who types the file format, or the work, finds nothing.
-    assert!(
-        desktop.contains("Keywords=") && desktop.contains("STL;"),
-        "the desktop entry must be findable by what the user is looking for"
-    );
-
-    let thumbnailer = std::fs::read_to_string(linux.join("ai.occlutrace.OccluView.thumbnailer"))
-        .expect("thumbnailer file should be readable");
-    assert!(thumbnailer.contains("Exec=occluview-cli thumbnail %i -o %o --size %s"));
-    assert!(thumbnailer.contains("MimeType=model/stl;model/obj;model/gltf-binary;"));
-
-    let deb_script =
-        std::fs::read_to_string(linux.join("build-deb.sh")).expect("deb script should be readable");
-    let check_script = std::fs::read_to_string(linux.join("check-deb.sh"))
-        .expect("deb check script should be readable");
-    for package in [
-        "libc6",
-        "libgcc-s1",
-        "libx11-6",
-        "libxcb1",
-        "libxcursor1",
-        "libxi6",
-        "libxrandr2",
-        "libxkbcommon0",
-        "libwayland-client0",
-        "libwayland-cursor0",
-        "libwayland-egl1",
-        "libvulkan1",
-        "desktop-file-utils",
-        "shared-mime-info",
-        "hicolor-icon-theme",
-        "xdg-desktop-portal",
-    ] {
-        assert!(
-            deb_script.contains(package),
-            "Debian package should declare runtime dependency {package}"
-        );
-    }
-
-    for required_path in [
-        "usr/bin/occluview",
-        "usr/bin/occluview-cli",
-        "usr/share/applications/ai.occlutrace.OccluView.desktop",
-        "usr/share/metainfo/ai.occlutrace.OccluView.metainfo.xml",
-        "usr/share/mime/packages/occluview-mime.xml",
-        "usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer",
-        "usr/share/icons/hicolor/512x512/apps/occluview.png",
-        // One icon name per registered type: a scan with no thumbnail yet must
-        // still be drawn as a scan, the way the Windows installer draws it.
-        "usr/share/icons/hicolor/scalable/mimetypes/model-stl.svg",
-        "usr/share/icons/hicolor/scalable/mimetypes/application-x-occluview-hps.svg",
-        "usr/share/doc/occluview/README.md",
-        "usr/share/doc/occluview/copyright",
-        "usr/share/doc/occluview/NEWS.gz",
-        "usr/share/doc/occluview/changelog.gz",
-        "usr/share/man/man1/occluview.1.gz",
-        "usr/share/man/man1/occluview-cli.1.gz",
-    ] {
-        assert!(
-            check_script.contains(required_path),
-            "Debian package check should assert {required_path}"
-        );
-    }
-
-    let copyright = std::fs::read_to_string(linux.join("copyright"))
-        .expect("Debian copyright file should be readable");
-    assert!(copyright.contains("License: Apache-2.0"));
-    assert!(copyright.contains("/usr/share/common-licenses/Apache-2.0"));
-    assert!(!copyright.contains("TERMS AND CONDITIONS"));
-}
-
-#[test]
-fn gui_windows_resource_is_embedded_during_cross_builds() {
-    let build_rs = include_str!("../../occluview-app/build.rs");
-
-    assert!(build_rs.contains("CARGO_CFG_WINDOWS"));
-    assert!(build_rs.contains("llvm-rc"));
-    assert!(build_rs.contains("cargo:rustc-link-arg-bin=occluview="));
-    assert!(!build_rs.contains("env::consts::OS != \"windows\""));
-}
-
-#[test]
-fn the_preview_window_and_the_com_object_die_together() {
-    // The child preview window holds a raw `&PreviewHandler` in GWLP_USERDATA
-    // with no AddRef, so their lifetimes have to be tied by hand. Two ordinary
-    // routes reach the mismatch:
-    //
-    //   * A host releases without calling `Unload` -- etiquette, not a COM
-    //     requirement, and especially likely after `DoPreview` returned an
-    //     error.
-    //   * Re-entrancy with a perfectly behaved host: `show_context_menu` runs
-    //     `TrackPopupMenuEx`, a modal loop that pumps the STA, so a click on
-    //     another file in Explorer can deliver Unload and Release while that
-    //     call is still on the stack.
-    //
-    // And the reverse: when Explorer destroys the parent, the child dies with
-    // it and a later Unload would call DestroyWindow on a recycled handle.
-    let preview = include_str!("com/preview.rs");
-    let window = include_str!("com/preview/window.rs");
-
-    let drop_impl = preview
-        .split_once("impl Drop for PreviewHandler {")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
-    let drop_body = drop_impl
-        .split_once("\n}")
-        .map(|(body, _)| body)
-        .unwrap_or_default();
-    assert!(
-        drop_body.contains("self.destroy_preview_window();"),
-        "dropping the COM object must take the window with it, or a live \
-         window is left pointing at freed memory"
-    );
-    let destroys_before_count = drop_body
-        .find("destroy_preview_window")
-        .zip(drop_body.find("ACTIVE_COM_OBJECTS"))
-        .is_some_and(|(window, count)| window < count);
-    assert!(
-        destroys_before_count,
-        "the window must be torn down before the object count drops"
-    );
-
-    // Clearing the slot is legal cross-thread; DestroyWindow is not. An
-    // orphaned window must degrade to DefWindowProcW, not to a dangling read.
-    let destroy = preview
-        .split_once("fn destroy_preview_window(&self)")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
-    let clears = destroy.find("SetWindowLongPtrW");
-    let destroys = destroy.find("DestroyWindow(hwnd)");
-    assert!(
-        clears
-            .zip(destroys)
-            .is_some_and(|(clear, destroy)| clear < destroy),
-        "GWLP_USERDATA must be cleared before DestroyWindow, and unconditionally"
-    );
-    assert!(
-        destroy.contains("DeleteObject"),
-        "the last rendered bitmap is up to 2048x2048x4 of GDI memory and must not leak"
-    );
-
-    assert!(
-        window.contains("WM_NCDESTROY"),
-        "a window destroyed with its parent must clear the handler's stale HWND"
-    );
-
-    // Destroying the window narrows the second route -- the common case then
-    // returns 0 from the modal call -- but cannot close it: the frame that
-    // opened the menu is still on the stack when Drop runs, and running the
-    // selected command from there reads the preview scene and the source
-    // stream of a freed object. What closes it is refusing to touch `self`
-    // once the window no longer names it.
-    let menu = include_str!("com/preview/context_menu.rs");
-    let after_tracking = menu
-        .split_once("TrackPopupMenuEx(menu,")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
-    let confirms = after_tracking.find("window_owns_handler(hwnd, std::ptr::from_ref(self))");
-    let runs = after_tracking.find("self.run_menu_command(hwnd, command)");
-    assert!(
-        confirms
-            .zip(runs)
-            .is_some_and(|(confirm, run)| confirm < run),
-        "the selected command must not run until the window has confirmed it \
-         still points at this handler"
-    );
-
-    // The Windows packaging job runs this through test-msi-lifecycle.ps1, so
-    // the rule is checked against a real host, not only against the source.
-    let smoke = include_str!("../../../install/test-preview-handler.ps1");
-    assert!(
-        smoke.contains("Release without Unload left the child preview window alive"),
-        "the preview smoke should cover a host that releases without Unload"
-    );
-}
-
-/// The COM boundary guard has to catch, not merely be spelled at every site.
-///
-/// Windows-only, because the module it tests is: CI runs the workspace suite
-/// on windows-latest, which is where this one counts.
-///
-/// The guard beside it checks that every entry point names `com_entry`. That
-/// is all a Linux build can check about the call sites, and it is worth
-/// having -- but it says nothing about the body. Deleting the `catch_unwind`
-/// from `com_entry` left the whole shell suite green, and `[profile.release]`
-/// sets `panic = "abort"` for the cdylib, so what these catches prevent is one
-/// bad file taking down `dllhost` and blanking every thumbnail in the folder.
-#[cfg(windows)]
-#[test]
-fn com_entry_returns_the_fallback_when_the_body_panics() {
-    let value = crate::com::com_entry("test::body_returns", || 0_u32, || 7);
-    assert_eq!(value, 7, "a body that returns must pass its value through");
-
-    let caught = crate::com::com_entry("test::body_panics", || 0_u32, || panic!("boom"));
-    assert_eq!(
-        caught, 0,
-        "a panicking body must come back as the fallback, not unwind into the \
-         COM caller"
-    );
 }

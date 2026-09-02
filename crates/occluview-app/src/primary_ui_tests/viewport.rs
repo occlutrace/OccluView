@@ -317,15 +317,15 @@ fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
 }
 
 #[test]
-fn update_runs_camera_cleanup_before_render_and_ui_pass() {
+fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
     let app_source = app_module_source();
-    let update = function_source(
+    let ui_pass = function_source(
         app_source,
-        "fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {",
+        "fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {",
     );
     let central = function_source(
         app_render_source(),
-        "pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {",
+        "pub(super) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {",
     );
     let render_pending = function_source(
         app_render_source(),
@@ -333,21 +333,63 @@ fn update_runs_camera_cleanup_before_render_and_ui_pass() {
     );
 
     assert!(
-        appears_before(
-            update,
-            "self.render_pending_frame(ctx);",
-            "self.show_central_panel(ctx);",
-        ),
+        ui_pass.contains("let ctx = ui.ctx().clone();")
+            && appears_before(
+                ui_pass,
+                "self.render_pending_frame(&ctx);",
+                "self.show_central_panel(ui);",
+            ),
         "the pending frame render pass should still happen before the main panel where camera input is collected"
     );
     assert!(
-        update.rfind("self.render_pending_frame(ctx);")
-            > update.find("self.show_central_panel(ctx);"),
+        ui_pass.rfind("self.render_pending_frame(&ctx);")
+            > ui_pass.find("self.show_central_panel(ui);"),
         "a second pending-frame pass must follow viewport input so the live paint callback \
          encodes THIS frame's camera (removes one frame of orbit latency)"
     );
+    let ordered_visible_work = [
+        "ctx.set_visuals(super::viewer_visuals());",
+        "self.handle_dropped_files(&ctx);",
+        "self.release_viewport_orbit_cursor_if_inactive(&ctx);",
+        "self.render_pending_frame(&ctx);",
+        "self.handle_edit_shortcuts(&ctx);",
+        "self.show_toolbar(ui);",
+        "self.maybe_render_cut_view(&ctx);",
+        "self.show_central_panel(ui);",
+    ];
+    for pair in ordered_visible_work.windows(2) {
+        assert!(
+            appears_before(ui_pass, pair[0], pair[1]),
+            "visible lifecycle order changed between {} and {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    let second_render = ui_pass.rfind("self.render_pending_frame(&ctx);");
+    assert!(second_render.is_some(), "ui keeps the post-input render");
+    let Some(second_render) = second_render else {
+        return;
+    };
+    let after_second_render = &ui_pass[second_render..];
+    let ordered_surfaces = [
+        "self.poll_gpu_errors();",
+        "self.show_error_dialog(&ctx);",
+        "self.show_information_dialog(&ctx);",
+        "self.repair_report.ui(&ctx);",
+        "self.update_notice.show(&ctx);",
+        "self.show_unsaved_close_guard(&ctx);",
+        "self.guard_pending_replace_open(&ctx);",
+    ];
+    for pair in ordered_surfaces.windows(2) {
+        assert!(
+            appears_before(after_second_render, pair[0], pair[1]),
+            "post-render surface order changed between {} and {}",
+            pair[0],
+            pair[1]
+        );
+    }
     assert!(
-        central.contains("self.show_viewport_overlays(ui, &response, ctx);"),
+        central.contains("self.show_viewport_overlays(ui, &response, &ctx);"),
         "the main viewport panel should hand off to the shared overlay body"
     );
     assert!(
@@ -489,6 +531,7 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
     let cut_tool = include_str!("../cut_tool.rs");
     let live_viewport = include_str!("../live_viewport.rs");
     let app_render = app_render_source();
+    let viewport_overlays = function_source(app_render, "fn show_viewport_overlays(");
 
     assert!(
         cut_tool.contains("pub(super) fn viewport_clip_plane(&self, bbox: Aabb) -> ClipPlane"),
@@ -500,38 +543,42 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
     );
     assert!(
         app_render.contains("self.active_viewport_clip_plane(scene.bbox())")
-            && app_render.contains("render_prepared_viewport_with_clip_and_overlay("),
+            && app_render.contains("render_prepared_viewport_with_clip_and_overlay_with_deadline("),
         "main viewport should render the active clipping plane, not only the small preview"
     );
     assert!(
         app_render.contains("fn render_section_pixels(")
-            && app_render.contains(
-                "offscreen.render_prepared_scene_with_clip(prepared, &camera, &plane, spec)"
-            ),
+            && app_render.contains("offscreen.render_prepared_scene_with_clip_with_deadline("),
         "section previews should reuse prepared GPU scene data instead of re-uploading meshes"
     );
     assert!(
         live_viewport.contains("clip_buffer") && live_viewport.contains("scene.draw_with_clip("),
         "live viewport should bind the same clip plane path as offscreen render"
     );
-    // Every viewport-owning tool must gate camera input only while it consumes
-    // its pointer gesture: Bridge Split, Cut View, Measure, and Align Scans all
-    // coexist with ordinary orbit/pan when idle.
-    // Matched flag by flag rather than as one literal: rustfmt wraps a long
-    // condition, and a contract that breaks on whitespace protects nothing.
-    for flag in [
-        "!bridge_ui_consumed",
-        "!cut_ui_consumed",
-        "!measure_ui_consumed",
-        "!align_ui_consumed",
+    // Bridge Split and Cut View may selectively drain wheel input. Their real
+    // production calls must therefore run before the camera path, regardless
+    // of how input arbitration is represented internally.
+    for (tool_call, tool) in [
+        (
+            "self.show_bridge_split_overlay(ui, response, ctx)",
+            "Bridge Split",
+        ),
+        (
+            "self.show_cut_tool_overlay(ui, response.rect, ctx)",
+            "Cut View",
+        ),
     ] {
         assert!(
-            app_render.contains(flag),
-            "{flag} must gate the camera, or that tool's pointer leaks into orbit/pan"
+            appears_before(
+                viewport_overlays,
+                tool_call,
+                "self.handle_viewport_input(ctx, response, response.rect,",
+            ),
+            "{tool} must run before camera input so its consumed wheel cannot zoom"
         );
     }
     assert!(
-        app_render.contains("self.handle_viewport_input(ctx, response, response.rect,"),
+        viewport_overlays.contains("self.handle_viewport_input(ctx, response, response.rect,"),
         "the camera path must still be reachable when no tool consumed the pointer"
     );
     // One body, called twice. `show_viewport_overlays` has what two copies of
@@ -539,7 +586,7 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
     assert_eq!(
         count_occurrences(
             app_render,
-            "self.show_viewport_overlays(ui, &response, ctx);"
+            "self.show_viewport_overlays(ui, &response, &ctx);"
         ),
         2,
         "both viewport branches must call the one overlay body"
@@ -636,17 +683,7 @@ fn camera_only_offscreen_redraw_skips_scene_resync() {
 fn live_window_uses_matching_msaa_for_custom_wgpu_viewport() {
     let source = app_bootstrap_source();
     let live_viewport = include_str!("../live_viewport.rs");
-    let start = source.rfind("let native_options = eframe::NativeOptions");
-    assert!(start.is_some(), "missing native_options");
-    let Some(start) = start else {
-        return;
-    };
-    let end = source[start..].find("eframe::run_native(");
-    assert!(end.is_some(), "missing run_native after native_options");
-    let Some(end) = end else {
-        return;
-    };
-    let native_options = &source[start..start + end];
+    let native_options = function_source(source, "fn native_options() -> eframe::NativeOptions {");
 
     assert!(
         native_options.contains("multisampling: LIVE_VIEWPORT_SAMPLE_COUNT"),
@@ -666,20 +703,10 @@ fn live_window_uses_matching_msaa_for_custom_wgpu_viewport() {
 #[test]
 fn live_window_requests_one_frame_of_swapchain_latency() {
     let source = app_bootstrap_source();
-    let start = source.rfind("let native_options = eframe::NativeOptions");
-    assert!(start.is_some(), "missing native_options");
-    let Some(start) = start else {
-        return;
-    };
-    let end = source[start..].find("eframe::run_native(");
-    assert!(end.is_some(), "missing run_native after native_options");
-    let Some(end) = end else {
-        return;
-    };
-    let native_options = &source[start..start + end];
+    let native_options = function_source(source, "fn native_options() -> eframe::NativeOptions {");
 
     assert!(
-        native_options.contains("desired_maximum_frame_latency: Some(1)"),
+        native_options.contains("surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY"),
         "the interactive viewport must not queue multiple already-stale camera frames"
     );
 }

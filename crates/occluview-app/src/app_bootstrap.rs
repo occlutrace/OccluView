@@ -87,20 +87,7 @@ fn real_main() -> Result<()> {
     // Capture it before eframe/winit runs so nothing consumes the env first.
     let startup_activation_token = single_instance::capture_activation_token();
 
-    let native_options = eframe::NativeOptions {
-        viewport: root_viewport_builder(),
-        renderer: eframe::Renderer::Wgpu,
-        depth_buffer: 24,
-        stencil_buffer: 8,
-        multisampling: LIVE_VIEWPORT_SAMPLE_COUNT,
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            // Keep vsync, but do not queue stale camera frames ahead of what
-            // the operator is currently doing with the mouse.
-            desired_maximum_frame_latency: Some(1),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let native_options = native_options();
 
     eframe::run_native(
         "OccluView 3D Viewer",
@@ -150,6 +137,23 @@ fn real_main() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("eframe: {e:?}"))?;
 
     Ok(())
+}
+
+fn native_options() -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        viewport: root_viewport_builder(),
+        renderer: eframe::Renderer::Wgpu,
+        depth_buffer: 24,
+        stencil_buffer: 8,
+        multisampling: LIVE_VIEWPORT_SAMPLE_COUNT,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            // Keep vsync, but do not queue stale camera frames ahead of what
+            // the operator is currently doing with the mouse.
+            surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 fn root_viewport_builder() -> egui::ViewportBuilder {
@@ -368,7 +372,6 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 #[cfg(windows)]
 fn show_startup_fatal_message_box(report_path: Option<&Path>, details: &str) {
     use windows::core::HSTRING;
-    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
     let message = if let Some(path) = report_path {
@@ -383,7 +386,7 @@ fn show_startup_fatal_message_box(report_path: Option<&Path>, details: &str) {
     let title = HSTRING::from("OccluView 3D Viewer");
     let message = HSTRING::from(message);
     unsafe {
-        MessageBoxW(HWND::default(), &message, &title, MB_OK | MB_ICONERROR);
+        MessageBoxW(None, &message, &title, MB_OK | MB_ICONERROR);
     }
 }
 
@@ -425,6 +428,16 @@ fn set_process_app_user_model_id() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_options_use_the_low_latency_surface_contract() {
+        let options = native_options();
+
+        assert_eq!(
+            options.wgpu_options.surface,
+            eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY
+        );
+    }
 
     #[test]
     fn crash_log_ring_keeps_only_the_most_recent_lines() {

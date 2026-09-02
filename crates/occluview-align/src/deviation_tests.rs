@@ -35,7 +35,9 @@ fn settings() -> DeviationSettings {
 
 fn lifted(positions: &[f32], by: f32) -> Vec<f32> {
     positions
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|point| [point[0], point[1], point[2] + by])
         .collect()
 }

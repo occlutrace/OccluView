@@ -74,7 +74,7 @@ fn eight_concurrent_mixed_requests_each_yield_a_bitmap_never_nothing() {
             pixels.len()
         );
         assert!(
-            pixels.chunks_exact(4).any(|px| px[3] > 0),
+            pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0),
             "{} produced an entirely empty bitmap (no visible pixels)",
             path.display()
         );
@@ -156,7 +156,7 @@ fn twenty_four_thread_mixed_burst_every_request_returns_a_bitmap_with_sane_wallt
             path.display()
         );
         assert!(
-            pixels.chunks_exact(4).any(|px| px[3] > 0),
+            pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0),
             "{} produced an entirely empty bitmap",
             path.display()
         );
@@ -212,7 +212,7 @@ fn deadline_under_contention_yields_placeholders_never_errors_or_missing_bitmaps
             path.display()
         );
         assert!(
-            pixels.chunks_exact(4).any(|px| px[3] > 0),
+            pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0),
             "{} returned an empty bitmap under a short deadline",
             path.display()
         );

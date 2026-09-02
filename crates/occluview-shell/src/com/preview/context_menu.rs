@@ -24,7 +24,7 @@ use crate::preview_scene::PreviewSceneState;
 use std::mem::size_of;
 use std::path::PathBuf;
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{GlobalFree, BOOL, HANDLE, HMODULE, HWND, POINT};
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HMODULE, HWND, POINT};
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, DeleteObject, GetSysColor, COLOR_MENUTEXT, HBITMAP, HGDIOBJ,
 };
@@ -88,7 +88,7 @@ impl PreviewHandler {
                         ..Default::default()
                     };
                     // SAFETY: `menu` is live and `info` is a valid separator descriptor.
-                    let _ = unsafe { InsertMenuItemW(menu, u32::MAX, BOOL(1), &info) };
+                    let _ = unsafe { InsertMenuItemW(menu, u32::MAX, true, &info) };
                 }
                 PreviewMenuEntry::Command(command) => {
                     let command = *command;
@@ -126,7 +126,7 @@ impl PreviewHandler {
                     };
                     // SAFETY: `menu` is live; `info`/`label` are valid for the
                     // duration of this call, which copies the string internally.
-                    let _ = unsafe { InsertMenuItemW(menu, u32::MAX, BOOL(1), &info) };
+                    let _ = unsafe { InsertMenuItemW(menu, u32::MAX, true, &info) };
                 }
             }
         }
@@ -266,7 +266,7 @@ impl PreviewHandler {
         // SAFETY: all string pointers stay alive across this synchronous call.
         let result = unsafe {
             ShellExecuteW(
-                hwnd,
+                Some(hwnd),
                 w!("open"),
                 PCWSTR(exe.as_ptr()),
                 PCWSTR(params.as_ptr()),
@@ -355,7 +355,7 @@ fn copy_rgba_to_clipboard(
     let ptr = unsafe { GlobalLock(hglobal) };
     if ptr.is_null() {
         // SAFETY: releasing the block we failed to lock.
-        let _ = unsafe { GlobalFree(hglobal) };
+        let _ = unsafe { GlobalFree(Some(hglobal)) };
         return Err(e_fail());
     }
     // SAFETY: `ptr` addresses at least `dib.len()` writable bytes.
@@ -364,11 +364,11 @@ fn copy_rgba_to_clipboard(
     let _ = unsafe { GlobalUnlock(hglobal) };
 
     // SAFETY: take ownership of the clipboard tied to our window.
-    unsafe { OpenClipboard(hwnd) }?;
+    unsafe { OpenClipboard(Some(hwnd)) }?;
     // SAFETY: clipboard is open; empty it before publishing our format.
     let outcome = unsafe { EmptyClipboard() }.and_then(|()| {
         // SAFETY: on success the system takes ownership of `hglobal`.
-        unsafe { SetClipboardData(u32::from(CF_DIB.0), HANDLE(hglobal.0)) }.map(|_| ())
+        unsafe { SetClipboardData(u32::from(CF_DIB.0), Some(HANDLE(hglobal.0))) }.map(|_| ())
     });
     // SAFETY: always release the clipboard we opened.
     let _ = unsafe { CloseClipboard() };
@@ -376,7 +376,7 @@ fn copy_rgba_to_clipboard(
     if outcome.is_err() {
         // The system never took ownership; reclaim the block.
         // SAFETY: `hglobal` is still ours on the failure path.
-        let _ = unsafe { GlobalFree(hglobal) };
+        let _ = unsafe { GlobalFree(Some(hglobal)) };
     }
     outcome
 }
@@ -396,19 +396,19 @@ fn resolve_app_exe() -> Option<HSTRING> {
 
     let mut buffer = [0u16; 1024];
     // SAFETY: `module` is our DLL handle; `buffer` is a valid write region.
-    let len = unsafe { GetModuleFileNameW(module, &mut buffer) } as usize;
+    let len = unsafe { GetModuleFileNameW(Some(module), &mut buffer) } as usize;
     if len == 0 || len >= buffer.len() {
         return None;
     }
-    let dll_path = HSTRING::from_wide(&buffer[..len]).ok()?;
+    let dll_path = HSTRING::from_wide(&buffer[..len]);
     sibling_file(&dll_path, crate::APP_EXE_NAME)
 }
 
 /// Replace the file name of `path` with `filename`, keeping the directory.
 fn sibling_file(path: &HSTRING, filename: &str) -> Option<HSTRING> {
-    let wide = path.as_wide();
+    let wide: &[u16] = path;
     let sep = wide.iter().rposition(|&c| c == u16::from(b'\\'))?;
     let mut full: Vec<u16> = wide[..=sep].to_vec();
     full.extend(filename.encode_utf16());
-    HSTRING::from_wide(&full).ok()
+    Some(HSTRING::from_wide(&full))
 }

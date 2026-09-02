@@ -85,8 +85,9 @@ pub(crate) enum BusyFinish {
 }
 
 /// State machine for one active mesh-edit session.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum EditModeState {
+    #[default]
     Inactive,
     ActiveClean {
         layer: LayerKey,
@@ -105,12 +106,6 @@ pub(crate) enum EditModeState {
         message: String,
         recoverable: bool,
     },
-}
-
-impl Default for EditModeState {
-    fn default() -> Self {
-        Self::Inactive
-    }
 }
 
 impl EditModeState {

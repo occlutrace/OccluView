@@ -135,7 +135,6 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
         p
     });
 
-    occluview_thumbnail::use_software_renderer_only();
     eprintln!("Rendering {size}x{size} thumbnail...");
     let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
         &file,
@@ -363,8 +362,7 @@ fn print_usage_with_error() {
 }
 
 fn usage_text() -> &'static str {
-    concat!(
-        "occluview-cli - headless OccluView\n\
+    "occluview-cli - headless OccluView\n\
          \n\
          USAGE:\n    \
          occluview-cli <SUBCOMMAND> [ARGS]\n\
@@ -379,7 +377,6 @@ fn usage_text() -> &'static str {
          \n\
          Every subcommand takes its file first; -h or --help in that position\n\
          prints this message instead of naming a file."
-    )
 }
 
 #[cfg(test)]
@@ -487,10 +484,8 @@ mod tests {
             "CLI thumbnails should not parse once for console stats and again for rendering"
         );
         assert!(
-            thumbnail.contains("occluview_thumbnail::use_software_renderer_only();"),
-            "one render and then the process ends: a discrete driver's own threads \
-             can fault while the process is torn down, and a file manager reads \
-             that as a thumbnailer that failed"
+            !thumbnail.contains("use_software_renderer_only"),
+            "CLI rendering uses the same per-request verified adapter policy as Explorer"
         );
     }
 

@@ -51,7 +51,7 @@ pub(super) fn remove_debris(
     }
 
     let mut kept = Vec::with_capacity(mesh.indices.len());
-    for (triangle, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (triangle, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         if !drop[components.component_of[triangle]] {
             kept.extend_from_slice(tri);
         }

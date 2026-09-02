@@ -733,7 +733,7 @@ pub(super) fn finite_vec3(value: DVec3, label: &str) -> Result<[f32; 3], CoreBri
 }
 
 fn reverse_triangle_winding(indices: &mut [u32]) {
-    for triangle in indices.chunks_exact_mut(3) {
+    for triangle in indices.as_chunks_mut::<3>().0 {
         triangle.swap(1, 2);
     }
 }

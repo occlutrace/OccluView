@@ -222,17 +222,16 @@ impl BrushSession {
         let vertex_count = mesh.vertices.len();
         let incident_triangles = Csr::from_pairs(
             vertex_count,
-            mesh.indices
-                .chunks_exact(3)
-                .enumerate()
-                .flat_map(move |(triangle_index, triangle)| {
+            mesh.indices.as_chunks::<3>().0.iter().enumerate().flat_map(
+                move |(triangle_index, triangle)| {
                     triangle.iter().filter_map(move |&raw| {
                         usize::try_from(raw)
                             .ok()
                             .filter(|&i| i < vertex_count)
                             .map(|i| (i, triangle_index))
                     })
-                }),
+                },
+            ),
         );
 
         // The scatter uses the same tolerant representative map as adjacency.

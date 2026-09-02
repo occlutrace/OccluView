@@ -26,7 +26,7 @@ pub fn invert_orientation(
 
     let mut vertices = mesh.vertices.clone();
     let mut indices = mesh.indices.clone();
-    for (triangle_index, triangle) in indices.chunks_exact_mut(3).enumerate() {
+    for (triangle_index, triangle) in indices.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         let should_flip = selection.is_none_or(|selection| selection.as_slice()[triangle_index]);
         if should_flip {
             triangle.swap(1, 2);

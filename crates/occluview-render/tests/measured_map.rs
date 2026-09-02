@@ -6,8 +6,9 @@ mod common;
 
 use glam::{Mat4, Vec3};
 use occluview_core::{Mesh, MeshBuilder, Vertex};
-use occluview_render::{GpuCamera, GpuMeshUniform, Offscreen, ThumbnailSpec};
+use occluview_render::{GpuCamera, GpuMeshUniform, Offscreen, RenderDeadline, ThumbnailSpec};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 const SIZE: u16 = 64;
 const DARK_TEST_BACKGROUND: [f64; 4] = [0.039, 0.039, 0.039, 1.0];
@@ -18,6 +19,10 @@ fn gpu_test_lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .expect("measured-map GPU test lock is not poisoned")
+}
+
+fn test_render_deadline() -> RenderDeadline {
+    RenderDeadline::after(Duration::from_secs(5))
 }
 
 fn dark_thumbnail_spec() -> ThumbnailSpec {
@@ -129,8 +134,13 @@ fn render_measured_dome(mesh: &Mesh) -> Vec<u8> {
         uniform: &uniform,
         texture: None,
     }];
-    pollster::block_on(offscreen.render_scene(&entries, &cam, dark_thumbnail_spec()))
-        .expect("render scene")
+    pollster::block_on(offscreen.render_scene_with_deadline(
+        &entries,
+        &cam,
+        dark_thumbnail_spec(),
+        test_render_deadline(),
+    ))
+    .expect("render scene")
 }
 
 /// Deviation ramp endpoints as defined by `occluview-align`.
@@ -147,7 +157,7 @@ fn a_measured_map_reaches_the_screen_in_the_colour_it_was_uploaded_in() {
     for uploaded in [COLD_END, HOT_END, [24, 200, 64, 255]] {
         let pixels = render_measured_dome(&colored_dome_mesh(uploaded));
         let mut covered = 0usize;
-        for px in pixels.chunks_exact(4) {
+        for px in pixels.as_chunks::<4>().0 {
             // A single-sample target leaves background pixels at exactly the
             // clear colour, so anything else is a fragment of the dome.
             if px[0].abs_diff(10) <= 1 && px[1].abs_diff(10) <= 1 && px[2].abs_diff(10) <= 1 {
@@ -192,7 +202,7 @@ fn a_swept_deviation_arrives_on_screen_as_a_transition() {
     let pixels = render_measured_dome(&ramped_dome_mesh(&stops));
 
     let (mut cold, mut nominal, mut hot) = (0usize, 0usize, 0usize);
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         if px[0].abs_diff(10) <= 1 && px[1].abs_diff(10) <= 1 && px[2].abs_diff(10) <= 1 {
             continue;
         }

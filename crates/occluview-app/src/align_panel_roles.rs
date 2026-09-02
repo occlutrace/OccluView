@@ -10,7 +10,7 @@
 
 use eframe::egui;
 
-use crate::mesh_editor_icons::EditorIcon;
+use crate::icons::AppIcon;
 use crate::ui_theme;
 
 /// Longest a scan's name is shown at. Both names and the button have to fit one
@@ -100,7 +100,7 @@ pub(crate) fn show(ui: &mut egui::Ui, roles: Option<&AlignRoles>, enabled: bool)
         swap = crate::align_panel::chip(
             ui,
             button_width,
-            Some(EditorIcon::Redo),
+            Some(AppIcon::Redo),
             "Swap",
             enabled,
             false,

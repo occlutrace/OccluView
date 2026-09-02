@@ -123,6 +123,10 @@ pub(crate) fn project_world_to_viewport(
 
     let x = offset.dot(right) / half_width;
     let y = offset.dot(up) / half_height;
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "preserve established last-bit screen geometry"
+    )]
     let screen = egui::pos2(
         viewport_rect.left() + ((x + 1.0) * 0.5 * width),
         viewport_rect.top() + ((1.0 - (y + 1.0) * 0.5) * height),

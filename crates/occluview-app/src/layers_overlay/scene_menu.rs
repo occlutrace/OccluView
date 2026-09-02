@@ -5,7 +5,7 @@
 //! saving it, which is the only way an alignment survives the session. The
 //! viewer has no project file.
 
-use crate::mesh_editor_icons::LayerMenuIcon;
+use crate::icons::AppIcon;
 use crate::ui_theme;
 use eframe::egui;
 
@@ -49,25 +49,25 @@ pub(crate) fn show_scene_context_menu(
 
     let entries = [
         (
-            LayerMenuIcon::Export,
+            AppIcon::Export,
             "Save scene as…",
             has_layers,
             SceneContextAction::SaveScene,
         ),
         (
-            LayerMenuIcon::Export,
+            AppIcon::Export,
             "Save each layer…",
             has_layers,
             SceneContextAction::SaveEachLayer,
         ),
         (
-            LayerMenuIcon::FlipNormals,
+            AppIcon::FlipNormals,
             "Reset positions",
             any_moved,
             SceneContextAction::ResetPositions,
         ),
         (
-            LayerMenuIcon::ShowAll,
+            AppIcon::FitView,
             "Fit view",
             has_layers,
             SceneContextAction::FitView,
@@ -81,7 +81,7 @@ pub(crate) fn show_scene_context_menu(
         }
         if menu_item(ui, icon, label, enabled).clicked() {
             *request = Some(action);
-            ui.close_menu();
+            ui.close();
         }
     }
 }

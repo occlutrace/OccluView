@@ -14,15 +14,15 @@ use std::io::Cursor;
 // `occluview_hps::MAX_TEXTURE_DIMENSION_PX` for why there is exactly one.
 pub(crate) use occluview_hps::{MAX_TEXTURE_DIMENSION_PX, MAX_TEXTURE_RGBA_BYTES};
 
+const EMBEDDED_RASTER_FORMAT_POLICY: &str =
+    "embedded texture format is not permitted; only PNG and JPEG are accepted";
+
 pub(crate) fn decode_embedded_raster(
     bytes: &[u8],
     format: &'static str,
 ) -> Result<MeshTexture, FormatError> {
-    let mut reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|error| {
-            texture_error(format, format!("texture format detection failed: {error}"))
-        })?;
+    let image_format = accepted_embedded_raster_format(bytes, format)?;
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), image_format);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_TEXTURE_DIMENSION_PX);
     limits.max_image_height = Some(MAX_TEXTURE_DIMENSION_PX);
@@ -38,6 +38,25 @@ pub(crate) fn decode_embedded_raster(
         height,
         decoded.to_rgba8().into_raw(),
     ))
+}
+
+fn accepted_embedded_raster_format(
+    bytes: &[u8],
+    container_format: &'static str,
+) -> Result<image::ImageFormat, FormatError> {
+    let image_format = image::guess_format(bytes).map_err(|error| {
+        texture_error(
+            container_format,
+            format!("texture format detection failed: {error}"),
+        )
+    })?;
+    match image_format {
+        image::ImageFormat::Png | image::ImageFormat::Jpeg => Ok(image_format),
+        unsupported => Err(texture_error(
+            container_format,
+            format!("{EMBEDDED_RASTER_FORMAT_POLICY}: {unsupported:?}"),
+        )),
+    }
 }
 
 pub(crate) fn validate_texture_dimensions(

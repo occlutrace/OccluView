@@ -1,6 +1,9 @@
 use super::{owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, SUPPORTED_EXTENSIONS};
 use std::path::Path;
 
+#[path = "shell_contract_tests/thumbnail_request.rs"]
+mod thumbnail_request;
+
 fn canonical_extension(extension: &str) -> &str {
     if extension == "dcm" {
         "hps"
@@ -22,13 +25,6 @@ pub(super) fn registration_source() -> String {
 
 #[test]
 fn thumbnail_registration_only_includes_implemented_stream_formats() {
-    // Comparing the constant with a longhand copy of itself holds whatever the
-    // list says, including an extension Explorer would then hand to a reader
-    // that does not exist. Registering a format promises the shell that a
-    // stream of those bytes produces a thumbnail, and the dispatcher is what
-    // keeps the promise.
-    // An empty list would pass the loop below vacuously; it cannot be empty,
-    // and the compiler says so -- clippy rejects the check as always false.
     for extension in SUPPORTED_EXTENSIONS {
         assert!(
             occluview_formats::probe::by_extension(extension).is_some(),
@@ -48,14 +44,6 @@ fn open_with_targets_the_real_gui_binary_name() {
     assert!(
         manifest.contains(&format!("name = \"{stem}\"")),
         "APP_EXE_NAME ({APP_EXE_NAME}) must name the [[bin]] target in occluview-app/Cargo.toml"
-    );
-}
-
-#[test]
-fn shell_gpu_tests_use_the_stable_fallback_adapter() {
-    assert!(
-        !crate::offscreen_factory::should_prefer_hardware_offscreen(),
-        "unit tests must not depend on a Windows runner's transient hardware adapter"
     );
 }
 
@@ -166,9 +154,25 @@ fn installer_metadata_tracks_supported_shell_extensions() {
     let reg = include_str!("../../../install/occluview-shell-registration.reg");
 
     assert!(wxs.contains("<MajorUpgrade"));
-    assert!(wxs.contains("AllowSameVersionUpgrades=\"yes\""));
+    assert!(!wxs.contains("AllowSameVersionUpgrades=\"yes\""));
     assert!(wxs.contains("DowngradeErrorMessage="));
-    assert!(wxs.contains("<RemoveFolder Id=\"rmProgramMenuDir\" On=\"uninstall\""));
+    assert!(wxs.contains(
+        "<Component Id=\"cmpOccluViewExe\" Guid=\"{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}\" Win64=\"yes\" Location=\"local\">"
+    ));
+    assert!(wxs.contains("<Component Id=\"cmpStartMenuShortcut\""));
+    assert!(wxs.contains(
+        "<RegistryValue\n              Root=\"HKCU\"\n              Key=\"Software\\OccluTrace\\OccluView\"\n              Name=\"StartMenuShortcut\"\n              Type=\"integer\"\n              Value=\"1\"\n              KeyPath=\"yes\""
+    ));
+    let executable_component = wxs
+        .split("<Component Id=\"cmpOccluViewExe\"")
+        .nth(1)
+        .expect("OccluView executable component must exist")
+        .split("<Component Id=\"cmpOccluViewShellDll\"")
+        .next()
+        .expect("OccluView shell component must follow the executable");
+    assert!(!executable_component.contains("<Shortcut"));
+    assert!(wxs.contains("Target=\"[INSTALLFOLDER]occluview.exe\""));
+    assert!(!wxs.contains("Target=\"[#filOccluViewExe]\""));
     assert!(wxs.contains("&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;"));
     assert!(wxs.contains("Software\\RegisteredApplications"));
     assert!(wxs.contains("Software\\OccluTrace\\OccluView\\Capabilities"));
@@ -323,6 +327,7 @@ fn ply_thumbnail_registration_has_direct_fallbacks() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn package_workflow_runs_installer_lifecycle_smoke() {
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
     assert!(workflow.contains("./install/test-msi-lifecycle.ps1"));
@@ -353,6 +358,7 @@ fn package_workflow_runs_installer_lifecycle_smoke() {
 
     let smoke = include_str!("../../../install/test-msi-lifecycle.ps1");
     let thumbnail_smoke = include_str!("../../../install/test-thumbnail-provider.ps1");
+    let preview_smoke = include_str!("../../../install/test-preview-handler.ps1");
     assert!(smoke.contains("msiexec.exe"));
     assert!(smoke.contains("UpgradeMsiPath"));
     assert!(smoke.contains("Assert-InstalledRegistry"));
@@ -375,7 +381,26 @@ fn package_workflow_runs_installer_lifecycle_smoke() {
     assert!(thumbnail_smoke.contains("New-SmokeObj"));
     assert!(thumbnail_smoke.contains("New-SmokeHps"));
     assert!(thumbnail_smoke.contains("New-SmokeLegacyHps"));
+    assert!(thumbnail_smoke.contains(
+        "Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop\nAdd-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop"
+    ));
     assert!(thumbnail_smoke.contains("Assert-ShellProbeSucceeded"));
+    assert!(!preview_smoke.contains("?? throw"));
+    assert!(!preview_smoke.contains("out RECT rect"));
+    let prevhost_probe = preview_smoke
+        .split("public static string ProbePrevhost(")
+        .nth(1)
+        .and_then(|probe| probe.split("// The detailed pixel").next())
+        .expect("Prevhost liveness probe must remain separately scoped");
+    assert!(prevhost_probe.contains("FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null)"));
+    assert!(prevhost_probe.contains("var initialFrame = CaptureFrame(child);"));
+    assert!(prevhost_probe.contains("EnsureFrameVisible(initialFrame"));
+    assert!(
+        !prevhost_probe.contains("UpdateWindow(")
+            && !prevhost_probe.contains("WaitForVisibleFrame")
+            && !prevhost_probe.contains("Thread.Sleep"),
+        "the low-integrity Prevhost probe must capture the frame returned by DoPreview without dispatching or waiting"
+    );
     assert!(thumbnail_smoke.contains("Assert-MixedFolderBurst"));
     assert!(thumbnail_smoke.contains("occluview-thumbnail-mixed"));
     assert!(thumbnail_smoke.contains("ProbeShellForced"));
@@ -422,7 +447,7 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("runs-on: ubuntu-latest"));
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux"));
-    assert!(workflow.contains("cargo test -p occluview-hps --features private-hps-key"));
+    assert!(workflow.contains("cargo test --locked -p occluview-hps --features private-hps-key"));
     assert!(workflow.contains("install/linux/build-deb.sh"));
     // The package to validate is the one build-deb.sh just named; globbing
     // target/deb hands dpkg-deb a second path as a control-file name.
@@ -436,7 +461,8 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("actions/download-artifact"));
     assert!(workflow.contains("*.deb"));
     assert!(workflow.contains("*.sha256"));
-    assert!(workflow.contains("Debian package: installs the native Linux viewer"));
+    assert!(workflow.contains(r"Download \`OccluView-Linux.deb\` for the native Linux viewer,"));
+    assert!(workflow.contains("launcher, MIME registration, and thumbnailer."));
 
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(build_deb.contains("occluview-formats/private-hps-key"));
@@ -512,7 +538,7 @@ fn package_pipeline_can_sign_windows_artifacts_when_certificate_is_configured() 
     assert!(workflow.contains("OCCLUVIEW_SIGN_PFX_PASSWORD"));
     assert!(workflow.contains("OCCLUVIEW_SIGN_CERT_SHA1"));
     assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(workflow.contains("cargo test -p occluview-hps --features private-hps-key"));
+    assert!(workflow.contains("cargo test --locked -p occluview-hps --features private-hps-key"));
     assert!(workflow.contains("-SignMode auto"));
     assert!(!workflow.contains("OCCLUVIEW_SIGN_PFX_PASSWORD: \""));
 
@@ -521,6 +547,91 @@ fn package_pipeline_can_sign_windows_artifacts_when_certificate_is_configured() 
     assert!(build_windows.contains("occluview-formats/private-hps-key"));
     assert!(build_windows.contains("CARGO_ENCODED_RUSTFLAGS"));
     assert!(build_windows.contains("--remap-path-prefix=$repo_root=occluview"));
+}
+
+#[test]
+fn release_notes_put_the_recommended_installer_before_technical_verification() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let notes = workflow
+        .split_once("OccluView $RELEASE_TAG")
+        .and_then(|(_, rest)| rest.split_once("NOTES"))
+        .map(|(notes, _)| notes)
+        .expect("release-notes template");
+
+    let download = notes
+        .find("## Start here")
+        .expect("release notes must start with the download choice");
+    let installer = notes
+        .find("Windows installer — recommended")
+        .expect("release notes must identify the Windows installer as recommended");
+    let technical = notes
+        .find("<summary>For IT and verification</summary>")
+        .expect("technical verification must remain available without leading the release");
+    assert!(download < installer && installer < technical);
+}
+
+#[test]
+fn public_release_uses_plain_package_names() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let signing = workflow
+        .split_once("- name: Sign update artifacts and write latest.json")
+        .and_then(|(_, rest)| {
+            rest.split_once("- name: Verify the signatures against the key the updater ships")
+        })
+        .map(|(signing, _)| signing)
+        .expect("release workflow must normalize the customer-facing package names");
+    let (_, publish) = workflow
+        .split_once("- name: Publish GitHub Release")
+        .expect("release workflow must publish the customer-facing downloads");
+
+    for asset in [
+        "OccluView-Windows-Setup.msi",
+        "OccluView-Windows-Portable.zip",
+        "OccluView-Linux.deb",
+    ] {
+        assert!(
+            signing.contains(asset),
+            "the signed release package should use the plain name {asset}"
+        );
+        assert!(
+            publish.contains(asset),
+            "the customer-facing release should publish {asset}"
+        );
+    }
+}
+
+#[test]
+fn public_release_groups_technical_verification_material_into_one_download() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let (_, bundle) = workflow
+        .split_once("- name: Bundle verification material")
+        .expect("release workflow must bundle technical verification material");
+    let (_, publish) = workflow
+        .split_once("- name: Publish GitHub Release")
+        .expect("release workflow must publish the customer-facing downloads");
+
+    assert!(bundle.contains("OccluView-${version}-verification.zip"));
+    assert!(bundle.contains("latest.json"));
+    assert!(bundle.contains("sbom-*.json"));
+    assert!(publish.contains("-name '*-verification.zip'"));
+    assert!(publish.contains("-name 'latest.json'"));
+    assert!(publish.contains("-name 'latest.json.minisig'"));
+    assert!(!publish.contains("-o -name '*.sha256'"));
+    assert!(!publish.contains("-o -name '*.minisig'"));
+    assert!(!publish.contains("-o -name '*.json'"));
+}
+
+#[test]
+fn release_note_markdown_is_not_executed_by_the_shell_heredoc() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let (_, write_notes) = workflow
+        .split_once("- name: Write release notes")
+        .expect("release workflow must write customer-facing notes");
+
+    assert!(write_notes.contains("\\`OccluView-Windows-Setup.msi\\`"));
+    assert!(write_notes.contains("\\`OccluView-Windows-Portable.zip\\`"));
+    assert!(write_notes.contains("\\`OccluView-Linux.deb\\`"));
+    assert!(write_notes.contains("\\`OccluView-${RELEASE_TAG#v}-verification.zip\\`"));
 }
 
 #[test]
@@ -566,28 +677,6 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
             "{package} version in Cargo.lock must match Cargo workspace version"
         );
     }
-}
-
-#[test]
-fn installer_refreshes_shell_association_cache_after_registry_changes() {
-    let registration = registration_source();
-    let app_bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    let app_state = include_str!("../../occluview-app/src/app/state.rs");
-    let wxs = include_str!("../../../install/occluview.wxs");
-
-    assert!(registration.contains("SHChangeNotify"));
-    assert!(registration.contains("SHCNE_ASSOCCHANGED"));
-    assert!(registration.contains("SHCNF_IDLIST"));
-    assert!(registration.contains("notify_shell_associations_changed();"));
-    assert!(app_state.contains("\"--shell-refresh\""));
-    assert!(app_bootstrap.contains("notify_shell_associations_changed"));
-    assert!(wxs.contains("Id=\"RefreshShellAssociationsInstall\""));
-    assert!(wxs.contains("Id=\"RefreshShellAssociationsUninstall\""));
-    assert!(wxs.contains("FileKey=\"filOccluViewExe\""));
-    assert!(wxs.contains("ExeCommand=\"--shell-refresh\""));
-    assert!(wxs.contains("After=\"WriteRegistryValues\""));
-    assert!(wxs.contains("After=\"RemoveRegistryValues\""));
-    assert!(!wxs.contains("filOccluViewCli"));
 }
 
 #[test]
@@ -655,7 +744,7 @@ fn com_thumbnail_provider_accepts_file_paths_for_extension_hints() {
     assert!(com.contains("IInitializeWithItem"));
     assert!(com.contains("impl IInitializeWithFile_Impl for ThumbnailProvider_Impl"));
     assert!(com.contains("impl IInitializeWithItem_Impl for ThumbnailProvider_Impl"));
-    assert!(com.contains("try_render_thumbnail_file(&path, spec, DEFAULT_THUMBNAIL_TIMEOUT)"));
+    assert!(com.contains("try_render_thumbnail_file_with_request(&path, spec, request)"));
     assert!(!com.contains("ThumbnailProvider::read_file(&path)"));
     assert!(!com.contains("std::fs::read(path)"));
     assert!(com.contains(".initialize_path(path.clone(), path_extension(&path));"));
@@ -705,28 +794,4 @@ fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
         return rest.get(..rest.find('"')?);
     }
     None
-}
-
-#[test]
-fn both_offscreen_factories_choose_the_adapter_the_same_way() {
-    // The rule is duplicated because `cfg!(test)` is per crate: a shared
-    // definition answers "not under test" while this crate's own tests run, and
-    // those are exactly the ones that must not touch a hardware adapter. Hence
-    // a copy, and hence this check that the copy still matches.
-    let shell = include_str!("offscreen_factory.rs");
-    let thumbnail = include_str!("../../occluview-thumbnail/src/offscreen_factory.rs");
-    let rule = concat!(
-        "pub(crate) const fn should_prefer_hardware_offscreen() -> bool {\n",
-        "    !cfg!(test)\n",
-        "}"
-    );
-    for (crate_name, source) in [
-        ("occluview-shell", shell),
-        ("occluview-thumbnail", thumbnail),
-    ] {
-        assert!(
-            source.contains(rule),
-            "{crate_name} chooses its adapter by a different rule"
-        );
-    }
 }

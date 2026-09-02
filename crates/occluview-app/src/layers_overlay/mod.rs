@@ -117,7 +117,7 @@ fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
     ui.painter().hline(
         egui::Rangef::new(left, left + inner_width),
         y,
-        egui::Stroke::new(1.0, ui_theme::hairline()),
+        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
     );
     ui.add_space(4.0);
 }

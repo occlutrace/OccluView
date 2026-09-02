@@ -204,8 +204,12 @@ impl OccluViewApp {
         if response.secondary_clicked() {
             let picked = self.pick_viewport_menu_target(response);
             ctx.data_mut(|data| match picked {
-                Some(target) => data.insert_temp(menu_id, target),
-                None => data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id),
+                Some(target) => {
+                    data.insert_temp(menu_id, target);
+                }
+                None => {
+                    data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id);
+                }
             });
         }
 

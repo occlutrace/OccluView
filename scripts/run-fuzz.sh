@@ -12,7 +12,7 @@
 #     `fuzz/corpus/<target>` is the writable, cached one; `fuzz/seeds/<target>`
 #     is tracked in git and must stay untouched.
 #   * The toolchain is named explicitly. cargo-fuzz needs nightly, and this
-#     repository pins 1.86.0 in `rust-toolchain.toml`, which wins over whatever
+#     repository pins 1.98.0 in `rust-toolchain.toml`, which wins over whatever
 #     a CI step set as the default.
 set -euo pipefail
 

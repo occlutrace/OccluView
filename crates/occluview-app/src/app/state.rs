@@ -13,6 +13,8 @@
 //! Geometry, materials, or scene changes set all four flags; camera changes set
 //! only `needs_render`.
 
+use super::app_settings_window::settings_popup_id;
+use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
@@ -20,6 +22,7 @@ use super::{
     PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Scene, SceneLoadRequest,
     SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
+use crate::app_settings::SettingsPersistence;
 
 /// Everything the bootstrap hands the app about how this process was started:
 /// the single-instance guard, the window raise handle, and the launcher's
@@ -108,11 +111,12 @@ pub(crate) struct OccluViewApp {
     /// Latest window-activation token forwarded by a second instance, used as
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
     pub(super) pending_raise_token: Option<String>,
-    pub(super) about_window: AboutWindowState,
-    /// The Third-party licenses window, opened from About.
-    pub(super) third_party_window_open: bool,
+    pub(super) information_dialog: InformationDialog,
+    /// Operator preferences, loaded once at startup and saved on change.
+    pub(super) settings: crate::app_settings::Settings,
+    pub(super) settings_persistence: SettingsPersistence,
     /// Persistent post-repair report card, populated by the Repair executor and
-    /// drawn in `update()`; shows what a repair changed (or that nothing did).
+    /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
     pub(super) app_logo: Option<egui::TextureHandle>,
     pub(super) foreground_pulse_until: Option<Instant>,
@@ -123,36 +127,10 @@ pub(crate) struct OccluViewApp {
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
     /// Interactive sculpt-brush tool and active stroke state.
     pub(super) sculpt: crate::sculpt_tool::SculptTool,
-    pub(super) align: crate::align_tool::AlignTool,
-    pub(super) align_worker: Option<crate::align_worker::AlignWorker>,
-    pub(super) align_settings: crate::align_worker::AlignSettings,
-    pub(super) align_status: Option<String>,
-    pub(super) align_stats: Option<occluview_align::DeviationStats>,
-    pub(super) align_rejected: Vec<u32>,
-    /// Per-layer overlay colours currently on screen.
-    pub(super) align_overlay_colors: Vec<(occluview_core::SceneMeshId, Arc<Vec<[u8; 4]>>)>,
-    /// The flat arrays the align worker takes, kept between jobs so a settings
-    /// change does not re-copy geometry that has not moved.
-    pub(super) align_geometry: crate::align_geometry::AlignGeometry,
-    /// The vertex buffer a deviation map is uploaded through, repainted across
-    /// re-colours instead of rebuilt.
-    pub(super) align_painted: crate::align_geometry::PaintedVertices,
-    /// Set when new colours are attached and the GPU has not seen them yet.
-    /// Consumed by the viewport sync, which is the one place that knows whether
-    /// there is a prepared scene to write into.
-    pub(super) deviation_push_pending: bool,
-    /// What the operator marked out of the match, on both scans. Owns its own
-    /// revision and coverage counts, so no caller can change a mask without the
-    /// caches downstream hearing about it.
-    pub(super) align_markings: crate::align_markings::AlignMarkings,
-    pub(super) align_drag: Option<super::app_align_drag::AlignDrag>,
-    pub(super) align_constraint: crate::align_drag::DragConstraint,
-    pub(super) align_brush: crate::align_brush::AlignBrush,
-    /// What the per-vertex colours on the moving scan currently mean.
-    pub(super) align_overlay: super::app_align_display::AlignOverlay,
-    pub(super) align_session_poses: Vec<(occluview_core::SceneMeshId, glam::Affine3A)>,
-    pub(super) align_tab: crate::align_panel::AlignTab,
-    pub(super) align_ghosted: Vec<(occluview_core::SceneMeshId, f32)>,
+    /// The Align Scans tool's whole state: tool, worker, settings, deviation
+    /// display, markings, drag, brush and session poses. One struct so the app
+    /// carries a single `align` field instead of eighteen loose ones.
+    pub(super) align: crate::align_state::AlignState,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     pub(super) edit_mode: EditModeController,
@@ -222,10 +200,12 @@ pub(super) struct AppErrorDialog {
     pub(super) details: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AboutWindowState {
-    Closed,
-    Open,
+fn information_route_is_blocked(
+    close_guard_open: bool,
+    pending_replace_open: bool,
+    app_error_open: bool,
+) -> bool {
+    close_guard_open || pending_replace_open || app_error_open
 }
 
 pub(super) struct RenderedFrame {
@@ -278,7 +258,7 @@ impl OccluViewApp {
             self.status_message_snapshot = None;
             self.status_message_since = None;
         } else {
-            ctx.request_repaint_after(STATUS_MESSAGE_TTL - elapsed);
+            ctx.request_repaint_after(STATUS_MESSAGE_TTL.saturating_sub(elapsed));
         }
     }
 
@@ -288,12 +268,22 @@ impl OccluViewApp {
         live_viewport: Option<SharedLiveViewport>,
         startup: StartupHandles,
     ) -> Self {
+        let settings = crate::app_settings::Settings::load();
+        let last_export_dir = if settings.remember_export_dir {
+            settings.last_export_dir.as_ref().map(PathBuf::from)
+        } else {
+            None
+        };
+        let update_check_on_start = settings.update_check_on_start;
         let mut app = Self {
             repaint_ctx: repaint_ctx.clone(),
             scene: None,
             current_paths: Vec::new(),
-            last_export_dir: None,
+            last_export_dir,
             recent_files: load_recent_files(),
+            settings,
+            settings_persistence: SettingsPersistence::default(),
+            information_dialog: InformationDialog::default(),
             camera: None,
             live_viewport,
             offscreen: None,
@@ -323,8 +313,6 @@ impl OccluViewApp {
             _single_instance: startup.single_instance,
             raise_target: startup.raise_target,
             pending_raise_token: startup.activation_token,
-            about_window: AboutWindowState::Closed,
-            third_party_window_open: false,
             repair_report: crate::repair_report::RepairReportDialog::default(),
             app_logo: None,
             foreground_pulse_until: None,
@@ -332,27 +320,10 @@ impl OccluViewApp {
             viewport_secondary_gesture_moved_since_press: false,
             mesh_selection_drag: None,
             sculpt: crate::sculpt_tool::SculptTool::default(),
-            align: crate::align_tool::AlignTool::default(),
-            align_worker: None,
-            align_settings: crate::align_worker::AlignSettings::default(),
-            align_status: None,
-            align_stats: None,
-            align_rejected: Vec::new(),
-            align_overlay_colors: Vec::new(),
-            align_geometry: crate::align_geometry::AlignGeometry::default(),
-            align_painted: crate::align_geometry::PaintedVertices::default(),
-            deviation_push_pending: false,
-            align_markings: crate::align_markings::AlignMarkings::default(),
-            align_drag: None,
-            align_constraint: crate::align_drag::DragConstraint::default(),
-            align_brush: crate::align_brush::AlignBrush::default(),
-            align_overlay: super::app_align_display::AlignOverlay::default(),
-            align_session_poses: Vec::new(),
-            align_tab: crate::align_panel::AlignTab::default(),
-            align_ghosted: Vec::new(),
+            align: crate::align_state::AlignState::default(),
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             edit_mode: EditModeController::default(),
-            update_notice: crate::update_notice::UpdateNotice::begin_check(),
+            update_notice: crate::update_notice::UpdateNotice::begin_check(update_check_on_start),
             unsaved_edit_layer_ids: std::collections::BTreeSet::new(),
             hidden_layer_stack: Vec::new(),
             translucent_layer_restore: std::collections::HashMap::new(),
@@ -380,10 +351,21 @@ impl OccluViewApp {
             close_guard: self.close_guard_open,
             pending_replace: self.pending_replace_open.is_some(),
             error: self.app_error.is_some(),
-            about: self.about_window == AboutWindowState::Open,
-            third_party: self.third_party_window_open,
+            settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id()),
+            information_dialog: self.information_dialog.is_open(),
         }
         .any()
+    }
+
+    /// A decision dialog takes precedence over informational content. Keep an
+    /// open information route in state so it can return after the decision is
+    /// resolved, but never let its modal consume Escape or clicks underneath.
+    fn foreground_dialog_open(&self) -> bool {
+        information_route_is_blocked(
+            self.close_guard_open,
+            self.pending_replace_open.is_some(),
+            self.app_error.is_some(),
+        )
     }
 
     /// Edit hotkeys, refused while a dialog is up.
@@ -506,11 +488,42 @@ impl OccluViewApp {
     pub(super) fn save_recent_files(&self) {
         save_recent_files(&self.recent_files);
     }
+
+    fn persist_settings_if_due(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        if self.settings_persistence.should_attempt(now) {
+            match self.settings.save() {
+                Ok(()) => self.settings_persistence.record_success(),
+                Err(error) => {
+                    tracing::warn!(%error, "could not persist viewer preferences");
+                    self.settings_persistence
+                        .record_failure(now, error.to_string());
+                }
+            }
+        }
+        if let Some(delay) = self.settings_persistence.retry_after(now) {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
+    /// Render the information route that was active at the start of this UI
+    /// pass. A selection inside About therefore replaces it on the following
+    /// frame instead of briefly stacking two modal backdrops.
+    pub(super) fn show_information_dialog(&mut self, ctx: &egui::Context) {
+        if self.foreground_dialog_open() {
+            return;
+        }
+        match self.information_dialog {
+            InformationDialog::None => {}
+            InformationDialog::About => self.show_about_dialog(ctx),
+            InformationDialog::ThirdPartyNotices => self.show_third_party_window(ctx),
+        }
+    }
 }
 
 impl eframe::App for OccluViewApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(super::viewer_visuals());
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.persist_settings_if_due(ctx);
         self.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
@@ -518,24 +531,43 @@ impl eframe::App for OccluViewApp {
         self.poll_sculpt_worker(ctx);
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);
-        self.handle_dropped_files(ctx);
-        self.release_viewport_orbit_cursor_if_inactive(ctx);
-        self.render_pending_frame(ctx);
-        self.handle_edit_shortcuts(ctx);
-        self.show_toolbar(ctx);
-        self.maybe_render_cut_view(ctx);
-        self.show_central_panel(ctx);
+        self.update_notice.poll(ctx);
+        self.intercept_unsaved_close(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        ctx.set_visuals(super::viewer_visuals());
+        self.handle_dropped_files(&ctx);
+        self.release_viewport_orbit_cursor_if_inactive(&ctx);
+        self.render_pending_frame(&ctx);
+        self.handle_edit_shortcuts(&ctx);
+        self.show_toolbar(ui);
+        self.maybe_render_cut_view(&ctx);
+        self.show_central_panel(ui);
         // Sync camera changes after viewport input so the live paint callback
         // uses the current frame's pose.
-        self.render_pending_frame(ctx);
+        self.render_pending_frame(&ctx);
         // Surface GPU faults before drawing the error dialog.
         self.poll_gpu_errors();
-        self.show_error_dialog(ctx);
-        self.show_about_window(ctx);
-        self.show_third_party_window(ctx);
-        self.repair_report.ui(ctx);
-        self.update_notice.show(ctx);
-        self.guard_unsaved_close(ctx);
-        self.guard_pending_replace_open(ctx);
+        self.show_error_dialog(&ctx);
+        self.show_information_dialog(&ctx);
+        self.repair_report.ui(&ctx);
+        self.update_notice.show(&ctx);
+        self.show_unsaved_close_guard(&ctx);
+        self.guard_pending_replace_open(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::information_route_is_blocked;
+
+    #[test]
+    fn information_route_yields_to_each_foreground_decision_dialog() {
+        assert!(!information_route_is_blocked(false, false, false));
+        assert!(information_route_is_blocked(true, false, false));
+        assert!(information_route_is_blocked(false, true, false));
+        assert!(information_route_is_blocked(false, false, true));
     }
 }

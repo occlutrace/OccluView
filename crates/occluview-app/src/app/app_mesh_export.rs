@@ -27,7 +27,8 @@ impl OccluViewApp {
         paths: &[PathBuf],
         request: LayerContextRequest,
     ) -> bool {
-        let default_format = default_layer_export_format(paths, request.index);
+        let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
+        let default_format = default_layer_export_format(paths, request.index, fallback);
         let mut dialog = layer_export_file_dialog(default_format).set_file_name(
             default_layer_export_name(paths, scene, request.index, default_format),
         );
@@ -91,8 +92,13 @@ impl OccluViewApp {
     /// Remember where an export landed so the next save dialog for a layer
     /// with no file of its own starts there instead of guessing.
     pub(super) fn remember_export_directory(&mut self, written: &Path) {
-        if let Some(parent) = written.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            self.last_export_dir = Some(parent.to_path_buf());
+        let Some(parent) = written.parent().filter(|dir| !dir.as_os_str().is_empty()) else {
+            return;
+        };
+        self.last_export_dir = Some(parent.to_path_buf());
+        if self.settings.remember_export_dir {
+            self.settings.last_export_dir = parent.to_str().map(str::to_owned);
+            self.settings_persistence.mark_dirty();
         }
     }
 
@@ -263,10 +269,24 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
     }
 }
 
-pub(super) fn default_layer_export_format(paths: &[PathBuf], index: usize) -> MeshWriteFormat {
+pub(super) fn default_layer_export_format(
+    paths: &[PathBuf],
+    index: usize,
+    fallback: MeshWriteFormat,
+) -> MeshWriteFormat {
     source_path_for_export_defaults(paths, index)
         .and_then(mesh_export_format_from_source_path)
-        .unwrap_or(MeshWriteFormat::PlyBinaryLittleEndian)
+        .unwrap_or(fallback)
+}
+
+pub(super) const fn fallback_mesh_write_format(
+    format: crate::app_settings::FallbackExportFormat,
+) -> MeshWriteFormat {
+    match format {
+        crate::app_settings::FallbackExportFormat::Ply => MeshWriteFormat::PlyBinaryLittleEndian,
+        crate::app_settings::FallbackExportFormat::Stl => MeshWriteFormat::StlBinary,
+        crate::app_settings::FallbackExportFormat::Obj => MeshWriteFormat::Obj,
+    }
 }
 
 /// The folders a save dialog may open in, best first: the layer's own
@@ -439,8 +459,12 @@ mod tests {
         let scene = exportable_scene()?;
         let paths = vec![PathBuf::from("very-long-scan-name.stl")];
 
-        let name =
-            default_layer_export_name(&paths, &scene, 0, default_layer_export_format(&paths, 0));
+        let name = default_layer_export_name(
+            &paths,
+            &scene,
+            0,
+            default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
+        );
 
         assert_eq!(name, "very-long-scan-name-edited.stl");
         Ok(())
@@ -452,11 +476,16 @@ mod tests {
         let paths = vec![PathBuf::from("encrypted-scan.hps")];
 
         assert_eq!(
-            default_layer_export_format(&paths, 0),
+            default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
             MeshWriteFormat::PlyBinaryLittleEndian
         );
         assert_eq!(
-            default_layer_export_name(&paths, &scene, 0, default_layer_export_format(&paths, 0),),
+            default_layer_export_name(
+                &paths,
+                &scene,
+                0,
+                default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
+            ),
             "encrypted-scan-edited.ply"
         );
         Ok(())
@@ -466,7 +495,10 @@ mod tests {
     fn derived_layer_uses_its_neighbour_for_folder_and_format() {
         let paths = vec![PathBuf::new(), PathBuf::from("/case/scans/upper.obj")];
 
-        assert_eq!(default_layer_export_format(&paths, 0), MeshWriteFormat::Obj);
+        assert_eq!(
+            default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
+            MeshWriteFormat::Obj
+        );
         assert_eq!(
             export_directory_candidates(&paths, 0, None),
             vec![PathBuf::from("/case/scans")]
@@ -485,7 +517,7 @@ mod tests {
             vec![PathBuf::from("/case/lower"), PathBuf::from("/case/upper")]
         );
         assert_eq!(
-            default_layer_export_format(&paths, 1),
+            default_layer_export_format(&paths, 1, MeshWriteFormat::PlyBinaryLittleEndian),
             MeshWriteFormat::PlyBinaryLittleEndian
         );
     }
@@ -506,7 +538,7 @@ mod tests {
             vec![PathBuf::from("/case/scans")]
         );
         assert_eq!(
-            default_layer_export_format(&paths, 2),
+            default_layer_export_format(&paths, 2, MeshWriteFormat::PlyBinaryLittleEndian),
             MeshWriteFormat::StlBinary
         );
     }

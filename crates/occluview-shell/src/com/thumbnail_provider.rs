@@ -7,18 +7,26 @@
 
 use super::{
     com_entry, e_fail, e_pointer, implement, path_extension, pixels_to_hbitmap, read_capped_stream,
-    reserve_thumbnail_stream_job, try_render_thumbnail_file,
-    try_render_thumbnail_shared_with_reservation, Arc, AssertUnwindSafe, CoTaskMemFree,
-    DeferredSource, IClassFactory, IClassFactory_Impl, IInitializeWithFile,
-    IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
-    IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider, IThumbnailProvider_Impl,
-    IUnknown, Interface, Ordering, PathBuf, StreamRead, ThumbnailAttempt, ThumbnailSpec,
-    ACTIVE_COM_OBJECTS, BOOL, CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP,
-    MAX_OFFSCREEN_EDGE, MAX_THUMBNAIL_INPUT_BYTES, PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET,
-    WTSAT_ARGB, WTS_ALPHATYPE,
+    read_capped_stream_until, reserve_thumbnail_stream_job_for_request,
+    try_render_thumbnail_file_with_request, try_render_thumbnail_shared_with_reservation, Arc,
+    AssertUnwindSafe, CoTaskMemFree, DeferredSource, IClassFactory, IClassFactory_Impl,
+    IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem, IInitializeWithItem_Impl,
+    IInitializeWithStream, IInitializeWithStream_Impl, IShellItem, IStream, IThumbnailProvider,
+    IThumbnailProvider_Impl, IUnknown, Interface, Ordering, PathBuf, Ref, StreamRead,
+    StreamReadBounds, ThumbnailAttempt, ThumbnailRenderRequest, ThumbnailSpec, ACTIVE_COM_OBJECTS,
+    BOOL, CLASS_E_NOAGGREGATION, DEFAULT_THUMBNAIL_TIMEOUT, GUID, HBITMAP, MAX_OFFSCREEN_EDGE,
+    MAX_THUMBNAIL_INPUT_BYTES, PCWSTR, SIGDN_FILESYSPATH, STREAM_SEEK_SET, WTSAT_ARGB,
+    WTS_ALPHATYPE,
 };
 use super::{placeholder_for_oversize_input, STATFLAG, STATSTG};
+#[cfg(feature = "diagnostic-logs")]
+use crate::shell_diagnostics::{
+    elapsed_ms_since, prepare_shell_diagnostics, record_shell_event, record_shell_failure,
+    ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticErrorClass,
+    ShellDiagnosticOutcome, ShellDiagnosticStage,
+};
 use std::panic::catch_unwind;
+use std::time::Instant;
 
 /// The COM class. Holds the bytes read from the shell-provided stream between
 /// `Initialize` and `GetThumbnail`.
@@ -94,8 +102,28 @@ impl ThumbnailProvider {
         Ok(())
     }
 
-    /// Reads the stream into a byte buffer, capped for shell safety.
+    /// Reads a stream synchronously, with the normal shell size cap but no
+    /// elapsed-time budget. Preview Pane uses this so DoPreview owns the
+    /// whole render result rather than converting unfinished I/O to success.
     pub(super) fn read_stream(stream: &IStream) -> windows::core::Result<StreamRead> {
+        Self::read_stream_inner(stream, None)
+    }
+
+    /// Reads the stream into a byte buffer under the caller's absolute budget.
+    pub(super) fn read_stream_until(
+        stream: &IStream,
+        deadline: Instant,
+    ) -> windows::core::Result<StreamRead> {
+        if Instant::now() >= deadline {
+            return Ok(StreamRead::TimedOut);
+        }
+        Self::read_stream_inner(stream, Some(deadline))
+    }
+
+    fn read_stream_inner(
+        stream: &IStream,
+        deadline: Option<Instant>,
+    ) -> windows::core::Result<StreamRead> {
         // SAFETY: `stat` is a stack-local zeroed STATSTG owned by us; the
         // STATFLAG_NONAME flag avoids an internal allocation we'd have to free.
         let mut stat: STATSTG = unsafe { std::mem::zeroed() };
@@ -109,28 +137,32 @@ impl ThumbnailProvider {
         } else {
             0
         };
-        Ok(read_capped_stream(
-            (declared != 0).then_some(declared),
-            MAX_THUMBNAIL_INPUT_BYTES,
-            Self::MIN_STREAM_BUFFER_BYTES,
-            Self::STREAM_READ_CHUNK_BYTES,
-            |buf| {
-                let mut read = 0u32;
-                // SAFETY: `buf` is a valid write region; `read` is a stack out-param.
-                let result = unsafe {
-                    stream.Read(
-                        buf.as_mut_ptr() as *mut std::ffi::c_void,
-                        buf.len() as u32,
-                        Some(std::ptr::from_mut(&mut read)),
-                    )
-                };
-                if result.is_err() {
-                    tracing::warn!(hresult = ?result, "shell stream read failed");
-                    return Err(());
-                }
-                Ok(read as usize)
-            },
-        ))
+        let bounds = StreamReadBounds {
+            declared_len: (declared != 0).then_some(declared),
+            max_bytes: MAX_THUMBNAIL_INPUT_BYTES,
+            min_buffer_bytes: Self::MIN_STREAM_BUFFER_BYTES,
+            chunk_bytes: Self::STREAM_READ_CHUNK_BYTES,
+        };
+        let mut read_chunk = |buf: &mut [u8]| {
+            let mut read = 0u32;
+            // SAFETY: `buf` is a valid write region; `read` is a stack out-param.
+            let result = unsafe {
+                stream.Read(
+                    buf.as_mut_ptr() as *mut std::ffi::c_void,
+                    buf.len() as u32,
+                    Some(std::ptr::from_mut(&mut read)),
+                )
+            };
+            if result.is_err() {
+                tracing::warn!(hresult = ?result, "shell stream read failed");
+                return Err(());
+            }
+            Ok(read as usize)
+        };
+        Ok(match deadline {
+            Some(deadline) => read_capped_stream_until(bounds, deadline, &mut read_chunk),
+            None => read_capped_stream(bounds, &mut read_chunk),
+        })
     }
 
     /// Render at `size` px (square, clamped to 1..=2048) and return the HBITMAP.
@@ -149,7 +181,11 @@ impl ThumbnailProvider {
     /// itself changes. A failed extraction shows the format icon for this
     /// browse and stays eligible for re-extraction — usually served instantly
     /// from the process cache the background worker populated meanwhile.
-    fn render_to_hbitmap(&self, size: u32) -> windows::core::Result<HBITMAP> {
+    fn render_to_hbitmap(
+        &self,
+        size: u32,
+        #[cfg(feature = "diagnostic-logs")] started: Instant,
+    ) -> windows::core::Result<HBITMAP> {
         let size_px = size.clamp(1, MAX_OFFSCREEN_EDGE) as u16;
         let spec = ThumbnailSpec {
             size_px,
@@ -157,9 +193,38 @@ impl ThumbnailProvider {
         };
         match self.thumbnail_attempt(spec) {
             ThumbnailAttempt::Bitmap(pixels) => {
-                pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px))
+                let bitmap = pixels_to_hbitmap(&pixels, u32::from(size_px), u32::from(size_px));
+                #[cfg(feature = "diagnostic-logs")]
+                if bitmap.is_ok() {
+                    record_shell_event(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::BitmapPublish,
+                        ShellDiagnosticOutcome::Completed,
+                        ShellDiagnosticAdapter::NotObserved,
+                        elapsed_ms_since(started),
+                    );
+                } else {
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::BitmapPublish,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Windows,
+                        elapsed_ms_since(started),
+                    );
+                }
+                bitmap
             }
-            ThumbnailAttempt::TransientFailure => Err(e_fail()),
+            ThumbnailAttempt::TransientFailure => {
+                #[cfg(feature = "diagnostic-logs")]
+                record_shell_failure(
+                    ShellDiagnosticComponent::Thumbnail,
+                    ShellDiagnosticStage::Render,
+                    ShellDiagnosticAdapter::NotObserved,
+                    ShellDiagnosticErrorClass::Transient,
+                    elapsed_ms_since(started),
+                );
+                Err(e_fail())
+            }
         }
     }
 
@@ -204,6 +269,7 @@ impl ThumbnailProvider {
     /// hiccup), while over-budget and decode verdicts are deterministic
     /// placeholders the shell may cache.
     fn render_attempt(&self, spec: ThumbnailSpec) -> ThumbnailAttempt {
+        let request = ThumbnailRenderRequest::new(DEFAULT_THUMBNAIL_TIMEOUT);
         if let Some(byte_len) = self.oversize_stream_len.get() {
             return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
         }
@@ -211,17 +277,17 @@ impl ThumbnailProvider {
         // `ensure_stream_bytes` may borrow it mutably.
         let source_path = self.source.borrow().path().map(PathBuf::from);
         if let Some(path) = source_path {
-            return try_render_thumbnail_file(&path, spec, DEFAULT_THUMBNAIL_TIMEOUT);
+            return try_render_thumbnail_file_with_request(&path, spec, request);
         }
         let _stream_bytes_guard = ThumbnailStreamBytesGuard::new(&self.bytes);
-        let Some(reservation) = reserve_thumbnail_stream_job(DEFAULT_THUMBNAIL_TIMEOUT) else {
+        let Some(reservation) = reserve_thumbnail_stream_job_for_request(request) else {
             tracing::warn!(
                 "thumbnail stream budget was busy; reporting transient failure instead of overcommitting dllhost"
             );
             return ThumbnailAttempt::TransientFailure;
         };
         let ext = self.source.borrow().extension().map(str::to_owned);
-        let bytes = match self.ensure_stream_bytes() {
+        let bytes = match self.ensure_stream_bytes(request) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => {
                 // The stream was already consumed (a repeat GetThumbnail on an
@@ -244,13 +310,7 @@ impl ThumbnailProvider {
         if let Some(byte_len) = self.oversize_stream_len.get() {
             ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len))
         } else {
-            try_render_thumbnail_shared_with_reservation(
-                ext,
-                bytes,
-                spec,
-                DEFAULT_THUMBNAIL_TIMEOUT,
-                reservation,
-            )
+            try_render_thumbnail_shared_with_reservation(ext, bytes, spec, reservation)
         }
     }
 
@@ -261,7 +321,10 @@ impl ThumbnailProvider {
     /// read failed partway) — except the over-cap case, which sets
     /// `oversize_stream_len` and returns empty bytes for the caller's
     /// deterministic oversize placeholder.
-    fn ensure_stream_bytes(&self) -> windows::core::Result<Option<Arc<[u8]>>> {
+    fn ensure_stream_bytes(
+        &self,
+        request: ThumbnailRenderRequest,
+    ) -> windows::core::Result<Option<Arc<[u8]>>> {
         if !self.bytes.borrow().is_empty() {
             return Ok(Some(self.bytes.borrow().clone()));
         }
@@ -269,7 +332,7 @@ impl ThumbnailProvider {
         let Some(stream_result) = self.source.borrow_mut().consume_pending_stream(
             |stream, _extension| -> windows::core::Result<StreamRead> {
                 ThumbnailProvider::rewind_stream(&stream)?;
-                ThumbnailProvider::read_stream(&stream)
+                ThumbnailProvider::read_stream_until(&stream, request.response_deadline())
             },
         ) else {
             return Ok(None);
@@ -287,7 +350,7 @@ impl ThumbnailProvider {
                 self.oversize_stream_len.set(Some(byte_len));
                 Ok(Some(Arc::<[u8]>::from([])))
             }
-            StreamRead::ReadFailed => {
+            StreamRead::ReadFailed | StreamRead::TimedOut => {
                 *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
                 Ok(None)
             }
@@ -316,16 +379,60 @@ impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
             "IThumbnailProvider::GetThumbnail",
             || Err(e_fail()),
             || {
+                #[cfg(feature = "diagnostic-logs")]
+                let started = Instant::now();
+                #[cfg(feature = "diagnostic-logs")]
+                prepare_shell_diagnostics();
+                #[cfg(feature = "diagnostic-logs")]
+                record_shell_event(
+                    ShellDiagnosticComponent::Thumbnail,
+                    ShellDiagnosticStage::Activation,
+                    ShellDiagnosticOutcome::Started,
+                    ShellDiagnosticAdapter::NotObserved,
+                    0,
+                );
                 if phbmp.is_null() || pdwalpha.is_null() {
+                    #[cfg(feature = "diagnostic-logs")]
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Windows,
+                        elapsed_ms_since(started),
+                    );
                     return Err(e_pointer());
                 }
-                let hbmp = self.this.render_to_hbitmap(cx)?;
-                // SAFETY: phbmp is a caller-provided out-pointer; the shell owns
-                // the handle we write through it.
-                unsafe { *phbmp = hbmp };
-                // SAFETY: pdwalpha is a caller-provided out-pointer.
-                unsafe { *pdwalpha = WTSAT_ARGB };
-                Ok(())
+                let result = self.this.render_to_hbitmap(
+                    cx,
+                    #[cfg(feature = "diagnostic-logs")]
+                    started,
+                );
+                if let Ok(hbmp) = &result {
+                    // SAFETY: phbmp is a caller-provided out-pointer; the shell owns
+                    // the handle we write through it.
+                    unsafe { *phbmp = *hbmp };
+                    // SAFETY: pdwalpha is a caller-provided out-pointer.
+                    unsafe { *pdwalpha = WTSAT_ARGB };
+                }
+                #[cfg(feature = "diagnostic-logs")]
+                if result.is_ok() {
+                    record_shell_event(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticOutcome::Completed,
+                        ShellDiagnosticAdapter::NotObserved,
+                        elapsed_ms_since(started),
+                    );
+                } else {
+                    record_shell_failure(
+                        ShellDiagnosticComponent::Thumbnail,
+                        ShellDiagnosticStage::ComReturn,
+                        ShellDiagnosticAdapter::NotObserved,
+                        ShellDiagnosticErrorClass::Transient,
+                        elapsed_ms_since(started),
+                    );
+                }
+                result.map(|_| ())
             },
         )
     }
@@ -334,12 +441,12 @@ impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
 impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
     /// Called by the shell with a read-only stream over the file (handles
     /// MotW / OneDrive placeholders).
-    fn Initialize(&self, pstream: Option<&IStream>, _grfmode: u32) -> windows::core::Result<()> {
+    fn Initialize(&self, pstream: Ref<'_, IStream>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "thumbnail IInitializeWithStream",
             || Err(e_fail()),
             || {
-                let stream = pstream.ok_or_else(e_pointer)?;
+                let stream = pstream.ok()?;
                 self.this
                     .source
                     .borrow_mut()
@@ -374,12 +481,12 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
     /// Called by the shell with an item. This gives us a filesystem path on
     /// Explorer code paths that do not use `IInitializeWithFile`, preserving
     /// extension hints for HPS and using mmap-backed file loading.
-    fn Initialize(&self, psi: Option<&IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
+    fn Initialize(&self, psi: Ref<'_, IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "thumbnail IInitializeWithItem",
             || Err(e_fail()),
             || {
-                let item = psi.ok_or_else(e_pointer)?;
+                let item = psi.ok()?;
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // allocated null-terminated UTF-16 path. We copy it into a Rust
                 // String before freeing the COM allocation.
@@ -402,7 +509,7 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
 impl IClassFactory_Impl for ThumbnailProvider_Impl {
     fn CreateInstance(
         &self,
-        punkouter: Option<&IUnknown>,
+        punkouter: Ref<'_, IUnknown>,
         riid: *const GUID,
         ppvobject: *mut *mut std::ffi::c_void,
     ) -> windows::core::Result<()> {
@@ -413,7 +520,7 @@ impl IClassFactory_Impl for ThumbnailProvider_Impl {
                 if ppvobject.is_null() {
                     return Err(e_pointer());
                 }
-                if punkouter.is_some() {
+                if !punkouter.is_null() {
                     return Err(windows::core::Error::from_hresult(CLASS_E_NOAGGREGATION));
                 }
                 let provider = ThumbnailProvider::new();

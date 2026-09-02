@@ -154,7 +154,7 @@ struct Shell {
 
 impl Shell {
     fn reverse_winding(&mut self) {
-        for triangle in self.indices.chunks_exact_mut(3) {
+        for triangle in self.indices.as_chunks_mut::<3>().0 {
             triangle.swap(1, 2);
         }
         self.signed_volume = -self.signed_volume;
@@ -193,7 +193,9 @@ fn recover_shells(mesh: &RobustMesh) -> Result<Vec<Shell>, RobustCsgError> {
     reject_geometrically_collapsed_faces(mesh)?;
     let raw_triangles = mesh
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|face| [face[0], face[1], face[2]])
         .collect::<Vec<_>>();
     if let Ok(shells) = recover_from_topology(&mesh.positions, &raw_triangles, false) {
@@ -205,7 +207,7 @@ fn recover_shells(mesh: &RobustMesh) -> Result<Vec<Shell>, RobustCsgError> {
 }
 
 fn reject_geometrically_collapsed_faces(mesh: &RobustMesh) -> Result<(), RobustCsgError> {
-    for face in mesh.indices.chunks_exact(3) {
+    for face in mesh.indices.as_chunks::<3>().0 {
         let keys = face
             .iter()
             .map(|&index| {
@@ -355,7 +357,9 @@ fn canonicalize_mesh(mesh: &RobustMesh) -> Result<CanonicalMesh, RobustCsgError>
     Ok((
         positions,
         canonical_indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|face| [face[0], face[1], face[2]])
             .collect(),
     ))
@@ -615,7 +619,7 @@ fn build_oriented_solids(shells: &[Shell]) -> Result<Vec<Manifold>, RobustCsgErr
 
 fn validate_shell_topology(indices: &[u64]) -> Result<(), RobustCsgError> {
     let mut edges: BTreeMap<(u64, u64), Vec<(u64, u64)>> = BTreeMap::new();
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         for (from, to) in [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -669,7 +673,7 @@ fn transform_mesh(
         .collect::<Result<Vec<_>, _>>()?;
     let mut indices = mesh.indices.clone();
     if reverse_winding {
-        for triangle in indices.chunks_exact_mut(3) {
+        for triangle in indices.as_chunks_mut::<3>().0 {
             triangle.swap(1, 2);
         }
     }
@@ -718,12 +722,16 @@ fn signed_volume(positions: &[[f64; 3]], indices: &[u64]) -> Result<f64, RobustC
             .ok_or_else(|| invalid_input("shell index is out of range"))
     };
     let origin = position(indices[0])?;
-    indices.chunks_exact(3).try_fold(0.0, |volume, triangle| {
-        let a = position(triangle[0])? - origin;
-        let b = position(triangle[1])? - origin;
-        let c = position(triangle[2])? - origin;
-        Ok(volume + a.dot(b.cross(c)) / 6.0)
-    })
+    indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .try_fold(0.0, |volume, triangle| {
+            let a = position(triangle[0])? - origin;
+            let b = position(triangle[1])? - origin;
+            let c = position(triangle[2])? - origin;
+            Ok(volume + a.dot(b.cross(c)) / 6.0)
+        })
 }
 
 fn shell_ordering(left: &Shell, right: &Shell) -> std::cmp::Ordering {

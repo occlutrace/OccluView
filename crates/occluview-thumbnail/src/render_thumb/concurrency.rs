@@ -2,12 +2,14 @@
 // then assert the pool/gate recover; that needs unwrap/expect/panic in test.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used, clippy::panic))]
 
+#[cfg(test)]
+use super::Duration;
 use super::{
-    Duration, Mutex, ThumbnailAttempt, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT,
+    Mutex, ThumbnailAttempt, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT,
     THUMBNAIL_JOB_GATE, THUMBNAIL_RENDERER_POOL,
 };
 use crate::offscreen_factory::create_thumbnail_offscreen;
-use occluview_render::Offscreen;
+use occluview_render::{AdapterPolicy, Offscreen, RenderDeadline};
 use std::collections::{HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,28 +47,7 @@ pub(super) struct ThumbnailRendererPool {
     /// How a renderer is built. A function pointer rather than a direct call
     /// so the recovery paths below -- a create that fails, and a create that
     /// panics -- can be exercised without a GPU.
-    create: fn() -> Result<Offscreen, ThumbnailError>,
-}
-
-/// Longest a request may wait for the pooled renderer before it gives up.
-///
-/// This is not the request's budget; the request has its own, and Explorer
-/// abandons the call long before this. It is the backstop that keeps a
-/// renderer lost to a wedged device from parking every decode lane forever:
-/// a worker waiting here holds its lane, so twelve of them are the whole
-/// folder. Reaching this ceiling means something is wrong, not that the
-/// machine is busy.
-const RENDERER_WAIT_CEILING: Duration = Duration::from_secs(30);
-
-/// The pool never produced a renderer inside the ceiling above.
-///
-/// Reported as a render error, which the request path already treats as
-/// transient: Explorer retries, and a retry is exactly right for a pool that
-/// is merely oversubscribed.
-fn renderer_wait_expired() -> ThumbnailError {
-    ThumbnailError::Render(occluview_render::RenderError::Surface(
-        "timed out waiting for the thumbnail renderer".to_string(),
-    ))
+    create: fn(RenderDeadline, AdapterPolicy) -> Result<Offscreen, ThumbnailError>,
 }
 
 pub(super) struct ThumbnailJobGate {
@@ -172,7 +153,7 @@ impl ThumbnailRendererPool {
 
     pub(super) const fn with_create(
         max_renderers: usize,
-        create: fn() -> Result<Offscreen, ThumbnailError>,
+        create: fn(RenderDeadline, AdapterPolicy) -> Result<Offscreen, ThumbnailError>,
     ) -> Self {
         Self {
             create,
@@ -187,9 +168,11 @@ impl ThumbnailRendererPool {
 
     pub(super) fn with_renderer<R>(
         &self,
+        deadline: RenderDeadline,
+        adapter_policy: AdapterPolicy,
         f: impl FnOnce(&Offscreen) -> Result<R, ThumbnailError>,
     ) -> Result<R, ThumbnailError> {
-        let renderer = self.checkout_renderer()?;
+        let renderer = self.checkout_renderer(deadline, adapter_policy)?;
         let lease = ThumbnailRendererLease::new(self, renderer);
         let Some(offscreen) = lease.offscreen.as_ref() else {
             return Err(ThumbnailError::Render(
@@ -219,15 +202,19 @@ impl ThumbnailRendererPool {
         }
     }
 
-    pub(super) fn checkout_renderer(&self) -> Result<Offscreen, ThumbnailError> {
-        self.checkout_renderer_within(RENDERER_WAIT_CEILING)
-    }
-
+    #[cfg(test)]
     pub(super) fn checkout_renderer_within(
         &self,
         budget: Duration,
     ) -> Result<Offscreen, ThumbnailError> {
-        let deadline = Instant::now() + budget;
+        self.checkout_renderer(RenderDeadline::after(budget), AdapterPolicy::FallbackOnly)
+    }
+
+    pub(super) fn checkout_renderer(
+        &self,
+        deadline: RenderDeadline,
+        adapter_policy: AdapterPolicy,
+    ) -> Result<Offscreen, ThumbnailError> {
         loop {
             let mut state = lock_recover(&self.state);
             if let Some(offscreen) = state.idle.pop() {
@@ -243,7 +230,9 @@ impl ThumbnailRendererPool {
                 // the pool believing its one renderer is in use forever, and
                 // every later request waiting for a renderer that is not
                 // coming.
-                match panic::catch_unwind(AssertUnwindSafe(self.create)) {
+                match panic::catch_unwind(AssertUnwindSafe(|| {
+                    (self.create)(deadline, adapter_policy)
+                })) {
                     Ok(Ok(offscreen)) => return Ok(offscreen),
                     Ok(Err(error)) => {
                         self.release_reservation();
@@ -255,16 +244,15 @@ impl ThumbnailRendererPool {
                     }
                 }
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(renderer_wait_expired());
-            }
+            let remaining = deadline.remaining().map_err(ThumbnailError::Render)?;
             let (_guard, wait) = self
                 .ready
                 .wait_timeout(state, remaining)
                 .unwrap_or_else(PoisonError::into_inner);
-            if wait.timed_out() && Instant::now() >= deadline {
-                return Err(renderer_wait_expired());
+            if wait.timed_out() {
+                if let Err(error) = deadline.remaining() {
+                    return Err(ThumbnailError::Render(error));
+                }
             }
         }
     }
@@ -322,6 +310,11 @@ impl ThumbnailJobGate {
         state.waiters.push_back(ticket);
 
         loop {
+            if Instant::now() >= deadline {
+                state.remove_waiter(ticket);
+                self.inner.ready.notify_all();
+                return None;
+            }
             if state.active_jobs < self.inner.max_jobs
                 && state.waiters.front().copied() == Some(ticket)
             {
@@ -400,23 +393,6 @@ impl Drop for ThumbnailRendererLease<'_> {
     }
 }
 
-/// Create the pooled renderer ahead of the first request and park it idle.
-///
-/// Under Explorer's Apartment hosting every extraction serializes through one
-/// host STA thread, so the very first `GetThumbnail` used to pay wgpu
-/// instance + adapter + device + pipeline creation in line, in front of the
-/// whole folder's queue. Prewarming from a background thread at class
-/// activation overlaps that fixed cost with the shell's Initialize and
-/// stream-copy phase. A failure is deliberately swallowed: the first real
-/// request repeats the attempt and owns the error path, and the pool's
-/// capacity accounting already tolerates a failed create.
-pub(super) fn prewarm_renderer_pool() {
-    let pool = ThumbnailRendererPool::shared();
-    if let Ok(renderer) = pool.checkout_renderer() {
-        drop(ThumbnailRendererLease::new(pool, renderer));
-    }
-}
-
 const fn default_thumbnail_job_capacity() -> usize {
     MAX_THUMBNAIL_JOB_LANES
 }
@@ -471,11 +447,10 @@ fn finish_inflight_thumbnail(
     }
 }
 
-fn wait_for_inflight_thumbnail(
+fn wait_for_inflight_thumbnail_by(
     entry: &Arc<InflightThumbnail>,
-    timeout: Duration,
+    deadline: Instant,
 ) -> Option<InflightThumbnailResult> {
-    let deadline = Instant::now() + timeout;
     let mut state = lock_recover(&entry.state);
 
     loop {
@@ -496,9 +471,19 @@ fn wait_for_inflight_thumbnail(
     }
 }
 
+#[cfg(test)]
 pub(super) fn render_coalesced_thumbnail(
     key: ThumbnailRequestKey,
     timeout: Duration,
+    render: impl FnOnce() -> ThumbnailAttempt,
+) -> ThumbnailAttempt {
+    render_coalesced_thumbnail_by(key, Instant::now() + timeout, render)
+}
+
+/// Run or join a coalesced render until a deadline fixed by the caller.
+pub(super) fn render_coalesced_thumbnail_by(
+    key: ThumbnailRequestKey,
+    deadline: Instant,
     render: impl FnOnce() -> ThumbnailAttempt,
 ) -> ThumbnailAttempt {
     // `render` is an infallible producer of a verdict: a full-size bitmap (a
@@ -519,11 +504,11 @@ pub(super) fn render_coalesced_thumbnail(
             result.into()
         }
         InflightThumbnailLease::Follower(entry) => {
-            if let Some(result) = wait_for_inflight_thumbnail(&entry, timeout) {
+            if let Some(result) = wait_for_inflight_thumbnail_by(&entry, deadline) {
                 result.into()
             } else {
                 tracing::warn!(
-                    ?timeout,
+                    ?deadline,
                     "waiting for an identical in-flight thumbnail timed out; reporting transient failure instead of duplicate render"
                 );
                 ThumbnailAttempt::TransientFailure
@@ -533,6 +518,7 @@ pub(super) fn render_coalesced_thumbnail(
 }
 
 /// request budget by waiting once for setup and again for rendering.
+#[cfg(test)]
 pub(super) fn run_thumbnail_job_with_deadline<T, F>(
     timeout: Duration,
     work: F,
@@ -548,6 +534,18 @@ where
     // folder spends queued behind it. The deadline is fixed here, once, and
     // both halves spend the same one.
     let deadline = Instant::now() + timeout;
+    run_thumbnail_job_by_deadline(deadline, work)
+}
+
+/// Start a thumbnail worker under an absolute deadline fixed at request entry.
+pub(super) fn run_thumbnail_job_by_deadline<T, F>(
+    deadline: Instant,
+    work: F,
+) -> ThumbnailJobOutcome<T>
+where
+    T: Send + 'static,
+    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
+{
     let Some(permit) = ThumbnailJobGate::shared().acquire_by(deadline) else {
         return ThumbnailJobOutcome::SetupTimedOut;
     };

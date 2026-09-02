@@ -21,6 +21,11 @@ workspace = true
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[features]
+# Diagnostic JSONL is compiled only into the private diagnostic package. The
+# normal customer shell extension has no diagnostics worker or file I/O path.
+diagnostic-logs = []
+
 [dependencies]
 occluview-core    = { workspace = true }
 occluview-render  = { workspace = true }
@@ -32,9 +37,8 @@ pollster          = { workspace = true }
 glam              = { workspace = true }
 
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.58"
+version = "0.62"
 features = [
-    "implement",
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
@@ -55,7 +59,7 @@ features = [
 # microsoft/windows-rs#3038). An explicit `windows-core` dependency of the
 # same version makes those paths resolve.
 [target.'cfg(windows)'.dependencies.windows-core]
-version = "0.58"
+version = "0.62"
 
 [dev-dependencies]
 

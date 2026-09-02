@@ -19,6 +19,14 @@ use super::{
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec, VIEWPORT_BACKGROUND_LINEAR,
 };
+use occluview_render::{
+    AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
+    RenderDeadline,
+};
+use std::time::Duration;
+
+const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
+const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
 
 impl OccluViewApp {
     pub(super) fn render_now(&mut self, ctx: &egui::Context) {
@@ -162,9 +170,15 @@ impl OccluViewApp {
                 size_px: CutTool::preview_size_px(),
                 background: VIEWPORT_BACKGROUND_LINEAR,
             };
-            match pollster::block_on(
-                offscreen.render_prepared_scene_with_clip(prepared, &camera, &plane, spec),
-            ) {
+            match pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
+                PreparedSceneClipRequest {
+                    scene: prepared,
+                    camera: &camera,
+                    clip: &plane,
+                    spec,
+                    deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                },
+            )) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(error = ?e, "section-view render failed");
@@ -216,8 +230,11 @@ impl OccluViewApp {
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if self.offscreen.is_none() {
             self.offscreen = Some(
-                pollster::block_on(Offscreen::new_prefer_hardware())
-                    .context("initializing offscreen")?,
+                pollster::block_on(Offscreen::new_with_adapter_policy(
+                    AdapterPolicy::HardwareThenFallback,
+                    RenderDeadline::after(APP_OFFSCREEN_INITIALIZATION_TIMEOUT),
+                ))
+                .context("initializing offscreen")?,
             );
         }
         Ok(())
@@ -281,20 +298,30 @@ impl OccluViewApp {
         let selection_overlay = self.prepared_selection_overlay.as_ref();
         let clip_plane = self.active_viewport_clip_plane(scene.bbox());
         let pixels = if clip_plane.enabled != 0 {
-            pollster::block_on(offscreen.render_prepared_viewport_with_clip_and_overlay(
-                prepared,
-                selection_overlay,
-                &gpu_cam,
-                &clip_plane,
-                spec,
-            ))
+            pollster::block_on(
+                offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
+                    PreparedViewportClipRequest {
+                        scene: prepared,
+                        overlay: selection_overlay,
+                        camera: &gpu_cam,
+                        clip: &clip_plane,
+                        spec,
+                        deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                    },
+                ),
+            )
         } else {
-            pollster::block_on(offscreen.render_prepared_viewport_with_overlay(
-                prepared,
-                selection_overlay,
-                &gpu_cam,
-                spec,
-            ))
+            pollster::block_on(
+                offscreen.render_prepared_viewport_with_overlay_with_deadline(
+                    PreparedViewportRequest {
+                        scene: prepared,
+                        overlay: selection_overlay,
+                        camera: &gpu_cam,
+                        spec,
+                        deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
+                    },
+                ),
+            )
         }
         .context("rendering viewport")?;
         Ok((spec, pixels))
@@ -343,7 +370,7 @@ impl OccluViewApp {
                     self.live_viewport_scene_dirty = false;
                 }
                 let repush_deviation =
-                    (rebuilt && restore_deviation) || self.deviation_push_pending;
+                    (rebuilt && restore_deviation) || self.align.deviation_push_pending;
                 if self.selection_overlay_dirty {
                     let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
@@ -365,7 +392,7 @@ impl OccluViewApp {
             // A push before the viewport has a prepared scene writes nowhere.
             // Keep the request standing until one exists, or the very first
             // measurement would come out in the scan's own colours.
-            self.deviation_push_pending = !self.push_deviation_colors();
+            self.align.deviation_push_pending = !self.push_deviation_colors();
         }
     }
 
@@ -517,8 +544,9 @@ impl OccluViewApp {
         self.section_cache.clear();
     }
 
-    pub(super) fn show_central_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub(super) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {
+        let ctx = root_ui.ctx().clone();
+        egui::CentralPanel::default().show(root_ui, |ui| {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(226, 230, 234));
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
@@ -529,7 +557,7 @@ impl OccluViewApp {
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
-                self.show_viewport_overlays(ui, &response, ctx);
+                self.show_viewport_overlays(ui, &response, &ctx);
             } else if let Some(texture) = self
                 .rendered
                 .as_ref()
@@ -542,7 +570,7 @@ impl OccluViewApp {
                     egui::Image::new((texture.id(), available))
                         .sense(egui::Sense::click_and_drag()),
                 );
-                self.show_viewport_overlays(ui, &response, ctx);
+                self.show_viewport_overlays(ui, &response, &ctx);
             } else if self.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);

@@ -153,7 +153,7 @@ fn world_gap(
 }
 
 fn assert_winding_matches_normals(mesh: &Mesh) {
-    for face in mesh.indices().chunks_exact(3) {
+    for face in mesh.indices().as_chunks::<3>().0 {
         let vertices = [
             mesh.vertices()[face[0] as usize],
             mesh.vertices()[face[1] as usize],
@@ -706,7 +706,7 @@ fn dense_octahedron_with_tetrahedron_debris() -> Mesh {
     ];
     for _ in 0..3 {
         let mut next = Vec::with_capacity(indices.len() * 4);
-        for face in indices.chunks_exact(3) {
+        for face in indices.as_chunks::<3>().0 {
             let a = face[0];
             let b = face[1];
             let c = face[2];

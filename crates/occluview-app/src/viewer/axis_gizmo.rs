@@ -41,7 +41,10 @@ pub(crate) fn paint_axis_gizmo(
     painter.circle_stroke(
         center,
         AXIS_GIZMO_RADIUS_PX + AXIS_GIZMO_GLOW_PX,
-        egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(15, 23, 42, 42)),
+        egui::Stroke::new(
+            1.0_f32,
+            egui::Color32::from_rgba_unmultiplied(15, 23, 42, 42),
+        ),
     );
 
     for (negative, positive, color) in [
@@ -69,7 +72,7 @@ pub(crate) fn paint_axis_gizmo(
         };
         painter.line_segment(
             [negative_center, positive_center],
-            egui::Stroke::new(1.5, color),
+            egui::Stroke::new(1.5_f32, color),
         );
     }
 
@@ -90,7 +93,7 @@ pub(crate) fn paint_axis_gizmo(
         painter.circle_stroke(
             marker.center,
             AXIS_GIZMO_MARKER_RADIUS_PX,
-            egui::Stroke::new(1.5, color),
+            egui::Stroke::new(1.5_f32, color),
         );
         painter.text(
             marker.center,

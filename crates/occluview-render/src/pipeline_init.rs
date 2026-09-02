@@ -21,80 +21,66 @@ impl Renderer {
     /// - [`RenderError::NoAdapter`] when no adapter is available (incl. WARP-less sandboxes).
     /// - [`RenderError::Surface`] for device-creation failure.
     pub async fn new_headless(target_format: wgpu::TextureFormat) -> Result<Self, RenderError> {
-        Self::new_headless_with_adapter_preference(target_format, false).await
+        let (renderer, _adapter_result) =
+            Self::new_headless_on_adapter(target_format, true).await?;
+        Ok(renderer)
     }
 
-    /// Create a headless renderer preferring a real GPU before falling back.
+    /// Create a headless renderer on one explicit adapter kind.
     ///
-    /// This is for user-facing viewer/thumbnail paths. Tests can keep using
-    /// [`Self::new_headless`] so CI/headless machines stay on the stable
-    /// fallback-adapter path.
-    ///
-    /// # Errors
-    /// - [`RenderError::NoAdapter`] when no compatible adapter is available.
-    /// - [`RenderError::Surface`] for device-creation failure.
-    pub async fn new_headless_prefer_hardware(
+    /// The offscreen policy layer owns fallback and verification. This lower
+    /// layer deliberately makes one adapter request only, so a consumer cannot
+    /// mistake a successful device allocation for a verified hardware frame.
+    pub(crate) async fn new_headless_on_adapter(
         target_format: wgpu::TextureFormat,
-    ) -> Result<Self, RenderError> {
-        Self::new_headless_with_adapter_preference(target_format, true).await
-    }
-
-    async fn new_headless_with_adapter_preference(
-        target_format: wgpu::TextureFormat,
-        prefer_hardware: bool,
-    ) -> Result<Self, RenderError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-        let adapter = if prefer_hardware {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    force_fallback_adapter: false,
-                    compatible_surface: None,
-                })
-                .await
-        } else {
-            None
-        };
-        let adapter = if let Some(adapter) = adapter {
-            adapter
-        } else {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    force_fallback_adapter: true,
-                    compatible_surface: None,
-                })
-                .await
-                .ok_or(RenderError::NoAdapter)?
-        };
+        force_fallback_adapter: bool,
+    ) -> Result<(Self, crate::offscreen::AdapterResult), RenderError> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: if force_fallback_adapter {
+                    wgpu::PowerPreference::LowPower
+                } else {
+                    wgpu::PowerPreference::HighPerformance
+                },
+                force_fallback_adapter,
+                compatible_surface: None,
+                apply_limit_buckets: false,
+            })
+            .await
+            .map_err(|_| RenderError::NoAdapter)?;
+        let adapter_result =
+            crate::offscreen::adapter_result_for_device_type(adapter.get_info().device_type);
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("occluview headless device"),
-                    required_features: wgpu::Features::empty(),
-                    // The conservative floor, raised to what the adapter
-                    // actually offers. `downlevel_defaults` caps
-                    // `max_texture_dimension_2d` at 2048, while the format
-                    // readers accept textures up to 8192 -- so a scan with a
-                    // 4096-pixel atlas decoded, cost its memory, and then had
-                    // nowhere to go. `using_resolution` copies the three
-                    // texture dimensions and nothing else, so the 256 MiB
-                    // buffer floor stayed: a scan of three million triangles
-                    // needs a 309 MiB vertex buffer, the allocation was
-                    // refused, and the frame came back empty.
-                    required_limits: wgpu::Limits {
-                        max_buffer_size: adapter.limits().max_buffer_size,
-                        ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
-                    },
-                    memory_hints: wgpu::MemoryHints::default(),
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("occluview headless device"),
+                required_features: wgpu::Features::empty(),
+                // The conservative floor, raised to what the adapter
+                // actually offers. `downlevel_defaults` caps
+                // `max_texture_dimension_2d` at 2048, while the format
+                // readers accept textures up to 8192 -- so a scan with a
+                // 4096-pixel atlas decoded, cost its memory, and then had
+                // nowhere to go. `using_resolution` copies the three
+                // texture dimensions and nothing else, so the 256 MiB
+                // buffer floor stayed: a scan of three million triangles
+                // needs a 309 MiB vertex buffer, the allocation was
+                // refused, and the frame came back empty.
+                required_limits: wgpu::Limits {
+                    max_buffer_size: adapter.limits().max_buffer_size,
+                    ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
                 },
-                None,
-            )
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .map_err(|e| RenderError::Surface(e.to_string()))?;
 
-        Self::with_device(device, queue, target_format)
+        Ok((
+            Self::with_device(device, queue, target_format)?,
+            adapter_result,
+        ))
     }
 
     /// Build the pipeline against an externally-created device/queue (used by
@@ -159,7 +145,7 @@ impl Renderer {
         let gpu_error: super::GpuErrorLatch = Arc::new(std::sync::Mutex::new(None));
         {
             let sink = Arc::clone(&gpu_error);
-            device.on_uncaptured_error(Box::new(move |error| {
+            device.on_uncaptured_error(Arc::new(move |error| {
                 super::record_gpu_error(&sink, error.to_string());
             }));
         }
@@ -191,8 +177,13 @@ impl Renderer {
         let clip_layout = clip_plane_bind_layout(&device);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("occluview pipeline layout"),
-            bind_group_layouts: &[&camera_layout, &mesh_layout, &texture_layout, &clip_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(&camera_layout),
+                Some(&mesh_layout),
+                Some(&texture_layout),
+                Some(&clip_layout),
+            ],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -200,13 +191,13 @@ impl Renderer {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
-                buffers: &[GpuMesh::vertex_layout()],
+                entry_point: Some("vs_main"),
+                buffers: &[Some(GpuMesh::vertex_layout())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -221,13 +212,13 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample,
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -236,13 +227,13 @@ impl Renderer {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_point_splat",
-                buffers: &[point_instance_layout()],
+                entry_point: Some("vs_point_splat"),
+                buffers: &[Some(point_instance_layout())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -257,13 +248,13 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample,
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -272,13 +263,13 @@ impl Renderer {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
-                buffers: &[GpuMesh::vertex_layout()],
+                entry_point: Some("vs_main"),
+                buffers: &[Some(GpuMesh::vertex_layout())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -293,13 +284,13 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample,
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -309,13 +300,13 @@ impl Renderer {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_point_splat",
-                    buffers: &[point_instance_layout()],
+                    entry_point: Some("vs_point_splat"),
+                    buffers: &[Some(point_instance_layout())],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target_format,
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -330,13 +321,13 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample,
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -345,13 +336,13 @@ impl Renderer {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
-                buffers: &[GpuMesh::vertex_layout()],
+                entry_point: Some("vs_main"),
+                buffers: &[Some(GpuMesh::vertex_layout())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_wireframe",
+                entry_point: Some("fs_wireframe"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -366,13 +357,13 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample,
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -407,8 +398,8 @@ impl Renderer {
             });
         let cap_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("occluview cap pipeline layout"),
-            bind_group_layouts: &[&camera_layout, &cap_uniform_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&camera_layout), Some(&cap_uniform_layout)],
+            immediate_size: 0,
         });
 
         let stencil_back_pipeline =
@@ -417,13 +408,13 @@ impl Renderer {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_main",
-                    buffers: &[GpuMesh::vertex_layout()],
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(GpuMesh::vertex_layout())],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target_format,
                         blend: Some(wgpu::BlendState::REPLACE),
@@ -438,8 +429,8 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState {
                         front: wgpu::StencilFaceState::default(),
                         back: wgpu::StencilFaceState {
@@ -454,7 +445,7 @@ impl Renderer {
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample,
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -464,13 +455,13 @@ impl Renderer {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_main",
-                    buffers: &[GpuMesh::vertex_layout()],
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(GpuMesh::vertex_layout())],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target_format,
                         blend: Some(wgpu::BlendState::REPLACE),
@@ -485,8 +476,8 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState {
                         front: wgpu::StencilFaceState {
                             compare: wgpu::CompareFunction::Always,
@@ -501,7 +492,7 @@ impl Renderer {
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample,
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -510,13 +501,13 @@ impl Renderer {
             layout: Some(&cap_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &cap_shader,
-                entry_point: "vs_main",
-                buffers: &[cap_vertex_layout()],
+                entry_point: Some("vs_main"),
+                buffers: &[Some(cap_vertex_layout())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &cap_shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -531,8 +522,8 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState {
                     front: wgpu::StencilFaceState {
                         compare: wgpu::CompareFunction::NotEqual,
@@ -552,7 +543,7 @@ impl Renderer {
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample,
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

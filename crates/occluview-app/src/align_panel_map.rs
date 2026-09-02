@@ -14,7 +14,7 @@ use occluview_align::{DeviationStats, RampMode};
 
 use crate::align_panel::AlignPanelAction;
 use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM};
-use crate::mesh_editor_icons::{self, EditorIcon};
+use crate::icons::AppIcon;
 use crate::{align_overlay, ui_theme};
 
 /// Show the Heatmap block; returns what the operator asked for.
@@ -51,16 +51,15 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
         let glyph = ui
             .allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover())
             .0;
-        mesh_editor_icons::paint(
+        crate::icons::paint(
             ui.painter(),
             glyph,
-            EditorIcon::Heatmap,
+            AppIcon::Heatmap,
             if settings.show_deviation {
                 ui_theme::ACCENT
             } else {
                 ui_theme::TEXT_MUTED
             },
-            settings.show_deviation,
         );
         let mut shown = settings.show_deviation;
         if ui
