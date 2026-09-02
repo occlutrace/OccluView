@@ -33,27 +33,22 @@ socket or named pipe and never leaves the machine.
 
 ## Local state
 
-The viewer writes to one directory: `%APPDATA%\OccluView\` on Windows (the
-roaming profile, so it follows a domain user between machines) or
-`$XDG_STATE_HOME/OccluView/` on Linux. It holds the recent-files list, crash
-reports, the skipped-update marker, and short-lived hand-off files. Scan paths
-are case identifiers in dental work, so note that the recent list contains them
-and roams; crash reports deliberately do not — the startup log records how many
-files and of which formats, never which. The README section *What OccluView
-stores on this machine* has the full inventory and how to clear it.
+The viewer writes one state directory: `%APPDATA%\OccluView\` on Windows or
+`$XDG_STATE_HOME/OccluView/` on Linux. It contains recent-file paths, crash
+reports, the skipped-update marker, and short-lived hand-off files. Crash
+reports deliberately omit scan paths.
 
 ## Signing keys
 
-Release signing, Authenticode and the embedded container key are documented in
-[docs/RUNBOOK-keys.md](docs/RUNBOOK-keys.md): where each secret lives, what
-happens if one is lost or leaks, and the two-release procedure for rotating the
-update key without cutting off installed copies.
+Release secrets are stored only in the release system, never in this
+repository. To rotate the update key, first ship a release that trusts the new
+public key, then sign subsequent releases with the new private key. Remove the
+old key only after installed versions can verify the replacement.
 
 ## Verifying a release
 
-Every asset carries a SHA-256 file and a minisign signature, releases carry a
-GitHub build-provenance attestation, and each platform ships a CycloneDX SBOM.
-The README's *Verify your download* section has the exact commands.
+Every release asset carries SHA-256 and minisign signatures; releases also
+carry GitHub build provenance and a CycloneDX SBOM.
 
 ## Supported versions
 

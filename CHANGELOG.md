@@ -3,6 +3,19 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.1.4 - Unreleased
+
+### Windows
+
+- Restored the Explorer Preview Pane's synchronous first-frame path: render a
+  bitmap, request paint, then report success. This avoids deferred work that
+  can leave Prevhost showing a permanent loading indicator.
+- Kept thumbnail and Preview Pane rendering on the current Rust and wgpu stack.
+- Made Windows installer upgrades forward-only, refreshed Explorer associations,
+  and preserved a working installation through rollback or failed major upgrades.
+- Added a private `Prevhost.exe` smoke check that confirms visible pixels in
+  the real surrogate while retaining low-integrity isolation.
+
 ## 1.1.0 - 2026-08-24
 
 ### Highlights

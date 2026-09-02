@@ -31,7 +31,7 @@ pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
 /// the status line can say which one it was. Both are on screen, in front of
 /// the operator who chose the file. The crash log ring is different: every
 /// field of every event lands in it, `write_crash_report` writes the ring to
-/// a file, and README and docs/USAGE.md both promise that file carries no
+/// a file, and README promises that file carries no
 /// scan paths -- which is what makes it safe to attach to a public issue. A
 /// scan path is the case, and the case is a patient.
 ///
