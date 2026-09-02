@@ -284,7 +284,10 @@ mod tests {
 
     #[test]
     fn caller_owned_deadline_expires_without_a_global_readback_budget() {
-        let deadline = RenderDeadline::at(Instant::now());
+        let expired_at = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("one second before now is representable");
+        let deadline = RenderDeadline::at(expired_at);
 
         assert!(matches!(
             deadline.remaining(),
