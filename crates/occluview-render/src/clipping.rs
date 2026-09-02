@@ -87,7 +87,7 @@ impl Default for ClipPlane {
 }
 
 /// Configuration for a cut-view render. Owned by the app; passed to
-/// [`crate::offscreen::Offscreen::render_with_cut`].
+/// [`crate::offscreen::Offscreen::render_with_cut_with_deadline`].
 #[derive(Clone, Debug)]
 pub struct CutViewSpec {
     /// The clipping plane. `enabled` is honored; set `0` for no cut.
