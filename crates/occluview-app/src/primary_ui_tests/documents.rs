@@ -1,10 +1,29 @@
 //! Guards over the documents the build ships with.
 //!
-//! The changelog against the version being prepared, and the usage guide
-//! against the keys the viewer actually binds. Both drift silently: nothing
-//! fails to compile when a guide describes a shortcut the build does not have.
+//! The changelog against the version being prepared, and the README against
+//! the keys the viewer actually binds. Both drift silently: nothing fails to
+//! compile when an operator instruction describes a shortcut the build lacks.
 
 use super::*;
+
+#[test]
+fn the_readme_is_the_only_repository_guide_for_operators() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().and_then(Path::parent);
+    assert!(
+        workspace_root.is_some(),
+        "app crate should live under the workspace crates directory"
+    );
+    let Some(workspace_root) = workspace_root else {
+        return;
+    };
+
+    assert!(workspace_root.join("README.md").is_file());
+    assert!(
+        !workspace_root.join("docs").exists(),
+        "operator instructions belong in README.md, not a repository docs tree"
+    );
+}
 
 #[test]
 fn the_changelog_only_names_versions_that_can_be_released() {
@@ -136,55 +155,48 @@ fn repository_tags() -> Option<Vec<String>> {
 }
 
 #[test]
-fn the_usage_guide_documents_the_shortcuts_the_build_implements() {
-    // The manifest homepage 404s, so the guide is the only place a "how do I
-    // measure thickness" question can be pointed at. A guide that invents
-    // bindings is worse than no guide, hence the cross-check against the keys
-    // the code reads.
-    let usage = include_str!("../../../../docs/USAGE.md");
+fn the_readme_documents_the_shortcuts_the_build_implements() {
+    // A documented shortcut that the build does not bind is worse than no
+    // shortcut, so cross-check the public operator surface against the code.
     let readme = include_str!("../../../../README.md");
-    assert!(
-        readme.contains("docs/USAGE.md"),
-        "the guide has to be reachable from the README"
-    );
 
     let editor = repo_source_file("src/app/app_mesh_editor.rs");
     let sculpt = repo_source_file("src/app/app_sculpt.rs");
     let dialogs = repo_source_file("src/app/app_dialogs.rs");
 
     assert!(
-        usage.contains("**Ctrl+A**") && editor.contains("egui::Key::A"),
+        readme.contains("**Ctrl+A**") && editor.contains("egui::Key::A"),
         "select-all is documented and implemented"
     );
     assert!(
-        usage.contains("**Delete** or **Backspace**")
+        readme.contains("**Delete** or **Backspace**")
             && editor.contains("egui::Key::Delete")
             && editor.contains("egui::Key::Backspace"),
         "the delete bindings are documented and implemented"
     );
     assert!(
-        usage.contains("**Ctrl+Z**") && editor.contains("egui::Key::Z"),
+        readme.contains("**Ctrl+Z**") && editor.contains("egui::Key::Z"),
         "undo is documented and implemented"
     );
     assert!(
-        usage.contains("**Ctrl+O**") && dialogs.contains("egui::Key::O"),
+        readme.contains("**Ctrl+O**") && dialogs.contains("egui::Key::O"),
         "open is documented and implemented"
     );
     assert!(
-        usage.contains("Add / Remove brush | **1**") && sculpt.contains("egui::Key::Num1"),
+        readme.contains("**1** chooses Add/Remove") && sculpt.contains("egui::Key::Num1"),
         "the brush selector is documented and implemented"
     );
     assert!(
-        usage.contains("occluview-cli close-holes"),
+        readme.contains("occluview-cli close-holes"),
         "the CLI subcommands should be listed where a user can find them"
     );
 }
 
-/// Every key the viewer consumes, written the way the guide writes it.
+/// Every key the viewer consumes, written the way the README writes it.
 ///
-/// The guide is checked in both directions against this table: a key the build
-/// reads and the guide never names leaves an operator guessing, and a key the
-/// guide names that nothing reads is an invention.
+/// The README is checked in both directions against this table: a key the
+/// build reads and README never names leaves an operator guessing, and a key
+/// it names that nothing reads is an invention.
 const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("A", &["**Ctrl+A**"]),
     ("Backspace", &["**Backspace**"]),
@@ -231,15 +243,15 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 }
 
 #[test]
-fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
-    // Guide and code drift both ways with nothing comparing them: `F` framing
+fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
+    // README and code drift both ways with nothing comparing them: `F` framing
     // a measurement, which the build does not do, and Shift+Middle-click,
     // which it does and the guide skipped.
     //
     // Meaning is out of reach here. `F` really is bound, and the guide really
     // did say it framed the cut when it flips which half is kept. Keys are
     // covered, so the prose is the only part a reviewer has to re-read.
-    let usage = include_str!("../../../../docs/USAGE.md");
+    let readme = include_str!("../../../../README.md");
     let bound = keys_the_viewer_binds();
 
     for name in &bound {
@@ -249,28 +261,28 @@ fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
             .and_then(|(_, spellings)| spellings.first().copied());
         let Some(spelling) = documented else {
             panic!(
-                "the viewer binds egui::Key::{name} and the guide has no entry for it;                  add it to docs/USAGE.md and to VIEWER_KEY_BINDINGS"
+                "the viewer binds egui::Key::{name} and README has no entry for it; add it to README.md and VIEWER_KEY_BINDINGS"
             );
         };
         assert!(
-            usage.contains(spelling),
-            "the viewer binds egui::Key::{name}, so docs/USAGE.md should say {spelling}"
+            readme.contains(spelling),
+            "the viewer binds egui::Key::{name}, so README.md should say {spelling}"
         );
     }
 
     for (name, spellings) in VIEWER_KEY_BINDINGS {
         assert!(
             bound.contains(*name),
-            "docs/USAGE.md documents {spellings:?} but nothing in the viewer \
+            "README.md documents {spellings:?} but nothing in the viewer \
              reads egui::Key::{name} any more"
         );
     }
 
-    // The other direction has to read the guide, not the table: checking only
+    // The other direction has to read the README, not the table: checking only
     // the spellings already listed here says nothing about a shortcut somebody
-    // invented in the prose. Every bold token in the guide that looks like a
+    // invented in the prose. Every bold token in the README that looks like a
     // key has to be one of them.
-    for token in usage.split("**").skip(1).step_by(2) {
+    for token in readme.split("**").skip(1).step_by(2) {
         if !looks_like_a_key(token) {
             continue;
         }
@@ -281,7 +293,7 @@ fn the_usage_guide_names_every_key_the_viewer_binds_and_no_others() {
             || NON_KEYBOARD_BINDINGS.contains(&token);
         assert!(
             known,
-            "docs/USAGE.md documents {bold}, which nothing in the viewer binds; \
+            "README.md documents {bold}, which nothing in the viewer binds; \
              add the binding or drop the line"
         );
     }
@@ -302,7 +314,7 @@ const NON_KEYBOARD_BINDINGS: &[&str] = &[
     "Shift+Middle-click",
 ];
 
-/// Whether a bold token in the guide is naming a key rather than emphasising a
+/// Whether a bold token in the README is naming a key rather than emphasising a
 /// word.
 ///
 /// Keys are written as a modifier chain of capitalised words or a single
@@ -319,14 +331,14 @@ fn looks_like_a_key(token: &str) -> bool {
 }
 
 #[test]
-fn the_guide_mentions_f_only_where_something_binds_f() {
+fn the_readme_mentions_f_only_where_something_binds_f() {
     // `F` is bound exactly once in the viewer -- flipping the planted cut --
     // and once in the Explorer preview window, where it frames the model. The
-    // guide claimed it in a third place, under Measuring, where no key F
+    // README must not claim it in a third place, under Measuring, where no key F
     // exists. Sections are the finest grain a text guard can work at, so pin
     // the sections.
-    let usage = include_str!("../../../../docs/USAGE.md");
-    let sections_naming_f: Vec<&str> = usage
+    let readme = include_str!("../../../../README.md");
+    let sections_naming_f: Vec<&str> = readme
         .split("\n## ")
         .skip(1)
         .filter(|section| section.contains("**F**"))

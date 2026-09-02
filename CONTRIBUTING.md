@@ -37,5 +37,5 @@ section matching the tag, and an untagged section publishes nothing.
 ## Releases
 
 Bump the workspace version, update `CHANGELOG.md`, and tag `vX.Y.Z`. The release
-workflow builds and verifies the distributable packages. See
-`docs/RUNBOOK-keys.md` for signing-key rotation.
+workflow builds and verifies the distributable packages. Signing-key rotation is
+described in `SECURITY.md`.

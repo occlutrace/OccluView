@@ -34,7 +34,7 @@ pub const MANIFEST_SIG_URL: &str =
 pub const UPDATE_PUBKEY: &str = "RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq";
 
 /// Every key an installed copy accepts. The list permits staged key rotation;
-/// see `docs/RUNBOOK-keys.md`.
+/// see `SECURITY.md`.
 pub const UPDATE_PUBKEYS: &[&str] = &[UPDATE_PUBKEY];
 
 /// Manifest platform key for the running build.
