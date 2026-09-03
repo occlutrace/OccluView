@@ -1,20 +1,17 @@
-<p align="center">
-  <img src="assets/occluview-logo.png" width="84" height="84" alt="OccluView logo">
-</p>
-
-<h1 align="center">OccluView</h1>
-
-<p align="center"><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
-
-<p align="center">
-  <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.1.0">Latest published release: v1.1.0</a>
-  &nbsp;·&nbsp;
-  <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml">Build status</a>
-</p>
-
-<p align="center">
-  <img src="assets/demo-overview.png" width="900" alt="OccluView showing two dental scan layers in the 3D viewport">
-</p>
+<table align="center">
+  <tr>
+    <td valign="middle"><img src="assets/occluview-logo.png" width="64" height="64" alt="OccluView logo"></td>
+    <td valign="middle">
+      <h1>OccluView</h1>
+      <p><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
+      <p>
+        <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.1.0">Latest published release: v1.1.0</a>
+        &nbsp;·&nbsp;
+        <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml">Build status</a>
+      </p>
+    </td>
+  </tr>
+</table>
 
 OccluView is a native desktop dental CAD workspace for inspecting, aligning,
 editing, repairing, and exporting scan meshes. It is designed for the work
@@ -31,9 +28,22 @@ It is not a published GitHub release; the latest published tag remains
   <img src="assets/occluview-workflow.gif" width="820" alt="Animated OccluView workflow: overview, alignment heatmap, mesh editing, sculpting, and repair report">
 </p>
 
+<p align="center">
+  <img src="assets/demo-overview.png" width="900" alt="OccluView showing two dental scan layers in the 3D viewport">
+</p>
+
 The animation and screenshots below were captured headlessly from the release
 binary using two supplied, de-identified STL scans. The visible identifiers are
 numeric only; no patient name is included.
+
+## Quick Look
+
+OccluView adds a live 3D preview to Windows Explorer. Select a scan and inspect
+it immediately without opening the full viewer.
+
+<p align="center">
+  <img src="assets/explorer-preview.gif" width="640" alt="OccluView Quick Look showing a live 3D Explorer Preview Pane">
+</p>
 
 ## Alignment and Heatmap
 
