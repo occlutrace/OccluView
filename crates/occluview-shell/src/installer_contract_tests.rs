@@ -384,6 +384,18 @@ fn private_diagnostic_msi_can_use_a_monotonic_package_version_without_relabeling
 }
 
 #[test]
+fn private_diagnostic_version_is_read_from_environment_not_powershell_source() {
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+
+    assert!(workflow.contains("OCCLUVIEW_WINDOWS_MSI_VERSION: ${{ inputs.windows_msi_version }}"));
+    assert!(workflow
+        .contains("$requestedMsiVersion = ([string]$env:OCCLUVIEW_WINDOWS_MSI_VERSION).Trim()"));
+    assert!(
+        !workflow.contains(r#"$requestedMsiVersion = "${{ inputs.windows_msi_version }}".Trim()"#)
+    );
+}
+
+#[test]
 fn diagnostic_msi_is_opt_in_contains_symbols_and_keeps_the_standard_package_path_unchanged() {
     // A diagnostic installer is a non-release investigation tool, not a
     // second customer release channel. It must carry symbols and the opt-in

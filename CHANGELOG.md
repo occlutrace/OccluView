@@ -12,8 +12,8 @@ remain in the Git history.
 - Replaced the circular viewport axis ring with a compact rotating axis triad in
   the bottom-right corner; endpoint clicks snap the camera without stealing
   scene input.
-- Prepared clearer operator-facing package names and release documentation for
-  the 1.1.1 validation build. The release remains unpublished.
+- Clarified the Windows package names and operator-facing release documentation
+  for 1.1.1.
 - The Layers panel now sizes itself to the scene, and the window grows with
   the panel: every layer stays visible without scrolling. Manually shrinking
   the window brings the scrollbar back.
