@@ -468,7 +468,7 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(build_deb.contains("occluview-formats/private-hps-key"));
     assert!(build_deb.contains("Private HPS key embedding enabled for this build."));
     assert!(
-        build_deb.contains("--compression=xz"),
+        build_deb.contains("-Zxz"),
         "the DEB must use the portable xz archive format instead of a newer runner default"
     );
 
