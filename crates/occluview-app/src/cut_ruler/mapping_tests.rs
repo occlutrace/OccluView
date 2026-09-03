@@ -64,7 +64,7 @@ fn section_panel_scales_with_a_compact_viewport() {
 #[test]
 fn section_panel_never_collides_with_chrome_across_window_sizes() {
     // Adversarial sweep (144 violations in the pre-fix layout): wherever
-    // the panel decides to show, it must coexist with the fixed orientation cube
+    // the panel decides to show, it must coexist with the lifted bottom-right triad
     // and the bottom-left status pill — at EVERY window
     // size. Where it cannot, it hides instead of painting over chrome.
     let mut shown = 0usize;
@@ -83,14 +83,14 @@ fn section_panel_never_collides_with_chrome_across_window_sizes() {
                 !panel.intersects(pill),
                 "{w}x{h}: panel covers the status pill"
             );
-            let gizmo = crate::viewer::axis_gizmo::axis_gizmo_footprint(vp);
+            let gizmo = crate::viewer::axis_gizmo::axis_gizmo_footprint_for(vp, Some(panel));
             assert!(
                 vp.contains_rect(gizmo),
-                "{w}x{h}: orientation cube leaves the viewport"
+                "{w}x{h}: axis triad leaves the viewport"
             );
             assert!(
                 !gizmo.intersects(panel),
-                "{w}x{h}: orientation cube overlaps the panel"
+                "{w}x{h}: axis triad overlaps the panel"
             );
             let image = section_image_rect(panel);
             assert!(

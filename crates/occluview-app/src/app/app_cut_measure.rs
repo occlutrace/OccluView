@@ -137,8 +137,10 @@ impl OccluViewApp {
             && pointer.is_some_and(|point| {
                 crate::cut_ruler::section_panel_contains(viewport_rect, point)
             });
+        let gizmo_avoid = self.active_section_panel_rect(viewport_rect);
         let over_gizmo = pointer.is_some_and(|point| {
-            crate::viewer::axis_gizmo::axis_gizmo_footprint(viewport_rect).contains(point)
+            crate::viewer::axis_gizmo::axis_gizmo_footprint_for(viewport_rect, gizmo_avoid)
+                .contains(point)
         });
         let over_egui = pointer.is_some_and(|point| {
             layers_rect.contains(point)

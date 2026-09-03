@@ -117,8 +117,9 @@ Use the **Help** button in the toolbar for the complete keyboard and mouse refer
   replaces the scene.
 - Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
   **E** Mesh Editing.
-- Orbit with right-drag; pan with middle-drag or LMB+RMB drag; zoom with the
-  wheel; recenter on a surface with middle-click or double-click.
+- Orbit with right-drag; pan with middle-drag or LMB+RMB drag; zoom toward the
+  pointer with the wheel; recenter on a surface with middle-click or
+  double-click.
 - In Mesh Editing, **Ctrl+A** selects all; **Delete** or **Backspace** removes;
   **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** undo and redo; **Enter** closes an
   outline; **Esc** cancels it.
@@ -129,8 +130,8 @@ Use the **Help** button in the toolbar for the complete keyboard and mouse refer
 - In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag** rotates a scan in Align Manual mode; stationary **RMB click** undoes the last alignment point.
 - **Ctrl+Middle-click** hides a layer; **Ctrl+Shift+Middle-click** restores the
   last hidden layer; **Shift+Middle-click** toggles translucency.
-- The upper-right orientation cube snaps the camera to a labeled axis when a
-  face is clicked.
+- The bottom-right axis triad follows the camera and snaps to a labeled axis
+  when an endpoint is clicked.
 
 ## The cut view
 

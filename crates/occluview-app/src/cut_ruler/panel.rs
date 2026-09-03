@@ -95,19 +95,22 @@ struct RulerPlacement<'a> {
 }
 
 /// The docked Section-panel rectangle (bottom-RIGHT), or `None` if the viewport
-/// is too small to host it without crowding the chrome or the orientation cube.
+/// is too small to host it without crowding the chrome or the bottom-right
+/// orientation gizmo.
 ///
 /// The panel ADAPTS to the window instead of painting over the chrome: its
 /// image side shrinks from [`MAX_IMAGE_SIDE_PX`] until it would drop
-/// below [`MIN_IMAGE_SIDE_PX`], budgeting (vertically) the fixed cube footprint
-/// and (horizontally) the bottom-left status pill.
+/// below [`MIN_IMAGE_SIDE_PX`], budgeting (vertically) the room needed to lift
+/// the bottom-right gizmo above it and (horizontally) the bottom-left status
+/// pill.
 pub(crate) fn section_panel_rect(viewport_rect: egui::Rect) -> Option<egui::Rect> {
     let chrome_h = PANEL_HEADER_PX + PANEL_FOOTER_PX + PANEL_PAD_PX * 2.0;
-    // Vertical budget: keep the panel below the fixed upper-right cube with a
-    // breathing gap. The footprint is the same rectangle the pointer adapter
-    // excludes, so this cannot drift from what is painted.
-    let cube_bottom = crate::viewer::axis_gizmo::axis_gizmo_footprint(viewport_rect).bottom();
-    let top_reserve = (cube_bottom - viewport_rect.top() + CHROME_GAP_PX).max(CHROME_GAP_PX);
+    // Vertical budget: keep enough room above the panel for the bottom-right
+    // gizmo to lift without leaving the viewport. The same footprint is passed
+    // to the painter and pointer adapter, so this cannot drift from what is
+    // painted.
+    let top_reserve = viewport_rect.top()
+        + crate::viewer::axis_gizmo::AXIS_GIZMO_LIFT_RESERVE_PX.max(CHROME_GAP_PX);
     let side_by_height = viewport_rect.height() - PANEL_BOTTOM_GAP_PX - chrome_h - top_reserve;
     // Horizontal budget: never cover the bottom-left status pill (transient
     // messages must stay readable while cutting).
