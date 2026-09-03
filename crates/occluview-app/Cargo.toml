@@ -1,7 +1,7 @@
 # occluview-app - the GUI binary (egui + wgpu).
 [package]
 name = "occluview-app"
-description = "OccluView desktop viewer - egui + wgpu."
+description = "Advanced dental CAD workspace for Mesh Repair and Mesh Editing."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

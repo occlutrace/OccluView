@@ -4,36 +4,128 @@
 
 <h1 align="center">OccluView</h1>
 
-<p align="center">Native 3D viewing and mesh editing for digital dental scans.</p>
+<p align="center"><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/occlutrace/OccluView/releases/latest"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.1.0">Latest published release: v1.1.0</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml">Build status</a>
 </p>
 
 <p align="center">
-  <img src="assets/screenshot1.png" width="820" alt="OccluView open with a dental scan">
+  <img src="assets/demo-overview.png" width="900" alt="OccluView showing two dental scan layers in the 3D viewport">
 </p>
+
+OccluView is a native desktop dental CAD workspace for inspecting, aligning,
+editing, repairing, and exporting scan meshes. It is designed for the work
+that starts after a scan opens: compare two surfaces, find the deviation,
+repair unsafe topology, edit a selected region, and keep the result traceable.
+
+The current working tree carries version `1.1.1` as a local validation build.
+It is not a published GitHub release; the latest published tag remains
+`v1.1.0`.
+
+## The workflow at a glance
+
+<p align="center">
+  <img src="assets/occluview-workflow.gif" width="820" alt="Animated OccluView workflow: overview, alignment heatmap, mesh editing, sculpting, and repair report">
+</p>
+
+The animation and screenshots below were captured headlessly from the release
+binary using two supplied, de-identified STL scans. The visible identifiers are
+numeric only; no patient name is included.
+
+## Alignment and Heatmap
+
+<p align="center">
+  <img src="assets/alignment-heatmap.png" width="900" alt="OccluView Align Scans panel with a deviation heatmap over two dental scans">
+</p>
+
+Open both scans as layers, choose **A** (Align), and use the automatic workflow:
+
+1. Confirm the moving and fixed scan in the panel.
+2. Click `Best fit matching` to seat corresponding surfaces.
+3. Read the colour map with the explicit millimetre legend, range presets, and
+   measured statistics.
+
+The Heatmap is not a decorative overlay: the panel reports how much surface was
+measured, what fell outside the opposing scan, the selected tolerance/range,
+and when the current range is saturating. Manual alignment remains available
+when the automatic pair is not appropriate.
+
+## Mesh Editing
+
+<p align="center">
+  <img src="assets/mesh-editing.png" width="900" alt="OccluView Mesh Editing panel with selection and mesh operations">
+</p>
+
+Mesh Editing keeps the common dental CAD operations in one bounded palette:
+
+- lasso, object, surface, and through-mesh selection;
+- select all, clear, and invert;
+- delete, crop, cut, separate, and close safe holes;
+- undo, redo, cancel, and an explicit Done commit.
+
+<p align="center">
+  <img src="assets/sculpting.png" width="900" alt="OccluView Sculpt panel with compact brush controls">
+</p>
+
+Sculpting uses the same editor session. Add/Remove and Smooth are separate
+brush modes, while the size and force controls stay compact and readable in the
+panel instead of consuming the whole viewport.
+
+## Mesh Repair
+
+<p align="center">
+  <img src="assets/mesh-repair.png" width="900" alt="OccluView Mesh Repair report with concrete repair counts">
+</p>
+
+Mesh Repair runs on the selected layer and opens a bounded report card. It
+removes duplicate and degenerate geometry, repairs unsafe topology, closes only
+safe pinholes, and reports the non-zero changes together with remaining open
+rims. A clean mesh receives an explicit “nothing to repair” result rather than
+silence. `Copy details` preserves the full per-pass report for a case record.
+
+## Product information surface
+
+<p align="center">
+  <img src="assets/about-dialog.png" width="700" alt="Stable compact OccluView About dialog">
+</p>
+
+About, third-party notices, and repair results use the same centered modal
+surface. The backdrop is kept separate from the measured card, so opening About
+does not trigger a resize/repaint loop or leave a tall empty window.
+
+## Formats and packages
 
 | Platform | Package | Includes |
 | --- | --- | --- |
-| Windows | `OccluView-Windows-Setup.msi` | Viewer, associations, thumbnails, and Explorer Preview Pane. |
+| Windows | `OccluView-Windows-Setup.msi` | Viewer, file associations, thumbnails, and Explorer Preview Pane. |
 | Windows | `OccluView-Windows-Portable.zip` | Viewer only; no Explorer integration. |
-| Debian/Ubuntu | `OccluView-Linux.deb` | Viewer, launcher, MIME setup, and thumbnails. |
+| Debian/Ubuntu | `occluview_1.1.1_amd64.deb` | Viewer, launcher, MIME setup, thumbnails, and local documentation. |
 
-OccluView opens STL, PLY, OBJ, GLB, and HPS; it exports STL, PLY, and OBJ.
+Supported input formats are STL, PLY, OBJ, GLB, and HPS dental containers.
+Export is available for STL, PLY, and OBJ.
 
-- `.hps` and `.dcm` are accepted for dental HPS containers; medical DICOM is not supported (`DICM` is refused), and `.dcm` is never the default file association.
+- `.hps` and `.dcm` are accepted as HPS dental containers; medical DICOM is not supported (a `DICM` signature is refused).
 
 ## Controls
 
-- Open a scan with **Ctrl+O**. Opening another file adds a layer; toolbar Open replaces the scene.
-- Toolbar tools: **C** cut view, **M** ruler, **T** thickness, **A** align scans, **E** edit mesh.
-- Orbit with right-drag; pan with middle-drag; zoom with the wheel; recenter on a surface with middle-click or double-click.
-- In Mesh Editor: **Ctrl+A** selects; **Delete** or **Backspace** removes; **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** undo and redo; **Enter** closes an outline; **Esc** cancels it.
-- In Sculpt: **1** chooses Add/Remove, **2** chooses Smooth, and holding **Shift** inverts or strengthens the active brush.
-- **Ctrl+Middle-click** hides a layer; **Ctrl+Shift+Middle-click** restores the last hidden layer; **Shift+Middle-click** toggles translucency.
+- Open a scan with **Ctrl+O**. Opening another file adds a layer; toolbar Open
+  replaces the scene.
+- Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
+  **E** Mesh Editing.
+- Orbit with right-drag; pan with middle-drag; zoom with the wheel; recenter on
+  a surface with middle-click or double-click.
+- In Mesh Editing, **Ctrl+A** selects all; **Delete** or **Backspace** removes;
+  **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** undo and redo; **Enter** closes an
+  outline; **Esc** cancels it.
+- Mesh Repair is available from a layer's context menu and reports exactly what
+  changed.
+- In Sculpt, **1** chooses Add/Remove, **2** chooses Smooth, and holding
+  **Shift** inverts or strengthens the active brush.
+- **Ctrl+Middle-click** hides a layer; **Ctrl+Shift+Middle-click** restores the
+  last hidden layer; **Shift+Middle-click** toggles translucency.
 
 ## The cut view
 
@@ -58,14 +150,18 @@ occluview-cli info <file> [file...]
 
 `thumbnail` uses the same rendering path as Explorer and Linux file managers.
 
-## Build
+## Build and validate locally
 
 ```bash
 cargo fmt --all --check
 cargo test --workspace --all-targets --locked
+./install/linux/build-deb.sh
+./install/linux/check-deb.sh target/deb/occluview_1.1.1_amd64.deb
 ```
 
-Security reporting and update-signing details are in [SECURITY.md](SECURITY.md).
-Contributions are covered by [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under
-[Apache-2.0](LICENSE); distribution notices are in [NOTICE](NOTICE) and
-[third-party notices](THIRD-PARTY-NOTICES.md).
+The DEB command creates a local artifact only. It does not create a tag, GitHub
+release, or publication. Security reporting and update-signing details are in
+[SECURITY.md](SECURITY.md). Contributions are covered by
+[CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [Apache-2.0](LICENSE);
+distribution notices are in [NOTICE](NOTICE) and
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

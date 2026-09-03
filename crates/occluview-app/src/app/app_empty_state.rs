@@ -4,25 +4,16 @@
 use super::{egui, OccluViewApp};
 
 impl OccluViewApp {
-    /// While files hover anywhere over the window, frame the viewport as the
-    /// drop target and switch to the copy cursor, so a drag is answered with
-    /// "this will open" before the operator lets go.
-    pub(super) fn show_drop_hover_frame_if_hovering(
-        ui: &mut egui::Ui,
-        viewport_rect: egui::Rect,
-        ctx: &egui::Context,
-    ) {
+    /// While files hover anywhere over the window, switch to the copy cursor so
+    /// a drag is answered with "this will open" before the operator lets go.
+    /// The viewport itself stays visually clean; the old full-surface stroke
+    /// made a permanent-looking strip around the 3D canvas.
+    pub(super) fn set_drop_hover_cursor_if_hovering(ctx: &egui::Context) {
         let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
         if !hovering {
             return;
         }
         ctx.set_cursor_icon(egui::CursorIcon::Copy);
-        ui.painter().rect_stroke(
-            viewport_rect.shrink(4.0),
-            10.0,
-            egui::Stroke::new(2.0, crate::ui_theme::accent()),
-            egui::StrokeKind::Outside,
-        );
     }
 
     /// The viewport's empty state: a centered call to action over the bare
@@ -74,5 +65,46 @@ impl OccluViewApp {
                 );
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_hover_keeps_drop_cursor_without_painting_a_viewport_frame() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                hovered_files: vec![egui::HoveredFile::default()],
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                OccluViewApp::set_drop_hover_cursor_if_hovering(&ctx);
+            },
+        );
+
+        let cursor_icon = output.platform_output.cursor_icon;
+        let paints_viewport_frame = output
+            .shapes
+            .iter()
+            .any(|clipped| matches!(clipped.shape, egui::epaint::Shape::Rect(_)));
+        output.drop_without_applying_deltas();
+
+        assert_eq!(
+            cursor_icon,
+            egui::CursorIcon::Copy,
+            "file hover must still advertise an open/drop action"
+        );
+        assert!(
+            !paints_viewport_frame,
+            "file hover must not paint a border around the whole viewport"
+        );
     }
 }

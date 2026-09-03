@@ -374,7 +374,7 @@ impl OccluViewApp {
         self.mesh_selection_drag = None;
         self.selection_overlay_dirty = true;
         self.needs_render = true;
-        self.status_message = Some("Edit mesh session applied".to_string());
+        self.status_message = Some("Mesh Editing session applied".to_string());
         ctx.request_repaint();
     }
 
@@ -392,7 +392,7 @@ impl OccluViewApp {
             return;
         };
         self.commit_scene_draft(current_scene.as_deref(), baseline, ctx);
-        self.status_message = Some("Edit mesh session reverted".to_string());
+        self.status_message = Some("Mesh Editing session reverted".to_string());
     }
 
     /// Undo (`redo == false`) or redo (`redo == true`) the last mesh edit and

@@ -63,6 +63,7 @@ mod measure_overlay;
 mod measure_tool;
 mod mesh_editor_icons;
 mod mesh_editor_overlay;
+mod modal_surface;
 mod probe_section;
 mod recent_files;
 mod repair_report;

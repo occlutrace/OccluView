@@ -368,7 +368,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\Software\OccluTrace\OccluView\Capabilities]
 "ApplicationName"="OccluView 3D Viewer"
-"ApplicationDescription"="Fast 3D mesh viewer for dental scans and open mesh files."
+"ApplicationDescription"="Advanced Mesh Repair and Mesh Editing for dental CAD scans."
 "ApplicationIcon"="<APP_EXE_PATH>,0"
 
 [HKEY_LOCAL_MACHINE\Software\OccluTrace\OccluView\Capabilities\FileAssociations]

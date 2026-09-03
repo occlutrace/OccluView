@@ -13,26 +13,21 @@ pub(crate) fn load_app_logo_color_image() -> Option<egui::ColorImage> {
     ))
 }
 
-/// Vertical band (px, measured up from the viewport's bottom edge) reserved for
-/// the bottom-left scale bar and its mm label. The scale bar line sits 16 px up
-/// and its label another 22 px above that (`app_scale_bar::paint_scale_bar`), so
-/// the label top — the highest scale-bar pixel — is ~38 px up; 40 px clears it.
-const SCALE_BAR_RESERVE_PX: f32 = 40.0;
-/// Breathing gap between the status pill and the scale bar band above it.
-const STATUS_SCALE_BAR_GAP_PX: f32 = 8.0;
-/// Height of the bottom-left status pill.
-const STATUS_HEIGHT_PX: f32 = 34.0;
+/// Height of the unobtrusive bottom-left status row.
+const STATUS_HEIGHT_PX: f32 = 22.0;
+/// Keep transient status text above the scale-bar label without drawing a
+/// second surface over the render.
+const STATUS_BOTTOM_OFFSET_PX: f32 = 44.0;
+const STATUS_MAX_WIDTH_PX: f32 = 360.0;
 
-/// Bottom-left status pill rectangle, lifted to sit *above* the scale bar band
-/// so the two no longer overlap. The scale bar keeps the very bottom-left corner
-/// (line + ticks + mm label); the transient status message stacks just above it.
-/// The axis gizmo and (moved) Section panel own the bottom-right corner, so this
-/// column is the status pill's alone.
+/// Bottom-left status row. It is deliberately a transparent, compact text
+/// target rather than a framed pill: the scale bar keeps the bottom edge and
+/// the render remains visible behind transient messages.
 pub(crate) fn status_overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
-    let width = viewport_rect.width().clamp(240.0, 430.0);
-    let pill_bottom = viewport_rect.bottom() - SCALE_BAR_RESERVE_PX - STATUS_SCALE_BAR_GAP_PX;
+    let width = (viewport_rect.width() - 28.0).clamp(0.0, STATUS_MAX_WIDTH_PX);
+    let row_bottom = viewport_rect.bottom() - STATUS_BOTTOM_OFFSET_PX;
     egui::Rect::from_min_size(
-        egui::pos2(viewport_rect.left() + 14.0, pill_bottom - STATUS_HEIGHT_PX),
+        egui::pos2(viewport_rect.left() + 14.0, row_bottom - STATUS_HEIGHT_PX),
         egui::vec2(width, STATUS_HEIGHT_PX),
     )
 }
@@ -160,16 +155,16 @@ mod tests {
     }
 
     #[test]
-    fn status_overlay_uses_bottom_left_without_resizing_viewport() {
+    fn status_overlay_is_compact_and_clear_of_the_scale_bar() {
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
 
         let rect = status_overlay_rect(viewport);
 
         assert_near(rect.left(), 14.0);
-        // Lifted above the scale bar band: bottom - 40 (reserve) - 8 (gap) = 752.
-        assert_near(rect.bottom(), 752.0);
-        assert_near(rect.height(), STATUS_HEIGHT_PX);
-        assert!(rect.width() <= 620.0);
+        // The transient status is a quiet text row, not a 34 px panel.
+        assert_near(rect.bottom(), 756.0);
+        assert!(rect.height() <= 22.0);
+        assert!(rect.width() <= 360.0);
         assert!(viewport.contains_rect(rect));
     }
 

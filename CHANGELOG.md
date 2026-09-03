@@ -3,7 +3,7 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
-## 1.1.4 - Unreleased
+## 1.1.1 - Unreleased
 
 ### Viewer
 
@@ -20,6 +20,13 @@ remain in the Git history.
   theme, and remembered sculpt brush settings.
 - Added an empty-viewport welcome screen with an Open call to action, drag-over
   feedback for dropped files, and a loading spinner in the status pill.
+- Removed the unwanted viewport edge strip and replaced the framed status pill
+  with a compact transparent status row.
+- Refined the About actions, Settings sliders, Sculpt controls, and the bounded
+  Mesh Repair report modal for a cleaner dental CAD workspace.
+- Stabilized About, third-party notices, and Repair Mesh sizing by separating
+  the modal backdrop from the measured card; added a headless Alignment/
+  Heatmap, Mesh Editing, Sculpt, and Repair walkthrough to the README.
 - Toolbar tools gained keyboard shortcuts (C, M, T, A, E) shown in their
   tooltips; icons now tint correctly with transparency.
 - A broken settings file is preserved as `settings.json.bak` instead of being
@@ -84,7 +91,7 @@ remain in the Git history.
 - Synchronized Cut View lines, shaded slices, measurements, pan, and zoom with
   the main camera.
 - Improved mixed-folder thumbnail scheduling and fallback isolation.
-- Refined Mesh Editor controls and the About dialog.
+- Refined Mesh Editing controls and the About dialog.
 
 ## 1.0.4 - 2026-07-19
 
@@ -115,7 +122,7 @@ remain in the Git history.
 
 ## 1.0.0 - 2026-07-15
 
-- First stable release of the viewer, mesh editor, HPS pipeline, Windows
+- First stable release of the viewer, Mesh Editing, HPS pipeline, Windows
   Explorer integration, Linux packages, CLI, and signed update channel.
 - Shared thumbnail loading and rendering across Windows, Linux, and the CLI.
 - Added minisign verification for Windows and Linux release artifacts.

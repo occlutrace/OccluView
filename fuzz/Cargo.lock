@@ -416,14 +416,14 @@ dependencies = [
 
 [[package]]
 name = "occlu-geometry-math"
-version = "1.1.4"
+version = "1.1.1"
 dependencies = [
  "glam",
 ]
 
 [[package]]
 name = "occlu-mesh-edit"
-version = "1.1.4"
+version = "1.1.1"
 dependencies = [
  "earcutr",
  "glam",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-core"
-version = "1.1.4"
+version = "1.1.1"
 dependencies = [
  "bytemuck",
  "glam",
@@ -446,7 +446,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-formats"
-version = "1.1.4"
+version = "1.1.1"
 dependencies = [
  "glam",
  "image",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-hps"
-version = "1.1.4"
+version = "1.1.1"
 dependencies = [
  "adler2",
  "blowfish",
