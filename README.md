@@ -102,7 +102,7 @@ does not trigger a resize/repaint loop or leave a tall empty window.
 | --- | --- | --- |
 | Windows | `OccluView-Windows-Setup.msi` | Viewer, file associations, thumbnails, and Explorer Preview Pane. |
 | Windows | `OccluView-Windows-Portable.zip` | Viewer only; no Explorer integration. |
-| Debian/Ubuntu | `occluview_1.1.1_amd64.deb` | Viewer, launcher, MIME setup, thumbnails, and local documentation. |
+| Debian/Ubuntu | `OccluView-Linux.deb` | Viewer, launcher, MIME setup, thumbnails, and local documentation. |
 
 Supported input formats are STL, PLY, OBJ, GLB, and HPS dental containers.
 Export is available for STL, PLY, and OBJ.
@@ -111,33 +111,36 @@ Export is available for STL, PLY, and OBJ.
 
 ## Controls
 
+Use the **Help** button in the toolbar for the complete keyboard and mouse reference.
+
 - Open a scan with **Ctrl+O**. Opening another file adds a layer; toolbar Open
   replaces the scene.
 - Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
   **E** Mesh Editing.
-- Orbit with right-drag; pan with middle-drag; zoom with the wheel; recenter on
-  a surface with middle-click or double-click.
+- Orbit with right-drag; pan with middle-drag or LMB+RMB drag; zoom with the
+  wheel; recenter on a surface with middle-click or double-click.
 - In Mesh Editing, **Ctrl+A** selects all; **Delete** or **Backspace** removes;
   **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** undo and redo; **Enter** closes an
   outline; **Esc** cancels it.
 - Mesh Repair is available from a layer's context menu and reports exactly what
   changed.
-- In Sculpt, **1** chooses Add/Remove, **2** chooses Smooth, and holding
-  **Shift** inverts or strengthens the active brush.
+- In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** changes Sculpt brush intensity.
+  Holding **Shift** during a drag removes or strengthens the active brush mode.
+- In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag** rotates a scan in Align Manual mode; stationary **RMB click** undoes the last alignment point.
 - **Ctrl+Middle-click** hides a layer; **Ctrl+Shift+Middle-click** restores the
   last hidden layer; **Shift+Middle-click** toggles translucency.
+- The upper-right orientation cube snaps the camera to a labeled axis when a
+  face is clicked.
 
 ## The cut view
 
 Plant the disc on a surface, then drag it to position the section. Plain wheel
-zooms the panel; **Ctrl+wheel** changes disc size. **F** flips the kept half
-while the disc is planted. **Esc** unplants the disc or closes Cut View.
+zooms the panel; **Ctrl+wheel** changes disc size. **F** flips the kept half while the disc is planted. **Esc** unplants the disc or closes Cut View.
 
 ## Windows Explorer
 
 The MSI registers thumbnails and an interactive Preview Pane. In that pane,
-right-drag orbits, wheel zooms, **F** frames the model, and **W** toggles
-wireframe.
+right-drag orbits, wheel zooms, **F** frames the model, and **W** toggles wireframe.
 
 ## Command line
 

@@ -345,8 +345,12 @@ fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
 /// interaction guard, and `Shift` on its own is a modifier held during a drag,
 /// not a shortcut.
 const NON_KEYBOARD_BINDINGS: &[&str] = &[
+    "Help",
     "W",
     "Shift",
+    "Shift+wheel",
+    "Ctrl/Command+drag",
+    "RMB click",
     "Ctrl+wheel",
     "Ctrl+Middle-click",
     "Ctrl+Shift+Middle-click",
@@ -399,4 +403,25 @@ fn the_readme_mentions_f_only_where_something_binds_f() {
         preview.contains("const VK_F: u32 = 0x46;"),
         "the Explorer preview is the other place the guide may name F"
     );
+}
+
+#[test]
+fn the_readme_points_operators_to_the_complete_controls_reference() {
+    let readme = include_str!("../../../../README.md");
+
+    for phrase in [
+        "**Help**",
+        "complete keyboard and mouse reference",
+        "**Shift+wheel** changes Sculpt brush size",
+        "**Ctrl+wheel** changes Sculpt brush intensity",
+        "**Shift** erases an Align exclusion region",
+        "**Ctrl/Command+drag** rotates a scan in Align",
+        "**F** flips the kept half",
+        "**W** toggles wireframe",
+    ] {
+        assert!(
+            readme.contains(phrase),
+            "README should explicitly document {phrase}"
+        );
+    }
 }
