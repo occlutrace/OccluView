@@ -15,6 +15,7 @@ use eframe::egui;
 use occluview_core::RepairReport;
 
 use crate::icons::AppIcon;
+use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
 
 /// Headline shown when Repair ran but found nothing to fix.
@@ -257,6 +258,42 @@ pub(crate) struct RepairReportDialog {
     card: Option<Card>,
 }
 
+const REPAIR_MODAL_ID: &str = "repair_report_card";
+const REPAIR_MODAL_DEFAULT_SIZE: egui::Vec2 = egui::vec2(440.0, 320.0);
+const REPAIR_MODAL_CONTENT_WIDTH: f32 = 400.0;
+const REPAIR_MODAL_BODY_ROW_HEIGHT: f32 = 22.0;
+const REPAIR_MODAL_BODY_MIN_HEIGHT: f32 = 42.0;
+const REPAIR_MODAL_BODY_MAX_HEIGHT: f32 = 230.0;
+
+/// Use the same bounded, centered modal surface as About and the license
+/// viewer. The old free-positioned Window could grow from its report rows and
+/// drift toward the viewport edge, which made the repair result look broken.
+fn show_repair_modal<T>(
+    ctx: &egui::Context,
+    add_contents: impl FnOnce(&mut egui::Ui) -> T,
+) -> egui::ModalResponse<T> {
+    show_information_modal(
+        ctx,
+        egui::Id::new(REPAIR_MODAL_ID),
+        REPAIR_MODAL_DEFAULT_SIZE,
+        add_contents,
+    )
+}
+
+fn repair_body_height(
+    changed: bool,
+    report_line_count: usize,
+    has_open_rim: bool,
+    has_skipped_rim: bool,
+) -> f32 {
+    let main_rows = if changed { report_line_count } else { 1 };
+    let info_rows = usize::from(has_open_rim) + usize::from(has_skipped_rim);
+    let info_gap = if info_rows > 0 { 6.0 } else { 0.0 };
+    let row_height =
+        (0..main_rows + info_rows).fold(0.0, |height, _| height + REPAIR_MODAL_BODY_ROW_HEIGHT);
+    (row_height + info_gap).clamp(REPAIR_MODAL_BODY_MIN_HEIGHT, REPAIR_MODAL_BODY_MAX_HEIGHT)
+}
+
 impl RepairReportDialog {
     /// Show the card for `report` on `layer_label`. Works for both a real
     /// repair and a clean no-op; the body wording is derived from
@@ -291,6 +328,7 @@ impl RepairReportDialog {
     }
 
     /// Draw the card if open. Closing (X or the Close button) clears it.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn ui(&mut self, ctx: &egui::Context) {
         let Some(card) = self.card.as_ref() else {
             return;
@@ -299,7 +337,7 @@ impl RepairReportDialog {
         // Pull everything the window body needs into owned locals so the
         // borrow of `self.card` ends before we may clear it below.
         let changed = card.report.changed_content();
-        let title = format!("Repair · {}", card.layer_label);
+        let layer_label = card.layer_label.clone();
         let lines = if changed {
             report_lines(&card.report)
         } else {
@@ -308,65 +346,105 @@ impl RepairReportDialog {
         let open_rims = open_rims_line(&card.report);
         let skipped = skipped_rims_line(&card.report);
         let details = copy_details(&card.layer_label, &card.report);
+        let body_height =
+            repair_body_height(changed, lines.len(), open_rims.is_some(), skipped.is_some());
 
-        let mut open = true;
         let mut close_clicked = false;
         let mut copy_clicked = false;
 
-        let vp = ctx.content_rect();
-        egui::Window::new(title)
-            .id(egui::Id::new("repair_report_card"))
-            .open(&mut open)
-            .default_pos(vp.center() - egui::vec2(150.0, 80.0))
-            .constrain_to(vp)
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                ui.set_min_width(236.0);
-                ui.set_max_width(320.0);
+        let modal_response = show_repair_modal(ctx, |ui| {
+            ui.set_width(REPAIR_MODAL_CONTENT_WIDTH.min(ui.available_width()));
 
-                if changed {
-                    for line in &lines {
-                        line_row(ui, line.icon, &line.text);
-                    }
-                } else {
-                    ui.horizontal(|ui| {
-                        gutter_icon(ui, LineIcon::Fixed);
-                        ui.label(egui::RichText::new(CLEAN_HEADLINE).color(ui_theme::text()));
-                    });
-                }
-
-                if open_rims.is_some() || skipped.is_some() {
-                    ui.add_space(6.0);
-                    for info in [open_rims.as_ref(), skipped.as_ref()].into_iter().flatten() {
-                        ui.label(
-                            egui::RichText::new(info)
+            ui.horizontal(|ui| {
+                gutter_icon(ui, LineIcon::Fixed);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Mesh Repair")
+                            .size(14.0)
+                            .strong()
+                            .color(ui_theme::text()),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&layer_label)
                                 .size(11.0)
                                 .color(ui_theme::text_weak()),
-                        );
-                    }
-                }
-
-                ui.add_space(10.0);
-                ui.separator();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
-                        close_clicked = true;
-                    }
-                    if ui
-                        .button("Copy details")
-                        .on_hover_text("Copy the full per-pass report to the clipboard")
-                        .clicked()
-                    {
-                        copy_clicked = true;
-                    }
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(&layer_label);
                 });
             });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Give the report body a content-sized viewport before adding its
+            // rows. A bare ScrollArea can inherit the modal's unconstrained
+            // height during egui's sizing pass and expand the card to the
+            // whole window; this capped slot keeps long reports scrollable
+            // without reserving a large blank area for short reports.
+            let body_width = ui.available_width();
+            ui.allocate_ui_with_layout(
+                egui::vec2(body_width, body_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("repair-report-body")
+                        .max_height(body_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if changed {
+                                for line in &lines {
+                                    line_row(ui, line.icon, &line.text);
+                                }
+                            } else {
+                                ui.horizontal(|ui| {
+                                    gutter_icon(ui, LineIcon::Fixed);
+                                    ui.label(
+                                        egui::RichText::new(CLEAN_HEADLINE).color(ui_theme::text()),
+                                    );
+                                });
+                            }
+
+                            if open_rims.is_some() || skipped.is_some() {
+                                ui.add_space(6.0);
+                                for info in
+                                    [open_rims.as_ref(), skipped.as_ref()].into_iter().flatten()
+                                {
+                                    ui.label(
+                                        egui::RichText::new(info)
+                                            .size(11.0)
+                                            .color(ui_theme::text_weak()),
+                                    );
+                                }
+                            }
+                        });
+                },
+            );
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Close").clicked() {
+                    close_clicked = true;
+                }
+                if ui
+                    .button("Copy details")
+                    .on_hover_text("Copy the full per-pass report to the clipboard")
+                    .clicked()
+                {
+                    copy_clicked = true;
+                }
+            });
+        });
 
         if copy_clicked {
             ctx.copy_text(details);
         }
-        if !open || close_clicked {
+        if close_clicked || modal_response.should_close() {
             self.close();
         }
     }
@@ -507,6 +585,17 @@ mod tests {
     }
 
     #[test]
+    fn repair_body_height_is_compact_for_short_reports_and_capped_for_long_ones() {
+        let clean_height = repair_body_height(false, 0, false, false);
+        let short_height = repair_body_height(true, 2, false, false);
+        let long_height = repair_body_height(true, 100, true, true);
+
+        assert!((clean_height - REPAIR_MODAL_BODY_MIN_HEIGHT).abs() < f32::EPSILON);
+        assert!(short_height < REPAIR_MODAL_BODY_MAX_HEIGHT);
+        assert!((long_height - REPAIR_MODAL_BODY_MAX_HEIGHT).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn copy_details_dumps_before_after_and_every_pass_including_zeros() {
         let details = copy_details("scan.stl", &multi_report());
         assert!(details.contains("Repair report — scan.stl"));
@@ -548,5 +637,57 @@ mod tests {
         ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
             .drop_without_applying_deltas();
         assert!(!dialog.is_open());
+    }
+
+    #[test]
+    fn repair_report_is_centered_and_bounded_like_the_other_information_modals() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut dialog = RepairReportDialog::default();
+        dialog.present("very-long-dental-scan-layer-name.stl", multi_report());
+
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| dialog.ui(ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        // egui deliberately uses the first frame as a sizing pass for areas;
+        // the visible frame must be checked after that pass has positioned the
+        // measured card around the center anchor.
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| dialog.ui(ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        let rect = ctx.memory(|memory| memory.area_rect(egui::Id::new(REPAIR_MODAL_ID)));
+        assert!(rect.is_some(), "Repair Mesh report should render an area");
+        let Some(rect) = rect else {
+            return;
+        };
+        assert!(
+            screen.contains_rect(rect),
+            "report modal {rect:?} escaped the screen {screen:?}"
+        );
+        assert!(
+            (rect.center().x - screen.center().x).abs() < 1.0
+                && (rect.center().y - screen.center().y).abs() < 1.0,
+            "report modal {rect:?} should be centered in {screen:?}"
+        );
+        assert!(
+            rect.width() <= 480.0,
+            "report modal spread too wide: {}",
+            rect.width()
+        );
+        assert!(
+            rect.height() <= 440.0,
+            "report modal spread too tall: {}",
+            rect.height()
+        );
     }
 }

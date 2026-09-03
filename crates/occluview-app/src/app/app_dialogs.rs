@@ -233,10 +233,10 @@ impl OccluViewApp {
                             .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
                     let edit_active = self.edit_mode.has_active_session();
                     let edit_hint = if edit_active {
-                        "Mesh editor is open".to_string()
+                        "Mesh Editing is open".to_string()
                     } else {
                         format!(
-                            "Edit mesh: selection and sculpting ({})",
+                            "Mesh Editing: selection and sculpting ({})",
                             ui.ctx().format_shortcut(&edit_shortcut)
                         )
                     };
@@ -377,29 +377,29 @@ impl OccluViewApp {
             return;
         }
         let rect = status_overlay_rect(viewport_rect);
+        let ink = ui_theme::viewport_ink(self.settings.viewport_background.is_dark());
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            egui::Frame::NONE
-                .fill(ui_theme::panel_fill())
-                .stroke(egui::Stroke::new(1.0_f32, ui_theme::hairline()))
-                .corner_radius(8)
-                .inner_margin(egui::Margin::symmetric(10, 7))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        // A scene load is invisible otherwise: the pill gains a
-                        // spinner for its duration, alongside any transient status.
-                        if self.active_load.is_some() {
-                            ui.add(egui::Spinner::new().size(14.0));
-                            ui.label(
-                                egui::RichText::new("Loading scene…")
-                                    .color(ui_theme::text_weak())
-                                    .size(11.5),
-                            );
-                        }
-                        if let Some(message) = &self.status_message {
-                            ui.label(message);
-                        }
-                    });
-                });
+            ui.set_width(rect.width());
+            ui.horizontal(|ui| {
+                // A scene load is invisible otherwise: the row gains a small
+                // spinner for its duration, alongside any transient status.
+                if self.active_load.is_some() {
+                    ui.add(egui::Spinner::new().size(13.0));
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new("Loading scene…").color(ink).size(11.5),
+                        )
+                        .truncate(),
+                    );
+                }
+                if let Some(message) = &self.status_message {
+                    let response = ui.add(
+                        egui::Label::new(egui::RichText::new(message).color(ink).size(11.5))
+                            .truncate(),
+                    );
+                    response.on_hover_text(message);
+                }
+            });
         });
     }
 

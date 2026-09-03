@@ -215,7 +215,7 @@ def build_dialog(logo):
 
     # Small, weak tagline (wrap to two centred lines to fit the sidebar).
     tag_font = font_regular(11)
-    lines = ["Fast 3D viewer", "for dental scans"]
+    lines = ["Advanced dental CAD", "Mesh Repair", "Mesh Editing"]
     ty = 170
     for line in lines:
         lb = d.textbbox((0, 0), line, font=tag_font)

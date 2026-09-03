@@ -110,6 +110,7 @@ fn toolbar_and_about_are_operator_focused() {
         "the viewport carries no version watermark"
     );
     let settings = repo_source_file("src/app/app_settings_window.rs");
+    let modal_surface = repo_source_file("src/modal_surface.rs");
     assert!(
         dialogs.contains("AppIcon::Settings")
             && dialogs.contains("Open preferences")
@@ -117,7 +118,9 @@ fn toolbar_and_about_are_operator_focused() {
         "the toolbar should open preferences from the settings button"
     );
     assert!(
-        settings.contains("egui::Modal::new(id)")
+        modal_surface.contains("egui::Area::new(backdrop_id)")
+            && modal_surface.contains("memory.set_modal_layer")
+            && modal_surface.contains("egui::ModalResponse")
             && settings.contains("information_modal(")
             && settings.contains("occluview-about-dialog-v2")
             && settings.contains("self.app_logo_texture(ctx)")
@@ -366,6 +369,56 @@ fn about_opens_the_embedded_third_party_notices() {
     assert!(
         notices.contains("show_rows"),
         "a quarter-megabyte of licenses must render lazily, not as one label"
+    );
+}
+
+#[test]
+fn information_surfaces_keep_actions_centered_and_repair_reports_bounded() {
+    let about = repo_source_file("src/app/app_settings_window.rs");
+    assert!(
+        about.contains("centered_about_row") && about.contains("ABOUT_ACTION_WIDTH"),
+        "About actions should be a compact centered group"
+    );
+
+    let repair = repo_source_file("src/repair_report.rs");
+    assert!(
+        repair.contains("show_information_modal") && repair.contains("ScrollArea::vertical"),
+        "Repair Mesh should use the centered bounded modal pattern used by information dialogs"
+    );
+    assert!(
+        !repair.contains("egui::Window::new(title)"),
+        "Repair Mesh should not use the unconstrained floating window shell"
+    );
+}
+
+#[test]
+fn ui_scale_zoom_waits_until_pointer_release() {
+    let panel = repo_source_file("src/app/app_settings_panel.rs");
+    let state = repo_source_file("src/app/state.rs");
+
+    assert!(
+        panel.contains("slider_f32_row_until_release")
+            && panel.contains("SetUiScale { value, commit }")
+            && state.contains("fn ui_scale_zoom_is_allowed")
+            && state.contains("input.pointer.any_down()")
+            && state.contains("if ui_scale_zoom_is_allowed(&ctx)"),
+        "UI Scale must defer the global egui zoom update while a slider pointer is held"
+    );
+}
+
+#[test]
+fn axis_gizmo_uses_the_viewport_background_palette() {
+    let render = app_render_source();
+    let gizmo = repo_source_file("src/viewer/axis_gizmo.rs");
+
+    assert!(
+        render.contains("paint_axis_gizmo(")
+            && render.contains("self.settings.viewport_background"),
+        "axis gizmo must receive the same viewport background setting as the scale bar"
+    );
+    assert!(
+        gizmo.contains("ViewportBackground") && gizmo.contains("AxisGizmoPalette"),
+        "axis gizmo must choose a contrast palette from the viewport background"
     );
 }
 

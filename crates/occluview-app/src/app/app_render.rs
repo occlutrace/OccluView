@@ -548,7 +548,10 @@ impl OccluViewApp {
 
     pub(super) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {
         let ctx = root_ui.ctx().clone();
-        egui::CentralPanel::default().show(root_ui, |ui| {
+        // The default CentralPanel carries an 8 px inner margin. That leaves a
+        // visible strip between the application chrome and the render surface;
+        // this panel owns the viewport background, so it must be edge-to-edge.
+        egui::CentralPanel::no_frame().show(root_ui, |ui| {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, self.settings.viewport_background.srgb());
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
@@ -577,7 +580,7 @@ impl OccluViewApp {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click());
-                Self::show_drop_hover_frame_if_hovering(ui, response.rect, &ctx);
+                Self::set_drop_hover_cursor_if_hovering(&ctx);
                 self.show_empty_state(ui, &response, &ctx);
                 self.show_status_overlay(ui, viewport_rect);
             } else {
@@ -602,9 +605,9 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) {
-        // While files hover anywhere over the window the whole viewport frames
-        // itself as the drop target, whatever the scene is showing.
-        Self::show_drop_hover_frame_if_hovering(ui, response.rect, ctx);
+        // While files hover anywhere over the window the viewport advertises
+        // itself as the drop target, without painting a border over the model.
+        Self::set_drop_hover_cursor_if_hovering(ctx);
         if self.scene.is_none() {
             // No scene yet: a quiet centered call to action over the clear
             // color. The overlays below are all camera/scene-gated, so the
@@ -625,7 +628,14 @@ impl OccluViewApp {
             // Lift the gizmo above the docked Section panel while cutting so it
             // never sits under the bottom-right panel.
             let gizmo_avoid = self.active_section_panel_rect(response.rect);
-            axis_snap = paint_axis_gizmo(ui, response.rect, camera, response, gizmo_avoid);
+            axis_snap = paint_axis_gizmo(
+                ui,
+                response.rect,
+                camera,
+                response,
+                gizmo_avoid,
+                self.settings.viewport_background,
+            );
         }
         self.show_layers_overlay(ui, response.rect, ctx);
         self.show_mesh_editor_overlay(response.rect, ctx);
