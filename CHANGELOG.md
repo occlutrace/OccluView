@@ -9,9 +9,9 @@ remain in the Git history.
 
 - Added a compact Help reference for the complete keyboard and mouse controls,
   with a contextual reminder in the viewport.
-- Replaced the circular viewport axis ring with a projected orientation cube;
-  only labeled faces snap the camera, and the cube adapts to the viewport
-  background.
+- Replaced the circular viewport axis ring with a compact rotating axis triad in
+  the bottom-right corner; endpoint clicks snap the camera without stealing
+  scene input.
 - Prepared clearer operator-facing package names and release documentation for
   the 1.1.1 validation build. The release remains unpublished.
 - The Layers panel now sizes itself to the scene, and the window grows with

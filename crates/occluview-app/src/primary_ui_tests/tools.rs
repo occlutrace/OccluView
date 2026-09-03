@@ -95,8 +95,8 @@ fn both_disc_tools_ask_one_question_about_the_pointer() {
     // The gizmo footprint has to come from the same call the painter uses; a
     // hand-rolled equivalent is how the hit box ends up far from the glyph.
     assert_eq!(
-        count_occurrences(&cut, "axis_gizmo::axis_gizmo_footprint(")
-            + count_occurrences(&bridge, "axis_gizmo::axis_gizmo_footprint("),
+        count_occurrences(&cut, "axis_gizmo::axis_gizmo_footprint_for(")
+            + count_occurrences(&bridge, "axis_gizmo::axis_gizmo_footprint_for("),
         1,
         "the gizmo footprint test must exist once, inside the shared arbitration"
     );

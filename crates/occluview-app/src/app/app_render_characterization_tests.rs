@@ -29,7 +29,13 @@ fn consumer_wheel_section_drain_prevents_camera_zoom() {
             true,
             false,
         ));
-        camera_changed = super::app_viewport::zoom_camera_from_wheel(&mut camera, ui.ctx(), 1.0);
+        camera_changed = super::app_viewport::zoom_camera_from_wheel(
+            &mut camera,
+            ui.ctx(),
+            1.0,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            egui::pos2(400.0, 300.0),
+        );
     })
     .drop_without_applying_deltas();
 

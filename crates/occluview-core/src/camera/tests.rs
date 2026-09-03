@@ -122,6 +122,7 @@ fn camera_module_is_split_by_responsibility_not_single_file() {
 }
 
 mod behavior;
+mod zoom;
 
 #[test]
 fn the_frame_fill_factor_has_one_definition() {

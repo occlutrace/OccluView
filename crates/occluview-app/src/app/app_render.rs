@@ -215,6 +215,18 @@ impl OccluViewApp {
         self.cut_view.viewport_clip_plane(bbox)
     }
 
+    pub(super) fn active_section_panel_rect(
+        &self,
+        viewport_rect: egui::Rect,
+    ) -> Option<egui::Rect> {
+        let visible = if self.bridge_split_active() {
+            self.bridge_split_section.slice_visible()
+        } else {
+            self.cut_view.is_active() && self.cut_view.slice_visible()
+        };
+        visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
+    }
+
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if self.offscreen.is_none() {
             self.offscreen = Some(
@@ -613,11 +625,13 @@ impl OccluViewApp {
             );
         }
         if let Some(camera) = self.camera.as_ref() {
+            let gizmo_avoid = self.active_section_panel_rect(response.rect);
             axis_snap = paint_axis_gizmo(
                 ui,
                 response.rect,
                 camera,
                 response,
+                gizmo_avoid,
                 self.settings.viewport_background,
             );
         }
