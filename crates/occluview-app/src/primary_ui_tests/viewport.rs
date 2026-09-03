@@ -542,6 +542,35 @@ fn viewport_primary_secondary_drag_pans_scene_before_orbit() {
 }
 
 #[test]
+fn orientation_cube_owns_only_its_face_footprint_before_scene_tools() {
+    let render = app_render_source();
+    let cut = repo_source_file("src/app/app_cut_measure.rs");
+    let gizmo = repo_source_file("src/viewer/axis_gizmo.rs");
+    let overlays = function_source(render, "fn show_viewport_overlays(");
+
+    assert!(
+        gizmo.contains("orientation_cube_faces")
+            && gizmo.contains("orientation_cube_hit")
+            && gizmo.contains("convex_polygon"),
+        "the viewport gizmo should be a projected face-based cube"
+    );
+    assert!(
+        render.contains("paint_axis_gizmo(")
+            && !overlays.contains("active_section_panel_rect(response.rect)"),
+        "the cube should use one fixed upper-right footprint, not the old lifted ring"
+    );
+    assert!(
+        cut.contains("axis_gizmo_footprint(viewport_rect)")
+            && !cut.contains("axis_gizmo_footprint(viewport_rect, gizmo_avoid)"),
+        "Cut View pointer ownership should exclude the same fixed cube footprint"
+    );
+    assert!(
+        overlays.contains("axis_snap.is_some()") && overlays.contains("camera.snap_to_axis(axis)"),
+        "a cube face click should still reach the existing camera snap authority"
+    );
+}
+
+#[test]
 fn cut_view_wires_clip_plane_into_viewport_and_preview() {
     let cut_tool = include_str!("../cut_tool.rs");
     let live_viewport = include_str!("../live_viewport.rs");
