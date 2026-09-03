@@ -277,9 +277,13 @@ pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
         HintContext::MeshEditing => {
             "LMB select · Shift+click unmark · Drag rectangle · Ctrl+Z undo"
         }
-        HintContext::Sculpt => "LMB sculpt · Shift changes mode · Shift+wheel size · Ctrl+wheel force",
+        HintContext::Sculpt => {
+            "LMB sculpt · Shift changes mode · Shift+wheel size · Ctrl+wheel force"
+        }
         HintContext::Align => "LMB place · Ctrl/Command+drag rotate · Shift+drag erase · RMB undo",
-        HintContext::Cut => "LMB plant or move · Ctrl+wheel in Section resizes · F flips · Esc closes",
+        HintContext::Cut => {
+            "LMB plant or move · Ctrl+wheel in Section resizes · F flips · Esc closes"
+        }
         HintContext::Measure => "LMB measure · RMB clears · Wheel zooms · Esc closes",
     }
 }
