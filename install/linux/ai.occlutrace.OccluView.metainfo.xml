@@ -7,20 +7,22 @@
   <developer id="ai.occlutrace">
     <name>Dental Cloud Technologies</name>
   </developer>
-  <summary>Fast 3D mesh viewer for dental scans</summary>
+  <summary>Advanced Mesh Repair and Mesh Editing for dental CAD</summary>
   <description>
     <p>
-      OccluView opens dental scans and common mesh files in a native desktop
-      viewport built for the daily work of a CAD designer: orthographic orbit
-      and pan, a cut view, a surface ruler, and a thickness analyser.
+      OccluView is an advanced dental CAD workspace for Mesh Repair and Mesh
+      Editing. It opens dental scans and common mesh files in a native desktop
+      viewport with orthographic orbit and pan, a cut view, a surface ruler,
+      and a thickness analyser.
     </p>
     <p>
       Scans load as layers with their own visibility, opacity, tint, and
-      wireframe. Selections are made by click, rectangle, or lasso, and the
-      mesh editor can delete, crop, cut, separate, close holes, repair, and
-      smooth, with undo and redo throughout. Two scans can be aligned against
-      each other and compared through a discrepancy heatmap. Edited layers
-      export back to STL, PLY, or OBJ.
+      wireframe. Selections are made by click, rectangle, or lasso, and Mesh
+      Editing can delete, crop, cut, separate, close holes, and smooth, with
+      undo and redo throughout. Mesh Repair removes damaged topology and
+      reports its changes. Two scans can be aligned against each other and
+      compared through a discrepancy heatmap. Edited layers export back to
+      STL, PLY, or OBJ.
     </p>
     <p>
       STL, PLY, OBJ, GLB, and HPS dental containers are supported. The package
@@ -35,9 +37,7 @@
     <binary>occluview-cli</binary>
   </provides>
   <releases>
-    <release version="1.1.4" date="2026-09-02"/>
-    <release version="1.1.3" date="2026-08-31"/>
-    <release version="1.1.1" date="2026-08-31"/>
+    <release version="1.1.1" date="2026-09-02"/>
     <release version="1.1.0" date="2026-08-24"/>
   </releases>
   <url type="homepage">https://occlutrace.ai</url>

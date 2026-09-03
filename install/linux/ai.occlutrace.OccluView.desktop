@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=OccluView
-GenericName=3D Mesh Viewer
-Comment=Open dental scans and common 3D mesh files
+GenericName=Advanced Dental CAD Mesh Editor
+Comment=Mesh Repair and Mesh Editing for dental scans
 Exec=occluview %F
 Icon=occluview
 Terminal=false

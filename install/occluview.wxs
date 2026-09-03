@@ -8,7 +8,7 @@
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.1.4" ?>
+<?define ProductVersion = "1.1.1" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>
@@ -45,7 +45,7 @@
     -->
     <Icon Id="OccluViewIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)..\crates\occluview-app\assets\windows\occluview.ico" />
     <Property Id="ARPPRODUCTICON" Value="OccluViewIcon.ico" />
-    <Property Id="ARPCOMMENTS" Value="Fast 3D mesh viewer for dental scans and open mesh files." />
+    <Property Id="ARPCOMMENTS" Value="Advanced Mesh Repair and Mesh Editing for dental CAD scans." />
     <Property Id="ARPCONTACT" Value="$(var.Manufacturer)" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/occlutrace/OccluView" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/occlutrace/OccluView/releases" />
@@ -495,7 +495,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\OccluTrace\OccluView\Capabilities">
               <RegistryValue Name="ApplicationName" Type="string" Value="$(var.ProductName)" />
-              <RegistryValue Name="ApplicationDescription" Type="string" Value="Fast 3D mesh viewer for dental scans and open mesh files." />
+              <RegistryValue Name="ApplicationDescription" Type="string" Value="Advanced Mesh Repair and Mesh Editing for dental CAD scans." />
               <RegistryValue Name="ApplicationIcon" Type="string" Value="[INSTALLFOLDER]occluview.exe,0" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\OccluTrace\OccluView\Capabilities\FileAssociations">

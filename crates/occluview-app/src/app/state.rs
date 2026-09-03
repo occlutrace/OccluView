@@ -28,6 +28,13 @@ use crate::app_settings::SettingsPersistence;
 /// persist marks settings dirty (one fsync per settled drag, not per frame).
 const SCULPT_SETTINGS_PERSIST_DELAY: Duration = Duration::from_secs(1);
 
+/// Global egui zoom changes the geometry of every widget. Keep it stable while
+/// a pointer gesture is active so the UI Scale slider cannot move under the
+/// pointer; the next frame after release applies the selected value.
+fn ui_scale_zoom_is_allowed(ctx: &egui::Context) -> bool {
+    !ctx.input(|input| input.pointer.any_down())
+}
+
 /// Everything the bootstrap hands the app about how this process was started:
 /// the single-instance guard, the window raise handle, and the launcher's
 /// activation token (focus provenance for the first load).
@@ -601,7 +608,7 @@ impl eframe::App for OccluViewApp {
         // UI scale rides egui's zoom factor: a multiplier over the platform's
         // own pixel density, so HiDPI setups keep their native baseline.
         let target_ui_scale = self.settings.ui_scale();
-        if (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
+        if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(target_ui_scale);
         }
         self.handle_dropped_files(&ctx);

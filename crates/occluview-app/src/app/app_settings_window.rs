@@ -9,36 +9,7 @@ use crate::icons::AppIcon;
 use crate::ui_theme;
 use eframe::egui;
 
-const INFORMATION_MODAL_BACKDROP_ALPHA: u8 = 48;
-
-pub(super) fn show_information_modal<T>(
-    ctx: &egui::Context,
-    id: egui::Id,
-    default_size: egui::Vec2,
-    add_contents: impl FnOnce(&mut egui::Ui) -> T,
-) -> egui::ModalResponse<T> {
-    let bounds = ctx.content_rect().shrink(16.0);
-    let frame = ui_theme::overlay_frame();
-    let frame_margin = frame.total_margin().sum();
-    let max_content_size = egui::vec2(
-        (bounds.width() - frame_margin.x).max(0.0),
-        (bounds.height() - frame_margin.y).max(0.0),
-    );
-    egui::Modal::new(id)
-        .area(
-            egui::Modal::default_area(id)
-                .default_size(default_size.min(bounds.size()))
-                .constrain_to(bounds),
-        )
-        .frame(frame)
-        .backdrop_color(egui::Color32::from_black_alpha(
-            INFORMATION_MODAL_BACKDROP_ALPHA,
-        ))
-        .show(ctx, |ui| {
-            ui.set_max_size(max_content_size);
-            add_contents(ui)
-        })
-}
+pub(super) use crate::modal_surface::show_information_modal;
 
 impl OccluViewApp {
     pub(super) fn show_settings_popup(&mut self, trigger: &egui::Response) {
@@ -116,9 +87,11 @@ impl OccluViewApp {
                 self.settings.theme = theme;
                 self.settings_persistence.mark_dirty();
             }
-            SettingsAction::SetUiScale(scale) => {
-                self.settings.ui_scale = scale;
-                self.settings_persistence.mark_dirty();
+            SettingsAction::SetUiScale { value, commit } => {
+                self.settings.ui_scale = value;
+                if commit {
+                    self.settings_persistence.mark_dirty();
+                }
             }
             SettingsAction::SetRememberSculptBrush(enabled) => {
                 self.settings.remember_sculpt_brush = enabled;
@@ -159,7 +132,7 @@ impl OccluViewApp {
                             .color(ui_theme::text()),
                     );
                     ui.label(
-                        egui::RichText::new("3D viewer for dental scans")
+                        egui::RichText::new("Mesh Repair · Mesh Editing for dental CAD")
                             .size(12.0)
                             .color(ui_theme::text_weak()),
                     );
@@ -174,37 +147,37 @@ impl OccluViewApp {
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let width =
-                        ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(1.0);
-                    if about_link(ui, width, AppIcon::Globe, "Website") {
+                centered_about_row(ui, ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP, |ui| {
+                    ui.spacing_mut().item_spacing.x = ABOUT_ACTION_GAP;
+                    if about_link(ui, ABOUT_ACTION_WIDTH, AppIcon::Globe, "Website") {
                         open_url = Some("https://occlutrace.ai");
                     }
-                    if about_link(ui, width, AppIcon::Github, "Source") {
+                    if about_link(ui, ABOUT_ACTION_WIDTH, AppIcon::Github, "Source") {
                         open_url = Some("https://github.com/occlutrace/OccluView");
                     }
                 });
-                let licenses_width = ui.available_width();
-                if about_link(
-                    ui,
-                    licenses_width,
-                    AppIcon::Licenses,
-                    "Third-party licenses",
-                ) {
-                    open_third_party = true;
-                }
                 ui.add_space(2.0);
-                ui.horizontal(|ui| {
+                centered_about_row(ui, ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP, |ui| {
+                    if about_link(
+                        ui,
+                        ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP,
+                        AppIcon::Licenses,
+                        "Third-party licenses",
+                    ) {
+                        open_third_party = true;
+                    }
+                });
+                ui.add_space(2.0);
+                centered_about_row(ui, ABOUT_FOOTER_WIDTH, |ui| {
                     ui.label(
                         egui::RichText::new("Apache License 2.0")
                             .size(10.5)
                             .color(ui_theme::text_muted()),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
-                            close = true;
-                        }
-                    });
+                    ui.add_space(10.0);
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
                 });
             },
         );
@@ -220,6 +193,31 @@ impl OccluViewApp {
     }
 }
 
+const ABOUT_ACTION_WIDTH: f32 = 132.0;
+const ABOUT_ACTION_GAP: f32 = 6.0;
+const ABOUT_FOOTER_WIDTH: f32 = 146.0;
+const ABOUT_ACTION_ROW_HEIGHT: f32 = 27.0;
+
+/// Center a compact row without `horizontal_centered`: that layout fills the
+/// available height by design, which made a vertically stacked modal grow on
+/// every repaint. The row itself stays top-aligned and only receives the
+/// horizontal gutter it needs.
+fn centered_about_row(
+    ui: &mut egui::Ui,
+    content_width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ABOUT_ACTION_ROW_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let gutter = ((ui.available_width() - content_width) * 0.5).max(0.0);
+            ui.add_space(gutter);
+            add_contents(ui);
+        },
+    );
+}
+
 fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 27.0), egui::Sense::click());
     if response.hovered() {
@@ -229,17 +227,32 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
             ui_theme::accent().gamma_multiply(0.08),
         );
     }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            ui_theme::RADIUS_CONTROL,
+            egui::Stroke::new(1.0_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let ink = ui_theme::text();
+    let font = egui::FontId::proportional(12.0);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let icon_side = 14.0;
+    let content_width = icon_side + 7.0 + galley.size().x;
+    let content_left = rect.center().x - content_width * 0.5;
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 13.0, rect.center().y),
-        egui::vec2(14.0, 14.0),
+        egui::pos2(content_left + icon_side * 0.5, rect.center().y),
+        egui::Vec2::splat(icon_side),
     );
     crate::icons::paint(ui.painter(), icon_rect, icon, ui_theme::text_weak());
-    ui.painter().text(
-        egui::pos2(icon_rect.right() + 7.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(12.0),
-        ui_theme::text(),
+    ui.painter().galley(
+        egui::pos2(
+            icon_rect.right() + 7.0,
+            rect.center().y - galley.size().y * 0.5,
+        ),
+        galley,
+        ink,
     );
     response.clicked()
 }
@@ -571,6 +584,95 @@ mod tests {
         assert!(
             bounds.contains_rect(rect),
             "information modal {rect:?} escaped the current content bounds {bounds:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scrollable_information_modal_stays_near_its_declared_size() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let id = egui::Id::new("information-modal-scroll-size-contract");
+
+        for _ in 0..2 {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show_rows(ui, 14.0, 2_000, |ui, rows| {
+                                for row in rows {
+                                    ui.label(format!("license line {row}"));
+                                }
+                            });
+                    });
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+
+        let rect = popup_rect(&ctx, id)?;
+        assert!(
+            rect.width() <= 600.0 && rect.height() <= 460.0,
+            "scrollable information modal should not expand to the full screen: {rect:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn about_modal_does_not_cycle_through_repeated_sizing_passes() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
+        let id = egui::Id::new("information-modal-about-stability-contract");
+        let mut rects = Vec::new();
+
+        for _ in 0..12 {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    show_information_modal(ui.ctx(), id, egui::vec2(320.0, 240.0), |ui| {
+                        ui.set_width(304.0_f32.min(ui.available_width()));
+                        ui.vertical_centered(|ui| {
+                            ui.label("OccluView");
+                            ui.label("Mesh Repair · Mesh Editing for dental CAD");
+                            ui.label("Version 1.1.1");
+                        });
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                        centered_about_row(ui, 270.0, |ui| {
+                            ui.label("Website");
+                            ui.label("Source");
+                        });
+                        ui.add_space(2.0);
+                        centered_about_row(ui, 270.0, |ui| {
+                            ui.label("Third-party licenses");
+                        });
+                        ui.add_space(2.0);
+                        centered_about_row(ui, 146.0, |ui| {
+                            ui.label("Apache License 2.0");
+                        });
+                    });
+                },
+            )
+            .drop_without_applying_deltas();
+            rects.push(popup_rect(&ctx, id)?);
+        }
+
+        let stable_tail = &rects[6..];
+        assert!(
+            stable_tail.windows(2).all(|pair| {
+                (pair[0].size() - pair[1].size()).length() < 0.1
+                    && (pair[0].center() - pair[1].center()).length() < 0.1
+            }),
+            "About modal kept changing size/position: {stable_tail:?}"
         );
         Ok(())
     }

@@ -26,7 +26,7 @@ const TAB_H: f32 = 28.0;
 /// while the glyphs stay legible.
 const ROW_H: f32 = 46.0;
 
-/// The Sculpt / Edit Mesh tab strip plus the window close button. Doubles as
+/// The Sculpt / Mesh Editing tab strip plus the window close button. Doubles as
 /// the window's top bar (the native title bar is off).
 pub(super) fn tab_strip(
     ui: &mut egui::Ui,
@@ -40,7 +40,7 @@ pub(super) fn tab_strip(
         ui.spacing_mut().item_spacing.x = gap;
         if tab_pill(
             ui,
-            "Edit Mesh",
+            "Mesh Editing",
             tab_w,
             state.active_tab == EditorTab::EditMesh,
         )
@@ -416,10 +416,10 @@ struct SculptSliderControl<'a> {
 
 fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
     let row_height = ui.spacing().interact_size.y;
-    // The caption rides its own line so the rail below takes the window's
-    // full width — on the narrowest window that is a third more travel than
-    // sharing the line with a label column. The right-aligned readout shows
-    // the value the hidden-label slider otherwise keeps to itself.
+    // The caption rides its own line. Keep the rail to half of the panel: a
+    // full-width rail is visually too dominant in this compact tool menu, and
+    // the fixed width makes Size and Force read as one small control group.
+    let slider_width = sculpt_slider_width(ui.available_width());
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(control.label).size(11.0).weak());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -433,7 +433,7 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
     let response = ui
         .add_enabled_ui(enabled, |ui| {
             ui.add_sized(
-                [ui.available_width(), row_height],
+                [slider_width, row_height],
                 egui::Slider::new(control.value, control.range)
                     .show_value(false)
                     .trailing_fill(true),
@@ -441,6 +441,12 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
         })
         .inner;
     response.on_hover_text(control.tooltip);
+}
+
+/// Reserve only half of the sculpt panel for the slider rail. Kept pure so
+/// the compact control geometry is explicit and regression-testable.
+fn sculpt_slider_width(available_width: f32) -> f32 {
+    (available_width * 0.5).max(0.0)
 }
 
 fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
@@ -691,6 +697,12 @@ mod tests {
     }
 
     #[test]
+    fn sculpt_slider_uses_half_of_the_panel_width() {
+        assert!((sculpt_slider_width(212.0) - 106.0).abs() < f32::EPSILON);
+        assert!(sculpt_slider_width(0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn selection_sections_follow_the_workflow_order() {
         let source =
             crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"))
@@ -699,7 +711,7 @@ mod tests {
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
         // The `section(ui, ...)` calls, not the bare titles: the tab strip also
-        // spells "Sculpt"/"Edit Mesh" and would collide with a bare search.
+        // spells "Sculpt"/"Mesh Editing" and would collide with a bare search.
         let order = [
             "section(ui, \"Selection\")",
             "section(ui, \"Edit selection\")",

@@ -133,7 +133,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::EditMesh,
-            "Edit mesh",
+            "Mesh Editing",
             target.face_editable,
             LayerContextAction::EditMesh,
         ),
@@ -155,7 +155,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Repair,
-            "Repair mesh",
+            "Mesh Repair",
             target.face_editable,
             LayerContextAction::RepairMesh,
         ),
@@ -489,7 +489,7 @@ mod tests {
             .map_or(source.as_str(), |(source, _)| source);
 
         assert!(
-            production_source.contains("Edit mesh"),
+            production_source.contains("Mesh Editing"),
             "layer context menu should expose the mesh edit entry point"
         );
         assert!(
@@ -507,9 +507,9 @@ mod tests {
             .map_or(source.as_str(), |(source, _)| source);
         for label in [
             "Next tint",
-            "Edit mesh",
+            "Mesh Editing",
             "Split bridge...",
-            "Repair mesh",
+            "Mesh Repair",
             "Flip normals",
             "Export layer...",
             "Wireframe overlay",

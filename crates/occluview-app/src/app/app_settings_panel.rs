@@ -32,7 +32,7 @@ pub(super) enum SettingsAction {
     SetShowCutGhost(bool),
     SetUnitDisplay(UnitDisplay),
     SetTheme(ThemePreference),
-    SetUiScale(f32),
+    SetUiScale { value: f32, commit: bool },
     SetRememberSculptBrush(bool),
     CheckForUpdates,
     OpenAbout,
@@ -141,7 +141,7 @@ pub(super) fn show_settings_popup(
                             }
                         },
                     );
-                    drag_f32_row(
+                    slider_f32_row(
                         ui,
                         "Orbit speed",
                         settings.orbit_sensitivity,
@@ -151,7 +151,7 @@ pub(super) fn show_settings_popup(
                         &mut action,
                         SettingsAction::SetOrbitSensitivity,
                     );
-                    drag_f32_row(
+                    slider_f32_row(
                         ui,
                         "Zoom speed",
                         settings.zoom_sensitivity,
@@ -161,7 +161,7 @@ pub(super) fn show_settings_popup(
                         &mut action,
                         SettingsAction::SetZoomSensitivity,
                     );
-                    drag_usize_row(
+                    slider_usize_row(
                         ui,
                         "Recent scenes",
                         settings.recent_files_limit,
@@ -229,7 +229,7 @@ pub(super) fn show_settings_popup(
                         &mut action,
                         SettingsAction::SetTheme,
                     );
-                    drag_f32_row(
+                    slider_f32_row_until_release(
                         ui,
                         "UI scale",
                         settings.ui_scale,
@@ -237,13 +237,12 @@ pub(super) fn show_settings_popup(
                         "×",
                         "Scales every element; 1.0 keeps the platform default",
                         &mut action,
-                        SettingsAction::SetUiScale,
                     );
 
                     ui.add_space(3.0);
                     ui.separator();
                     ui.add_space(5.0);
-                    section_label(ui, "Mesh editor");
+                    section_label(ui, "Mesh Editing");
                     let mut remember_brush = settings.remember_sculpt_brush;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -356,10 +355,21 @@ fn export_format_row(ui: &mut egui::Ui, settings: &Settings, action: &mut Option
     );
 }
 
-/// One label + right-aligned numeric stepper row. Live-typed: the action fires
-/// on every drag tick so the viewport answers immediately.
+const NUMERIC_LABEL_WIDTH: f32 = 96.0;
+const NUMERIC_VALUE_WIDTH: f32 = 48.0;
+const NUMERIC_SLIDER_MIN_WIDTH: f32 = 72.0;
+
+/// The slider gets the flexible middle column; labels and readouts stay on a
+/// stable grid so rows do not jump when a value changes.
+fn numeric_slider_width(available_width: f32, item_spacing: f32) -> f32 {
+    (available_width - NUMERIC_LABEL_WIDTH - NUMERIC_VALUE_WIDTH - item_spacing * 2.0)
+        .max(NUMERIC_SLIDER_MIN_WIDTH)
+}
+
+/// One label + slider + readable numeric value. The action fires on every
+/// slider tick so the viewport answers immediately.
 #[allow(clippy::too_many_arguments)]
-fn drag_f32_row(
+fn slider_f32_row(
     ui: &mut egui::Ui,
     label: &str,
     value: f32,
@@ -369,33 +379,103 @@ fn drag_f32_row(
     action: &mut Option<SettingsAction>,
     make: fn(f32) -> SettingsAction,
 ) {
+    slider_f32_row_inner(
+        ui,
+        label,
+        value,
+        range,
+        suffix,
+        tooltip,
+        action,
+        false,
+        |value, _commit| make(value),
+    );
+}
+
+/// UI Scale is special: changing egui's global zoom changes every widget's
+/// geometry. Preview the value while dragging, but only let the app persist it
+/// after the pointer is released so the slider cannot move under the pointer.
+#[allow(clippy::too_many_arguments)]
+fn slider_f32_row_until_release(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &str,
+    tooltip: &str,
+    action: &mut Option<SettingsAction>,
+) {
+    slider_f32_row_inner(
+        ui,
+        label,
+        value,
+        range,
+        suffix,
+        tooltip,
+        action,
+        true,
+        |value, commit| SettingsAction::SetUiScale { value, commit },
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn slider_f32_row_inner(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &str,
+    tooltip: &str,
+    action: &mut Option<SettingsAction>,
+    defer_pointer_commit: bool,
+    make: impl Fn(f32, bool) -> SettingsAction,
+) {
+    let row_width = ui.available_width();
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::vec2(row_width, ROW_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.label(label).on_hover_text(tooltip);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut edit = value;
-                let response = ui
-                    .add_sized(
-                        [64.0, 20.0],
-                        egui::DragValue::new(&mut edit)
-                            .range(range)
-                            .speed(0.01)
-                            .suffix(suffix),
-                    )
-                    .on_hover_text(tooltip);
-                if response.changed() {
-                    *action = Some(make(edit));
-                }
-            });
+            let spacing = ui.spacing().item_spacing.x;
+            let label_response = ui.add_sized(
+                [NUMERIC_LABEL_WIDTH, 20.0],
+                egui::Label::new(egui::RichText::new(label).size(11.5)).truncate(),
+            );
+            label_response.on_hover_text(tooltip);
+
+            let mut edit = value;
+            let slider_response = ui.add_sized(
+                [numeric_slider_width(row_width, spacing), 20.0],
+                egui::Slider::new(&mut edit, range)
+                    .show_value(false)
+                    .step_by(0.05)
+                    .trailing_fill(true),
+            );
+            let changed = slider_response.changed();
+            let pointer_down = slider_response.is_pointer_button_down_on();
+            let drag_stopped = slider_response.drag_stopped();
+            slider_response.on_hover_text(tooltip);
+            if changed || (defer_pointer_commit && drag_stopped) {
+                let commit = !defer_pointer_commit || !pointer_down || drag_stopped;
+                *action = Some(make(edit, commit));
+            }
+
+            ui.add_sized(
+                [NUMERIC_VALUE_WIDTH, 20.0],
+                egui::Label::new(
+                    egui::RichText::new(format!("{edit:.2}{suffix}"))
+                        .size(11.0)
+                        .color(ui_theme::text_muted()),
+                )
+                .halign(egui::Align::RIGHT)
+                .truncate(),
+            );
         },
     );
 }
 
-/// Whole-number variant of [`drag_f32_row`] (no suffix, unit steps).
+/// Whole-number variant of [`slider_f32_row`] (no suffix, unit steps).
 #[allow(clippy::too_many_arguments)]
-fn drag_usize_row(
+fn slider_usize_row(
     ui: &mut egui::Ui,
     label: &str,
     value: usize,
@@ -404,20 +484,40 @@ fn drag_usize_row(
     action: &mut Option<SettingsAction>,
     make: fn(usize) -> SettingsAction,
 ) {
+    let row_width = ui.available_width();
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::vec2(row_width, ROW_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.label(label).on_hover_text(tooltip);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut edit = value;
-                let response = ui
-                    .add_sized([64.0, 20.0], egui::DragValue::new(&mut edit).range(range))
-                    .on_hover_text(tooltip);
-                if response.changed() {
-                    *action = Some(make(edit));
-                }
-            });
+            let spacing = ui.spacing().item_spacing.x;
+            let label_response = ui.add_sized(
+                [NUMERIC_LABEL_WIDTH, 20.0],
+                egui::Label::new(egui::RichText::new(label).size(11.5)).truncate(),
+            );
+            label_response.on_hover_text(tooltip);
+
+            let mut edit = value;
+            let slider_response = ui.add_sized(
+                [numeric_slider_width(row_width, spacing), 20.0],
+                egui::Slider::new(&mut edit, range)
+                    .show_value(false)
+                    .trailing_fill(true),
+            );
+            let changed = slider_response.changed();
+            slider_response.on_hover_text(tooltip);
+            if changed {
+                *action = Some(make(edit));
+            }
+
+            ui.add_sized(
+                [NUMERIC_VALUE_WIDTH, 20.0],
+                egui::Label::new(
+                    egui::RichText::new(edit.to_string())
+                        .size(11.0)
+                        .color(ui_theme::text_muted()),
+                )
+                .halign(egui::Align::RIGHT),
+            );
         },
     );
 }
@@ -500,5 +600,23 @@ fn update_status_text(status: &UpdateCheckStatus) -> (&str, egui::Color32, Optio
         UpdateCheckStatus::Failed(error) => {
             ("Couldn’t check", ui_theme::danger(), Some(error.as_str()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn numeric_preferences_use_slider_tracks_instead_of_stepper_boxes() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_settings_panel.rs"));
+
+        assert!(
+            source.contains("egui::Slider::new"),
+            "numeric preferences should expose a continuous slider"
+        );
+        assert!(
+            !source.contains("egui::DragValue::new"),
+            "numeric preferences should not fall back to compact stepper boxes"
+        );
     }
 }

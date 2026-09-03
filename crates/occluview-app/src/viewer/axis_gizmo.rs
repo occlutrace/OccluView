@@ -2,10 +2,13 @@ use eframe::egui;
 use glam::Vec3;
 use occluview_core::{Camera, CameraAxisView};
 
+use crate::app_settings::ViewportBackground;
+use crate::ui_theme;
+
 const AXIS_GIZMO_RADIUS_PX: f32 = 24.0;
 const AXIS_GIZMO_MARKER_RADIUS_PX: f32 = 9.0;
 const AXIS_GIZMO_MARGIN_PX: f32 = 16.0;
-/// Backing-halo radius drawn under the gizmo ring (the `+ 10.0` disc below).
+/// Backing-halo radius drawn under the gizmo ring.
 const AXIS_GIZMO_GLOW_PX: f32 = 10.0;
 /// Vertical room the lifted gizmo needs above the Section panel: its margin
 /// plus the full glow circle. The panel's size budget reserves this so the
@@ -20,30 +23,97 @@ struct AxisGizmoMarker {
     depth: f32,
 }
 
+#[derive(Clone, Copy)]
+struct AxisGizmoPalette {
+    surface: egui::Color32,
+    surface_hover: egui::Color32,
+    border: egui::Color32,
+    border_hover: egui::Color32,
+    line_halo: egui::Color32,
+    negative_fill: egui::Color32,
+    negative_label: egui::Color32,
+    positive_label: egui::Color32,
+    hub_fill: egui::Color32,
+}
+
+fn axis_gizmo_palette(background: ViewportBackground) -> AxisGizmoPalette {
+    if background.is_dark() {
+        AxisGizmoPalette {
+            surface: egui::Color32::from_rgba_unmultiplied(16, 21, 29, 190),
+            surface_hover: egui::Color32::from_rgba_unmultiplied(24, 31, 42, 225),
+            border: egui::Color32::from_rgba_unmultiplied(236, 240, 246, 72),
+            border_hover: egui::Color32::from_rgba_unmultiplied(236, 240, 246, 150),
+            line_halo: ui_theme::viewport_ink_halo(true),
+            negative_fill: egui::Color32::from_rgba_unmultiplied(32, 39, 50, 230),
+            negative_label: ui_theme::viewport_ink(true),
+            positive_label: egui::Color32::WHITE,
+            hub_fill: egui::Color32::from_rgba_unmultiplied(236, 240, 246, 235),
+        }
+    } else {
+        AxisGizmoPalette {
+            surface: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 165),
+            surface_hover: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 225),
+            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 55),
+            border_hover: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 125),
+            line_halo: ui_theme::viewport_ink_halo(false),
+            negative_fill: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 220),
+            negative_label: ui_theme::viewport_ink(false),
+            positive_label: egui::Color32::WHITE,
+            hub_fill: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 220),
+        }
+    }
+}
+
 /// Paint the navigation gizmo. `avoid` (the docked Section panel, when the cut
 /// tool is active) lifts the gizmo to sit just ABOVE that rect instead of its
 /// default bottom-right home, so the panel can own the bottom-right corner.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn paint_axis_gizmo(
     ui: &egui::Ui,
     image_rect: egui::Rect,
     camera: &Camera,
     response: &egui::Response,
     avoid: Option<egui::Rect>,
+    background: ViewportBackground,
 ) -> Option<CameraAxisView> {
     let markers = axis_gizmo_markers(camera, image_rect, avoid);
     let painter = ui.painter();
     let center = axis_gizmo_center(image_rect, avoid);
+    let palette = axis_gizmo_palette(background);
+    let hovered = response
+        .hover_pos()
+        .and_then(|pointer| axis_gizmo_snap_target(&markers, pointer));
+    if hovered.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    // A compact frosted disc keeps the triad readable over mesh highlights,
+    // while its surface/border follow the actual viewport background instead
+    // of the old fixed opaque white blob.
     painter.circle_filled(
         center,
         AXIS_GIZMO_RADIUS_PX + AXIS_GIZMO_GLOW_PX,
-        egui::Color32::from_rgba_unmultiplied(248, 250, 252, 210),
+        if hovered.is_some() {
+            palette.surface_hover
+        } else {
+            palette.surface
+        },
     );
     painter.circle_stroke(
         center,
         AXIS_GIZMO_RADIUS_PX + AXIS_GIZMO_GLOW_PX,
+        egui::Stroke::new(1.0_f32, palette.border),
+    );
+    painter.circle_stroke(
+        center,
+        AXIS_GIZMO_RADIUS_PX,
         egui::Stroke::new(
-            1.0_f32,
-            egui::Color32::from_rgba_unmultiplied(15, 23, 42, 42),
+            if hovered.is_some() { 1.5 } else { 1.0 },
+            if hovered.is_some() {
+                palette.border_hover
+            } else {
+                palette.border
+            },
         ),
     );
 
@@ -72,7 +142,11 @@ pub(crate) fn paint_axis_gizmo(
         };
         painter.line_segment(
             [negative_center, positive_center],
-            egui::Stroke::new(1.5_f32, color),
+            egui::Stroke::new(4.0_f32, palette.line_halo),
+        );
+        painter.line_segment(
+            [negative_center, positive_center],
+            egui::Stroke::new(2.25_f32, color),
         );
     }
 
@@ -80,33 +154,46 @@ pub(crate) fn paint_axis_gizmo(
     ordered.sort_by(|left, right| left.depth.total_cmp(&right.depth));
     for marker in ordered {
         let color = axis_gizmo_color(marker.axis);
+        let is_hovered = hovered == Some(marker.axis);
         let is_positive = matches!(
             marker.axis,
             CameraAxisView::PositiveX | CameraAxisView::PositiveY | CameraAxisView::PositiveZ
         );
         let fill = if is_positive {
             color
+        } else if is_hovered {
+            palette.surface_hover
         } else {
-            egui::Color32::from_rgba_unmultiplied(248, 250, 252, 235)
+            palette.negative_fill
         };
         painter.circle_filled(marker.center, AXIS_GIZMO_MARKER_RADIUS_PX, fill);
         painter.circle_stroke(
             marker.center,
             AXIS_GIZMO_MARKER_RADIUS_PX,
-            egui::Stroke::new(1.5_f32, color),
+            egui::Stroke::new(if is_hovered { 2.5 } else { 1.5 }, color),
         );
+        if is_hovered {
+            painter.circle_stroke(
+                marker.center,
+                AXIS_GIZMO_MARKER_RADIUS_PX - 2.0,
+                egui::Stroke::new(1.0, palette.border_hover),
+            );
+        }
         painter.text(
             marker.center,
             egui::Align2::CENTER_CENTER,
             axis_gizmo_marker_label(marker.axis),
             egui::FontId::proportional(11.0),
             if is_positive {
-                egui::Color32::WHITE
+                palette.positive_label
             } else {
-                egui::Color32::from_rgb(15, 23, 42)
+                palette.negative_label
             },
         );
     }
+
+    painter.circle_filled(center, 4.5, palette.hub_fill);
+    painter.circle_stroke(center, 4.5, egui::Stroke::new(1.0, palette.border_hover));
 
     if response.clicked_by(egui::PointerButton::Primary) {
         return response
@@ -313,5 +400,15 @@ mod tests {
             axis_gizmo_snap_target(&markers, marker.center),
             Some(CameraAxisView::PositiveX)
         );
+    }
+
+    #[test]
+    fn axis_gizmo_palette_follows_viewport_background() {
+        let light = axis_gizmo_palette(ViewportBackground::White);
+        let dark = axis_gizmo_palette(ViewportBackground::Dark);
+
+        assert_ne!(light.surface, dark.surface);
+        assert_ne!(light.negative_fill, dark.negative_fill);
+        assert_ne!(light.negative_label, dark.negative_label);
     }
 }

@@ -461,6 +461,20 @@ fn the_scale_bar_reads_the_camera_and_not_the_scene() {
 }
 
 #[test]
+fn viewport_surface_is_edge_to_edge_without_a_central_panel_frame() {
+    let render = app_render_source();
+
+    assert!(
+        render.contains("egui::CentralPanel::no_frame()"),
+        "the 3D surface must reach the chrome edge without the default panel margin"
+    );
+    assert!(
+        !render.contains("egui::CentralPanel::default().show"),
+        "the default CentralPanel frame reintroduces the visible strip around the viewport"
+    );
+}
+
+#[test]
 fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
     let app_source = app_module_source();
     let viewport_source = app_viewport_source();

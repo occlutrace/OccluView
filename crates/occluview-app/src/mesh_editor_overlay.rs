@@ -192,7 +192,7 @@ pub(crate) fn show(
 ) -> Option<MeshEditorAction> {
     let width = window_width(viewport_rect);
     let mut action = None;
-    egui::Window::new("Mesh editor")
+    egui::Window::new("Mesh Editing")
         .id(egui::Id::new("occluview_mesh_editor_window"))
         .default_pos(default_pos(viewport_rect))
         .constrain_to(viewport_rect)
@@ -218,7 +218,7 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
     // selection-mode toggles stay live so the operator is never locked out.
     let ops_enabled = !state.busy;
 
-    groups::header(ui, "Mesh editor", AppIcon::EditMesh);
+    groups::header(ui, "Mesh Editing", AppIcon::EditMesh);
     let mut action = groups::tab_strip(ui, &state);
     ui.add_space(4.0);
     match state.active_tab {

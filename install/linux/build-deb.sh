@@ -127,9 +127,9 @@ Installed-Size: $installed_size
 Depends: libc6, libgcc-s1, libx11-6, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libvulkan1, desktop-file-utils, shared-mime-info, hicolor-icon-theme
 Recommends: xdg-desktop-portal
 Homepage: https://occlutrace.ai
-Description: fast 3D mesh viewer for dental scans
- OccluView opens STL, PLY, OBJ, GLB, and HPS mesh packages in a native
- desktop viewport and provides a thumbnail command for file managers.
+Description: advanced Mesh Repair and Mesh Editing for dental CAD
+ OccluView is a native desktop dental CAD workspace for inspection, editing,
+ repair, alignment, export, and file-manager thumbnails.
 CONTROL
 
 cat > "$pkg_root/DEBIAN/postinst" <<'POSTINST'
