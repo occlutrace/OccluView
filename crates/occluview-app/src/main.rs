@@ -52,6 +52,7 @@ mod cut_ruler;
 mod cut_tool;
 mod edit_mode;
 mod icons;
+mod interaction_hints;
 #[cfg(windows)]
 mod jump_list;
 mod jump_list_model;
