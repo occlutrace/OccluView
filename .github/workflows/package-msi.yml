@@ -134,16 +134,18 @@ jobs:
         shell: pwsh
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
+          OCCLUVIEW_WINDOWS_CONFIGURATION: ${{ inputs.windows_configuration }}
+          OCCLUVIEW_WINDOWS_MSI_VERSION: ${{ inputs.windows_msi_version }}
         run: |
           $configuration = "release"
-          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and "${{ inputs.windows_configuration }}" -eq "diagnostic") {
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:OCCLUVIEW_WINDOWS_CONFIGURATION -eq "diagnostic") {
             $configuration = "diagnostic"
           }
           $buildArgs = @{
             Configuration = $configuration
             SignMode = "auto"
           }
-          $requestedMsiVersion = "${{ inputs.windows_msi_version }}".Trim()
+          $requestedMsiVersion = ([string]$env:OCCLUVIEW_WINDOWS_MSI_VERSION).Trim()
           if (-not [string]::IsNullOrWhiteSpace($requestedMsiVersion)) {
             if ($configuration -ne "diagnostic") {
               throw "windows_msi_version is reserved for private diagnostic packages."

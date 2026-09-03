@@ -122,6 +122,16 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     }
 }
 
+#[test]
+fn the_changelog_does_not_claim_the_current_release_is_unpublished() {
+    let changelog = include_str!("../../../../CHANGELOG.md").to_ascii_lowercase();
+
+    assert!(
+        !changelog.contains("the release remains unpublished"),
+        "the current changelog must describe the published release, not a local validation build"
+    );
+}
+
 /// A three-part version, with or without a leading `v`.
 fn parse_version(raw: &str) -> Option<[u64; 3]> {
     let parts: Vec<u64> = raw
