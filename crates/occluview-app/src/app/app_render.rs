@@ -227,6 +227,10 @@ impl OccluViewApp {
         visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
     }
 
+    pub(super) fn axis_gizmo_is_hidden(&self) -> bool {
+        self.cut_view.is_active() && self.cut_view.slice_visible()
+    }
+
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if self.offscreen.is_none() {
             self.offscreen = Some(
@@ -625,15 +629,18 @@ impl OccluViewApp {
             );
         }
         if let Some(camera) = self.camera.as_ref() {
-            let gizmo_avoid = self.active_section_panel_rect(response.rect);
-            axis_snap = paint_axis_gizmo(
-                ui,
-                response.rect,
-                camera,
-                response,
-                gizmo_avoid,
-                self.settings.viewport_background,
-            );
+            let gizmo_hidden = self.axis_gizmo_is_hidden();
+            if !gizmo_hidden {
+                let gizmo_avoid = self.active_section_panel_rect(response.rect);
+                axis_snap = paint_axis_gizmo(
+                    ui,
+                    response.rect,
+                    camera,
+                    response,
+                    gizmo_avoid,
+                    self.settings.viewport_background,
+                );
+            }
         }
         self.show_layers_overlay(ui, response.rect, ctx);
         self.show_mesh_editor_overlay(response.rect, ctx);
