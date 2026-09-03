@@ -169,7 +169,7 @@ mkdir -p "$out_dir"
 # Keep the package readable by the older dpkg-deb versions still common on
 # supported Debian/Ubuntu installations. Newer runners default to zstd, while
 # xz remains accepted by both the target systems and our package checker.
-dpkg-deb --build --root-owner-group --compression=xz \
+dpkg-deb --build --root-owner-group -Zxz \
   "$pkg_root" "$out_dir/occluview_${version}_${arch}.deb"
 # Contract: the last line on stdout is the path of the package just built.
 # Callers take it from here rather than globbing target/deb, which on a
