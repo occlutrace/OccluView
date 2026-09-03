@@ -579,12 +579,14 @@ fn axis_gizmo_owns_only_its_endpoint_footprint_before_scene_tools() {
         "the viewport gizmo should be a projected rotating axis triad"
     );
     assert!(
-        render.contains("paint_axis_gizmo(") && overlays.contains("active_section_panel_rect"),
-        "the bottom-right triad should lift above the Section panel only when needed"
+        render.contains("paint_axis_gizmo(")
+            && overlays.contains("axis_gizmo_is_hidden")
+            && overlays.contains("if !gizmo_hidden"),
+        "Cut View must hide the triad instead of moving it above the Section panel"
     );
     assert!(
-        cut.contains("axis_gizmo_footprint_for(viewport_rect, gizmo_avoid)"),
-        "Cut View pointer ownership should exclude the same triad footprint"
+        cut.contains("axis_gizmo_is_hidden") && cut.contains("let over_gizmo = !gizmo_hidden"),
+        "Cut View pointer ownership must also ignore a hidden triad"
     );
     assert!(
         overlays.contains("axis_snap.is_some()") && overlays.contains("camera.snap_to_axis(axis)"),
