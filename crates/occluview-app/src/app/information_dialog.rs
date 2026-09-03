@@ -4,6 +4,7 @@ pub(super) enum InformationDialog {
     None,
     About,
     ThirdPartyNotices,
+    KeyboardMouse,
 }
 
 impl InformationDialog {
@@ -21,5 +22,6 @@ mod tests {
         assert!(!InformationDialog::None.is_open());
         assert!(InformationDialog::About.is_open());
         assert!(InformationDialog::ThirdPartyNotices.is_open());
+        assert!(InformationDialog::KeyboardMouse.is_open());
     }
 }

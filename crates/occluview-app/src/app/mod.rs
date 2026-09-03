@@ -51,6 +51,7 @@ mod app_bridge_split;
 mod app_cut_measure;
 mod app_dialogs;
 mod app_empty_state;
+mod app_help;
 mod app_input;
 mod app_layer_edits;
 mod app_layer_interaction;
