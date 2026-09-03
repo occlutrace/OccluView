@@ -473,66 +473,32 @@ jobs:
           cat > dist/release-notes.md <<NOTES
           OccluView $RELEASE_TAG
 
-          ## Start here
+          ## Download for Windows
 
-          ### Windows installer — recommended
+          - **OccluView-Windows-Setup.msi** — recommended. Installs the viewer,
+            Explorer previews, thumbnails, and file associations.
+          - **OccluView-Windows-Portable.zip** — runs without installation; no
+            Explorer integration.
 
-          Download \`OccluView-Windows-Setup.msi\`. It installs the
-          viewer, Explorer thumbnails, the live Preview Pane, and file
-          associations. For a normal Windows workstation, this is the only file
-          to choose.
+          ## What's new
 
-          ### Windows portable (.zip)
+          - First Glance now shows the complete workflow: open, align, inspect,
+            edit, sculpt, repair, and export.
+          - Help lists the real mouse and keyboard controls in plain language.
+          - Navigation is more natural: right-drag orbits and the wheel zooms
+            toward the pointer.
+          - Cut View keeps the small section window clear; the axis gizmo hides
+            instead of jumping above it.
 
-          Use \`OccluView-Windows-Portable.zip\` only when software cannot be
-          installed. It opens OccluView manually and does not add Explorer
-          previews or file associations.
-
-          ### Debian / Ubuntu (.deb)
-
-          Download \`OccluView-Linux.deb\` for the native Linux viewer,
-          launcher, MIME registration, and thumbnailer.
-
-          <details>
-          <summary>For IT and verification</summary>
-
-          The \`OccluView-${RELEASE_TAG#v}-verification.zip\` download contains
-          checksums, signature material, the signed update manifest, public key,
-          and SBOMs for verification and audit. GitHub build provenance remains
-          attached to each normal package. Normal users do not need this archive.
-
-          All packages install LICENSE, NOTICE, THIRD-PARTY-NOTICES.md and
-          THIRD-PARTY-NOTICES-NATIVE.md (the statically linked C++ components,
-          which no Cargo-derived document covers).
-
-          Extract the verification archive beside the package, then verify if
-          your clinic IT team requires it:
-
-          \`\`\`
-          sha256sum -c <asset>.sha256
-          minisign -Vm <asset> -P RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2kFOtITQnq
-          gh attestation verify <asset> --repo occlutrace/OccluView
-          \`\`\`
-
-          The same key is published as occluview.pub in the repository and is
-          compiled into the updater. sbom-windows.json and sbom-linux.json list
-          every third-party component in the binaries.
-
-          </details>
+          The verification archive, checksums, signatures, SBOMs, and source
+          archives are included below for IT and audit use; normal users do not
+          need them.
           NOTES
-          # The changelog section for this version, verbatim, so the release
-          # page states what changed without a second hop.
           version="${RELEASE_TAG#v}"
-          changes=$(awk -v ver="$version" '$0 ~ "^## "ver" " {flag=1; next} /^## /{flag=0} flag' CHANGELOG.md)
-          if [[ -z "${changes// /}" ]]; then
-            echo "CHANGELOG.md has no '## $version' section; the release page would say nothing." >&2
+          if ! grep -q "^## $version " CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## $version' section." >&2
             exit 1
           fi
-          {
-            echo
-            echo "Changes:"
-            printf '%s\n' "$changes"
-          } >> dist/release-notes.md
       - name: Sign update artifacts and write latest.json
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}

@@ -5,7 +5,7 @@
       <h1>OccluView</h1>
       <p><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
       <p>
-        <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.1.0">Latest published release: v1.1.0</a>
+        <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.1.1">Latest published release: v1.1.1</a>
         &nbsp;·&nbsp;
         <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml">Build status</a>
       </p>
@@ -18,23 +18,22 @@ editing, repairing, and exporting scan meshes. It is designed for the work
 that starts after a scan opens: compare two surfaces, find the deviation,
 repair unsafe topology, edit a selected region, and keep the result traceable.
 
-The current working tree carries version `1.1.1` as a local validation build.
-It is not a published GitHub release; the latest published tag remains
-`v1.1.0`.
-
 ## The workflow at a glance
 
 <p align="center">
   <img src="assets/occluview-workflow.gif" width="820" alt="Animated OccluView workflow: overview, alignment heatmap, mesh editing, sculpting, and repair report">
 </p>
 
-<p align="center">
-  <img src="assets/demo-overview.png" width="900" alt="OccluView showing two dental scan layers in the 3D viewport">
-</p>
-
 The animation and screenshots below were captured headlessly from the release
 binary using two supplied, de-identified STL scans. The visible identifiers are
 numeric only; no patient name is included.
+
+## Download for Windows
+
+Choose one file:
+
+- [OccluView-Windows-Setup.msi](https://github.com/occlutrace/OccluView/releases/latest/download/OccluView-Windows-Setup.msi) — recommended; installs the viewer, Explorer previews, thumbnails, and file associations.
+- [OccluView-Windows-Portable.zip](https://github.com/occlutrace/OccluView/releases/latest/download/OccluView-Windows-Portable.zip) — runs without installation; no Explorer integration.
 
 ## Quick Look
 
@@ -106,16 +105,10 @@ About, third-party notices, and repair results use the same centered modal
 surface. The backdrop is kept separate from the measured card, so opening About
 does not trigger a resize/repaint loop or leave a tall empty window.
 
-## Formats and packages
+## Files and results
 
-| Platform | Package | Includes |
-| --- | --- | --- |
-| Windows | `OccluView-Windows-Setup.msi` | Viewer, file associations, thumbnails, and Explorer Preview Pane. |
-| Windows | `OccluView-Windows-Portable.zip` | Viewer only; no Explorer integration. |
-| Debian/Ubuntu | `OccluView-Linux.deb` | Viewer, launcher, MIME setup, thumbnails, and local documentation. |
-
-Supported input formats are STL, PLY, OBJ, GLB, and HPS dental containers.
-Export is available for STL, PLY, and OBJ.
+Open STL, PLY, OBJ, GLB, and HPS dental containers. Export the finished result
+as STL, PLY, or OBJ.
 
 - `.hps` and `.dcm` are accepted as HPS dental containers; medical DICOM is not supported (a `DICM` signature is refused).
 
@@ -162,20 +155,7 @@ occluview-cli close-holes <file> -o out.stl [--limit-mm N]
 occluview-cli info <file> [file...]
 ```
 
-`thumbnail` uses the same rendering path as Explorer and Linux file managers.
+`thumbnail` uses the same rendering path as the Windows Preview Pane.
 
-## Build and validate locally
-
-```bash
-cargo fmt --all --check
-cargo test --workspace --all-targets --locked
-./install/linux/build-deb.sh
-./install/linux/check-deb.sh target/deb/occluview_1.1.1_amd64.deb
-```
-
-The DEB command creates a local artifact only. It does not create a tag, GitHub
-release, or publication. Security reporting and update-signing details are in
-[SECURITY.md](SECURITY.md). Contributions are covered by
-[CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [Apache-2.0](LICENSE);
-distribution notices are in [NOTICE](NOTICE) and
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Licensed under [Apache-2.0](LICENSE); distribution notices are in [NOTICE](NOTICE)
+and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
