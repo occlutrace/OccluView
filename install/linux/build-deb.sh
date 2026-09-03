@@ -166,7 +166,11 @@ chmod 0755 "$pkg_root/DEBIAN/postinst" "$pkg_root/DEBIAN/postrm"
 
 out_dir="target/deb"
 mkdir -p "$out_dir"
-dpkg-deb --build --root-owner-group "$pkg_root" "$out_dir/occluview_${version}_${arch}.deb"
+# Keep the package readable by the older dpkg-deb versions still common on
+# supported Debian/Ubuntu installations. Newer runners default to zstd, while
+# xz remains accepted by both the target systems and our package checker.
+dpkg-deb --build --root-owner-group --compression=xz \
+  "$pkg_root" "$out_dir/occluview_${version}_${arch}.deb"
 # Contract: the last line on stdout is the path of the package just built.
 # Callers take it from here rather than globbing target/deb, which on a
 # developer machine holds every earlier version as well.
