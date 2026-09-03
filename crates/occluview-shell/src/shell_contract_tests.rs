@@ -461,9 +461,6 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(workflow.contains("actions/download-artifact"));
     assert!(workflow.contains("*.deb"));
     assert!(workflow.contains("*.sha256"));
-    assert!(workflow.contains(r"Download \`OccluView-Linux.deb\` for the native Linux viewer,"));
-    assert!(workflow.contains("launcher, MIME registration, and thumbnailer."));
-
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(build_deb.contains("occluview-formats/private-hps-key"));
     assert!(build_deb.contains("Private HPS key embedding enabled for this build."));
@@ -560,15 +557,17 @@ fn release_notes_put_the_recommended_installer_before_technical_verification() {
         .expect("release-notes template");
 
     let download = notes
-        .find("## Start here")
-        .expect("release notes must start with the download choice");
+        .find("## Download for Windows")
+        .expect("release notes must start with the Windows download choice");
     let installer = notes
-        .find("Windows installer — recommended")
+        .find("**OccluView-Windows-Setup.msi**")
         .expect("release notes must identify the Windows installer as recommended");
-    let technical = notes
-        .find("<summary>For IT and verification</summary>")
-        .expect("technical verification must remain available without leading the release");
-    assert!(download < installer && installer < technical);
+    let portable = notes
+        .find("**OccluView-Windows-Portable.zip**")
+        .expect("release notes must explain the portable Windows package");
+    assert!(download < installer && installer < portable);
+    assert!(!notes.contains("OccluView-Linux.deb"));
+    assert!(!notes.contains("<details>"));
 }
 
 #[test]
@@ -628,11 +627,14 @@ fn release_note_markdown_is_not_executed_by_the_shell_heredoc() {
     let (_, write_notes) = workflow
         .split_once("- name: Write release notes")
         .expect("release workflow must write customer-facing notes");
+    let note_body = write_notes
+        .split("<<NOTES")
+        .nth(1)
+        .and_then(|body| body.split("NOTES").next())
+        .expect("release workflow must close the notes heredoc");
 
-    assert!(write_notes.contains("\\`OccluView-Windows-Setup.msi\\`"));
-    assert!(write_notes.contains("\\`OccluView-Windows-Portable.zip\\`"));
-    assert!(write_notes.contains("\\`OccluView-Linux.deb\\`"));
-    assert!(write_notes.contains("\\`OccluView-${RELEASE_TAG#v}-verification.zip\\`"));
+    assert!(note_body.contains("**OccluView-Windows-Setup.msi**"));
+    assert!(note_body.contains("**OccluView-Windows-Portable.zip**"));
 }
 
 #[test]
