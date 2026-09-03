@@ -42,7 +42,7 @@ const NAVIGATION: &[HintRow] = &[
     },
     HintRow {
         gesture: "Wheel",
-        action: "Zoom the camera",
+        action: "Zoom toward the pointer",
     },
     HintRow {
         gesture: "MMB click",

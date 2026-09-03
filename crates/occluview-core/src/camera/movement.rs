@@ -22,6 +22,66 @@ impl Camera {
         };
     }
 
+    /// Zoom around a screen point instead of the camera target.
+    ///
+    /// Orthographic zoom changes the view-plane scale but does not move the
+    /// eye, so the point under the cursor would otherwise slide toward the
+    /// viewport centre. Move the target by the exact difference between the
+    /// old and new view-plane offsets; the world point under the cursor then
+    /// stays under it for both zoom-in and zoom-out.
+    pub fn zoom_at_screen_point(
+        &mut self,
+        scale: f32,
+        pointer_px: Vec2,
+        viewport_px: Vec2,
+    ) -> bool {
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !pointer_px.is_finite()
+            || !viewport_px.is_finite()
+            || viewport_px.x <= f32::EPSILON
+            || viewport_px.y <= f32::EPSILON
+        {
+            return false;
+        }
+
+        let old_height = self.orthographic_height;
+        let target_before = self.target;
+        self.zoom_by(scale);
+        let new_height = self.orthographic_height;
+        if !old_height.is_finite()
+            || !new_height.is_finite()
+            || (new_height - old_height).abs() <= f32::EPSILON
+        {
+            return new_height != old_height;
+        }
+
+        let Some((right, up, _forward)) = self.view_basis() else {
+            return new_height != old_height;
+        };
+        if !target_before.is_finite() {
+            return new_height != old_height;
+        }
+
+        // Normalized screen coordinates use +Y up, matching the camera's
+        // view-plane basis rather than egui's downward screen Y.
+        let ndc = Vec2::new(
+            pointer_px.x / viewport_px.x * 2.0 - 1.0,
+            1.0 - pointer_px.y / viewport_px.y * 2.0,
+        );
+        let old_half_height = old_height * 0.5;
+        let new_half_height = new_height * 0.5;
+        let old_half_width = old_half_height * viewport_px.x / viewport_px.y;
+        let new_half_width = new_half_height * viewport_px.x / viewport_px.y;
+        let target_delta = right * (ndc.x * (old_half_width - new_half_width))
+            + up * (ndc.y * (old_half_height - new_half_height));
+        if target_delta.is_finite() {
+            self.target += target_delta;
+        }
+
+        new_height != old_height
+    }
+
     /// Pan the camera target in the current view plane using screen-space
     /// pixels. Positive X/Y deltas match pointer movement directions.
     pub fn pan_screen(&mut self, delta_px: Vec2, viewport_px: Vec2) {

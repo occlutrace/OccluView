@@ -4,202 +4,249 @@ use occluview_core::{Camera, CameraAxisView};
 
 use crate::app_settings::ViewportBackground;
 
-/// The projected cube is deliberately compact: it belongs to the viewport
-/// corner, not to the model. The footprint is larger than the cube's maximum
-/// projected extent so the cut and measure adapters can reserve one exact
-/// rectangle without duplicating the projection math.
-const ORIENTATION_CUBE_SCALE_PX: f32 = 48.0;
-const ORIENTATION_CUBE_FOOTPRINT_PX: f32 = 96.0;
-const ORIENTATION_CUBE_MARGIN_PX: f32 = 14.0;
-const ORIENTATION_CUBE_EDGE_PX: f32 = 1.0;
+/// The gizmo is a small projected axis triad, not a second toolbar. Its
+/// footprint is deliberately larger than the painted arms so pointer routing
+/// and painting share one stable rectangle.
+const AXIS_GIZMO_ARM_PX: f32 = 36.0;
+const AXIS_GIZMO_FOOTPRINT_PX: f32 = 96.0;
+const AXIS_GIZMO_MARGIN_PX: f32 = 14.0;
+const AXIS_GIZMO_GAP_PX: f32 = 8.0;
+const AXIS_GIZMO_HIT_RADIUS_PX: f32 = 10.0;
+const AXIS_GIZMO_ARROW_PX: f32 = 7.0;
+
+/// Vertical room needed when the bottom-right gizmo lifts above the docked
+/// Section panel: viewport margin + full footprint + a breathing gap.
+pub(crate) const AXIS_GIZMO_LIFT_RESERVE_PX: f32 =
+    AXIS_GIZMO_MARGIN_PX + AXIS_GIZMO_FOOTPRINT_PX + AXIS_GIZMO_GAP_PX;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct OrientationCubeFace {
-    pub(crate) axis: CameraAxisView,
-    pub(crate) polygon: [egui::Pos2; 4],
-    pub(crate) center: egui::Pos2,
+struct AxisGizmoMarker {
+    axis: CameraAxisView,
+    endpoint: egui::Pos2,
     depth: f32,
+    projected_length: f32,
 }
 
 #[derive(Clone, Copy)]
 struct AxisGizmoPalette {
-    face_front: egui::Color32,
-    face_side: egui::Color32,
-    face_hover: egui::Color32,
-    edge_hover: egui::Color32,
-    axis_edge: egui::Color32,
+    shadow: egui::Color32,
+    hub_fill: egui::Color32,
+    hub_stroke: egui::Color32,
     label: egui::Color32,
 }
 
 fn axis_gizmo_palette(background: ViewportBackground) -> AxisGizmoPalette {
     if background.is_dark() {
         AxisGizmoPalette {
-            face_front: egui::Color32::from_rgba_unmultiplied(44, 51, 63, 236),
-            face_side: egui::Color32::from_rgba_unmultiplied(31, 38, 49, 226),
-            face_hover: egui::Color32::from_rgba_unmultiplied(76, 91, 111, 246),
-            edge_hover: egui::Color32::from_rgba_unmultiplied(236, 240, 246, 210),
-            axis_edge: egui::Color32::from_rgb(206, 216, 230),
-            label: egui::Color32::from_rgb(244, 247, 251),
+            shadow: egui::Color32::from_black_alpha(180),
+            hub_fill: egui::Color32::from_rgb(226, 232, 240),
+            hub_stroke: egui::Color32::from_rgb(15, 23, 42),
+            label: egui::Color32::from_rgb(245, 247, 250),
         }
     } else {
         AxisGizmoPalette {
-            face_front: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 242),
-            face_side: egui::Color32::from_rgba_unmultiplied(231, 235, 240, 236),
-            face_hover: egui::Color32::from_rgba_unmultiplied(208, 218, 230, 248),
-            edge_hover: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 180),
-            axis_edge: egui::Color32::from_rgb(44, 55, 72),
-            label: egui::Color32::from_rgb(20, 29, 43),
+            shadow: egui::Color32::from_black_alpha(95),
+            hub_fill: egui::Color32::from_rgb(15, 23, 42),
+            hub_stroke: egui::Color32::from_rgb(248, 250, 252),
+            label: egui::Color32::from_rgb(15, 23, 42),
         }
     }
 }
 
-/// Paint the projected navigation cube and return an axis only for a primary
-/// click on a face. The viewport response remains the shared input surface;
-/// this painter owns no separate pointer stream.
+/// Paint the camera-facing axis triad and return a snap target only for a
+/// primary click near an axis endpoint. The viewport response remains the
+/// shared input surface; this painter owns no separate pointer stream.
 pub(crate) fn paint_axis_gizmo(
     ui: &egui::Ui,
     image_rect: egui::Rect,
     camera: &Camera,
     response: &egui::Response,
+    avoid: Option<egui::Rect>,
     background: ViewportBackground,
 ) -> Option<CameraAxisView> {
-    let faces = orientation_cube_faces(camera, image_rect);
-    if faces.is_empty() {
+    let Some((center, mut markers)) = axis_gizmo_markers(camera, image_rect, avoid) else {
         return None;
-    }
-
+    };
     let hovered = response
         .hover_pos()
-        .and_then(|pointer| orientation_cube_hit(&faces, pointer));
+        .and_then(|pointer| axis_gizmo_hit(&markers, center, pointer));
     if hovered.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
     let palette = axis_gizmo_palette(background);
     let painter = ui.painter();
-    for face in &faces {
-        let is_hovered = hovered == Some(face.axis);
-        let fill = if is_hovered {
-            palette.face_hover
-        } else if face.depth >= 0.55 {
-            palette.face_front
-        } else {
-            palette.face_side
-        };
-        let axis_color = axis_gizmo_color(face.axis);
-        let outline = if is_hovered {
-            palette.edge_hover
-        } else {
-            palette.axis_edge
-        };
-        let axis_stroke = egui::Stroke::new(
-            if is_hovered {
-                2.0
-            } else {
-                ORIENTATION_CUBE_EDGE_PX
-            },
-            axis_color,
+    markers.sort_by(|left, right| left.depth.total_cmp(&right.depth));
+    for marker in markers.iter() {
+        let delta = marker.endpoint - center;
+        let length = delta.length();
+        if length <= f32::EPSILON {
+            continue;
+        }
+        let direction = delta / length;
+        let is_hovered = hovered == Some(marker.axis);
+        let is_positive = matches!(
+            marker.axis,
+            CameraAxisView::PositiveX | CameraAxisView::PositiveY | CameraAxisView::PositiveZ
         );
-        painter.add(egui::Shape::convex_polygon(
-            face.polygon.to_vec(),
-            fill,
-            egui::Stroke::new(if is_hovered { 1.5 } else { 1.0 }, outline),
-        ));
-        painter.line_segment([face.polygon[0], face.polygon[1]], axis_stroke);
-        painter.line_segment([face.polygon[1], face.polygon[2]], axis_stroke);
-        painter.line_segment([face.polygon[2], face.polygon[3]], axis_stroke);
-        painter.line_segment([face.polygon[3], face.polygon[0]], axis_stroke);
-        painter.text(
-            face.center,
-            egui::Align2::CENTER_CENTER,
-            face.axis.label(),
-            egui::FontId::proportional(11.5),
-            if is_hovered {
-                palette.label
-            } else {
-                palette.label.gamma_multiply(0.94)
-            },
+        let axis_color = axis_gizmo_color(marker.axis);
+        let color = if is_positive {
+            axis_color
+        } else {
+            axis_color.gamma_multiply(if background.is_dark() { 0.62 } else { 0.48 })
+        };
+        let width = if is_hovered {
+            2.75
+        } else if is_positive {
+            2.0
+        } else {
+            1.25
+        };
+        painter.line_segment(
+            [center, marker.endpoint],
+            egui::Stroke::new(width + 1.5, palette.shadow),
         );
+        painter.line_segment([center, marker.endpoint], egui::Stroke::new(width, color));
+
+        if is_positive {
+            paint_arrowhead(
+                painter,
+                marker.endpoint,
+                direction,
+                if is_hovered {
+                    axis_color.gamma_multiply(1.12)
+                } else {
+                    axis_color
+                },
+                palette.shadow,
+            );
+        } else {
+            painter.circle_filled(marker.endpoint, if is_hovered { 3.5 } else { 2.5 }, color);
+        }
+
+        // The positive ends carry the readable labels. Negative ends stay as
+        // quiet dots: labeling both ends makes standard views collide when
+        // two projected axes share a screen direction.
+        if is_positive {
+            painter.text(
+                marker.endpoint + direction * 7.0,
+                egui::Align2::CENTER_CENTER,
+                marker.axis.label(),
+                egui::FontId::proportional(if is_hovered { 11.5 } else { 10.5 }),
+                if is_hovered {
+                    axis_color
+                } else {
+                    palette.label
+                },
+            );
+        }
     }
+
+    painter.circle_filled(center, 4.0, palette.shadow);
+    painter.circle_filled(center, 2.75, palette.hub_fill);
+    painter.circle_stroke(center, 2.75, egui::Stroke::new(0.75, palette.hub_stroke));
 
     if response.clicked_by(egui::PointerButton::Primary) {
         return response
             .interact_pointer_pos()
-            .and_then(|pointer| orientation_cube_hit(&faces, pointer));
+            .and_then(|pointer| axis_gizmo_hit(&markers, center, pointer));
     }
     None
 }
 
-/// Project the camera-facing axis faces of a unit cube into the viewport.
-/// Results are ordered from farthest to nearest for painter back-to-front
-/// drawing. Only face normals map to camera actions; edges and corner gaps do
-/// not.
-pub(crate) fn orientation_cube_faces(
+fn paint_arrowhead(
+    painter: &egui::Painter,
+    tip: egui::Pos2,
+    direction: egui::Vec2,
+    fill: egui::Color32,
+    shadow: egui::Color32,
+) {
+    let perpendicular = egui::vec2(-direction.y, direction.x);
+    let base = tip - direction * AXIS_GIZMO_ARROW_PX;
+    let width = AXIS_GIZMO_ARROW_PX * 0.62;
+    let triangle = vec![
+        tip,
+        base + perpendicular * width,
+        base - perpendicular * width,
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        triangle.clone(),
+        shadow,
+        egui::Stroke::NONE,
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        triangle,
+        fill,
+        egui::Stroke::new(0.75, shadow),
+    ));
+}
+
+/// Project all six world-axis endpoints around the camera's current basis.
+/// Their screen positions therefore rotate continuously with the viewport.
+fn axis_gizmo_markers(
     camera: &Camera,
     viewport: egui::Rect,
-) -> Vec<OrientationCubeFace> {
-    let Some((right, up, forward)) = orientation_cube_basis(camera) else {
-        return Vec::new();
-    };
-    let center = orientation_cube_center(viewport);
-    let toward_eye = -forward;
-    let mut faces = Vec::with_capacity(3);
-
-    for axis in CameraAxisView::ALL {
-        let (normal, corners) = axis_face_geometry(axis);
-        let depth = normal.dot(toward_eye);
-        if !depth.is_finite() || depth <= 1.0e-4 {
-            continue;
-        }
-        let polygon = corners.map(|corner| project_cube_corner(corner, center, right, up));
-        let center = polygon
-            .iter()
-            .copied()
-            .fold(egui::Pos2::ZERO, |sum, point| sum + point.to_vec2())
-            / 4.0;
-        faces.push(OrientationCubeFace {
-            axis,
-            polygon,
-            center,
-            depth,
-        });
-    }
-
-    faces.sort_by(|left, right| left.depth.total_cmp(&right.depth));
-    faces
+    avoid: Option<egui::Rect>,
+) -> Option<(egui::Pos2, Vec<AxisGizmoMarker>)> {
+    let (right, up, forward) = axis_gizmo_basis(camera)?;
+    let center = axis_gizmo_center(viewport, avoid);
+    let eye_direction = -forward;
+    let markers = CameraAxisView::ALL
+        .into_iter()
+        .map(|axis| {
+            let direction = axis.direction();
+            let projected = egui::vec2(direction.dot(right), -direction.dot(up));
+            AxisGizmoMarker {
+                axis,
+                endpoint: center + projected * AXIS_GIZMO_ARM_PX,
+                depth: direction.dot(eye_direction),
+                projected_length: projected.length() * AXIS_GIZMO_ARM_PX,
+            }
+        })
+        .collect();
+    Some((center, markers))
 }
 
-/// Return the front-most face under `pointer`, if any. The convex test keeps
-/// projected corner gaps decorative and non-clickable.
-pub(crate) fn orientation_cube_hit(
-    faces: &[OrientationCubeFace],
+/// Return the front-most axis endpoint under `pointer`. The centre and empty
+/// space remain decorative, so they cannot accidentally snap the camera.
+fn axis_gizmo_hit(
+    markers: &[AxisGizmoMarker],
+    center: egui::Pos2,
     pointer: egui::Pos2,
 ) -> Option<CameraAxisView> {
-    faces
+    markers
         .iter()
-        .rev()
-        .find(|face| point_in_convex_quad(pointer, &face.polygon))
-        .map(|face| face.axis)
+        .filter(|marker| marker.projected_length > AXIS_GIZMO_HIT_RADIUS_PX * 0.5)
+        .filter(|marker| marker.endpoint.distance(pointer) <= AXIS_GIZMO_HIT_RADIUS_PX)
+        .max_by(|left, right| left.depth.total_cmp(&right.depth))
+        .map(|marker| marker.axis)
+        .filter(|_| pointer.distance(center) > AXIS_GIZMO_HIT_RADIUS_PX)
 }
 
-/// The one rectangle used by painting and viewport-tool ownership.
-pub(crate) fn axis_gizmo_footprint(viewport: egui::Rect) -> egui::Rect {
+/// The painted footprint when the Section panel owns the bottom-right corner.
+pub(crate) fn axis_gizmo_footprint_for(
+    viewport: egui::Rect,
+    avoid: Option<egui::Rect>,
+) -> egui::Rect {
     egui::Rect::from_center_size(
-        orientation_cube_center(viewport),
-        egui::vec2(ORIENTATION_CUBE_FOOTPRINT_PX, ORIENTATION_CUBE_FOOTPRINT_PX),
+        axis_gizmo_center(viewport, avoid),
+        egui::vec2(AXIS_GIZMO_FOOTPRINT_PX, AXIS_GIZMO_FOOTPRINT_PX),
     )
 }
 
-fn orientation_cube_center(viewport: egui::Rect) -> egui::Pos2 {
-    let half = ORIENTATION_CUBE_FOOTPRINT_PX * 0.5;
-    let x = (viewport.right() - ORIENTATION_CUBE_MARGIN_PX - half).max(viewport.left() + half);
-    let y = (viewport.top() + ORIENTATION_CUBE_MARGIN_PX + half)
-        .min(viewport.bottom() - half)
-        .max(viewport.top() + half);
+fn axis_gizmo_center(viewport: egui::Rect, avoid: Option<egui::Rect>) -> egui::Pos2 {
+    let half = AXIS_GIZMO_FOOTPRINT_PX * 0.5;
+    let x = (viewport.right() - AXIS_GIZMO_MARGIN_PX - half)
+        .max(viewport.left() + AXIS_GIZMO_MARGIN_PX + half);
+    let bottom_home = viewport.bottom() - AXIS_GIZMO_MARGIN_PX - half;
+    let y = avoid.map_or(bottom_home, |panel| {
+        (panel.top() - AXIS_GIZMO_GAP_PX - half)
+            .clamp(viewport.top() + AXIS_GIZMO_MARGIN_PX + half, bottom_home)
+    });
     egui::pos2(x, y)
 }
 
-fn orientation_cube_basis(camera: &Camera) -> Option<(Vec3, Vec3, Vec3)> {
+fn axis_gizmo_basis(camera: &Camera) -> Option<(Vec3, Vec3, Vec3)> {
     let forward = camera.view_direction();
     let up = camera.view_up();
     let right = forward.cross(up).normalize_or_zero();
@@ -210,87 +257,6 @@ fn orientation_cube_basis(camera: &Camera) -> Option<(Vec3, Vec3, Vec3)> {
         && up.length_squared() > f32::EPSILON
         && right.length_squared() > f32::EPSILON)
         .then_some((right, up, forward))
-}
-
-fn project_cube_corner(corner: Vec3, center: egui::Pos2, right: Vec3, up: Vec3) -> egui::Pos2 {
-    let screen = egui::vec2(corner.dot(right), -corner.dot(up)) * ORIENTATION_CUBE_SCALE_PX;
-    center + screen
-}
-
-fn axis_face_geometry(axis: CameraAxisView) -> (Vec3, [Vec3; 4]) {
-    let h = 0.5;
-    match axis {
-        CameraAxisView::PositiveX => (
-            Vec3::X,
-            [
-                Vec3::new(h, -h, -h),
-                Vec3::new(h, h, -h),
-                Vec3::new(h, h, h),
-                Vec3::new(h, -h, h),
-            ],
-        ),
-        CameraAxisView::NegativeX => (
-            Vec3::NEG_X,
-            [
-                Vec3::new(-h, -h, h),
-                Vec3::new(-h, h, h),
-                Vec3::new(-h, h, -h),
-                Vec3::new(-h, -h, -h),
-            ],
-        ),
-        CameraAxisView::PositiveY => (
-            Vec3::Y,
-            [
-                Vec3::new(-h, h, -h),
-                Vec3::new(-h, h, h),
-                Vec3::new(h, h, h),
-                Vec3::new(h, h, -h),
-            ],
-        ),
-        CameraAxisView::NegativeY => (
-            Vec3::NEG_Y,
-            [
-                Vec3::new(-h, -h, h),
-                Vec3::new(-h, -h, -h),
-                Vec3::new(h, -h, -h),
-                Vec3::new(h, -h, h),
-            ],
-        ),
-        CameraAxisView::PositiveZ => (
-            Vec3::Z,
-            [
-                Vec3::new(-h, -h, h),
-                Vec3::new(h, -h, h),
-                Vec3::new(h, h, h),
-                Vec3::new(-h, h, h),
-            ],
-        ),
-        CameraAxisView::NegativeZ => (
-            Vec3::NEG_Z,
-            [
-                Vec3::new(h, -h, -h),
-                Vec3::new(-h, -h, -h),
-                Vec3::new(-h, h, -h),
-                Vec3::new(h, h, -h),
-            ],
-        ),
-    }
-}
-
-fn point_in_convex_quad(point: egui::Pos2, polygon: &[egui::Pos2; 4]) -> bool {
-    let mut has_positive = false;
-    let mut has_negative = false;
-    for (from, to) in polygon.iter().zip(polygon.iter().cycle().skip(1)).take(4) {
-        let edge = *to - *from;
-        let relative = point - *from;
-        let cross = edge.x * relative.y - edge.y * relative.x;
-        has_positive |= cross > 1.0e-4;
-        has_negative |= cross < -1.0e-4;
-        if has_positive && has_negative {
-            return false;
-        }
-    }
-    true
 }
 
 fn axis_gizmo_color(axis: CameraAxisView) -> egui::Color32 {
@@ -312,7 +278,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn orientation_cube_projects_visible_faces_and_only_faces_are_clickable() {
+    fn axis_gizmo_projects_rotating_axes_and_only_endpoints_are_clickable() {
         let camera = Camera {
             target: Vec3::ZERO,
             distance: 100.0,
@@ -321,41 +287,42 @@ mod tests {
             ..Camera::default()
         };
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
-        let faces = orientation_cube_faces(&camera, viewport);
+        let Some((center, markers)) = axis_gizmo_markers(&camera, viewport, None) else {
+            panic!("camera basis should be valid");
+        };
 
-        assert_eq!(
-            faces.len(),
-            3,
-            "an oblique view should expose three cube faces"
-        );
-        for face in &faces {
-            assert_eq!(orientation_cube_hit(&faces, face.center), Some(face.axis));
+        assert_eq!(markers.len(), 6);
+        for marker in &markers {
+            assert!(marker.projected_length > 0.0);
+            assert_eq!(
+                axis_gizmo_hit(&markers, center, marker.endpoint),
+                Some(marker.axis)
+            );
         }
-
-        let footprint = axis_gizmo_footprint(viewport);
-        assert!(viewport.contains_rect(footprint));
-        assert!(footprint.left() > viewport.center().x);
-        assert!(footprint.top() < viewport.center().y);
-        assert!(
-            orientation_cube_hit(&faces, footprint.left_top() + egui::vec2(2.0, 2.0)).is_none(),
-            "decorative corner gaps must not snap a camera"
-        );
+        assert!(axis_gizmo_hit(&markers, center, center).is_none());
     }
 
     #[test]
-    fn orientation_cube_does_not_overlap_the_bottom_right_section_panel() {
+    fn axis_gizmo_lives_bottom_right_and_lifts_above_section_panel() {
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1600.0, 900.0));
-        let panel = egui::Rect::from_min_size(egui::pos2(1240.0, 470.0), egui::vec2(352.0, 389.0));
+        let home = axis_gizmo_footprint_for(viewport, None);
+        assert!(home.right() < viewport.right());
+        assert!(home.bottom() < viewport.bottom());
+        assert!(home.left() > viewport.center().x);
+        assert!(home.top() > viewport.center().y);
 
-        assert!(!axis_gizmo_footprint(viewport).intersects(panel));
+        let panel = egui::Rect::from_min_size(egui::pos2(1240.0, 470.0), egui::vec2(352.0, 389.0));
+        let lifted = axis_gizmo_footprint_for(viewport, Some(panel));
+        assert!(!lifted.intersects(panel));
+        assert!(lifted.bottom() <= panel.top());
     }
 
     #[test]
-    fn orientation_cube_palette_changes_with_the_viewport_background() {
+    fn axis_gizmo_palette_changes_with_the_viewport_background() {
         let light = axis_gizmo_palette(ViewportBackground::White);
         let dark = axis_gizmo_palette(ViewportBackground::Dark);
 
-        assert_ne!(light.face_front, dark.face_front);
-        assert_ne!(light.axis_edge, dark.axis_edge);
+        assert_ne!(light.hub_fill, dark.hub_fill);
+        assert_ne!(light.label, dark.label);
     }
 }

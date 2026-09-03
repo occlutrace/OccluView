@@ -308,7 +308,8 @@ fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
         "viewport input should dispatch the right-click layer menu"
     );
     assert!(
-        orbit.contains("sample.down && response.is_pointer_button_down_on()")
+        orbit.contains("sample.down && !sample.pressed")
+            && orbit.contains("response.is_pointer_button_down_on()")
             && orbit.contains("viewport_orbit_drag_active(")
             && orbit.contains("pan_drag_active || orbit_drag_active")
             && input.contains("orbit_delta_from_drag(secondary_pointer.motion"),
@@ -542,31 +543,52 @@ fn viewport_primary_secondary_drag_pans_scene_before_orbit() {
 }
 
 #[test]
-fn orientation_cube_owns_only_its_face_footprint_before_scene_tools() {
+fn secondary_motion_is_latched_before_context_menu_dispatch() {
+    let input = function_source(
+        app_viewport_source(),
+        "pub(super) fn handle_viewport_input(",
+    );
+    let viewport = app_viewport_source();
+
+    assert!(
+        appears_before(
+            input,
+            "self.update_viewport_orbit_gesture(",
+            "self.handle_viewport_secondary_context_menu(",
+        ),
+        "RMB motion must be recorded before egui decides whether the release is a context click"
+    );
+    assert!(
+        viewport.contains("sample.released && !sample.pressed")
+            && viewport.contains("sample.motion.length_sq() > f32::EPSILON"),
+        "a press-and-release short drag must also suppress the context menu"
+    );
+}
+
+#[test]
+fn axis_gizmo_owns_only_its_endpoint_footprint_before_scene_tools() {
     let render = app_render_source();
     let cut = repo_source_file("src/app/app_cut_measure.rs");
     let gizmo = repo_source_file("src/viewer/axis_gizmo.rs");
     let overlays = function_source(render, "fn show_viewport_overlays(");
 
     assert!(
-        gizmo.contains("orientation_cube_faces")
-            && gizmo.contains("orientation_cube_hit")
-            && gizmo.contains("convex_polygon"),
-        "the viewport gizmo should be a projected face-based cube"
+        gizmo.contains("axis_gizmo_markers")
+            && gizmo.contains("axis_gizmo_hit")
+            && gizmo.contains("paint_arrowhead"),
+        "the viewport gizmo should be a projected rotating axis triad"
     );
     assert!(
-        render.contains("paint_axis_gizmo(")
-            && !overlays.contains("active_section_panel_rect(response.rect)"),
-        "the cube should use one fixed upper-right footprint, not the old lifted ring"
+        render.contains("paint_axis_gizmo(") && overlays.contains("active_section_panel_rect"),
+        "the bottom-right triad should lift above the Section panel only when needed"
     );
     assert!(
-        cut.contains("axis_gizmo_footprint(viewport_rect)")
-            && !cut.contains("axis_gizmo_footprint(viewport_rect, gizmo_avoid)"),
-        "Cut View pointer ownership should exclude the same fixed cube footprint"
+        cut.contains("axis_gizmo_footprint_for(viewport_rect, gizmo_avoid)"),
+        "Cut View pointer ownership should exclude the same triad footprint"
     );
     assert!(
         overlays.contains("axis_snap.is_some()") && overlays.contains("camera.snap_to_axis(axis)"),
-        "a cube face click should still reach the existing camera snap authority"
+        "an axis endpoint click should still reach the existing camera snap authority"
     );
 }
 

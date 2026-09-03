@@ -28,14 +28,22 @@ pub(super) fn zoom_camera_from_wheel(
     camera: &mut occluview_core::Camera,
     ctx: &egui::Context,
     zoom_sensitivity: f32,
+    viewport_rect: egui::Rect,
+    pointer: egui::Pos2,
 ) -> bool {
     let zoom = zoom_factor_from_scroll(super::app_input::raw_wheel_delta(ctx).y);
     if (zoom - 1.0).abs() > f32::EPSILON {
         // Sensitivity is an exponent on the zoom factor: 1.0 keeps the fixed
         // gain, values below soften it, values above sharpen it, and any
         // factor stays a pure multiplicative zoom.
-        camera.zoom_by(zoom.powf(zoom_sensitivity));
-        return true;
+        return camera.zoom_at_screen_point(
+            zoom.powf(zoom_sensitivity),
+            Vec2::new(
+                pointer.x - viewport_rect.left(),
+                pointer.y - viewport_rect.top(),
+            ),
+            Vec2::new(viewport_rect.width(), viewport_rect.height()),
+        );
     }
     false
 }
@@ -109,6 +117,14 @@ impl OccluViewApp {
 
         // Any camera motion owns the gesture, including movement below egui's
         // normal click/drag threshold. A truly stationary RMB opens the menu.
+        // A press frame may also carry the cursor movement that brought the
+        // pointer to the click location; it is not motion of the RMB gesture.
+        // A release frame with motion is the opposite edge case: the complete
+        // short drag can arrive in one egui frame and still must suppress the
+        // context menu.
+        if sample.released && !sample.pressed && sample.motion.length_sq() > f32::EPSILON {
+            self.viewport_secondary_gesture_moved_since_press = true;
+        }
         let suppress_context_menu =
             response.secondary_clicked() && self.viewport_secondary_gesture_moved_since_press;
         if !suppress_context_menu {
@@ -126,7 +142,8 @@ impl OccluViewApp {
         pan_drag_active: bool,
         sample: SecondaryPointerSample,
     ) -> bool {
-        let secondary_press_owned = sample.down && response.is_pointer_button_down_on();
+        let secondary_press_owned =
+            sample.down && !sample.pressed && response.is_pointer_button_down_on();
         let orbit_drag_active = viewport_orbit_drag_active(
             pan_drag_active,
             sample.down,
@@ -152,6 +169,12 @@ impl OccluViewApp {
         gizmo_click: bool,
     ) {
         let secondary_pointer = secondary_pointer_sample(ctx);
+        let pan_drag_active = viewport_pan_drag_active(ctx, response);
+        let orbit_drag_active =
+            self.update_viewport_orbit_gesture(ctx, response, pan_drag_active, secondary_pointer);
+        // Update the movement latch before handing the same release to egui's
+        // context-menu recognizer. Otherwise the first frame of a short RMB
+        // drag can still look stationary and open a menu while orbiting.
         self.handle_viewport_secondary_context_menu(ctx, response, secondary_pointer);
 
         // Modified middle clicks manage per-layer visibility and never fall
@@ -187,10 +210,6 @@ impl OccluViewApp {
         } else {
             None
         };
-
-        let pan_drag_active = viewport_pan_drag_active(ctx, response);
-        let orbit_drag_active =
-            self.update_viewport_orbit_gesture(ctx, response, pan_drag_active, secondary_pointer);
 
         // An armed sculpt brush owns the primary drag ahead of every selection
         // gesture; RMB orbit / MMB retarget / wheel zoom fall through below.
@@ -267,7 +286,15 @@ impl OccluViewApp {
         }
 
         if response.hovered() && !sculpt_wheel_used {
-            changed |= zoom_camera_from_wheel(camera, ctx, self.settings.zoom_sensitivity());
+            if let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) {
+                changed |= zoom_camera_from_wheel(
+                    camera,
+                    ctx,
+                    self.settings.zoom_sensitivity(),
+                    viewport_rect,
+                    pointer,
+                );
+            }
         }
 
         if changed {
@@ -284,13 +311,12 @@ mod tests {
     use eframe::egui;
     use occluview_core::Camera;
 
-    fn camera_after_wheel(delta_y: f32) -> (bool, f32) {
+    fn camera_after_wheel(delta_y: f32, pointer: egui::Pos2) -> (bool, f32) {
         let ctx = egui::Context::default();
+        let viewport_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(800.0, 600.0));
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
+            screen_rect: Some(viewport_rect),
             events: vec![egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, delta_y),
@@ -302,7 +328,7 @@ mod tests {
         let mut camera = Camera::default();
         let mut changed = false;
         ctx.run_ui(input, |ui| {
-            changed = zoom_camera_from_wheel(&mut camera, ui.ctx(), 1.0);
+            changed = zoom_camera_from_wheel(&mut camera, ui.ctx(), 1.0, viewport_rect, pointer);
         })
         .drop_without_applying_deltas();
         (changed, camera.orthographic_height)
@@ -310,8 +336,9 @@ mod tests {
 
     #[test]
     fn consumer_wheel_camera_uses_vertical_delta_and_preserves_direction() {
-        let (inward_changed, inward_height) = camera_after_wheel(120.0);
-        let (outward_changed, outward_height) = camera_after_wheel(-120.0);
+        let (inward_changed, inward_height) = camera_after_wheel(120.0, egui::pos2(500.0, 380.0));
+        let (outward_changed, outward_height) =
+            camera_after_wheel(-120.0, egui::pos2(500.0, 380.0));
 
         assert!(inward_changed && inward_height < 100.0);
         assert!(outward_changed && outward_height > 100.0);
@@ -321,7 +348,7 @@ mod tests {
     fn consumer_wheel_camera_nan_is_ignored_without_change() {
         let initial_height = Camera::default().orthographic_height;
 
-        let (changed, height) = camera_after_wheel(f32::NAN);
+        let (changed, height) = camera_after_wheel(f32::NAN, egui::pos2(500.0, 380.0));
 
         assert!(!changed);
         assert_eq!(height, initial_height);
