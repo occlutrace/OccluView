@@ -490,9 +490,8 @@ jobs:
           - Cut View keeps the small section window clear; the axis gizmo hides
             instead of jumping above it.
 
-          The verification archive, checksums, signatures, SBOMs, and source
-          archives are included below for IT and audit use; normal users do not
-          need them.
+          The verification archive is for technical checks; regular users do
+          not need it.
           NOTES
           version="${RELEASE_TAG#v}"
           if ! grep -q "^## $version " CHANGELOG.md; then
