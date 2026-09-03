@@ -582,6 +582,7 @@ impl OccluViewApp {
             InformationDialog::None => {}
             InformationDialog::About => self.show_about_dialog(ctx),
             InformationDialog::ThirdPartyNotices => self.show_third_party_window(ctx),
+            InformationDialog::KeyboardMouse => self.show_help_dialog(ctx),
         }
     }
 }

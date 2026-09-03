@@ -1,3 +1,4 @@
+use super::app_help::{render_contextual_hint, show_help_toolbar_toggle};
 use super::app_recent_popup::RecentFilesAction;
 use super::app_settings_panel::settings_popup_id;
 use super::information_dialog::InformationDialog;
@@ -256,6 +257,10 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let help_response = show_help_toolbar_toggle(ui, !self.close_guard_open);
+                        if help_response.clicked() {
+                            self.information_dialog = InformationDialog::KeyboardMouse;
+                        }
                         let response = show_settings_toolbar_toggle(ui, !self.close_guard_open);
                         if response.clicked() {
                             self.information_dialog = InformationDialog::None;
@@ -373,7 +378,11 @@ impl OccluViewApp {
     }
 
     pub(super) fn show_status_overlay(&self, ui: &mut egui::Ui, viewport_rect: egui::Rect) {
-        if self.status_message.is_none() && self.active_load.is_none() {
+        let pointer_over_viewport = ui
+            .ctx()
+            .pointer_hover_pos()
+            .is_some_and(|pointer| viewport_rect.contains(pointer));
+        if self.status_message.is_none() && self.active_load.is_none() && !pointer_over_viewport {
             return;
         }
         let rect = status_overlay_rect(viewport_rect);
@@ -398,6 +407,8 @@ impl OccluViewApp {
                             .truncate(),
                     );
                     response.on_hover_text(message);
+                } else if pointer_over_viewport {
+                    render_contextual_hint(ui, rect, self.interaction_hint_context(), ink);
                 }
             });
         });

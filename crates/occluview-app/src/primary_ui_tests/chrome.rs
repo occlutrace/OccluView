@@ -136,6 +136,35 @@ fn toolbar_and_about_are_operator_focused() {
 }
 
 #[test]
+fn help_is_a_direct_toolbar_surface_with_a_non_consuming_hint() {
+    let dialogs = app_dialogs_source();
+    let state = repo_source_file("src/app/state.rs");
+    let help = repo_source_file("src/app/app_help.rs");
+
+    assert!(
+        dialogs.contains("show_help_toolbar_toggle")
+            && help.contains("AppIcon::Licenses")
+            && help.contains("Show keyboard and mouse controls")
+            && dialogs.contains("InformationDialog::KeyboardMouse"),
+        "Help should be a direct toolbar action with a discoverable tooltip"
+    );
+    assert!(
+        state.contains("InformationDialog::KeyboardMouse")
+            && state.contains("self.show_help_dialog(ctx)"),
+        "the Help route should be explicit in the foreground information dispatcher"
+    );
+    assert!(
+        dialogs.contains("status_overlay_rect(") && help.contains("contextual_line("),
+        "the reminder should use the existing bounded status geometry and catalogue"
+    );
+    let hint = function_source(&help, "fn render_contextual_hint");
+    assert!(
+        hint.contains("contextual_line(") && !hint.contains("consume_pointer_event"),
+        "the reminder should be passive text, not another viewport input owner"
+    );
+}
+
+#[test]
 fn layer_overlay_does_not_clone_full_scene_each_repaint() {
     let layer_source = repo_source_file("src/layers_overlay/mod.rs");
     // Read the one file these claims are about. The concatenated viewport
