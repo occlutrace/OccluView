@@ -16,7 +16,7 @@
 OccluView is a native desktop dental CAD workspace for inspecting, aligning,
 editing, repairing, and exporting scan meshes. It is designed for the work
 that starts after a scan opens: compare two surfaces, find the deviation,
-repair unsafe topology, edit a selected region, and keep the result traceable.
+repair unsafe topology, edit and align 3D scans.
 
 ## The workflow at a glance
 
@@ -24,9 +24,6 @@ repair unsafe topology, edit a selected region, and keep the result traceable.
   <img src="assets/occluview-workflow.gif" width="820" alt="Animated OccluView workflow: overview, alignment heatmap, mesh editing, sculpting, and repair report">
 </p>
 
-The animation and screenshots below were captured headlessly from the release
-binary using two supplied, de-identified STL scans. The visible identifiers are
-numeric only; no patient name is included.
 
 ## Download for Windows
 
@@ -94,16 +91,6 @@ removes duplicate and degenerate geometry, repairs unsafe topology, closes only
 safe pinholes, and reports the non-zero changes together with remaining open
 rims. A clean mesh receives an explicit “nothing to repair” result rather than
 silence. `Copy details` preserves the full per-pass report for a case record.
-
-## Product information surface
-
-<p align="center">
-  <img src="assets/about-dialog.png" width="700" alt="Stable compact OccluView About dialog">
-</p>
-
-About, third-party notices, and repair results use the same centered modal
-surface. The backdrop is kept separate from the measured card, so opening About
-does not trigger a resize/repaint loop or leave a tall empty window.
 
 ## Files and results
 
