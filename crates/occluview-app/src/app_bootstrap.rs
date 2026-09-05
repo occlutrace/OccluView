@@ -38,7 +38,7 @@ fn real_main() -> Result<()> {
 
     set_process_app_user_model_id();
 
-    let args = app::parse_args();
+    let args = occluview_app::parse_args();
     if args.version {
         print_version_line();
         return Ok(());
@@ -63,7 +63,7 @@ fn real_main() -> Result<()> {
     // should not be attaching patient identifiers with it.
     tracing::info!(
         file_count = args.files.len(),
-        formats = ?file_extensions(&args.files),
+        formats = ?occluview_app::file_extensions(&args.files),
         "OccluView starting"
     );
     let single_instance = single_instance::SingleInstance::acquire()?;
@@ -220,17 +220,6 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
         "OccluView crash report\nversion: {}\nthread: {thread_name}\nlocation: {location}\n\n{payload}",
         env!("CARGO_PKG_VERSION")
     )
-}
-
-/// The distinct lowercase extensions of `files`, sorted: a log line that says
-/// what kind of session this is without saying whose.
-///
-/// This is what the logs are allowed to say about a set of scans: how many and
-/// of which kinds. The paths themselves name the case, and the crash report
-/// they would end up in is a file operators are asked to attach to a public
-/// issue.
-pub(crate) fn file_extensions(files: &[PathBuf]) -> Vec<String> {
-    occluview_app::file_extensions(files)
 }
 
 fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {

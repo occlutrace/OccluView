@@ -15,7 +15,13 @@
 ///
 /// Lives in the application state; the live and offscreen render paths query
 /// and consume their own cursors where they previously read and cleared
-/// shared boolean flags.
+/// shared boolean flags. `Copy` because it is a small generation snapshot,
+/// not a resource handle.
+///
+/// Staleness is unconditional: a scene change stales the live consumer even
+/// when no live viewport is attached. That is intentional — an unread cursor
+/// costs nothing, and a viewport attached later rebuilds instead of trusting
+/// an empty cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RenderInvalidation {
     frame: u64,
@@ -89,6 +95,7 @@ impl RenderInvalidation {
     }
 
     /// Whether a frame is pending.
+    #[must_use]
     pub fn redraw_pending(&self) -> bool {
         self.consumed_frame != self.frame
     }
@@ -99,6 +106,7 @@ impl RenderInvalidation {
     }
 
     /// Whether the live path must re-upload the scene.
+    #[must_use]
     pub fn live_scene_stale(&self) -> bool {
         self.consumed_live_scene != self.scene
     }
@@ -109,6 +117,7 @@ impl RenderInvalidation {
     }
 
     /// Whether the offscreen path must rebuild its prepared scene.
+    #[must_use]
     pub fn offscreen_scene_stale(&self) -> bool {
         self.consumed_offscreen_scene != self.scene
     }
@@ -119,6 +128,7 @@ impl RenderInvalidation {
     }
 
     /// Whether the live path must rebuild the selection overlay.
+    #[must_use]
     pub fn live_overlay_stale(&self) -> bool {
         self.consumed_live_overlay != self.overlay
     }
@@ -129,6 +139,7 @@ impl RenderInvalidation {
     }
 
     /// Whether the offscreen path must rebuild the selection overlay.
+    #[must_use]
     pub fn offscreen_overlay_stale(&self) -> bool {
         self.consumed_offscreen_overlay != self.overlay
     }

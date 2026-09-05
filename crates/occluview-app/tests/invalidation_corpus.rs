@@ -27,11 +27,13 @@ fn assert_all_clean(state: &RenderInvalidation, step: &str) {
     );
 }
 
-/// A full synthetic session: load, orbit, select, sculpt stroke with
-/// densification, burst load, clear. Mirrors the producer/consumer order of
-/// `render_pending_frame` (one path per frame) and the offscreen render path.
+/// A full synthetic live session: load, orbit, select, sculpt stroke with
+/// densification, burst load, clear. Only the live cursors advance; the
+/// offscreen cursor stays behind from the load, proving one path cannot hide
+/// an update from the other. Mirrors `render_pending_frame` dispatching to
+/// the live path every frame while a live viewport is attached.
 #[test]
-fn scripted_session_keeps_each_consumer_exact() {
+fn live_session_keeps_each_consumer_exact() {
     let mut state = RenderInvalidation::new();
     let mut steps = 0;
 
@@ -56,59 +58,113 @@ fn scripted_session_keeps_each_consumer_exact() {
     assert!(state.offscreen_scene_stale());
     assert!(state.offscreen_overlay_stale());
     state.consume_redraw();
-    // The fallback path runs and catches up its own cursors.
-    state.consume_offscreen_scene();
-    state.consume_offscreen_overlay();
     steps += 1;
-    assert_all_clean(&state, "after initial sync");
+    assert!(!state.redraw_pending());
+    assert!(!state.live_scene_stale() && !state.live_overlay_stale());
 
-    // Selection change stales only the overlays; live consumes first.
+    // Selection change stales only the overlays; the live one consumes.
     state.selection_changed();
     steps += 1;
-    assert!(!state.live_scene_stale() && !state.offscreen_scene_stale());
+    assert!(!state.live_scene_stale());
+    assert!(state.live_overlay_stale());
     state.consume_redraw();
     state.consume_live_overlay();
-    assert!(!state.live_overlay_stale());
-    assert!(state.offscreen_overlay_stale());
-    state.consume_offscreen_overlay();
     steps += 1;
-    assert_all_clean(&state, "after selection sync");
+    assert!(!state.live_overlay_stale());
 
-    // Mid-stroke densification: scenes stale, overlay spared.
+    // Mid-stroke densification: live scene stale, overlay spared.
     state.sculpt_topology_changed();
     steps += 1;
-    assert!(state.live_scene_stale() && state.offscreen_scene_stale());
-    assert!(!state.live_overlay_stale() && !state.offscreen_overlay_stale());
+    assert!(state.live_scene_stale());
+    assert!(!state.live_overlay_stale());
     state.consume_redraw();
     state.consume_live_scene();
-    state.consume_offscreen_scene();
     steps += 1;
-    assert_all_clean(&state, "after sculpt resync");
+    assert!(!state.live_scene_stale());
 
-    // Burst load: final scene marks everything, intermediate frames suppress.
+    // Burst load: intermediate frames suppress, the final load repaints.
     state.scene_geometry_changed();
     state.suppress_redraw();
     steps += 1;
     assert!(!state.redraw_pending());
-    assert!(state.live_scene_stale() && state.offscreen_scene_stale());
+    assert!(state.live_scene_stale());
     state.scene_geometry_changed();
     steps += 1;
     assert!(state.redraw_pending());
     state.consume_redraw();
     state.consume_live_scene();
     state.consume_live_overlay();
-    state.consume_offscreen_scene();
-    state.consume_offscreen_overlay();
     steps += 1;
-    assert_all_clean(&state, "after burst load");
+    assert!(!state.redraw_pending());
+    assert!(!state.live_scene_stale() && !state.live_overlay_stale());
 
-    // Clear resets every cursor.
+    // Clear resets every cursor, including the offscreen one left behind.
     state.scene_geometry_changed();
     state.reset();
     steps += 1;
     assert_all_clean(&state, "after clear");
 
-    assert_eq!(steps, 12, "the scripted session covers twelve cause steps");
+    assert_eq!(steps, 12, "the live session covers twelve cause steps");
+}
+
+/// The same synthetic session on the offscreen fallback path: only the
+/// offscreen cursors advance while the live cursor stays behind.
+#[test]
+fn offscreen_session_keeps_each_consumer_exact() {
+    let mut state = RenderInvalidation::new();
+    let mut steps = 0;
+
+    state.scene_geometry_changed();
+    steps += 1;
+    state.consume_redraw();
+    state.consume_offscreen_scene();
+    state.consume_offscreen_overlay();
+    steps += 1;
+    assert!(!state.offscreen_scene_stale() && !state.offscreen_overlay_stale());
+    assert!(state.live_scene_stale() && state.live_overlay_stale());
+
+    state.request_redraw();
+    steps += 1;
+    state.consume_redraw();
+    steps += 1;
+    assert!(!state.offscreen_scene_stale());
+
+    state.selection_changed();
+    steps += 1;
+    assert!(!state.offscreen_scene_stale());
+    assert!(state.offscreen_overlay_stale());
+    state.consume_redraw();
+    state.consume_offscreen_overlay();
+    steps += 1;
+    assert!(!state.offscreen_overlay_stale());
+
+    state.sculpt_topology_changed();
+    steps += 1;
+    assert!(state.offscreen_scene_stale());
+    assert!(!state.offscreen_overlay_stale());
+    state.consume_redraw();
+    state.consume_offscreen_scene();
+    steps += 1;
+
+    state.scene_geometry_changed();
+    state.suppress_redraw();
+    steps += 1;
+    assert!(!state.redraw_pending());
+    assert!(state.offscreen_scene_stale());
+    state.scene_geometry_changed();
+    steps += 1;
+    state.consume_redraw();
+    state.consume_offscreen_scene();
+    state.consume_offscreen_overlay();
+    steps += 1;
+    assert!(!state.offscreen_scene_stale() && !state.offscreen_overlay_stale());
+
+    state.scene_geometry_changed();
+    state.reset();
+    steps += 1;
+    assert_all_clean(&state, "after clear");
+
+    assert_eq!(steps, 12, "the offscreen session covers twelve cause steps");
 }
 
 /// Live and offscreen cursors advance independently across many generations.
