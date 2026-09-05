@@ -88,8 +88,8 @@ use app_layer_edits::{
 };
 use app_load_errors::load_error_dialog;
 use app_scale_bar::paint_scale_bar;
-pub(crate) use state::{parse_args, OccluViewApp, StartupHandles};
 use state::{AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame};
+pub(crate) use state::{OccluViewApp, StartupHandles};
 
 #[cfg(test)]
 mod tests {

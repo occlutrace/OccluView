@@ -61,12 +61,6 @@ pub(crate) struct StartupHandles {
     pub(crate) activation_token: Option<String>,
 }
 
-pub(crate) use occluview_app::Args;
-
-pub(crate) fn parse_args() -> Args {
-    occluview_app::parse_args()
-}
-
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct OccluViewApp {
     pub(super) repaint_ctx: egui::Context,

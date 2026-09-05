@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 /// Parsed process arguments: launcher flags plus candidate file paths.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Args {
+pub struct StartupArgs {
     /// `--shell-refresh` was passed (Windows installer refresh path).
     pub shell_refresh: bool,
     /// `--version` or `-V` was passed; the process prints and exits early.
@@ -23,12 +23,12 @@ pub struct Args {
 ///
 /// Flags match anywhere in the sequence; everything else is kept as a file
 /// path in order. Never touches the environment or the filesystem.
-pub fn parse_args_from<I, S>(args: I) -> Args
+pub fn parse_args_from<I, S>(args: I) -> StartupArgs
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut parsed = Args::default();
+    let mut parsed = StartupArgs::default();
     for arg in args {
         // Match flags on the lossy view but keep the original bytes for file
         // paths: a non-UTF8 scan name must survive verbatim on Unix.
@@ -43,7 +43,7 @@ where
 }
 
 /// Parse the real process arguments (skips the executable name).
-pub fn parse_args() -> Args {
+pub fn parse_args() -> StartupArgs {
     parse_args_from(std::env::args_os().skip(1))
 }
 
@@ -101,7 +101,10 @@ mod tests {
 
     #[test]
     fn no_arguments_yields_no_flags_and_no_files() {
-        assert_eq!(parse_args_from(Vec::<String>::new()), Args::default());
+        assert_eq!(
+            parse_args_from(Vec::<String>::new()),
+            StartupArgs::default()
+        );
     }
 
     #[test]

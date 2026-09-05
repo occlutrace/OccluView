@@ -105,19 +105,14 @@ fn primary_startup_only_refreshes_shell_associations_on_explicit_request() {
 #[test]
 fn incoming_files_append_while_scene_or_load_is_active() {
     let source = app_loading_source();
-    let shared_logic = main_source();
 
     assert!(
         source.contains("fn should_append_incoming_open(&self) -> bool"),
         "incoming open requests need a shared append decision"
     );
     assert!(
-        source.contains("crate::should_append_incoming_open_state("),
-        "incoming open requests should reuse the shared append helper"
-    );
-    assert!(
-        shared_logic.contains("occluview_app::should_append_incoming_open_state"),
-        "the binary must delegate the append decision to the shared helper"
+        source.contains("occluview_app::should_append_incoming_open_state("),
+        "incoming open requests should reuse the single canonical append helper"
     );
     assert!(
         occluview_app::should_append_incoming_open_state(false, true, 0),

@@ -328,7 +328,7 @@ impl OccluViewApp {
                 tracing::error!(
                     error = %failure_without_paths(&e, &pending.paths),
                     path_count = pending.paths.len(),
-                    formats = ?crate::app_bootstrap::file_extensions(&pending.paths),
+                    formats = ?occluview_app::file_extensions(&pending.paths),
                     source = pending.source,
                     load_ms = pending.started_at.elapsed().as_millis(),
                     "scene load failed"
@@ -338,7 +338,7 @@ impl OccluViewApp {
     }
 
     fn should_append_incoming_open(&self) -> bool {
-        crate::should_append_incoming_open_state(
+        occluview_app::should_append_incoming_open_state(
             self.scene.is_some(),
             self.active_load.is_some(),
             self.queued_loads.len(),
@@ -562,19 +562,19 @@ mod tests {
     #[test]
     fn incoming_open_state_prefers_append_when_scene_or_load_exists() {
         assert!(
-            !crate::should_append_incoming_open_state(false, false, 0),
+            !occluview_app::should_append_incoming_open_state(false, false, 0),
             "empty app state should replace the scene on external open"
         );
         assert!(
-            crate::should_append_incoming_open_state(true, false, 0),
+            occluview_app::should_append_incoming_open_state(true, false, 0),
             "an existing scene should append new external opens"
         );
         assert!(
-            crate::should_append_incoming_open_state(false, true, 0),
+            occluview_app::should_append_incoming_open_state(false, true, 0),
             "an active background load should append new external opens"
         );
         assert!(
-            crate::should_append_incoming_open_state(false, false, 2),
+            occluview_app::should_append_incoming_open_state(false, false, 2),
             "queued loads should append new external opens"
         );
     }

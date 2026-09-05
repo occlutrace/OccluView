@@ -86,14 +86,6 @@ pub(crate) const APP_USER_MODEL_ID: &str = "OccluTrace.OccluView";
 const LINUX_DESKTOP_APP_ID: &str = "ai.occlutrace.OccluView";
 pub(crate) const LIVE_VIEWPORT_SAMPLE_COUNT: u16 = 4;
 
-fn should_append_incoming_open_state(
-    has_scene: bool,
-    has_active_load: bool,
-    queued_load_count: usize,
-) -> bool {
-    occluview_app::should_append_incoming_open_state(has_scene, has_active_load, queued_load_count)
-}
-
 fn main() {
     app_bootstrap::main_entry();
 }

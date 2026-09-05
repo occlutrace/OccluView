@@ -8,5 +8,5 @@ pub mod invalidation;
 mod startup;
 
 pub use startup::{
-    file_extensions, parse_args, parse_args_from, should_append_incoming_open_state, Args,
+    file_extensions, parse_args, parse_args_from, should_append_incoming_open_state, StartupArgs,
 };
