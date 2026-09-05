@@ -309,8 +309,7 @@ fn blind_note(seen: Option<&occluview_align::Observability>, rms_mm: f64) -> Str
 /// Turn a worker refusal into a sentence the operator can act on.
 ///
 /// Presentation owns this copy: the worker returns the typed reason and this
-/// boundary renders it, so a later localization pass replaces these strings
-/// without touching background computation.
+/// boundary renders it.
 fn describe_align_failure(rejection: AlignFailure) -> String {
     match rejection {
         AlignFailure::Fit(FitRejection::TooFewPairs { have, need }) => format!(
