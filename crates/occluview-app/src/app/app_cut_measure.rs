@@ -174,29 +174,30 @@ impl OccluViewApp {
         // measure tool is gone (e.g. its toolbar toggle turned it off), the
         // passive section has no owner left to drive or close it, so it closes
         // with its tool — never orphaned.
-        if self.cut_view.is_probe_linked() && !self.measure.is_active() {
-            self.cut_view.disable();
-            self.needs_render = true;
+        if self.tools.cut_view.is_probe_linked() && !self.tools.measure.is_active() {
+            self.tools.cut_view.disable();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
             return false;
         }
         let can_cut = self
+            .document
             .scene
             .as_ref()
             .is_some_and(|scene| CutTool::can_render_bbox(scene.bbox()));
-        if self.cut_view.is_active() && !can_cut {
-            self.cut_view.disable();
-            self.needs_render = true;
+        if self.tools.cut_view.is_active() && !can_cut {
+            self.tools.cut_view.disable();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
             return false;
         }
-        if !self.cut_view.is_active() {
+        if !self.tools.cut_view.is_active() {
             return false;
         }
-        let Some(camera) = self.camera else {
+        let Some(camera) = self.render.camera else {
             return false;
         };
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
 
@@ -204,8 +205,9 @@ impl OccluViewApp {
             self.build_cut_frame_input(ctx, &camera, &scene, viewport_rect);
         let eye = frame.eye;
         let hover_pos = frame.pointer;
-        let update = self.cut_view.update(&frame, eye);
+        let update = self.tools.cut_view.update(&frame, eye);
         let orientation_changed = self
+            .tools
             .cut_view
             .sync_main_view(SectionMainView::from_camera(camera));
         if update.pose_changed
@@ -214,16 +216,18 @@ impl OccluViewApp {
             || update.exited
             || orientation_changed
         {
-            self.needs_render = true;
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         // Plain wheel inside the Section panel: zoom the slice to the cursor.
         if panel_zoom_notches != 0.0
-            && self
-                .cut_view
-                .zoom_slice_at_cursor(viewport_rect, hover_pos, panel_zoom_notches)
+            && self.tools.cut_view.zoom_slice_at_cursor(
+                viewport_rect,
+                hover_pos,
+                panel_zoom_notches,
+            )
         {
-            self.needs_render = true;
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         match update.cursor {
@@ -251,13 +255,13 @@ impl OccluViewApp {
                     &color_for,
                 );
             }
-            if let Some(pose) = self.cut_view.pose() {
+            if let Some(pose) = self.tools.cut_view.pose() {
                 cut_overlay::paint_disc(
                     painter,
                     &camera,
                     viewport_rect,
                     pose,
-                    self.cut_view.is_planted(),
+                    self.tools.cut_view.is_planted(),
                 );
             }
         }
@@ -268,9 +272,12 @@ impl OccluViewApp {
         // so this stays one slice render per frame — the top-of-loop pass then
         // no-ops during an active cut. In Lines mode it no-ops (no GPU slice).
         self.maybe_render_cut_view(ctx);
-        let panel =
-            self.cut_view
-                .show_section_panel(ui, viewport_rect, section.as_deref(), &color_for);
+        let panel = self.tools.cut_view.show_section_panel(
+            ui,
+            viewport_rect,
+            section.as_deref(),
+            &color_for,
+        );
         let panel_consumed = panel.consumed_pointer;
         self.apply_cut_section_outcome(panel, ctx);
         update.consumed_pointer || panel_consumed
@@ -281,46 +288,46 @@ impl OccluViewApp {
         panel: crate::cut_tool::CutToolUiOutcome,
         ctx: &egui::Context,
     ) {
-        let measure_owned = self.cut_view.is_probe_linked();
+        let measure_owned = self.tools.cut_view.is_probe_linked();
         if matches!(panel.command, crate::cut_ruler::SectionPanelCommand::Close) {
             if measure_owned {
                 self.disarm_measure_and_probe_cut();
             } else {
-                self.cut_view.disable();
-                self.needs_render = true;
+                self.tools.cut_view.disable();
+                self.render.invalidation.overlay_tools_changed();
             }
             ctx.request_repaint();
             return;
         }
         if panel.thickness_changed && measure_owned {
             if let Some(probe) = panel.thickness_probe {
-                self.measure.set_probe(ThicknessProbe {
+                self.tools.measure.set_probe(ThicknessProbe {
                     entry: probe.entry,
                     reading: ThicknessReading::Wall {
                         exit: probe.exit,
                         thickness_mm: probe.thickness_mm,
                     },
                 });
-                self.status_message = Some(format!(
+                self.ui.status_message = Some(format!(
                     "Wall thickness: {}",
                     measure_tool::format_length(
                         f64::from(probe.thickness_mm),
-                        self.settings.unit_display
+                        self.persistence.settings.unit_display
                     )
                 ));
             } else {
-                self.measure.clear_probe();
+                self.tools.measure.clear_probe();
             }
             ctx.request_repaint();
         }
         if panel.viewport_needs_render {
-            self.needs_render = true;
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
     }
 
     fn cut_section(&mut self, scene: &Scene) -> Option<Arc<SceneSection>> {
-        self.section_for_plane(scene, self.cut_view.section_plane())
+        self.section_for_plane(scene, self.tools.cut_view.section_plane())
     }
 
     /// Compute one cached world-space section from any active viewport tool.
@@ -329,7 +336,7 @@ impl OccluViewApp {
         scene: &Scene,
         plane: Option<occluview_core::scene::SectionPlane>,
     ) -> Option<Arc<SceneSection>> {
-        plane.map(|plane| self.section_cache.get_or_compute(scene, plane))
+        plane.map(|plane| self.render.section_cache.get_or_compute(scene, plane))
     }
 
     /// Advance the armed measurement tool one frame: keep the tool-exclusivity
@@ -344,7 +351,7 @@ impl OccluViewApp {
         suppress_click: bool,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.measure.is_active() {
+        if !self.tools.measure.is_active() {
             return false;
         }
         // Invariants: an edit session owns LMB (marquee/lasso), an INTERACTIVE
@@ -352,19 +359,19 @@ impl OccluViewApp {
         // PROBE-LINKED cut is the exception: it was opened by this very tool and
         // is passive, so the marker and the section coexist. The tool stands down
         // instead of fighting the others.
-        if self.edit_mode.has_active_session()
-            || (self.cut_view.is_active() && !self.cut_view.is_probe_linked())
-            || self.scene.is_none()
-            || self.camera.is_none()
+        if self.document.edit_mode.has_active_session()
+            || (self.tools.cut_view.is_active() && !self.tools.cut_view.is_probe_linked())
+            || self.document.scene.is_none()
+            || self.render.camera.is_none()
         {
-            self.measure.disarm();
+            self.tools.measure.disarm();
             ctx.request_repaint();
             return false;
         }
         // Esc exits the tool (and drops its overlays, incl. the probe-linked cut
         // view it opened) — but never steal Escape from an open dialog (same rule
         // as the cut ladder).
-        if !self.modal_dialog_open()
+        if !self.ui.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.disarm_measure_and_probe_cut();
@@ -374,7 +381,7 @@ impl OccluViewApp {
         // Align Scans owns the primary click while it is armed. Without this
         // one click would place an align point AND a ruler anchor.
         if self.align_active() {
-            self.measure.disarm();
+            self.tools.measure.disarm();
             return false;
         }
         let viewport_rect = response.rect;
@@ -383,10 +390,15 @@ impl OccluViewApp {
             .input(|input| input.pointer.hover_pos())
             .filter(|pos| self.pointer_on_bare_viewport(ctx, viewport_rect, *pos));
         if let Some(pointer) = hover {
-            let over_anchor = self.measure.mode() == Some(MeasureMode::Ruler)
-                && self.camera.is_some_and(|camera| {
-                    measure_overlay::ruler_anchor_at(&camera, viewport_rect, &self.measure, pointer)
-                        .is_some()
+            let over_anchor = self.tools.measure.mode() == Some(MeasureMode::Ruler)
+                && self.render.camera.is_some_and(|camera| {
+                    measure_overlay::ruler_anchor_at(
+                        &camera,
+                        viewport_rect,
+                        &self.tools.measure,
+                        pointer,
+                    )
+                    .is_some()
                 });
             ctx.set_cursor_icon(if over_anchor {
                 egui::CursorIcon::Grab
@@ -394,13 +406,13 @@ impl OccluViewApp {
                 egui::CursorIcon::Crosshair
             });
         }
-        if let Some(camera) = self.camera {
+        if let Some(camera) = self.render.camera {
             measure_overlay::paint_measurements(
                 ui.painter(),
                 &camera,
                 viewport_rect,
-                &self.measure,
-                self.settings.unit_display,
+                &self.tools.measure,
+                self.persistence.settings.unit_display,
                 hover,
             );
         }
@@ -411,10 +423,10 @@ impl OccluViewApp {
     /// close that too — one gesture (Esc / the strip Close) dismisses everything
     /// the thickness probe put on screen.
     fn disarm_measure_and_probe_cut(&mut self) {
-        self.measure.disarm();
-        if self.cut_view.is_probe_linked() {
-            self.cut_view.disable();
-            self.needs_render = true;
+        self.tools.measure.disarm();
+        if self.tools.cut_view.is_probe_linked() {
+            self.tools.cut_view.disable();
+            self.render.invalidation.overlay_tools_changed();
         }
     }
 
@@ -433,11 +445,16 @@ impl OccluViewApp {
         // A probe-linked cut view coexists with the measure tool: its docked
         // Section panel owns its own pointer, so treat it as chrome, never as bare
         // viewport (no crosshair/re-probe bleeding into the panel).
-        if self.cut_view.is_active() && crate::cut_ruler::section_panel_contains(viewport_rect, pos)
+        if self.tools.cut_view.is_active()
+            && crate::cut_ruler::section_panel_contains(viewport_rect, pos)
         {
             return false;
         }
-        let layer_count = self.scene.as_ref().map_or(0, |scene| scene.meshes().len());
+        let layer_count = self
+            .document
+            .scene
+            .as_ref()
+            .map_or(0, |scene| scene.meshes().len());
         if layers_overlay::layer_overlay_rect(viewport_rect, layer_count).contains(pos) {
             return false;
         }
@@ -465,17 +482,17 @@ impl OccluViewApp {
         };
         let primary_down =
             ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
-        if self.measure.dragged_ruler_anchor().is_some() {
+        if self.tools.measure.dragged_ruler_anchor().is_some() {
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
             if primary_down && response.rect.contains(pointer) {
-                if let Some((camera, scene)) = self.camera.zip(self.scene.clone()) {
+                if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
                     if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
-                        if let Some(distance_mm) = self.measure.update_ruler_drag(hit.point) {
-                            self.status_message = Some(format!(
+                        if let Some(distance_mm) = self.tools.measure.update_ruler_drag(hit.point) {
+                            self.ui.status_message = Some(format!(
                                 "Distance: {}",
                                 measure_tool::format_length(
                                     distance_mm,
-                                    self.settings.unit_display
+                                    self.persistence.settings.unit_display
                                 )
                             ));
                             ctx.request_repaint();
@@ -483,7 +500,7 @@ impl OccluViewApp {
                     }
                 }
             } else if !primary_down {
-                self.measure.end_ruler_drag();
+                self.tools.measure.end_ruler_drag();
                 ctx.request_repaint();
             }
             return true;
@@ -491,14 +508,17 @@ impl OccluViewApp {
         if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
             return false;
         }
-        if self.measure.mode() == Some(MeasureMode::Ruler)
+        if self.tools.measure.mode() == Some(MeasureMode::Ruler)
             && ctx.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary))
         {
-            if let Some(camera) = self.camera {
-                if let Some(anchor) =
-                    measure_overlay::ruler_anchor_at(&camera, response.rect, &self.measure, pointer)
-                {
-                    if self.measure.begin_ruler_drag(anchor) {
+            if let Some(camera) = self.render.camera {
+                if let Some(anchor) = measure_overlay::ruler_anchor_at(
+                    &camera,
+                    response.rect,
+                    &self.tools.measure,
+                    pointer,
+                ) {
+                    if self.tools.measure.begin_ruler_drag(anchor) {
                         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
                         return true;
                     }
@@ -513,19 +533,19 @@ impl OccluViewApp {
             // the "Thickness exits on rotation" guard. Note `press_origin()`
             // cannot be used here — egui wipes it on every release, so on the
             // click frame it is always None.
-            if self.viewport_secondary_gesture_moved_since_press {
+            if self.ui.viewport_secondary_gesture_moved_since_press {
                 return false;
             }
-            let cleared_anything = self.measure.clear_measurements();
+            let cleared_anything = self.tools.measure.clear_measurements();
             if cleared_anything {
-                self.status_message = Some("Measurements cleared".to_string());
+                self.ui.status_message = Some("Measurements cleared".to_string());
             }
             // Clearing the measurement also closes the cut view it drove — the
             // section reflects the current probe or nothing at all.
-            let probe_linked = self.cut_view.is_probe_linked();
+            let probe_linked = self.tools.cut_view.is_probe_linked();
             if probe_linked {
-                self.cut_view.disable();
-                self.needs_render = true;
+                self.tools.cut_view.disable();
+                self.render.invalidation.overlay_tools_changed();
             }
             ctx.request_repaint();
             // Nothing was cleared: the stationary RMB was not a tool gesture,
@@ -535,7 +555,7 @@ impl OccluViewApp {
         if suppress_click || !response.clicked_by(egui::PointerButton::Primary) {
             return false;
         }
-        let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+        let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
             return false;
         };
         if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
@@ -549,12 +569,15 @@ impl OccluViewApp {
 
     /// Apply one on-mesh measure click for the armed mode.
     fn apply_measure_click(&mut self, scene: &Scene, hit: ScenePickHit) {
-        match self.measure.mode() {
+        match self.tools.measure.mode() {
             Some(MeasureMode::Ruler) => {
-                if let Some(distance_mm) = self.measure.place_ruler_point(hit.point) {
-                    self.status_message = Some(format!(
+                if let Some(distance_mm) = self.tools.measure.place_ruler_point(hit.point) {
+                    self.ui.status_message = Some(format!(
                         "Distance: {}",
-                        measure_tool::format_length(distance_mm, self.settings.unit_display)
+                        measure_tool::format_length(
+                            distance_mm,
+                            self.persistence.settings.unit_display
+                        )
                     ));
                 }
             }
@@ -573,25 +596,25 @@ impl OccluViewApp {
         }
         match measure_tool::probe_wall_thickness(entry, hit.triangle_index, hit.point) {
             Some(probe) => {
-                self.status_message = Some(match probe.reading {
+                self.ui.status_message = Some(match probe.reading {
                     ThicknessReading::Wall { thickness_mm, .. } => format!(
                         "Wall thickness: {}",
                         measure_tool::format_length(
                             f64::from(thickness_mm),
-                            self.settings.unit_display
+                            self.persistence.settings.unit_display
                         )
                     ),
                     ThicknessReading::Open => {
                         "Open surface: no opposite wall along the inward normal".to_string()
                     }
                 });
-                self.measure.set_probe(probe);
+                self.tools.measure.set_probe(probe);
                 // Feature D: the same click ALSO opens the Cut View at this
                 // cross-section (Wall readings only), showing the same chord.
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
-                self.status_message =
+                self.ui.status_message =
                     Some("Cannot probe here: degenerate surface geometry".to_string());
             }
         }
@@ -615,6 +638,7 @@ impl OccluViewApp {
         match planned {
             Some((pose, exit, thickness_mm)) => {
                 let eye = self
+                    .render
                     .camera
                     .map_or(pose.center + pose.plane_normal, occluview_core::Camera::eye);
                 let keep_positive = crate::cut_geometry::camera_keep_side(&pose, eye);
@@ -623,13 +647,15 @@ impl OccluViewApp {
                     exit,
                     thickness_mm,
                 };
-                self.cut_view.plant_from_probe(pose, keep_positive, seed);
-                self.needs_render = true;
+                self.tools
+                    .cut_view
+                    .plant_from_probe(pose, keep_positive, seed);
+                self.render.invalidation.overlay_tools_changed();
             }
             None => {
-                if self.cut_view.is_probe_linked() {
-                    self.cut_view.disable();
-                    self.needs_render = true;
+                if self.tools.cut_view.is_probe_linked() {
+                    self.tools.cut_view.disable();
+                    self.render.invalidation.overlay_tools_changed();
                 }
             }
         }
@@ -661,29 +687,35 @@ impl OccluViewApp {
             pointer,
             over_section_panel,
             over_viewport,
-        } = self.viewport_pointer(ctx, viewport_rect, scene, self.cut_view.slice_visible());
+        } = self.viewport_pointer(
+            ctx,
+            viewport_rect,
+            scene,
+            self.tools.cut_view.slice_visible(),
+        );
 
         // A probe-linked cut is PASSIVE: the measure tool owns the main-viewport
         // pointer and the Esc/F keys, so the disc is not draggable, does not
         // re-plant, and never consumes Escape here (Esc goes to the measure tool,
         // which closes both). This is what lets the two tools coexist.
-        let probe_linked = self.cut_view.is_probe_linked();
+        let probe_linked = self.tools.cut_view.is_probe_linked();
 
         // An armed lasso outline owns primary clicks (the same placement
         // convention dental CAD software uses); the follow-mode plant yields
         // to it. A *planted* disc still owns its handle presses, so only the
         // follow-mode plant is gated here.
-        let lasso_owns_lmb = self.edit_mode.lasso_armed() && self.edit_mode.has_active_session();
-        let plant_suppressed = lasso_owns_lmb && !self.cut_view.is_planted();
+        let lasso_owns_lmb =
+            self.document.edit_mode.lasso_armed() && self.document.edit_mode.has_active_session();
+        let plant_suppressed = lasso_owns_lmb && !self.tools.cut_view.is_planted();
         let primary_pressed = raw_pressed && !plant_suppressed && !probe_linked;
 
         // Never steal Escape from an open dialog: the cut ladder only consumes
         // it when the operator is actually looking at the viewport.
         let escape = !probe_linked
-            && !self.modal_dialog_open()
+            && !self.ui.modal_dialog_open()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let flip = !probe_linked
-            && self.cut_view.is_planted()
+            && self.tools.cut_view.is_planted()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F));
 
         // Wheel scoping: the wheel acts ONLY inside the Section
@@ -702,14 +734,17 @@ impl OccluViewApp {
             ray_origin,
         } = super::disc_frame::disc_view_geometry(camera, viewport_rect, pointer);
 
-        let surface_hit = if self.cut_view.is_planted() || !over_viewport {
+        let surface_hit = if self.tools.cut_view.is_planted() || !over_viewport {
             None
         } else {
             pointer.and_then(|p| surface_sample(camera, viewport_rect, p, scene))
         };
 
-        let (disc_center_screen, disc_radius_screen) =
-            super::disc_frame::disc_screen_placement(camera, viewport_rect, self.cut_view.pose());
+        let (disc_center_screen, disc_radius_screen) = super::disc_frame::disc_screen_placement(
+            camera,
+            viewport_rect,
+            self.tools.cut_view.pose(),
+        );
 
         let frame = CutFrameInput {
             pointer,

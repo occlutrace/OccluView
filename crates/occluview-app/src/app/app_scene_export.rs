@@ -19,11 +19,11 @@ impl OccluViewApp {
     /// one mesh and cannot survive the merge, so the status line says so
     /// instead of letting the operator discover it later.
     pub(super) fn save_scene_dialog(&mut self) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let Some(mesh) = merged_scene_mesh(scene.as_ref()) else {
-            self.status_message = Some("Nothing visible to save".into());
+            self.ui.status_message = Some("Nothing visible to save".into());
             return;
         };
         let dropped_texture = scene
@@ -35,9 +35,11 @@ impl OccluViewApp {
             .set_file_name("scene.ply");
         // Index zero with the neighbour fallback resolves to the first layer
         // that has a file, so a merged scene lands next to its scans.
-        if let Some(directory) =
-            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
-        {
+        if let Some(directory) = default_layer_export_directory(
+            &self.persistence.current_paths,
+            0,
+            self.persistence.last_export_dir.as_deref(),
+        ) {
             dialog = dialog.set_directory(directory);
         }
         let Some(selected) = dialog.save_file() else {
@@ -45,7 +47,7 @@ impl OccluViewApp {
         };
         let path = normalize_layer_export_path(selected, MeshWriteFormat::PlyBinaryLittleEndian);
         let Ok(format) = mesh_export_format_from_path(&path) else {
-            self.status_message = Some("Unsupported output format".into());
+            self.ui.status_message = Some("Unsupported output format".into());
             return;
         };
 
@@ -66,14 +68,14 @@ impl OccluViewApp {
                 } else {
                     ""
                 };
-                self.forget_unsaved_edits(&written);
+                self.document.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
-                self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
+                self.ui.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
             Err(error) => {
                 let summary = format!("Could not save the scene: {error}");
-                self.status_message = Some(summary.clone());
-                self.app_error = Some(AppErrorDialog {
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not save the scene".to_string(),
                     summary,
                     details: format!(
@@ -88,31 +90,33 @@ impl OccluViewApp {
     /// Write every visible layer to its own file in a chosen folder, each in
     /// its current pose.
     pub(super) fn save_each_layer_dialog(&mut self) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         if !scene.meshes().iter().any(|entry| entry.visible) {
-            self.status_message = Some("Nothing visible to save".into());
+            self.ui.status_message = Some("Nothing visible to save".into());
             return;
         }
         let mut dialog = rfd::FileDialog::new();
-        if let Some(start) =
-            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
-        {
+        if let Some(start) = default_layer_export_directory(
+            &self.persistence.current_paths,
+            0,
+            self.persistence.last_export_dir.as_deref(),
+        ) {
             dialog = dialog.set_directory(start);
         }
         let Some(directory) = dialog.pick_folder() else {
             return;
         };
 
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         let visible: Vec<(usize, &SceneMesh)> = scene
             .meshes()
             .iter()
             .enumerate()
             .filter(|(_, entry)| entry.visible)
             .collect();
-        let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
+        let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
             .map(|(index, entry)| {
@@ -157,7 +161,7 @@ impl OccluViewApp {
         if written > 0 {
             // Even a partial batch is a real destination choice worth
             // remembering for the next save dialog.
-            self.last_export_dir = Some(directory.clone());
+            self.persistence.last_export_dir = Some(directory.clone());
         }
         if failed == 0 {
             // Same rule as the whole-scene save: a hidden layer was not written,
@@ -168,7 +172,7 @@ impl OccluViewApp {
                 .filter(|entry| entry.visible)
                 .map(SceneMesh::id)
                 .collect();
-            self.forget_unsaved_edits(&written);
+            self.document.forget_unsaved_edits(&written);
         }
         let mut status = if failed == 0 {
             format!("Saved {written} layers to {}", directory.display())
@@ -186,7 +190,7 @@ impl OccluViewApp {
                 "; {renamed} {files} renamed to keep what was already there"
             );
         }
-        self.status_message = Some(status);
+        self.ui.status_message = Some(status);
     }
 }
 

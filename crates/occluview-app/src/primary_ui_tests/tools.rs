@@ -24,18 +24,18 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        "self.align.drag = None;",
+        "self.tools.align.drag = None;",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
-        "self.align.geometry.clear();",
-        "self.align.tool.disarm();",
-        "self.align.status = None;",
-        "self.align.stats = None;",
-        "self.align.rejected.clear();",
-        "self.align.session_poses.clear();",
-        "self.align.brush.set_armed(false);",
-        "self.align.tab = crate::align_panel::AlignTab::default();",
-        "self.align.constraint = crate::align_drag::DragConstraint::default();",
+        "self.tools.align.geometry.clear();",
+        "self.tools.align.tool.disarm();",
+        "self.tools.align.status = None;",
+        "self.tools.align.stats = None;",
+        "self.tools.align.rejected.clear();",
+        "self.tools.align.session_poses.clear();",
+        "self.tools.align.brush.set_armed(false);",
+        "self.tools.align.tab = crate::align_panel::AlignTab::default();",
+        "self.tools.align.constraint = crate::align_drag::DragConstraint::default();",
     ] {
         assert!(
             disarm.contains(reset),
@@ -113,6 +113,7 @@ fn the_one_guarded_forwarder_is_not_named_like_the_others() {
     // replays an undo while a dialog is up. This holds the callee to a name
     // nobody reaches for out of habit.
     let state = repo_source_file("src/app/state.rs");
+    let ui_state = repo_source_file("src/app/state_ui.rs");
     let editor = repo_source_file("src/app/app_mesh_editor.rs");
 
     assert!(
@@ -128,7 +129,8 @@ fn the_one_guarded_forwarder_is_not_named_like_the_others() {
         !editor.contains(&by_habit) && !state.contains(&format!("self.{by_habit}")),
         "the pass-through name invites a call that skips the dialog check"
     );
-    // And the guard itself must still refuse every dialog.
+    // And the guard itself must still refuse every dialog. The predicate body
+    // lives in state_ui.rs, where self is the UiState.
     for dialog in [
         "self.close_guard_open",
         "self.pending_replace_open.is_some()",
@@ -137,7 +139,7 @@ fn the_one_guarded_forwarder_is_not_named_like_the_others() {
         "information_dialog: self.information_dialog.is_open()",
     ] {
         assert!(
-            state.contains(dialog),
+            ui_state.contains(dialog),
             "edit hotkeys must stay refused while {dialog} is up"
         );
     }
@@ -169,9 +171,9 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
     // app::open_dialogs. Only a source guard can check the other half: that
     // the five call sites still ask it instead of counting dialogs again
     // themselves, which is the shape the drift took.
-    let state = repo_source_file("src/app/state.rs");
+    let ui_state = repo_source_file("src/app/state_ui.rs");
     assert!(
-        state.contains("pub(super) fn modal_dialog_open(&self) -> bool"),
+        ui_state.contains("pub(super) fn modal_dialog_open(&self) -> bool"),
         "the predicate should exist once"
     );
     for dialog in [
@@ -181,7 +183,10 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
         "settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id())",
         "information_dialog: self.information_dialog.is_open()",
     ] {
-        assert!(state.contains(dialog), "the predicate must count {dialog}");
+        assert!(
+            ui_state.contains(dialog),
+            "the predicate must count {dialog}"
+        );
     }
 
     for module in [
@@ -191,11 +196,11 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
     ] {
         let source = repo_source_file(module);
         assert!(
-            source.contains("self.modal_dialog_open()"),
+            source.contains("self.ui.modal_dialog_open()"),
             "{module} should ask the shared predicate"
         );
         assert!(
-            !source.contains("let dialogs_open = self.close_guard_open"),
+            !source.contains("let dialogs_open = self.ui.close_guard_open"),
             "{module} must not keep its own copy, which is how they drifted"
         );
     }
@@ -203,7 +208,7 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
 
 /// The scene-editing calls that require `self.scene` to be the only handle.
 const IN_PLACE_SCENE_EDITS: &[&str] = &[
-    "self.live_scene_mut()",
+    "self.document.live_scene_mut()",
     "self.attach_overlay_colors(",
     "self.patch_overlay_colors(",
     "self.repaint_region_preview(",
@@ -233,7 +238,7 @@ fn scene_handles_alive_across_an_edit(source: &str) -> Vec<String> {
     }
 
     let mut offenders = Vec::new();
-    for (clone_at, _) in source.match_indices("self.scene.clone()") {
+    for (clone_at, _) in source.match_indices("self.document.scene.clone()") {
         let clone_index = source[..clone_at].chars().count();
         let held_at = depth_at[clone_index];
         // The handle dies with its block, or where the code says so.

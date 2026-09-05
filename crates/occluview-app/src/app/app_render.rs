@@ -6,16 +6,16 @@
 //! backend gave us one; the offscreen path is the fallback and is also what
 //! produces the cut-view preview.
 //!
-//! Both consume the dirty flags documented in [`super::state`] and clear the
-//! ones they have honoured. Each path caches its own `PreparedScene`, so a
-//! scene change has to mark both or the untouched path keeps drawing the
-//! previous geometry.
+//! Both consume their own [`crate::invalidation::RenderInvalidation`]
+//! cursors documented in [`super::state_render`] where they rebuild. Each path caches its own
+//! `PreparedScene`, so a scene change stales both or the untouched path keeps
+//! drawing the previous geometry.
 
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
-    paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, Context, CutTool, GpuCamera,
-    GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
+    paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, AxisGizmoInput, Context, CutTool,
+    GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec,
 };
@@ -35,12 +35,12 @@ impl OccluViewApp {
             Ok(frame) => frame,
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
-                self.app_error = Some(AppErrorDialog {
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not render scene".to_string(),
                     summary: "The file opened, but the viewport could not be rendered.".to_string(),
                     details: format!("Render failed\n\n{e:#}"),
                 });
-                self.status_message = Some("Render failed".to_string());
+                self.ui.status_message = Some("Render failed".to_string());
                 return;
             }
         };
@@ -59,20 +59,20 @@ impl OccluViewApp {
         // panel already painted it, so a fresh id would destroy the just-painted
         // texture mid-frame and `Queue::submit` fails validation ("texture ...
         // has been destroyed"). A stable id never frees a painted texture.
-        if let Some(frame) = self.rendered.as_mut() {
+        if let Some(frame) = self.render.rendered.as_mut() {
             frame.texture.set(color_image, egui::TextureOptions::LINEAR);
             frame.pixels = pixels;
             frame.size_px = spec.size_px;
         } else {
             let texture =
                 ctx.load_texture("occluview-mesh", color_image, egui::TextureOptions::LINEAR);
-            self.rendered = Some(RenderedFrame {
+            self.render.rendered = Some(RenderedFrame {
                 texture,
                 pixels,
                 size_px: spec.size_px,
             });
         }
-        self.needs_render = false;
+        self.render.invalidation.consume_redraw();
         tracing::info!(
             width_px = spec.size_px[0],
             height_px = spec.size_px[1],
@@ -82,35 +82,35 @@ impl OccluViewApp {
     }
 
     pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
-        let Some(scene) = self.scene.clone() else {
-            self.cut_view.disable();
+        let Some(scene) = self.document.scene.clone() else {
+            self.tools.cut_view.disable();
             return;
         };
         let bbox = scene.bbox();
-        let Some(cut) = self.cut_view.cut_view_spec(bbox) else {
+        let Some(cut) = self.tools.cut_view.cut_view_spec(bbox) else {
             return;
         };
-        let (focus, half_extent) = self.cut_view.cut_view_focus(bbox);
-        let basis = self.cut_view.slice_basis();
+        let (focus, half_extent) = self.tools.cut_view.cut_view_focus(bbox);
+        let basis = self.tools.cut_view.slice_basis();
         let Some((color_image, slice_cam)) =
             self.render_section_pixels(&scene, cut.plane, focus, half_extent, basis)
         else {
             return;
         };
-        self.cut_view.store_slice(ctx, color_image, slice_cam);
+        self.tools.cut_view.store_slice(ctx, color_image, slice_cam);
     }
 
     pub(super) fn maybe_render_bridge_split_section(&mut self, ctx: &egui::Context) {
-        if !(self.bridge_split_active()
-            && self.bridge_split_section.take_needs_render()
-            && self.bridge_split_section.wants_offscreen_slice())
+        if !(self.tools.bridge_split_active()
+            && self.tools.bridge_split_section.take_needs_render()
+            && self.tools.bridge_split_section.wants_offscreen_slice())
         {
             return;
         }
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let Some(frame) = self.bridge_split_section.frame() else {
+        let Some(frame) = self.tools.bridge_split_section.frame() else {
             return;
         };
         let bbox = scene.bbox();
@@ -118,14 +118,15 @@ impl OccluViewApp {
             frame.normal().to_array(),
             frame.normal().dot(frame.pose().center),
         );
-        let (focus, half_extent) = self.bridge_split_section.focus(bbox);
-        let basis = self.bridge_split_section.slice_basis();
+        let (focus, half_extent) = self.tools.bridge_split_section.focus(bbox);
+        let basis = self.tools.bridge_split_section.slice_basis();
         let Some((color_image, slice_cam)) =
             self.render_section_pixels(&scene, plane, focus, half_extent, basis)
         else {
             return;
         };
-        self.bridge_split_section
+        self.tools
+            .bridge_split_section
             .store_slice(ctx, color_image, slice_cam);
     }
 
@@ -143,22 +144,23 @@ impl OccluViewApp {
             tracing::error!(error = ?e, "section-view offscreen init failed");
             return None;
         }
-        let offscreen = self.offscreen.as_ref()?;
-        if self.offscreen_scene_dirty {
+        let offscreen = self.render.offscreen.as_ref()?;
+        if self.render.invalidation.offscreen_scene_stale() {
             let updates = prepared_scene_updates(scene);
             let rebuild = self
+                .render
                 .prepared_scene
                 .as_mut()
                 .is_none_or(|prepared| !prepared.update(offscreen.renderer(), &updates));
             if rebuild {
                 let sources = prepared_scene_sources(scene);
-                self.prepared_scene = Some(offscreen.prepare_scene(&sources));
+                self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
             }
-            self.offscreen_scene_dirty = false;
+            self.render.invalidation.consume_offscreen_scene();
         }
         let pixels = {
-            let offscreen = self.offscreen.as_ref()?;
-            let prepared = self.prepared_scene.as_ref()?;
+            let offscreen = self.render.offscreen.as_ref()?;
+            let prepared = self.render.prepared_scene.as_ref()?;
             let camera = occluview_render::cut_view_camera_focused_with_up(
                 &plane,
                 focus,
@@ -168,7 +170,7 @@ impl OccluViewApp {
             );
             let spec = ThumbnailSpec {
                 size_px: CutTool::preview_size_px(),
-                background: self.settings.viewport_background.linear(),
+                background: self.persistence.settings.viewport_background.linear(),
             };
             match pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
                 PreparedSceneClipRequest {
@@ -201,8 +203,8 @@ impl OccluViewApp {
         &self,
         bbox: occluview_core::Aabb,
     ) -> occluview_render::ClipPlane {
-        if self.bridge_split_active() {
-            return self.bridge_split_section.frame().map_or_else(
+        if self.tools.bridge_split_active() {
+            return self.tools.bridge_split_section.frame().map_or_else(
                 occluview_render::ClipPlane::disabled,
                 |frame| {
                     occluview_render::ClipPlane::new(
@@ -212,28 +214,28 @@ impl OccluViewApp {
                 },
             );
         }
-        self.cut_view.viewport_clip_plane(bbox)
+        self.tools.cut_view.viewport_clip_plane(bbox)
     }
 
     pub(super) fn active_section_panel_rect(
         &self,
         viewport_rect: egui::Rect,
     ) -> Option<egui::Rect> {
-        let visible = if self.bridge_split_active() {
-            self.bridge_split_section.slice_visible()
+        let visible = if self.tools.bridge_split_active() {
+            self.tools.bridge_split_section.slice_visible()
         } else {
-            self.cut_view.is_active() && self.cut_view.slice_visible()
+            self.tools.cut_view.is_active() && self.tools.cut_view.slice_visible()
         };
         visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
     }
 
     pub(super) fn axis_gizmo_is_hidden(&self) -> bool {
-        self.cut_view.is_active() && self.cut_view.slice_visible()
+        self.tools.cut_view.is_active() && self.tools.cut_view.slice_visible()
     }
 
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
-        if self.offscreen.is_none() {
-            self.offscreen = Some(
+        if self.render.offscreen.is_none() {
+            self.render.offscreen = Some(
                 pollster::block_on(Offscreen::new_with_adapter_policy(
                     AdapterPolicy::HardwareThenFallback,
                     RenderDeadline::after(APP_OFFSCREEN_INITIALIZATION_TIMEOUT),
@@ -245,28 +247,33 @@ impl OccluViewApp {
     }
 
     pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
-        if self.camera.is_none() {
+        if self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
-        let scene = self.scene.clone().context("no scene loaded")?;
-        let mut cam = self.camera.context("camera unavailable")?;
+        let scene = self.document.scene.clone().context("no scene loaded")?;
+        let mut cam = self.render.camera.context("camera unavailable")?;
         cam.fit_clip_planes_to_bbox(scene.bbox());
         self.ensure_offscreen()?;
 
-        let [width_px, height_px] = self.render_extent_px;
+        let [width_px, height_px] = self.render.render_extent_px;
         let aspect = f32::from(width_px) / f32::from(height_px.max(1));
         let view = build_view_matrix(&cam);
         let proj = build_proj_matrix(&cam, aspect);
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let spec = ViewportSpec {
-            size_px: self.render_extent_px,
-            background: self.settings.viewport_background.linear(),
+            size_px: self.render.render_extent_px,
+            background: self.persistence.settings.viewport_background.linear(),
         };
 
-        let offscreen = self.offscreen.as_ref().context("offscreen unavailable")?;
-        if self.offscreen_scene_dirty {
+        let offscreen = self
+            .render
+            .offscreen
+            .as_ref()
+            .context("offscreen unavailable")?;
+        if self.render.invalidation.offscreen_scene_stale() {
             let updates = prepared_scene_updates(&scene);
             let rebuild = self
+                .render
                 .prepared_scene
                 .as_mut()
                 .is_none_or(|prepared| !prepared.update(offscreen.renderer(), &updates));
@@ -277,7 +284,7 @@ impl OccluViewApp {
                     .iter()
                     .map(|source| source.mesh.vertices().len())
                     .sum();
-                self.prepared_scene = Some(offscreen.prepare_scene(&sources));
+                self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
                 tracing::info!(
                     mesh_count = sources.len(),
                     vertex_count,
@@ -285,21 +292,22 @@ impl OccluViewApp {
                     "offscreen viewport scene prepared"
                 );
             }
-            self.offscreen_scene_dirty = false;
+            self.render.invalidation.consume_offscreen_scene();
         }
-        if self.selection_overlay_dirty {
-            let overlay = selection_overlay_for_scene(&scene, &self.edit_mode);
-            self.prepared_selection_overlay = overlay.as_ref().map(|overlay| {
+        if self.render.invalidation.offscreen_overlay_stale() {
+            let overlay = selection_overlay_for_scene(&scene, &self.document.edit_mode);
+            self.render.prepared_selection_overlay = overlay.as_ref().map(|overlay| {
                 let sources = overlay.prepared_sources();
                 offscreen.prepare_scene(&sources)
             });
-            self.selection_overlay_dirty = false;
+            self.render.invalidation.consume_offscreen_overlay();
         }
         let prepared = self
+            .render
             .prepared_scene
             .as_ref()
             .context("prepared scene unavailable")?;
-        let selection_overlay = self.prepared_selection_overlay.as_ref();
+        let selection_overlay = self.render.prepared_selection_overlay.as_ref();
         let clip_plane = self.active_viewport_clip_plane(scene.bbox());
         let pixels = if clip_plane.enabled != 0 {
             pollster::block_on(
@@ -310,7 +318,7 @@ impl OccluViewApp {
                         camera: &gpu_cam,
                         clip: &clip_plane,
                         spec,
-                        show_ghost: self.settings.show_cut_ghost,
+                        show_ghost: self.persistence.settings.show_cut_ghost,
                         deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
                     },
                 ),
@@ -337,23 +345,23 @@ impl OccluViewApp {
         // has to be pushed again or it silently vanishes on the next scene
         // change.
         let restore_deviation = self.align_overlay_is_up();
-        let Some(live_viewport) = self.live_viewport.clone() else {
+        let Some(live_viewport) = self.render.live_viewport.clone() else {
             return;
         };
-        if self.camera.is_none() {
+        if self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             self.clear_live_viewport();
-            self.needs_render = false;
+            self.render.invalidation.consume_redraw();
             return;
         };
-        let Some(mut cam) = self.camera else {
+        let Some(mut cam) = self.render.camera else {
             return;
         };
         cam.fit_clip_planes_to_bbox(scene.bbox());
 
-        let [width_px, height_px] = self.render_extent_px;
+        let [width_px, height_px] = self.render.render_extent_px;
         let aspect = f32::from(width_px) / f32::from(height_px.max(1));
         let view = build_view_matrix(&cam);
         let proj = build_proj_matrix(&cam, aspect);
@@ -362,10 +370,10 @@ impl OccluViewApp {
 
         let repush = match live_viewport.lock() {
             Ok(mut viewport) => {
-                viewport.set_show_ghost(self.settings.show_cut_ghost);
-                viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);
+                viewport.set_show_ghost(self.persistence.settings.show_cut_ghost);
+                viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
                 let mut rebuilt = false;
-                if self.live_viewport_scene_dirty {
+                if self.render.invalidation.live_scene_stale() {
                     let sources = prepared_scene_sources(scene);
                     let updates = prepared_scene_updates(scene);
                     // Only a real rebuild re-uploads the scan's own colours. A
@@ -373,20 +381,20 @@ impl OccluViewApp {
                     // where it was, so pushing it again would move thirty-four
                     // megabytes to write what is already there.
                     rebuilt = viewport.sync_scene(&sources, &updates);
-                    self.live_viewport_scene_dirty = false;
+                    self.render.invalidation.consume_live_scene();
                 }
                 let repush_deviation =
-                    (rebuilt && restore_deviation) || self.align.deviation_push_pending;
-                if self.selection_overlay_dirty {
-                    let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
+                    (rebuilt && restore_deviation) || self.tools.align.deviation_push_pending;
+                if self.render.invalidation.live_overlay_stale() {
+                    let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
                         Vec::new,
                         super::selection_overlay::SelectionOverlayScene::prepared_sources,
                     );
                     viewport.sync_selection_overlay(&sources);
-                    self.selection_overlay_dirty = false;
+                    self.render.invalidation.consume_live_overlay();
                 }
-                self.needs_render = false;
+                self.render.invalidation.consume_redraw();
                 repush_deviation
             }
             Err(e) => {
@@ -398,12 +406,12 @@ impl OccluViewApp {
             // A push before the viewport has a prepared scene writes nowhere.
             // Keep the request standing until one exists, or the very first
             // measurement would come out in the scan's own colours.
-            self.align.deviation_push_pending = !self.push_deviation_colors();
+            self.tools.align.deviation_push_pending = !self.push_deviation_colors();
         }
     }
 
     pub(super) fn clear_live_viewport(&self) {
-        let Some(live_viewport) = self.live_viewport.as_ref() else {
+        let Some(live_viewport) = self.render.live_viewport.as_ref() else {
             return;
         };
         if let Ok(mut viewport) = live_viewport.lock() {
@@ -417,7 +425,7 @@ impl OccluViewApp {
     /// line always, copyable dialog only when no other error is showing, so a
     /// GPU that faults every frame cannot spam modal dialogs).
     pub(super) fn poll_gpu_errors(&mut self) {
-        let Some(live_viewport) = self.live_viewport.as_ref() else {
+        let Some(live_viewport) = self.render.live_viewport.as_ref() else {
             return;
         };
         let error = match live_viewport.lock() {
@@ -431,9 +439,9 @@ impl OccluViewApp {
             return;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
-        self.status_message = Some("Graphics driver reported a problem".to_string());
-        if self.app_error.is_none() {
-            self.app_error = Some(AppErrorDialog {
+        self.ui.status_message = Some("Graphics driver reported a problem".to_string());
+        if self.ui.app_error.is_none() {
+            self.ui.app_error = Some(AppErrorDialog {
                 title: "Graphics problem".to_string(),
                 summary: "The graphics driver reported a problem while drawing. The view may \
                           be incomplete. Saving your work and restarting OccluView is \
@@ -445,28 +453,25 @@ impl OccluViewApp {
     }
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
-        self.bridge_split.cancel();
-        self.bridge_split_disc.disarm();
-        self.bridge_split_section.reset();
-        self.edit_mode.sync_to_scene(&scene);
+        self.tools.bridge_split.cancel();
+        self.tools.bridge_split_disc.disarm();
+        self.tools.bridge_split_section.reset();
+        self.document.edit_mode.sync_to_scene(&scene);
         // A structural scene swap (load, delete, another mesh edit, undo/redo)
         // reverts the geometry the persistent sculpt session was prepared over,
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
         // it), so drop the session here and re-prepare on the next stroke.
-        self.sculpt.invalidate_session();
-        self.scene = Some(Arc::new(scene));
+        self.tools.sculpt.invalidate_session();
+        self.document.scene = Some(Arc::new(scene));
         self.clear_live_viewport();
-        self.prepared_scene = None;
-        self.prepared_selection_overlay = None;
+        self.render.prepared_scene = None;
+        self.render.prepared_selection_overlay = None;
         if reset_camera {
             self.reset_camera_to_home();
         }
-        self.needs_render = true;
-        self.live_viewport_scene_dirty = self.live_viewport.is_some();
-        self.offscreen_scene_dirty = true;
-        self.selection_overlay_dirty = true;
-        self.mesh_selection_drag = None;
-        self.rendered = None;
+        self.render.invalidation.scene_geometry_changed();
+        self.document.mesh_selection_drag = None;
+        self.render.rendered = None;
         // Whatever the align tool was showing described the geometry that just
         // got replaced. Undo and redo already dropped it by hand; every other
         // structural path — repair, close holes, crop, cut, separate, a bridge
@@ -479,9 +484,9 @@ impl OccluViewApp {
         // replaced geometry, so measurements are cleared (the tool stays armed
         // while something remains to measure). Material-only updates keep them
         // (world space is unchanged).
-        self.measure.clear_measurements();
+        self.tools.measure.clear_measurements();
         if !self.has_measurable_layer() {
-            self.measure.disarm();
+            self.tools.measure.disarm();
         }
         if self.can_render_cut_view() {
             // A planted disc holds a WORLD-space plane. Scanner vendors place
@@ -491,63 +496,57 @@ impl OccluViewApp {
             // file loaded wrong". Re-arm instead: the tool stays on, the stale
             // placement does not. Bridge split already does this three lines
             // above; only the cut view was left behind.
-            if self.cut_view.is_active() {
-                self.cut_view.enable();
+            if self.tools.cut_view.is_active() {
+                self.tools.cut_view.enable();
             }
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         } else {
-            self.cut_view.disable();
+            self.tools.cut_view.disable();
         }
     }
 
     pub(super) fn update_scene_materials(&mut self, scene: Scene) {
-        self.scene = Some(Arc::new(scene));
+        self.document.scene = Some(Arc::new(scene));
         self.mark_scene_materials_changed();
     }
 
     /// The bookkeeping a material change needs, for a caller that already owns
     /// the live scene and mutated it in place.
     pub(super) fn mark_scene_materials_changed(&mut self) {
-        if let Some(scene) = self.scene.clone() {
-            self.edit_mode.sync_to_scene(&scene);
+        if let Some(scene) = self.document.scene.clone() {
+            self.document.edit_mode.sync_to_scene(&scene);
         }
-        self.needs_render = true;
-        self.live_viewport_scene_dirty = self.live_viewport.is_some();
-        self.offscreen_scene_dirty = true;
-        self.selection_overlay_dirty = true;
-        self.mesh_selection_drag = None;
+        self.render.invalidation.scene_geometry_changed();
+        self.document.mesh_selection_drag = None;
         if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         } else {
-            self.cut_view.disable();
+            self.tools.cut_view.disable();
         }
     }
 
     pub(super) fn clear_scene(&mut self) {
-        self.clear_unsaved_mesh_edits();
-        self.hidden_layer_stack.clear();
-        self.translucent_layer_restore.clear();
-        self.scene = None;
+        self.document.clear_unsaved_mesh_edits();
+        self.document.hidden_layer_stack.clear();
+        self.document.translucent_layer_restore.clear();
+        self.document.scene = None;
         self.clear_live_viewport();
-        self.prepared_scene = None;
-        self.prepared_selection_overlay = None;
-        self.current_paths.clear();
-        self.camera = None;
-        self.rendered = None;
-        self.needs_render = false;
-        self.live_viewport_scene_dirty = false;
-        self.offscreen_scene_dirty = false;
-        self.selection_overlay_dirty = false;
-        self.mesh_selection_drag = None;
-        self.load_queue_camera_reset = super::LoadQueueCameraReset::Idle;
-        self.camera_modified_during_load = false;
-        self.edit_mode.clear();
-        self.bridge_split.cancel();
-        self.bridge_split_disc.disarm();
-        self.bridge_split_section.reset();
-        self.cut_view.disable();
-        self.measure.disarm();
-        self.section_cache.clear();
+        self.render.prepared_scene = None;
+        self.render.prepared_selection_overlay = None;
+        self.persistence.current_paths.clear();
+        self.render.camera = None;
+        self.render.rendered = None;
+        self.render.invalidation.reset();
+        self.document.mesh_selection_drag = None;
+        self.document.load_queue_camera_reset = super::LoadQueueCameraReset::Idle;
+        self.document.camera_modified_during_load = false;
+        self.document.edit_mode.clear();
+        self.tools.bridge_split.cancel();
+        self.tools.bridge_split_disc.disarm();
+        self.tools.bridge_split_section.reset();
+        self.tools.cut_view.disable();
+        self.tools.measure.disarm();
+        self.render.section_cache.clear();
     }
 
     pub(super) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {
@@ -556,10 +555,13 @@ impl OccluViewApp {
         // visible strip between the application chrome and the render surface;
         // this panel owns the viewport background, so it must be edge-to-edge.
         egui::CentralPanel::no_frame().show(root_ui, |ui| {
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, self.settings.viewport_background.srgb());
+            ui.painter().rect_filled(
+                ui.max_rect(),
+                0.0,
+                self.persistence.settings.viewport_background.srgb(),
+            );
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
-            let live_viewport = self.live_viewport.clone();
+            let live_viewport = self.render.live_viewport.clone();
             if let Some(live_viewport) = live_viewport {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
@@ -568,6 +570,7 @@ impl OccluViewApp {
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
                 self.show_viewport_overlays(ui, &response, &ctx);
             } else if let Some(texture) = self
+                .render
                 .rendered
                 .as_ref()
                 .map(|rendered| rendered.texture.clone())
@@ -580,7 +583,7 @@ impl OccluViewApp {
                         .sense(egui::Sense::click_and_drag()),
                 );
                 self.show_viewport_overlays(ui, &response, &ctx);
-            } else if self.scene.is_none() {
+            } else if self.document.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click());
@@ -612,34 +615,34 @@ impl OccluViewApp {
         // While files hover anywhere over the window the viewport advertises
         // itself as the drop target, without painting a border over the model.
         Self::set_drop_hover_cursor_if_hovering(ctx);
-        if self.scene.is_none() {
+        if self.document.scene.is_none() {
             // No scene yet: a quiet centered call to action over the clear
             // color. The overlays below are all camera/scene-gated, so the
             // right-click scene menu keeps working untouched.
             self.show_empty_state(ui, response, ctx);
         }
         let mut axis_snap = None;
-        if let Some(camera) = self.camera.as_ref() {
+        if let Some(camera) = self.render.camera.as_ref() {
             paint_scale_bar(
                 ui,
                 response.rect,
                 camera,
-                self.settings.unit_display,
-                self.settings.viewport_background,
+                self.persistence.settings.unit_display,
+                self.persistence.settings.viewport_background,
             );
         }
-        if let Some(camera) = self.camera.as_ref() {
+        if let Some(camera) = self.render.camera.as_ref() {
             let gizmo_hidden = self.axis_gizmo_is_hidden();
             if !gizmo_hidden {
                 let gizmo_avoid = self.active_section_panel_rect(response.rect);
-                axis_snap = paint_axis_gizmo(
+                axis_snap = paint_axis_gizmo(AxisGizmoInput {
                     ui,
-                    response.rect,
+                    image_rect: response.rect,
                     camera,
                     response,
-                    gizmo_avoid,
-                    self.settings.viewport_background,
-                );
+                    avoid: gizmo_avoid,
+                    background: self.persistence.settings.viewport_background,
+                });
             }
         }
         self.show_layers_overlay(ui, response.rect, ctx);
@@ -655,9 +658,9 @@ impl OccluViewApp {
         let measure_ui_consumed =
             self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
         if let Some(axis) = axis_snap {
-            if let Some(camera) = self.camera.as_mut() {
+            if let Some(camera) = self.render.camera.as_mut() {
                 camera.snap_to_axis(axis);
-                self.needs_render = true;
+                self.render.invalidation.request_redraw();
                 ctx.request_repaint();
             }
         }
@@ -667,8 +670,8 @@ impl OccluViewApp {
     }
 
     pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
-        if self.needs_render {
-            if self.live_viewport.is_some() {
+        if self.render.invalidation.redraw_pending() {
+            if self.render.live_viewport.is_some() {
                 self.sync_live_viewport();
             } else {
                 self.render_now(ctx);
@@ -742,7 +745,7 @@ mod tests {
             "render_now must update the viewport texture in place, not reallocate it"
         );
         assert!(
-            source.contains("self.cut_view.store_slice(ctx, color_image, slice_cam)"),
+            source.contains("self.tools.cut_view.store_slice(ctx, color_image, slice_cam)"),
             "render_cut_now must route the slice through CutTool::store_slice"
         );
         assert!(

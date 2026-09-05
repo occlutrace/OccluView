@@ -20,7 +20,9 @@ use super::{
     layer_actions, layers_overlay, LayerContextAction, LayerContextApply, LayerContextRequest,
     OccluViewApp, PathBuf, Scene,
 };
-use occluview_core::SceneMesh;
+use super::{state_document::DocumentState, state_ui::UiState, AppErrorDialog};
+use crate::edit_mode::{EditModeController, EditSessionToken};
+use occluview_core::{CoreError, SceneMesh, SceneMeshId};
 use repair::apply_layer_repair_action_with_status;
 use selection_ops::apply_selected_face_mesh_edit_action_with_status;
 
@@ -33,8 +35,8 @@ use whole_mesh::apply_layer_mesh_edit_action_with_status;
 #[derive(Clone, Copy)]
 struct SelectedFaceEditContext {
     index: usize,
-    layer_id: occluview_core::SceneMeshId,
-    token: crate::edit_mode::EditSessionToken,
+    layer_id: SceneMeshId,
+    token: EditSessionToken,
 }
 
 pub(super) fn apply_layer_context_action_with_status(
@@ -43,8 +45,8 @@ pub(super) fn apply_layer_context_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    if app.bridge_split_active() {
-        app.status_message = Some("Finish or cancel Bridge split first".to_string());
+    if app.tools.bridge_split_active() {
+        app.ui.status_message = Some("Finish or cancel Bridge split first".to_string());
         return LayerContextApply::default();
     }
 
@@ -97,7 +99,7 @@ pub(super) fn apply_layer_context_action_with_status(
     };
     let apply = layer_actions::apply_layer_context_action(scene, request);
     if apply.scene_changed {
-        app.status_message = Some(format!("Removed layer: {removed_label}"));
+        app.ui.status_message = Some(format!("Removed layer: {removed_label}"));
     }
     apply
 }
@@ -111,24 +113,23 @@ fn begin_face_selection_with_status(
     let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
         return;
     };
-    let switching_target = app.edit_mode.selected_layer_id() != Some(entry.id());
-    if app.edit_mode.begin_face_selection(entry, scene) {
+    let switching_target = app.document.edit_mode.selected_layer_id() != Some(entry.id());
+    if app.document.edit_mode.begin_face_selection(entry, scene) {
         // Open on the Edit Mesh tab so the session starts in selection/repair.
-        app.editor_tab = crate::mesh_editor_overlay::EditorTab::EditMesh;
+        app.tools.editor_tab = crate::mesh_editor_overlay::EditorTab::EditMesh;
         if switching_target {
             // A lasso's screen points belong to its previous mesh. Do not let
             // a layer-row context action carry that outline into a new target.
-            app.mesh_selection_drag = None;
+            app.document.mesh_selection_drag = None;
         }
-        app.selection_overlay_dirty = true;
-        app.needs_render = true;
+        app.render.invalidation.selection_changed();
         // Start the sculpt preparation while the operator is still choosing a
         // mesh-editor action. This removes the one-time weld/adjacency wait
         // from the first sculpt stroke without blocking the editor UI.
         app.prepare_armed_sculpt_session();
-        app.status_message = Some(format!("Face selection: {layer_label}"));
+        app.ui.status_message = Some(format!("Face selection: {layer_label}"));
     } else {
-        app.status_message = Some(format!("Cannot select faces: {layer_label}"));
+        app.ui.status_message = Some(format!("Cannot select faces: {layer_label}"));
     }
 }
 
@@ -152,10 +153,76 @@ pub(super) fn resolve_layer<'s>(
 
 /// Append the "not undoable" note when the last edit's pre-op snapshot was
 /// skipped (oversized) — the suffix shared by the mesh-edit status lines.
-pub(super) fn with_undoable_note(app: &OccluViewApp, status: String) -> String {
-    if app.edit_mode.last_edit_undoable() {
+pub(super) fn with_undoable_note(edit_mode: &EditModeController, status: String) -> String {
+    if edit_mode.last_edit_undoable() {
         status
     } else {
         format!("{status} (not undoable: snapshot too large)")
+    }
+}
+
+/// What one token-based layer mesh-edit resolved to: the kernel verdict
+/// translated into document/undo/notification effects by
+/// [`commit_layer_edit`].
+pub(super) enum LayerEditResolution {
+    /// Applied; `changed` selects the undoable commit (unsaved-tracked,
+    /// undoability-noted status) from the honest noop (snapshot discarded,
+    /// status as written).
+    Applied { changed: bool, status: String },
+    /// Refused by the kernel; rendered into the shared failure dialog.
+    Failed {
+        error: CoreError,
+        layer_label: String,
+    },
+}
+
+/// The busy-session refusal shared by every token-based executor: no
+/// snapshot is taken, so there is nothing to finish.
+pub(super) fn refuse_busy_layer_edit(ui: &mut UiState) -> LayerContextApply {
+    ui.status_message = Some("Layer edit already in progress".to_string());
+    LayerContextApply::default()
+}
+
+/// Apply one resolved layer edit: finish the edit session, track unsaved
+/// state, and notify — the document/undo/notification combination every
+/// token-based executor must otherwise remember. Status gains the
+/// undoability note from the edit state; failures open the copyable error
+/// dialog. Takes the affected owners, not the whole app, so the effects
+/// stay explicit and the boundary stays headless-testable.
+pub(super) fn commit_layer_edit(
+    document: &mut DocumentState,
+    ui: &mut UiState,
+    token: EditSessionToken,
+    layer_id: SceneMeshId,
+    resolution: LayerEditResolution,
+) {
+    match resolution {
+        LayerEditResolution::Applied {
+            changed: true,
+            status,
+        } => {
+            document.mark_mesh_edits_unsaved(layer_id);
+            let _ = document.edit_mode.finish_layer_edit_success(token);
+            ui.status_message = Some(with_undoable_note(&document.edit_mode, status));
+        }
+        LayerEditResolution::Applied {
+            changed: false,
+            status,
+        } => {
+            let _ = document.edit_mode.finish_layer_edit_noop(token);
+            ui.status_message = Some(status);
+        }
+        LayerEditResolution::Failed { error, layer_label } => {
+            let summary = format!("Could not edit layer: {error}");
+            let _ = document
+                .edit_mode
+                .finish_layer_edit_error(token, error.to_string());
+            ui.status_message = Some(summary.clone());
+            ui.app_error = Some(AppErrorDialog {
+                title: "Could not edit layer".to_string(),
+                summary,
+                details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),
+            });
+        }
     }
 }

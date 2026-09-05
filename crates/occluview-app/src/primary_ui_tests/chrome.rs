@@ -53,7 +53,7 @@ fn successful_appends_do_not_leave_status_overlay_copy() {
         "successful appends should not leave persistent bottom-left status copy"
     );
     assert!(
-        !app_source.contains("self.status_message = append.then"),
+        !app_source.contains("self.ui.status_message = append.then"),
         "append success should clear transient loading status instead of replacing it"
     );
 }
@@ -114,7 +114,7 @@ fn toolbar_and_about_are_operator_focused() {
     assert!(
         dialogs.contains("AppIcon::Settings")
             && dialogs.contains("Open preferences")
-            && toolbar.contains("self.information_dialog = InformationDialog::None;"),
+            && toolbar.contains("self.ui.information_dialog = InformationDialog::None;"),
         "the toolbar should open preferences from the settings button"
     );
     assert!(
@@ -206,7 +206,7 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         viewport_source.contains("drop(scene);"),
         "the handle must be released before the in-place material edit"
     );
-    let state = repo_source_file("src/app/state.rs");
+    let state = repo_source_file("src/app/state_document.rs");
     assert!(
         state.contains("let handles = Arc::strong_count(scene);"),
         "a future caller that holds a second handle must be caught"
@@ -317,11 +317,11 @@ fn app_errors_are_copyable_dialogs_not_only_status_text() {
     let dialogs_source = app_dialogs_source();
 
     assert!(
-        app_module_source().contains("app_error: Option<AppErrorDialog>"),
+        repo_source_file("src/app/state_ui.rs").contains("app_error: Option<AppErrorDialog>"),
         "file/render failures should have a copyable error dialog state"
     );
     assert!(
-        loading_source.contains("self.app_error = Some(load_error_dialog"),
+        loading_source.contains("self.ui.app_error = Some(load_error_dialog"),
         "loader failures must open the error dialog, not only write status text"
     );
     assert!(
@@ -341,7 +341,7 @@ fn unsaved_mesh_edits_guard_the_window_close() {
     let guard = function_source(&dialogs, "pub(super) fn show_unsaved_close_guard(");
 
     assert!(
-        intercept.contains("self.has_unsaved_mesh_edits()")
+        intercept.contains("self.document.has_unsaved_mesh_edits()")
             && intercept.contains("intercept_unsaved_close_request("),
         "closing with unsaved mesh edits must be intercepted, not silently lost"
     );
@@ -352,14 +352,25 @@ fn unsaved_mesh_edits_guard_the_window_close() {
 
     // Every mesh-edit apply path must mark the unsaved state.
     for file in [
-        "src/app/app_layer_edits/whole_mesh.rs",
         "src/app/app_layer_edits/selection_ops.rs",
         "src/app/app_layer_edits/undo_redo.rs",
     ] {
         assert!(
-            repo_source_file(file).contains("app.mark_mesh_edits_unsaved("),
+            repo_source_file(file).contains("app.document.mark_mesh_edits_unsaved("),
             "{file} must mark unsaved mesh edits per layer so the save flow \
              knows exactly what to export"
+        );
+    }
+    // Whole-mesh and repair edits route through the shared commit seam,
+    // which marks unsaved state (pinned headlessly by commit_tests).
+    for file in [
+        "src/app/app_layer_edits/whole_mesh.rs",
+        "src/app/app_layer_edits/repair.rs",
+    ] {
+        assert!(
+            repo_source_file(file).contains("super::commit_layer_edit("),
+            "{file} must commit through the shared layer-edit seam so the \
+             save flow knows exactly what to export"
         );
     }
 }
@@ -375,7 +386,7 @@ fn about_opens_the_embedded_third_party_notices() {
         "the About dialog should offer the third-party licenses view"
     );
     assert!(
-        settings.contains("self.information_dialog = InformationDialog::ThirdPartyNotices;")
+        settings.contains("self.ui.information_dialog = InformationDialog::ThirdPartyNotices;")
             && !settings.contains("InformationDialog::ThirdPartyNotices\n            ||"),
         "About should replace its one typed route with ThirdPartyNotices, without an obsolete other-modal predicate"
     );
@@ -442,7 +453,7 @@ fn axis_gizmo_uses_the_viewport_background_palette() {
 
     assert!(
         render.contains("paint_axis_gizmo(")
-            && render.contains("self.settings.viewport_background"),
+            && render.contains("self.persistence.settings.viewport_background"),
         "axis gizmo must receive the same viewport background setting as the scale bar"
     );
     assert!(
@@ -468,7 +479,7 @@ fn the_unsaved_edits_flag_stays_derived() {
     // Derived from the layer set, not kept beside it: a parallel `bool` takes
     // four assignments to maintain, the export path skipped one, and the close
     // guard was told a hidden layer's edits were already on disk.
-    let state = repo_source_file("src/app/state.rs");
+    let state = repo_source_file("src/app/state_document.rs");
     assert!(
         state.contains("pub(super) fn has_unsaved_mesh_edits(&self) -> bool"),
         "the unsaved-edits answer should be computed from the layer set"

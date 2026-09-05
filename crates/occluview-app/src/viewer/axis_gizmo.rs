@@ -53,20 +53,36 @@ fn axis_gizmo_palette(background: ViewportBackground) -> AxisGizmoPalette {
     }
 }
 
+/// Inputs for [`paint_axis_gizmo`], bundled so the painter signature stays a
+/// single viewport context as overlay needs evolve.
+pub(crate) struct AxisGizmoInput<'a> {
+    /// Where to paint; owns the painter used for the triad.
+    pub(crate) ui: &'a egui::Ui,
+    /// Viewport rectangle the triad is laid out against.
+    pub(crate) image_rect: egui::Rect,
+    /// Camera whose basis orients the triad.
+    pub(crate) camera: &'a Camera,
+    /// Shared input surface the gizmo hit-tests against.
+    pub(crate) response: &'a egui::Response,
+    /// Screen region (e.g. the section panel) the triad lifts above.
+    pub(crate) avoid: Option<egui::Rect>,
+    /// Palette source so the triad reads on light and dark viewports.
+    pub(crate) background: ViewportBackground,
+}
+
 /// Paint the camera-facing axis triad and return a snap target only for a
 /// primary click near an axis endpoint. The viewport response remains the
 /// shared input surface; this painter owns no separate pointer stream.
-pub(crate) fn paint_axis_gizmo(
-    ui: &egui::Ui,
-    image_rect: egui::Rect,
-    camera: &Camera,
-    response: &egui::Response,
-    avoid: Option<egui::Rect>,
-    background: ViewportBackground,
-) -> Option<CameraAxisView> {
-    let Some((center, mut markers)) = axis_gizmo_markers(camera, image_rect, avoid) else {
-        return None;
-    };
+pub(crate) fn paint_axis_gizmo(input: AxisGizmoInput<'_>) -> Option<CameraAxisView> {
+    let AxisGizmoInput {
+        ui,
+        image_rect,
+        camera,
+        response,
+        avoid,
+        background,
+    } = input;
+    let (center, mut markers) = axis_gizmo_markers(camera, image_rect, avoid)?;
     let hovered = response
         .hover_pos()
         .and_then(|pointer| axis_gizmo_hit(&markers, center, pointer));
@@ -77,7 +93,7 @@ pub(crate) fn paint_axis_gizmo(
     let palette = axis_gizmo_palette(background);
     let painter = ui.painter();
     markers.sort_by(|left, right| left.depth.total_cmp(&right.depth));
-    for marker in markers.iter() {
+    for marker in &markers {
         let delta = marker.endpoint - center;
         let length = delta.length();
         if length <= f32::EPSILON {
@@ -287,8 +303,12 @@ mod tests {
             ..Camera::default()
         };
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
-        let Some((center, markers)) = axis_gizmo_markers(&camera, viewport, None) else {
-            panic!("camera basis should be valid");
+        let gizmo = axis_gizmo_markers(&camera, viewport, None);
+        // The assert is the failure signal; the else arm is unreachable while
+        // it stands and keeps the test deny-clean without expect/unwrap.
+        assert!(gizmo.is_some(), "camera basis should be valid");
+        let Some((center, markers)) = gizmo else {
+            return;
         };
 
         assert_eq!(markers.len(), 6);

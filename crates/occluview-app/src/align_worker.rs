@@ -197,6 +197,21 @@ pub(crate) struct AlignJob {
     pub(crate) settings: AlignSettings,
 }
 
+/// Why a job produced nothing trustworthy. Domain data only: the worker never
+/// renders user-facing copy; the presentation boundary renders it from the
+/// typed reason.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum AlignFailure {
+    /// A fit or refine refused, carrying the refusal to report.
+    Fit(FitRejection),
+    /// The fixed scan has no usable surface.
+    FixedSurfaceMissing,
+    /// The moving scan has no usable surface.
+    MovingSurfaceMissing,
+    /// The cached measurement was dropped before it could be coloured.
+    MeasurementDropped,
+}
+
 /// What a finished job produced.
 pub(crate) enum AlignOutcome {
     /// A fit landed. The pose maps the moving layer's local frame to world.
@@ -232,8 +247,8 @@ pub(crate) enum AlignOutcome {
     },
     /// Nothing trustworthy came out, and this is why.
     Failed {
-        /// A sentence naming what went wrong, not "alignment failed".
-        message: String,
+        /// The typed reason; the panel renders the sentence.
+        rejection: AlignFailure,
     },
 }
 
@@ -490,7 +505,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
 
     let Some(index) = surface_index(&mut cached.surface, job) else {
         return AlignOutcome::Failed {
-            message: "The fixed scan has no usable surface".into(),
+            rejection: AlignFailure::FixedSurfaceMissing,
         };
     };
 
@@ -502,7 +517,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
                     report: Box::new(report),
                 },
                 Err(rejection) => AlignOutcome::Failed {
-                    message: describe(rejection),
+                    rejection: AlignFailure::Fit(rejection),
                 },
             }
         }
@@ -527,7 +542,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
 fn recolor(job: &AlignJob, cached: &mut WorkerCache) -> AlignOutcome {
     let Some((_, map)) = cached.measured.as_ref() else {
         return AlignOutcome::Failed {
-            message: "The measurement was dropped before it could be coloured".into(),
+            rejection: AlignFailure::MeasurementDropped,
         };
     };
     let tolerance = job.settings.tolerance_mm.to_bits();
@@ -625,12 +640,12 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     // Missing bounds are reported instead of inventing an overlap allowance.
     let Some((moving_center, moving_extent)) = occluview_align::bounds_of(moving) else {
         return AlignOutcome::Failed {
-            message: "The moving scan has no usable surface".into(),
+            rejection: AlignFailure::MovingSurfaceMissing,
         };
     };
     let Some((fixed_center, fixed_extent)) = occluview_align::bounds_of(fixed_soup) else {
         return AlignOutcome::Failed {
-            message: "The fixed scan has no usable surface".into(),
+            rejection: AlignFailure::FixedSurfaceMissing,
         };
     };
     let bounds = FitBounds {
@@ -652,60 +667,9 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
             rejected: fit.rejected,
         },
         Err(rejection) => AlignOutcome::Failed {
-            message: describe(rejection),
+            rejection: AlignFailure::Fit(rejection),
         },
     }
-}
-
-/// Turn a refusal into a sentence the operator can act on.
-///
-/// Each refusal is converted to an actionable status message.
-fn describe(rejection: FitRejection) -> String {
-    match rejection {
-        FitRejection::TooFewPairs { have, need } => format!(
-            "Only {have} of {need} correspondences — place another arrow, or raise max influence \
-             if the meshes are still far apart"
-        ),
-        FitRejection::Unpaired { moving, fixed } => {
-            format!("{moving} points on one scan and {fixed} on the other — a point has no partner")
-        }
-        FitRejection::Degenerate { weak_axes } => {
-            let named = axis_names(weak_axes);
-            if named.is_empty() {
-                "The clicked points do not determine a rotation — spread them out".into()
-            } else {
-                format!("The clicked points lie on a line: rotation about {named} is undetermined")
-            }
-        }
-        FitRejection::UnitMismatch { ratio } => format!(
-            "The two scans are {ratio:.1}x apart in size — they are probably in different units"
-        ),
-        FitRejection::Apart {
-            separation,
-            allowed,
-        } => format!(
-            "That fit leaves the two scans {separation:.0} mm apart instead of on top of each \
-             other ({allowed:.0} mm) — check that each arrow pair points at the same spot on both \
-             scans"
-        ),
-        FitRejection::Runaway { moved_by, allowed } => format!(
-            "Best fit wandered {moved_by:.0} mm, further than the scan's own size ({allowed:.0} \
-             mm) — place a few arrow pairs first, or lower max influence"
-        ),
-        FitRejection::NonFinite => {
-            "A clicked point or surface normal was not a finite number".into()
-        }
-    }
-}
-
-/// Name the world axes a degeneracy report flagged.
-pub(crate) fn axis_names(weak: [bool; 3]) -> String {
-    ["X", "Y", "Z"]
-        .into_iter()
-        .zip(weak)
-        .filter_map(|(name, flagged)| flagged.then_some(name))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 // Split out to hold the workspace's 800-line file budget. A `#[path]` child

@@ -26,8 +26,8 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     let layer_label = resolve_layer(scene, paths, &request)
         .map_or_else(|| "layer".to_string(), |(_, label)| label);
 
-    if selection_covers_whole_mesh(scene, &request, &app.edit_mode) {
-        app.status_message = Some(match request.action {
+    if selection_covers_whole_mesh(scene, &request, &app.document.edit_mode) {
+        app.ui.status_message = Some(match request.action {
             LayerContextAction::CropToSelectedFaces => {
                 format!("Selection already covers the whole mesh: {layer_label}")
             }
@@ -41,8 +41,8 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     // Refuse an exploding Separate before begin_scene_edit clones the whole
     // scene for the undo snapshot — the refusal needs no snapshot at all.
     if request.action == LayerContextAction::SeparateSelectedComponents {
-        if let Some(parts) = separate_component_overflow(scene, &request, &app.edit_mode) {
-            app.status_message = Some(format!(
+        if let Some(parts) = separate_component_overflow(scene, &request, &app.document.edit_mode) {
+            app.ui.status_message = Some(format!(
                 "Selection splits into {parts} parts — refine the selection: {layer_label}"
             ));
             return LayerContextApply::default();
@@ -56,10 +56,10 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
         .iter()
         .map(occluview_core::SceneMesh::id)
         .collect();
-    match apply_selected_face_mesh_edit_action(scene, request, &mut app.edit_mode) {
+    match apply_selected_face_mesh_edit_action(scene, request, &mut app.document.edit_mode) {
         Ok(apply) => {
             if apply.scene_changed {
-                app.mark_mesh_edits_unsaved(request.layer_id);
+                app.document.mark_mesh_edits_unsaved(request.layer_id);
                 if apply.structural_scene_change {
                     let spawned: Vec<_> = scene
                         .meshes()
@@ -68,19 +68,20 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                         .filter(|id| !ids_before.contains(id))
                         .collect();
                     for id in spawned {
-                        app.mark_mesh_edits_unsaved(id);
+                        app.document.mark_mesh_edits_unsaved(id);
                     }
                 }
                 let status = layer_edit_status(&layer_label, request.action, None);
-                app.status_message = Some(with_undoable_note(app, status));
+                app.ui.status_message = Some(with_undoable_note(&app.document.edit_mode, status));
             } else {
                 let has_selection = app
+                    .document
                     .edit_mode
                     .selected_faces_for_layer(request.layer_id)
                     .is_some_and(|selection| selection.selected_count() > 0);
-                app.status_message = Some(
+                app.ui.status_message = Some(
                     if let Some(parts) =
-                        separate_component_overflow(scene, &request, &app.edit_mode)
+                        separate_component_overflow(scene, &request, &app.document.edit_mode)
                     {
                         format!(
                             "Selection splits into {parts} parts — refine the selection: {layer_label}"
@@ -96,8 +97,8 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
         }
         Err(error) => {
             let summary = format!("Could not edit selection: {error}");
-            app.status_message = Some(summary.clone());
-            app.app_error = Some(AppErrorDialog {
+            app.ui.status_message = Some(summary.clone());
+            app.ui.app_error = Some(AppErrorDialog {
                 title: "Could not edit selection".to_string(),
                 summary,
                 details: format!(
