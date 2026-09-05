@@ -176,7 +176,7 @@ impl OccluViewApp {
         // with its tool — never orphaned.
         if self.cut_view.is_probe_linked() && !self.measure.is_active() {
             self.cut_view.disable();
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
             return false;
         }
@@ -186,7 +186,7 @@ impl OccluViewApp {
             .is_some_and(|scene| CutTool::can_render_bbox(scene.bbox()));
         if self.cut_view.is_active() && !can_cut {
             self.cut_view.disable();
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
             return false;
         }
@@ -214,7 +214,7 @@ impl OccluViewApp {
             || update.exited
             || orientation_changed
         {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         // Plain wheel inside the Section panel: zoom the slice to the cursor.
@@ -223,7 +223,7 @@ impl OccluViewApp {
                 .cut_view
                 .zoom_slice_at_cursor(viewport_rect, hover_pos, panel_zoom_notches)
         {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         match update.cursor {
@@ -287,7 +287,7 @@ impl OccluViewApp {
                 self.disarm_measure_and_probe_cut();
             } else {
                 self.cut_view.disable();
-                self.needs_render = true;
+                self.invalidation.overlay_tools_changed();
             }
             ctx.request_repaint();
             return;
@@ -314,7 +314,7 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
         if panel.viewport_needs_render {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
     }
@@ -414,7 +414,7 @@ impl OccluViewApp {
         self.measure.disarm();
         if self.cut_view.is_probe_linked() {
             self.cut_view.disable();
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
         }
     }
 
@@ -525,7 +525,7 @@ impl OccluViewApp {
             let probe_linked = self.cut_view.is_probe_linked();
             if probe_linked {
                 self.cut_view.disable();
-                self.needs_render = true;
+                self.invalidation.overlay_tools_changed();
             }
             ctx.request_repaint();
             // Nothing was cleared: the stationary RMB was not a tool gesture,
@@ -624,12 +624,12 @@ impl OccluViewApp {
                     thickness_mm,
                 };
                 self.cut_view.plant_from_probe(pose, keep_positive, seed);
-                self.needs_render = true;
+                self.invalidation.overlay_tools_changed();
             }
             None => {
                 if self.cut_view.is_probe_linked() {
                     self.cut_view.disable();
-                    self.needs_render = true;
+                    self.invalidation.overlay_tools_changed();
                 }
             }
         }

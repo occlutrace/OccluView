@@ -141,7 +141,7 @@ impl OccluViewApp {
                 viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
             }
         }
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         true
     }
 
@@ -190,7 +190,7 @@ impl OccluViewApp {
             };
             wrote &= viewport.write_scene_vertices(&topology, painted);
         }
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         wrote
     }
 
@@ -221,7 +221,7 @@ impl OccluViewApp {
         self.mark_scene_materials_changed();
         self.restore_layer_colors(&overlaid);
         self.align.stats = None;
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
     }
 
     /// Whether anything is currently overlaid.

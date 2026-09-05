@@ -76,7 +76,7 @@ impl OccluViewApp {
             std::thread::spawn(move || mesh.warm_bvh());
         }
         self.bridge_split_section.reset();
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         self.status_message = Some("Bridge split: place separator disc".to_string());
         self.repaint_ctx.request_repaint();
     }
@@ -187,7 +187,7 @@ impl OccluViewApp {
             .bridge_split_section
             .sync_main_view(SectionMainView::from_camera(*frame_context.camera));
         if frame_changed || orientation_changed {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         if panel_zoom_notches != 0.0
@@ -197,7 +197,7 @@ impl OccluViewApp {
                 panel_zoom_notches,
             )
         {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         if let Some(pose) = self.bridge_split_disc.pose() {
@@ -234,7 +234,7 @@ impl OccluViewApp {
             &color_for,
         );
         if panel.viewport_needs_render {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         panel.consumed_pointer
@@ -284,7 +284,7 @@ impl OccluViewApp {
             Some(BridgeSplitPanelAction::SetDiscRadiusMm(radius_mm)) => {
                 if self.bridge_split_disc.set_radius_mm(radius_mm) {
                     self.sync_bridge_split_pose(entry);
-                    self.needs_render = true;
+                    self.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
                 }
             }
@@ -303,7 +303,7 @@ impl OccluViewApp {
             .bridge_split
             .poll(Some(BridgeSplitTarget::capture(entry)))
         {
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
     }
@@ -460,7 +460,7 @@ impl OccluViewApp {
         self.bridge_split_section.reset();
         self.mesh_selection_drag = None;
         self.status_message = Some(message.to_string());
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         self.repaint_ctx.request_repaint();
     }
 }

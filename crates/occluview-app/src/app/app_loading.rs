@@ -295,7 +295,7 @@ impl OccluViewApp {
                 if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
                     && queued_after_current
                 {
-                    self.needs_render = false;
+                    self.invalidation.suppress_redraw();
                     self.rendered = None;
                     self.clear_live_viewport();
                 }

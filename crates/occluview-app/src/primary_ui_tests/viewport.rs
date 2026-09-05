@@ -399,7 +399,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "camera input should still be collected once the overlays have had the pointer"
     );
     assert!(
-        render_pending.contains("if self.needs_render {")
+        render_pending.contains("if self.invalidation.redraw_pending() {")
             && render_pending.contains("self.sync_live_viewport();")
             && render_pending.contains("self.render_now(ctx);"),
         "pending frame rendering should stay centralized in one helper"
@@ -426,7 +426,7 @@ fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
         "scene targeting should still have two target-setting branches"
     );
     assert!(
-        repaint_helper.contains("self.needs_render = true;"),
+        repaint_helper.contains("self.invalidation.request_redraw();"),
         "the shared camera repaint helper should still mark the viewport dirty"
     );
     assert!(
@@ -682,9 +682,21 @@ fn layer_material_edits_do_not_reset_prepared_scene() {
         viewport_source.contains("self.update_scene_materials(draft);"),
         "opacity/tint/visibility edits should not clear uploaded GPU mesh data"
     );
+    let materials_fn = function_source(
+        app_render,
+        "pub(super) fn mark_scene_materials_changed(&mut self) {",
+    );
     assert!(
-        app_render.contains("self.live_viewport_scene_dirty = self.live_viewport.is_some();"),
-        "layer/material edits should mark only the live scene payload dirty, not rebuild on every camera move"
+        materials_fn.contains("self.invalidation.scene_geometry_changed();"),
+        "layer/material edits should stale every prepared-scene consumer through the typed invalidation"
+    );
+    // The typed model proves the mapping: material edits stale both scene
+    // consumers and the overlay, while a camera move stales nothing.
+    let mut camera_only = occluview_app::invalidation::RenderInvalidation::new();
+    camera_only.request_redraw();
+    assert!(
+        !camera_only.live_scene_stale() && !camera_only.offscreen_scene_stale(),
+        "camera moves must not rebuild on every camera move"
     );
 }
 
@@ -707,43 +719,50 @@ fn section_panel_owns_close_without_a_separate_hint_strip() {
 
 #[test]
 fn camera_only_live_viewport_redraw_skips_scene_resync() {
-    let app_source = app_module_source();
     let sync = app_render_source();
 
-    assert!(
-        app_source.contains("live_viewport_scene_dirty: bool"),
-        "app state should track whether GPU scene payloads actually changed"
-    );
     assert!(
         sync.contains("viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);"),
         "camera/viewport changes should update view state without forcing a scene upload"
     );
     assert!(
-        sync.contains("if self.live_viewport_scene_dirty {"),
+        sync.contains("if self.invalidation.live_scene_stale() {"),
         "scene uploads should be conditional on actual scene changes"
     );
     assert!(
         sync.contains("viewport.sync_scene(&sources, &updates);"),
         "only scene mutations should touch prepared scene synchronization"
     );
+    // The typed model proves the cause mapping: a camera-only change requests
+    // a repaint while both scene consumers stay fresh.
+    let mut camera_only = occluview_app::invalidation::RenderInvalidation::new();
+    camera_only.request_redraw();
+    assert!(camera_only.redraw_pending());
+    assert!(
+        !camera_only.live_scene_stale() && !camera_only.live_overlay_stale(),
+        "camera-only changes must not force a live scene re-upload"
+    );
 }
 
 #[test]
 fn camera_only_offscreen_redraw_skips_scene_resync() {
-    let app_source = app_module_source();
     let render_pixels = app_render_source();
 
     assert!(
-        app_source.contains("offscreen_scene_dirty: bool"),
-        "offscreen fallback should track whether scene GPU state actually changed"
-    );
-    assert!(
-        render_pixels.contains("if self.offscreen_scene_dirty {"),
+        render_pixels.contains("if self.invalidation.offscreen_scene_stale() {"),
         "camera-only offscreen redraws should not rewrite layer uniforms every frame"
     );
     assert!(
-        render_pixels.contains("self.offscreen_scene_dirty = false;"),
-        "offscreen scene sync should clear its dirty bit after the upload/update path runs"
+        render_pixels.contains("self.invalidation.consume_offscreen_scene();"),
+        "offscreen scene sync should consume its own cursor after the upload/update path runs"
+    );
+    // The typed model proves the cause mapping for the fallback path too.
+    let mut camera_only = occluview_app::invalidation::RenderInvalidation::new();
+    camera_only.request_redraw();
+    assert!(camera_only.redraw_pending());
+    assert!(
+        !camera_only.offscreen_scene_stale() && !camera_only.offscreen_overlay_stale(),
+        "camera-only changes must not force an offscreen scene rebuild"
     );
 }
 

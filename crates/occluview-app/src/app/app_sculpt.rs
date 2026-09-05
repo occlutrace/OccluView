@@ -178,7 +178,7 @@ impl OccluViewApp {
             }
             None => "Sculpt off".to_string(),
         });
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         ctx.request_repaint();
     }
 
@@ -203,7 +203,7 @@ impl OccluViewApp {
             }
             EditorTab::Sculpt => {}
         }
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         ctx.request_repaint();
     }
 
@@ -355,7 +355,9 @@ impl OccluViewApp {
             schedule_dabs(worker, stroke, &params)
         };
         if queued > 0 {
-            self.needs_render = true;
+            // Dab bytes reach the GPU through the worker poll's sparse writes;
+            // only the repaint is owed here.
+            self.invalidation.request_redraw();
         }
         ctx.request_repaint();
     }
@@ -451,7 +453,7 @@ impl OccluViewApp {
                     if self.sculpt.armed.is_some() {
                         self.status_message = None;
                     }
-                    self.needs_render = true;
+                    self.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
                 }
             }
@@ -477,9 +479,7 @@ impl OccluViewApp {
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
         self.sculpt.invalidate_session();
-        self.live_viewport_scene_dirty = true;
-        self.offscreen_scene_dirty = true;
-        self.needs_render = true;
+        self.invalidation.sculpt_topology_changed();
     }
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
@@ -497,7 +497,7 @@ impl OccluViewApp {
         if !apply_sculpt_wheel_settings(ctx) {
             return false;
         }
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         ctx.request_repaint();
         true
     }
