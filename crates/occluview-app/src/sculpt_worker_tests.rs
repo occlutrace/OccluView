@@ -375,6 +375,65 @@ fn touched_overflow_escalates_to_full_sync() {
     );
 }
 
+/// A contended backlog defers the drain instead of blocking the frame: the
+/// pending ids and the full-sync flag stay queued for the next poll.
+#[test]
+fn take_update_defers_when_backlog_locked() {
+    let worker = test_worker();
+    worker.state.record_touched(vec![0, 1, 2]);
+    worker.state.request_full_sync();
+    let held = worker
+        .state
+        .pending_touched
+        .lock()
+        .expect("test holds the backlog lock");
+    assert!(
+        worker.take_update().is_none(),
+        "a contended drain must defer, not block or half-drain"
+    );
+    drop(held);
+    let retry = worker.take_update().expect("deferred update must redrain");
+    assert!(
+        retry.full_sync,
+        "the full-sync flag must survive the deferred drain"
+    );
+}
+
+/// A contended rebuild slot defers the drain the same way.
+#[test]
+fn take_rebuild_defers_when_slot_locked() {
+    let worker = test_worker();
+    let mesh = Mesh::new(
+        Some("rebuild-defer".to_string()),
+        vec![
+            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("rebuild mesh");
+    worker.state.record_rebuild(SculptRebuild {
+        topology: PreparedSceneTopology::from_mesh(&mesh),
+        mesh,
+    });
+    let held = worker
+        .state
+        .rebuild
+        .lock()
+        .expect("test holds the rebuild lock");
+    assert!(
+        worker.take_rebuild().is_none(),
+        "a contended rebuild drain must defer"
+    );
+    drop(held);
+    assert!(
+        worker.take_rebuild().is_some(),
+        "the deferred rebuild must redrain"
+    );
+}
+
 /// A densifying rebuild supersedes queued sparse ids, which index the
 /// pre-rebuild array. Newer rebuilds replace older unread ones.
 #[test]

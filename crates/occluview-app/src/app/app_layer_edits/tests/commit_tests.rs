@@ -41,7 +41,7 @@ fn owners() -> (DocumentState, UiState) {
 #[test]
 fn commit_applied_change_marks_unsaved_stores_undo_and_notes_status() {
     let Some(scene) = commit_scene() else {
-        return;
+        panic!("commit fixture builds");
     };
     let (mut document, mut ui) = owners();
     let entry = scene.meshes()[0].clone();
@@ -74,7 +74,7 @@ fn commit_applied_change_marks_unsaved_stores_undo_and_notes_status() {
 #[test]
 fn commit_noop_discards_snapshot_without_unsaved_or_dialog() {
     let Some(scene) = commit_scene() else {
-        return;
+        panic!("commit fixture builds");
     };
     let (mut document, mut ui) = owners();
     let entry = scene.meshes()[0].clone();
@@ -108,7 +108,7 @@ fn commit_noop_discards_snapshot_without_unsaved_or_dialog() {
 #[test]
 fn commit_failure_finishes_error_and_opens_the_copyable_dialog() {
     let Some(scene) = commit_scene() else {
-        return;
+        panic!("commit fixture builds");
     };
     let (mut document, mut ui) = owners();
     let entry = scene.meshes()[0].clone();
@@ -160,7 +160,7 @@ fn repair_stale_index_resolves_without_touching_undo() {
     use super::super::repair::{apply_layer_repair_action, LayerRepairOutcome};
 
     let Some(scene) = commit_scene() else {
-        return;
+        panic!("commit fixture builds");
     };
     let (document, _) = owners();
     // Index past the end: entry lookup misses, so the outcome is stale and

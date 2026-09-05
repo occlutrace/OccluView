@@ -3,8 +3,6 @@
 //! Extracted domains live in their own modules with their invariants (see
 //! `state_render`, `state_document`, `state_persistence`); the root only
 //! orchestrates transitions across domains.
-//! The remaining flat fields are mapped to their intended owners below and
-//! move slice by slice, never mechanically all at once.
 //!
 //! State ownership by domain:
 //!

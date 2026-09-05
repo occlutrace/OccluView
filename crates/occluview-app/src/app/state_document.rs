@@ -4,8 +4,10 @@
 //! Owned invariants:
 //!
 //! - `scene` is the single authoritative content handle; in-place edits go
-//!   through [`DocumentState::live_scene_mut`] so a second live handle fails
-//!   a test instead of silently deep-copying the case every frame.
+//!   through [`DocumentState::live_scene_mut`] (borrowed scene) or
+//!   [`taken_scene_mut`] (take-edit-restore in the sculpt worker) so a
+//!   second live handle fails a test instead of silently deep-copying the
+//!   case every frame.
 //! - `unsaved_edit_layer_ids` names exactly the layers whose in-scene mesh
 //!   differs from disk; every applied mesh edit and its undo/redo routes
 //!   through [`DocumentState::mark_mesh_edits_unsaved`].
@@ -118,7 +120,8 @@ impl DocumentState {
         }
     }
 
-    /// The live scene, mutable in place.
+    /// The live scene, mutable in place (the borrowed-handle path; the
+    /// take-edit-restore path is [`taken_scene_mut`]).
     ///
     /// `Arc::make_mut` copies the whole scene whenever a second handle exists,
     /// and the callers below all run per frame: a slider drag, a brush dab, a

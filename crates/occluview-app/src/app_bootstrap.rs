@@ -15,6 +15,10 @@ const CRASH_LOG_CAPACITY: usize = 50;
 
 /// Binary entry behind the library boundary: install the panic hook, then run
 /// fallible startup and report failures instead of unwinding through `main`.
+///
+/// Never returns a `Result`: startup failures are written under `crashes/`
+/// and shown (dialog on Windows, log elsewhere), then swallowed. Blocks
+/// running the event loop; `--version` and `--shell-refresh` exit first.
 pub fn main_entry() {
     install_panic_hook();
     if let Err(error) = real_main() {
