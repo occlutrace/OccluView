@@ -99,9 +99,9 @@ impl OccluViewApp {
         let Some(desired) = desired_render_extent_px(viewport_points, pixels_per_point) else {
             return;
         };
-        if render_extent_change_requires_rerender(self.render_extent_px, desired) {
-            self.render_extent_px = desired;
-            self.invalidation.request_redraw();
+        if render_extent_change_requires_rerender(self.render.render_extent_px, desired) {
+            self.render.render_extent_px = desired;
+            self.render.invalidation.request_redraw();
         }
     }
 
@@ -209,7 +209,7 @@ impl OccluViewApp {
         let scene_pick = if (self.settings.double_click_resets_camera && response.double_clicked())
             || response.clicked_by(egui::PointerButton::Middle)
         {
-            let camera = self.camera;
+            let camera = self.render.camera;
             let scene = self.scene.as_ref();
             response
                 .interact_pointer_pos()
@@ -254,7 +254,7 @@ impl OccluViewApp {
         // modified scroll over a panel keeps its own meaning.
         let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response.hovered());
 
-        let Some(camera) = self.camera.as_mut() else {
+        let Some(camera) = self.render.camera.as_mut() else {
             return;
         };
 

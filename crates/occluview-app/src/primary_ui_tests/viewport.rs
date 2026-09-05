@@ -399,7 +399,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "camera input should still be collected once the overlays have had the pointer"
     );
     assert!(
-        render_pending.contains("if self.invalidation.redraw_pending() {")
+        render_pending.contains("if self.render.invalidation.redraw_pending() {")
             && render_pending.contains("self.sync_live_viewport();")
             && render_pending.contains("self.render_now(ctx);"),
         "pending frame rendering should stay centralized in one helper"
@@ -426,7 +426,7 @@ fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
         "scene targeting should still have two target-setting branches"
     );
     assert!(
-        repaint_helper.contains("self.invalidation.request_redraw();"),
+        repaint_helper.contains("self.render.invalidation.request_redraw();"),
         "the shared camera repaint helper should still mark the viewport dirty"
     );
     assert!(
@@ -687,7 +687,7 @@ fn layer_material_edits_do_not_reset_prepared_scene() {
         "pub(super) fn mark_scene_materials_changed(&mut self) {",
     );
     assert!(
-        materials_fn.contains("self.invalidation.scene_geometry_changed();"),
+        materials_fn.contains("self.render.invalidation.scene_geometry_changed();"),
         "layer/material edits should stale every prepared-scene consumer through the typed invalidation"
     );
     // The typed model proves the mapping: material edits stale both scene
@@ -722,11 +722,11 @@ fn camera_only_live_viewport_redraw_skips_scene_resync() {
     let sync = app_render_source();
 
     assert!(
-        sync.contains("viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);"),
+        sync.contains("viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);"),
         "camera/viewport changes should update view state without forcing a scene upload"
     );
     assert!(
-        sync.contains("if self.invalidation.live_scene_stale() {"),
+        sync.contains("if self.render.invalidation.live_scene_stale() {"),
         "scene uploads should be conditional on actual scene changes"
     );
     assert!(
@@ -749,11 +749,11 @@ fn camera_only_offscreen_redraw_skips_scene_resync() {
     let render_pixels = app_render_source();
 
     assert!(
-        render_pixels.contains("if self.invalidation.offscreen_scene_stale() {"),
+        render_pixels.contains("if self.render.invalidation.offscreen_scene_stale() {"),
         "camera-only offscreen redraws should not rewrite layer uniforms every frame"
     );
     assert!(
-        render_pixels.contains("self.invalidation.consume_offscreen_scene();"),
+        render_pixels.contains("self.render.invalidation.consume_offscreen_scene();"),
         "offscreen scene sync should consume its own cursor after the upload/update path runs"
     );
     // The typed model proves the cause mapping for the fallback path too.

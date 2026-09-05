@@ -1,22 +1,18 @@
-//! `OccluViewApp` itself: the fields the whole binary shares, and the small
-//! set of methods that keep them consistent.
+//! `OccluViewApp` itself: the root coordinator over owned state domains.
 //!
-//! Render invalidation is a typed [`RenderInvalidation`] state: call sites name
-//! the semantic cause (`request_redraw`, `selection_changed`,
-//! `scene_geometry_changed`, `sculpt_topology_changed`) and each render path
-//! consumes its own cursor. Camera-only changes repaint without touching
-//! uploaded geometry; scene changes rebuild both prepared scenes and the
-//! overlay; a mid-stroke sculpt topology change rebuilds the scenes while
-//! sparing the overlay.
+//! Extracted domains live in their own modules with their invariants (see
+//! `state_render`); the root only orchestrates transitions across domains.
+//! The remaining flat fields are mapped to their intended owners below and
+//! move slice by slice, never mechanically all at once.
 //!
 //! State ownership by domain:
 //!
 //! - Document (`scene`, `current_paths`, selection via `edit_mode`,
 //!   `unsaved_edit_layer_ids`, undo/redo): mutated through scene-commit and
 //!   layer-edit helpers; structural swaps go through `set_scene`.
-//! - Render (`invalidation`, `prepared_scene`, `prepared_selection_overlay`,
-//!   `rendered`, `render_extent_px`, `section_cache`): the render paths own
-//!   their caches and consume invalidation cursors where they rebuild.
+//! - Render: extracted into [`RenderState`]. Call sites name a semantic
+//!   invalidation cause; each render path consumes its own cursor, so
+//!   camera-only redraws never touch uploaded geometry.
 //! - Tools (`cut_view`, `bridge_split*`, `measure`, `sculpt`, `align`,
 //!   `edit_mode`, `editor_tab`): each tool owns its workflow; cross-tool
 //!   arbitration lives in the overlay orchestration, not in the tools.
@@ -32,14 +28,14 @@
 use super::app_settings_panel::settings_popup_id;
 use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
+use super::state_render::RenderState;
 use super::{
     egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, Arc,
-    Camera, CutTool, Duration, EditModeController, Instant, LoadQueueCameraReset, Offscreen,
-    PathBuf, PendingSceneLoad, PreparedScene, RecentFiles, Scene, SceneLoadRequest,
-    SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
+    CutTool, Duration, EditModeController, Instant, LoadQueueCameraReset, PathBuf,
+    PendingSceneLoad, RecentFiles, Scene, SceneLoadRequest,
 };
 use crate::app_settings::SettingsPersistence;
-use crate::invalidation::RenderInvalidation;
+use crate::live_viewport::SharedLiveViewport;
 
 /// How long the sculpt sliders must stay still before the debounced preference
 /// persist marks settings dirty (one fsync per settled drag, not per frame).
@@ -64,6 +60,8 @@ pub(crate) struct StartupHandles {
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct OccluViewApp {
     pub(super) repaint_ctx: egui::Context,
+    /// Renderer mirrors, caches, and invalidation cursors; see `state_render`.
+    pub(super) render: RenderState,
     pub(super) scene: Option<Arc<Scene>>,
     pub(super) current_paths: Vec<PathBuf>,
     /// Where the last successful export of this session landed. Save dialogs
@@ -71,16 +69,6 @@ pub(crate) struct OccluViewApp {
     /// choice to the platform.
     pub(super) last_export_dir: Option<PathBuf>,
     pub(super) recent_files: RecentFiles,
-    pub(super) camera: Option<Camera>,
-    pub(super) live_viewport: Option<SharedLiveViewport>,
-    pub(super) offscreen: Option<Offscreen>,
-    pub(super) prepared_scene: Option<PreparedScene>,
-    pub(super) prepared_selection_overlay: Option<PreparedScene>,
-    pub(super) render_extent_px: [u16; 2],
-    pub(super) rendered: Option<RenderedFrame>,
-    /// Typed redraw and cache-staleness state; see the module docs and
-    /// [`RenderInvalidation`]. Render paths consume their own cursors.
-    pub(super) invalidation: RenderInvalidation,
     pub(super) status_message: Option<String>,
     pub(super) status_message_since: Option<Instant>,
     pub(super) status_message_snapshot: Option<String>,
@@ -98,10 +86,6 @@ pub(crate) struct OccluViewApp {
     /// exclusive with `cut_view`; anchors are world-space and re-project every
     /// frame.
     pub(super) measure: crate::measure_tool::MeasureTool,
-    /// Content-keyed cache of the section contour for the active cut plane.
-    /// Camera motion never recomputes it; only geometry/transform/visibility or
-    /// plane changes do.
-    pub(super) section_cache: occluview_core::scene::SectionCache,
     pub(super) active_load: Option<PendingSceneLoad>,
     pub(super) queued_loads: std::collections::VecDeque<SceneLoadRequest>,
     pub(super) load_queue_camera_reset: LoadQueueCameraReset,
@@ -222,12 +206,6 @@ fn information_route_is_blocked(
     close_guard_open || pending_replace_open || app_error_open
 }
 
-pub(super) struct RenderedFrame {
-    pub(super) texture: egui::TextureHandle,
-    pub(super) pixels: Vec<u8>,
-    pub(super) size_px: [u16; 2],
-}
-
 /// Report an unexpected shared scene handle once per process.
 fn report_shared_scene_edit(handles: usize) {
     static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -294,6 +272,7 @@ impl OccluViewApp {
         repaint_ctx.options_mut(|options| options.zoom_with_keyboard = false);
         let mut app = Self {
             repaint_ctx: repaint_ctx.clone(),
+            render: RenderState::new(live_viewport),
             scene: None,
             current_paths: Vec::new(),
             last_export_dir,
@@ -301,14 +280,6 @@ impl OccluViewApp {
             settings,
             settings_persistence: SettingsPersistence::default(),
             information_dialog: InformationDialog::default(),
-            camera: None,
-            live_viewport,
-            offscreen: None,
-            prepared_scene: None,
-            prepared_selection_overlay: None,
-            render_extent_px: DEFAULT_RENDER_EXTENT_PX,
-            rendered: None,
-            invalidation: RenderInvalidation::new(),
             status_message: None,
             status_message_since: None,
             status_message_snapshot: None,
@@ -318,7 +289,6 @@ impl OccluViewApp {
             bridge_split_disc: crate::cut_manipulator::CutManipulator::default(),
             bridge_split_section: crate::section_view::SectionView::default(),
             measure: crate::measure_tool::MeasureTool::default(),
-            section_cache: occluview_core::scene::SectionCache::new(),
             active_load: None,
             queued_loads: std::collections::VecDeque::new(),
             load_queue_camera_reset: LoadQueueCameraReset::Idle,
@@ -434,11 +404,11 @@ impl OccluViewApp {
 
     pub(super) fn reset_camera_to_home(&mut self) {
         let Some(scene) = self.scene.as_ref() else {
-            self.camera = None;
+            self.render.camera = None;
             return;
         };
-        self.camera = Some(home_camera_for_scene(scene));
-        self.invalidation.request_redraw();
+        self.render.camera = Some(home_camera_for_scene(scene));
+        self.render.invalidation.request_redraw();
     }
 
     /// Record that `layer_id` now differs from what was loaded from disk.
@@ -476,7 +446,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn request_camera_repaint(&mut self, ctx: &egui::Context) {
-        self.invalidation.request_redraw();
+        self.render.invalidation.request_redraw();
         self.mark_camera_modified();
         ctx.request_repaint();
     }

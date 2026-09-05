@@ -120,7 +120,7 @@ fn begin_face_selection_with_status(
             // a layer-row context action carry that outline into a new target.
             app.mesh_selection_drag = None;
         }
-        app.invalidation.selection_changed();
+        app.render.invalidation.selection_changed();
         // Start the sculpt preparation while the operator is still choosing a
         // mesh-editor action. This removes the one-time weld/adjacency wait
         // from the first sculpt stroke without blocking the editor UI.
