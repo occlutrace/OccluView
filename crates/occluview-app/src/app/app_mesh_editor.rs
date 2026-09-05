@@ -413,7 +413,7 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         let mut draft = scene.as_ref().clone();
         let apply = if redo {
             apply_last_mesh_edit_redo_with_status(self, &mut draft, &paths)

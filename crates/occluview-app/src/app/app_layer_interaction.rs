@@ -81,7 +81,7 @@ impl OccluViewApp {
         };
         self.grow_window_for_layers(ctx, viewport_rect, scene.meshes().len());
 
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         let active_layer_id = self.document.edit_mode.selected_layer_id();
         let changes =
             layers_overlay::show(ui, viewport_rect, scene.as_ref(), &paths, active_layer_id);
@@ -227,7 +227,11 @@ impl OccluViewApp {
             return None;
         }
         Some(layers_overlay::LayerContextMenuTarget {
-            label: layers_overlay::layer_label(&self.current_paths, entry, hit.layer_index),
+            label: layers_overlay::layer_label(
+                &self.persistence.current_paths,
+                entry,
+                hit.layer_index,
+            ),
             index: hit.layer_index,
             layer_id: hit.layer_id,
             visible: entry.visible,
@@ -318,7 +322,7 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         self.apply_layer_overlay_changes(
             scene,
             &paths,

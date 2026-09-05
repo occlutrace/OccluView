@@ -103,7 +103,7 @@ impl OccluViewApp {
                         do_open = true;
                     }
                     // Recent files use a chevron popup attached to Open.
-                    ui.add_enabled_ui(!self.recent_files.is_empty(), |ui| {
+                    ui.add_enabled_ui(!self.persistence.recent_files.is_empty(), |ui| {
                         let (rect, response) =
                             ui.allocate_exact_size(egui::vec2(18.0, 22.0), egui::Sense::click());
                         crate::icons::paint(
@@ -117,7 +117,8 @@ impl OccluViewApp {
                             },
                         );
                         let response = response.on_hover_text("Recent files");
-                        if let Some(action) = show_recent_files_popup(&response, &self.recent_files)
+                        if let Some(action) =
+                            show_recent_files_popup(&response, &self.persistence.recent_files)
                         {
                             match action {
                                 RecentFilesAction::Open(paths) => recent_to_open = Some(paths),
@@ -348,8 +349,8 @@ impl OccluViewApp {
             }
         }
         if clear_recent {
-            self.recent_files.clear();
-            self.save_recent_files();
+            self.persistence.recent_files.clear();
+            self.persistence.save_recent_files();
         }
         if let Some(paths) = recent_to_open {
             self.replace_paths(&paths, "recent");
@@ -392,7 +393,7 @@ impl OccluViewApp {
             return;
         }
         let rect = status_overlay_rect(viewport_rect);
-        let ink = ui_theme::viewport_ink(self.settings.viewport_background.is_dark());
+        let ink = ui_theme::viewport_ink(self.persistence.settings.viewport_background.is_dark());
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.set_width(rect.width());
             ui.horizontal(|ui| {
@@ -560,7 +561,7 @@ impl OccluViewApp {
         let scene = self.document.scene.as_ref()?;
         let index = scene.meshes().iter().position(|entry| entry.id() == id)?;
         Some(crate::layers_overlay::layer_label(
-            &self.current_paths,
+            &self.persistence.current_paths,
             &scene.meshes()[index],
             index,
         ))

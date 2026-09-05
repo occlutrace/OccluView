@@ -15,89 +15,92 @@ impl OccluViewApp {
     pub(super) fn show_settings_popup(&mut self, trigger: &egui::Response) {
         let Some(action) = show_settings_popup(
             trigger,
-            &self.settings,
-            self.update_notice.check_status(),
-            self.settings_persistence.error(),
+            &self.persistence.settings,
+            self.persistence.update_notice.check_status(),
+            self.persistence.settings_persistence.error(),
         ) else {
             return;
         };
 
         match action {
             SettingsAction::SetExportFormat(format) => {
-                self.settings.fallback_export_format = format;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.fallback_export_format = format;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetRememberExportDir(remember) => {
-                self.settings
-                    .set_remember_export_dir(remember, self.last_export_dir.as_deref());
-                self.settings_persistence.mark_dirty();
+                self.persistence
+                    .settings
+                    .set_remember_export_dir(remember, self.persistence.last_export_dir.as_deref());
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetUpdateCheckOnStart(enabled) => {
-                self.settings.update_check_on_start = enabled;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.update_check_on_start = enabled;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetFrameSceneOnOpen(enabled) => {
-                self.settings.frame_scene_on_open = enabled;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.frame_scene_on_open = enabled;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetDoubleClickFocus(enabled) => {
-                self.settings.double_click_resets_camera = enabled;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.double_click_resets_camera = enabled;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetOrbitSensitivity(value) => {
-                self.settings.orbit_sensitivity = value;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.orbit_sensitivity = value;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetZoomSensitivity(value) => {
-                self.settings.zoom_sensitivity = value;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.zoom_sensitivity = value;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetRecentFilesLimit(limit) => {
-                self.settings.recent_files_limit = limit;
+                self.persistence.settings.recent_files_limit = limit;
                 // Re-trim the live list so an operator shrinking the limit sees
                 // the chevron shorten immediately, not after a restart.
-                let stored = self.recent_files.serialize();
-                self.recent_files = crate::recent_files::RecentFiles::deserialize(
-                    self.settings.recent_files_limit(),
+                let stored = self.persistence.recent_files.serialize();
+                self.persistence.recent_files = crate::recent_files::RecentFiles::deserialize(
+                    self.persistence.settings.recent_files_limit(),
                     &stored,
                 );
-                self.settings_persistence.mark_dirty();
-                self.save_recent_files();
+                self.persistence.settings_persistence.mark_dirty();
+                self.persistence.save_recent_files();
             }
             SettingsAction::SetViewportBackground(background) => {
-                self.settings.viewport_background = background;
+                self.persistence.settings.viewport_background = background;
                 // The clear color is baked into the prepared scene specs, so
                 // both render paths must rebuild before the change is visible.
                 self.mark_scene_materials_changed();
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetShowCutGhost(enabled) => {
-                self.settings.show_cut_ghost = enabled;
+                self.persistence.settings.show_cut_ghost = enabled;
                 // Both render paths bake the ghost decision into the frame they
                 // draw; force the next one so a stationary cut view answers at
                 // once instead of waiting for the next camera move.
                 self.render.invalidation.overlay_tools_changed();
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetUnitDisplay(unit) => {
-                self.settings.unit_display = unit;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.unit_display = unit;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetTheme(theme) => {
-                self.settings.theme = theme;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.theme = theme;
+                self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetUiScale { value, commit } => {
-                self.settings.ui_scale = value;
+                self.persistence.settings.ui_scale = value;
                 if commit {
-                    self.settings_persistence.mark_dirty();
+                    self.persistence.settings_persistence.mark_dirty();
                 }
             }
             SettingsAction::SetRememberSculptBrush(enabled) => {
-                self.settings.remember_sculpt_brush = enabled;
-                self.settings_persistence.mark_dirty();
+                self.persistence.settings.remember_sculpt_brush = enabled;
+                self.persistence.settings_persistence.mark_dirty();
             }
-            SettingsAction::CheckForUpdates => self.update_notice.request_check(&trigger.ctx),
+            SettingsAction::CheckForUpdates => {
+                self.persistence.update_notice.request_check(&trigger.ctx);
+            }
             SettingsAction::OpenAbout => {
                 egui::Popup::close_id(&trigger.ctx, settings_popup_id());
                 self.information_dialog = InformationDialog::About;

@@ -206,7 +206,8 @@ impl OccluViewApp {
             return;
         }
 
-        let scene_pick = if (self.settings.double_click_resets_camera && response.double_clicked())
+        let scene_pick = if (self.persistence.settings.double_click_resets_camera
+            && response.double_clicked())
             || response.clicked_by(egui::PointerButton::Middle)
         {
             let camera = self.render.camera;
@@ -288,7 +289,7 @@ impl OccluViewApp {
             if let Some(mut orbit_delta) =
                 orbit_delta_from_drag(secondary_pointer.motion, viewport_rect.size())
             {
-                let sensitivity = self.settings.orbit_sensitivity();
+                let sensitivity = self.persistence.settings.orbit_sensitivity();
                 orbit_delta.x *= sensitivity;
                 orbit_delta.y *= sensitivity;
                 camera.orbit_view_by(orbit_delta.x, orbit_delta.y);
@@ -301,7 +302,7 @@ impl OccluViewApp {
                 changed |= zoom_camera_from_wheel(
                     camera,
                     ctx,
-                    self.settings.zoom_sensitivity(),
+                    self.persistence.settings.zoom_sensitivity(),
                     viewport_rect,
                     pointer,
                 );

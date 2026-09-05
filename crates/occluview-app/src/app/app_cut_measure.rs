@@ -306,7 +306,7 @@ impl OccluViewApp {
                     "Wall thickness: {}",
                     measure_tool::format_length(
                         f64::from(probe.thickness_mm),
-                        self.settings.unit_display
+                        self.persistence.settings.unit_display
                     )
                 ));
             } else {
@@ -401,7 +401,7 @@ impl OccluViewApp {
                 &camera,
                 viewport_rect,
                 &self.measure,
-                self.settings.unit_display,
+                self.persistence.settings.unit_display,
                 hover,
             );
         }
@@ -480,7 +480,7 @@ impl OccluViewApp {
                                 "Distance: {}",
                                 measure_tool::format_length(
                                     distance_mm,
-                                    self.settings.unit_display
+                                    self.persistence.settings.unit_display
                                 )
                             ));
                             ctx.request_repaint();
@@ -559,7 +559,10 @@ impl OccluViewApp {
                 if let Some(distance_mm) = self.measure.place_ruler_point(hit.point) {
                     self.status_message = Some(format!(
                         "Distance: {}",
-                        measure_tool::format_length(distance_mm, self.settings.unit_display)
+                        measure_tool::format_length(
+                            distance_mm,
+                            self.persistence.settings.unit_display
+                        )
                     ));
                 }
             }
@@ -583,7 +586,7 @@ impl OccluViewApp {
                         "Wall thickness: {}",
                         measure_tool::format_length(
                             f64::from(thickness_mm),
-                            self.settings.unit_display
+                            self.persistence.settings.unit_display
                         )
                     ),
                     ThicknessReading::Open => {
