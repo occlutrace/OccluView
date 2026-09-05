@@ -29,6 +29,12 @@ impl Camera {
     /// viewport centre. Move the target by the exact difference between the
     /// old and new view-plane offsets; the world point under the cursor then
     /// stays under it for both zoom-in and zoom-out.
+    ///
+    /// The `!=` comparisons below test exact stored-value identity: they
+    /// report whether the clamped height changed at all, including sub-epsilon
+    /// clamp steps. An epsilon margin would misreport a real (tiny) change as
+    /// "unchanged".
+    #[expect(clippy::float_cmp, reason = "exact stored orthographic_height identity, not a tolerance check")]
     pub fn zoom_at_screen_point(
         &mut self,
         scale: f32,
