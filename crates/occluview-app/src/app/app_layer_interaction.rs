@@ -251,7 +251,7 @@ impl OccluViewApp {
         ctx: &egui::Context,
         response: &egui::Response,
     ) {
-        if self.bridge_split_active() {
+        if self.tools.bridge_split_active() {
             return;
         }
         // A stationary RMB first abandons an in-progress outline, then opens
@@ -342,7 +342,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) {
-        if self.bridge_split_active() {
+        if self.tools.bridge_split_active() {
             return;
         }
         let camera = self.render.camera;
@@ -386,7 +386,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) {
-        if self.bridge_split_active() {
+        if self.tools.bridge_split_active() {
             return;
         }
         let camera = self.render.camera;
@@ -433,7 +433,7 @@ impl OccluViewApp {
     /// Shift+Ctrl+MiddleClick: unhide the most recently hidden layer from any
     /// visibility control that is still in the scene and still hidden.
     pub(super) fn restore_last_hidden_layer(&mut self, ctx: &egui::Context) {
-        if self.bridge_split_active() {
+        if self.tools.bridge_split_active() {
             return;
         }
         let Some(scene) = self.document.scene.clone() else {

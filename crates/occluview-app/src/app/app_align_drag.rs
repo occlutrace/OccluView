@@ -41,7 +41,7 @@ impl OccluViewApp {
         // egui promotes a press to a drag after six pixels OR eight tenths of a
         // second, so without this gate a careful click on a cusp moved the scan
         // instead of placing a point.
-        if self.align.tab != crate::align_panel::AlignTab::Manually {
+        if self.tools.align.tab != crate::align_panel::AlignTab::Manually {
             return self.finish_align_drag();
         }
         let primary_down =
@@ -57,7 +57,7 @@ impl OccluViewApp {
         };
         let motion = ctx.input(|input| input.pointer.delta());
 
-        if self.align.drag.is_none() {
+        if self.tools.align.drag.is_none() {
             if !response.drag_started_by(egui::PointerButton::Primary) {
                 return false;
             }
@@ -75,6 +75,7 @@ impl OccluViewApp {
             // the general pick run, so deliberately grabbing the reference still
             // works: aim where the moving scan is not.
             let hit = self
+                .tools
                 .align
                 .tool
                 .moving_layer()
@@ -89,7 +90,7 @@ impl OccluViewApp {
             let Some(entry) = scene.meshes().get(hit.layer_index) else {
                 return false;
             };
-            self.align.drag = Some(AlignDrag {
+            self.tools.align.drag = Some(AlignDrag {
                 layer: hit.layer_id,
                 start: entry.transform,
                 centroid: entry
@@ -112,11 +113,11 @@ impl OccluViewApp {
             // the operator can still let go and try again if they grabbed the
             // arch they did not mean to.
             if let Some(name) = self.layer_display_name(hit.layer_id) {
-                self.align.status = Some(format!("Moving {name} by hand"));
+                self.tools.align.status = Some(format!("Moving {name} by hand"));
             }
         }
 
-        let Some(drag) = self.align.drag else {
+        let Some(drag) = self.tools.align.drag else {
             return false;
         };
         if motion.length_sq() <= f32::EPSILON {
@@ -135,7 +136,7 @@ impl OccluViewApp {
                 right,
                 up,
                 crate::align_drag::DEGREES_PER_PIXEL,
-                self.align.constraint,
+                self.tools.align.constraint,
             );
             // Turn about the layer's own centre, so the scan spins in place
             // instead of orbiting the world origin.
@@ -149,7 +150,7 @@ impl OccluViewApp {
                 crate::align_drag::screen_delta_to_world(motion, right, up, world_per_pixel);
             Affine3A::from_translation(crate::align_drag::constrain_translation(
                 moved,
-                self.align.constraint,
+                self.tools.align.constraint,
             ))
         };
 
@@ -187,7 +188,7 @@ impl OccluViewApp {
 
     /// Close an open drag, recording the whole gesture as one undo step.
     pub(super) fn finish_align_drag(&mut self) -> bool {
-        let Some(drag) = self.align.drag.take() else {
+        let Some(drag) = self.tools.align.drag.take() else {
             return false;
         };
         let Some(scene) = self.document.scene.clone() else {
@@ -221,7 +222,7 @@ impl OccluViewApp {
             drag.layer,
             EditModeCommand::MoveLayer,
         ) else {
-            self.align.status = Some(
+            self.tools.align.status = Some(
                 "Moved by hand, but this step could not be added to the history — \
                  Ctrl+Z will not undo it"
                     .into(),
@@ -254,7 +255,7 @@ impl OccluViewApp {
             .unwrap_or_else(|| "The scan".to_owned());
         // Teardown first so its status cannot overwrite the movement result.
         self.forget_align_fit("Moved by hand");
-        self.align.status = Some(format!(
+        self.tools.align.status = Some(format!(
             "{name} moved {moved_mm:.2} mm by hand (Ctrl+Z undoes)"
         ));
         true

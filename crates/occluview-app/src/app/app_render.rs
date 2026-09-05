@@ -83,34 +83,34 @@ impl OccluViewApp {
 
     pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
         let Some(scene) = self.document.scene.clone() else {
-            self.cut_view.disable();
+            self.tools.cut_view.disable();
             return;
         };
         let bbox = scene.bbox();
-        let Some(cut) = self.cut_view.cut_view_spec(bbox) else {
+        let Some(cut) = self.tools.cut_view.cut_view_spec(bbox) else {
             return;
         };
-        let (focus, half_extent) = self.cut_view.cut_view_focus(bbox);
-        let basis = self.cut_view.slice_basis();
+        let (focus, half_extent) = self.tools.cut_view.cut_view_focus(bbox);
+        let basis = self.tools.cut_view.slice_basis();
         let Some((color_image, slice_cam)) =
             self.render_section_pixels(&scene, cut.plane, focus, half_extent, basis)
         else {
             return;
         };
-        self.cut_view.store_slice(ctx, color_image, slice_cam);
+        self.tools.cut_view.store_slice(ctx, color_image, slice_cam);
     }
 
     pub(super) fn maybe_render_bridge_split_section(&mut self, ctx: &egui::Context) {
-        if !(self.bridge_split_active()
-            && self.bridge_split_section.take_needs_render()
-            && self.bridge_split_section.wants_offscreen_slice())
+        if !(self.tools.bridge_split_active()
+            && self.tools.bridge_split_section.take_needs_render()
+            && self.tools.bridge_split_section.wants_offscreen_slice())
         {
             return;
         }
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let Some(frame) = self.bridge_split_section.frame() else {
+        let Some(frame) = self.tools.bridge_split_section.frame() else {
             return;
         };
         let bbox = scene.bbox();
@@ -118,14 +118,15 @@ impl OccluViewApp {
             frame.normal().to_array(),
             frame.normal().dot(frame.pose().center),
         );
-        let (focus, half_extent) = self.bridge_split_section.focus(bbox);
-        let basis = self.bridge_split_section.slice_basis();
+        let (focus, half_extent) = self.tools.bridge_split_section.focus(bbox);
+        let basis = self.tools.bridge_split_section.slice_basis();
         let Some((color_image, slice_cam)) =
             self.render_section_pixels(&scene, plane, focus, half_extent, basis)
         else {
             return;
         };
-        self.bridge_split_section
+        self.tools
+            .bridge_split_section
             .store_slice(ctx, color_image, slice_cam);
     }
 
@@ -202,8 +203,8 @@ impl OccluViewApp {
         &self,
         bbox: occluview_core::Aabb,
     ) -> occluview_render::ClipPlane {
-        if self.bridge_split_active() {
-            return self.bridge_split_section.frame().map_or_else(
+        if self.tools.bridge_split_active() {
+            return self.tools.bridge_split_section.frame().map_or_else(
                 occluview_render::ClipPlane::disabled,
                 |frame| {
                     occluview_render::ClipPlane::new(
@@ -213,23 +214,23 @@ impl OccluViewApp {
                 },
             );
         }
-        self.cut_view.viewport_clip_plane(bbox)
+        self.tools.cut_view.viewport_clip_plane(bbox)
     }
 
     pub(super) fn active_section_panel_rect(
         &self,
         viewport_rect: egui::Rect,
     ) -> Option<egui::Rect> {
-        let visible = if self.bridge_split_active() {
-            self.bridge_split_section.slice_visible()
+        let visible = if self.tools.bridge_split_active() {
+            self.tools.bridge_split_section.slice_visible()
         } else {
-            self.cut_view.is_active() && self.cut_view.slice_visible()
+            self.tools.cut_view.is_active() && self.tools.cut_view.slice_visible()
         };
         visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
     }
 
     pub(super) fn axis_gizmo_is_hidden(&self) -> bool {
-        self.cut_view.is_active() && self.cut_view.slice_visible()
+        self.tools.cut_view.is_active() && self.tools.cut_view.slice_visible()
     }
 
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
@@ -383,7 +384,7 @@ impl OccluViewApp {
                     self.render.invalidation.consume_live_scene();
                 }
                 let repush_deviation =
-                    (rebuilt && restore_deviation) || self.align.deviation_push_pending;
+                    (rebuilt && restore_deviation) || self.tools.align.deviation_push_pending;
                 if self.render.invalidation.live_overlay_stale() {
                     let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
@@ -405,7 +406,7 @@ impl OccluViewApp {
             // A push before the viewport has a prepared scene writes nowhere.
             // Keep the request standing until one exists, or the very first
             // measurement would come out in the scan's own colours.
-            self.align.deviation_push_pending = !self.push_deviation_colors();
+            self.tools.align.deviation_push_pending = !self.push_deviation_colors();
         }
     }
 
@@ -452,15 +453,15 @@ impl OccluViewApp {
     }
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
-        self.bridge_split.cancel();
-        self.bridge_split_disc.disarm();
-        self.bridge_split_section.reset();
+        self.tools.bridge_split.cancel();
+        self.tools.bridge_split_disc.disarm();
+        self.tools.bridge_split_section.reset();
         self.document.edit_mode.sync_to_scene(&scene);
         // A structural scene swap (load, delete, another mesh edit, undo/redo)
         // reverts the geometry the persistent sculpt session was prepared over,
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
         // it), so drop the session here and re-prepare on the next stroke.
-        self.sculpt.invalidate_session();
+        self.tools.sculpt.invalidate_session();
         self.document.scene = Some(Arc::new(scene));
         self.clear_live_viewport();
         self.render.prepared_scene = None;
@@ -483,9 +484,9 @@ impl OccluViewApp {
         // replaced geometry, so measurements are cleared (the tool stays armed
         // while something remains to measure). Material-only updates keep them
         // (world space is unchanged).
-        self.measure.clear_measurements();
+        self.tools.measure.clear_measurements();
         if !self.has_measurable_layer() {
-            self.measure.disarm();
+            self.tools.measure.disarm();
         }
         if self.can_render_cut_view() {
             // A planted disc holds a WORLD-space plane. Scanner vendors place
@@ -495,12 +496,12 @@ impl OccluViewApp {
             // file loaded wrong". Re-arm instead: the tool stays on, the stale
             // placement does not. Bridge split already does this three lines
             // above; only the cut view was left behind.
-            if self.cut_view.is_active() {
-                self.cut_view.enable();
+            if self.tools.cut_view.is_active() {
+                self.tools.cut_view.enable();
             }
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         } else {
-            self.cut_view.disable();
+            self.tools.cut_view.disable();
         }
     }
 
@@ -518,9 +519,9 @@ impl OccluViewApp {
         self.render.invalidation.scene_geometry_changed();
         self.document.mesh_selection_drag = None;
         if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         } else {
-            self.cut_view.disable();
+            self.tools.cut_view.disable();
         }
     }
 
@@ -540,11 +541,11 @@ impl OccluViewApp {
         self.document.load_queue_camera_reset = super::LoadQueueCameraReset::Idle;
         self.document.camera_modified_during_load = false;
         self.document.edit_mode.clear();
-        self.bridge_split.cancel();
-        self.bridge_split_disc.disarm();
-        self.bridge_split_section.reset();
-        self.cut_view.disable();
-        self.measure.disarm();
+        self.tools.bridge_split.cancel();
+        self.tools.bridge_split_disc.disarm();
+        self.tools.bridge_split_section.reset();
+        self.tools.cut_view.disable();
+        self.tools.measure.disarm();
         self.render.section_cache.clear();
     }
 
@@ -744,7 +745,7 @@ mod tests {
             "render_now must update the viewport texture in place, not reallocate it"
         );
         assert!(
-            source.contains("self.cut_view.store_slice(ctx, color_image, slice_cam)"),
+            source.contains("self.tools.cut_view.store_slice(ctx, color_image, slice_cam)"),
             "render_cut_now must route the slice through CutTool::store_slice"
         );
         assert!(

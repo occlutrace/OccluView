@@ -123,14 +123,14 @@ impl OccluViewApp {
     }
 
     pub(super) fn interaction_hint_context(&self) -> HintContext {
-        if self.measure.is_active() {
+        if self.tools.measure.is_active() {
             HintContext::Measure
-        } else if self.cut_view.is_active() || self.bridge_split_active() {
+        } else if self.tools.cut_view.is_active() || self.tools.bridge_split_active() {
             HintContext::Cut
         } else if self.align_active() {
             HintContext::Align
         } else if self.document.edit_mode.has_active_session() {
-            match self.editor_tab {
+            match self.tools.editor_tab {
                 crate::mesh_editor_overlay::EditorTab::EditMesh => HintContext::MeshEditing,
                 crate::mesh_editor_overlay::EditorTab::Sculpt => HintContext::Sculpt,
             }
