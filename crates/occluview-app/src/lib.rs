@@ -4,9 +4,8 @@
 //! The binary entry point (`main.rs`) keeps bootstrap wiring; everything here
 //! is pure and UI-neutral so behavior can be pinned by unit tests.
 
-pub mod startup;
+mod startup;
 
-pub use startup::Args;
 pub use startup::{
-    file_extensions, parse_args, parse_args_from, should_append_incoming_open_state,
+    file_extensions, parse_args, parse_args_from, should_append_incoming_open_state, Args,
 };
