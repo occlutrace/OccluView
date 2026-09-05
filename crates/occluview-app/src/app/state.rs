@@ -39,7 +39,7 @@ use super::{
     SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
 use crate::app_settings::SettingsPersistence;
-use occluview_app::invalidation::RenderInvalidation;
+use crate::invalidation::RenderInvalidation;
 
 /// How long the sculpt sliders must stay still before the debounced preference
 /// persist marks settings dirty (one fsync per settled drag, not per frame).

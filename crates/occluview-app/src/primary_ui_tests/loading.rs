@@ -28,7 +28,7 @@ fn app_starts_idle_until_scene_data_arrives() {
         "empty startup should not spend time rendering a nonexistent scene"
     );
     assert!(
-        !occluview_app::invalidation::RenderInvalidation::new().redraw_pending(),
+        !invalidation::RenderInvalidation::new().redraw_pending(),
         "a fresh invalidation state must have no frame pending"
     );
 }
@@ -111,15 +111,15 @@ fn incoming_files_append_while_scene_or_load_is_active() {
         "incoming open requests need a shared append decision"
     );
     assert!(
-        source.contains("occluview_app::should_append_incoming_open_state("),
+        source.contains("should_append_incoming_open_state("),
         "incoming open requests should reuse the single canonical append helper"
     );
     assert!(
-        occluview_app::should_append_incoming_open_state(false, true, 0),
+        should_append_incoming_open_state(false, true, 0),
         "incoming files should append when a scene load is still pending"
     );
     assert!(
-        !occluview_app::should_append_incoming_open_state(false, false, 0),
+        !should_append_incoming_open_state(false, false, 0),
         "incoming files replace an idle empty session"
     );
 }

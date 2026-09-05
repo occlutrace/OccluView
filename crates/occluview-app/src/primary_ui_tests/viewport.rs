@@ -692,7 +692,7 @@ fn layer_material_edits_do_not_reset_prepared_scene() {
     );
     // The typed model proves the mapping: material edits stale both scene
     // consumers and the overlay, while a camera move stales nothing.
-    let mut camera_only = occluview_app::invalidation::RenderInvalidation::new();
+    let mut camera_only = invalidation::RenderInvalidation::new();
     camera_only.request_redraw();
     assert!(
         !camera_only.live_scene_stale() && !camera_only.offscreen_scene_stale(),
@@ -735,7 +735,7 @@ fn camera_only_live_viewport_redraw_skips_scene_resync() {
     );
     // The typed model proves the cause mapping: a camera-only change requests
     // a repaint while both scene consumers stay fresh.
-    let mut camera_only = occluview_app::invalidation::RenderInvalidation::new();
+    let mut camera_only = invalidation::RenderInvalidation::new();
     camera_only.request_redraw();
     assert!(camera_only.redraw_pending());
     assert!(
@@ -757,7 +757,7 @@ fn camera_only_offscreen_redraw_skips_scene_resync() {
         "offscreen scene sync should consume its own cursor after the upload/update path runs"
     );
     // The typed model proves the cause mapping for the fallback path too.
-    let mut camera_only = occluview_app::invalidation::RenderInvalidation::new();
+    let mut camera_only = invalidation::RenderInvalidation::new();
     camera_only.request_redraw();
     assert!(camera_only.redraw_pending());
     assert!(

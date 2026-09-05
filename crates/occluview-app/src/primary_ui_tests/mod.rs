@@ -70,6 +70,12 @@ pub(super) fn main_source() -> &'static str {
     include_str!("../main.rs")
 }
 
+/// Canonical home of the application module graph since the library
+/// boundary (Stage C): `main.rs` only delegates to the public entry here.
+pub(super) fn lib_source() -> &'static str {
+    include_str!("../lib.rs")
+}
+
 /// Canonical home of argument parsing and the single-instance append
 /// decision since the library seam (see `src/startup.rs`).
 pub(super) fn startup_source() -> &'static str {
