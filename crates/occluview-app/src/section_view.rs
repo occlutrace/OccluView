@@ -300,6 +300,7 @@ impl SectionView {
         viewport_rect: egui::Rect,
         section: Option<&SceneSection>,
         color_for: F,
+        locale: &crate::i18n::LocaleManager,
     ) -> SectionViewUiOutcome
     where
         F: Fn(SceneMeshId) -> egui::Color32,
@@ -329,6 +330,7 @@ impl SectionView {
             self.slice_basis,
             &mut self.ruler,
             render,
+            locale,
         );
         if out.mode != self.prefs.mode {
             self.prefs.mode = out.mode;

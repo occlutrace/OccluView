@@ -236,6 +236,36 @@ mod tests {
         }
     }
 
+    /// A secondary launch forwards open requests only: the handoff carries
+    /// paths and an activation token, never a language, so it cannot change
+    /// the primary instance's UI language.
+    #[test]
+    fn handoff_carries_no_language() {
+        let source = include_str!("protocol.rs");
+        let production = source
+            .split_once("mod tests")
+            .map_or(source, |(part, _)| part);
+        for forbidden in ["locale", "language", "Locale", "Language", "langid"] {
+            assert!(
+                !production.contains(forbidden),
+                "handoff protocol must stay language-neutral, found {forbidden:?}"
+            );
+        }
+        let original = request(&["/tmp/a.stl"], None);
+        let payload = serialize_request(&original);
+        assert!(payload.is_ok(), "serialize request failed: {payload:?}");
+        let Ok(payload) = payload else {
+            return;
+        };
+        let parsed = parse_request(&payload);
+        assert!(parsed.is_ok(), "parse request failed: {parsed:?}");
+        let Ok(parsed) = parsed else {
+            return;
+        };
+        assert_eq!(parsed.paths, original.paths);
+        assert_eq!(parsed.activation_token, None);
+    }
+
     #[test]
     fn request_envelope_round_trips_multiple_paths() {
         let original = request(&["/tmp/a.stl", "/tmp/b/scan.ply"], None);
@@ -398,5 +428,43 @@ mod tests {
             error.to_string().contains("max is"),
             "unexpected error: {error:?}"
         );
+    }
+}
+
+/// Language-neutrality of the handoff on every platform (the socket tests
+/// above are Unix-gated; this one is not).
+#[cfg(test)]
+mod handoff_neutrality_tests {
+    use super::{parse_request, serialize_request, OpenRequest};
+    use std::path::PathBuf;
+
+    #[test]
+    fn handoff_carries_no_language_on_any_platform() {
+        let source = include_str!("protocol.rs");
+        let production = source
+            .split_once("mod tests")
+            .map_or(source, |(part, _)| part);
+        for forbidden in ["locale", "language", "Locale", "Language", "langid"] {
+            assert!(
+                !production.contains(forbidden),
+                "handoff protocol must stay language-neutral, found {forbidden:?}"
+            );
+        }
+        let original = OpenRequest {
+            paths: vec![PathBuf::from("/tmp/a.stl")],
+            activation_token: None,
+        };
+        let payload = serialize_request(&original);
+        assert!(payload.is_ok(), "serialize request failed: {payload:?}");
+        let Ok(payload) = payload else {
+            return;
+        };
+        let parsed = parse_request(&payload);
+        assert!(parsed.is_ok(), "parse request failed: {parsed:?}");
+        let Ok(parsed) = parsed else {
+            return;
+        };
+        assert_eq!(parsed.paths, original.paths);
+        assert_eq!(parsed.activation_token, None);
     }
 }

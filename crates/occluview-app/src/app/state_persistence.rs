@@ -31,6 +31,10 @@ pub(super) struct PersistenceState {
     /// Operator preferences, loaded once at startup and saved on change.
     pub(super) settings: Settings,
     pub(super) settings_persistence: SettingsPersistence,
+    /// Retry state for the language sidecar, mirroring settings persistence.
+    /// The sidecar lives in its own file so an old binary rewriting
+    /// settings.json can never erase the language choice.
+    pub(super) language_persistence: SettingsPersistence,
     pub(super) recent_files: RecentFiles,
     pub(super) last_export_dir: Option<PathBuf>,
     pub(super) current_paths: Vec<PathBuf>,
@@ -54,6 +58,7 @@ impl PersistenceState {
             recent_files: load_recent_files(settings.recent_files_limit()),
             settings,
             settings_persistence: SettingsPersistence::default(),
+            language_persistence: SettingsPersistence::default(),
             last_export_dir,
             current_paths: Vec::new(),
             update_notice: UpdateNotice::begin_check(update_check_on_start),
@@ -82,6 +87,40 @@ impl PersistenceState {
             }
         }
         if let Some(delay) = self.settings_persistence.retry_after(now) {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
+    /// Persist the language sidecar on the same rhythm as settings, through
+    /// its own file and retry state.
+    pub(super) fn persist_language_if_due(
+        &mut self,
+        ctx: &egui::Context,
+        preference: &crate::i18n::preference::UiLanguagePreference,
+    ) {
+        let now = Instant::now();
+        if self.language_persistence.should_attempt(now) {
+            match crate::app_paths::app_state_dir() {
+                Some(dir) => match crate::i18n::preference::save(&dir, preference) {
+                    Ok(()) => self.language_persistence.record_success(),
+                    Err(error) => {
+                        tracing::warn!(%error, "could not persist language preference");
+                        self.language_persistence
+                            .record_failure(now, error.to_string());
+                    }
+                },
+                None => self
+                    .language_persistence
+                    .record_failure(now, "application state directory is unavailable".to_owned()),
+            }
+        }
+        if let Some(delay) = self
+            .settings_persistence
+            .retry_after(now)
+            .into_iter()
+            .chain(self.language_persistence.retry_after(now))
+            .min()
+        {
             ctx.request_repaint_after(delay);
         }
     }
@@ -125,6 +164,7 @@ mod tests {
         PersistenceState {
             settings: Settings::default(),
             settings_persistence: SettingsPersistence::default(),
+            language_persistence: SettingsPersistence::default(),
             recent_files: RecentFiles::new(10),
             last_export_dir: None,
             current_paths: Vec::new(),

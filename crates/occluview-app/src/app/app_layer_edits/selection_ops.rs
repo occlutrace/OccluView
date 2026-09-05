@@ -23,17 +23,25 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let layer_label = resolve_layer(scene, paths, &request)
-        .map_or_else(|| "layer".to_string(), |(_, label)| label);
+    let layer_label = resolve_layer(scene, paths, &request, &app.ui.locale).map_or_else(
+        || {
+            app.ui
+                .locale
+                .tr_with("layer-unnamed", &[("n", &(request.index + 1).to_string())])
+        },
+        |(_, label)| label,
+    );
 
     if selection_covers_whole_mesh(scene, &request, &app.document.edit_mode) {
         app.ui.status_message = Some(match request.action {
-            LayerContextAction::CropToSelectedFaces => {
-                format!("Selection already covers the whole mesh: {layer_label}")
-            }
-            _ => {
-                format!("Selection covers the whole mesh — remove the layer instead: {layer_label}")
-            }
+            LayerContextAction::CropToSelectedFaces => app
+                .ui
+                .locale
+                .tr_with("select-covers-all", &[("layer", &layer_label)]),
+            _ => app
+                .ui
+                .locale
+                .tr_with("select-covers-remove", &[("layer", &layer_label)]),
         });
         return LayerContextApply::default();
     }
@@ -42,8 +50,9 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     // scene for the undo snapshot — the refusal needs no snapshot at all.
     if request.action == LayerContextAction::SeparateSelectedComponents {
         if let Some(parts) = separate_component_overflow(scene, &request, &app.document.edit_mode) {
-            app.ui.status_message = Some(format!(
-                "Selection splits into {parts} parts — refine the selection: {layer_label}"
+            app.ui.status_message = Some(app.ui.locale.tr_with(
+                "select-splits",
+                &[("parts", &parts.to_string()), ("layer", &layer_label)],
             ));
             return LayerContextApply::default();
         }
@@ -71,8 +80,12 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                         app.document.mark_mesh_edits_unsaved(id);
                     }
                 }
-                let status = layer_edit_status(&layer_label, request.action, None);
-                app.ui.status_message = Some(with_undoable_note(&app.document.edit_mode, status));
+                let status = layer_edit_status(&layer_label, request.action, None, &app.ui.locale);
+                app.ui.status_message = Some(with_undoable_note(
+                    &app.document.edit_mode,
+                    &app.ui.locale,
+                    status,
+                ));
             } else {
                 let has_selection = app
                     .document
@@ -83,23 +96,29 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                     if let Some(parts) =
                         separate_component_overflow(scene, &request, &app.document.edit_mode)
                     {
-                        format!(
-                            "Selection splits into {parts} parts — refine the selection: {layer_label}"
+                        app.ui.locale.tr_with(
+                            "select-splits",
+                            &[("parts", &parts.to_string()), ("layer", &layer_label)],
                         )
                     } else if has_selection {
-                        format!("No changes: {layer_label}")
+                        app.ui
+                            .locale
+                            .tr_with("edit-no-changes", &[("layer", &layer_label)])
                     } else {
-                        "Select mesh faces first".to_string()
+                        app.ui.locale.tr("edit-select-faces-first")
                     },
                 );
             }
             apply
         }
         Err(error) => {
-            let summary = format!("Could not edit selection: {error}");
+            let summary = app.ui.locale.tr_with(
+                "edit-apply-failed-summary",
+                &[("detail", &error.to_string())],
+            );
             app.ui.status_message = Some(summary.clone());
             app.ui.app_error = Some(AppErrorDialog {
-                title: "Could not edit selection".to_string(),
+                title: app.ui.locale.tr("edit-apply-failed-title"),
                 summary,
                 details: format!(
                     "Selection edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"

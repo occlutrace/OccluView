@@ -83,8 +83,14 @@ impl OccluViewApp {
 
         let paths = self.persistence.current_paths.clone();
         let active_layer_id = self.document.edit_mode.selected_layer_id();
-        let changes =
-            layers_overlay::show(ui, viewport_rect, scene.as_ref(), &paths, active_layer_id);
+        let changes = layers_overlay::show(
+            ui,
+            viewport_rect,
+            scene.as_ref(),
+            &paths,
+            active_layer_id,
+            &self.ui.locale,
+        );
         // Ownership is handed over, not borrowed: the material-only path
         // mutates the live scene through `Arc::make_mut`, which deep-copies for
         // as long as any other handle exists -- and this one would be it.
@@ -231,6 +237,7 @@ impl OccluViewApp {
                 &self.persistence.current_paths,
                 entry,
                 hit.layer_index,
+                &self.ui.locale,
             ),
             index: hit.layer_index,
             layer_id: hit.layer_id,
@@ -261,7 +268,7 @@ impl OccluViewApp {
         if response.secondary_clicked()
             && discard_lasso_outline(&mut self.document.mesh_selection_drag)
         {
-            self.ui.status_message = Some("Lasso outline dropped".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("lasso-dropped"));
             ctx.request_repaint();
         }
         let menu_id = Self::viewport_menu_target_id();
@@ -302,12 +309,15 @@ impl OccluViewApp {
         // because the viewer has no project file.
         let (has_layers, any_moved) = self.scene_menu_state();
         response.context_menu(|ui| match target {
-            Some(target) => layers_overlay::show_layer_context_menu(ui, &target, &mut request),
+            Some(target) => {
+                layers_overlay::show_layer_context_menu(ui, &target, &mut request, &self.ui.locale);
+            }
             None => layers_overlay::show_scene_context_menu(
                 ui,
                 has_layers,
                 any_moved,
                 &mut scene_request,
+                &self.ui.locale,
             ),
         });
 
@@ -366,13 +376,13 @@ impl OccluViewApp {
             return;
         }
         entry.visible = false;
-        let label = entry
-            .mesh
-            .name()
-            .map_or_else(|| format!("layer {}", hit.layer_index + 1), String::from);
-        self.ui.status_message = Some(format!(
-            "Hidden: {label} (Shift+Ctrl+Middle click restores)"
-        ));
+        let label = layers_overlay::layer_label(
+            &self.persistence.current_paths,
+            entry,
+            hit.layer_index,
+            &self.ui.locale,
+        );
+        self.ui.status_message = Some(self.ui.locale.tr_with("layer-hidden", &[("label", &label)]));
         self.remember_visibility_changes(&scene, &draft);
         self.update_scene_materials(draft);
         ctx.request_repaint();
@@ -406,25 +416,33 @@ impl OccluViewApp {
         else {
             return;
         };
-        let label = entry
-            .mesh
-            .name()
-            .map_or_else(|| format!("layer {}", hit.layer_index + 1), String::from);
+        let label = layers_overlay::layer_label(
+            &self.persistence.current_paths,
+            entry,
+            hit.layer_index,
+            &self.ui.locale,
+        );
         if let Some(previous) = self
             .document
             .translucent_layer_restore
             .remove(&hit.layer_id)
         {
             entry.opacity = previous;
-            self.ui.status_message = Some(format!("Opaque again: {label}"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr_with("layer-opaque-again", &[("label", &label)]),
+            );
         } else {
             self.document
                 .translucent_layer_restore
                 .insert(hit.layer_id, entry.opacity);
             entry.opacity = TRANSLUCENT_OPACITY;
-            self.ui.status_message = Some(format!(
-                "Translucent: {label} (Shift+Middle click restores)"
-            ));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr_with("layer-translucent", &[("label", &label)]),
+            );
         }
         self.update_scene_materials(draft);
         ctx.request_repaint();
@@ -455,16 +473,28 @@ impl OccluViewApp {
                 continue;
             }
             entry.visible = true;
-            let label = entry
-                .mesh
-                .name()
-                .map_or_else(|| "layer".to_string(), String::from);
-            self.ui.status_message = Some(format!("Restored: {label}"));
+            let position = scene
+                .as_ref()
+                .meshes()
+                .iter()
+                .position(|probe| probe.id() == layer_id)
+                .map_or(1, |index| index + 1);
+            let label = layers_overlay::layer_label(
+                &self.persistence.current_paths,
+                entry,
+                position - 1,
+                &self.ui.locale,
+            );
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr_with("layer-restored", &[("label", &label)]),
+            );
             self.update_scene_materials(draft);
             ctx.request_repaint();
             return;
         }
-        self.ui.status_message = Some("No hidden layers to restore".to_string());
+        self.ui.status_message = Some(self.ui.locale.tr("layers-none-hidden"));
         ctx.request_repaint();
     }
 }

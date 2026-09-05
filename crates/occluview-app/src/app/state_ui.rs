@@ -41,6 +41,12 @@ fn information_route_is_blocked(
 #[allow(clippy::struct_excessive_bools)]
 pub(super) struct UiState {
     pub(super) repaint_ctx: egui::Context,
+    /// Runtime localizer: one catalog generation per frame. UI/presentation
+    /// ownership; persisted preference lives in [`PersistenceState`](super::state_persistence::PersistenceState).
+    pub(super) locale: crate::i18n::LocaleManager,
+    /// Whether the native window title was synced to the catalog yet.
+    /// Sent once on the first frame and on every manual switch afterwards.
+    pub(super) native_title_sent: bool,
     pub(super) status_message: Option<String>,
     pub(super) status_message_since: Option<Instant>,
     pub(super) status_message_snapshot: Option<String>,
@@ -78,9 +84,11 @@ pub(super) struct PendingReplaceOpen {
 }
 
 impl UiState {
-    pub(super) fn new(repaint_ctx: egui::Context) -> Self {
+    pub(super) fn new(repaint_ctx: egui::Context, locale: crate::i18n::LocaleManager) -> Self {
         Self {
             repaint_ctx,
+            locale,
+            native_title_sent: false,
             status_message: None,
             status_message_since: None,
             status_message_snapshot: None,
@@ -150,6 +158,14 @@ impl UiState {
             ctx.request_repaint_after(STATUS_MESSAGE_TTL.saturating_sub(elapsed));
         }
     }
+    /// Push the catalog window title to the native window once per
+    /// language generation. eframe applies `ViewportCommand::Title` live.
+    pub(super) fn sync_native_title(&mut self, ctx: &egui::Context) {
+        if !self.native_title_sent {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.locale.window_title()));
+            self.native_title_sent = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -166,7 +182,10 @@ mod tests {
 
     #[test]
     fn ui_state_starts_without_dialogs_or_status() {
-        let ui = UiState::new(egui::Context::default());
+        let ui = UiState::new(
+            egui::Context::default(),
+            crate::i18n::LocaleManager::for_tests(),
+        );
 
         assert!(!ui.modal_dialog_open());
         assert!(!ui.foreground_dialog_open());

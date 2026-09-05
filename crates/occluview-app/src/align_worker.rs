@@ -212,6 +212,75 @@ pub(crate) enum AlignFailure {
     MeasurementDropped,
 }
 
+/// Catalog coordinates for a typed failure. The worker stays locale-free;
+/// the presentation boundary resolves the key with `$a`/`$b` via the active
+/// catalog. English values mirror the former inline sentences.
+pub(crate) fn align_failure_parts(failure: AlignFailure) -> (&'static str, String, String) {
+    match failure {
+        AlignFailure::FixedSurfaceMissing => {
+            ("align-fail-no-surface-fixed", String::new(), String::new())
+        }
+        AlignFailure::MovingSurfaceMissing => {
+            ("align-fail-no-surface-moving", String::new(), String::new())
+        }
+        AlignFailure::MeasurementDropped => ("align-fail-recolor", String::new(), String::new()),
+        AlignFailure::Fit(rejection) => fit_rejection_parts(rejection),
+    }
+}
+
+fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String) {
+    match rejection {
+        FitRejection::TooFewPairs { have, need } => {
+            ("align-reject-toofew", have.to_string(), need.to_string())
+        }
+        FitRejection::Unpaired { moving, fixed } => (
+            "align-reject-unpaired",
+            moving.to_string(),
+            fixed.to_string(),
+        ),
+        FitRejection::Degenerate { weak_axes } => {
+            let named = axis_names(weak_axes);
+            if named.is_empty() {
+                (
+                    "align-reject-degenerate-plain",
+                    String::new(),
+                    String::new(),
+                )
+            } else {
+                ("align-reject-degenerate-line", named, String::new())
+            }
+        }
+        FitRejection::UnitMismatch { ratio } => {
+            ("align-reject-unit", format!("{ratio:.1}"), String::new())
+        }
+        FitRejection::Apart {
+            separation,
+            allowed,
+        } => (
+            "align-reject-apart",
+            format!("{separation:.0}"),
+            format!("{allowed:.0}"),
+        ),
+        FitRejection::Runaway { moved_by, allowed } => (
+            "align-reject-runaway",
+            format!("{moved_by:.0}"),
+            format!("{allowed:.0}"),
+        ),
+        FitRejection::NonFinite => ("align-reject-nonfinite", String::new(), String::new()),
+    }
+}
+
+/// World-axis names for a degeneracy report. Locale-neutral identifiers;
+/// the catalog sentence places them.
+pub(crate) fn axis_names(weak: [bool; 3]) -> String {
+    ["X", "Y", "Z"]
+        .into_iter()
+        .zip(weak)
+        .filter_map(|(name, flagged)| flagged.then_some(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// What a finished job produced.
 pub(crate) enum AlignOutcome {
     /// A fit landed. The pose maps the moving layer's local frame to world.

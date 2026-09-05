@@ -40,12 +40,15 @@ pub(crate) enum BrushPanelAction {
 }
 
 /// Show the Brush tool window; returns what the operator asked for.
+// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn show(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
     brush: &mut AlignBrush,
     marked: Option<f32>,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<BrushPanelAction> {
     // Opens to the LEFT of the main window's default corner, so the two do not
     // land on top of each other the first time the checkbox is ticked.
@@ -63,7 +66,7 @@ pub(crate) fn show(
             ui.set_width(WINDOW_WIDTH - 24.0);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.style_mut().animation_time = 0.05;
-            action = body(ui, brush, marked, enabled);
+            action = body(ui, brush, marked, enabled, locale);
         });
     action
 }
@@ -74,36 +77,37 @@ fn body(
     brush: &mut AlignBrush,
     marked: Option<f32>,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<BrushPanelAction> {
-    let mut action = header(ui);
+    let mut action = header(ui, locale);
     ui.add_space(2.0);
     ui.label(
-        egui::RichText::new("Paint the surface best-fit matching must ignore, on either mesh")
+        egui::RichText::new(locale.tr("align-brush-subtitle"))
             .size(11.0)
             .color(ui_theme::text()),
     );
     ui.label(
         egui::RichText::new(if brush.is_inverse() {
-            "Drag clears · hold Shift to mark · Shift+wheel resizes"
+            locale.tr("align-brush-hint-inverse")
         } else {
-            "Drag marks · hold Shift to clear · Shift+wheel resizes"
+            locale.tr("align-brush-hint-mark")
         })
         .size(11.0)
         .color(ui_theme::text_muted()),
     );
     ui.add_space(4.0);
 
-    action = action.or(commands(ui, enabled));
+    action = action.or(commands(ui, enabled, locale));
     ui.add_space(2.0);
-    size(ui, brush, enabled);
-    automatic(ui, brush, enabled);
-    coverage(ui, marked);
+    size(ui, brush, enabled, locale);
+    automatic(ui, brush, enabled, locale);
+    coverage(ui, marked, locale);
     action
 }
 
 /// The title strip, with the only way out of the window that is not the
 /// checkbox that opened it.
-fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
+fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<BrushPanelAction> {
     let mut action = None;
     ui.horizontal(|ui| {
         let glyph = ui
@@ -111,7 +115,7 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
             .0;
         crate::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::accent());
         ui.label(
-            egui::RichText::new("Brush tool")
+            egui::RichText::new(locale.tr("align-brush-title"))
                 .size(13.0)
                 .color(ui_theme::text()),
         );
@@ -129,7 +133,7 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
                 },
             );
             if close_response
-                .on_hover_text("Close the brush — the markings are kept")
+                .on_hover_text(locale.tr("align-brush-close-hint"))
                 .clicked()
             {
                 action = Some(BrushPanelAction::Close);
@@ -142,7 +146,11 @@ fn header(ui: &mut egui::Ui) -> Option<BrushPanelAction> {
 /// The same whole-mesh commands the operator's dental CAD software offers,
 /// driven off the command list itself so a new one cannot be added to the
 /// enum and forgotten here.
-fn commands(ui: &mut egui::Ui, enabled: bool) -> Option<BrushPanelAction> {
+fn commands(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<BrushPanelAction> {
     let mut action = None;
     for command in MaskCommand::ALL {
         // A match rather than a lookup table: a new command stops the build here
@@ -157,11 +165,11 @@ fn commands(ui: &mut egui::Ui, enabled: bool) -> Option<BrushPanelAction> {
             ui,
             ui.available_width(),
             Some(icon),
-            command.label(),
+            &locale.tr(command.label_key()),
             enabled,
             false,
         )
-        .on_hover_text(command.hint())
+        .on_hover_text(locale.tr(command.hint_key()))
         .clicked()
         {
             action = Some(BrushPanelAction::Mask(command));
@@ -171,14 +179,19 @@ fn commands(ui: &mut egui::Ui, enabled: bool) -> Option<BrushPanelAction> {
 }
 
 /// Brush size and the standing stroke direction.
-fn size(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
+fn size(
+    ui: &mut egui::Ui,
+    brush: &mut AlignBrush,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) {
     let mut radius = brush.radius_mm();
     if ui
         .add_enabled(
             enabled,
             egui::Slider::new(&mut radius, 0.1..=20.0)
                 .suffix(" mm")
-                .text("brush size"),
+                .text(locale.tr("align-brush-size").as_str()),
         )
         .changed()
     {
@@ -186,8 +199,11 @@ fn size(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
     }
     let mut inverse = brush.is_inverse();
     if ui
-        .add_enabled(enabled, egui::Checkbox::new(&mut inverse, "Brush inverse"))
-        .on_hover_text("A plain drag clears instead of marks. Shift inverses it again")
+        .add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut inverse, locale.tr("align-brush-inverse").as_str()),
+        )
+        .on_hover_text(locale.tr("align-brush-inverse-hint"))
         .changed()
     {
         brush.set_inverse(inverse);
@@ -196,7 +212,12 @@ fn size(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
 
 /// The same "Mark automatic" control and radius the operator's dental CAD
 /// software uses.
-fn automatic(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
+fn automatic(
+    ui: &mut egui::Ui,
+    brush: &mut AlignBrush,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) {
     ui.add_space(2.0);
     let mut radius = brush.auto_radius_mm();
     if ui
@@ -204,9 +225,9 @@ fn automatic(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
             enabled,
             egui::Slider::new(&mut radius, 0.1..=20.0)
                 .suffix(" mm")
-                .text("automatic radius"),
+                .text(locale.tr("align-brush-auto-radius").as_str()),
         )
-        .on_hover_text("The radius of the mesh area kept at each arrow end")
+        .on_hover_text(locale.tr("align-brush-auto-radius-hint"))
         .changed()
     {
         brush.set_auto_radius_mm(radius);
@@ -218,21 +239,24 @@ fn automatic(ui: &mut egui::Ui, brush: &mut AlignBrush, enabled: bool) {
 /// The one number that says whether the brush did what the operator meant.
 /// "Fit nowhere" and a slip of the hand look identical on a shaded surface at a
 /// glance, and both make best-fit matching do nothing.
-fn coverage(ui: &mut egui::Ui, marked: Option<f32>) {
+fn coverage(ui: &mut egui::Ui, marked: Option<f32>, locale: &crate::i18n::LocaleManager) {
     let Some(marked) = marked else {
         return;
     };
     let percent = (marked * 100.0).clamp(0.0, 100.0);
     let (text, ink) = if marked >= 1.0 {
-        (
-            "Everything is marked — best-fit matching will have no effect".to_owned(),
-            MARKED_OUT_INK,
-        )
+        (locale.tr("align-brush-all-marked"), MARKED_OUT_INK)
     } else if marked <= 0.0 {
-        ("Nothing marked".to_owned(), ui_theme::text_muted())
+        (
+            locale.tr("align-brush-nothing-marked"),
+            ui_theme::text_muted(),
+        )
     } else {
         (
-            format!("{percent:.0}% marked out of the match"),
+            locale.tr_with(
+                "align-brush-percent-marked",
+                &[("pct", &format!("{percent:.0}"))],
+            ),
             ui_theme::text_muted(),
         )
     };
@@ -283,7 +307,13 @@ mod tests {
             let name = format!("MaskCommand::{command:?}");
             assert!(source.contains(&name), "{name} is never offered");
         }
-        for control in ["brush size", "Brush inverse", "automatic radius"] {
+        // Control captions resolve through the catalog; the keys are
+        // what the window must reference.
+        for control in [
+            "align-brush-size",
+            "align-brush-inverse",
+            "align-brush-auto-radius",
+        ] {
             assert!(source.contains(control), "the brush needs {control}");
         }
     }
@@ -293,7 +323,7 @@ mod tests {
     #[test]
     fn the_window_says_how_much_of_the_mesh_is_marked() {
         let source = production();
-        assert!(source.contains("best-fit matching will have no effect"));
-        assert!(source.contains("marked out of the match"));
+        assert!(source.contains("align-brush-all-marked"));
+        assert!(source.contains("align-brush-percent-marked"));
     }
 }

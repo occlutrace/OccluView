@@ -49,12 +49,16 @@ pub(crate) fn combine_loaded_scene(
     (combined_scene, combined_paths)
 }
 
-pub(crate) fn load_status_message(mode: SceneLoadMode, path_count: usize) -> String {
-    let noun = if path_count == 1 { "file" } else { "files" };
-    match mode {
-        SceneLoadMode::Replace => format!("Opening {path_count} {noun}..."),
-        SceneLoadMode::Append => format!("Adding {path_count} {noun}..."),
-    }
+pub(crate) fn load_status_message(
+    mode: SceneLoadMode,
+    path_count: usize,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let key = match mode {
+        SceneLoadMode::Replace => "load-opening",
+        SceneLoadMode::Append => "load-adding",
+    };
+    locale.tr_plural(key, &[], &[("count", path_count)])
 }
 
 #[cfg(test)]
@@ -105,21 +109,37 @@ mod tests {
 
     #[test]
     fn load_status_message_matches_mode_and_count() {
+        // Interpolated counts carry Fluent bidi isolation marks by design.
+        let locale = crate::i18n::LocaleManager::for_tests();
         assert_eq!(
-            load_status_message(SceneLoadMode::Replace, 1),
-            "Opening 1 file..."
+            load_status_message(SceneLoadMode::Replace, 1, &locale),
+            "Opening \u{2068}1\u{2069} file…"
         );
         assert_eq!(
-            load_status_message(SceneLoadMode::Replace, 2),
-            "Opening 2 files..."
+            load_status_message(SceneLoadMode::Replace, 2, &locale),
+            "Opening \u{2068}2\u{2069} files…"
         );
         assert_eq!(
-            load_status_message(SceneLoadMode::Append, 1),
-            "Adding 1 file..."
+            load_status_message(SceneLoadMode::Append, 1, &locale),
+            "Adding \u{2068}1\u{2069} file…"
         );
         assert_eq!(
-            load_status_message(SceneLoadMode::Append, 3),
-            "Adding 3 files..."
+            load_status_message(SceneLoadMode::Append, 3, &locale),
+            "Adding \u{2068}3\u{2069} files…"
+        );
+        let russian = {
+            use crate::i18n::preference::UiLanguagePreference;
+            let mut manager = crate::i18n::LocaleManager::for_tests();
+            manager.set_preference(UiLanguagePreference::Explicit("ru"));
+            manager
+        };
+        assert_eq!(
+            load_status_message(SceneLoadMode::Replace, 1, &russian),
+            "Открытие \u{2068}1\u{2069} файла…"
+        );
+        assert_eq!(
+            load_status_message(SceneLoadMode::Replace, 2, &russian),
+            "Открытие \u{2068}2\u{2069} файлов…"
         );
     }
 }

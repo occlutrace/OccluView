@@ -377,8 +377,8 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "self.poll_gpu_errors();",
         "self.show_error_dialog(&ctx);",
         "self.show_information_dialog(&ctx);",
-        "self.ui.repair_report.ui(&ctx);",
-        "self.persistence.update_notice.show(&ctx);",
+        "self.ui.repair_report.ui(&ctx, &self.ui.locale);",
+        "self.persistence.update_notice.show(&ctx, &self.ui.locale);",
         "self.show_unsaved_close_guard(&ctx);",
         "self.guard_pending_replace_open(&ctx);",
     ];

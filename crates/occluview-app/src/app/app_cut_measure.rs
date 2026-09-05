@@ -277,6 +277,7 @@ impl OccluViewApp {
             viewport_rect,
             section.as_deref(),
             &color_for,
+            &self.ui.locale,
         );
         let panel_consumed = panel.consumed_pointer;
         self.apply_cut_section_outcome(panel, ctx);
@@ -308,13 +309,19 @@ impl OccluViewApp {
                         thickness_mm: probe.thickness_mm,
                     },
                 });
-                self.ui.status_message = Some(format!(
-                    "Wall thickness: {}",
-                    measure_tool::format_length(
-                        f64::from(probe.thickness_mm),
-                        self.persistence.settings.unit_display
-                    )
-                ));
+                self.ui.status_message = Some(
+                    self.ui.locale.tr_with(
+                        "measure-thickness",
+                        &[(
+                            "len",
+                            measure_tool::format_length(
+                                f64::from(probe.thickness_mm),
+                                self.persistence.settings.unit_display,
+                            )
+                            .as_str(),
+                        )],
+                    ),
+                );
             } else {
                 self.tools.measure.clear_probe();
             }
@@ -488,13 +495,19 @@ impl OccluViewApp {
                 if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
                     if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
                         if let Some(distance_mm) = self.tools.measure.update_ruler_drag(hit.point) {
-                            self.ui.status_message = Some(format!(
-                                "Distance: {}",
-                                measure_tool::format_length(
-                                    distance_mm,
-                                    self.persistence.settings.unit_display
-                                )
-                            ));
+                            self.ui.status_message = Some(
+                                self.ui.locale.tr_with(
+                                    "measure-distance",
+                                    &[(
+                                        "len",
+                                        measure_tool::format_length(
+                                            distance_mm,
+                                            self.persistence.settings.unit_display,
+                                        )
+                                        .as_str(),
+                                    )],
+                                ),
+                            );
                             ctx.request_repaint();
                         }
                     }
@@ -538,7 +551,7 @@ impl OccluViewApp {
             }
             let cleared_anything = self.tools.measure.clear_measurements();
             if cleared_anything {
-                self.ui.status_message = Some("Measurements cleared".to_string());
+                self.ui.status_message = Some(self.ui.locale.tr("measure-cleared"));
             }
             // Clearing the measurement also closes the cut view it drove — the
             // section reflects the current probe or nothing at all.
@@ -572,13 +585,19 @@ impl OccluViewApp {
         match self.tools.measure.mode() {
             Some(MeasureMode::Ruler) => {
                 if let Some(distance_mm) = self.tools.measure.place_ruler_point(hit.point) {
-                    self.ui.status_message = Some(format!(
-                        "Distance: {}",
-                        measure_tool::format_length(
-                            distance_mm,
-                            self.persistence.settings.unit_display
-                        )
-                    ));
+                    self.ui.status_message = Some(
+                        self.ui.locale.tr_with(
+                            "measure-distance",
+                            &[(
+                                "len",
+                                measure_tool::format_length(
+                                    distance_mm,
+                                    self.persistence.settings.unit_display,
+                                )
+                                .as_str(),
+                            )],
+                        ),
+                    );
                 }
             }
             Some(MeasureMode::Thickness) => self.apply_thickness_probe(scene, hit),
@@ -597,16 +616,18 @@ impl OccluViewApp {
         match measure_tool::probe_wall_thickness(entry, hit.triangle_index, hit.point) {
             Some(probe) => {
                 self.ui.status_message = Some(match probe.reading {
-                    ThicknessReading::Wall { thickness_mm, .. } => format!(
-                        "Wall thickness: {}",
-                        measure_tool::format_length(
-                            f64::from(thickness_mm),
-                            self.persistence.settings.unit_display
-                        )
+                    ThicknessReading::Wall { thickness_mm, .. } => self.ui.locale.tr_with(
+                        "measure-thickness",
+                        &[(
+                            "len",
+                            measure_tool::format_length(
+                                f64::from(thickness_mm),
+                                self.persistence.settings.unit_display,
+                            )
+                            .as_str(),
+                        )],
                     ),
-                    ThicknessReading::Open => {
-                        "Open surface: no opposite wall along the inward normal".to_string()
-                    }
+                    ThicknessReading::Open => self.ui.locale.tr("measure-open-wall"),
                 });
                 self.tools.measure.set_probe(probe);
                 // Feature D: the same click ALSO opens the Cut View at this
@@ -614,8 +635,7 @@ impl OccluViewApp {
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
-                self.ui.status_message =
-                    Some("Cannot probe here: degenerate surface geometry".to_string());
+                self.ui.status_message = Some(self.ui.locale.tr("measure-cannot-probe"));
             }
         }
     }

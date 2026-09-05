@@ -19,6 +19,8 @@ use crate::sculpt_tool::{
 
 #[path = "mesh_editor_groups.rs"]
 mod groups;
+#[path = "mesh_editor_session.rs"]
+mod session_bar;
 
 /// The two tabs of the editor window: selection/repair tools, or the sculpt
 /// brushes. Exactly one is shown at a time.
@@ -189,10 +191,11 @@ pub(crate) fn show(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
     state: MeshEditorPanelState,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let width = window_width(viewport_rect);
     let mut action = None;
-    egui::Window::new("Mesh Editing")
+    egui::Window::new(locale.text("meshedit-window-title"))
         .id(egui::Id::new("occluview_mesh_editor_window"))
         .default_pos(default_pos(viewport_rect))
         .constrain_to(viewport_rect)
@@ -202,7 +205,7 @@ pub(crate) fn show(
         .show(ctx, |ui| {
             ui.set_min_width(width - 24.0);
             ui.set_width(width - 24.0);
-            action = window_action(ui, state);
+            action = window_action(ui, state, locale);
         });
     action
 }
@@ -210,7 +213,11 @@ pub(crate) fn show(
 /// Assemble the window body: the tab strip, then the active tab's tools, then
 /// the shared status + commit bar. Every section renders in [`groups`]; this
 /// function fixes the shared spacing and chains the optional actions.
-fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshEditorAction> {
+fn window_action(
+    ui: &mut egui::Ui,
+    state: MeshEditorPanelState,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<MeshEditorAction> {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
     // Snappier hover/press for this dense tool palette than the global chrome.
     ui.style_mut().animation_time = 0.05;
@@ -218,21 +225,21 @@ fn window_action(ui: &mut egui::Ui, state: MeshEditorPanelState) -> Option<MeshE
     // selection-mode toggles stay live so the operator is never locked out.
     let ops_enabled = !state.busy;
 
-    groups::header(ui, "Mesh Editing", AppIcon::EditMesh);
-    let mut action = groups::tab_strip(ui, &state);
+    groups::header(ui, &locale.tr("meshedit-header-edit"), AppIcon::EditMesh);
+    let mut action = groups::tab_strip(ui, &state, locale);
     ui.add_space(4.0);
     match state.active_tab {
         EditorTab::EditMesh => {
-            action = action.or(groups::selection(ui, &state, ops_enabled));
-            action = action.or(groups::edit_selection(ui, &state, ops_enabled));
-            action = action.or(groups::close_holes(ui, ops_enabled));
+            action = action.or(groups::selection(ui, &state, ops_enabled, locale));
+            action = action.or(groups::edit_selection(ui, &state, ops_enabled, locale));
+            action = action.or(groups::close_holes(ui, ops_enabled, locale));
         }
         EditorTab::Sculpt => {
-            action = action.or(groups::sculpt(ui, &state, ops_enabled));
+            action = action.or(groups::sculpt(ui, &state, ops_enabled, locale));
         }
     }
-    groups::status(ui, &state);
-    action = action.or(groups::session(ui, &state, ops_enabled));
+    session_bar::status(ui, &state, locale);
+    action = action.or(session_bar::session(ui, &state, ops_enabled, locale));
     action
 }
 
@@ -248,13 +255,13 @@ mod tests {
             .map_or(source.as_str(), |(source, _)| source);
         // The operator's top-down workflow: pick a selection mode and mark →
         // edit that selection. History and commit
-        // (Undo/Redo/Cancel/Done) render last, in `groups::session`.
+        // (Undo/Redo/Cancel/Done) render last, in `session_bar::session`.
         let order = [
             "groups::selection(",
             "groups::edit_selection(",
             "groups::close_holes(",
             "groups::sculpt(",
-            "groups::session(",
+            "session_bar::session(",
         ];
         let mut last = 0;
         for call in order {

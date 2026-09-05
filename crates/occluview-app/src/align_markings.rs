@@ -69,6 +69,7 @@ impl MaskCommand {
 
     /// The label on the button, verbatim from the dental CAD software the
     /// operator already works in.
+    #[cfg(test)]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::FitEverywhere => "Fit everywhere",
@@ -79,6 +80,7 @@ impl MaskCommand {
     }
 
     /// What the button does, in one line.
+    #[cfg(test)]
     pub(crate) fn hint(self) -> &'static str {
         match self {
             Self::FitEverywhere => "Clear all existing markings",
@@ -89,12 +91,43 @@ impl MaskCommand {
     }
 
     /// What to tell the operator afterwards.
+    #[cfg(test)]
     pub(crate) fn report(self) -> &'static str {
         match self {
             Self::FitEverywhere => "Markings cleared — matching on the whole scan",
             Self::FitNowhere => "Whole mesh marked — best-fit matching will have no effect",
             Self::InvertMarkings => "Markings inverted",
             Self::MarkAutomatic => "Matching only around the arrow ends",
+        }
+    }
+
+    /// Catalog key for the button label.
+    pub(crate) fn label_key(self) -> &'static str {
+        match self {
+            Self::FitEverywhere => "align-mask-fit-everywhere",
+            Self::FitNowhere => "align-mask-fit-nowhere",
+            Self::InvertMarkings => "align-mask-invert",
+            Self::MarkAutomatic => "align-mask-automatic",
+        }
+    }
+
+    /// Catalog key for the one-line hint.
+    pub(crate) fn hint_key(self) -> &'static str {
+        match self {
+            Self::FitEverywhere => "align-mask-fit-everywhere-hint",
+            Self::FitNowhere => "align-mask-fit-nowhere-hint",
+            Self::InvertMarkings => "align-mask-invert-hint",
+            Self::MarkAutomatic => "align-mask-automatic-hint",
+        }
+    }
+
+    /// Catalog key for the after-report status line.
+    pub(crate) fn report_key(self) -> &'static str {
+        match self {
+            Self::FitEverywhere => "align-mask-fit-everywhere-report",
+            Self::FitNowhere => "align-mask-fit-nowhere-report",
+            Self::InvertMarkings => "align-mask-invert-report",
+            Self::MarkAutomatic => "align-mask-automatic-report",
         }
     }
 }

@@ -29,11 +29,21 @@ impl DragConstraint {
     /// Named for the direction a hand moves, not for the axis letter. An
     /// operator dragging a scan is thinking "lift it", not "constrain to
     /// world Z".
+    #[cfg(test)]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Free => "Move/rotate in all directions",
             Self::ZOnly => "Move in z-direction",
             Self::XyPlane => "Move in xy-plane",
+        }
+    }
+
+    /// Catalog key rendering the localized constraint label.
+    pub(crate) fn label_key(self) -> &'static str {
+        match self {
+            Self::Free => "align-constraint-free",
+            Self::ZOnly => "align-constraint-z",
+            Self::XyPlane => "align-constraint-xy",
         }
     }
 
@@ -48,11 +58,21 @@ impl DragConstraint {
     }
 
     /// What the constraint does, in one line.
+    #[cfg(test)]
     pub(crate) fn hint(self) -> &'static str {
         match self {
             Self::Free => "Drag the scan in any direction",
             Self::ZOnly => "Drag only along the vertical axis",
             Self::XyPlane => "Drag only across the horizontal plane",
+        }
+    }
+
+    /// Catalog key rendering the localized one-line hint.
+    pub(crate) fn hint_key(self) -> &'static str {
+        match self {
+            Self::Free => "align-constraint-free-hint",
+            Self::ZOnly => "align-constraint-z-hint",
+            Self::XyPlane => "align-constraint-xy-hint",
         }
     }
 }
@@ -145,6 +165,29 @@ pub(crate) fn constrained_rotation_from_drag(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    /// The kept English constraint wording renders from the catalog verbatim.
+    #[test]
+    fn english_constraint_labels_match_source_wording() {
+        use super::DragConstraint;
+
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        for constraint in [
+            DragConstraint::Free,
+            DragConstraint::ZOnly,
+            DragConstraint::XyPlane,
+        ] {
+            assert_eq!(
+                catalog.text(constraint.label_key()).as_deref(),
+                Some(constraint.label())
+            );
+            assert_eq!(
+                catalog.text(constraint.hint_key()).as_deref(),
+                Some(constraint.hint())
+            );
+        }
+    }
+
     /// One conversion, one guard. The brush ring and the hand drag each had
     /// their own, guarding a different operand, so a zero-height viewport was
     /// safe on one path and produced an infinity on the other.

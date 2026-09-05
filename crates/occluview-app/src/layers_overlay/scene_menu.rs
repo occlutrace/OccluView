@@ -33,6 +33,7 @@ pub(crate) fn show_scene_context_menu(
     has_layers: bool,
     any_moved: bool,
     request: &mut Option<SceneContextAction>,
+    locale: &crate::i18n::LocaleManager,
 ) {
     ui.set_min_width(MENU_WIDTH);
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -40,46 +41,51 @@ pub(crate) fn show_scene_context_menu(
 
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new("Scene")
+        egui::RichText::new(locale.tr("scene-menu-title"))
             .color(ui_theme::text_weak())
             .size(11.0),
     );
     ui.add_space(2.0);
     ui.separator();
 
+    // English literals stay: the scene-menu guard pins wording and order.
     let entries = [
         (
             AppIcon::Export,
             "Save scene as…",
+            "scene-menu-save",
             has_layers,
             SceneContextAction::SaveScene,
         ),
         (
             AppIcon::Export,
             "Save each layer…",
+            "scene-menu-save-each",
             has_layers,
             SceneContextAction::SaveEachLayer,
         ),
         (
             AppIcon::FlipNormals,
             "Reset positions",
+            "scene-menu-reset",
             any_moved,
             SceneContextAction::ResetPositions,
         ),
         (
             AppIcon::FitView,
             "Fit view",
+            "scene-menu-fit",
             has_layers,
             SceneContextAction::FitView,
         ),
     ];
 
-    for (position, (icon, label, enabled, action)) in entries.into_iter().enumerate() {
+    for (position, (icon, _label, key, enabled, action)) in entries.into_iter().enumerate() {
         // The saving pair and the view pair are different kinds of action.
         if position == 2 {
             ui.separator();
         }
-        if menu_item(ui, icon, label, enabled).clicked() {
+        if menu_item(ui, icon, &locale.tr(key), enabled).clicked() {
             *request = Some(action);
             ui.close();
         }

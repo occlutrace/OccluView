@@ -170,13 +170,9 @@ impl OccluViewApp {
             self.tools.sculpt.disarm();
         }
         self.ui.status_message = Some(match self.tools.sculpt.armed {
-            Some(SculptToolKind::AddRemove) => {
-                "Add/Remove: drag to build, hold Shift to carve".to_string()
-            }
-            Some(SculptToolKind::Smooth) => {
-                "Smooth: drag to relax, hold Shift to force it".to_string()
-            }
-            None => "Sculpt off".to_string(),
+            Some(SculptToolKind::AddRemove) => self.ui.locale.tr("sculpt-armed-addremove"),
+            Some(SculptToolKind::Smooth) => self.ui.locale.tr("sculpt-armed-smooth"),
+            None => self.ui.locale.tr("sculpt-off"),
         });
         self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
@@ -470,7 +466,11 @@ impl OccluViewApp {
                 }
             }
             Err(error) => {
-                self.ui.status_message = Some(format!("Cannot sculpt this layer: {error}"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr_with("sculpt-failed", &[("detail", error.as_str())]),
+                );
                 ctx.request_repaint();
             }
         }

@@ -36,11 +36,11 @@ impl OccluViewApp {
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
                 self.ui.app_error = Some(AppErrorDialog {
-                    title: "Could not render scene".to_string(),
-                    summary: "The file opened, but the viewport could not be rendered.".to_string(),
+                    title: self.ui.locale.tr("render-failed-title"),
+                    summary: self.ui.locale.tr("render-failed-summary"),
                     details: format!("Render failed\n\n{e:#}"),
                 });
-                self.ui.status_message = Some("Render failed".to_string());
+                self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
                 return;
             }
         };
@@ -439,14 +439,11 @@ impl OccluViewApp {
             return;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
-        self.ui.status_message = Some("Graphics driver reported a problem".to_string());
+        self.ui.status_message = Some(self.ui.locale.tr("gpu-failed-status"));
         if self.ui.app_error.is_none() {
             self.ui.app_error = Some(AppErrorDialog {
-                title: "Graphics problem".to_string(),
-                summary: "The graphics driver reported a problem while drawing. The view may \
-                          be incomplete. Saving your work and restarting OccluView is \
-                          recommended if it keeps happening."
-                    .to_string(),
+                title: self.ui.locale.tr("gpu-failed-title"),
+                summary: self.ui.locale.tr("gpu-failed-summary"),
                 details: format!("wgpu uncaptured error\n\n{error}"),
             });
         }
@@ -479,7 +476,7 @@ impl OccluViewApp {
         // scan kept a map of its own former surface, lost its tint to the map
         // shading, and the panel went on reporting a percentage for a surface
         // that no longer existed. Hoisted to the one place they all pass through.
-        self.forget_align_fit("The scan changed");
+        self.forget_align_fit(&self.ui.locale.tr("align-status-scan-changed"));
         // Structural scene change: world anchors may now dangle over deleted or
         // replaced geometry, so measurements are cleared (the tool stays armed
         // while something remains to measure). Material-only updates keep them

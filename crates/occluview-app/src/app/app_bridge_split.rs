@@ -29,20 +29,19 @@ struct BridgeSectionInput<'a> {
 impl OccluViewApp {
     pub(super) fn begin_bridge_split_from_layer(&mut self, scene: &Scene, layer_id: SceneMeshId) {
         if self.document.edit_mode.has_active_session() {
-            self.ui.status_message = Some("Finish or cancel mesh editing first".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
             return;
         }
         if self.tools.bridge_split.session().mode() != BridgeSplitMode::Off {
-            self.ui.status_message = Some("Bridge split is already active".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("bridge-active"));
             return;
         }
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
-            self.ui.status_message = Some("Bridge split target is no longer available".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("bridge-target-gone"));
             return;
         };
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
-            self.ui.status_message =
-                Some("Bridge split requires a visible triangle mesh".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("bridge-needs-mesh"));
             return;
         }
 
@@ -79,7 +78,7 @@ impl OccluViewApp {
         }
         self.tools.bridge_split_section.reset();
         self.render.invalidation.overlay_tools_changed();
-        self.ui.status_message = Some("Bridge split: place separator disc".to_string());
+        self.ui.status_message = Some(self.ui.locale.tr("bridge-place-disc"));
         self.ui.repaint_ctx.request_repaint();
     }
 
@@ -93,22 +92,22 @@ impl OccluViewApp {
             return false;
         }
         let Some(scene) = self.document.scene.clone() else {
-            self.cancel_bridge_split("Bridge split canceled: scene closed");
+            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-scene"));
             return false;
         };
         let Some(camera) = self.render.camera else {
-            self.cancel_bridge_split("Bridge split canceled: camera unavailable");
+            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-camera"));
             return false;
         };
         let Some(entry) = live_bridge_entry(&scene, self.tools.bridge_split.session().target())
         else {
-            self.cancel_bridge_split("Bridge split canceled: source mesh changed");
+            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-changed"));
             return false;
         };
 
         self.poll_bridge_split_result(entry, ctx);
         if self.consume_bridge_split_escape(ctx) {
-            self.cancel_bridge_split("Bridge split canceled");
+            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled"));
             return true;
         }
 
@@ -234,6 +233,7 @@ impl OccluViewApp {
             frame_context.viewport_rect,
             section.as_deref(),
             &color_for,
+            &self.ui.locale,
         );
         if panel.viewport_needs_render {
             self.render.invalidation.overlay_tools_changed();
@@ -263,6 +263,7 @@ impl OccluViewApp {
                 can_apply: self.tools.bridge_split.session().can_apply(),
                 failure: self.tools.bridge_split.session().failure(),
             },
+            &self.ui.locale,
         )
     }
 
@@ -294,7 +295,7 @@ impl OccluViewApp {
             }
             Some(BridgeSplitPanelAction::Apply) => self.apply_bridge_split_preview(scene, ctx),
             Some(BridgeSplitPanelAction::Cancel) => {
-                self.cancel_bridge_split("Bridge split canceled");
+                self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled"));
                 return true;
             }
             None => {}
@@ -315,7 +316,7 @@ impl OccluViewApp {
 
     fn submit_bridge_preview(&mut self, entry: &SceneMesh) {
         if self.tools.bridge_split.submit_current_request(entry) {
-            self.ui.status_message = Some("Bridge split: calculating".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("bridge-calculating"));
             self.ui.repaint_ctx.request_repaint();
         }
     }
@@ -422,7 +423,7 @@ impl OccluViewApp {
         };
         let surface_result = !preview.result.report.parts_closed;
         let Some(entry) = live_bridge_entry(scene, Some(preview.guard.target)) else {
-            self.cancel_bridge_split("Bridge split canceled: source mesh changed");
+            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-changed"));
             return;
         };
         let Some(token) = self.document.edit_mode.begin_scene_edit(
@@ -430,14 +431,14 @@ impl OccluViewApp {
             entry.id(),
             EditModeCommand::BridgeSplit,
         ) else {
-            self.ui.status_message = Some("Bridge split is temporarily unavailable".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("bridge-unavailable"));
             return;
         };
         let undoable = self.document.edit_mode.last_edit_undoable();
         let applied = apply_preview_to_scene(scene, preview.guard.target, &preview.result);
         let Ok(applied) = applied else {
             let _ = self.document.edit_mode.finish_layer_edit_noop(token);
-            self.cancel_bridge_split("Bridge split preview is no longer valid");
+            self.cancel_bridge_split(&self.ui.locale.tr("bridge-preview-stale"));
             return;
         };
         if self
@@ -446,7 +447,7 @@ impl OccluViewApp {
             .finish_scene_edit_success(token, &applied.scene)
             != BusyFinish::Applied
         {
-            self.ui.status_message = Some("Bridge split was not applied".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("bridge-not-applied"));
             return;
         }
         let source_layer_id = applied.source_layer_id;
@@ -458,11 +459,11 @@ impl OccluViewApp {
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
         self.ui.status_message = Some(if surface_result {
-            "Bridge split complete (surface result; natural borders preserved)".to_string()
+            self.ui.locale.tr("bridge-complete-surface")
         } else if undoable {
-            "Bridge split complete".to_string()
+            self.ui.locale.tr("bridge-complete")
         } else {
-            "Bridge split complete (not undoable: snapshot too large)".to_string()
+            self.ui.locale.tr("bridge-complete-locked")
         });
         ctx.request_repaint();
     }

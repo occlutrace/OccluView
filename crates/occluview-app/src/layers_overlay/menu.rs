@@ -40,9 +40,10 @@ pub(super) fn attach_layer_context_menu(
     response: egui::Response,
     target: &LayerContextMenuTarget,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) {
     response.context_menu(|ui| {
-        show_layer_context_menu(ui, target, context_request);
+        show_layer_context_menu(ui, target, context_request, locale);
     });
 }
 
@@ -52,6 +53,7 @@ pub(crate) fn show_layer_context_menu(
     ui: &mut egui::Ui,
     target: &LayerContextMenuTarget,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) {
     // Pin the menu width: without this, egui lays the menu out inside
     // whatever sliver of screen is left of the click point, wrapping every
@@ -64,17 +66,18 @@ pub(crate) fn show_layer_context_menu(
     // spawn several coincident parts.
     menu_title(ui, &target.label);
     ui.separator();
-    show_material_actions(ui, target, context_request);
+    show_material_actions(ui, target, context_request, locale);
     ui.separator();
-    show_mesh_edit_actions(ui, target, context_request);
+    show_mesh_edit_actions(ui, target, context_request, locale);
     ui.separator();
-    show_layer_actions(ui, target, context_request);
+    show_layer_actions(ui, target, context_request, locale);
 }
 
 fn show_material_actions(
     ui: &mut egui::Ui,
     target: &LayerContextMenuTarget,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) {
     layer_menu_button(
         ui,
@@ -82,15 +85,25 @@ fn show_material_actions(
         LayerMenuButton::new(
             AppIcon::Palette,
             "Next tint",
+            "layer-menu-next-tint",
             true,
             LayerContextAction::NextTint,
         ),
         context_request,
+        locale,
     );
-    let (colors_label, colors_icon) = if target.show_vertex_colors {
-        ("Hide scan colors", AppIcon::ScanColors)
+    let (colors_label, colors_key, colors_icon) = if target.show_vertex_colors {
+        (
+            "Hide scan colors",
+            "layer-menu-hide-colors",
+            AppIcon::ScanColors,
+        )
     } else {
-        ("Show scan colors", AppIcon::ScanColorsOff)
+        (
+            "Show scan colors",
+            "layer-menu-show-colors",
+            AppIcon::ScanColorsOff,
+        )
     };
     layer_menu_button(
         ui,
@@ -98,16 +111,26 @@ fn show_material_actions(
         LayerMenuButton::new(
             colors_icon,
             colors_label,
+            colors_key,
             target.has_color_data,
             LayerContextAction::ToggleShowVertexColors,
         ),
         context_request,
+        locale,
     );
     if target.has_texture {
-        let (texture_label, texture_icon) = if target.show_texture {
-            ("Disable texture", AppIcon::Texture)
+        let (texture_label, texture_key, texture_icon) = if target.show_texture {
+            (
+                "Disable texture",
+                "layer-menu-disable-texture",
+                AppIcon::Texture,
+            )
         } else {
-            ("Show texture", AppIcon::TextureOff)
+            (
+                "Show texture",
+                "layer-menu-show-texture",
+                AppIcon::TextureOff,
+            )
         };
         layer_menu_button(
             ui,
@@ -115,10 +138,12 @@ fn show_material_actions(
             LayerMenuButton::new(
                 texture_icon,
                 texture_label,
+                texture_key,
                 true,
                 LayerContextAction::ToggleShowTexture,
             ),
             context_request,
+            locale,
         );
     }
 }
@@ -127,6 +152,7 @@ fn show_mesh_edit_actions(
     ui: &mut egui::Ui,
     target: &LayerContextMenuTarget,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) {
     layer_menu_button(
         ui,
@@ -134,10 +160,12 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::EditMesh,
             "Mesh Editing",
+            "layer-menu-mesh-editing",
             target.face_editable,
             LayerContextAction::EditMesh,
         ),
         context_request,
+        locale,
     );
     layer_menu_button(
         ui,
@@ -145,10 +173,12 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::BridgeSplit,
             "Split bridge...",
+            "layer-menu-split-bridge",
             target.visible && target.face_editable,
             LayerContextAction::BridgeSplit,
         ),
         context_request,
+        locale,
     );
     layer_menu_button(
         ui,
@@ -156,10 +186,12 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::Repair,
             "Mesh Repair",
+            "layer-menu-repair",
             target.face_editable,
             LayerContextAction::RepairMesh,
         ),
         context_request,
+        locale,
     );
     layer_menu_button(
         ui,
@@ -167,10 +199,12 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::FlipNormals,
             "Flip normals",
+            "layer-menu-flip-normals",
             target.face_editable,
             LayerContextAction::InvertNormals,
         ),
         context_request,
+        locale,
     );
     layer_menu_button(
         ui,
@@ -178,10 +212,12 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::Export,
             "Export layer...",
+            "layer-menu-export",
             target.face_editable,
             LayerContextAction::ExportLayer,
         ),
         context_request,
+        locale,
     );
 }
 
@@ -189,11 +225,17 @@ fn show_layer_actions(
     ui: &mut egui::Ui,
     target: &LayerContextMenuTarget,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) {
     let wireframe_label = if target.wireframe {
         "Hide wireframe"
     } else {
         "Wireframe overlay"
+    };
+    let wireframe_key = if target.wireframe {
+        "layer-menu-hide-wireframe"
+    } else {
+        "layer-menu-show-wireframe"
     };
     layer_menu_button(
         ui,
@@ -201,10 +243,12 @@ fn show_layer_actions(
         LayerMenuButton::new(
             AppIcon::Wireframe,
             wireframe_label,
+            wireframe_key,
             true,
             LayerContextAction::ToggleWireframe,
         ),
         context_request,
+        locale,
     );
     layer_menu_button(
         ui,
@@ -212,25 +256,40 @@ fn show_layer_actions(
         LayerMenuButton::new(
             AppIcon::Trash,
             "Remove layer",
+            "layer-menu-remove",
             true,
             LayerContextAction::Remove,
         ),
         context_request,
+        locale,
     );
 }
 
 struct LayerMenuButton<'a> {
     icon: AppIcon,
+    /// English wording pinned by source guards (operator vocabulary + README
+    /// sync). Rendering uses `key`; this stays as the canonical reference.
+    #[allow(dead_code)]
     label: &'a str,
+    /// Catalog key rendering the localized label. The English `label`
+    /// literal stays: source guards pin the operator wording.
+    key: &'static str,
     enabled: bool,
     action: LayerContextAction,
 }
 
 impl<'a> LayerMenuButton<'a> {
-    const fn new(icon: AppIcon, label: &'a str, enabled: bool, action: LayerContextAction) -> Self {
+    const fn new(
+        icon: AppIcon,
+        label: &'a str,
+        key: &'static str,
+        enabled: bool,
+        action: LayerContextAction,
+    ) -> Self {
         Self {
             icon,
             label,
+            key,
             enabled,
             action,
         }
@@ -242,8 +301,9 @@ fn layer_menu_button(
     target: &LayerContextMenuTarget,
     button: LayerMenuButton<'_>,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) {
-    if menu_item(ui, button.icon, button.label, button.enabled).clicked() {
+    if menu_item(ui, button.icon, &locale.tr(button.key), button.enabled).clicked() {
         *context_request = Some(LayerContextRequest {
             index: target.index,
             layer_id: target.layer_id,
