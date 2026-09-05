@@ -450,6 +450,7 @@ fn snippet(source: &str, index: usize) -> String {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn presentation_sinks_route_through_catalogs() {
     let mut failures = Vec::new();
     for (name, production) in &discover_sources() {
