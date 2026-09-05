@@ -24,8 +24,12 @@ fn app_starts_idle_until_scene_data_arrives() {
     let new_fn = function_source(app_module_source(), "pub(crate) fn new(");
 
     assert!(
-        new_fn.contains("needs_render: false,"),
+        new_fn.contains("invalidation: RenderInvalidation::new(),"),
         "empty startup should not spend time rendering a nonexistent scene"
+    );
+    assert!(
+        !occluview_app::invalidation::RenderInvalidation::new().redraw_pending(),
+        "a fresh invalidation state must have no frame pending"
     );
 }
 
@@ -424,7 +428,7 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         "the first loaded layer should still get a camera even when more queued files are pending"
     );
     assert!(
-        app_source.contains("self.needs_render = false;")
+        app_source.contains("self.invalidation.suppress_redraw();")
             && app_source.contains("self.rendered = None;")
             && app_source.contains("self.clear_live_viewport();"),
         "intermediate burst loads should not render or publish a half-framed scene"

@@ -1,17 +1,33 @@
 //! `OccluViewApp` itself: the fields the whole binary shares, and the small
 //! set of methods that keep them consistent.
 //!
-//! Render invalidation uses four flags:
+//! Render invalidation is a typed [`RenderInvalidation`] state: call sites name
+//! the semantic cause (`request_redraw`, `selection_changed`,
+//! `scene_geometry_changed`, `sculpt_topology_changed`) and each render path
+//! consumes its own cursor. Camera-only changes repaint without touching
+//! uploaded geometry; scene changes rebuild both prepared scenes and the
+//! overlay; a mid-stroke sculpt topology change rebuilds the scenes while
+//! sparing the overlay.
 //!
-//! - `needs_render` — draw again this frame. A camera move sets this and
-//!   nothing else, because the prepared geometry did not change.
-//! - `live_viewport_scene_dirty` — the live eframe/wgpu path must rebuild its
-//!   `PreparedScene`. Only ever set when `live_viewport` is `Some`.
-//! - `offscreen_scene_dirty` — the offscreen path must rebuild its own.
-//! - `selection_overlay_dirty` — the selection overlay mesh must be rebuilt.
+//! State ownership by domain:
 //!
-//! Geometry, materials, or scene changes set all four flags; camera changes set
-//! only `needs_render`.
+//! - Document (`scene`, `current_paths`, selection via `edit_mode`,
+//!   `unsaved_edit_layer_ids`, undo/redo): mutated through scene-commit and
+//!   layer-edit helpers; structural swaps go through `set_scene`.
+//! - Render (`invalidation`, `prepared_scene`, `prepared_selection_overlay`,
+//!   `rendered`, `render_extent_px`, `section_cache`): the render paths own
+//!   their caches and consume invalidation cursors where they rebuild.
+//! - Tools (`cut_view`, `bridge_split*`, `measure`, `sculpt`, `align`,
+//!   `edit_mode`, `editor_tab`): each tool owns its workflow; cross-tool
+//!   arbitration lives in the overlay orchestration, not in the tools.
+//! - UI (`status_message*`, `app_error`, dialogs, `open_dialogs`,
+//!   `information_dialog`, panel transient flags): presentation only, renders
+//!   worker/domain results into user-facing copy at the boundary.
+//! - Platform (`_single_instance`, `incoming_open_requests`, `raise_target`,
+//!   `pending_raise_token`, window handles): native handoff and activation.
+//! - Persistence (`settings`, `settings_persistence`, `recent_files`,
+//!   `last_export_dir`, save/export coordination): update-compatible stored
+//!   state; workers never touch it directly.
 
 use super::app_settings_panel::settings_popup_id;
 use super::information_dialog::InformationDialog;
@@ -23,6 +39,7 @@ use super::{
     SharedLiveViewport, DEFAULT_RENDER_EXTENT_PX,
 };
 use crate::app_settings::SettingsPersistence;
+use occluview_app::invalidation::RenderInvalidation;
 
 /// How long the sculpt sliders must stay still before the debounced preference
 /// persist marks settings dirty (one fsync per settled drag, not per frame).
@@ -67,10 +84,9 @@ pub(crate) struct OccluViewApp {
     pub(super) prepared_selection_overlay: Option<PreparedScene>,
     pub(super) render_extent_px: [u16; 2],
     pub(super) rendered: Option<RenderedFrame>,
-    pub(super) needs_render: bool,
-    pub(super) live_viewport_scene_dirty: bool,
-    pub(super) offscreen_scene_dirty: bool,
-    pub(super) selection_overlay_dirty: bool,
+    /// Typed redraw and cache-staleness state; see the module docs and
+    /// [`RenderInvalidation`]. Render paths consume their own cursors.
+    pub(super) invalidation: RenderInvalidation,
     pub(super) status_message: Option<String>,
     pub(super) status_message_since: Option<Instant>,
     pub(super) status_message_snapshot: Option<String>,
@@ -298,10 +314,7 @@ impl OccluViewApp {
             prepared_selection_overlay: None,
             render_extent_px: DEFAULT_RENDER_EXTENT_PX,
             rendered: None,
-            needs_render: false,
-            live_viewport_scene_dirty: false,
-            offscreen_scene_dirty: false,
-            selection_overlay_dirty: false,
+            invalidation: RenderInvalidation::new(),
             status_message: None,
             status_message_since: None,
             status_message_snapshot: None,
@@ -431,7 +444,7 @@ impl OccluViewApp {
             return;
         };
         self.camera = Some(home_camera_for_scene(scene));
-        self.needs_render = true;
+        self.invalidation.request_redraw();
     }
 
     /// Record that `layer_id` now differs from what was loaded from disk.
@@ -469,7 +482,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn request_camera_repaint(&mut self, ctx: &egui::Context) {
-        self.needs_render = true;
+        self.invalidation.request_redraw();
         self.mark_camera_modified();
         ctx.request_repaint();
     }

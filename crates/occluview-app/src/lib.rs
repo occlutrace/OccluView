@@ -4,6 +4,7 @@
 //! The binary entry point (`main.rs`) keeps bootstrap wiring; everything here
 //! is pure and UI-neutral so behavior can be pinned by unit tests.
 
+pub mod invalidation;
 mod startup;
 
 pub use startup::{

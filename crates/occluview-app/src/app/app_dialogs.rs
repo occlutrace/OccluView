@@ -309,7 +309,7 @@ impl OccluViewApp {
                 self.measure.disarm();
                 self.cut_view.enable();
             }
-            self.needs_render = true;
+            self.invalidation.overlay_tools_changed();
         }
         // Arming a measurement or the cut view closes Align, the same way
         // arming Align closes them. Two tools cannot share the primary click.
@@ -324,7 +324,7 @@ impl OccluViewApp {
             );
             if disable_cut {
                 self.cut_view.disable();
-                self.needs_render = true;
+                self.invalidation.overlay_tools_changed();
             }
             match next {
                 Some(mode) => self.measure.arm(mode),

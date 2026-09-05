@@ -26,8 +26,7 @@ impl OccluViewApp {
                 .as_ref()
                 .is_some_and(|scene| self.edit_mode.select_all_visible_selections(scene));
         if selected_all {
-            self.selection_overlay_dirty = true;
-            self.needs_render = true;
+            self.invalidation.selection_changed();
             self.status_message = self.scene.as_ref().map(|scene| {
                 format!(
                     "Selected {} faces",
@@ -209,7 +208,7 @@ impl OccluViewApp {
         self.abort_sculpt_stroke();
         self.sculpt.disarm();
         self.mesh_selection_drag = None;
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         self.status_message = Some(if self.edit_mode.lasso_armed() {
             "Lasso armed: click or drag to outline; Enter, double-click, \
              or click the start closes"
@@ -233,7 +232,7 @@ impl OccluViewApp {
         self.abort_sculpt_stroke();
         self.sculpt.disarm();
         self.mesh_selection_drag = None;
-        self.needs_render = true;
+        self.invalidation.overlay_tools_changed();
         self.status_message = Some(if self.edit_mode.object_mode() {
             "Object select: click an object to select it whole".to_string()
         } else {
@@ -258,8 +257,7 @@ impl OccluViewApp {
                     .as_ref()
                     .is_some_and(|scene| self.edit_mode.select_all_visible_selections(scene))
                 {
-                    self.selection_overlay_dirty = true;
-                    self.needs_render = true;
+                    self.invalidation.selection_changed();
                     self.update_visible_selection_status();
                     ctx.request_repaint();
                 }
@@ -271,8 +269,7 @@ impl OccluViewApp {
                     .as_ref()
                     .is_some_and(|scene| self.edit_mode.invert_visible_selections(scene))
                 {
-                    self.selection_overlay_dirty = true;
-                    self.needs_render = true;
+                    self.invalidation.selection_changed();
                     self.update_visible_selection_status();
                     ctx.request_repaint();
                 }
@@ -284,8 +281,7 @@ impl OccluViewApp {
                     .as_ref()
                     .is_some_and(|scene| self.edit_mode.clear_visible_selections(scene))
                 {
-                    self.selection_overlay_dirty = true;
-                    self.needs_render = true;
+                    self.invalidation.selection_changed();
                     self.status_message = Some("Selection cleared".to_string());
                     ctx.request_repaint();
                 }
@@ -308,7 +304,7 @@ impl OccluViewApp {
                     .edit_mode
                     .set_through_mesh(!self.edit_mode.through_mesh())
                 {
-                    self.needs_render = true;
+                    self.invalidation.overlay_tools_changed();
                     self.status_message = Some(if self.edit_mode.through_mesh() {
                         "Through-mesh selection".to_string()
                     } else {
@@ -372,8 +368,7 @@ impl OccluViewApp {
         self.sculpt.disarm();
         self.edit_mode.finish_edit_session();
         self.mesh_selection_drag = None;
-        self.selection_overlay_dirty = true;
-        self.needs_render = true;
+        self.invalidation.selection_changed();
         self.status_message = Some("Mesh Editing session applied".to_string());
         ctx.request_repaint();
     }
@@ -386,8 +381,7 @@ impl OccluViewApp {
         let baseline = self.edit_mode.cancel_edit_session();
         self.mesh_selection_drag = None;
         let Some(baseline) = baseline else {
-            self.selection_overlay_dirty = true;
-            self.needs_render = true;
+            self.invalidation.selection_changed();
             ctx.request_repaint();
             return;
         };
@@ -716,8 +710,7 @@ impl OccluViewApp {
             },
         );
         if changed {
-            self.selection_overlay_dirty = true;
-            self.needs_render = true;
+            self.invalidation.selection_changed();
             self.update_visible_selection_status();
         }
         changed
@@ -780,8 +773,7 @@ impl OccluViewApp {
         if !acted {
             return false;
         }
-        self.selection_overlay_dirty = true;
-        self.needs_render = true;
+        self.invalidation.selection_changed();
         self.update_visible_selection_status();
         ctx.request_repaint();
         true

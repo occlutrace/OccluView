@@ -71,7 +71,9 @@ impl OccluViewApp {
             }
         }
         if had_rebuilds || had_updates || had_completions {
-            self.needs_render = true;
+            // Rebuilds and sparse writes already landed in GPU buffers above;
+            // only the repaint is owed here.
+            self.invalidation.request_redraw();
         }
         self.complete_pending_mesh_edit_session(ctx);
         self.complete_pending_history_navigation(ctx);
@@ -123,9 +125,7 @@ impl OccluViewApp {
         }
         // The uploaded geometry is the wrong SIZE now, so the prepared scene
         // must be rebuilt rather than reconciled.
-        self.live_viewport_scene_dirty = self.live_viewport.is_some();
-        self.offscreen_scene_dirty = true;
-        self.needs_render = true;
+        self.invalidation.sculpt_topology_changed();
         if self.can_render_cut_view() {
             self.cut_view.mark_dirty();
         }
@@ -269,7 +269,9 @@ impl OccluViewApp {
         }
         self.edit_mode.sync_to_scene(&scene_arc);
         self.scene = Some(scene_arc);
-        self.needs_render = true;
+        // The commit swaps the layer's mesh Arc after the stroke's bytes were
+        // already pushed to the GPU by sparse writes; only a repaint is owed.
+        self.invalidation.request_redraw();
         if self.can_render_cut_view() {
             self.cut_view.mark_dirty();
         }
@@ -315,11 +317,18 @@ mod tests {
             install < flush,
             "a rebuild must be installed before the frame's sparse writes"
         );
+        let install_fn = source
+            .find("fn install_sculpt_rebuild(")
+            .expect("the rebuild installer must exist");
         assert!(
-            source.contains("self.offscreen_scene_dirty = true;")
-                && source
-                    .contains("self.live_viewport_scene_dirty = self.live_viewport.is_some();"),
+            source[install_fn..].contains("self.invalidation.sculpt_topology_changed();"),
             "installing a rebuild must force a full prepared-scene rebuild"
         );
+        // The typed model proves the cause mapping: a topology change stales
+        // both scene consumers while sparing the selection overlay.
+        let mut topology = occluview_app::invalidation::RenderInvalidation::new();
+        topology.sculpt_topology_changed();
+        assert!(topology.live_scene_stale() && topology.offscreen_scene_stale());
+        assert!(!topology.live_overlay_stale() && !topology.offscreen_overlay_stale());
     }
 }

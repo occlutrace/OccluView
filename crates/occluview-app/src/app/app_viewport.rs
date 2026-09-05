@@ -101,7 +101,7 @@ impl OccluViewApp {
         };
         if render_extent_change_requires_rerender(self.render_extent_px, desired) {
             self.render_extent_px = desired;
-            self.needs_render = true;
+            self.invalidation.request_redraw();
         }
     }
 

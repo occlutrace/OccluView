@@ -6,10 +6,10 @@
 //! backend gave us one; the offscreen path is the fallback and is also what
 //! produces the cut-view preview.
 //!
-//! Both consume the dirty flags documented in [`super::state`] and clear the
-//! ones they have honoured. Each path caches its own `PreparedScene`, so a
-//! scene change has to mark both or the untouched path keeps drawing the
-//! previous geometry.
+//! Both consume their own [`RenderInvalidation`] cursors documented in
+//! [`super::state`] where they rebuild. Each path caches its own
+//! `PreparedScene`, so a scene change stales both or the untouched path keeps
+//! drawing the previous geometry.
 
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
@@ -72,7 +72,7 @@ impl OccluViewApp {
                 size_px: spec.size_px,
             });
         }
-        self.needs_render = false;
+        self.invalidation.consume_redraw();
         tracing::info!(
             width_px = spec.size_px[0],
             height_px = spec.size_px[1],
@@ -144,7 +144,7 @@ impl OccluViewApp {
             return None;
         }
         let offscreen = self.offscreen.as_ref()?;
-        if self.offscreen_scene_dirty {
+        if self.invalidation.offscreen_scene_stale() {
             let updates = prepared_scene_updates(scene);
             let rebuild = self
                 .prepared_scene
@@ -154,7 +154,7 @@ impl OccluViewApp {
                 let sources = prepared_scene_sources(scene);
                 self.prepared_scene = Some(offscreen.prepare_scene(&sources));
             }
-            self.offscreen_scene_dirty = false;
+            self.invalidation.consume_offscreen_scene();
         }
         let pixels = {
             let offscreen = self.offscreen.as_ref()?;
@@ -264,7 +264,7 @@ impl OccluViewApp {
         };
 
         let offscreen = self.offscreen.as_ref().context("offscreen unavailable")?;
-        if self.offscreen_scene_dirty {
+        if self.invalidation.offscreen_scene_stale() {
             let updates = prepared_scene_updates(&scene);
             let rebuild = self
                 .prepared_scene
@@ -285,15 +285,15 @@ impl OccluViewApp {
                     "offscreen viewport scene prepared"
                 );
             }
-            self.offscreen_scene_dirty = false;
+            self.invalidation.consume_offscreen_scene();
         }
-        if self.selection_overlay_dirty {
+        if self.invalidation.offscreen_overlay_stale() {
             let overlay = selection_overlay_for_scene(&scene, &self.edit_mode);
             self.prepared_selection_overlay = overlay.as_ref().map(|overlay| {
                 let sources = overlay.prepared_sources();
                 offscreen.prepare_scene(&sources)
             });
-            self.selection_overlay_dirty = false;
+            self.invalidation.consume_offscreen_overlay();
         }
         let prepared = self
             .prepared_scene
@@ -345,7 +345,7 @@ impl OccluViewApp {
         }
         let Some(scene) = self.scene.as_ref() else {
             self.clear_live_viewport();
-            self.needs_render = false;
+            self.invalidation.consume_redraw();
             return;
         };
         let Some(mut cam) = self.camera else {
@@ -365,7 +365,7 @@ impl OccluViewApp {
                 viewport.set_show_ghost(self.settings.show_cut_ghost);
                 viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);
                 let mut rebuilt = false;
-                if self.live_viewport_scene_dirty {
+                if self.invalidation.live_scene_stale() {
                     let sources = prepared_scene_sources(scene);
                     let updates = prepared_scene_updates(scene);
                     // Only a real rebuild re-uploads the scan's own colours. A
@@ -373,20 +373,20 @@ impl OccluViewApp {
                     // where it was, so pushing it again would move thirty-four
                     // megabytes to write what is already there.
                     rebuilt = viewport.sync_scene(&sources, &updates);
-                    self.live_viewport_scene_dirty = false;
+                    self.invalidation.consume_live_scene();
                 }
                 let repush_deviation =
                     (rebuilt && restore_deviation) || self.align.deviation_push_pending;
-                if self.selection_overlay_dirty {
+                if self.invalidation.live_overlay_stale() {
                     let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
                         Vec::new,
                         super::selection_overlay::SelectionOverlayScene::prepared_sources,
                     );
                     viewport.sync_selection_overlay(&sources);
-                    self.selection_overlay_dirty = false;
+                    self.invalidation.consume_live_overlay();
                 }
-                self.needs_render = false;
+                self.invalidation.consume_redraw();
                 repush_deviation
             }
             Err(e) => {
@@ -461,10 +461,7 @@ impl OccluViewApp {
         if reset_camera {
             self.reset_camera_to_home();
         }
-        self.needs_render = true;
-        self.live_viewport_scene_dirty = self.live_viewport.is_some();
-        self.offscreen_scene_dirty = true;
-        self.selection_overlay_dirty = true;
+        self.invalidation.scene_geometry_changed();
         self.mesh_selection_drag = None;
         self.rendered = None;
         // Whatever the align tool was showing described the geometry that just
@@ -511,10 +508,7 @@ impl OccluViewApp {
         if let Some(scene) = self.scene.clone() {
             self.edit_mode.sync_to_scene(&scene);
         }
-        self.needs_render = true;
-        self.live_viewport_scene_dirty = self.live_viewport.is_some();
-        self.offscreen_scene_dirty = true;
-        self.selection_overlay_dirty = true;
+        self.invalidation.scene_geometry_changed();
         self.mesh_selection_drag = None;
         if self.can_render_cut_view() {
             self.cut_view.mark_dirty();
@@ -534,10 +528,7 @@ impl OccluViewApp {
         self.current_paths.clear();
         self.camera = None;
         self.rendered = None;
-        self.needs_render = false;
-        self.live_viewport_scene_dirty = false;
-        self.offscreen_scene_dirty = false;
-        self.selection_overlay_dirty = false;
+        self.invalidation.reset();
         self.mesh_selection_drag = None;
         self.load_queue_camera_reset = super::LoadQueueCameraReset::Idle;
         self.camera_modified_during_load = false;
@@ -657,7 +648,7 @@ impl OccluViewApp {
         if let Some(axis) = axis_snap {
             if let Some(camera) = self.camera.as_mut() {
                 camera.snap_to_axis(axis);
-                self.needs_render = true;
+                self.invalidation.request_redraw();
                 ctx.request_repaint();
             }
         }
@@ -667,7 +658,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
-        if self.needs_render {
+        if self.invalidation.redraw_pending() {
             if self.live_viewport.is_some() {
                 self.sync_live_viewport();
             } else {
