@@ -44,28 +44,10 @@ pub(crate) struct StartupHandles {
     pub(crate) activation_token: Option<String>,
 }
 
-pub(crate) struct Args {
-    pub shell_refresh: bool,
-    pub version: bool,
-    pub files: Vec<PathBuf>,
-}
+pub(crate) use occluview_app::Args;
 
 pub(crate) fn parse_args() -> Args {
-    let mut shell_refresh = false;
-    let mut version = false;
-    let mut files = Vec::new();
-    for arg in std::env::args().skip(1) {
-        match arg.as_str() {
-            "--shell-refresh" => shell_refresh = true,
-            "--version" | "-V" => version = true,
-            _ => files.push(PathBuf::from(arg)),
-        }
-    }
-    Args {
-        shell_refresh,
-        version,
-        files,
-    }
+    occluview_app::parse_args()
 }
 
 #[allow(clippy::struct_excessive_bools)]

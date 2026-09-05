@@ -70,6 +70,12 @@ pub(super) fn main_source() -> &'static str {
     include_str!("../main.rs")
 }
 
+/// Canonical home of argument parsing and the single-instance append
+/// decision since the library seam (see `src/startup.rs`).
+pub(super) fn startup_source() -> &'static str {
+    include_str!("../startup.rs")
+}
+
 pub(super) fn app_module_source() -> &'static str {
     concat!(
         include_str!("../app/mod.rs"),
