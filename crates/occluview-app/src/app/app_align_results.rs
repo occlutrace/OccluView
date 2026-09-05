@@ -7,8 +7,9 @@ use eframe::egui;
 use occluview_align::Rigid;
 
 use super::OccluViewApp;
-use crate::align_worker::{AlignCompletion, AlignOutcome, AlignWorker};
+use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
+use occluview_align::FitRejection;
 
 /// What the operator is told when a finished fit could not be written.
 ///
@@ -139,8 +140,8 @@ impl OccluViewApp {
                     blind_note(seen.as_ref(), summary.rms)
                 ));
             }
-            AlignOutcome::Failed { message } => {
-                self.align.status = Some(message);
+            AlignOutcome::Failed { rejection } => {
+                self.align.status = Some(describe_align_failure(rejection));
             }
         }
         ctx.request_repaint();
@@ -299,11 +300,69 @@ fn blind_note(seen: Option<&occluview_align::Observability>, rms_mm: f64) -> Str
     format!(" — a rigid mismatch of up to {hidden:.2} mm could read as this")
 }
 
+/// Turn a worker refusal into a sentence the operator can act on.
+///
+/// Presentation owns this copy: the worker returns the typed reason and this
+/// boundary renders it, so a later localization pass replaces these strings
+/// without touching background computation.
+fn describe_align_failure(rejection: AlignFailure) -> String {
+    match rejection {
+        AlignFailure::Fit(FitRejection::TooFewPairs { have, need }) => format!(
+            "Only {have} of {need} correspondences — place another arrow, or raise max influence \
+             if the meshes are still far apart"
+        ),
+        AlignFailure::Fit(FitRejection::Unpaired { moving, fixed }) => {
+            format!("{moving} points on one scan and {fixed} on the other — a point has no partner")
+        }
+        AlignFailure::Fit(FitRejection::Degenerate { weak_axes }) => {
+            let named = axis_names(weak_axes);
+            if named.is_empty() {
+                "The clicked points do not determine a rotation — spread them out".to_string()
+            } else {
+                format!("The clicked points lie on a line: rotation about {named} is undetermined")
+            }
+        }
+        AlignFailure::Fit(FitRejection::UnitMismatch { ratio }) => format!(
+            "The two scans are {ratio:.1}x apart in size — they are probably in different units"
+        ),
+        AlignFailure::Fit(FitRejection::Apart {
+            separation,
+            allowed,
+        }) => format!(
+            "That fit leaves the two scans {separation:.0} mm apart instead of on top of each \
+             other ({allowed:.0} mm) — check that each arrow pair points at the same spot on both \
+             scans"
+        ),
+        AlignFailure::Fit(FitRejection::Runaway { moved_by, allowed }) => format!(
+            "Best fit wandered {moved_by:.0} mm, further than the scan's own size ({allowed:.0} \
+             mm) — place a few arrow pairs first, or lower max influence"
+        ),
+        AlignFailure::Fit(FitRejection::NonFinite) => {
+            "A clicked point or surface normal was not a finite number".to_string()
+        }
+        AlignFailure::FixedSurfaceMissing => "The fixed scan has no usable surface".to_string(),
+        AlignFailure::MovingSurfaceMissing => "The moving scan has no usable surface".to_string(),
+        AlignFailure::MeasurementDropped => {
+            "The measurement was dropped before it could be coloured".to_string()
+        }
+    }
+}
+
+/// Name the world axes a degeneracy report flagged.
+fn axis_names(weak: [bool; 3]) -> String {
+    ["X", "Y", "Z"]
+        .into_iter()
+        .zip(weak)
+        .filter_map(|(name, flagged)| flagged.then_some(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Name the directions a refine could not determine, so the panel never shows
 /// a confident number for a fit that is free to slide.
 fn weak_axis_note(translation: [bool; 3], rotation: [bool; 3]) -> String {
-    let sliding = crate::align_worker::axis_names(translation);
-    let spinning = crate::align_worker::axis_names(rotation);
+    let sliding = axis_names(translation);
+    let spinning = axis_names(rotation);
     match (sliding.is_empty(), spinning.is_empty()) {
         (true, true) => String::new(),
         (false, true) => format!(" — the fit can still slide along {sliding}"),
@@ -426,6 +485,56 @@ mod tests {
         assert!(
             remainder.contains("self.apply_deviation_colors(colors)"),
             "the summary path still paints"
+        );
+    }
+
+    /// Every worker refusal renders an actionable sentence, never a bare
+    /// "alignment failed": the typed reason crosses the thread boundary and
+    /// this boundary owns the copy.
+    #[test]
+    fn every_align_failure_renders_an_actionable_sentence() {
+        use super::{describe_align_failure, AlignFailure};
+        use occluview_align::FitRejection;
+
+        let cases = [
+            AlignFailure::Fit(FitRejection::TooFewPairs { have: 2, need: 3 }),
+            AlignFailure::Fit(FitRejection::Unpaired {
+                moving: 3,
+                fixed: 2,
+            }),
+            AlignFailure::Fit(FitRejection::Degenerate {
+                weak_axes: [true, false, false],
+            }),
+            AlignFailure::Fit(FitRejection::Degenerate {
+                weak_axes: [false; 3],
+            }),
+            AlignFailure::Fit(FitRejection::UnitMismatch { ratio: 25.4 }),
+            AlignFailure::Fit(FitRejection::Apart {
+                separation: 12.0,
+                allowed: 3.0,
+            }),
+            AlignFailure::Fit(FitRejection::Runaway {
+                moved_by: 40.0,
+                allowed: 20.0,
+            }),
+            AlignFailure::Fit(FitRejection::NonFinite),
+            AlignFailure::FixedSurfaceMissing,
+            AlignFailure::MovingSurfaceMissing,
+            AlignFailure::MeasurementDropped,
+        ];
+        for case in cases {
+            let rendered = describe_align_failure(case);
+            assert!(
+                !rendered.is_empty() && rendered != "alignment failed",
+                "every refusal must name what went wrong: {case:?}"
+            );
+        }
+        assert!(
+            describe_align_failure(AlignFailure::Fit(FitRejection::Degenerate {
+                weak_axes: [true, false, true],
+            }))
+            .contains("X, Z"),
+            "degenerate fits must name the undetermined axes"
         );
     }
 
