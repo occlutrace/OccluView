@@ -14,8 +14,8 @@
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
-    paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, Context, CutTool, GpuCamera,
-    GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
+    paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, AxisGizmoInput, Context, CutTool,
+    GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec,
 };
@@ -632,14 +632,14 @@ impl OccluViewApp {
             let gizmo_hidden = self.axis_gizmo_is_hidden();
             if !gizmo_hidden {
                 let gizmo_avoid = self.active_section_panel_rect(response.rect);
-                axis_snap = paint_axis_gizmo(
+                axis_snap = paint_axis_gizmo(AxisGizmoInput {
                     ui,
-                    response.rect,
+                    image_rect: response.rect,
                     camera,
                     response,
-                    gizmo_avoid,
-                    self.settings.viewport_background,
-                );
+                    avoid: gizmo_avoid,
+                    background: self.settings.viewport_background,
+                });
             }
         }
         self.show_layers_overlay(ui, response.rect, ctx);

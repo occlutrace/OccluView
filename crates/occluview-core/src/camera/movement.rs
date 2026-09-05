@@ -34,7 +34,10 @@ impl Camera {
     /// report whether the clamped height changed at all, including sub-epsilon
     /// clamp steps. An epsilon margin would misreport a real (tiny) change as
     /// "unchanged".
-    #[expect(clippy::float_cmp, reason = "exact stored orthographic_height identity, not a tolerance check")]
+    #[expect(
+        clippy::float_cmp,
+        reason = "exact stored orthographic_height identity, not a tolerance check"
+    )]
     pub fn zoom_at_screen_point(
         &mut self,
         scale: f32,

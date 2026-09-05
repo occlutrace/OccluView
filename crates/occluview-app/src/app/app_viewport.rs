@@ -135,6 +135,29 @@ impl OccluViewApp {
         }
     }
 
+    /// Modified middle clicks manage per-layer visibility. Returns true when
+    /// the click was consumed and must not reach camera retarget below.
+    fn handle_viewport_middle_click_modifiers(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+    ) -> bool {
+        if !response.clicked_by(egui::PointerButton::Middle) {
+            return false;
+        }
+        let modifiers = ctx.input(|input| input.modifiers);
+        if modifiers.command && modifiers.shift {
+            self.restore_last_hidden_layer(ctx);
+        } else if modifiers.command {
+            self.hide_layer_under_cursor(response, ctx);
+        } else if modifiers.shift {
+            self.toggle_layer_translucency_under_cursor(response, ctx);
+        } else {
+            return false;
+        }
+        true
+    }
+
     fn update_viewport_orbit_gesture(
         &mut self,
         ctx: &egui::Context,
@@ -179,20 +202,8 @@ impl OccluViewApp {
 
         // Modified middle clicks manage per-layer visibility and never fall
         // through to the plain middle-click camera retarget below.
-        if response.clicked_by(egui::PointerButton::Middle) {
-            let modifiers = ctx.input(|input| input.modifiers);
-            if modifiers.command && modifiers.shift {
-                self.restore_last_hidden_layer(ctx);
-                return;
-            }
-            if modifiers.command {
-                self.hide_layer_under_cursor(response, ctx);
-                return;
-            }
-            if modifiers.shift {
-                self.toggle_layer_translucency_under_cursor(response, ctx);
-                return;
-            }
+        if self.handle_viewport_middle_click_modifiers(ctx, response) {
+            return;
         }
 
         let scene_pick = if (self.settings.double_click_resets_camera && response.double_clicked())

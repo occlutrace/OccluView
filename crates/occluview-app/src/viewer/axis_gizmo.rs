@@ -53,20 +53,30 @@ fn axis_gizmo_palette(background: ViewportBackground) -> AxisGizmoPalette {
     }
 }
 
+/// Inputs for [`paint_axis_gizmo`], bundled so the painter signature stays a
+/// single viewport context as overlay needs evolve.
+pub(crate) struct AxisGizmoInput<'a> {
+    pub(crate) ui: &'a egui::Ui,
+    pub(crate) image_rect: egui::Rect,
+    pub(crate) camera: &'a Camera,
+    pub(crate) response: &'a egui::Response,
+    pub(crate) avoid: Option<egui::Rect>,
+    pub(crate) background: ViewportBackground,
+}
+
 /// Paint the camera-facing axis triad and return a snap target only for a
 /// primary click near an axis endpoint. The viewport response remains the
 /// shared input surface; this painter owns no separate pointer stream.
-pub(crate) fn paint_axis_gizmo(
-    ui: &egui::Ui,
-    image_rect: egui::Rect,
-    camera: &Camera,
-    response: &egui::Response,
-    avoid: Option<egui::Rect>,
-    background: ViewportBackground,
-) -> Option<CameraAxisView> {
-    let Some((center, mut markers)) = axis_gizmo_markers(camera, image_rect, avoid) else {
-        return None;
-    };
+pub(crate) fn paint_axis_gizmo(input: AxisGizmoInput<'_>) -> Option<CameraAxisView> {
+    let AxisGizmoInput {
+        ui,
+        image_rect,
+        camera,
+        response,
+        avoid,
+        background,
+    } = input;
+    let (center, mut markers) = axis_gizmo_markers(camera, image_rect, avoid)?;
     let hovered = response
         .hover_pos()
         .and_then(|pointer| axis_gizmo_hit(&markers, center, pointer));
@@ -77,7 +87,7 @@ pub(crate) fn paint_axis_gizmo(
     let palette = axis_gizmo_palette(background);
     let painter = ui.painter();
     markers.sort_by(|left, right| left.depth.total_cmp(&right.depth));
-    for marker in markers.iter() {
+    for marker in &markers {
         let delta = marker.endpoint - center;
         let length = delta.length();
         if length <= f32::EPSILON {
@@ -287,9 +297,9 @@ mod tests {
             ..Camera::default()
         };
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
-        let Some((center, markers)) = axis_gizmo_markers(&camera, viewport, None) else {
-            panic!("camera basis should be valid");
-        };
+        let gizmo = axis_gizmo_markers(&camera, viewport, None);
+        assert!(gizmo.is_some(), "camera basis should be valid");
+        let (center, markers) = gizmo.unwrap_or_default();
 
         assert_eq!(markers.len(), 6);
         for marker in &markers {

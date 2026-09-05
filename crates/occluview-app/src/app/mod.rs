@@ -16,7 +16,7 @@ use super::viewer::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, desired_render_extent_px,
     home_camera_for_scene, orbit_delta_from_drag, paint_axis_gizmo, pick_scene_hit,
     pick_scene_point, render_extent_change_requires_rerender, viewport_orbit_drag_active,
-    viewport_pan_drag_active, zoom_factor_from_scroll, DEFAULT_RENDER_EXTENT_PX,
+    viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput, DEFAULT_RENDER_EXTENT_PX,
 };
 use super::{
     read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
