@@ -144,8 +144,8 @@ impl OccluViewApp {
         }
         self.imply_align_pair();
         self.align.status = Some(match self.align.tool.moving_layer() {
-            Some(_) => "Two scans in view — click a point on each to pair them".into(),
-            None => "Click a point on the scan that should move".into(),
+            Some(_) => self.locale.tr("align-status-two-scans"),
+            None => self.locale.tr("align-status-click-moving"),
         });
         ctx.request_repaint();
     }
@@ -255,7 +255,7 @@ impl OccluViewApp {
             return true;
         };
         if entry.mesh.is_point_cloud() {
-            self.align.status = Some("A point cloud has no surface to pair".into());
+            self.align.status = Some(self.locale.tr("align-status-no-surface"));
             return true;
         }
 
@@ -270,14 +270,12 @@ impl OccluViewApp {
 
         self.align.status = Some(match self.align.tool.click(point) {
             ClickOutcome::Ignored => return true,
-            ClickOutcome::StartedPair => "Now click the matching spot on the other scan".into(),
-            ClickOutcome::CompletedPair(index) => {
-                format!("Pair {} placed", index + 1)
-            }
-            ClickOutcome::MovedPending => "Point moved".into(),
-            ClickOutcome::RefusedThirdLayer => {
-                "That scan is not in this pair — press Clear to start over".into()
-            }
+            ClickOutcome::StartedPair => self.locale.tr("align-status-now-other"),
+            ClickOutcome::CompletedPair(index) => self
+                .locale
+                .tr_with("align-pair-placed", &[("n", &(index + 1).to_string())]),
+            ClickOutcome::MovedPending => self.locale.tr("align-status-moved"),
+            ClickOutcome::RefusedThirdLayer => self.locale.tr("align-status-wrong-scan"),
         });
         ctx.request_repaint();
         true
@@ -346,7 +344,7 @@ impl OccluViewApp {
             self.align.tool.moving_layer(),
             self.align.tool.fixed_layer(),
         ) else {
-            self.align.status = Some("Place a point on each scan first".into());
+            self.align.status = Some(self.locale.tr("align-status-place-first"));
             return;
         };
         let (Some(moving), Some(fixed)) = (layer_of(&scene, moving_id), layer_of(&scene, fixed_id))
@@ -362,14 +360,16 @@ impl OccluViewApp {
             let hidden = if moving.visible { fixed_id } else { moving_id };
             let name = self
                 .layer_display_name(hidden)
-                .unwrap_or_else(|| "One of the scans".to_owned());
-            self.align.status = Some(format!("{name} is hidden — show it to align against it"));
+                .unwrap_or_else(|| self.locale.tr("align-status-one-scan"));
+            self.align.status = Some(
+                self.locale
+                    .tr_with("align-status-hidden", &[("name", &name)]),
+            );
             return;
         }
 
         let Some(pose) = Rigid::from_affine(&moving.transform) else {
-            self.align.status =
-                Some("That scan carries a scaled placement, which cannot be aligned".into());
+            self.align.status = Some(self.locale.tr("align-status-scaled"));
             return;
         };
 
@@ -446,19 +446,14 @@ impl OccluViewApp {
             settings,
         });
         if stale {
-            self.align.status = Some(
-                "Markings dropped — the scan's surface changed since they were painted".into(),
-            );
+            self.align.status = Some(self.locale.tr("align-markings-dropped"));
             return;
         }
-        self.align.status = Some(
-            match kind {
-                AlignJobKind::Align => "Aligning…",
-                AlignJobKind::Refine => "Refining…",
-                AlignJobKind::Measure => "Measuring…",
-            }
-            .into(),
-        );
+        self.align.status = Some(match kind {
+            AlignJobKind::Align => self.locale.tr("align-job-align"),
+            AlignJobKind::Refine => self.locale.tr("align-job-refine"),
+            AlignJobKind::Measure => self.locale.tr("align-job-measure"),
+        });
     }
 }
 

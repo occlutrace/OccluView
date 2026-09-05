@@ -193,10 +193,10 @@ impl UpdateNotice {
     }
 
     /// Draw the current notice state without consuming worker events.
-    pub(crate) fn show(&mut self, ctx: &egui::Context) {
+    pub(crate) fn show(&mut self, ctx: &egui::Context, locale: &crate::i18n::LocaleManager) {
         match &self.phase {
             Phase::Idle | Phase::Dismissed => {}
-            _ => self.draw_window(ctx),
+            _ => self.draw_window(ctx, locale),
         }
     }
 
@@ -233,7 +233,7 @@ impl UpdateNotice {
         }
     }
 
-    fn draw_window(&mut self, ctx: &egui::Context) {
+    fn draw_window(&mut self, ctx: &egui::Context, locale: &crate::i18n::LocaleManager) {
         let mut next_phase: Option<Phase> = None;
         let mut start_download: Option<AvailableUpdate> = None;
         egui::Window::new("occluview-update-notice")
@@ -245,17 +245,17 @@ impl UpdateNotice {
                 ui.set_max_width(300.0);
                 match &self.phase {
                     Phase::Available(update) => {
-                        draw_available(ui, update, &mut start_download, &mut next_phase);
+                        draw_available(ui, locale, update, &mut start_download, &mut next_phase);
                     }
                     Phase::Downloading {
                         update,
                         received,
                         total,
-                    } => draw_downloading(ui, update, *received, *total),
+                    } => draw_downloading(ui, locale, update, *received, *total),
                     Phase::Ready { update, installer } => {
-                        draw_ready(ui, ctx, update, installer, &mut next_phase);
+                        draw_ready(ui, ctx, locale, update, installer, &mut next_phase);
                     }
-                    Phase::Failed(message) => draw_failed(ui, message, &mut next_phase),
+                    Phase::Failed(message) => draw_failed(ui, locale, message, &mut next_phase),
                     Phase::Idle | Phase::Dismissed => {}
                 }
             });
@@ -358,10 +358,12 @@ fn drain_download_events(
 
 fn draw_available(
     ui: &mut egui::Ui,
+    locale: &crate::i18n::LocaleManager,
     update: &AvailableUpdate,
     start_download: &mut Option<AvailableUpdate>,
     next_phase: &mut Option<Phase>,
 ) {
+    use crate::i18n::catalog::args;
     let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
     crate::icons::paint(
         ui.painter(),
@@ -369,11 +371,20 @@ fn draw_available(
         crate::icons::AppIcon::InstallUpdate,
         crate::ui_theme::text(),
     );
-    ui.label(egui::RichText::new(format!("OccluView {} is available", update.version)).strong());
     ui.label(
-        egui::RichText::new(format!("You are on {}.", env!("CARGO_PKG_VERSION")))
-            .weak()
-            .size(11.0),
+        egui::RichText::new(locale.text_with(
+            "update-available-body",
+            Some(&args(&[("version", &update.version.to_string())])),
+        ))
+        .strong(),
+    );
+    ui.label(
+        egui::RichText::new(locale.text_with(
+            "update-current-version",
+            Some(&args(&[("version", env!("CARGO_PKG_VERSION"))])),
+        ))
+        .weak()
+        .size(11.0),
     );
     if let Some(notes) = update.notes.as_deref() {
         if !notes.trim().is_empty() {
@@ -384,23 +395,23 @@ fn draw_available(
     ui.add_space(6.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if update.downloadable() {
-            if ui.button("Download update").clicked() {
+            if ui.button(locale.text("update-download")).clicked() {
                 *start_download = Some(update.clone());
             }
         } else {
             // The release exists but publishes no installer for this
             // platform: point at the release page instead of pretending.
             ui.hyperlink_to(
-                "Open release page",
+                locale.text("update-open-release"),
                 "https://github.com/occlutrace/OccluView/releases/latest",
             );
         }
-        if ui.button("Later").clicked() {
+        if ui.button(locale.text("update-later")).clicked() {
             *next_phase = Some(Phase::Dismissed);
         }
         if ui
-            .button("Skip this version")
-            .on_hover_text("Do not offer this version again; the next release will be offered")
+            .button(locale.text("update-skip"))
+            .on_hover_text(locale.text("update-skip-tooltip"))
             .clicked()
         {
             store_skipped_version(&update.version.to_string());
@@ -411,11 +422,18 @@ fn draw_available(
 
 fn draw_downloading(
     ui: &mut egui::Ui,
+    locale: &crate::i18n::LocaleManager,
     update: &AvailableUpdate,
     received: u64,
     total: Option<u64>,
 ) {
-    ui.label(egui::RichText::new(format!("Downloading OccluView {}", update.version)).strong());
+    ui.label(
+        egui::RichText::new(locale.tr_with(
+            "update-downloading",
+            &[("version", &update.version.to_string())],
+        ))
+        .strong(),
+    );
     ui.add(
         egui::ProgressBar::new(progress_fraction(received, total))
             .desired_width(280.0)
@@ -423,25 +441,34 @@ fn draw_downloading(
     );
 }
 
+// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+#[expect(clippy::too_many_arguments)]
 fn draw_ready(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
+    locale: &crate::i18n::LocaleManager,
     update: &AvailableUpdate,
     installer: &std::path::Path,
     next_phase: &mut Option<Phase>,
 ) {
     ui.label(
-        egui::RichText::new(format!("OccluView {} is ready to install", update.version)).strong(),
+        egui::RichText::new(locale.tr_with(
+            "update-ready-title",
+            &[("version", &update.version.to_string())],
+        ))
+        .strong(),
     );
+    // Canonical handoff wording pinned by source guards; rendering resolves
+    // `update-ready-hint-windows` / `update-ready-hint-other`.
     let handoff_hint = if cfg!(target_os = "windows") {
-        "The installer was verified. OccluView will close while Windows applies the update."
+        locale.tr("update-ready-hint-windows")
     } else {
-        "The package was verified. Your system's package installer will open — confirm the update there."
+        locale.tr("update-ready-hint-other")
     };
     ui.label(egui::RichText::new(handoff_hint).weak().size(11.0));
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if ui.button("Install and close").clicked() {
+        if ui.button(locale.tr("update-install-close")).clicked() {
             // Verified again here, not only at download time: what was
             // checked and what is about to reach a privileged installer are
             // separated by this click.
@@ -450,17 +477,25 @@ fn draw_ready(
                 Err(error) => *next_phase = Some(Phase::Failed(error.to_string())),
             }
         }
-        if ui.button("Later").clicked() {
+        if ui.button(locale.tr("update-later")).clicked() {
             *next_phase = Some(Phase::Dismissed);
         }
     });
 }
 
-fn draw_failed(ui: &mut egui::Ui, message: &str, next_phase: &mut Option<Phase>) {
-    ui.label(egui::RichText::new("Update failed").strong());
+fn draw_failed(
+    ui: &mut egui::Ui,
+    locale: &crate::i18n::LocaleManager,
+    message: &str,
+    next_phase: &mut Option<Phase>,
+) {
+    ui.label(egui::RichText::new(locale.tr("update-failed-title")).strong());
+    // Verbatim by design: the message is raw OS/IO error text (and
+    // upstream release notes render the same way). Routing either
+    // through the catalogs would corrupt diagnostics.
     ui.label(egui::RichText::new(message).weak().size(11.0));
     ui.add_space(6.0);
-    if ui.button("Dismiss").clicked() {
+    if ui.button(locale.tr("update-dismiss")).clicked() {
         *next_phase = Some(Phase::Dismissed);
     }
 }
@@ -543,9 +578,10 @@ mod settings_status_tests {
     fn show_does_not_consume_worker_events() {
         let ctx = egui::Context::default();
         let mut notice = pending_manual_check();
+        let locale = crate::i18n::LocaleManager::for_tests();
 
         ctx.run_ui(egui::RawInput::default(), |ui| {
-            notice.show(ui.ctx());
+            notice.show(ui.ctx(), &locale);
         })
         .drop_without_applying_deltas();
 

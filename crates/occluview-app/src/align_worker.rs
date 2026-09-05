@@ -232,8 +232,12 @@ pub(crate) enum AlignOutcome {
     },
     /// Nothing trustworthy came out, and this is why.
     Failed {
-        /// A sentence naming what went wrong, not "alignment failed".
-        message: String,
+        /// Catalog key rendering the localized status (worker has no locale).
+        status_key: &'static str,
+        /// Pre-formatted positional details for `$a`/`$b` (axis names,
+        /// counts, millimetres). Empty when the key needs none.
+        a: String,
+        b: String,
     },
 }
 
@@ -490,7 +494,9 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
 
     let Some(index) = surface_index(&mut cached.surface, job) else {
         return AlignOutcome::Failed {
-            message: "The fixed scan has no usable surface".into(),
+            status_key: "align-fail-no-surface-fixed",
+            a: String::new(),
+            b: String::new(),
         };
     };
 
@@ -501,9 +507,10 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
                     pose: report.rigid,
                     report: Box::new(report),
                 },
-                Err(rejection) => AlignOutcome::Failed {
-                    message: describe(rejection),
-                },
+                Err(rejection) => {
+                    let (status_key, a, b) = describe(rejection);
+                    AlignOutcome::Failed { status_key, a, b }
+                }
             }
         }
         SurfaceJob::Measure => {
@@ -527,7 +534,9 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
 fn recolor(job: &AlignJob, cached: &mut WorkerCache) -> AlignOutcome {
     let Some((_, map)) = cached.measured.as_ref() else {
         return AlignOutcome::Failed {
-            message: "The measurement was dropped before it could be coloured".into(),
+            status_key: "align-fail-recolor",
+            a: String::new(),
+            b: String::new(),
         };
     };
     let tolerance = job.settings.tolerance_mm.to_bits();
@@ -625,12 +634,16 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     // Missing bounds are reported instead of inventing an overlap allowance.
     let Some((moving_center, moving_extent)) = occluview_align::bounds_of(moving) else {
         return AlignOutcome::Failed {
-            message: "The moving scan has no usable surface".into(),
+            status_key: "align-fail-no-surface-moving",
+            a: String::new(),
+            b: String::new(),
         };
     };
     let Some((fixed_center, fixed_extent)) = occluview_align::bounds_of(fixed_soup) else {
         return AlignOutcome::Failed {
-            message: "The fixed scan has no usable surface".into(),
+            status_key: "align-fail-no-surface-fixed",
+            a: String::new(),
+            b: String::new(),
         };
     };
     let bounds = FitBounds {
@@ -651,50 +664,58 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
             rms: fit.pair_rms,
             rejected: fit.rejected,
         },
-        Err(rejection) => AlignOutcome::Failed {
-            message: describe(rejection),
-        },
+        Err(rejection) => {
+            let (status_key, a, b) = describe(rejection);
+            AlignOutcome::Failed { status_key, a, b }
+        }
     }
 }
 
-/// Turn a refusal into a sentence the operator can act on.
+/// Turn a refusal into a catalog key plus pre-formatted positional details.
 ///
-/// Each refusal is converted to an actionable status message.
-fn describe(rejection: FitRejection) -> String {
+/// The worker thread has no locale: each refusal becomes a message key with
+/// `$a`/`$b` display strings (counts, axis names, millimetres). The app
+/// resolves the key against its locale; English values mirror the former
+/// inline sentences exactly.
+fn describe(rejection: FitRejection) -> (&'static str, String, String) {
     match rejection {
-        FitRejection::TooFewPairs { have, need } => format!(
-            "Only {have} of {need} correspondences — place another arrow, or raise max influence \
-             if the meshes are still far apart"
-        ),
-        FitRejection::Unpaired { moving, fixed } => {
-            format!("{moving} points on one scan and {fixed} on the other — a point has no partner")
+        FitRejection::TooFewPairs { have, need } => {
+            ("align-reject-toofew", have.to_string(), need.to_string())
         }
+        FitRejection::Unpaired { moving, fixed } => (
+            "align-reject-unpaired",
+            moving.to_string(),
+            fixed.to_string(),
+        ),
         FitRejection::Degenerate { weak_axes } => {
             let named = axis_names(weak_axes);
             if named.is_empty() {
-                "The clicked points do not determine a rotation — spread them out".into()
+                (
+                    "align-reject-degenerate-plain",
+                    String::new(),
+                    String::new(),
+                )
             } else {
-                format!("The clicked points lie on a line: rotation about {named} is undetermined")
+                ("align-reject-degenerate-line", named, String::new())
             }
         }
-        FitRejection::UnitMismatch { ratio } => format!(
-            "The two scans are {ratio:.1}x apart in size — they are probably in different units"
-        ),
+        FitRejection::UnitMismatch { ratio } => {
+            ("align-reject-unit", format!("{ratio:.1}"), String::new())
+        }
         FitRejection::Apart {
             separation,
             allowed,
-        } => format!(
-            "That fit leaves the two scans {separation:.0} mm apart instead of on top of each \
-             other ({allowed:.0} mm) — check that each arrow pair points at the same spot on both \
-             scans"
+        } => (
+            "align-reject-apart",
+            format!("{separation:.0}"),
+            format!("{allowed:.0}"),
         ),
-        FitRejection::Runaway { moved_by, allowed } => format!(
-            "Best fit wandered {moved_by:.0} mm, further than the scan's own size ({allowed:.0} \
-             mm) — place a few arrow pairs first, or lower max influence"
+        FitRejection::Runaway { moved_by, allowed } => (
+            "align-reject-runaway",
+            format!("{moved_by:.0}"),
+            format!("{allowed:.0}"),
         ),
-        FitRejection::NonFinite => {
-            "A clicked point or surface normal was not a finite number".into()
-        }
+        FitRejection::NonFinite => ("align-reject-nonfinite", String::new(), String::new()),
     }
 }
 

@@ -1,8 +1,9 @@
+use super::mesh_editor_overlay as editor;
 use super::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
-    apply_visible_selected_face_mesh_edit_action_with_limit, egui, mesh_editor_overlay,
-    pick_scene_hit, AppErrorDialog, LayerContextAction, MeshEditorAction, MeshSelectionDrag,
-    OccluViewApp, Scene, ScreenPolygonSelectionRequest,
+    apply_visible_selected_face_mesh_edit_action_with_limit, egui, pick_scene_hit, AppErrorDialog,
+    LayerContextAction, MeshEditorAction, MeshSelectionDrag, OccluViewApp, Scene,
+    ScreenPolygonSelectionRequest,
 };
 use crate::viewer::lasso_capture::{self, LassoEvent};
 
@@ -29,9 +30,10 @@ impl OccluViewApp {
             self.selection_overlay_dirty = true;
             self.needs_render = true;
             self.status_message = self.scene.as_ref().map(|scene| {
-                format!(
-                    "Selected {} faces",
-                    self.edit_mode.visible_selected_face_count(scene)
+                self.locale.tr_plural(
+                    "edit-selected-faces",
+                    &[],
+                    &[("faces", self.edit_mode.visible_selected_face_count(scene))],
                 )
             });
             ctx.request_repaint();
@@ -84,7 +86,7 @@ impl OccluViewApp {
         let Some(scene) = self.scene.as_ref() else {
             return;
         };
-        let state = mesh_editor_overlay::MeshEditorPanelState {
+        let panel = editor::MeshEditorPanelState {
             selected_face_count: self.edit_mode.visible_selected_face_count(scene),
             can_undo: self.edit_mode.undo_layer_id().is_some(),
             can_redo: self.edit_mode.redo_layer_id().is_some(),
@@ -96,7 +98,7 @@ impl OccluViewApp {
             busy: self.edit_mode.is_busy(),
             active_tab: self.editor_tab,
         };
-        let Some(action) = mesh_editor_overlay::show(ctx, viewport_rect, state) else {
+        let Some(action) = editor::show(ctx, viewport_rect, panel, &self.locale) else {
             return;
         };
 
@@ -142,7 +144,7 @@ impl OccluViewApp {
             .collect::<Vec<_>>();
         let target_layers = selected_layers;
         if target_layers.is_empty() {
-            self.status_message = Some("Select mesh faces first".to_string());
+            self.status_message = Some(self.locale.tr("edit-select-faces-first"));
             return;
         }
         let ids_before = scene
@@ -152,7 +154,7 @@ impl OccluViewApp {
             .collect::<Vec<_>>();
         let mut draft = scene.as_ref().clone();
         let close_holes_limit_mm = (layer_action == LayerContextAction::CloseHoles)
-            .then(|| mesh_editor_overlay::close_holes_limit_mm(ctx))
+            .then(|| editor::close_holes_limit_mm(ctx))
             .flatten();
         match apply_visible_selected_face_mesh_edit_action_with_limit(
             &mut draft,
@@ -171,24 +173,30 @@ impl OccluViewApp {
                 for layer_id in target_layers.iter().chain(&spawned) {
                     self.mark_mesh_edits_unsaved(*layer_id);
                 }
-                self.status_message = Some(format!(
-                    "{} on {} visible layer{}",
-                    batch_action_label(layer_action),
-                    target_layers.len(),
-                    if target_layers.len() == 1 { "" } else { "s" }
+                self.status_message = Some(self.locale.tr_plural(
+                    "batchedit-status",
+                    &[(
+                        "label",
+                        &super::app_layer_edits::whole_mesh::batch_action_label(
+                            layer_action,
+                            &self.locale,
+                        ),
+                    )],
+                    &[("n", target_layers.len())],
                 ));
             }
             Ok(_) => {
-                self.status_message = Some(
-                    "No changes: refine the selection; hidden layers stay untouched".to_string(),
-                );
+                self.status_message = Some(self.locale.tr("edit-no-changes-hidden"));
                 ctx.request_repaint();
             }
             Err(error) => {
-                let summary = format!("Could not edit selection: {error}");
+                let summary = self.locale.tr_with(
+                    "edit-apply-failed-summary",
+                    &[("detail", &error.to_string())],
+                );
                 self.status_message = Some(summary.clone());
                 self.app_error = Some(AppErrorDialog {
-                    title: "Could not edit selection".to_string(),
+                    title: self.locale.tr("edit-apply-failed-title"),
                     summary,
                     details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
                 });
@@ -211,11 +219,9 @@ impl OccluViewApp {
         self.mesh_selection_drag = None;
         self.needs_render = true;
         self.status_message = Some(if self.edit_mode.lasso_armed() {
-            "Lasso armed: click or drag to outline; Enter, double-click, \
-             or click the start closes"
-                .to_string()
+            self.locale.tr("sculpt-lasso-armed")
         } else {
-            "Lasso disarmed".to_string()
+            self.locale.tr("sculpt-lasso-off")
         });
         ctx.request_repaint();
     }
@@ -235,9 +241,9 @@ impl OccluViewApp {
         self.mesh_selection_drag = None;
         self.needs_render = true;
         self.status_message = Some(if self.edit_mode.object_mode() {
-            "Object select: click an object to select it whole".to_string()
+            self.locale.tr("sculpt-object-on")
         } else {
-            "Object select off".to_string()
+            self.locale.tr("sculpt-object-off")
         });
         ctx.request_repaint();
     }
@@ -286,7 +292,7 @@ impl OccluViewApp {
                 {
                     self.selection_overlay_dirty = true;
                     self.needs_render = true;
-                    self.status_message = Some("Selection cleared".to_string());
+                    self.status_message = Some(self.locale.tr("sculpt-selection-cleared"));
                     ctx.request_repaint();
                 }
                 true
@@ -310,9 +316,9 @@ impl OccluViewApp {
                 {
                     self.needs_render = true;
                     self.status_message = Some(if self.edit_mode.through_mesh() {
-                        "Through-mesh selection".to_string()
+                        self.locale.tr("sculpt-through-on")
                     } else {
-                        "Surface selection".to_string()
+                        self.locale.tr("sculpt-through-off")
                     });
                     ctx.request_repaint();
                 }
@@ -347,9 +353,14 @@ impl OccluViewApp {
             let faces = self.edit_mode.visible_selected_face_count(scene);
             let layers = self.edit_mode.visible_selected_layer_count(scene);
             if layers > 1 {
-                format!("Selected {faces} faces across {layers} layers")
+                self.locale.tr_plural(
+                    "edit-selected-faces-across",
+                    &[],
+                    &[("faces", faces), ("layers", layers)],
+                )
             } else {
-                format!("Selected {faces} faces")
+                self.locale
+                    .tr_plural("edit-selected-faces", &[], &[("faces", faces)])
             }
         });
     }
@@ -361,7 +372,7 @@ impl OccluViewApp {
         self.commit_sculpt_stroke(ctx);
         if self.sculpt.worker_has_pending_work() {
             self.sculpt.finish_requested = true;
-            self.status_message = Some("Finishing sculpt stroke...".to_string());
+            self.status_message = Some(self.locale.tr("sculpt-finishing"));
             ctx.request_repaint();
             return;
         }
@@ -374,7 +385,7 @@ impl OccluViewApp {
         self.mesh_selection_drag = None;
         self.selection_overlay_dirty = true;
         self.needs_render = true;
-        self.status_message = Some("Mesh Editing session applied".to_string());
+        self.status_message = Some(self.locale.tr("session-applied"));
         ctx.request_repaint();
     }
 
@@ -392,7 +403,7 @@ impl OccluViewApp {
             return;
         };
         self.commit_scene_draft(current_scene.as_deref(), baseline, ctx);
-        self.status_message = Some("Mesh Editing session reverted".to_string());
+        self.status_message = Some(self.locale.tr("session-reverted"));
     }
 
     /// Undo (`redo == false`) or redo (`redo == true`) the last mesh edit and
@@ -405,7 +416,7 @@ impl OccluViewApp {
         self.commit_sculpt_stroke(ctx);
         if self.sculpt.worker_has_pending_work() {
             self.sculpt.pending_history = Some(redo);
-            self.status_message = Some("Finishing sculpt before history change...".to_string());
+            self.status_message = Some(self.locale.tr("sculpt-finishing-history"));
             ctx.request_repaint();
             return;
         }
@@ -430,7 +441,7 @@ impl OccluViewApp {
         // Here rather than at the call sites, so Ctrl+Z gets it too: history
         // can revert the pose an align overlay describes, and the shortcut is
         // live the whole time Align Scans is open.
-        self.forget_align_fit("Stepped through history");
+        self.forget_align_fit(&self.locale.tr("align-status-stepped"));
     }
 
     /// Swap the draft scene in as the live scene (or clear it, if the draft
@@ -669,7 +680,7 @@ impl OccluViewApp {
             }
             LassoEvent::Drop => {
                 self.mesh_selection_drag = None;
-                self.status_message = Some("Lasso outline dropped".to_string());
+                self.status_message = Some(self.locale.tr("lasso-dropped"));
                 ctx.request_repaint();
                 true
             }
@@ -680,7 +691,7 @@ impl OccluViewApp {
                     && (enter || double_clicked)
                     && point_count < lasso_capture::MIN_LASSO_POINTS
                 {
-                    self.status_message = Some("Lasso needs at least 3 points".to_string());
+                    self.status_message = Some(self.locale.tr("lasso-needs-points"));
                 }
                 if outline_active {
                     // Keep the rubber-band segment tracking the live cursor.
@@ -730,7 +741,7 @@ impl OccluViewApp {
         pan_drag_active: bool,
     ) {
         let drag_allowed = self.edit_mode.has_active_session()
-            && self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
+            && self.editor_tab == editor::EditorTab::EditMesh
             && !pan_drag_active
             && !ctx.input(|input| {
                 input.pointer.button_down(egui::PointerButton::Secondary)
@@ -753,9 +764,7 @@ impl OccluViewApp {
         ctx: &egui::Context,
         response: &egui::Response,
     ) -> bool {
-        if !self.edit_mode.has_active_session()
-            || self.editor_tab != mesh_editor_overlay::EditorTab::EditMesh
-        {
+        if !self.edit_mode.has_active_session() || self.editor_tab != editor::EditorTab::EditMesh {
             return false;
         }
         let camera = self.camera;
@@ -785,16 +794,5 @@ impl OccluViewApp {
         self.update_visible_selection_status();
         ctx.request_repaint();
         true
-    }
-}
-
-fn batch_action_label(action: LayerContextAction) -> &'static str {
-    match action {
-        LayerContextAction::CloseHoles => "Closed safe interior holes",
-        LayerContextAction::DeleteSelectedFaces => "Deleted selection",
-        LayerContextAction::CropToSelectedFaces => "Cropped selection",
-        LayerContextAction::CutSelectionToNewLayer => "Cut selection",
-        LayerContextAction::SeparateSelectedComponents => "Separated selection",
-        _ => "Edited selection",
     }
 }

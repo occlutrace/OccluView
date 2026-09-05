@@ -75,6 +75,7 @@ impl OccluViewApp {
                 drop_pending: &mut drop_pending,
                 tab: &mut tab,
             },
+            &self.locale,
         );
 
         let mut mask_command = None;
@@ -85,6 +86,7 @@ impl OccluViewApp {
                 &mut brush,
                 self.align_marked_fraction(),
                 !busy,
+                &self.locale,
             ) {
                 Some(crate::align_panel_brush::BrushPanelAction::Mask(command)) => {
                     mask_command = Some(command);
@@ -97,7 +99,7 @@ impl OccluViewApp {
 
         if drop_pending {
             self.align.tool.back();
-            self.align.status = Some("Half-placed arrow dropped".into());
+            self.align.status = Some(self.locale.tr("align-status-half-dropped"));
         }
         self.align.settings = settings;
         self.align.constraint = constraint;
@@ -158,10 +160,18 @@ impl OccluViewApp {
         // The markings belong to surfaces, not to roles.
         self.align.markings.swap_sides();
         // A map is a measurement of one scan against the other, in that order.
-        self.forget_align_fit("Pair turned around");
+        self.forget_align_fit(&self.locale.tr("align-status-turned"));
         let named = self.align_roles().map_or_else(
-            || "Pair turned around".to_owned(),
-            |roles| format!("{} moves now, {} stays put", roles.moving, roles.fixed),
+            || self.locale.tr("align-status-turned"),
+            |roles| {
+                self.locale.tr_with(
+                    "align-roles-swapped",
+                    &[
+                        ("moving", roles.moving.as_str()),
+                        ("fixed", roles.fixed.as_str()),
+                    ],
+                )
+            },
         );
         self.align.status = Some(named);
     }
@@ -171,8 +181,8 @@ impl OccluViewApp {
     fn clear_align_pair(&mut self) {
         self.align.tool.clear();
         self.clear_align_mask();
-        self.forget_align_fit("Pair cleared");
-        self.align.status = Some("Click a point on the scan that should move".into());
+        self.forget_align_fit(&self.locale.tr("align-status-cleared"));
+        self.align.status = Some(self.locale.tr("align-status-click-moving"));
     }
 
     /// The operator's dental CAD "Back": drop the half-placed point, else the
@@ -184,9 +194,11 @@ impl OccluViewApp {
         self.align.rejected.clear();
         self.align.status = Some(match self.align.tool.pairs().len() {
             0 if self.align.tool.pending().is_none() => {
-                "Click alternating points at the same positions on the two meshes".to_owned()
+                self.locale.tr("align-status-click-alternate")
             }
-            remaining => format!("Arrow removed — {remaining} left"),
+            remaining => self
+                .locale
+                .tr_plural("align-arrow-removed", &[], &[("n", remaining)]),
         });
         true
     }

@@ -77,9 +77,9 @@ fn toolbar_and_about_are_operator_focused() {
         "toolbar actions should remain direct rather than move into nested menus"
     );
     assert!(
-        toolbar.contains("toolbar_toggle(") && toolbar.contains("Cut view"),
+        toolbar.contains("toolbar_toggle(") && toolbar.contains("toolbar-cut-label"),
         "toolbar should expose the real actions as direct toggles with \
-         icon-set glyphs"
+         icon-set glyphs (labels resolve through the locale catalog)"
     );
     assert!(
         !toolbar.contains("Save edits"),
@@ -90,7 +90,7 @@ fn toolbar_and_about_are_operator_focused() {
         "the screenshot action was removed; the toolbar should not reference it"
     );
     assert!(
-        toolbar.contains("Recent files")
+        toolbar.contains("toolbar-recent-hint")
             && toolbar.contains("show_recent_files_popup")
             && repo_source_file("src/app/app_recent_popup.rs").contains("Clear recent"),
         "recent scans should stay reachable from a slim dropdown beside Open"
@@ -110,12 +110,14 @@ fn toolbar_and_about_are_operator_focused() {
         "the viewport carries no version watermark"
     );
     let settings = repo_source_file("src/app/app_settings_window.rs");
+    let settings_panel = repo_source_file("src/app/app_settings_panel.rs");
     let modal_surface = repo_source_file("src/modal_surface.rs");
     assert!(
-        dialogs.contains("AppIcon::Settings")
-            && dialogs.contains("Open preferences")
+        settings_panel.contains("AppIcon::Settings")
+            && settings_panel.contains("toolbar-settings-hint")
             && toolbar.contains("self.information_dialog = InformationDialog::None;"),
-        "the toolbar should open preferences from the settings button"
+        "the toolbar should open preferences from the settings button \
+         (tooltip resolves through the locale catalog)"
     );
     assert!(
         modal_surface.contains("egui::Area::new(backdrop_id)")
@@ -325,7 +327,7 @@ fn app_errors_are_copyable_dialogs_not_only_status_text() {
         "loader failures must open the error dialog, not only write status text"
     );
     assert!(
-        render_source.contains("title: \"Could not render scene\".to_string()"),
+        render_source.contains("render-failed-title"),
         "render failures should open a render-specific error dialog"
     );
     assert!(
@@ -346,7 +348,7 @@ fn unsaved_mesh_edits_guard_the_window_close() {
         "closing with unsaved mesh edits must be intercepted, not silently lost"
     );
     assert!(
-        guard.contains("Close without saving") && guard.contains("Cancel"),
+        guard.contains("guard-close-destructive") && guard.contains("GuardDialogAction::Cancel"),
         "the close guard must offer an explicit choice"
     );
 

@@ -126,6 +126,15 @@ pub(crate) struct OccluViewApp {
     /// Operator preferences, loaded once at startup and saved on change.
     pub(super) settings: crate::app_settings::Settings,
     pub(super) settings_persistence: SettingsPersistence,
+    /// UI language state: sidecar preference + one catalog generation per
+    /// frame. Built once in `new()` from the sidecar and the OS list.
+    pub(super) locale: crate::i18n::LocaleManager,
+    /// Retry state for the language sidecar, mirroring settings persistence.
+    pub(super) language_persistence: SettingsPersistence,
+    /// Whether the native window title was synced to the catalog yet.
+    /// Sent once on the first frame (the manifest title is English) and on
+    /// every manual switch afterwards.
+    pub(super) native_title_sent: bool,
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
@@ -219,6 +228,10 @@ impl MeshSelectionDrag {
 pub(super) struct AppErrorDialog {
     pub(super) title: String,
     pub(super) summary: String,
+    /// Support copy-paste payload: locale-neutral English by design, like
+    /// `repair_report::copy_details`. Headings stay fixed so tickets share
+    /// one language; `title`/`summary` carry the localized explanation and
+    /// raw payloads stay verbatim inside.
     pub(super) details: String,
 }
 
@@ -291,6 +304,17 @@ impl OccluViewApp {
         startup: StartupHandles,
     ) -> Self {
         let settings = crate::app_settings::Settings::load();
+        let state_dir = crate::app_paths::app_state_dir();
+        let (locale, locale_snapshot) = crate::i18n::LocaleManager::startup(
+            state_dir.as_deref(),
+            &crate::i18n::os::SystemLocaleSource,
+        );
+        if let Some(diagnostic) = locale_snapshot.diagnostic {
+            tracing::warn!(
+                ?diagnostic,
+                "language preference sidecar was unusable; using Auto/English"
+            );
+        }
         let last_export_dir = if settings.remember_export_dir {
             settings.last_export_dir.as_ref().map(PathBuf::from)
         } else {
@@ -308,6 +332,9 @@ impl OccluViewApp {
             recent_files: load_recent_files(settings.recent_files_limit()),
             settings,
             settings_persistence: SettingsPersistence::default(),
+            locale,
+            language_persistence: SettingsPersistence::default(),
+            native_title_sent: false,
             information_dialog: InformationDialog::default(),
             camera: None,
             live_viewport,
@@ -524,6 +551,15 @@ impl OccluViewApp {
         save_recent_files(&self.recent_files);
     }
 
+    /// Push the catalog window title to the native window once per
+    /// language generation. eframe applies `ViewportCommand::Title` live.
+    fn sync_native_title(&mut self, ctx: &egui::Context) {
+        if !self.native_title_sent {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.locale.window_title()));
+            self.native_title_sent = true;
+        }
+    }
+
     fn persist_settings_if_due(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         if self.settings_persistence.should_attempt(now) {
@@ -536,7 +572,33 @@ impl OccluViewApp {
                 }
             }
         }
-        if let Some(delay) = self.settings_persistence.retry_after(now) {
+        // The language sidecar persists on the same rhythm, from the same
+        // frame pump, but through its own file — an old binary rewriting
+        // settings.json can never erase the language choice.
+        if self.language_persistence.should_attempt(now) {
+            match crate::app_paths::app_state_dir() {
+                Some(dir) => {
+                    match crate::i18n::preference::save(&dir, &self.locale.snapshot().preference) {
+                        Ok(()) => self.language_persistence.record_success(),
+                        Err(error) => {
+                            tracing::warn!(%error, "could not persist language preference");
+                            self.language_persistence
+                                .record_failure(now, error.to_string());
+                        }
+                    }
+                }
+                None => self
+                    .language_persistence
+                    .record_failure(now, "application state directory is unavailable".to_owned()),
+            }
+        }
+        if let Some(delay) = self
+            .settings_persistence
+            .retry_after(now)
+            .into_iter()
+            .chain(self.language_persistence.retry_after(now))
+            .min()
+        {
             ctx.request_repaint_after(delay);
         }
     }
@@ -589,6 +651,7 @@ impl OccluViewApp {
 
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_native_title(ctx);
         self.persist_settings_if_due(ctx);
         self.sync_sculpt_preferences(ctx);
         self.expire_status_message(ctx);
@@ -630,8 +693,8 @@ impl eframe::App for OccluViewApp {
         self.poll_gpu_errors();
         self.show_error_dialog(&ctx);
         self.show_information_dialog(&ctx);
-        self.repair_report.ui(&ctx);
-        self.update_notice.show(&ctx);
+        self.repair_report.ui(&ctx, &self.locale);
+        self.update_notice.show(&ctx, &self.locale);
         self.show_unsaved_close_guard(&ctx);
         self.guard_pending_replace_open(&ctx);
     }

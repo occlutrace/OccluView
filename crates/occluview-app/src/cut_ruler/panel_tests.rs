@@ -58,6 +58,7 @@ fn run_panel_frame(
     };
     let mut captured = None;
     ctx.run_ui(raw, |ui| {
+        let locale = crate::i18n::LocaleManager::for_tests();
         let render = SectionRender {
             mode: SectionDisplay::Lines,
             measure_mode: SliceMeasureMode::Distance,
@@ -66,7 +67,14 @@ fn run_panel_frame(
             section: None,
             color_for: |_id: SceneMeshId| ui_theme::text(),
         };
-        captured = Some(show_section_panel(ui, vp, flat_cam(), ruler, render));
+        captured = Some(show_section_panel(
+            ui,
+            vp,
+            flat_cam(),
+            ruler,
+            render,
+            &locale,
+        ));
     })
     .drop_without_applying_deltas();
     captured.expect("panel ran")

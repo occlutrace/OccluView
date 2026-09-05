@@ -107,12 +107,13 @@ impl OccluViewApp {
             // duration of a hand-drag the colours stayed welded to the surface
             // at distances that were no longer true, which reads as a heatmap
             // that agrees with wherever the operator drags it.
-            self.forget_align_fit("Moving by hand");
+            self.forget_align_fit(&self.locale.tr("align-status-moving-hand"));
             // Said at the START as well as the end, because this is the moment
             // the operator can still let go and try again if they grabbed the
             // arch they did not mean to.
             if let Some(name) = self.layer_display_name(hit.layer_id) {
-                self.align.status = Some(format!("Moving {name} by hand"));
+                self.align.status =
+                    Some(self.locale.tr_with("align-drag-moving", &[("name", &name)]));
             }
         }
 
@@ -220,11 +221,7 @@ impl OccluViewApp {
             self.edit_mode
                 .begin_scene_edit(&before, drag.layer, EditModeCommand::MoveLayer)
         else {
-            self.align.status = Some(
-                "Moved by hand, but this step could not be added to the history — \
-                 Ctrl+Z will not undo it"
-                    .into(),
-            );
+            self.align.status = Some(self.locale.tr("align-drag-unrecorded"));
             return false;
         };
         let mut after = before;
@@ -248,11 +245,12 @@ impl OccluViewApp {
         let moved_mm = f64::from((current.translation - drag.start.translation).length());
         let name = self
             .layer_display_name(drag.layer)
-            .unwrap_or_else(|| "The scan".to_owned());
+            .unwrap_or_else(|| self.locale.tr("align-status-one-scan"));
         // Teardown first so its status cannot overwrite the movement result.
-        self.forget_align_fit("Moved by hand");
-        self.align.status = Some(format!(
-            "{name} moved {moved_mm:.2} mm by hand (Ctrl+Z undoes)"
+        self.forget_align_fit(&self.locale.tr("align-status-moved-hand"));
+        self.align.status = Some(self.locale.tr_with(
+            "align-drag-moved",
+            &[("name", &name), ("moved", &format!("{moved_mm:.2}"))],
         ));
         true
     }

@@ -1,0 +1,110 @@
+//! Empty-viewport surface and drag-hover feedback: what the operator sees
+//! before any scene exists, and how a file drag over the window answers.
+
+use super::{egui, OccluViewApp};
+
+impl OccluViewApp {
+    /// While files hover anywhere over the window, switch to the copy cursor so
+    /// a drag is answered with "this will open" before the operator lets go.
+    /// The viewport itself stays visually clean; the old full-surface stroke
+    /// made a permanent-looking strip around the 3D canvas.
+    pub(super) fn set_drop_hover_cursor_if_hovering(ctx: &egui::Context) {
+        let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
+        if !hovering {
+            return;
+        }
+        ctx.set_cursor_icon(egui::CursorIcon::Copy);
+    }
+
+    /// The viewport's empty state: a centered call to action over the bare
+    /// clear color. Clicking it opens the same native dialog as the toolbar
+    /// Open button; the Ctrl+O hint is real — it is the one wired shortcut.
+    pub(super) fn show_empty_state(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        ctx: &egui::Context,
+    ) {
+        if response.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        // A failed startup load can leave the error dialog up over the empty
+        // viewport; the guard owns the pointer until it is dismissed.
+        if !self.modal_dialog_open() && response.clicked() {
+            self.open_dialog_requested = true;
+            ctx.request_repaint();
+        }
+        let card_rect =
+            egui::Rect::from_center_size(response.rect.center(), egui::vec2(340.0, 120.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(card_rect), |ui| {
+            ui.vertical_centered(|ui| {
+                let (icon_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::hover());
+                crate::icons::paint(
+                    ui.painter(),
+                    icon_rect,
+                    crate::icons::AppIcon::Open,
+                    crate::ui_theme::text_weak(),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(self.locale.text("empty-open-file"))
+                        .color(crate::ui_theme::text())
+                        .size(14.0)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(self.locale.text("empty-formats-hint"))
+                        .color(crate::ui_theme::text_weak())
+                        .size(11.5),
+                );
+                ui.label(
+                    egui::RichText::new("Ctrl+O")
+                        .color(crate::ui_theme::text_muted())
+                        .size(10.5),
+                );
+            });
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_hover_keeps_drop_cursor_without_painting_a_viewport_frame() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                hovered_files: vec![egui::HoveredFile::default()],
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                OccluViewApp::set_drop_hover_cursor_if_hovering(&ctx);
+            },
+        );
+
+        let cursor_icon = output.platform_output.cursor_icon;
+        let paints_viewport_frame = output
+            .shapes
+            .iter()
+            .any(|clipped| matches!(clipped.shape, egui::epaint::Shape::Rect(_)));
+        output.drop_without_applying_deltas();
+
+        assert_eq!(
+            cursor_icon,
+            egui::CursorIcon::Copy,
+            "file hover must still advertise an open/drop action"
+        );
+        assert!(
+            !paints_viewport_frame,
+            "file hover must not paint a border around the whole viewport"
+        );
+    }
+}

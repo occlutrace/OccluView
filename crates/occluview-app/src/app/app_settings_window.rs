@@ -16,8 +16,10 @@ impl OccluViewApp {
         let Some(action) = show_settings_popup(
             trigger,
             &self.settings,
+            &self.locale,
             self.update_notice.check_status(),
             self.settings_persistence.error(),
+            self.language_persistence.error(),
         ) else {
             return;
         };
@@ -97,6 +99,19 @@ impl OccluViewApp {
                 self.settings.remember_sculpt_brush = enabled;
                 self.settings_persistence.mark_dirty();
             }
+            SettingsAction::SetLanguage(preference) => {
+                self.locale.set_preference(preference);
+                self.language_persistence.mark_dirty();
+                // Re-arm the once-per-generation native title: the next
+                // update pushes `ViewportCommand::Title` live, no restart.
+                self.native_title_sent = false;
+            }
+            SettingsAction::ApplySystemLanguage => {
+                self.locale
+                    .reapply_auto(&crate::i18n::os::SystemLocaleSource);
+                self.language_persistence.mark_dirty();
+                self.native_title_sent = false;
+            }
             SettingsAction::CheckForUpdates => self.update_notice.request_check(&trigger.ctx),
             SettingsAction::OpenAbout => {
                 egui::Popup::close_id(&trigger.ctx, settings_popup_id());
@@ -126,33 +141,51 @@ impl OccluViewApp {
                         ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
                     }
                     ui.label(
-                        egui::RichText::new("OccluView")
+                        egui::RichText::new(self.locale.text("about-title"))
                             .size(19.0)
                             .strong()
                             .color(ui_theme::text()),
                     );
                     ui.label(
-                        egui::RichText::new("Mesh Repair · Mesh Editing for dental CAD")
+                        egui::RichText::new(self.locale.text("about-tagline"))
                             .size(12.0)
                             .color(ui_theme::text_weak()),
                     );
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
-                            .size(11.0)
-                            .color(ui_theme::text_muted()),
+                        egui::RichText::new(self.locale.text_with(
+                            "about-version",
+                            Some(&crate::i18n::catalog::args(&[(
+                                "version",
+                                env!("CARGO_PKG_VERSION"),
+                            )])),
+                        ))
+                        .size(11.0)
+                        .color(ui_theme::text_muted()),
                     );
                 });
 
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(4.0);
+                // Canonical link labels "Website", "Source",
+                // "Third-party licenses" pinned by source guards.
                 centered_about_row(ui, ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP, |ui| {
                     ui.spacing_mut().item_spacing.x = ABOUT_ACTION_GAP;
-                    if about_link(ui, ABOUT_ACTION_WIDTH, AppIcon::Globe, "Website") {
+                    if about_link(
+                        ui,
+                        ABOUT_ACTION_WIDTH,
+                        AppIcon::Globe,
+                        &self.locale.tr("about-website"),
+                    ) {
                         open_url = Some("https://occlutrace.ai");
                     }
-                    if about_link(ui, ABOUT_ACTION_WIDTH, AppIcon::Github, "Source") {
+                    if about_link(
+                        ui,
+                        ABOUT_ACTION_WIDTH,
+                        AppIcon::Github,
+                        &self.locale.tr("about-source"),
+                    ) {
                         open_url = Some("https://github.com/occlutrace/OccluView");
                     }
                 });
@@ -162,7 +195,7 @@ impl OccluViewApp {
                         ui,
                         ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP,
                         AppIcon::Licenses,
-                        "Third-party licenses",
+                        &self.locale.tr("about-licenses"),
                     ) {
                         open_third_party = true;
                     }
@@ -170,12 +203,12 @@ impl OccluViewApp {
                 ui.add_space(2.0);
                 centered_about_row(ui, ABOUT_FOOTER_WIDTH, |ui| {
                     ui.label(
-                        egui::RichText::new("Apache License 2.0")
+                        egui::RichText::new(self.locale.tr("about-license-kind"))
                             .size(10.5)
                             .color(ui_theme::text_muted()),
                     );
                     ui.add_space(10.0);
-                    if ui.button("Close").clicked() {
+                    if ui.button(self.locale.tr("help-close")).clicked() {
                         close = true;
                     }
                 });
@@ -260,9 +293,8 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::app_dialogs::{
-        recent_files_popup_id, show_recent_files_popup, show_settings_toolbar_toggle,
-    };
+    use crate::app::app_dialogs::{recent_files_popup_id, show_recent_files_popup};
+    use crate::app::app_settings_panel::show_settings_toolbar_toggle;
     use crate::app_settings::Settings;
     use crate::recent_files::RecentFiles;
     use crate::update_notice::UpdateCheckStatus;
@@ -282,6 +314,15 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> anyhow::Result<ToolbarFrame> {
+        let locale = crate::i18n::LocaleManager::for_tests();
+        run_toolbar_frame_in(ctx, events, &locale)
+    }
+
+    fn run_toolbar_frame_in(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        locale: &crate::i18n::LocaleManager,
+    ) -> anyhow::Result<ToolbarFrame> {
         let input = egui::RawInput {
             screen_rect: Some(test_screen()),
             safe_area_insets: Some(egui::SafeAreaInsets(egui::Margin::same(4).into())),
@@ -298,19 +339,21 @@ mod tests {
                 .exact_size(30.0)
                 .show(ui, |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let settings = show_settings_toolbar_toggle(ui, true);
+                        let settings = show_settings_toolbar_toggle(ui, true, locale);
                         settings_trigger = Some(settings.rect);
                         action = show_settings_popup(
                             &settings,
                             &Settings::default(),
+                            locale,
                             &UpdateCheckStatus::Idle,
+                            None,
                             None,
                         );
 
                         let recent_trigger_response =
                             ui.add(egui::Button::new("Recent").min_size(egui::vec2(64.0, 22.0)));
                         recent_trigger = Some(recent_trigger_response.rect);
-                        let _ = show_recent_files_popup(&recent_trigger_response, &recent);
+                        let _ = show_recent_files_popup(&recent_trigger_response, &recent, locale);
                     });
                 });
         });
@@ -674,6 +717,63 @@ mod tests {
             }),
             "About modal kept changing size/position: {stable_tail:?}"
         );
+        Ok(())
+    }
+
+    /// Wireframe screenshots of the settings popup in every embedded locale
+    /// for human visual review (`target/i18n-shots/`, never committed).
+    #[test]
+    fn settings_popup_wireframes_for_visual_review() -> anyhow::Result<()> {
+        use crate::i18n::catalog::EMBEDDED_TAGS;
+        use crate::i18n::preference::UiLanguagePreference;
+
+        for tag in EMBEDDED_TAGS {
+            let ctx = egui::Context::default();
+            let mut manager = crate::i18n::LocaleManager::for_tests();
+            if *tag != "en" {
+                manager.set_preference(UiLanguagePreference::Explicit(tag));
+            }
+            // Open the popup through the real toggle: press, release.
+            let initial = run_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
+            let center = initial.settings_trigger.center();
+            let press = |position| {
+                run_toolbar_frame_in(
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(position),
+                        pointer_button(position, true),
+                    ],
+                    &manager,
+                )
+            };
+            let release = |position| {
+                run_toolbar_frame_in(
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(position),
+                        pointer_button(position, false),
+                    ],
+                    &manager,
+                )
+            };
+            let _ = press(center)?;
+            let _ = release(center)?;
+            // Two more frames: popup open, then scroll content layout.
+            let _ = run_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
+            // Top slice only: below-fold shapes are culled headless and
+            // wheel scrolling proved flaky in the harness (real users
+            // scroll normally). The language selector — the new surface —
+            // gets a dedicated direct render with its dropdown open below.
+            let frame = run_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
+            let path = crate::i18n::shots::save_shot_with_texts(
+                &format!("settings-{tag}"),
+                &ctx,
+                frame.output,
+                500,
+                384,
+            );
+            assert!(path.is_file(), "shot missing: {}", path.display());
+        }
         Ok(())
     }
 }

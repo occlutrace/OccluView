@@ -29,28 +29,29 @@ pub(crate) struct AlignRoles {
 }
 
 impl AlignRoles {
-    /// The sentence for the panel.
-    pub(crate) fn sentence(&self) -> String {
+    /// The sentence for the panel. Names stay raw data; only the frame
+    /// words resolve through the catalog.
+    pub(crate) fn sentence(&self, locale: &crate::i18n::LocaleManager) -> String {
         let moving = shorten(&self.moving);
         let fixed = shorten(&self.fixed);
-        if self.implied {
-            format!("{moving} → {fixed} (a guess)")
+        let key = if self.implied {
+            "align-pair-guessed"
         } else {
-            format!("{moving} → {fixed}")
-        }
+            "align-pair-decided"
+        };
+        locale.tr_with(key, &[("moving", &moving), ("fixed", &fixed)])
     }
 
     /// What the row explains on hover.
-    pub(crate) fn hint(&self) -> String {
-        let head = if self.implied {
-            "Nothing clicked yet, so the tool guessed from the order the files were opened. Your first click decides it: "
+    pub(crate) fn hint(&self, locale: &crate::i18n::LocaleManager) -> String {
+        let key = if self.implied {
+            "align-pair-hint-guessed"
         } else {
-            ""
+            "align-pair-hint-decided"
         };
-        format!(
-            "{head}{} moves, {} stays put",
-            self.moving.trim(),
-            self.fixed.trim()
+        locale.tr_with(
+            key,
+            &[("moving", self.moving.trim()), ("fixed", self.fixed.trim())],
         )
     }
 }
@@ -73,7 +74,12 @@ fn shorten(name: &str) -> String {
 }
 
 /// Draw the row. Returns whether the operator asked to turn the pair around.
-pub(crate) fn show(ui: &mut egui::Ui, roles: Option<&AlignRoles>, enabled: bool) -> bool {
+pub(crate) fn show(
+    ui: &mut egui::Ui,
+    roles: Option<&AlignRoles>,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> bool {
     let Some(roles) = roles else {
         return false;
     };
@@ -86,14 +92,16 @@ pub(crate) fn show(ui: &mut egui::Ui, roles: Option<&AlignRoles>, enabled: bool)
             egui::vec2(text_width, crate::align_panel::CHIP_HEIGHT),
             |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(roles.sentence()).size(11.5).color(
-                        if roles.implied {
-                            ui_theme::text_muted()
-                        } else {
-                            ui_theme::text()
-                        },
-                    ))
-                    .on_hover_text(roles.hint());
+                    ui.label(
+                        egui::RichText::new(roles.sentence(locale))
+                            .size(11.5)
+                            .color(if roles.implied {
+                                ui_theme::text_muted()
+                            } else {
+                                ui_theme::text()
+                            }),
+                    )
+                    .on_hover_text(roles.hint(locale));
                 });
             },
         );
@@ -101,11 +109,11 @@ pub(crate) fn show(ui: &mut egui::Ui, roles: Option<&AlignRoles>, enabled: bool)
             ui,
             button_width,
             Some(AppIcon::Redo),
-            "Swap",
+            &locale.tr("align-pair-swap"),
             enabled,
             false,
         )
-        .on_hover_text("Fit the other way round — the arrows move with it")
+        .on_hover_text(locale.tr("align-pair-swap-hint"))
         .clicked();
     });
     ui.add_space(2.0);
@@ -115,6 +123,10 @@ pub(crate) fn show(ui: &mut egui::Ui, roles: Option<&AlignRoles>, enabled: bool)
 #[cfg(test)]
 mod tests {
     use super::{shorten, AlignRoles, NAME_BUDGET};
+
+    fn english() -> crate::i18n::LocaleManager {
+        crate::i18n::LocaleManager::for_tests()
+    }
 
     fn roles(implied: bool) -> AlignRoles {
         AlignRoles {
@@ -127,20 +139,25 @@ mod tests {
     /// The direction is stated in the direction the fit runs, both ways round.
     #[test]
     fn the_row_names_the_scan_that_moves_first() {
-        assert_eq!(roles(false).sentence(), "lower.stl → upper.stl");
-        assert!(roles(false).hint().starts_with("lower.stl moves"));
+        // Names interpolate as data with Fluent bidi isolation marks.
+        assert_eq!(
+            roles(false).sentence(&english()),
+            "\u{2068}lower.stl\u{2069} → \u{2068}upper.stl\u{2069}"
+        );
+        assert!(roles(false).hint(&english()).contains("lower.stl"));
+        assert!(roles(false).hint(&english()).contains("moves"));
     }
 
     /// A guess says it is a guess. It used to say nothing at all, and then the
     /// operator learnt about it from an arch that jumped the wrong way.
     #[test]
     fn a_guess_admits_to_being_one() {
-        let guessed = roles(true).sentence();
+        let guessed = roles(true).sentence(&english());
         assert!(
             guessed.contains("guess"),
             "the operator has to be told this is not their choice yet, got {guessed}"
         );
-        assert!(roles(true).hint().contains("first click decides"));
+        assert!(roles(true).hint(&english()).contains("first click decides"));
     }
 
     /// Two scans from one case differ at the END of the name, so that is the

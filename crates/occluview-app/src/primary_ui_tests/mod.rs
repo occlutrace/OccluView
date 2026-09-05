@@ -9,6 +9,7 @@ mod chrome;
 mod documents;
 mod loading;
 mod platform;
+mod presentation_sinks;
 mod source_tree;
 mod tools;
 mod viewport;
