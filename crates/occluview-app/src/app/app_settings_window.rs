@@ -103,13 +103,13 @@ impl OccluViewApp {
             }
             SettingsAction::OpenAbout => {
                 egui::Popup::close_id(&trigger.ctx, settings_popup_id());
-                self.information_dialog = InformationDialog::About;
+                self.ui.information_dialog = InformationDialog::About;
             }
         }
     }
 
     pub(super) fn show_about_dialog(&mut self, ctx: &egui::Context) {
-        if self.information_dialog != InformationDialog::About {
+        if self.ui.information_dialog != InformationDialog::About {
             return;
         }
 
@@ -189,9 +189,9 @@ impl OccluViewApp {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
         if open_third_party {
-            self.information_dialog = InformationDialog::ThirdPartyNotices;
+            self.ui.information_dialog = InformationDialog::ThirdPartyNotices;
         } else if close || modal_response.should_close() {
-            self.information_dialog = InformationDialog::None;
+            self.ui.information_dialog = InformationDialog::None;
         }
     }
 }

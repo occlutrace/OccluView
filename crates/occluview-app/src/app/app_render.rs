@@ -35,12 +35,12 @@ impl OccluViewApp {
             Ok(frame) => frame,
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
-                self.app_error = Some(AppErrorDialog {
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not render scene".to_string(),
                     summary: "The file opened, but the viewport could not be rendered.".to_string(),
                     details: format!("Render failed\n\n{e:#}"),
                 });
-                self.status_message = Some("Render failed".to_string());
+                self.ui.status_message = Some("Render failed".to_string());
                 return;
             }
         };
@@ -439,9 +439,9 @@ impl OccluViewApp {
             return;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
-        self.status_message = Some("Graphics driver reported a problem".to_string());
-        if self.app_error.is_none() {
-            self.app_error = Some(AppErrorDialog {
+        self.ui.status_message = Some("Graphics driver reported a problem".to_string());
+        if self.ui.app_error.is_none() {
+            self.ui.app_error = Some(AppErrorDialog {
                 title: "Graphics problem".to_string(),
                 summary: "The graphics driver reported a problem while drawing. The view may \
                           be incomplete. Saving your work and restarting OccluView is \

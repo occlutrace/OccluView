@@ -687,7 +687,7 @@ fn gui_file_association_launches_reuse_existing_window() {
     let app_lib = include_str!("../../occluview-app/src/lib.rs");
     let bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
     let app_loading = include_str!("../../occluview-app/src/app/app_loading.rs");
-    let app_state = include_str!("../../occluview-app/src/app/state.rs");
+    let app_platform = include_str!("../../occluview-app/src/app/state_platform.rs");
     let single_instance = include_str!("../../occluview-app/src/single_instance/mod.rs");
     let single_instance_windows =
         include_str!("../../occluview-app/src/single_instance/windows.rs");
@@ -695,9 +695,9 @@ fn gui_file_association_launches_reuse_existing_window() {
     assert!(app_lib.contains("mod single_instance;"));
     assert!(bootstrap.contains("SingleInstance::acquire"));
     assert!(bootstrap.contains("write_open_request(&request)"));
-    assert!(app_state.contains("incoming_open_requests: single_instance::OpenRequestListener"));
+    assert!(app_platform.contains("incoming_open_requests: single_instance::OpenRequestListener"));
     assert!(app_loading.contains("fn open_paths_from_external_source("));
-    assert!(app_loading.contains("for request in self.incoming_open_requests.take_requests()"));
+    assert!(app_loading.contains("for request in self.platform.take_open_requests()"));
     assert!(app_loading
         .contains("self.open_paths_from_external_source(&request.paths, \"single-instance\")"));
     assert!(single_instance_windows.contains("CreateMutexW"));

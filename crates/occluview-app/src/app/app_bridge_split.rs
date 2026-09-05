@@ -29,19 +29,20 @@ struct BridgeSectionInput<'a> {
 impl OccluViewApp {
     pub(super) fn begin_bridge_split_from_layer(&mut self, scene: &Scene, layer_id: SceneMeshId) {
         if self.document.edit_mode.has_active_session() {
-            self.status_message = Some("Finish or cancel mesh editing first".to_string());
+            self.ui.status_message = Some("Finish or cancel mesh editing first".to_string());
             return;
         }
         if self.tools.bridge_split.session().mode() != BridgeSplitMode::Off {
-            self.status_message = Some("Bridge split is already active".to_string());
+            self.ui.status_message = Some("Bridge split is already active".to_string());
             return;
         }
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
-            self.status_message = Some("Bridge split target is no longer available".to_string());
+            self.ui.status_message = Some("Bridge split target is no longer available".to_string());
             return;
         };
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
-            self.status_message = Some("Bridge split requires a visible triangle mesh".to_string());
+            self.ui.status_message =
+                Some("Bridge split requires a visible triangle mesh".to_string());
             return;
         }
 
@@ -78,8 +79,8 @@ impl OccluViewApp {
         }
         self.tools.bridge_split_section.reset();
         self.render.invalidation.overlay_tools_changed();
-        self.status_message = Some("Bridge split: place separator disc".to_string());
-        self.repaint_ctx.request_repaint();
+        self.ui.status_message = Some("Bridge split: place separator disc".to_string());
+        self.ui.repaint_ctx.request_repaint();
     }
 
     pub(super) fn show_bridge_split_overlay(
@@ -314,8 +315,8 @@ impl OccluViewApp {
 
     fn submit_bridge_preview(&mut self, entry: &SceneMesh) {
         if self.tools.bridge_split.submit_current_request(entry) {
-            self.status_message = Some("Bridge split: calculating".to_string());
-            self.repaint_ctx.request_repaint();
+            self.ui.status_message = Some("Bridge split: calculating".to_string());
+            self.ui.repaint_ctx.request_repaint();
         }
     }
 
@@ -339,7 +340,7 @@ impl OccluViewApp {
     }
 
     fn consume_bridge_split_escape(&self, ctx: &egui::Context) -> bool {
-        !self.modal_dialog_open()
+        !self.ui.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     }
 
@@ -429,7 +430,7 @@ impl OccluViewApp {
             entry.id(),
             EditModeCommand::BridgeSplit,
         ) else {
-            self.status_message = Some("Bridge split is temporarily unavailable".to_string());
+            self.ui.status_message = Some("Bridge split is temporarily unavailable".to_string());
             return;
         };
         let undoable = self.document.edit_mode.last_edit_undoable();
@@ -445,7 +446,7 @@ impl OccluViewApp {
             .finish_scene_edit_success(token, &applied.scene)
             != BusyFinish::Applied
         {
-            self.status_message = Some("Bridge split was not applied".to_string());
+            self.ui.status_message = Some("Bridge split was not applied".to_string());
             return;
         }
         let source_layer_id = applied.source_layer_id;
@@ -456,7 +457,7 @@ impl OccluViewApp {
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
-        self.status_message = Some(if surface_result {
+        self.ui.status_message = Some(if surface_result {
             "Bridge split complete (surface result; natural borders preserved)".to_string()
         } else if undoable {
             "Bridge split complete".to_string()
@@ -471,9 +472,9 @@ impl OccluViewApp {
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
         self.document.mesh_selection_drag = None;
-        self.status_message = Some(message.to_string());
+        self.ui.status_message = Some(message.to_string());
         self.render.invalidation.overlay_tools_changed();
-        self.repaint_ctx.request_repaint();
+        self.ui.repaint_ctx.request_repaint();
     }
 }
 

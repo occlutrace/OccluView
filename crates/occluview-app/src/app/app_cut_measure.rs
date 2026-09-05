@@ -308,7 +308,7 @@ impl OccluViewApp {
                         thickness_mm: probe.thickness_mm,
                     },
                 });
-                self.status_message = Some(format!(
+                self.ui.status_message = Some(format!(
                     "Wall thickness: {}",
                     measure_tool::format_length(
                         f64::from(probe.thickness_mm),
@@ -371,7 +371,7 @@ impl OccluViewApp {
         // Esc exits the tool (and drops its overlays, incl. the probe-linked cut
         // view it opened) — but never steal Escape from an open dialog (same rule
         // as the cut ladder).
-        if !self.modal_dialog_open()
+        if !self.ui.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.disarm_measure_and_probe_cut();
@@ -488,7 +488,7 @@ impl OccluViewApp {
                 if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
                     if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
                         if let Some(distance_mm) = self.tools.measure.update_ruler_drag(hit.point) {
-                            self.status_message = Some(format!(
+                            self.ui.status_message = Some(format!(
                                 "Distance: {}",
                                 measure_tool::format_length(
                                     distance_mm,
@@ -533,12 +533,12 @@ impl OccluViewApp {
             // the "Thickness exits on rotation" guard. Note `press_origin()`
             // cannot be used here — egui wipes it on every release, so on the
             // click frame it is always None.
-            if self.viewport_secondary_gesture_moved_since_press {
+            if self.ui.viewport_secondary_gesture_moved_since_press {
                 return false;
             }
             let cleared_anything = self.tools.measure.clear_measurements();
             if cleared_anything {
-                self.status_message = Some("Measurements cleared".to_string());
+                self.ui.status_message = Some("Measurements cleared".to_string());
             }
             // Clearing the measurement also closes the cut view it drove — the
             // section reflects the current probe or nothing at all.
@@ -572,7 +572,7 @@ impl OccluViewApp {
         match self.tools.measure.mode() {
             Some(MeasureMode::Ruler) => {
                 if let Some(distance_mm) = self.tools.measure.place_ruler_point(hit.point) {
-                    self.status_message = Some(format!(
+                    self.ui.status_message = Some(format!(
                         "Distance: {}",
                         measure_tool::format_length(
                             distance_mm,
@@ -596,7 +596,7 @@ impl OccluViewApp {
         }
         match measure_tool::probe_wall_thickness(entry, hit.triangle_index, hit.point) {
             Some(probe) => {
-                self.status_message = Some(match probe.reading {
+                self.ui.status_message = Some(match probe.reading {
                     ThicknessReading::Wall { thickness_mm, .. } => format!(
                         "Wall thickness: {}",
                         measure_tool::format_length(
@@ -614,7 +614,7 @@ impl OccluViewApp {
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
-                self.status_message =
+                self.ui.status_message =
                     Some("Cannot probe here: degenerate surface geometry".to_string());
             }
         }
@@ -712,7 +712,7 @@ impl OccluViewApp {
         // Never steal Escape from an open dialog: the cut ladder only consumes
         // it when the operator is actually looking at the viewport.
         let escape = !probe_linked
-            && !self.modal_dialog_open()
+            && !self.ui.modal_dialog_open()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let flip = !probe_linked
             && self.tools.cut_view.is_planted()

@@ -79,8 +79,10 @@ mod selection_overlay;
 mod state;
 mod state_document;
 mod state_persistence;
+mod state_platform;
 mod state_render;
 mod state_tool;
+mod state_ui;
 
 use app_layer_edits::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
@@ -89,10 +91,11 @@ use app_layer_edits::{
 };
 use app_load_errors::load_error_dialog;
 use app_scale_bar::paint_scale_bar;
-use state::{AppErrorDialog, PendingReplaceOpen};
-pub(crate) use state::{OccluViewApp, StartupHandles};
+pub(crate) use state::OccluViewApp;
 use state_document::MeshSelectionDrag;
+pub(crate) use state_platform::StartupHandles;
 use state_render::RenderedFrame;
+use state_ui::{AppErrorDialog, PendingReplaceOpen};
 
 #[cfg(test)]
 mod tests {

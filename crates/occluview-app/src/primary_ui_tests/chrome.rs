@@ -53,7 +53,7 @@ fn successful_appends_do_not_leave_status_overlay_copy() {
         "successful appends should not leave persistent bottom-left status copy"
     );
     assert!(
-        !app_source.contains("self.status_message = append.then"),
+        !app_source.contains("self.ui.status_message = append.then"),
         "append success should clear transient loading status instead of replacing it"
     );
 }
@@ -114,7 +114,7 @@ fn toolbar_and_about_are_operator_focused() {
     assert!(
         dialogs.contains("AppIcon::Settings")
             && dialogs.contains("Open preferences")
-            && toolbar.contains("self.information_dialog = InformationDialog::None;"),
+            && toolbar.contains("self.ui.information_dialog = InformationDialog::None;"),
         "the toolbar should open preferences from the settings button"
     );
     assert!(
@@ -317,11 +317,11 @@ fn app_errors_are_copyable_dialogs_not_only_status_text() {
     let dialogs_source = app_dialogs_source();
 
     assert!(
-        app_module_source().contains("app_error: Option<AppErrorDialog>"),
+        repo_source_file("src/app/state_ui.rs").contains("app_error: Option<AppErrorDialog>"),
         "file/render failures should have a copyable error dialog state"
     );
     assert!(
-        loading_source.contains("self.app_error = Some(load_error_dialog"),
+        loading_source.contains("self.ui.app_error = Some(load_error_dialog"),
         "loader failures must open the error dialog, not only write status text"
     );
     assert!(
@@ -375,7 +375,7 @@ fn about_opens_the_embedded_third_party_notices() {
         "the About dialog should offer the third-party licenses view"
     );
     assert!(
-        settings.contains("self.information_dialog = InformationDialog::ThirdPartyNotices;")
+        settings.contains("self.ui.information_dialog = InformationDialog::ThirdPartyNotices;")
             && !settings.contains("InformationDialog::ThirdPartyNotices\n            ||"),
         "About should replace its one typed route with ThirdPartyNotices, without an obsolete other-modal predicate"
     );

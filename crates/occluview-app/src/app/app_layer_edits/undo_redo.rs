@@ -23,7 +23,7 @@ pub(in crate::app) fn apply_last_mesh_edit_undo_with_status(
         .iter()
         .position(|entry| entry.id() == layer_id)
     else {
-        app.status_message = Some("Nothing to undo".to_string());
+        app.ui.status_message = Some("Nothing to undo".to_string());
         return LayerContextApply::default();
     };
     apply_layer_mesh_undo_action_with_status(
@@ -53,7 +53,7 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
         .iter()
         .position(|entry| entry.id() == layer_id)
     else {
-        app.status_message = Some("Nothing to redo".to_string());
+        app.ui.status_message = Some("Nothing to redo".to_string());
         return LayerContextApply::default();
     };
     let Some(current) = scene.meshes().get(index).cloned() else {
@@ -65,11 +65,11 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
         StructuralHistoryStep::Restored(restored_scene) => {
             *scene = restored_scene;
             app.document.mark_mesh_edits_unsaved(layer_id);
-            app.status_message = Some(format!("Redid mesh edit: {layer_label}"));
+            app.ui.status_message = Some(format!("Redid mesh edit: {layer_label}"));
             return structural_scene_apply();
         }
         StructuralHistoryStep::SceneChanged => {
-            app.status_message = Some(format!(
+            app.ui.status_message = Some(format!(
                 "Redo unavailable — the scene changed since that step: {layer_label}"
             ));
             return LayerContextApply::default();
@@ -93,7 +93,7 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
     // walk is paid once here instead.
     let _ = entry.mesh.bbox();
     app.document.mark_mesh_edits_unsaved(layer_id);
-    app.status_message = Some(format!("Redid mesh edit: {layer_label}"));
+    app.ui.status_message = Some(format!("Redid mesh edit: {layer_label}"));
     structural_scene_apply()
 }
 
@@ -117,11 +117,11 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
         StructuralHistoryStep::Restored(restored) => {
             *scene = restored;
             app.document.mark_mesh_edits_unsaved(request.layer_id);
-            app.status_message = Some(format!("Undid mesh edit: {layer_label}"));
+            app.ui.status_message = Some(format!("Undid mesh edit: {layer_label}"));
             return structural_scene_apply();
         }
         StructuralHistoryStep::SceneChanged => {
-            app.status_message = Some(format!(
+            app.ui.status_message = Some(format!(
                 "Undo unavailable — the scene changed since that step: {layer_label}"
             ));
             return LayerContextApply::default();
@@ -132,7 +132,7 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
     let apply = apply_layer_mesh_undo_action(scene, request, &mut app.document.edit_mode);
     if apply.scene_changed {
         app.document.mark_mesh_edits_unsaved(request.layer_id);
-        app.status_message = Some(format!("Undid mesh edit: {layer_label}"));
+        app.ui.status_message = Some(format!("Undid mesh edit: {layer_label}"));
     }
     apply
 }

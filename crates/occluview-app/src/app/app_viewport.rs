@@ -50,21 +50,21 @@ pub(super) fn zoom_camera_from_wheel(
 
 impl OccluViewApp {
     pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        if self.viewport_orbit_cursor_grabbed {
+        if self.ui.viewport_orbit_cursor_grabbed {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
-        self.viewport_orbit_cursor_grabbed = true;
+        self.ui.viewport_orbit_cursor_grabbed = true;
     }
 
     pub(super) fn release_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        if !self.viewport_orbit_cursor_grabbed {
+        if !self.ui.viewport_orbit_cursor_grabbed {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::None));
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-        self.viewport_orbit_cursor_grabbed = false;
+        self.ui.viewport_orbit_cursor_grabbed = false;
     }
 
     pub(super) fn release_viewport_orbit_cursor_if_inactive(&mut self, ctx: &egui::Context) {
@@ -112,7 +112,7 @@ impl OccluViewApp {
         sample: SecondaryPointerSample,
     ) {
         if sample.pressed {
-            self.viewport_secondary_gesture_moved_since_press = false;
+            self.ui.viewport_secondary_gesture_moved_since_press = false;
         }
 
         // Any camera motion owns the gesture, including movement below egui's
@@ -123,15 +123,15 @@ impl OccluViewApp {
         // short drag can arrive in one egui frame and still must suppress the
         // context menu.
         if sample.released && !sample.pressed && sample.motion.length_sq() > f32::EPSILON {
-            self.viewport_secondary_gesture_moved_since_press = true;
+            self.ui.viewport_secondary_gesture_moved_since_press = true;
         }
         let suppress_context_menu =
-            response.secondary_clicked() && self.viewport_secondary_gesture_moved_since_press;
+            response.secondary_clicked() && self.ui.viewport_secondary_gesture_moved_since_press;
         if !suppress_context_menu {
             self.handle_viewport_context_menu(ctx, response);
         }
         if sample.released {
-            self.viewport_secondary_gesture_moved_since_press = false;
+            self.ui.viewport_secondary_gesture_moved_since_press = false;
         }
     }
 
@@ -170,11 +170,11 @@ impl OccluViewApp {
         let orbit_drag_active = viewport_orbit_drag_active(
             pan_drag_active,
             sample.down,
-            self.viewport_orbit_cursor_grabbed,
+            self.ui.viewport_orbit_cursor_grabbed,
             secondary_press_owned.then_some(sample.motion),
         );
         if (pan_drag_active || orbit_drag_active) && sample.motion.length_sq() > f32::EPSILON {
-            self.viewport_secondary_gesture_moved_since_press = true;
+            self.ui.viewport_secondary_gesture_moved_since_press = true;
         }
         if orbit_drag_active {
             self.grab_viewport_orbit_cursor(ctx);

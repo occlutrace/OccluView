@@ -169,7 +169,7 @@ impl OccluViewApp {
         } else {
             self.tools.sculpt.disarm();
         }
-        self.status_message = Some(match self.tools.sculpt.armed {
+        self.ui.status_message = Some(match self.tools.sculpt.armed {
             Some(SculptToolKind::AddRemove) => {
                 "Add/Remove: drag to build, hold Shift to carve".to_string()
             }
@@ -463,14 +463,14 @@ impl OccluViewApp {
                 if valid && self.document.edit_mode.has_active_session() {
                     self.tools.sculpt.worker = Some(SculptWorker::spawn(session));
                     if self.tools.sculpt.armed.is_some() {
-                        self.status_message = None;
+                        self.ui.status_message = None;
                     }
                     self.render.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
                 }
             }
             Err(error) => {
-                self.status_message = Some(format!("Cannot sculpt this layer: {error}"));
+                self.ui.status_message = Some(format!("Cannot sculpt this layer: {error}"));
                 ctx.request_repaint();
             }
         }

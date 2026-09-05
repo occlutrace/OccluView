@@ -377,7 +377,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "self.poll_gpu_errors();",
         "self.show_error_dialog(&ctx);",
         "self.show_information_dialog(&ctx);",
-        "self.repair_report.ui(&ctx);",
+        "self.ui.repair_report.ui(&ctx);",
         "self.persistence.update_notice.show(&ctx);",
         "self.show_unsaved_close_guard(&ctx);",
         "self.guard_pending_replace_open(&ctx);",
@@ -477,11 +477,10 @@ fn viewport_surface_is_edge_to_edge_without_a_central_panel_frame() {
 
 #[test]
 fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
-    let app_source = app_module_source();
     let viewport_source = app_viewport_source();
 
     assert!(
-        app_source.contains("viewport_orbit_cursor_grabbed: bool"),
+        repo_source_file("src/app/state_ui.rs").contains("viewport_orbit_cursor_grabbed: bool"),
         "app state should remember whether viewport orbit currently owns the cursor"
     );
     assert!(

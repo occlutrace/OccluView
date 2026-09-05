@@ -15,7 +15,7 @@ impl OccluViewApp {
         self.tools.align.drag = None;
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
-        self.status_message = Some(if restored {
+        self.ui.status_message = Some(if restored {
             "Alignment cancelled — every scan is back where it was (Ctrl+Z brings it back)".into()
         } else {
             "Alignment closed".to_string()
@@ -34,7 +34,7 @@ impl OccluViewApp {
             .as_ref()
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
-        self.status_message = Some(match (running, moved) {
+        self.ui.status_message = Some(match (running, moved) {
             (true, _) => {
                 "Alignment closed — a fit was still running and was dropped, so the scans are \
                  exactly as you last saw them"

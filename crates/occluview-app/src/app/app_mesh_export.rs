@@ -69,7 +69,7 @@ impl OccluViewApp {
                 } else {
                     " (this scan has not been moved)"
                 };
-                self.status_message = Some(format!(
+                self.ui.status_message = Some(format!(
                     "Exported {name}{placement} as {}{}: {}",
                     mesh_export_format_label(report.format),
                     warning_suffix,
@@ -79,8 +79,8 @@ impl OccluViewApp {
             }
             Err(error) => {
                 let summary = format!("Could not export layer: {error}");
-                self.status_message = Some(summary.clone());
-                self.app_error = Some(AppErrorDialog {
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not export layer".to_string(),
                     summary,
                     details: format!(

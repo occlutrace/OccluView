@@ -49,12 +49,12 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         None
     };
     if request.action == LayerContextAction::CloseHoles && selection.is_none() {
-        app.status_message = Some("Select mesh faces first".to_string());
+        app.ui.status_message = Some("Select mesh faces first".to_string());
         return LayerContextApply::default();
     }
 
     let Some(token) = app.document.edit_mode.begin_layer_edit(entry, command) else {
-        app.status_message = Some("Layer edit already in progress".to_string());
+        app.ui.status_message = Some("Layer edit already in progress".to_string());
         return LayerContextApply::default();
     };
 
@@ -79,10 +79,10 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                     close_holes_limit_mm,
                     true,
                 );
-                app.status_message = Some(with_undoable_note(app, status));
+                app.ui.status_message = Some(with_undoable_note(app, status));
             } else {
                 let _ = app.document.edit_mode.finish_layer_edit_noop(token);
-                app.status_message = Some(close_holes_aware_status(
+                app.ui.status_message = Some(close_holes_aware_status(
                     &layer_label,
                     request.action,
                     report.as_ref(),
@@ -98,8 +98,8 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                 .document
                 .edit_mode
                 .finish_layer_edit_error(token, error.to_string());
-            app.status_message = Some(summary.clone());
-            app.app_error = Some(AppErrorDialog {
+            app.ui.status_message = Some(summary.clone());
+            app.ui.app_error = Some(AppErrorDialog {
                 title: "Could not edit layer".to_string(),
                 summary,
                 details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),
