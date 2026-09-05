@@ -6,8 +6,8 @@
 //! backend gave us one; the offscreen path is the fallback and is also what
 //! produces the cut-view preview.
 //!
-//! Both consume their own [`RenderInvalidation`] cursors documented in
-//! [`super::state`] where they rebuild. Each path caches its own
+//! Both consume their own [`occluview_app::invalidation::RenderInvalidation`]
+//! cursors documented in [`super::state`] where they rebuild. Each path caches its own
 //! `PreparedScene`, so a scene change stales both or the untouched path keeps
 //! drawing the previous geometry.
 
