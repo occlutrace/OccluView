@@ -34,7 +34,6 @@ fn ui_scale_zoom_is_allowed(ctx: &egui::Context) -> bool {
     !ctx.input(|input| input.pointer.any_down())
 }
 
-#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct OccluViewApp {
     /// Dialogs, transient presentation, notifications; see `state_ui`.
     pub(super) ui: UiState,

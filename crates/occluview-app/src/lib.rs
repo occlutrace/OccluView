@@ -102,4 +102,6 @@ pub(crate) const LIVE_VIEWPORT_SAMPLE_COUNT: u16 = 4;
 #[cfg(test)]
 mod cut_manipulator_hostile_tests;
 #[cfg(test)]
+mod perf_harness;
+#[cfg(test)]
 mod primary_ui_tests;

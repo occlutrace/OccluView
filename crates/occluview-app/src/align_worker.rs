@@ -198,8 +198,8 @@ pub(crate) struct AlignJob {
 }
 
 /// Why a job produced nothing trustworthy. Domain data only: the worker never
-/// renders user-facing copy, so a later localization pass meets a typed
-/// reason at the presentation boundary instead of an English sentence.
+/// renders user-facing copy; the presentation boundary renders it from the
+/// typed reason.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AlignFailure {
     /// A fit or refine refused, carrying the refusal to report.
