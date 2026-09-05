@@ -13,6 +13,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "occluview_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "occluview"
 path = "src/main.rs"

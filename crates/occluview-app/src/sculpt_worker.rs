@@ -162,9 +162,11 @@ impl SculptCommandQueue {
     }
 
     fn is_empty(&self) -> bool {
-        self.state.lock().map_or(true, |state| {
-            state.commands.is_empty() && !self.active.load(Ordering::Acquire)
-        })
+        // Fail active on contention: a skipped drain retries on the repaint
+        // this returns, while a false quiet would stall the worker's output.
+        self.state
+            .try_lock()
+            .is_ok_and(|state| state.commands.is_empty() && !self.active.load(Ordering::Acquire))
     }
 }
 
@@ -176,7 +178,25 @@ struct WorkerState {
     /// complete geometry, so a newer one simply replaces an unread older one.
     rebuild: Mutex<Option<SculptRebuild>>,
     completions: Mutex<VecDeque<SculptCompletion>>,
-    error: Mutex<Option<String>>,
+    error: Mutex<Option<SculptFailure>>,
+}
+
+/// Why the sculpt worker produced nothing trustworthy. Domain data only: the
+/// worker never formats user-facing copy; the UI boundary renders it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SculptFailure {
+    /// The background thread panicked; carries the payload text for diagnostics.
+    WorkerPanicked { message: String },
+    /// The worker thread could not be spawned.
+    Spawn { detail: String },
+    /// The sculpt kernel pool could not be created.
+    KernelPool { detail: String },
+    /// A finished stroke had no undo baseline.
+    MissingUndoBaseline,
+    /// The shadow vertex lock was poisoned.
+    ShadowPoisoned,
+    /// The sculpt result changed the vertex count.
+    VertexCountChanged,
 }
 
 impl WorkerState {
@@ -214,10 +234,51 @@ impl WorkerState {
         }
     }
 
-    fn set_error(&self, message: String) {
+    fn set_error(&self, failure: SculptFailure) {
         if let Ok(mut error) = self.error.lock() {
-            *error = Some(message);
+            *error = Some(failure);
         }
+    }
+
+    /// Re-queue a drained-but-unapplied update (lock contention on the frame
+    /// path). A full sync supersedes queued deltas; sparse ids merge back and
+    /// overflow escalates to a full sync. Never blocks.
+    fn restore_update(&self, update: SculptUpdate) {
+        if update.full_sync {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        }
+        if update.touched.is_empty() {
+            return;
+        }
+        // A queued rebuild supersedes sparse ids: they index the pre-rebuild
+        // array, so escalate to a full sync of the latest shadow instead of
+        // resurrecting stale ids behind the rebuild. A contended rebuild
+        // lock means the worker is mid-publish; a full sync covers either
+        // outcome.
+        let Ok(slot) = self.rebuild.try_lock() else {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        };
+        if slot.is_some() {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        }
+        drop(slot);
+        let Ok(mut pending) = self.pending_touched.try_lock() else {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        };
+        pending.extend(update.touched);
+        if pending.len() > MAX_PENDING_TOUCHES {
+            pending.clear();
+            self.full_sync.store(true, Ordering::Release);
+        }
+    }
+
+    /// Mark the next drain authoritative after a GPU-write rejection.
+    fn request_full_sync(&self) {
+        self.full_sync.store(true, Ordering::Release);
     }
 }
 
@@ -288,19 +349,22 @@ impl SculptWorker {
                             run_worker(session, worker_queue.clone(), worker_state.clone(), pool);
                         }));
                         if let Err(payload) = result {
-                            worker_state.set_error(format!(
-                                "sculpt worker panicked: {}",
-                                panic_message(payload)
-                            ));
+                            worker_state.set_error(SculptFailure::WorkerPanicked {
+                                message: panic_message(payload),
+                            });
                             worker_queue.mark_idle();
                         }
                     });
                 if let Err(error) = spawn_result {
-                    state.set_error(format!("could not start sculpt worker: {error}"));
+                    state.set_error(SculptFailure::Spawn {
+                        detail: error.to_string(),
+                    });
                 }
             }
             Err(error) => {
-                state.set_error(format!("could not create sculpt kernel pool: {error}"));
+                state.set_error(SculptFailure::KernelPool {
+                    detail: error.to_string(),
+                });
             }
         }
         Self {
@@ -327,23 +391,24 @@ impl SculptWorker {
     }
 
     pub(crate) fn take_update(&self) -> Option<SculptUpdate> {
+        // Non-blocking: a contended backlog (and its full-sync flag) stays
+        // queued for the next frame instead of stalling the egui frame.
+        let Ok(mut pending) = self.state.pending_touched.try_lock() else {
+            return None;
+        };
         let full_sync = self.state.full_sync.swap(false, Ordering::AcqRel);
-        let touched = self
-            .state
-            .pending_touched
-            .lock()
-            .map(|mut pending| std::mem::take(&mut *pending))
-            .unwrap_or_default();
+        let touched = std::mem::take(&mut *pending);
         (full_sync || !touched.is_empty()).then_some(SculptUpdate { touched, full_sync })
     }
 
     /// Take the pending whole-layer rebuild, if a dab densified the mesh.
     /// Must be drained BEFORE `take_update`, so a sparse write never lands on
-    /// buffers the rebuild is about to replace.
+    /// buffers the rebuild is about to replace. Defers on contention like
+    /// [`Self::take_update`].
     pub(crate) fn take_rebuild(&self) -> Option<SculptRebuild> {
         self.state
             .rebuild
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|mut slot| slot.take())
     }
@@ -351,17 +416,27 @@ impl SculptWorker {
     pub(crate) fn take_completion(&self) -> Option<SculptCompletion> {
         self.state
             .completions
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|mut completions| completions.pop_front())
     }
 
-    pub(crate) fn take_error(&self) -> Option<String> {
+    pub(crate) fn take_error(&self) -> Option<SculptFailure> {
         self.state
             .error
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|mut error| error.take())
+    }
+
+    /// Re-queue a drained-but-unapplied update after frame-path contention.
+    pub(crate) fn restore_update(&self, update: SculptUpdate) {
+        self.state.restore_update(update);
+    }
+
+    /// Escalate to an authoritative full sync after a GPU-write rejection.
+    pub(crate) fn request_full_sync(&self) {
+        self.state.request_full_sync();
     }
 
     pub(crate) fn is_quiescent(&self) -> bool {
@@ -369,7 +444,7 @@ impl SculptWorker {
             && self
                 .state
                 .completions
-                .lock()
+                .try_lock()
                 .is_ok_and(|completions| completions.is_empty())
     }
 }
@@ -408,12 +483,12 @@ fn run_worker(
                 let start_mesh = session.stroke_start_mesh.take();
                 if dirty {
                     let Some(before) = start_mesh else {
-                        state.set_error("sculpt stroke has no undo baseline".to_string());
+                        state.set_error(SculptFailure::MissingUndoBaseline);
                         queue.mark_idle();
                         continue;
                     };
                     let Ok(shadow) = session.shadow.read() else {
-                        state.set_error("sculpt shadow lock was poisoned".to_string());
+                        state.set_error(SculptFailure::ShadowPoisoned);
                         queue.mark_idle();
                         continue;
                     };
@@ -426,7 +501,7 @@ fn run_worker(
                     if let Some(mesh) = mesh {
                         state.push_completion(SculptCompletion { before, mesh });
                     } else {
-                        state.set_error("sculpt result changed the vertex count".to_string());
+                        state.set_error(SculptFailure::VertexCountChanged);
                     }
                 }
             }
@@ -445,329 +520,8 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     "non-string panic payload".to_string()
 }
 
+// Split out to hold the workspace's 800-line file budget. A `#[path]` child
+// module so the tests still reach this file's private items.
 #[cfg(test)]
-mod tests {
-    #![allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        clippy::expect_used,
-        clippy::float_cmp,
-        clippy::panic
-    )]
-
-    use super::*;
-    use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController};
-    use crate::sculpt_tool::mean_uniform_scale;
-    use glam::Vec3;
-    use occluview_core::{mesh_edit_buffers_from_mesh, BrushSession, Mesh, Scene, SceneMesh};
-    use std::time::Duration;
-
-    fn worker_for(mesh: &Mesh) -> SculptWorker {
-        let entry = SceneMesh::new(mesh.clone());
-        let layer_id = entry.id();
-        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
-        SculptWorker::spawn(SculptSession {
-            layer_id,
-            topology_id: mesh.topology_id(),
-            session: brush,
-            base_mesh: Arc::new(mesh.clone()),
-            shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
-            topology: PreparedSceneTopology::from_mesh(mesh),
-            world_to_local: Affine3A::IDENTITY,
-            local_per_world: mean_uniform_scale(&Affine3A::IDENTITY),
-            dirty_stroke: false,
-            stroke_start_mesh: None,
-        })
-    }
-
-    fn test_worker() -> SculptWorker {
-        let mesh = Mesh::new(
-            Some("worker-test".to_string()),
-            vec![
-                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2, 0, 2, 3],
-        )
-        .expect("test mesh");
-        worker_for(&mesh)
-    }
-
-    /// A 5x3 lattice at 4mm spacing folded along a sharp ridge — far coarser
-    /// than the 3.5mm brush below, so a Smooth dab has to densify before it can
-    /// relax anything.
-    fn coarse_ridge_mesh() -> Mesh {
-        let mut vertices = Vec::new();
-        for j in 0..3usize {
-            for i in 0..5usize {
-                let x = i as f32 * 4.0 - 8.0;
-                let y = j as f32 * 4.0 - 4.0;
-                let z = if j == 1 { 4.0 } else { 0.0 };
-                vertices.push(Vertex::at(Vec3::new(x, y, z)));
-            }
-        }
-        let mut indices = Vec::new();
-        let idx = |i: usize, j: usize| (j * 5 + i) as u32;
-        for j in 0..2usize {
-            for i in 0..4usize {
-                indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
-                indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
-            }
-        }
-        Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
-    }
-
-    fn wait_for_rebuild(worker: &SculptWorker) -> SculptRebuild {
-        for _ in 0..2_000 {
-            if let Some(rebuild) = worker.take_rebuild() {
-                return rebuild;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        panic!("the densifying dab never produced a layer rebuild");
-    }
-
-    fn wait_for_completions(worker: &SculptWorker, expected: usize) -> usize {
-        let mut completed = 0;
-        for _ in 0..2_000 {
-            if worker.take_completion().is_some() {
-                completed += 1;
-                if completed == expected {
-                    return completed;
-                }
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        completed
-    }
-
-    fn wait_for_completion(worker: &SculptWorker) -> SculptCompletion {
-        for _ in 0..2_000 {
-            if let Some(completion) = worker.take_completion() {
-                return completion;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        panic!("sculpt worker did not complete the stroke");
-    }
-
-    #[test]
-    fn worker_accepts_two_ordered_strokes_without_repreparing() {
-        let worker = test_worker();
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 0.0],
-            radius_mm: 2.0,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        assert!(worker.try_apply(stroke, BrushMode::Add));
-        assert!(worker.finish_stroke());
-        assert!(worker.try_apply(stroke, BrushMode::Add));
-        assert!(worker.finish_stroke());
-        assert_eq!(wait_for_completions(&worker, 2), 2);
-    }
-
-    #[test]
-    fn rapid_strokes_keep_a_dab_after_each_finish_barrier() {
-        let worker = test_worker();
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 0.0],
-            radius_mm: 2.0,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        for _ in 0..4 {
-            for _ in 0..32 {
-                let _ = worker.try_apply(stroke, BrushMode::Add);
-            }
-            assert!(worker.finish_stroke());
-        }
-        assert_eq!(wait_for_completions(&worker, 4), 4);
-    }
-
-    #[test]
-    fn consuming_each_completion_does_not_disable_the_next_stroke() {
-        let worker = test_worker();
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 0.0],
-            radius_mm: 2.0,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        for _ in 0..4 {
-            for _ in 0..16 {
-                let _ = worker.try_apply(stroke, BrushMode::Add);
-            }
-            assert!(worker.finish_stroke());
-            let completion = wait_for_completion(&worker);
-            assert_eq!(completion.mesh.vertices().len(), 4);
-        }
-    }
-
-    #[test]
-    fn repeated_completions_survive_scene_and_edit_state_commit() {
-        let worker = test_worker();
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 0.0],
-            radius_mm: 2.0,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        let mesh = Mesh::new(
-            Some("scene-commit-test".to_string()),
-            vec![
-                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2, 0, 2, 3],
-        )
-        .expect("scene mesh");
-        let entry = SceneMesh::new(mesh);
-        let layer_id = entry.id();
-        let mut scene = Scene::new();
-        scene.add(entry);
-        let mut edit_mode = EditModeController::new(8, 1_000_000);
-
-        for _ in 0..4 {
-            assert!(worker.try_apply(stroke, BrushMode::Add));
-            assert!(worker.finish_stroke());
-            let SculptCompletion { before, mesh } = wait_for_completion(&worker);
-            let current = scene
-                .meshes()
-                .iter()
-                .find(|entry| entry.id() == layer_id)
-                .expect("scene layer")
-                .clone();
-            let token = edit_mode
-                .begin_layer_edit_with_snapshot(&current, before, EditModeCommand::Sculpt)
-                .expect("edit state accepts the next completion");
-            scene
-                .meshes_mut()
-                .iter_mut()
-                .find(|entry| entry.id() == layer_id)
-                .expect("scene layer")
-                .mesh = Arc::new(mesh);
-            edit_mode.sync_to_scene(&scene);
-            assert_eq!(
-                edit_mode.finish_layer_edit_success(token),
-                BusyFinish::Applied
-            );
-        }
-    }
-
-    /// Densification changes the topology, and the ids must say so honestly:
-    /// the rebuilt layer gets a FRESH `topology_id` (the renderer's cue to drop
-    /// its exactly-sized buffers), while the undo baseline keeps the PRE-stroke
-    /// identity and the pre-stroke triangle list.
-    #[test]
-    fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline() {
-        let mesh = coarse_ridge_mesh();
-        let original_vertices = mesh.vertices().len();
-        let original_triangles = mesh.triangle_count();
-        let original_topology_id = mesh.topology_id();
-        let worker = worker_for(&mesh);
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 4.0],
-            radius_mm: 3.5,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        assert!(worker.try_apply(stroke, BrushMode::Smooth));
-        let rebuild = wait_for_rebuild(&worker);
-        assert!(worker.finish_stroke());
-        let completion = wait_for_completion(&worker);
-
-        // The rebuilt layer really grew, and its token describes ITSELF — a
-        // mismatch here is exactly how a stale GPU buffer gets written.
-        assert!(rebuild.mesh.vertices().len() > original_vertices);
-        assert!(rebuild.mesh.triangle_count() > original_triangles);
-        assert_ne!(
-            rebuild.mesh.topology_id(),
-            original_topology_id,
-            "a grown mesh must NOT reuse the frozen sculpt topology id"
-        );
-        assert_eq!(
-            rebuild.topology,
-            PreparedSceneTopology::from_mesh(&rebuild.mesh)
-        );
-
-        // Undo goes back to the coarse mesh, not to the dense one with old
-        // coordinates.
-        assert_eq!(completion.before.vertices().len(), original_vertices);
-        assert_eq!(completion.before.triangle_count(), original_triangles);
-        assert_eq!(completion.before.topology_id(), original_topology_id);
-
-        // The committed mesh matches the geometry already on the GPU, so the
-        // commit is a content swap and not another re-upload.
-        assert_eq!(
-            completion.mesh.vertices().len(),
-            rebuild.mesh.vertices().len()
-        );
-        assert_eq!(completion.mesh.indices(), rebuild.mesh.indices());
-        assert_eq!(completion.mesh.topology_id(), rebuild.mesh.topology_id());
-    }
-
-    /// A densified layer must arrive PICK-READY, and stay pick-ready across the
-    /// commit — or the brush dies for good.
-    ///
-    /// The failure chain: the viewport lays a dab only where the cursor
-    /// hits the surface, the hit test refuses to build a scan-sized BVH on the
-    /// egui thread, and the only thing that ever warmed one was the session
-    /// preparation. A densifying dab swapped in a rebuilt mesh with a cold BVH,
-    /// the session still "matched" so no re-preparation ever ran, and from that
-    /// moment every stroke on the layer found no surface and silently did
-    /// nothing. First stroke worked, everything after it was dead.
-    #[test]
-    fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
-        let mesh = coarse_ridge_mesh();
-        let worker = worker_for(&mesh);
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 4.0],
-            radius_mm: 3.5,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        assert!(worker.try_apply(stroke, BrushMode::Smooth));
-        let rebuild = wait_for_rebuild(&worker);
-        assert!(
-            rebuild.mesh.bvh_is_ready(),
-            "the rebuilt layer goes into the scene as-is; a cold BVH there kills \
-             the hit test, and nothing downstream ever warms it again"
-        );
-
-        assert!(worker.finish_stroke());
-        let completion = wait_for_completion(&worker);
-        assert!(
-            completion.mesh.bvh_is_ready(),
-            "the committed mesh replaces the layer after the stroke; it has to \
-             stay pick-ready or the SECOND stroke is the one that dies"
-        );
-    }
-
-    /// The un-densified path is untouched: a stroke that changes no topology
-    /// still streams sparsely and still freezes the topology id.
-    #[test]
-    fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
-        let worker = test_worker();
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 0.0],
-            radius_mm: 2.0,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        assert!(worker.try_apply(stroke, BrushMode::Add));
-        assert!(worker.finish_stroke());
-        let completion = wait_for_completion(&worker);
-        assert!(worker.take_rebuild().is_none(), "Add must not densify");
-        assert_eq!(completion.mesh.vertices().len(), 4);
-        assert_eq!(
-            completion.mesh.topology_id(),
-            completion.before.topology_id(),
-            "a positions-only sculpt keeps the GPU buffer token frozen"
-        );
-    }
-}
+#[path = "sculpt_worker_tests.rs"]
+mod tests;

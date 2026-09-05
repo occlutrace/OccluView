@@ -91,7 +91,7 @@ fn edit_mesh_entry_opens_one_scene_wide_session() {
         "the existing RMB Edit mesh action should keep routing through the mesh-edit entry point"
     );
     assert!(
-        layer_edits.contains("app.edit_mode.begin_face_selection(entry, scene)"),
+        layer_edits.contains("app.document.edit_mode.begin_face_selection(entry, scene)"),
         "RMB Edit mesh should open the shared scene edit session"
     );
     assert!(
@@ -121,7 +121,7 @@ fn viewport_double_click_focuses_scene_point_not_home_reset() {
 
     assert!(
         source.contains(
-            "(self.settings.double_click_resets_camera && response.double_clicked())\n            || response.clicked_by(egui::PointerButton::Middle)"
+            "(self.persistence.settings.double_click_resets_camera\n            && response.double_clicked())\n            || response.clicked_by(egui::PointerButton::Middle)"
         ),
         "viewport input should pick a scene point for double-click focus, gated by the preference"
     );
@@ -152,7 +152,7 @@ fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
     let click = function_source(source, "fn handle_primary_face_selection_click(");
 
     assert!(
-        click.contains("self.edit_mode.has_active_session()"),
+        click.contains("self.document.edit_mode.has_active_session()"),
         "face selection should be gated by the scene-wide edit session"
     );
     assert!(
@@ -181,7 +181,7 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
         "mesh edit marquee selection should begin from an explicit primary drag gate"
     );
     assert!(
-        drag.contains("self.mesh_selection_drag = Some("),
+        drag.contains("self.document.mesh_selection_drag ="),
         "viewport input should keep marquee state in app state while dragging"
     );
     assert!(
@@ -202,7 +202,7 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
     );
     let commit = function_source(source, "fn commit_screen_polygon_selection(");
     assert!(
-        commit.contains("self.edit_mode.select_faces_in_screen_polygon("),
+        commit.contains("self.document.edit_mode.select_faces_in_screen_polygon("),
         "marquee and lasso must commit through the single screen-polygon selection API"
     );
     assert!(
@@ -253,7 +253,7 @@ fn armed_lasso_places_points_on_press_through_pure_state_machine() {
     assert!(
         appears_before(
             input,
-            "!self.edit_mode.lasso_armed()",
+            "!self.document.edit_mode.lasso_armed()",
             "self.handle_primary_face_selection_click(ctx, response)",
         ),
         "face pick must be gated off while the lasso owns primary clicks"
@@ -288,7 +288,7 @@ fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
         interaction.contains("fn discard_lasso_outline")
             && appears_before(
                 menu,
-                "discard_lasso_outline(&mut self.mesh_selection_drag)",
+                "discard_lasso_outline(&mut self.document.mesh_selection_drag)",
                 "viewport_menu_target_id",
             ),
         "a stationary right-click must drop an in-progress lasso outline before \
@@ -349,8 +349,8 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
          encodes THIS frame's camera (removes one frame of orbit latency)"
     );
     let ordered_visible_work = [
-        "crate::ui_theme::set_active(self.settings.theme);",
-        "ctx.set_visuals(super::viewer_visuals(self.settings.theme));",
+        "crate::ui_theme::set_active(self.persistence.settings.theme);",
+        "ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));",
         "self.handle_dropped_files(&ctx);",
         "self.release_viewport_orbit_cursor_if_inactive(&ctx);",
         "self.render_pending_frame(&ctx);",
@@ -377,8 +377,8 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "self.poll_gpu_errors();",
         "self.show_error_dialog(&ctx);",
         "self.show_information_dialog(&ctx);",
-        "self.repair_report.ui(&ctx);",
-        "self.update_notice.show(&ctx);",
+        "self.ui.repair_report.ui(&ctx);",
+        "self.persistence.update_notice.show(&ctx);",
         "self.show_unsaved_close_guard(&ctx);",
         "self.guard_pending_replace_open(&ctx);",
     ];
@@ -399,7 +399,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "camera input should still be collected once the overlays have had the pointer"
     );
     assert!(
-        render_pending.contains("if self.needs_render {")
+        render_pending.contains("if self.render.invalidation.redraw_pending() {")
             && render_pending.contains("self.sync_live_viewport();")
             && render_pending.contains("self.render_now(ctx);"),
         "pending frame rendering should stay centralized in one helper"
@@ -426,11 +426,11 @@ fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
         "scene targeting should still have two target-setting branches"
     );
     assert!(
-        repaint_helper.contains("self.needs_render = true;"),
+        repaint_helper.contains("self.render.invalidation.request_redraw();"),
         "the shared camera repaint helper should still mark the viewport dirty"
     );
     assert!(
-        repaint_helper.contains("self.mark_camera_modified();"),
+        repaint_helper.contains("self.document.mark_camera_modified();"),
         "the shared camera repaint helper should still track camera mutation"
     );
     assert!(
@@ -477,11 +477,10 @@ fn viewport_surface_is_edge_to_edge_without_a_central_panel_frame() {
 
 #[test]
 fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
-    let app_source = app_module_source();
     let viewport_source = app_viewport_source();
 
     assert!(
-        app_source.contains("viewport_orbit_cursor_grabbed: bool"),
+        repo_source_file("src/app/state_ui.rs").contains("viewport_orbit_cursor_grabbed: bool"),
         "app state should remember whether viewport orbit currently owns the cursor"
     );
     assert!(
@@ -682,9 +681,21 @@ fn layer_material_edits_do_not_reset_prepared_scene() {
         viewport_source.contains("self.update_scene_materials(draft);"),
         "opacity/tint/visibility edits should not clear uploaded GPU mesh data"
     );
+    let materials_fn = function_source(
+        app_render,
+        "pub(super) fn mark_scene_materials_changed(&mut self) {",
+    );
     assert!(
-        app_render.contains("self.live_viewport_scene_dirty = self.live_viewport.is_some();"),
-        "layer/material edits should mark only the live scene payload dirty, not rebuild on every camera move"
+        materials_fn.contains("self.render.invalidation.scene_geometry_changed();"),
+        "layer/material edits should stale every prepared-scene consumer through the typed invalidation"
+    );
+    // The typed model proves the mapping: material edits stale both scene
+    // consumers and the overlay, while a camera move stales nothing.
+    let mut camera_only = invalidation::RenderInvalidation::new();
+    camera_only.request_redraw();
+    assert!(
+        !camera_only.live_scene_stale() && !camera_only.offscreen_scene_stale(),
+        "camera moves must not rebuild on every camera move"
     );
 }
 
@@ -707,43 +718,50 @@ fn section_panel_owns_close_without_a_separate_hint_strip() {
 
 #[test]
 fn camera_only_live_viewport_redraw_skips_scene_resync() {
-    let app_source = app_module_source();
     let sync = app_render_source();
 
     assert!(
-        app_source.contains("live_viewport_scene_dirty: bool"),
-        "app state should track whether GPU scene payloads actually changed"
-    );
-    assert!(
-        sync.contains("viewport.update_view(&gpu_cam, self.render_extent_px, clip_plane);"),
+        sync.contains("viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);"),
         "camera/viewport changes should update view state without forcing a scene upload"
     );
     assert!(
-        sync.contains("if self.live_viewport_scene_dirty {"),
+        sync.contains("if self.render.invalidation.live_scene_stale() {"),
         "scene uploads should be conditional on actual scene changes"
     );
     assert!(
         sync.contains("viewport.sync_scene(&sources, &updates);"),
         "only scene mutations should touch prepared scene synchronization"
     );
+    // The typed model proves the cause mapping: a camera-only change requests
+    // a repaint while both scene consumers stay fresh.
+    let mut camera_only = invalidation::RenderInvalidation::new();
+    camera_only.request_redraw();
+    assert!(camera_only.redraw_pending());
+    assert!(
+        !camera_only.live_scene_stale() && !camera_only.live_overlay_stale(),
+        "camera-only changes must not force a live scene re-upload"
+    );
 }
 
 #[test]
 fn camera_only_offscreen_redraw_skips_scene_resync() {
-    let app_source = app_module_source();
     let render_pixels = app_render_source();
 
     assert!(
-        app_source.contains("offscreen_scene_dirty: bool"),
-        "offscreen fallback should track whether scene GPU state actually changed"
-    );
-    assert!(
-        render_pixels.contains("if self.offscreen_scene_dirty {"),
+        render_pixels.contains("if self.render.invalidation.offscreen_scene_stale() {"),
         "camera-only offscreen redraws should not rewrite layer uniforms every frame"
     );
     assert!(
-        render_pixels.contains("self.offscreen_scene_dirty = false;"),
-        "offscreen scene sync should clear its dirty bit after the upload/update path runs"
+        render_pixels.contains("self.render.invalidation.consume_offscreen_scene();"),
+        "offscreen scene sync should consume its own cursor after the upload/update path runs"
+    );
+    // The typed model proves the cause mapping for the fallback path too.
+    let mut camera_only = invalidation::RenderInvalidation::new();
+    camera_only.request_redraw();
+    assert!(camera_only.redraw_pending());
+    assert!(
+        !camera_only.offscreen_scene_stale() && !camera_only.offscreen_overlay_stale(),
+        "camera-only changes must not force an offscreen scene rebuild"
     );
 }
 

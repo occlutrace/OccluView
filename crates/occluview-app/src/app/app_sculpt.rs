@@ -157,19 +157,19 @@ impl OccluViewApp {
     /// Arm/disarm a sculpt tool (toggling the armed one disarms).
     pub(super) fn toggle_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
         self.abort_sculpt_stroke();
-        self.sculpt.toggle(kind);
-        if self.sculpt.armed.is_some() {
+        self.tools.sculpt.toggle(kind);
+        if self.tools.sculpt.armed.is_some() {
             // Arming a brush means the Sculpt tab: show it and drop selection.
-            self.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
-            self.mesh_selection_drag = None;
+            self.tools.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
+            self.document.mesh_selection_drag = None;
             // Prepare the target off the UI thread. Selection gesture state is
             // intentionally preserved; sculpt owns LMB while armed and must
             // not silently turn Lasso into Marquee.
             self.prepare_armed_sculpt_session();
         } else {
-            self.sculpt.disarm();
+            self.tools.sculpt.disarm();
         }
-        self.status_message = Some(match self.sculpt.armed {
+        self.ui.status_message = Some(match self.tools.sculpt.armed {
             Some(SculptToolKind::AddRemove) => {
                 "Add/Remove: drag to build, hold Shift to carve".to_string()
             }
@@ -178,7 +178,7 @@ impl OccluViewApp {
             }
             None => "Sculpt off".to_string(),
         });
-        self.needs_render = true;
+        self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
     }
 
@@ -189,28 +189,28 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) {
         use mesh_editor_overlay::EditorTab;
-        if self.editor_tab == tab {
+        if self.tools.editor_tab == tab {
             return;
         }
-        self.editor_tab = tab;
+        self.tools.editor_tab = tab;
         match tab {
             EditorTab::EditMesh => {
                 self.abort_sculpt_stroke();
-                self.sculpt.disarm();
+                self.tools.sculpt.disarm();
             }
-            EditorTab::Sculpt if self.sculpt.armed.is_none() => {
+            EditorTab::Sculpt if self.tools.sculpt.armed.is_none() => {
                 self.toggle_sculpt_tool(SculptToolKind::AddRemove, ctx);
             }
             EditorTab::Sculpt => {}
         }
-        self.needs_render = true;
+        self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
     }
 
     /// Edit-Mesh-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
     /// Consumed only while a session is open and no text field has focus.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
-        if !self.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
+        if !self.document.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
             return false;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)) {
@@ -226,7 +226,7 @@ impl OccluViewApp {
 
     /// Arm a sculpt tool idempotently — the hotkey only turns a tool ON.
     fn arm_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
-        if self.sculpt.armed != Some(kind) {
+        if self.tools.sculpt.armed != Some(kind) {
             self.toggle_sculpt_tool(kind, ctx);
         }
     }
@@ -241,14 +241,14 @@ impl OccluViewApp {
         pan_drag_active: bool,
     ) -> bool {
         self.poll_sculpt_preparation(ctx);
-        if !self.edit_mode.has_active_session() {
-            if self.sculpt.armed.is_some() || self.sculpt.stroke.is_some() {
+        if !self.document.edit_mode.has_active_session() {
+            if self.tools.sculpt.armed.is_some() || self.tools.sculpt.stroke.is_some() {
                 self.abort_sculpt_stroke();
-                self.sculpt.disarm();
+                self.tools.sculpt.disarm();
             }
             return false;
         }
-        let Some(kind) = self.sculpt.armed else {
+        let Some(kind) = self.tools.sculpt.armed else {
             return false;
         };
         if pan_drag_active {
@@ -271,12 +271,12 @@ impl OccluViewApp {
         // egui frame. The edge is authoritative: finalize any stale previous
         // stroke before creating the next one, otherwise its old anchor and
         // hold timer can make the second drag look dead.
-        if pressed && self.sculpt.stroke.is_some() {
+        if pressed && self.tools.sculpt.stroke.is_some() {
             self.commit_sculpt_stroke(ctx);
         }
 
         if !down {
-            if self.sculpt.stroke.is_some() {
+            if self.tools.sculpt.stroke.is_some() {
                 self.commit_sculpt_stroke(ctx);
                 return true;
             }
@@ -288,10 +288,10 @@ impl OccluViewApp {
         let Some(pointer) = pointer else {
             return true;
         };
-        if self.sculpt.stroke.is_none() && !response.contains_pointer() {
+        if self.tools.sculpt.stroke.is_none() && !response.contains_pointer() {
             return false;
         }
-        if self.sculpt.stroke.is_none() {
+        if self.tools.sculpt.stroke.is_none() {
             let _ = self.ensure_sculpt_session_for_target();
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
@@ -311,7 +311,13 @@ impl OccluViewApp {
     fn paint_sculpt_dabs(&mut self, ctx: &egui::Context, hit: &ScenePickHit, input: DabInput) {
         // Mid-stroke the session/stroke are locked to the stroke's own layer;
         // dabs that wander onto another arch are ignored, not committed there.
-        match self.sculpt.stroke.as_ref().map(|stroke| stroke.layer_id) {
+        match self
+            .tools
+            .sculpt
+            .stroke
+            .as_ref()
+            .map(|stroke| stroke.layer_id)
+        {
             Some(layer) if layer != hit.layer_id => {
                 ctx.request_repaint();
                 return;
@@ -322,7 +328,7 @@ impl OccluViewApp {
                     ctx.request_repaint();
                     return;
                 }
-                self.sculpt.stroke = Some(StrokeState {
+                self.tools.sculpt.stroke = Some(StrokeState {
                     layer_id: hit.layer_id,
                     last_dab_local: None,
                     hold_seconds: 0.0,
@@ -333,6 +339,7 @@ impl OccluViewApp {
         let params = DabParams {
             hit_world: hit.point,
             view_world: self
+                .render
                 .camera
                 .as_ref()
                 .map_or(Vec3::NEG_Z, |camera| camera.view_direction()),
@@ -345,27 +352,30 @@ impl OccluViewApp {
             mode: input.kind.brush_mode(input.shift),
             dt: input.dt,
         };
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return;
         };
         let queued = {
-            let Some(stroke) = self.sculpt.stroke.as_mut() else {
+            let Some(stroke) = self.tools.sculpt.stroke.as_mut() else {
                 return;
             };
             schedule_dabs(worker, stroke, &params)
         };
         if queued > 0 {
-            self.needs_render = true;
+            // Dab bytes reach the GPU through the worker poll's sparse writes;
+            // only the repaint is owed here.
+            self.render.invalidation.request_redraw();
         }
         ctx.request_repaint();
     }
 
     /// Prepare the target without requiring a successful BVH hit first.
     fn ensure_sculpt_session_for_target(&mut self) -> bool {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
-        let Some((index, layer_id)) = sculpt_target(&scene, self.edit_mode.session_layer_id())
+        let Some((index, layer_id)) =
+            sculpt_target(&scene, self.document.edit_mode.session_layer_id())
         else {
             return false;
         };
@@ -373,7 +383,7 @@ impl OccluViewApp {
     }
 
     fn ensure_sculpt_session_for_hit(&mut self, hit: &ScenePickHit) -> bool {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
@@ -398,22 +408,26 @@ impl OccluViewApp {
             return false;
         }
         if self
+            .tools
             .sculpt
             .session_matches(layer_id, entry.mesh.topology_id())
         {
             return true;
         }
-        self.sculpt.queue_preparation(Arc::clone(scene), index)
+        self.tools
+            .sculpt
+            .queue_preparation(Arc::clone(scene), index)
     }
 
     /// Prepare the active edit layer as soon as Edit Mesh/Sculpt becomes
     /// available. The one-time O(n) weld/adjacency/grid build stays off the UI
     /// thread and normally completes before the first brush press.
     pub(super) fn prepare_armed_sculpt_session(&mut self) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let target = self
+            .document
             .edit_mode
             .session_layer_id()
             .and_then(|layer_id| {
@@ -430,33 +444,33 @@ impl OccluViewApp {
                 first.filter(|_| sculptable.next().is_none())
             });
         if let Some(index) = target {
-            let _ = self.sculpt.queue_preparation(scene, index);
+            let _ = self.tools.sculpt.queue_preparation(scene, index);
         }
     }
 
     pub(super) fn poll_sculpt_preparation(&mut self, ctx: &egui::Context) {
-        let Some(result) = self.sculpt.poll_preparation() else {
+        let Some(result) = self.tools.sculpt.poll_preparation() else {
             return;
         };
         match result {
             Ok(session) => {
-                let valid = self.scene.as_ref().is_some_and(|scene| {
+                let valid = self.document.scene.as_ref().is_some_and(|scene| {
                     scene.meshes().iter().any(|entry| {
                         entry.id() == session.layer_id
                             && entry.mesh.topology_id() == session.topology_id
                     })
                 });
-                if valid && self.edit_mode.has_active_session() {
-                    self.sculpt.worker = Some(SculptWorker::spawn(session));
-                    if self.sculpt.armed.is_some() {
-                        self.status_message = None;
+                if valid && self.document.edit_mode.has_active_session() {
+                    self.tools.sculpt.worker = Some(SculptWorker::spawn(session));
+                    if self.tools.sculpt.armed.is_some() {
+                        self.ui.status_message = None;
                     }
-                    self.needs_render = true;
+                    self.render.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
                 }
             }
             Err(error) => {
-                self.status_message = Some(format!("Cannot sculpt this layer: {error}"));
+                self.ui.status_message = Some(format!("Cannot sculpt this layer: {error}"));
                 ctx.request_repaint();
             }
         }
@@ -466,7 +480,7 @@ impl OccluViewApp {
     /// the persistent session too and force a full re-sync so the on-screen
     /// geometry reverts to the committed scene.
     pub(super) fn abort_sculpt_stroke(&mut self) {
-        let had_stroke = self.sculpt.stroke.take().is_some();
+        let had_stroke = self.tools.sculpt.stroke.take().is_some();
         if had_stroke {
             self.invalidate_sculpt_session_silent();
         }
@@ -476,10 +490,8 @@ impl OccluViewApp {
         // Cancel any worker prepared from the pre-edit scene as well as the
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
-        self.sculpt.invalidate_session();
-        self.live_viewport_scene_dirty = true;
-        self.offscreen_scene_dirty = true;
-        self.needs_render = true;
+        self.tools.sculpt.invalidate_session();
+        self.render.invalidation.sculpt_topology_changed();
     }
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
@@ -491,13 +503,16 @@ impl OccluViewApp {
         ctx: &egui::Context,
         over_viewport: bool,
     ) -> bool {
-        if !over_viewport || self.sculpt.armed.is_none() || !self.edit_mode.has_active_session() {
+        if !over_viewport
+            || self.tools.sculpt.armed.is_none()
+            || !self.document.edit_mode.has_active_session()
+        {
             return false;
         }
         if !apply_sculpt_wheel_settings(ctx) {
             return false;
         }
-        self.needs_render = true;
+        self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
         true
     }
@@ -507,8 +522,8 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         pointer: egui::Pos2,
     ) -> Option<ScenePickHit> {
-        let camera = self.camera?;
-        let scene = self.scene.as_ref()?;
+        let camera = self.render.camera?;
+        let scene = self.document.scene.as_ref()?;
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
         // The preparation worker warms this exact layer. Never allow a cold
@@ -522,7 +537,8 @@ impl OccluViewApp {
     }
 
     fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
-        sculpt_target(scene, self.edit_mode.session_layer_id()).map(|(_, layer_id)| layer_id)
+        sculpt_target(scene, self.document.edit_mode.session_layer_id())
+            .map(|(_, layer_id)| layer_id)
     }
 
     /// The brush cursor is deliberately screen-space: a surface-projected ring
@@ -530,13 +546,13 @@ impl OccluViewApp {
     /// polygons on every repaint. A quiet ring communicates brush size without
     /// competing with the model or introducing hover latency.
     pub(super) fn paint_sculpt_cursor_impl(&self, ui: &egui::Ui, viewport_rect: egui::Rect) {
-        let Some(kind) = self.sculpt.armed else {
+        let Some(kind) = self.tools.sculpt.armed else {
             return;
         };
-        if !self.edit_mode.has_active_session() {
+        if !self.document.edit_mode.has_active_session() {
             return;
         }
-        let Some(camera) = self.camera.as_ref() else {
+        let Some(camera) = self.render.camera.as_ref() else {
             return;
         };
         let Some(pointer) = ui.ctx().pointer_hover_pos() else {

@@ -1,12 +1,10 @@
 use super::app_chrome::{load_app_logo_color_image, status_overlay_rect, viewer_visuals};
-use super::app_files::{
-    load_recent_files, recent_scene_hover, recent_scene_label, save_recent_files,
-};
+use super::app_files::{recent_scene_hover, recent_scene_label};
 use super::cut_tool::CutTool;
 use super::edit_mode::{EditModeCommand, EditModeController, ScreenPolygonSelectionRequest};
 use super::layer_actions::{self, LayerContextAction, LayerContextApply, LayerContextRequest};
 use super::layers_overlay::{self, LayerOverlayChanges};
-use super::live_viewport::{self, SharedLiveViewport};
+use super::live_viewport;
 use super::mesh_editor_overlay::{self, MeshEditorAction};
 use super::scene_loading::{
     combine_loaded_scene, load_status_message, LoadQueueCameraReset, PendingSceneLoad,
@@ -16,20 +14,19 @@ use super::viewer::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, desired_render_extent_px,
     home_camera_for_scene, orbit_delta_from_drag, paint_axis_gizmo, pick_scene_hit,
     pick_scene_point, render_extent_change_requires_rerender, viewport_orbit_drag_active,
-    viewport_pan_drag_active, zoom_factor_from_scroll, DEFAULT_RENDER_EXTENT_PX,
+    viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput,
 };
 use super::{
     read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
 };
-use crate::recent_files::RecentFiles;
 use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
 use glam::Mat4;
 use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
-    GpuCamera, GpuMeshUniform, Offscreen, PreparedScene, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, ThumbnailSpec, ViewportSpec,
+    GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, PreparedSceneTopology,
+    PreparedSceneUpdate, ThumbnailSpec, ViewportSpec,
 };
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::Arc;
@@ -80,6 +77,12 @@ mod information_dialog;
 mod open_dialogs;
 mod selection_overlay;
 mod state;
+mod state_document;
+mod state_persistence;
+mod state_platform;
+mod state_render;
+mod state_tool;
+mod state_ui;
 
 use app_layer_edits::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
@@ -88,8 +91,11 @@ use app_layer_edits::{
 };
 use app_load_errors::load_error_dialog;
 use app_scale_bar::paint_scale_bar;
-pub(crate) use state::{parse_args, OccluViewApp, StartupHandles};
-use state::{AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen, RenderedFrame};
+pub(crate) use state::OccluViewApp;
+use state_document::MeshSelectionDrag;
+pub(crate) use state_platform::StartupHandles;
+use state_render::RenderedFrame;
+use state_ui::{AppErrorDialog, PendingReplaceOpen};
 
 #[cfg(test)]
 mod tests {

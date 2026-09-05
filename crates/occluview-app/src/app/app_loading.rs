@@ -81,7 +81,7 @@ impl OccluViewApp {
         if self.replace_open_needs_guard() {
             // Newest replace supersedes an older parked one; the open is held,
             // never dropped, until the operator answers the dialog.
-            self.pending_replace_open = Some(PendingReplaceOpen {
+            self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
             });
@@ -105,7 +105,7 @@ impl OccluViewApp {
     /// a live session carrying uncommitted edits, or any layer with edits not
     /// yet written to disk, would be lost by a blind scene replace.
     fn replace_open_needs_guard(&self) -> bool {
-        self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()
+        self.document.edit_mode.is_dirty() || self.document.has_unsaved_mesh_edits()
     }
 
     pub(super) fn append_paths(&mut self, paths: &[PathBuf], source: &'static str) {
@@ -126,7 +126,7 @@ impl OccluViewApp {
             source,
             mode,
         };
-        if self.active_load.is_some() {
+        if self.document.active_load.is_some() {
             if mode == SceneLoadMode::Replace {
                 // The evicted loader thread is abandoned, not cancelled. Its
                 // receiver is dropped, so its `send` fails and it exits -- but
@@ -143,14 +143,14 @@ impl OccluViewApp {
                 // single-file case anyway, since the check can only sit
                 // between files. Left as it is. It takes sustained impatience
                 // to reach, and it clears itself.
-                self.queued_loads.clear();
-                self.active_load = None;
-                self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                self.camera_modified_during_load = false;
+                self.document.queued_loads.clear();
+                self.document.active_load = None;
+                self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                self.document.camera_modified_during_load = false;
                 self.start_scene_load(request);
             } else {
-                self.queued_loads.push_back(request);
-                self.status_message = Some(format!(
+                self.document.queued_loads.push_back(request);
+                self.ui.status_message = Some(format!(
                     "Queued {} layer{}",
                     paths.len(),
                     if paths.len() == 1 { "" } else { "s" }
@@ -170,7 +170,7 @@ impl OccluViewApp {
         let load_paths = paths.clone();
         let started_at = Instant::now();
         let (sender, receiver) = mpsc::channel();
-        let repaint_ctx = self.repaint_ctx.clone();
+        let repaint_ctx = self.ui.repaint_ctx.clone();
         let spawn_result = std::thread::Builder::new()
             .name("scene-load".to_string())
             .spawn(move || {
@@ -179,8 +179,8 @@ impl OccluViewApp {
                 repaint_ctx.request_repaint();
             });
         if let Err(error) = spawn_result {
-            self.status_message = Some("Open failed: could not start loader".to_string());
-            self.app_error = Some(AppErrorDialog {
+            self.ui.status_message = Some("Open failed: could not start loader".to_string());
+            self.ui.app_error = Some(AppErrorDialog {
                 title: "Could not open file".to_string(),
                 summary: "The background scene loader could not be started.".to_string(),
                 details: format!("Loader thread start failed\n\n{error:#}"),
@@ -188,8 +188,8 @@ impl OccluViewApp {
             tracing::error!(?error, source, "scene loader thread spawn failed");
             return;
         }
-        self.status_message = Some(load_status_message(mode, paths.len()));
-        self.active_load = Some(PendingSceneLoad {
+        self.ui.status_message = Some(load_status_message(mode, paths.len()));
+        self.document.active_load = Some(PendingSceneLoad {
             paths,
             source,
             mode,
@@ -199,7 +199,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn process_scene_loads(&mut self, ctx: &egui::Context) {
-        let Some(active) = self.active_load.as_ref() else {
+        let Some(active) = self.document.active_load.as_ref() else {
             self.start_next_queued_load();
             return;
         };
@@ -208,9 +208,9 @@ impl OccluViewApp {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 let source = active.source;
-                let startup_token = self.pending_raise_token.take();
-                self.active_load = None;
-                self.status_message = Some("Open failed: loader stopped".to_string());
+                let startup_token = self.platform.pending_raise_token.take();
+                self.document.active_load = None;
+                self.ui.status_message = Some("Open failed: loader stopped".to_string());
                 tracing::error!(source, "scene loader disconnected");
                 if source == "startup" || source == "single-instance" {
                     single_instance::complete_startup_notification(startup_token.as_deref());
@@ -220,20 +220,20 @@ impl OccluViewApp {
             }
         };
 
-        let Some(active) = self.active_load.take() else {
+        let Some(active) = self.document.active_load.take() else {
             return;
         };
-        let load_settled = self.queued_loads.is_empty();
+        let load_settled = self.document.queued_loads.is_empty();
         let raise_after_handoff = active.source == "single-instance" && load_settled;
         let raise_after_startup = active.source == "startup" && load_settled;
         self.apply_scene_load_result(active, result);
         if raise_after_handoff {
             // Second (definitive) raise now that the window has fresh content.
-            let startup_token = self.pending_raise_token.clone();
+            let startup_token = self.platform.pending_raise_token.clone();
             self.raise_window_for_incoming_open(ctx);
             single_instance::complete_startup_notification(startup_token.as_deref());
             // The handoff is complete; drop its provenance token.
-            self.pending_raise_token = None;
+            self.platform.pending_raise_token = None;
         } else if raise_after_startup {
             self.raise_window_for_startup_open(ctx);
         }
@@ -241,8 +241,8 @@ impl OccluViewApp {
     }
 
     fn start_next_queued_load(&mut self) {
-        if self.active_load.is_none() {
-            if let Some(request) = self.queued_loads.pop_front() {
+        if self.document.active_load.is_none() {
+            if let Some(request) = self.document.queued_loads.pop_front() {
                 self.start_scene_load(request);
             }
         }
@@ -255,8 +255,8 @@ impl OccluViewApp {
                 let scene_ready_ms = pending.started_at.elapsed().as_millis();
                 let (scene, current_paths) = if append {
                     combine_loaded_scene(
-                        self.scene.as_deref(),
-                        &self.current_paths,
+                        self.document.scene.as_deref(),
+                        &self.persistence.current_paths,
                         scene,
                         &pending.paths,
                     )
@@ -264,45 +264,45 @@ impl OccluViewApp {
                     (scene, pending.paths.clone())
                 };
                 let recent_paths = current_paths.clone();
-                let queued_after_current = !self.queued_loads.is_empty();
+                let queued_after_current = !self.document.queued_loads.is_empty();
                 if !append {
-                    self.edit_mode.clear();
+                    self.document.edit_mode.clear();
                     // The old scene (and any unsaved edits on it) is gone.
-                    self.clear_unsaved_mesh_edits();
-                    self.hidden_layer_stack.clear();
-                    self.translucent_layer_restore.clear();
+                    self.document.clear_unsaved_mesh_edits();
+                    self.document.hidden_layer_stack.clear();
+                    self.document.translucent_layer_restore.clear();
                 }
                 let reset_camera = if append {
-                    let reset = self.load_queue_camera_reset
+                    let reset = self.document.load_queue_camera_reset
                         == LoadQueueCameraReset::WhenQueueDrains
                         && !queued_after_current
-                        && !self.camera_modified_during_load;
+                        && !self.document.camera_modified_during_load;
                     if reset {
-                        self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                        self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
                     }
                     reset
                 } else if queued_after_current {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::WhenQueueDrains;
-                    self.camera.is_none()
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::WhenQueueDrains;
+                    self.render.camera.is_none()
                 } else {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
                     // The "Frame a scene when it opens" preference only owns the
                     // replacement path; a first-ever load always frames (there is
                     // no pose worth keeping yet) and appends never steal the view.
-                    self.settings.frame_scene_on_open
+                    self.persistence.settings.frame_scene_on_open
                 };
                 self.set_scene(scene, reset_camera);
-                if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
+                if self.document.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
                     && queued_after_current
                 {
-                    self.needs_render = false;
-                    self.rendered = None;
+                    self.render.invalidation.suppress_redraw();
+                    self.render.rendered = None;
                     self.clear_live_viewport();
                 }
-                self.current_paths = current_paths;
-                self.push_recent_scene(&recent_paths);
-                self.save_recent_files();
-                self.status_message = None;
+                self.persistence.current_paths = current_paths;
+                self.persistence.push_recent_scene(&recent_paths);
+                self.persistence.save_recent_files();
+                self.ui.status_message = None;
                 tracing::info!(
                     source = pending.source,
                     append,
@@ -314,21 +314,22 @@ impl OccluViewApp {
             Err(e) => {
                 let action = if append { "Add" } else { "Open" };
                 if !append {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                } else if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
-                    && self.queued_loads.is_empty()
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                } else if self.document.load_queue_camera_reset
+                    == LoadQueueCameraReset::WhenQueueDrains
+                    && self.document.queued_loads.is_empty()
                 {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                    if self.scene.is_some() {
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                    if self.document.scene.is_some() {
                         self.reset_camera_to_home();
                     }
                 }
-                self.status_message = Some(format!("{action} failed: {e:#}"));
-                self.app_error = Some(load_error_dialog(action, &e, &pending.paths));
+                self.ui.status_message = Some(format!("{action} failed: {e:#}"));
+                self.ui.app_error = Some(load_error_dialog(action, &e, &pending.paths));
                 tracing::error!(
                     error = %failure_without_paths(&e, &pending.paths),
                     path_count = pending.paths.len(),
-                    formats = ?crate::app_bootstrap::file_extensions(&pending.paths),
+                    formats = ?crate::file_extensions(&pending.paths),
                     source = pending.source,
                     load_ms = pending.started_at.elapsed().as_millis(),
                     "scene load failed"
@@ -339,9 +340,9 @@ impl OccluViewApp {
 
     fn should_append_incoming_open(&self) -> bool {
         crate::should_append_incoming_open_state(
-            self.scene.is_some(),
-            self.active_load.is_some(),
-            self.queued_loads.len(),
+            self.document.scene.is_some(),
+            self.document.active_load.is_some(),
+            self.document.queued_loads.len(),
         )
     }
 
@@ -368,13 +369,11 @@ impl OccluViewApp {
 
     pub(super) fn handle_open_requests(&mut self, ctx: &egui::Context) {
         let mut handled_request = false;
-        for request in self.incoming_open_requests.take_requests() {
+        for request in self.platform.take_open_requests() {
             handled_request = true;
             // Keep the most recent forwarded activation token; it is the
             // provenance the post-load raise uses. See activation.rs.
-            if request.activation_token.is_some() {
-                self.pending_raise_token = request.activation_token;
-            }
+            self.platform.remember_raise_token(request.activation_token);
             self.open_paths_from_external_source(&request.paths, "single-instance");
         }
         if handled_request {
@@ -390,8 +389,8 @@ impl OccluViewApp {
     /// compositor/window-manager fallback remains the only policy-compliant
     /// option for a launch that did not originate from a user action.
     pub(super) fn raise_window_for_startup_open(&mut self, ctx: &egui::Context) {
-        let token = self.pending_raise_token.take();
-        let activated = self.raise_target.try_activate(token.as_deref());
+        let token = self.platform.take_raise_token();
+        let activated = self.platform.raise_target.try_activate(token.as_deref());
         single_instance::complete_startup_notification(token.as_deref());
         if activated {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -416,8 +415,8 @@ impl OccluViewApp {
         // the forwarded user-interaction provenance. winit's own `Focus` is not
         // enough for a live Wayland surface and can be rejected as a focus
         // steal on X11.
-        let token = self.pending_raise_token.clone();
-        if self.raise_target.try_activate(token.as_deref()) {
+        let token = self.platform.pending_raise_token.clone();
+        if self.platform.raise_target.try_activate(token.as_deref()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             return;
         }
@@ -432,22 +431,22 @@ impl OccluViewApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
             egui::UserAttentionType::Informational,
         ));
-        self.foreground_pulse_until = Some(Instant::now() + FOREGROUND_PULSE_DURATION);
+        self.ui.foreground_pulse_until = Some(Instant::now() + FOREGROUND_PULSE_DURATION);
         ctx.request_repaint_after(FOREGROUND_PULSE_DURATION);
     }
 
     pub(super) fn finish_foreground_pulse_if_due(&mut self, ctx: &egui::Context) {
-        let Some(until) = self.foreground_pulse_until else {
+        let Some(until) = self.ui.foreground_pulse_until else {
             return;
         };
         if Instant::now() < until {
             ctx.request_repaint_after(until.saturating_duration_since(Instant::now()));
             return;
         }
-        self.foreground_pulse_until = None;
+        self.ui.foreground_pulse_until = None;
         // The attention pulse (fallback path) has ended; drop any provenance
         // token still held from a load that failed before its post-load raise.
-        self.pending_raise_token = None;
+        self.platform.pending_raise_token = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::viewport::WindowLevel::Normal,
         ));

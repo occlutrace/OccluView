@@ -132,11 +132,11 @@ fn file_type_progids_are_brand_neutral() {
 
 #[test]
 fn gui_app_sets_process_app_user_model_id() {
-    let app_main = include_str!("../../occluview-app/src/main.rs");
+    let app_lib = include_str!("../../occluview-app/src/lib.rs");
     let bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
     let jump_list = include_str!("../../occluview-app/src/jump_list.rs");
 
-    assert!(app_main.contains("pub(crate) const APP_USER_MODEL_ID"));
+    assert!(app_lib.contains("pub(crate) const APP_USER_MODEL_ID"));
     assert!(bootstrap.contains("SetCurrentProcessExplicitAppUserModelID"));
     assert!(bootstrap.contains("set_process_app_user_model_id();"));
     assert!(jump_list.contains("super::APP_USER_MODEL_ID"));
@@ -684,20 +684,20 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
 
 #[test]
 fn gui_file_association_launches_reuse_existing_window() {
-    let app_main = include_str!("../../occluview-app/src/main.rs");
+    let app_lib = include_str!("../../occluview-app/src/lib.rs");
     let bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
     let app_loading = include_str!("../../occluview-app/src/app/app_loading.rs");
-    let app_state = include_str!("../../occluview-app/src/app/state.rs");
+    let app_platform = include_str!("../../occluview-app/src/app/state_platform.rs");
     let single_instance = include_str!("../../occluview-app/src/single_instance/mod.rs");
     let single_instance_windows =
         include_str!("../../occluview-app/src/single_instance/windows.rs");
 
-    assert!(app_main.contains("mod single_instance"));
+    assert!(app_lib.contains("mod single_instance;"));
     assert!(bootstrap.contains("SingleInstance::acquire"));
     assert!(bootstrap.contains("write_open_request(&request)"));
-    assert!(app_state.contains("incoming_open_requests: single_instance::OpenRequestListener"));
+    assert!(app_platform.contains("incoming_open_requests: single_instance::OpenRequestListener"));
     assert!(app_loading.contains("fn open_paths_from_external_source("));
-    assert!(app_loading.contains("for request in self.incoming_open_requests.take_requests()"));
+    assert!(app_loading.contains("for request in self.platform.take_open_requests()"));
     assert!(app_loading
         .contains("self.open_paths_from_external_source(&request.paths, \"single-instance\")"));
     assert!(single_instance_windows.contains("CreateMutexW"));

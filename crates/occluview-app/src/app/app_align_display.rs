@@ -50,7 +50,7 @@ impl OccluViewApp {
         kind: AlignOverlay,
     ) -> bool {
         let shared = Arc::new(colors);
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return false;
         };
         let Some(entry) = live
@@ -66,10 +66,10 @@ impl OccluViewApp {
         }
         entry.set_deviation(Some(Arc::clone(&shared)));
         self.set_overlay_colors(layer, shared);
-        self.align.overlay = kind;
+        self.tools.align.overlay = kind;
         // Change only the material data; preserve the prepared scene.
         self.mark_scene_materials_changed();
-        self.align.deviation_push_pending = true;
+        self.tools.align.deviation_push_pending = true;
         true
     }
 
@@ -82,8 +82,10 @@ impl OccluViewApp {
         touched: &[u32],
         patched: &[[u8; 4]],
     ) -> bool {
-        let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
-        else {
+        let (Some(scene), Some(live_viewport)) = (
+            self.document.scene.clone(),
+            self.render.live_viewport.clone(),
+        ) else {
             return false;
         };
         let Some(entry) = layer_of(&scene, layer) else {
@@ -92,6 +94,7 @@ impl OccluViewApp {
         let count = entry.mesh.vertices().len();
         // The stored colours and scratch buffer must match this mesh.
         let Some(slot) = self
+            .tools
             .align
             .overlay_colors
             .iter_mut()
@@ -99,7 +102,7 @@ impl OccluViewApp {
         else {
             return false;
         };
-        if !self.align.painted.holds(&entry.mesh, count) {
+        if !self.tools.align.painted.holds(&entry.mesh, count) {
             return false;
         }
 
@@ -118,6 +121,7 @@ impl OccluViewApp {
         // Finish reads through the cloned scene before editing the live scene.
         let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
         let painted = self
+            .tools
             .align
             .painted
             .patch(&entry.mesh, &shared, touched)
@@ -125,7 +129,7 @@ impl OccluViewApp {
         drop(scene);
 
         // Retain the full array so a later GPU rebuild can restore it.
-        if let Some(live) = self.live_scene_mut() {
+        if let Some(live) = self.document.live_scene_mut() {
             if let Some(entry) = live
                 .meshes_mut()
                 .iter_mut()
@@ -141,20 +145,21 @@ impl OccluViewApp {
                 viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
             }
         }
-        self.needs_render = true;
+        self.render.invalidation.overlay_tools_changed();
         true
     }
 
     /// Remember one layer's colours, replacing whatever it had.
     fn set_overlay_colors(&mut self, layer: SceneMeshId, colors: Arc<Vec<[u8; 4]>>) {
         match self
+            .tools
             .align
             .overlay_colors
             .iter_mut()
             .find(|(id, _)| *id == layer)
         {
             Some(slot) => slot.1 = colors,
-            None => self.align.overlay_colors.push((layer, colors)),
+            None => self.tools.align.overlay_colors.push((layer, colors)),
         }
     }
 
@@ -166,14 +171,16 @@ impl OccluViewApp {
     /// there is no prepared scene to write into yet; the caller re-pushes after
     /// the viewport has built one.
     pub(super) fn push_deviation_colors(&mut self) -> bool {
-        let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
-        else {
+        let (Some(scene), Some(live_viewport)) = (
+            self.document.scene.clone(),
+            self.render.live_viewport.clone(),
+        ) else {
             return false;
         };
-        if self.align.overlay_colors.is_empty() {
+        if self.tools.align.overlay_colors.is_empty() {
             return false;
         }
-        let pending = self.align.overlay_colors.clone();
+        let pending = self.tools.align.overlay_colors.clone();
         let mut wrote = true;
         for (layer, colors) in pending {
             let Some(entry) = layer_of(&scene, layer) else {
@@ -181,7 +188,7 @@ impl OccluViewApp {
             };
             let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
             // Reuse the existing buffer; only vertex colours changed.
-            let Some(painted) = self.align.painted.repaint(&entry.mesh, &colors) else {
+            let Some(painted) = self.tools.align.painted.repaint(&entry.mesh, &colors) else {
                 wrote = false;
                 continue;
             };
@@ -190,23 +197,23 @@ impl OccluViewApp {
             };
             wrote &= viewport.write_scene_vertices(&topology, painted);
         }
-        self.needs_render = true;
+        self.render.invalidation.overlay_tools_changed();
         wrote
     }
 
     /// Drop every overlay and restore the meshes' own colours.
     pub(super) fn clear_deviation_overlay(&mut self) {
-        self.align.overlay = AlignOverlay::Nothing;
+        self.tools.align.overlay = AlignOverlay::Nothing;
         // Restore the other layer even when no colour array remains.
         self.unghost_layers();
-        if self.align.overlay_colors.is_empty() {
+        if self.tools.align.overlay_colors.is_empty() {
             return;
         }
-        self.align.overlay_colors.clear();
+        self.tools.align.overlay_colors.clear();
         // A push still standing would chase colours that no longer exist.
-        self.align.deviation_push_pending = false;
-        self.align.painted.clear();
-        let Some(live) = self.live_scene_mut() else {
+        self.tools.align.deviation_push_pending = false;
+        self.tools.align.painted.clear();
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         let overlaid: Vec<SceneMeshId> = live
@@ -220,13 +227,13 @@ impl OccluViewApp {
             .collect();
         self.mark_scene_materials_changed();
         self.restore_layer_colors(&overlaid);
-        self.align.stats = None;
-        self.needs_render = true;
+        self.tools.align.stats = None;
+        self.render.invalidation.overlay_tools_changed();
     }
 
     /// Whether anything is currently overlaid.
     pub(super) fn align_overlay_is_up(&self) -> bool {
-        !self.align.overlay_colors.is_empty()
+        !self.tools.align.overlay_colors.is_empty()
     }
 
     /// Put the meshes' own vertex colours back on the GPU, for the layers that
@@ -236,8 +243,10 @@ impl OccluViewApp {
         if layers.is_empty() {
             return;
         }
-        let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
-        else {
+        let (Some(scene), Some(live_viewport)) = (
+            self.document.scene.clone(),
+            self.render.live_viewport.clone(),
+        ) else {
             return;
         };
         let Ok(viewport) = live_viewport.lock() else {
@@ -256,12 +265,12 @@ impl OccluViewApp {
     // Display helpers.
     /// The moving layer carries the map.
     pub(super) fn align_mapped_layer(&self) -> Option<SceneMeshId> {
-        self.align.tool.moving_layer()
+        self.tools.align.tool.moving_layer()
     }
 
     /// The fixed layer, which is ghosted while the map is shown.
     fn align_other_layer(&self) -> Option<SceneMeshId> {
-        self.align.tool.fixed_layer()
+        self.tools.align.tool.fixed_layer()
     }
 
     /// Fade the other scan while the map is up.
@@ -270,14 +279,14 @@ impl OccluViewApp {
     /// the coloured one is then only visible in patches. Lab software shows one
     /// clean coloured surface; this is how.
     pub(super) fn ghost_other_layer(&mut self) {
-        if !self.align.ghosted.is_empty() {
+        if !self.tools.align.ghosted.is_empty() {
             return;
         }
         let Some(other) = self.align_other_layer() else {
             return;
         };
         // Opacity is a material change; preserve the scene structure.
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         let mut remembered = Vec::new();
@@ -290,17 +299,17 @@ impl OccluViewApp {
         if remembered.is_empty() {
             return;
         }
-        self.align.ghosted = remembered;
+        self.tools.align.ghosted = remembered;
         self.mark_scene_materials_changed();
     }
 
     /// Bring the faded scan back.
     pub(super) fn unghost_layers(&mut self) {
-        if self.align.ghosted.is_empty() {
+        if self.tools.align.ghosted.is_empty() {
             return;
         }
-        let restore = std::mem::take(&mut self.align.ghosted);
-        let Some(live) = self.live_scene_mut() else {
+        let restore = std::mem::take(&mut self.tools.align.ghosted);
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         for (id, opacity) in restore {
@@ -348,7 +357,7 @@ mod tests {
             "an overlay must go through the material path, not set_scene"
         );
         assert!(
-            source.contains("self.live_scene_mut()"),
+            source.contains("self.document.live_scene_mut()"),
             "the live scene is mutated in place, not cloned per re-colour"
         );
         assert!(
@@ -363,11 +372,11 @@ mod tests {
     fn the_upload_buffer_is_repainted_not_rebuilt() {
         let source = production();
         assert!(
-            source.contains("self.align.painted.repaint("),
+            source.contains("self.tools.align.painted.repaint("),
             "the vertex upload must reuse its buffer"
         );
         assert!(
-            source.contains("self.align.painted.clear()"),
+            source.contains("self.tools.align.painted.clear()"),
             "dropping the overlay must drop the scratch buffer with it"
         );
     }
@@ -388,11 +397,15 @@ mod tests {
         // Same rule as above: release the cloned handle before the in-place
         // edit.
         assert!(
-            crate::primary_ui_tests::appears_before(patch, "drop(scene);", "self.live_scene_mut()",),
+            crate::primary_ui_tests::appears_before(
+                patch,
+                "drop(scene);",
+                "self.document.live_scene_mut()",
+            ),
             "the cloned scene handle must be dropped before the in-place edit"
         );
         assert!(
-            !patch.contains("self.align.painted.repaint("),
+            !patch.contains("self.tools.align.painted.repaint("),
             "the sparse path must not fall back to a full repaint silently"
         );
     }
@@ -408,7 +421,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .expect("one place that attaches colours");
         assert!(
-            attach.contains("self.align.overlay = kind"),
+            attach.contains("self.tools.align.overlay = kind"),
             "attaching colours must record what they mean"
         );
         let clear = source
@@ -416,7 +429,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .expect("one place that drops colours");
         assert!(
-            clear.contains("self.align.overlay = AlignOverlay::Nothing"),
+            clear.contains("self.tools.align.overlay = AlignOverlay::Nothing"),
             "dropping colours must clear what they meant"
         );
     }

@@ -1,7 +1,7 @@
 use super::{
-    desired_render_extent_px, egui, orbit_delta_from_drag, pick_scene_point,
+    desired_render_extent_px, egui, mesh_editor_overlay, orbit_delta_from_drag, pick_scene_point,
     render_extent_change_requires_rerender, viewport_orbit_drag_active, viewport_pan_drag_active,
-    zoom_factor_from_scroll, OccluViewApp,
+    zoom_factor_from_scroll, MeshSelectionDrag, OccluViewApp,
 };
 use glam::Vec2;
 
@@ -50,21 +50,21 @@ pub(super) fn zoom_camera_from_wheel(
 
 impl OccluViewApp {
     pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        if self.viewport_orbit_cursor_grabbed {
+        if self.ui.viewport_orbit_cursor_grabbed {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
-        self.viewport_orbit_cursor_grabbed = true;
+        self.ui.viewport_orbit_cursor_grabbed = true;
     }
 
     pub(super) fn release_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
-        if !self.viewport_orbit_cursor_grabbed {
+        if !self.ui.viewport_orbit_cursor_grabbed {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::None));
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-        self.viewport_orbit_cursor_grabbed = false;
+        self.ui.viewport_orbit_cursor_grabbed = false;
     }
 
     pub(super) fn release_viewport_orbit_cursor_if_inactive(&mut self, ctx: &egui::Context) {
@@ -78,9 +78,9 @@ impl OccluViewApp {
     pub(super) fn maybe_render_cut_view(&mut self, ctx: &egui::Context) {
         // `take_needs_render` always clears the flag; the GPU slice render runs
         // only in Mesh mode (Lines draws the cached contour, no offscreen work).
-        if self.cut_view.take_needs_render()
-            && self.cut_view.is_active()
-            && self.cut_view.wants_offscreen_slice()
+        if self.tools.cut_view.take_needs_render()
+            && self.tools.cut_view.is_active()
+            && self.tools.cut_view.wants_offscreen_slice()
             && self.can_render_cut_view()
         {
             self.render_cut_now(ctx);
@@ -93,15 +93,15 @@ impl OccluViewApp {
         viewport_points: egui::Vec2,
         pixels_per_point: f32,
     ) {
-        if self.scene.is_none() {
+        if self.document.scene.is_none() {
             return;
         }
         let Some(desired) = desired_render_extent_px(viewport_points, pixels_per_point) else {
             return;
         };
-        if render_extent_change_requires_rerender(self.render_extent_px, desired) {
-            self.render_extent_px = desired;
-            self.needs_render = true;
+        if render_extent_change_requires_rerender(self.render.render_extent_px, desired) {
+            self.render.render_extent_px = desired;
+            self.render.invalidation.request_redraw();
         }
     }
 
@@ -112,7 +112,7 @@ impl OccluViewApp {
         sample: SecondaryPointerSample,
     ) {
         if sample.pressed {
-            self.viewport_secondary_gesture_moved_since_press = false;
+            self.ui.viewport_secondary_gesture_moved_since_press = false;
         }
 
         // Any camera motion owns the gesture, including movement below egui's
@@ -123,16 +123,39 @@ impl OccluViewApp {
         // short drag can arrive in one egui frame and still must suppress the
         // context menu.
         if sample.released && !sample.pressed && sample.motion.length_sq() > f32::EPSILON {
-            self.viewport_secondary_gesture_moved_since_press = true;
+            self.ui.viewport_secondary_gesture_moved_since_press = true;
         }
         let suppress_context_menu =
-            response.secondary_clicked() && self.viewport_secondary_gesture_moved_since_press;
+            response.secondary_clicked() && self.ui.viewport_secondary_gesture_moved_since_press;
         if !suppress_context_menu {
             self.handle_viewport_context_menu(ctx, response);
         }
         if sample.released {
-            self.viewport_secondary_gesture_moved_since_press = false;
+            self.ui.viewport_secondary_gesture_moved_since_press = false;
         }
+    }
+
+    /// Modified middle clicks manage per-layer visibility. Returns true when
+    /// the click was consumed and must not reach camera retarget below.
+    fn handle_viewport_middle_click_modifiers(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+    ) -> bool {
+        if !response.clicked_by(egui::PointerButton::Middle) {
+            return false;
+        }
+        let modifiers = ctx.input(|input| input.modifiers);
+        if modifiers.command && modifiers.shift {
+            self.restore_last_hidden_layer(ctx);
+        } else if modifiers.command {
+            self.hide_layer_under_cursor(response, ctx);
+        } else if modifiers.shift {
+            self.toggle_layer_translucency_under_cursor(response, ctx);
+        } else {
+            return false;
+        }
+        true
     }
 
     fn update_viewport_orbit_gesture(
@@ -147,11 +170,11 @@ impl OccluViewApp {
         let orbit_drag_active = viewport_orbit_drag_active(
             pan_drag_active,
             sample.down,
-            self.viewport_orbit_cursor_grabbed,
+            self.ui.viewport_orbit_cursor_grabbed,
             secondary_press_owned.then_some(sample.motion),
         );
         if (pan_drag_active || orbit_drag_active) && sample.motion.length_sq() > f32::EPSILON {
-            self.viewport_secondary_gesture_moved_since_press = true;
+            self.ui.viewport_secondary_gesture_moved_since_press = true;
         }
         if orbit_drag_active {
             self.grab_viewport_orbit_cursor(ctx);
@@ -179,27 +202,16 @@ impl OccluViewApp {
 
         // Modified middle clicks manage per-layer visibility and never fall
         // through to the plain middle-click camera retarget below.
-        if response.clicked_by(egui::PointerButton::Middle) {
-            let modifiers = ctx.input(|input| input.modifiers);
-            if modifiers.command && modifiers.shift {
-                self.restore_last_hidden_layer(ctx);
-                return;
-            }
-            if modifiers.command {
-                self.hide_layer_under_cursor(response, ctx);
-                return;
-            }
-            if modifiers.shift {
-                self.toggle_layer_translucency_under_cursor(response, ctx);
-                return;
-            }
+        if self.handle_viewport_middle_click_modifiers(ctx, response) {
+            return;
         }
 
-        let scene_pick = if (self.settings.double_click_resets_camera && response.double_clicked())
+        let scene_pick = if (self.persistence.settings.double_click_resets_camera
+            && response.double_clicked())
             || response.clicked_by(egui::PointerButton::Middle)
         {
-            let camera = self.camera;
-            let scene = self.scene.as_ref();
+            let camera = self.render.camera;
+            let scene = self.document.scene.as_ref();
             response
                 .interact_pointer_pos()
                 .zip(camera)
@@ -227,9 +239,9 @@ impl OccluViewApp {
         // A click the axis gizmo answered is a view change, not a pick. The
         // gizmo markers sit over the model, so without this the same click
         // snapped the camera AND marked the facet behind the marker.
-        if self.editor_tab == crate::mesh_editor_overlay::EditorTab::EditMesh
+        if self.tools.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !gizmo_click
-            && !self.edit_mode.lasso_armed()
+            && !self.document.edit_mode.lasso_armed()
             && response.clicked_by(egui::PointerButton::Primary)
             && !response.dragged()
             && self.handle_primary_face_selection_click(ctx, response)
@@ -243,7 +255,7 @@ impl OccluViewApp {
         // modified scroll over a panel keeps its own meaning.
         let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response.hovered());
 
-        let Some(camera) = self.camera.as_mut() else {
+        let Some(camera) = self.render.camera.as_mut() else {
             return;
         };
 
@@ -277,7 +289,7 @@ impl OccluViewApp {
             if let Some(mut orbit_delta) =
                 orbit_delta_from_drag(secondary_pointer.motion, viewport_rect.size())
             {
-                let sensitivity = self.settings.orbit_sensitivity();
+                let sensitivity = self.persistence.settings.orbit_sensitivity();
                 orbit_delta.x *= sensitivity;
                 orbit_delta.y *= sensitivity;
                 camera.orbit_view_by(orbit_delta.x, orbit_delta.y);
@@ -290,7 +302,7 @@ impl OccluViewApp {
                 changed |= zoom_camera_from_wheel(
                     camera,
                     ctx,
-                    self.settings.zoom_sensitivity(),
+                    self.persistence.settings.zoom_sensitivity(),
                     viewport_rect,
                     pointer,
                 );
@@ -299,6 +311,35 @@ impl OccluViewApp {
 
         if changed {
             self.request_camera_repaint(ctx);
+        }
+    }
+
+    /// Start a mesh-selection marquee on an explicit primary drag. Lives with
+    /// the viewport input that gates it; the drag state itself is document
+    /// state consumed by the mesh editor.
+    pub(super) fn begin_mesh_selection_drag(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        pan_drag_active: bool,
+    ) {
+        let drag_allowed = self.document.edit_mode.has_active_session()
+            && self.tools.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
+            && !pan_drag_active
+            && !ctx.input(|input| {
+                input.pointer.button_down(egui::PointerButton::Secondary)
+                    || input.pointer.button_down(egui::PointerButton::Middle)
+            });
+        if drag_allowed && response.drag_started_by(egui::PointerButton::Primary) {
+            let origin = ctx.input(|input| input.pointer.press_origin());
+            let current = response.interact_pointer_pos();
+            if let (Some(origin), Some(current)) = (origin, current) {
+                self.document.mesh_selection_drag =
+                    Some(MeshSelectionDrag::Rect { origin, current });
+                ctx.request_repaint();
+            }
+        } else if !response.dragged_by(egui::PointerButton::Primary) && !response.drag_stopped() {
+            self.document.mesh_selection_drag = None;
         }
     }
 }

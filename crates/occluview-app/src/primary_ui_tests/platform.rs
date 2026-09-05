@@ -32,19 +32,20 @@ fn windows_app_reports_startup_and_panic_failures() {
 
 #[test]
 fn linux_build_uses_real_gui_instead_of_failure_stub() {
-    let source = main_source();
+    let binary = main_source();
+    let library = lib_source();
     let manifest = app_manifest_source();
 
     assert!(
-        !source.contains("#[cfg(not(windows))]\nfn main() -> std::process::ExitCode"),
+        !binary.contains("#[cfg(not(windows))]\nfn main() -> std::process::ExitCode"),
         "Linux builds must launch the same egui/wgpu desktop viewer, not a failure stub"
     );
     assert!(
-        source.contains("mod app"),
-        "the GUI implementation should be compiled cross-platform"
+        library.contains("mod app;"),
+        "the GUI implementation should live behind the library boundary"
     );
     assert!(
-        !source.contains("#[cfg(windows)]\nmod app"),
+        !library.contains("#[cfg(windows)]\nmod app"),
         "app module must not be hidden behind cfg(windows)"
     );
     assert!(
@@ -54,8 +55,64 @@ fn linux_build_uses_real_gui_instead_of_failure_stub() {
 }
 
 #[test]
+fn binary_entry_delegates_to_the_public_library_entry() {
+    let binary = main_source();
+
+    assert!(
+        binary.contains("occluview_app::main_entry()"),
+        "the binary must delegate to the public library entry point"
+    );
+    assert!(
+        binary.contains("windows_subsystem"),
+        "the Windows GUI-subsystem attribute must stay on the binary"
+    );
+    assert!(
+        !binary.contains("mod app"),
+        "the application module graph must live behind the library boundary"
+    );
+    let meaningful = binary
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .count();
+    assert!(
+        meaningful <= 20,
+        "main.rs must stay a thin delegate of at most 20 meaningful lines, found {meaningful}"
+    );
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_window_identity_value_matches_desktop_metadata() {
+    assert_eq!(
+        LINUX_DESKTOP_APP_ID, "ai.occlutrace.OccluView",
+        "Wayland app_id value must match the installed desktop file id"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_app_identity_value_matches_shell_registration() {
+    assert_eq!(
+        APP_USER_MODEL_ID, "OccluTrace.OccluView",
+        "AppUserModelID value must match the shell registration"
+    );
+}
+
+#[test]
+fn platform_identity_values_are_pinned_unconditionally() {
+    // The cfg-gated asserts above only run on their platform; pin both
+    // values everywhere so cross-platform drift cannot hide.
+    assert!(
+        lib_source().contains("LINUX_DESKTOP_APP_ID: &str = \"ai.occlutrace.OccluView\""),
+        "Wayland app_id value must match the installed desktop file id"
+    );
+    assert!(
+        lib_source().contains("APP_USER_MODEL_ID: &str = \"OccluTrace.OccluView\""),
+        "AppUserModelID value must match the shell registration"
+    );
+}
+#[test]
 fn linux_window_identity_matches_desktop_metadata() {
-    let main_source = main_source();
     let bootstrap_source = app_bootstrap_source();
     let build_deb = linux_build_deb_source();
     let package_workflow = package_workflow_source();
@@ -63,8 +120,7 @@ fn linux_window_identity_matches_desktop_metadata() {
     let desktop = linux_desktop_source();
 
     assert!(
-        main_source.contains("LINUX_DESKTOP_APP_ID: &str = \"ai.occlutrace.OccluView\"")
-            && bootstrap_source.contains(".with_app_id(crate::LINUX_DESKTOP_APP_ID)"),
+        bootstrap_source.contains(".with_app_id(crate::LINUX_DESKTOP_APP_ID)"),
         "Wayland app_id should match the installed desktop file id"
     );
     assert!(build_deb.contains("ai.occlutrace.OccluView.desktop"));
@@ -220,7 +276,11 @@ fn the_viewer_answers_version_before_any_windowing() {
     // --version must never focus a running instance or open a window; the
     // early exit has to sit before the single-instance handshake.
     assert!(version_exit < single_instance);
-    assert!(app_module_source().contains("\"--version\" | \"-V\""));
+    assert!(startup_source().contains("\"--version\" | \"-V\""));
+    assert!(
+        parse_args_from(["-V"]).version && parse_args_from(["--version"]).version,
+        "both version spellings must exit before any windowing"
+    );
 }
 
 #[test]

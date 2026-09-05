@@ -2,34 +2,63 @@
 
 use super::{egui, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::SculptRebuild;
-use crate::sculpt_worker::{SculptCompletion, SculptUpdate};
+use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
 use std::sync::Arc;
 
+/// Outcome of one GPU-upload attempt. Contention restores the update for
+/// retry; a rejected write escalates to a full sync plus a topology rebuild.
+pub(super) enum SculptFlushOutcome {
+    Applied,
+    Deferred,
+    GpuRejected,
+    NoTarget,
+    WorkerGone,
+}
+
+/// Render a worker failure at the presentation boundary. The worker returns
+/// the typed reason; only this layer owns the English copy.
+fn describe_sculpt_failure(failure: &SculptFailure) -> String {
+    match failure {
+        SculptFailure::WorkerPanicked { message } => {
+            format!("sculpt worker panicked: {message}")
+        }
+        SculptFailure::Spawn { detail } => {
+            format!("could not start sculpt worker: {detail}")
+        }
+        SculptFailure::KernelPool { detail } => {
+            format!("could not create sculpt kernel pool: {detail}")
+        }
+        SculptFailure::MissingUndoBaseline => "sculpt stroke has no undo baseline".to_string(),
+        SculptFailure::ShadowPoisoned => "sculpt shadow lock was poisoned".to_string(),
+        SculptFailure::VertexCountChanged => "sculpt result changed the vertex count".to_string(),
+    }
+}
+
 impl OccluViewApp {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
-        if !self.sculpt.finish_requested || self.sculpt.worker_has_pending_work() {
+        if !self.tools.sculpt.finish_requested || self.tools.sculpt.worker_has_pending_work() {
             return;
         }
-        self.sculpt.finish_requested = false;
+        self.tools.sculpt.finish_requested = false;
         self.finish_mesh_edit_session_now(ctx);
     }
 
     pub(super) fn complete_pending_history_navigation(&mut self, ctx: &egui::Context) {
-        let Some(redo) = self.sculpt.pending_history else {
+        let Some(redo) = self.tools.sculpt.pending_history else {
             return;
         };
-        if self.sculpt.worker_has_pending_work() {
+        if self.tools.sculpt.worker_has_pending_work() {
             return;
         }
-        self.sculpt.pending_history = None;
+        self.tools.sculpt.pending_history = None;
         self.apply_history_navigation_now(redo, ctx);
     }
 
     /// Drain worker updates and commit completed strokes without making the
     /// viewport wait for geometry work.
     pub(super) fn poll_sculpt_worker(&mut self, ctx: &egui::Context) {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return;
         };
         // Topology first: a densifying dab replaced the layer, and any sparse
@@ -60,8 +89,11 @@ impl OccluViewApp {
         for update in updates {
             self.flush_sculpt_update(update);
         }
-        if let Some(error) = error {
-            self.status_message = Some(format!("Sculpt worker stopped: {error}"));
+        if let Some(failure) = error {
+            self.ui.status_message = Some(format!(
+                "Sculpt worker stopped: {}",
+                describe_sculpt_failure(&failure)
+            ));
             self.invalidate_sculpt_session_silent();
         }
         for SculptCompletion { before, mesh } in completions {
@@ -71,7 +103,9 @@ impl OccluViewApp {
             }
         }
         if had_rebuilds || had_updates || had_completions {
-            self.needs_render = true;
+            // Rebuilds and sparse writes already landed in GPU buffers above;
+            // only the repaint is owed here.
+            self.render.invalidation.request_redraw();
         }
         self.complete_pending_mesh_edit_session(ctx);
         self.complete_pending_history_navigation(ctx);
@@ -90,79 +124,94 @@ impl OccluViewApp {
     /// Returns `false` if the scene no longer matches, which makes the caller
     /// drop the session rather than sculpt against stale geometry.
     fn install_sculpt_rebuild(&mut self, rebuild: SculptRebuild) -> bool {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return false;
         };
         let layer_id = worker.layer_id;
         let expected = worker.topology_id;
         let new_topology_id = rebuild.mesh.topology_id();
-        let Some(mut scene_arc) = self.scene.take() else {
+        let Some(mut scene_arc) = self.document.scene.take() else {
             return false;
         };
         {
-            let scene = super::state::taken_scene_mut(&mut scene_arc);
+            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
                 .find(|entry| entry.id() == layer_id)
             else {
-                self.scene = Some(scene_arc);
+                self.document.scene = Some(scene_arc);
                 return false;
             };
             if entry.mesh.topology_id() != expected {
-                self.scene = Some(scene_arc);
+                self.document.scene = Some(scene_arc);
                 return false;
             }
             entry.mesh = Arc::new(rebuild.mesh);
         }
-        self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene = Some(scene_arc);
-        if let Some(worker) = self.sculpt.worker.as_mut() {
+        self.document.edit_mode.sync_to_scene(&scene_arc);
+        self.document.scene = Some(scene_arc);
+        if let Some(worker) = self.tools.sculpt.worker.as_mut() {
             worker.topology_id = new_topology_id;
             worker.topology = rebuild.topology;
         }
         // The uploaded geometry is the wrong SIZE now, so the prepared scene
         // must be rebuilt rather than reconciled.
-        self.live_viewport_scene_dirty = self.live_viewport.is_some();
-        self.offscreen_scene_dirty = true;
-        self.needs_render = true;
+        self.render.invalidation.sculpt_topology_changed();
         if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         }
         true
     }
 
-    fn flush_sculpt_update(&mut self, update: SculptUpdate) {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
-            return;
+    fn flush_sculpt_update(&mut self, update: SculptUpdate) -> SculptFlushOutcome {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
+            // Single-threaded poll drained this from a live worker, so a
+            // missing worker means the session was invalidated mid-poll and
+            // teardown owns recovery; the drained delta dies with it.
+            return SculptFlushOutcome::WorkerGone;
         };
-        let touched = if update.full_sync {
-            Vec::new()
-        } else {
-            let mut touched = update.touched;
+        let full_sync = update.full_sync;
+        // Sort before touching the shadow so the shared read is held only for
+        // the upload. Restoring keeps the order; the next flush re-sorts.
+        let mut touched = update.touched;
+        if !full_sync {
             touched.sort_unstable();
             touched.dedup();
-            touched
-        };
+        }
         let shadow = worker.shadow();
         // The worker briefly holds the write lock while it patches a large
-        // brush region. Never make the egui frame wait behind that write: skip
-        // this GPU upload and repaint on the next frame instead.
+        // brush region. Never make the egui frame wait behind that write:
+        // restore the drained update and retry on a later frame instead.
         let Ok(shadow) = shadow.try_read() else {
-            return;
+            worker.restore_update(SculptUpdate { touched, full_sync });
+            return SculptFlushOutcome::Deferred;
         };
-        if let Some(live_viewport) = self.live_viewport.as_ref() {
-            if let Ok(viewport) = live_viewport.lock() {
-                let _ = if update.full_sync {
-                    viewport.write_scene_vertices(&worker.topology, &shadow)
-                } else {
-                    viewport.write_scene_vertices_sparse(&worker.topology, &shadow, &touched)
-                };
+        if let Some(live_viewport) = self.render.live_viewport.as_ref() {
+            let Ok(viewport) = live_viewport.try_lock() else {
+                worker.restore_update(SculptUpdate { touched, full_sync });
+                return SculptFlushOutcome::Deferred;
+            };
+            let applied = if full_sync {
+                viewport.write_scene_vertices(&worker.topology, &shadow)
+            } else {
+                viewport.write_scene_vertices_sparse(&worker.topology, &shadow, &touched)
+            };
+            if applied {
+                SculptFlushOutcome::Applied
+            } else {
+                worker.request_full_sync();
+                self.render.invalidation.sculpt_topology_changed();
+                if self.can_render_cut_view() {
+                    self.tools.cut_view.mark_dirty();
+                }
+                SculptFlushOutcome::GpuRejected
             }
-        } else if let (Some(offscreen), Some(prepared)) =
-            (self.offscreen.as_ref(), self.prepared_scene.as_ref())
-        {
-            let _ = if update.full_sync {
+        } else if let (Some(offscreen), Some(prepared)) = (
+            self.render.offscreen.as_ref(),
+            self.render.prepared_scene.as_ref(),
+        ) {
+            let applied = if full_sync {
                 prepared.write_entry_vertices(offscreen.renderer(), &worker.topology, &shadow)
             } else {
                 prepared.write_entry_vertices_sparse(
@@ -172,22 +221,37 @@ impl OccluViewApp {
                     &touched,
                 )
             };
+            if applied {
+                SculptFlushOutcome::Applied
+            } else {
+                worker.request_full_sync();
+                self.render.invalidation.sculpt_topology_changed();
+                if self.can_render_cut_view() {
+                    self.tools.cut_view.mark_dirty();
+                }
+                SculptFlushOutcome::GpuRejected
+            }
+        } else {
+            // No GPU target: the CPU shadow stays authoritative and the
+            // commit path sources it, so there is no stale GPU state to fix.
+            SculptFlushOutcome::NoTarget
         }
     }
 
     /// Finish the drag: the worker creates the mesh off the UI thread and the
     /// next worker poll installs it as one undoable layer edit.
     pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) {
-        if self.sculpt.stroke.take().is_none() {
+        if self.tools.sculpt.stroke.take().is_none() {
             return;
         }
         if self
+            .tools
             .sculpt
             .worker
             .as_ref()
             .is_none_or(|worker| !worker.finish_stroke())
         {
-            self.status_message = Some("Sculpt worker is unavailable".to_string());
+            self.ui.status_message = Some("Sculpt worker is unavailable".to_string());
         }
         ctx.request_repaint();
     }
@@ -198,12 +262,12 @@ impl OccluViewApp {
         sculpted: Mesh,
         ctx: &egui::Context,
     ) -> bool {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return false;
         };
         let layer_id = worker.layer_id;
         let topology_id = worker.topology_id;
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
@@ -212,25 +276,26 @@ impl OccluViewApp {
         if entry.mesh.topology_id() != topology_id {
             return false;
         }
-        let Some(token) =
-            self.edit_mode
-                .begin_layer_edit_with_snapshot(entry, before, EditModeCommand::Sculpt)
-        else {
-            self.status_message = Some("Layer edit already in progress".to_string());
+        let Some(token) = self.document.edit_mode.begin_layer_edit_with_snapshot(
+            entry,
+            before,
+            EditModeCommand::Sculpt,
+        ) else {
+            self.ui.status_message = Some("Layer edit already in progress".to_string());
             return false;
         };
         drop(scene);
         if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
-            let _ = self.edit_mode.finish_layer_edit_success(token);
-            self.mark_mesh_edits_unsaved(layer_id);
+            let _ = self.document.edit_mode.finish_layer_edit_success(token);
+            self.document.mark_mesh_edits_unsaved(layer_id);
             // Only promise the undo that exists. `begin_layer_edit_with_snapshot`
             // skips an oversized pre-op snapshot -- the edit still applies, but
             // Ctrl+Z will not bring the layer back. Telling the operator
             // otherwise is worse than saying nothing: they find out by pressing
             // it, on work they have already moved on from. Every other mesh-edit
             // status goes through `with_undoable_note` for the same reason.
-            self.status_message = Some(
-                if self.edit_mode.last_edit_undoable() {
+            self.ui.status_message = Some(
+                if self.document.edit_mode.last_edit_undoable() {
                     "Sculpt applied (Ctrl+Z undoes)"
                 } else {
                     "Sculpt applied (not undoable: snapshot too large)"
@@ -240,6 +305,7 @@ impl OccluViewApp {
             true
         } else {
             let _ = self
+                .document
                 .edit_mode
                 .finish_layer_edit_error(token, "sculpt commit failed".to_string());
             false
@@ -252,26 +318,28 @@ impl OccluViewApp {
         mesh: Mesh,
         ctx: &egui::Context,
     ) -> bool {
-        let Some(mut scene_arc) = self.scene.take() else {
+        let Some(mut scene_arc) = self.document.scene.take() else {
             return false;
         };
         {
-            let scene = super::state::taken_scene_mut(&mut scene_arc);
+            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
                 .find(|entry| entry.id() == layer_id)
             else {
-                self.scene = Some(scene_arc);
+                self.document.scene = Some(scene_arc);
                 return false;
             };
             entry.mesh = Arc::new(mesh);
         }
-        self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene = Some(scene_arc);
-        self.needs_render = true;
+        self.document.edit_mode.sync_to_scene(&scene_arc);
+        self.document.scene = Some(scene_arc);
+        // The commit swaps the layer's mesh Arc after the stroke's bytes were
+        // already pushed to the GPU by sparse writes; only a repaint is owed.
+        self.render.invalidation.request_redraw();
         if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         }
         ctx.request_repaint();
         true
@@ -315,11 +383,18 @@ mod tests {
             install < flush,
             "a rebuild must be installed before the frame's sparse writes"
         );
+        let install_fn = source
+            .find("fn install_sculpt_rebuild(")
+            .expect("the rebuild installer must exist");
         assert!(
-            source.contains("self.offscreen_scene_dirty = true;")
-                && source
-                    .contains("self.live_viewport_scene_dirty = self.live_viewport.is_some();"),
+            source[install_fn..].contains("self.render.invalidation.sculpt_topology_changed();"),
             "installing a rebuild must force a full prepared-scene rebuild"
         );
+        // The typed model proves the cause mapping: a topology change stales
+        // both scene consumers while sparing the selection overlay.
+        let mut topology = crate::invalidation::RenderInvalidation::new();
+        topology.sculpt_topology_changed();
+        assert!(topology.live_scene_stale() && topology.offscreen_scene_stale());
+        assert!(!topology.live_overlay_stale() && !topology.offscreen_overlay_stale());
     }
 }

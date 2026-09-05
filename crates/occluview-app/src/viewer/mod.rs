@@ -4,7 +4,7 @@ mod interaction;
 pub(crate) mod lasso_capture;
 mod viewport_size;
 
-pub(crate) use axis_gizmo::paint_axis_gizmo;
+pub(crate) use axis_gizmo::{paint_axis_gizmo, AxisGizmoInput};
 pub(crate) use camera::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, home_camera_for_scene,
 };

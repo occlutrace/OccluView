@@ -64,7 +64,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.align.brush.is_armed() {
+        if !self.tools.align.brush.is_armed() {
             return false;
         }
         let primary_down =
@@ -73,7 +73,7 @@ impl OccluViewApp {
             // The stroke ended. The markings changed what would be matched and
             // measured, so a map drawn before them is stale — drop it rather
             // than silently recomputing behind the operator's hand.
-            if self.align.markings.close_stroke() {
+            if self.tools.align.markings.close_stroke() {
                 self.invalidate_deviation_map("Markings changed");
                 // The release frame still reads as a click. An armed brush owns
                 // it, or one dab would also drop an alignment arrow.
@@ -98,19 +98,19 @@ impl OccluViewApp {
         // below. `Arc::make_mut` copies the whole case while a second handle
         // is alive, and this is a per-frame path.
         let (layer_id, painting, changed) = {
-            let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+            let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
             let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
                 return true;
             };
             // Paint whichever member of the active pair is under the cursor.
-            let painting = if Some(hit.layer_id) == self.align.tool.moving_layer() {
+            let painting = if Some(hit.layer_id) == self.tools.align.tool.moving_layer() {
                 AlignSide::Moving
-            } else if Some(hit.layer_id) == self.align.tool.fixed_layer() {
+            } else if Some(hit.layer_id) == self.tools.align.tool.fixed_layer() {
                 AlignSide::Fixed
             } else {
-                self.align.status = Some("That mesh is not in this alignment".into());
+                self.tools.align.status = Some("That mesh is not in this alignment".into());
                 return true;
             };
             let Some(entry) = layer_of(&scene, hit.layer_id) else {
@@ -121,24 +121,25 @@ impl OccluViewApp {
             };
 
             let erase = self
+                .tools
                 .align
                 .brush
                 .erases(ctx.input(|input| input.modifiers.shift));
-            let radius_mm = f64::from(self.align.brush.radius_mm());
+            let radius_mm = f64::from(self.tools.align.brush.radius_mm());
             let center = DVec3::new(
                 f64::from(hit.point.x),
                 f64::from(hit.point.y),
                 f64::from(hit.point.z),
             );
             // Cached: rebuilding this per dab was seven milliseconds of pure copy.
-            let positions = self.align.geometry.local_positions(entry);
+            let positions = self.tools.align.geometry.local_positions(entry);
             let mesh = MarkedMesh {
                 positions: &positions,
                 pose,
                 vertex_count: entry.mesh.vertices().len(),
                 geometry: entry.mesh.geometry_id(),
             };
-            let changed = self.align.markings.dab(
+            let changed = self.tools.align.markings.dab(
                 painting,
                 &mesh,
                 &MaskEdit {
@@ -164,7 +165,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.align.brush.is_armed() {
+        if !self.tools.align.brush.is_armed() {
             return false;
         }
         // Over the viewport itself, not over a window floating on it: the
@@ -176,10 +177,13 @@ impl OccluViewApp {
         if !over_viewport {
             return false;
         }
-        if !resize_align_brush_from_wheel(&mut self.align.brush, ctx) {
+        if !resize_align_brush_from_wheel(&mut self.tools.align.brush, ctx) {
             return false;
         }
-        self.align.status = Some(format!("Brush {:.1} mm", self.align.brush.radius_mm()));
+        self.tools.align.status = Some(format!(
+            "Brush {:.1} mm",
+            self.tools.align.brush.radius_mm()
+        ));
         ctx.request_repaint();
         true
     }
@@ -195,10 +199,11 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
     ) {
-        if !self.align.brush.is_armed() {
+        if !self.tools.align.brush.is_armed() {
             return;
         }
-        let (Some(camera), Some(pointer)) = (self.camera.as_ref(), ctx.pointer_hover_pos()) else {
+        let (Some(camera), Some(pointer)) = (self.render.camera.as_ref(), ctx.pointer_hover_pos())
+        else {
             return;
         };
         if !self.pointer_on_bare_viewport(ctx, viewport_rect, pointer) {
@@ -208,7 +213,7 @@ impl OccluViewApp {
         // number of pixels regardless of depth.
         let mm_per_pixel =
             crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport_rect.height());
-        let radius_px = self.align.brush.radius_mm() / mm_per_pixel;
+        let radius_px = self.tools.align.brush.radius_mm() / mm_per_pixel;
         if !radius_px.is_finite() || radius_px < 2.0 {
             return;
         }
@@ -216,7 +221,7 @@ impl OccluViewApp {
         // clears with a red one; the ring says which of the two this drag
         // will be, Shift included.
         let shift = ctx.input(|input| input.modifiers.shift);
-        let ink = if self.align.brush.erases(shift) {
+        let ink = if self.tools.align.brush.erases(shift) {
             egui::Color32::from_rgb(196, 82, 72)
         } else {
             egui::Color32::from_rgb(72, 158, 108)
@@ -241,7 +246,7 @@ impl OccluViewApp {
             // so taking both up front doubles peak transient memory to save
             // nothing.
             let taken = {
-                let Some(scene) = self.scene.clone() else {
+                let Some(scene) = self.document.scene.clone() else {
                     return;
                 };
                 self.side_layer(side)
@@ -259,12 +264,12 @@ impl OccluViewApp {
             // "Mark automatic" is the only command that can decline, and it
             // declines for one reason the operator can act on.
             if command == MaskCommand::MarkAutomatic {
-                self.align.status =
+                self.tools.align.status =
                     Some("Place at least one arrow before marking automatically".into());
             }
             return;
         }
-        self.align.status = Some(command.report().into());
+        self.tools.align.status = Some(command.report().into());
         self.invalidate_deviation_map(command.report());
     }
 
@@ -285,7 +290,7 @@ impl OccluViewApp {
         } else {
             Vec::new()
         };
-        let positions = self.align.geometry.local_positions(entry);
+        let positions = self.tools.align.geometry.local_positions(entry);
         let mesh = MarkedMesh {
             positions: &positions,
             pose,
@@ -294,14 +299,18 @@ impl OccluViewApp {
         };
         let keep = AutoKeep {
             centres: &keep,
-            radius_mm: f64::from(self.align.brush.auto_radius_mm()),
+            radius_mm: f64::from(self.tools.align.brush.auto_radius_mm()),
         };
-        self.align.markings.command(side, command, &mesh, &keep)
+        self.tools
+            .align
+            .markings
+            .command(side, command, &mesh, &keep)
     }
 
     /// The world positions of the arrow ends that sit on one side's mesh.
     fn side_arrow_points(&self, side: AlignSide, entry: &SceneMesh) -> Vec<DVec3> {
-        self.align
+        self.tools
+            .align
             .tool
             .pairs()
             .iter()
@@ -319,15 +328,15 @@ impl OccluViewApp {
     /// Which layer one side of the alignment is.
     fn side_layer(&self, side: AlignSide) -> Option<SceneMeshId> {
         match side {
-            AlignSide::Moving => self.align.tool.moving_layer(),
-            AlignSide::Fixed => self.align.tool.fixed_layer(),
+            AlignSide::Moving => self.tools.align.tool.moving_layer(),
+            AlignSide::Fixed => self.tools.align.tool.fixed_layer(),
         }
     }
 
     /// Drop both masks — done whenever the pair changes, since a mask is
     /// indexed by one layer's vertices.
     pub(super) fn clear_align_mask(&mut self) {
-        self.align.markings.clear();
+        self.tools.align.markings.clear();
     }
 
     /// What share of the two scans is marked, if either carries a mask that
@@ -337,8 +346,8 @@ impl OccluViewApp {
     /// to answer would be a two-million-byte scan per frame, so the counts are
     /// maintained where the masks are edited and this only reads them.
     pub(super) fn align_marked_fraction(&self) -> Option<f32> {
-        let scene = self.scene.as_ref()?;
-        self.align.markings.marked_fraction(
+        let scene = self.document.scene.as_ref()?;
+        self.tools.align.markings.marked_fraction(
             self.side_identity(AlignSide::Moving, scene),
             self.side_identity(AlignSide::Fixed, scene),
         )
@@ -360,8 +369,8 @@ impl OccluViewApp {
 
     /// Put the markings on both meshes, take them off, or leave them alone.
     pub(super) fn refresh_align_region_preview(&mut self) {
-        if !self.align.brush.is_armed() {
-            if self.align.overlay == AlignOverlay::Region {
+        if !self.tools.align.brush.is_armed() {
+            if self.tools.align.overlay == AlignOverlay::Region {
                 self.clear_deviation_overlay();
                 // The map was taken down to make room for the markings. Closing
                 // the brush is the moment to put it back, or an operator who
@@ -374,13 +383,13 @@ impl OccluViewApp {
         // A measured map and the markings are both per-vertex colours on the
         // same layers, so only one of them can be up. The brush wins: the
         // operator is about to change what the map measured anyway.
-        if self.align.overlay == AlignOverlay::Map {
+        if self.tools.align.overlay == AlignOverlay::Map {
             self.clear_deviation_overlay();
         }
         // A measurement already running would land on top of the markings a
         // moment later. Retiring the generation drops it at the door instead of
         // letting it race the brush.
-        if let Some(worker) = self.align.worker.as_ref() {
+        if let Some(worker) = self.tools.align.worker.as_ref() {
             worker.bump_generation();
         }
         let mut reached = false;
@@ -392,7 +401,7 @@ impl OccluViewApp {
         if !reached {
             // Silence here reads as a broken brush; the operator's actual
             // problem is that no mesh has been named.
-            self.align.status =
+            self.tools.align.status =
                 Some("Click a point on each mesh first, then paint on either".into());
         }
     }
@@ -415,7 +424,7 @@ impl OccluViewApp {
         // than stolen: a `mem::take` here left the markings holding an empty
         // list for the rest of the frame, so anything else that asked what the
         // last dab touched was told "nothing".
-        let touched = self.align.markings.touched().to_vec();
+        let touched = self.tools.align.markings.touched().to_vec();
         let Some(patched) = self.region_colors_for(layer, side, &touched) else {
             self.repaint_region_preview(layer, side);
             return;
@@ -432,9 +441,9 @@ impl OccluViewApp {
         side: AlignSide,
         touched: &[u32],
     ) -> Option<Vec<[u8; 4]>> {
-        let scene = self.scene.clone()?;
+        let scene = self.document.scene.clone()?;
         let entry = layer_of(&scene, layer)?;
-        let mask = self.align.markings.mask_for(side, marked_on(entry))?;
+        let mask = self.tools.align.markings.mask_for(side, marked_on(entry))?;
         let own_colors = entry.mesh.has_vertex_colors();
         let vertices = entry.mesh.vertices();
         Some(
@@ -448,11 +457,11 @@ impl OccluViewApp {
     /// One colour per vertex of one side: its own colour where nothing is
     /// marked, blue where it is.
     fn region_colors(&self, layer: SceneMeshId, side: AlignSide) -> Option<Vec<[u8; 4]>> {
-        let scene = self.scene.as_ref()?;
+        let scene = self.document.scene.as_ref()?;
         let entry = layer_of(scene, layer)?;
         let vertices = entry.mesh.vertices();
         let count = vertices.len();
-        let mask = self.align.markings.mask_for(side, marked_on(entry));
+        let mask = self.tools.align.markings.mask_for(side, marked_on(entry));
         let mask = mask.as_ref().map(|mask| mask.as_slice());
         // A coloured scan keeps its own colours where nothing is marked. The
         // operator is usually aiming AT something they can see — a stain, a
@@ -595,7 +604,7 @@ mod tests {
     fn a_dab_reuses_the_cached_geometry_and_re_colours_only_what_it_touched() {
         let stroke = stroke();
         assert!(
-            stroke.contains("self.align.geometry.local_positions(entry)"),
+            stroke.contains("self.tools.align.geometry.local_positions(entry)"),
             "the positions must come from the cache, not a fresh copy per dab"
         );
         assert!(
@@ -616,8 +625,8 @@ mod tests {
     fn the_side_a_dab_lands_on_comes_from_the_cursor() {
         let stroke = stroke();
         assert!(
-            stroke.contains("Some(hit.layer_id) == self.align.tool.moving_layer()")
-                && stroke.contains("Some(hit.layer_id) == self.align.tool.fixed_layer()"),
+            stroke.contains("Some(hit.layer_id) == self.tools.align.tool.moving_layer()")
+                && stroke.contains("Some(hit.layer_id) == self.tools.align.tool.fixed_layer()"),
             "the side must come from what is under the cursor"
         );
     }

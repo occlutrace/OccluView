@@ -405,7 +405,7 @@ fn the_readme_mentions_f_only_where_something_binds_f() {
 
     let cut = repo_source_file("src/app/app_cut_measure.rs");
     assert!(
-        cut.contains("self.cut_view.is_planted()") && cut.contains("egui::Key::F"),
+        cut.contains("self.tools.cut_view.is_planted()") && cut.contains("egui::Key::F"),
         "the cut view is where F is read, and only while the disc is planted"
     );
     let preview = repo_source_file("../occluview-shell/src/com/preview/window.rs");

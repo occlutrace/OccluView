@@ -24,8 +24,12 @@ fn app_starts_idle_until_scene_data_arrives() {
     let new_fn = function_source(app_module_source(), "pub(crate) fn new(");
 
     assert!(
-        new_fn.contains("needs_render: false,"),
-        "empty startup should not spend time rendering a nonexistent scene"
+        new_fn.contains("render: RenderState::new(live_viewport),"),
+        "empty startup should build render state through its owner, idle until scene data arrives"
+    );
+    assert!(
+        !invalidation::RenderInvalidation::new().redraw_pending(),
+        "a fresh invalidation state must have no frame pending"
     );
 }
 
@@ -101,19 +105,22 @@ fn primary_startup_only_refreshes_shell_associations_on_explicit_request() {
 #[test]
 fn incoming_files_append_while_scene_or_load_is_active() {
     let source = app_loading_source();
-    let shared_logic = main_source();
 
     assert!(
         source.contains("fn should_append_incoming_open(&self) -> bool"),
         "incoming open requests need a shared append decision"
     );
     assert!(
-        source.contains("crate::should_append_incoming_open_state("),
-        "incoming open requests should reuse the shared append helper"
+        source.contains("should_append_incoming_open_state("),
+        "incoming open requests should reuse the single canonical append helper"
     );
     assert!(
-        shared_logic.contains("has_scene || has_active_load || queued_load_count != 0"),
+        should_append_incoming_open_state(false, true, 0),
         "incoming files should append when a scene load is still pending"
+    );
+    assert!(
+        !should_append_incoming_open_state(false, false, 0),
+        "incoming files replace an idle empty session"
     );
 }
 
@@ -142,7 +149,7 @@ fn incoming_files_raise_existing_window_temporarily() {
         "taskbar attention should be requested for a background handoff and reset after the pulse"
     );
     assert!(
-        loading_source.contains("self.raise_target.try_activate("),
+        loading_source.contains("self.platform.raise_target.try_activate("),
         "the handoff should first attempt a real WM activation (X11) before the \
          focus-stealing-prevention-limited fallback"
     );
@@ -155,11 +162,13 @@ fn incoming_files_use_event_driven_ipc_instead_of_250ms_polling() {
     let single_instance_fallback = include_str!("../single_instance/fallback.rs");
 
     assert!(
-        app_source.contains("single_instance::OpenRequestListener::spawn"),
+        repo_source_file("src/app/state_platform.rs")
+            .contains("single_instance::OpenRequestListener::spawn"),
         "primary instance should start a dedicated open-request listener instead of passive polling"
     );
     assert!(
-        app_source.contains("incoming_open_requests: single_instance::OpenRequestListener"),
+        repo_source_file("src/app/state_platform.rs")
+            .contains("incoming_open_requests: single_instance::OpenRequestListener"),
         "app state should own an explicit incoming-open listener"
     );
     assert!(
@@ -253,15 +262,15 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
     );
 
     let ordered_nonvisual_work = [
-        "self.persist_settings_if_due(ctx);",
-        "self.expire_status_message(ctx);",
+        "self.persistence.persist_settings_if_due(ctx);",
+        "self.ui.expire_status_message(ctx);",
         "Self::schedule_linux_open_request_repaint(ctx);",
         "self.process_scene_loads(ctx);",
         "self.poll_sculpt_preparation(ctx);",
         "self.poll_sculpt_worker(ctx);",
         "self.handle_open_requests(ctx);",
         "self.finish_foreground_pulse_if_due(ctx);",
-        "self.update_notice.poll(ctx);",
+        "self.persistence.update_notice.poll(ctx);",
         "self.intercept_unsaved_close(ctx);",
     ];
     for pair in ordered_nonvisual_work.windows(2) {
@@ -273,7 +282,7 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
         );
     }
     assert!(
-        loading_source.contains("let load_settled = self.queued_loads.is_empty();")
+        loading_source.contains("let load_settled = self.document.queued_loads.is_empty();")
             && loading_source.contains("active.source == \"single-instance\" && load_settled")
             && loading_source.contains("if raise_after_handoff {")
             && loading_source.contains("self.raise_window_for_incoming_open(ctx);"),
@@ -303,12 +312,14 @@ fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
 
     assert!(
         loading.contains("fn replace_open_needs_guard(&self) -> bool")
-            && loading.contains("self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()"),
+            && loading.contains(
+                "self.document.edit_mode.is_dirty() || self.document.has_unsaved_mesh_edits()"
+            ),
         "a replace open must be gated on a live dirty session OR unsaved edits, \
          not proceed straight to a scene-destroying load"
     );
     assert!(
-        loading.contains("self.pending_replace_open = Some(PendingReplaceOpen {"),
+        loading.contains("self.ui.pending_replace_open = Some(PendingReplaceOpen {"),
         "a guarded replace open must be parked, not silently dropped or applied"
     );
     assert!(
@@ -356,11 +367,12 @@ fn replace_guard_suppresses_edit_shortcuts_and_runs_each_frame() {
     // app::open_dialogs tests the predicate itself; what matters here is that
     // the parked open still feeds it and that the hotkeys still ask.
     assert!(
-        app_source.contains("pending_replace: self.pending_replace_open.is_some(),"),
+        repo_source_file("src/app/state_ui.rs")
+            .contains("pending_replace: self.pending_replace_open.is_some(),"),
         "the parked open must still count as a dialog in front"
     );
     assert!(
-        app_source.contains("if self.modal_dialog_open() || self.bridge_split_active()"),
+        app_source.contains("if self.ui.modal_dialog_open() || self.tools.bridge_split_active()"),
         "edit hotkeys must not act behind the open-guard dialog"
     );
     assert!(
@@ -381,12 +393,13 @@ fn append_scene_load_preserves_existing_camera() {
         app_source.contains("if append {")
             && app_source.contains("LoadQueueCameraReset::WhenQueueDrains")
             && app_source.contains("&& !queued_after_current")
-            && app_source.contains("!self.camera_modified_during_load"),
+            && app_source.contains("!self.document.camera_modified_during_load"),
         "queued append loads must not re-home after the user has already moved the camera"
     );
     assert!(
-        !app_source
-            .contains("self.set_scene(scene, true);\n                    self.current_paths"),
+        !app_source.contains(
+            "self.set_scene(scene, true);\n                    self.persistence.current_paths"
+        ),
         "scene load completion should not always reset the camera"
     );
     assert!(
@@ -408,22 +421,22 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         "multi-file bursts need to distinguish automatic framing from user camera movement"
     );
     assert!(
-        app_source.contains("let queued_after_current = !self.queued_loads.is_empty();"),
+        app_source.contains("let queued_after_current = !self.document.queued_loads.is_empty();"),
         "camera reset should be deferred while more files from the open burst are queued"
     );
     assert!(
-        app_source.contains("self.camera.is_none()"),
+        app_source.contains("self.render.camera.is_none()"),
         "the first loaded layer should still get a camera even when more queued files are pending"
     );
     assert!(
-        app_source.contains("self.needs_render = false;")
-            && app_source.contains("self.rendered = None;")
+        app_source.contains("self.render.invalidation.suppress_redraw();")
+            && app_source.contains("self.render.rendered = None;")
             && app_source.contains("self.clear_live_viewport();"),
         "intermediate burst loads should not render or publish a half-framed scene"
     );
     assert!(
-        app_source.contains("} else if self.load_queue_camera_reset")
-            && app_source.contains("&& self.queued_loads.is_empty()"),
+        app_source.contains("} else if self.document.load_queue_camera_reset")
+            && app_source.contains("&& self.document.queued_loads.is_empty()"),
         "a final append failure should still frame the successfully loaded partial scene"
     );
 }

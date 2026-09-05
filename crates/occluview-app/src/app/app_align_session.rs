@@ -12,10 +12,10 @@ impl OccluViewApp {
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
         // Drop an active drag before restoring session poses so Cancel cannot
         // record the discarded gesture as an undo step.
-        self.align.drag = None;
+        self.tools.align.drag = None;
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
-        self.status_message = Some(if restored {
+        self.ui.status_message = Some(if restored {
             "Alignment cancelled — every scan is back where it was (Ctrl+Z brings it back)".into()
         } else {
             "Alignment closed".to_string()
@@ -28,12 +28,13 @@ impl OccluViewApp {
         // Read before teardown cancels the worker so the status can report a
         // fit that was still running when the session closed.
         let running = self
+            .tools
             .align
             .worker
             .as_ref()
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
-        self.status_message = Some(match (running, moved) {
+        self.ui.status_message = Some(match (running, moved) {
             (true, _) => {
                 "Alignment closed — a fit was still running and was dropped, so the scans are \
                  exactly as you last saw them"
@@ -50,7 +51,7 @@ impl OccluViewApp {
     /// is inside the transaction too, and reporting "nothing moved" after
     /// dragging it would be a lie Cancel then acts on.
     pub(super) fn align_session_moved(&self) -> bool {
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             return false;
         };
         scene.meshes().iter().any(|entry| {
@@ -61,7 +62,8 @@ impl OccluViewApp {
 
     /// The pose a layer had when the session opened, if it was there.
     fn session_pose_of(&self, layer: SceneMeshId) -> Option<Affine3A> {
-        self.align
+        self.tools
+            .align
             .session_poses
             .iter()
             .find(|(id, _)| *id == layer)
@@ -79,16 +81,17 @@ impl OccluViewApp {
         if !self.align_session_moved() {
             return false;
         }
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let mut next = scene.as_ref().clone();
         let Some(focus) = next.meshes().first().map(occluview_core::SceneMesh::id) else {
             return false;
         };
-        let Some(token) = self
-            .edit_mode
-            .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
+        let Some(token) =
+            self.document
+                .edit_mode
+                .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
         else {
             return false;
         };
@@ -97,7 +100,9 @@ impl OccluViewApp {
                 entry.transform = pose;
             }
         }
-        self.edit_mode.finish_scene_edit_success(token, &next);
+        self.document
+            .edit_mode
+            .finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
         true
     }

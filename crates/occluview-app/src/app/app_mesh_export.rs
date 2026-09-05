@@ -27,14 +27,16 @@ impl OccluViewApp {
         paths: &[PathBuf],
         request: LayerContextRequest,
     ) -> bool {
-        let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
+        let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
         let default_format = default_layer_export_format(paths, request.index, fallback);
         let mut dialog = layer_export_file_dialog(default_format).set_file_name(
             default_layer_export_name(paths, scene, request.index, default_format),
         );
-        if let Some(directory) =
-            default_layer_export_directory(paths, request.index, self.last_export_dir.as_deref())
-        {
+        if let Some(directory) = default_layer_export_directory(
+            paths,
+            request.index,
+            self.persistence.last_export_dir.as_deref(),
+        ) {
             dialog = dialog.set_directory(directory);
         }
 
@@ -47,7 +49,9 @@ impl OccluViewApp {
             Ok(report) => {
                 // The layer on disk now matches the scene: it no longer
                 // counts toward the unsaved-edits close guard.
-                self.unsaved_edit_layer_ids.remove(&request.layer_id);
+                self.document
+                    .unsaved_edit_layer_ids
+                    .remove(&request.layer_id);
                 self.remember_export_directory(&path);
                 let warning_suffix = mesh_export_warning_summary(&report.warnings)
                     .map(|summary| format!(" (warnings: {summary})"))
@@ -65,7 +69,7 @@ impl OccluViewApp {
                 } else {
                     " (this scan has not been moved)"
                 };
-                self.status_message = Some(format!(
+                self.ui.status_message = Some(format!(
                     "Exported {name}{placement} as {}{}: {}",
                     mesh_export_format_label(report.format),
                     warning_suffix,
@@ -75,8 +79,8 @@ impl OccluViewApp {
             }
             Err(error) => {
                 let summary = format!("Could not export layer: {error}");
-                self.status_message = Some(summary.clone());
-                self.app_error = Some(AppErrorDialog {
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not export layer".to_string(),
                     summary,
                     details: format!(
@@ -95,10 +99,10 @@ impl OccluViewApp {
         let Some(parent) = written.parent().filter(|dir| !dir.as_os_str().is_empty()) else {
             return;
         };
-        self.last_export_dir = Some(parent.to_path_buf());
-        if self.settings.remember_export_dir {
-            self.settings.last_export_dir = parent.to_str().map(str::to_owned);
-            self.settings_persistence.mark_dirty();
+        self.persistence.last_export_dir = Some(parent.to_path_buf());
+        if self.persistence.settings.remember_export_dir {
+            self.persistence.settings.last_export_dir = parent.to_str().map(str::to_owned);
+            self.persistence.settings_persistence.mark_dirty();
         }
     }
 
@@ -106,21 +110,21 @@ impl OccluViewApp {
     /// a time. Stops at the first cancelled dialog or failed write so the
     /// operator is never told edits were saved when they were not.
     pub(super) fn save_edited_layers_flow(&mut self) -> SaveEditedLayersOutcome {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return SaveEditedLayersOutcome::NothingToSave;
         };
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         let pending: Vec<(usize, occluview_core::SceneMeshId)> = scene
             .meshes()
             .iter()
             .enumerate()
-            .filter(|(_, entry)| self.unsaved_edit_layer_ids.contains(&entry.id()))
+            .filter(|(_, entry)| self.document.unsaved_edit_layer_ids.contains(&entry.id()))
             .map(|(index, entry)| (index, entry.id()))
             .collect();
         if pending.is_empty() {
             // Edited layers may have been removed from the scene since; the
             // guard has nothing actionable left.
-            self.clear_unsaved_mesh_edits();
+            self.document.clear_unsaved_mesh_edits();
             return SaveEditedLayersOutcome::NothingToSave;
         }
         for (index, layer_id) in pending {
@@ -133,7 +137,7 @@ impl OccluViewApp {
                 return SaveEditedLayersOutcome::Aborted;
             }
         }
-        if self.unsaved_edit_layer_ids.is_empty() {
+        if self.document.unsaved_edit_layer_ids.is_empty() {
             SaveEditedLayersOutcome::AllSaved
         } else {
             SaveEditedLayersOutcome::Aborted

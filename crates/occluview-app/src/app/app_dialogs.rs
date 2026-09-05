@@ -32,10 +32,10 @@ impl OccluViewApp {
     #[allow(clippy::too_many_lines)]
     pub(super) fn show_toolbar(&mut self, root_ui: &mut egui::Ui) {
         let ctx = root_ui.ctx().clone();
-        if self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.information_dialog.is_open()
+        if self.ui.close_guard_open
+            || self.ui.pending_replace_open.is_some()
+            || self.ui.app_error.is_some()
+            || self.ui.information_dialog.is_open()
         {
             egui::Popup::close_id(&ctx, settings_popup_id());
         }
@@ -53,7 +53,7 @@ impl OccluViewApp {
         let mut toggle_measure: Option<MeasureMode> = None;
         let mut toggle_align = false;
         let mut toggle_edit_mesh = false;
-        if !self.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
+        if !self.ui.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
             let consume = |ctx: &egui::Context, shortcut: &egui::KeyboardShortcut| {
                 ctx.input_mut(|input| input.consume_key(shortcut.modifiers, shortcut.logical_key))
             };
@@ -103,7 +103,7 @@ impl OccluViewApp {
                         do_open = true;
                     }
                     // Recent files use a chevron popup attached to Open.
-                    ui.add_enabled_ui(!self.recent_files.is_empty(), |ui| {
+                    ui.add_enabled_ui(!self.persistence.recent_files.is_empty(), |ui| {
                         let (rect, response) =
                             ui.allocate_exact_size(egui::vec2(18.0, 22.0), egui::Sense::click());
                         crate::icons::paint(
@@ -117,7 +117,8 @@ impl OccluViewApp {
                             },
                         );
                         let response = response.on_hover_text("Recent files");
-                        if let Some(action) = show_recent_files_popup(&response, &self.recent_files)
+                        if let Some(action) =
+                            show_recent_files_popup(&response, &self.persistence.recent_files)
                         {
                             match action {
                                 RecentFilesAction::Open(paths) => recent_to_open = Some(paths),
@@ -131,7 +132,7 @@ impl OccluViewApp {
                         ToolbarToggle::new(
                             AppIcon::Add,
                             "Add",
-                            self.scene.is_some(),
+                            self.document.scene.is_some(),
                             false,
                             "Add more files to the current scene",
                         ),
@@ -158,7 +159,7 @@ impl OccluViewApp {
                             AppIcon::Cut,
                             "Cut view",
                             can_cut,
-                            self.cut_view.is_active(),
+                            self.tools.cut_view.is_active(),
                             &cut_hint,
                         ),
                     )
@@ -169,7 +170,7 @@ impl OccluViewApp {
 
                     toolbar_divider(ui);
 
-                    let edit_session_active = self.edit_mode.has_active_session();
+                    let edit_session_active = self.document.edit_mode.has_active_session();
                     let has_pickable_layer = self.has_measurable_layer();
                     let can_measure =
                         measure_tool::measure_menu_enabled(has_pickable_layer, edit_session_active);
@@ -197,7 +198,7 @@ impl OccluViewApp {
                         } else {
                             format!("{hint} ({})", ui.ctx().format_shortcut(&shortcut))
                         };
-                        let active = self.measure.mode() == Some(mode);
+                        let active = self.tools.measure.mode() == Some(mode);
                         if toolbar_toggle(
                             ui,
                             ToolbarToggle::new(icon, label, can_measure, active, &tooltip),
@@ -227,12 +228,12 @@ impl OccluViewApp {
                         toggle_align = true;
                     }
 
-                    let can_edit_mesh = self.scene.is_some()
-                        && self
-                            .scene
-                            .as_ref()
-                            .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
-                    let edit_active = self.edit_mode.has_active_session();
+                    let can_edit_mesh =
+                        self.document.scene.is_some()
+                            && self.document.scene.as_ref().is_some_and(|s| {
+                                s.meshes().iter().any(|m| !m.mesh.is_point_cloud())
+                            });
+                    let edit_active = self.document.edit_mode.has_active_session();
                     let edit_hint = if edit_active {
                         "Mesh Editing is open".to_string()
                     } else {
@@ -257,13 +258,13 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let help_response = show_help_toolbar_toggle(ui, !self.close_guard_open);
+                        let help_response = show_help_toolbar_toggle(ui, !self.ui.close_guard_open);
                         if help_response.clicked() {
-                            self.information_dialog = InformationDialog::KeyboardMouse;
+                            self.ui.information_dialog = InformationDialog::KeyboardMouse;
                         }
-                        let response = show_settings_toolbar_toggle(ui, !self.close_guard_open);
+                        let response = show_settings_toolbar_toggle(ui, !self.ui.close_guard_open);
                         if response.clicked() {
-                            self.information_dialog = InformationDialog::None;
+                            self.ui.information_dialog = InformationDialog::None;
                         }
                         self.show_settings_popup(&response);
                     });
@@ -275,16 +276,19 @@ impl OccluViewApp {
         // button's: a second session over a live one would discard the first
         // one's selection.
         if toggle_edit_mesh {
-            let edit_active = self.edit_mode.has_active_session();
-            let can_edit_mesh = self.scene.is_some()
+            let edit_active = self.document.edit_mode.has_active_session();
+            let can_edit_mesh = self.document.scene.is_some()
                 && self
+                    .document
                     .scene
                     .as_ref()
                     .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
-            if let (false, true, Some(scene)) = (edit_active, can_edit_mesh, self.scene.clone()) {
+            if let (false, true, Some(scene)) =
+                (edit_active, can_edit_mesh, self.document.scene.clone())
+            {
                 for entry in scene.meshes() {
                     if !entry.mesh.is_point_cloud() && entry.visible {
-                        let _ = self.edit_mode.begin_face_selection(entry, &scene);
+                        let _ = self.document.edit_mode.begin_face_selection(entry, &scene);
                         break;
                     }
                 }
@@ -301,15 +305,15 @@ impl OccluViewApp {
             }
         }
         if toggle_cut_view {
-            if self.cut_view.is_active() {
-                self.cut_view.disable();
+            if self.tools.cut_view.is_active() {
+                self.tools.cut_view.disable();
             } else {
                 // The viewport-owning tools are mutually exclusive: entering
                 // the cut view stands the measurement tool down cleanly.
-                self.measure.disarm();
-                self.cut_view.enable();
+                self.tools.measure.disarm();
+                self.tools.cut_view.enable();
             }
-            self.needs_render = true;
+            self.render.invalidation.overlay_tools_changed();
         }
         // Arming a measurement or the cut view closes Align, the same way
         // arming Align closes them. Two tools cannot share the primary click.
@@ -318,17 +322,17 @@ impl OccluViewApp {
         }
         if let Some(clicked) = toggle_measure {
             let (next, disable_cut) = measure_tool::apply_menu_toggle(
-                self.measure.mode(),
-                self.cut_view.is_active(),
+                self.tools.measure.mode(),
+                self.tools.cut_view.is_active(),
                 clicked,
             );
             if disable_cut {
-                self.cut_view.disable();
-                self.needs_render = true;
+                self.tools.cut_view.disable();
+                self.render.invalidation.overlay_tools_changed();
             }
             match next {
-                Some(mode) => self.measure.arm(mode),
-                None => self.measure.disarm(),
+                Some(mode) => self.tools.measure.arm(mode),
+                None => self.tools.measure.disarm(),
             }
             ctx.request_repaint();
         }
@@ -345,8 +349,8 @@ impl OccluViewApp {
             }
         }
         if clear_recent {
-            self.recent_files.clear();
-            self.save_recent_files();
+            self.persistence.recent_files.clear();
+            self.persistence.save_recent_files();
         }
         if let Some(paths) = recent_to_open {
             self.replace_paths(&paths, "recent");
@@ -354,16 +358,16 @@ impl OccluViewApp {
     }
 
     pub(super) fn app_logo_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
-        if self.app_logo.is_none() {
+        if self.ui.app_logo.is_none() {
             if let Some(color_image) = load_app_logo_color_image() {
-                self.app_logo = Some(ctx.load_texture(
+                self.ui.app_logo = Some(ctx.load_texture(
                     "occluview-app-logo",
                     color_image,
                     egui::TextureOptions::LINEAR,
                 ));
             }
         }
-        self.app_logo.as_ref()
+        self.ui.app_logo.as_ref()
     }
 
     /// The native Open dialog, shared by the toolbar Open button, the Ctrl+O
@@ -382,17 +386,20 @@ impl OccluViewApp {
             .ctx()
             .pointer_hover_pos()
             .is_some_and(|pointer| viewport_rect.contains(pointer));
-        if self.status_message.is_none() && self.active_load.is_none() && !pointer_over_viewport {
+        if self.ui.status_message.is_none()
+            && self.document.active_load.is_none()
+            && !pointer_over_viewport
+        {
             return;
         }
         let rect = status_overlay_rect(viewport_rect);
-        let ink = ui_theme::viewport_ink(self.settings.viewport_background.is_dark());
+        let ink = ui_theme::viewport_ink(self.persistence.settings.viewport_background.is_dark());
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.set_width(rect.width());
             ui.horizontal(|ui| {
                 // A scene load is invisible otherwise: the row gains a small
                 // spinner for its duration, alongside any transient status.
-                if self.active_load.is_some() {
+                if self.document.active_load.is_some() {
                     ui.add(egui::Spinner::new().size(13.0));
                     ui.add(
                         egui::Label::new(
@@ -401,7 +408,7 @@ impl OccluViewApp {
                         .truncate(),
                     );
                 }
-                if let Some(message) = &self.status_message {
+                if let Some(message) = &self.ui.status_message {
                     let response = ui.add(
                         egui::Label::new(egui::RichText::new(message).color(ink).size(11.5))
                             .truncate(),
@@ -418,9 +425,9 @@ impl OccluViewApp {
     pub(super) fn intercept_unsaved_close(&mut self, ctx: &egui::Context) {
         intercept_unsaved_close_request(
             ctx,
-            self.has_unsaved_mesh_edits(),
-            self.close_confirmed,
-            &mut self.close_guard_open,
+            self.document.has_unsaved_mesh_edits(),
+            self.ui.close_confirmed,
+            &mut self.ui.close_guard_open,
         );
     }
 
@@ -428,10 +435,10 @@ impl OccluViewApp {
     /// "Save…" exports each edited layer before closing; the destructive path
     /// re-issues the close only after explicit consent.
     pub(super) fn show_unsaved_close_guard(&mut self, ctx: &egui::Context) {
-        if !self.close_guard_open {
+        if !self.ui.close_guard_open {
             return;
         }
-        let edited_count = self.unsaved_edit_layer_ids.len().max(1);
+        let edited_count = self.document.unsaved_edit_layer_ids.len().max(1);
         let mut do_save = false;
         let headline = if edited_count == 1 {
             "1 edited layer has not been saved to disk."
@@ -454,19 +461,19 @@ impl OccluViewApp {
         match response.action {
             Some(GuardDialogAction::Save) => do_save = true,
             Some(GuardDialogAction::Destructive) => {
-                self.close_confirmed = true;
-                self.close_guard_open = false;
+                self.ui.close_confirmed = true;
+                self.ui.close_guard_open = false;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            Some(GuardDialogAction::Cancel) => self.close_guard_open = false,
+            Some(GuardDialogAction::Cancel) => self.ui.close_guard_open = false,
             None => {}
         }
         if do_save {
             match self.save_edited_layers_flow() {
                 super::app_mesh_export::SaveEditedLayersOutcome::AllSaved
                 | super::app_mesh_export::SaveEditedLayersOutcome::NothingToSave => {
-                    self.close_confirmed = true;
-                    self.close_guard_open = false;
+                    self.ui.close_confirmed = true;
+                    self.ui.close_guard_open = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 // A cancelled dialog or failed write keeps the app open —
@@ -480,16 +487,16 @@ impl OccluViewApp {
     /// live edit session is dirty or unsaved edits exist. Mirrors the
     /// close-guard wording: "Save…" writes each edited layer then opens,
     pub(super) fn guard_pending_replace_open(&mut self, ctx: &egui::Context) {
-        if self.pending_replace_open.is_none() {
+        if self.ui.pending_replace_open.is_none() {
             return;
         }
         // Never stack over the close guard; it takes precedence (the app is
         // trying to exit). The parked open waits until that resolves.
-        if self.close_guard_open {
+        if self.ui.close_guard_open {
             return;
         }
         let session_layer = self.active_session_layer_label();
-        let edited_count = self.unsaved_edit_layer_ids.len();
+        let edited_count = self.document.unsaved_edit_layer_ids.len();
         let mut do_save = false;
         let mut do_discard = false;
         let mut do_cancel = false;
@@ -520,11 +527,11 @@ impl OccluViewApp {
 
         if do_cancel {
             // Drop the parked open; keep the current scene and session.
-            self.pending_replace_open = None;
+            self.ui.pending_replace_open = None;
             return;
         }
         if do_discard {
-            if let Some(pending) = self.pending_replace_open.take() {
+            if let Some(pending) = self.ui.pending_replace_open.take() {
                 self.replace_paths_confirmed(&pending.paths, pending.source);
             }
             return;
@@ -533,7 +540,7 @@ impl OccluViewApp {
             match self.save_edited_layers_flow() {
                 super::app_mesh_export::SaveEditedLayersOutcome::AllSaved
                 | super::app_mesh_export::SaveEditedLayersOutcome::NothingToSave => {
-                    if let Some(pending) = self.pending_replace_open.take() {
+                    if let Some(pending) = self.ui.pending_replace_open.take() {
                         self.replace_paths_confirmed(&pending.paths, pending.source);
                     }
                 }
@@ -550,18 +557,18 @@ impl OccluViewApp {
     /// unsaved edits left by a closed session) or the layer has since left the
     /// scene.
     fn active_session_layer_label(&self) -> Option<String> {
-        let id = self.edit_mode.session_layer_id()?;
-        let scene = self.scene.as_ref()?;
+        let id = self.document.edit_mode.session_layer_id()?;
+        let scene = self.document.scene.as_ref()?;
         let index = scene.meshes().iter().position(|entry| entry.id() == id)?;
         Some(crate::layers_overlay::layer_label(
-            &self.current_paths,
+            &self.persistence.current_paths,
             &scene.meshes()[index],
             index,
         ))
     }
 
     pub(super) fn show_error_dialog(&mut self, ctx: &egui::Context) {
-        let Some(error) = self.app_error.clone() else {
+        let Some(error) = self.ui.app_error.clone() else {
             return;
         };
         let mut open = true;
@@ -606,7 +613,7 @@ impl OccluViewApp {
                 });
             });
         if !open || close_clicked {
-            self.app_error = None;
+            self.ui.app_error = None;
         }
     }
 }

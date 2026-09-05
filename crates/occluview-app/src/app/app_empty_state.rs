@@ -30,8 +30,8 @@ impl OccluViewApp {
         }
         // A failed startup load can leave the error dialog up over the empty
         // viewport; the guard owns the pointer until it is dismissed.
-        if !self.modal_dialog_open() && response.clicked() {
-            self.open_dialog_requested = true;
+        if !self.ui.modal_dialog_open() && response.clicked() {
+            self.ui.open_dialog_requested = true;
             ctx.request_repaint();
         }
         let card_rect =

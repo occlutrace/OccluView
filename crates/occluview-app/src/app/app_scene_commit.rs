@@ -28,7 +28,8 @@ impl OccluViewApp {
             .iter()
             .map(occluview_core::SceneMesh::id)
             .collect();
-        self.unsaved_edit_layer_ids
+        self.document
+            .unsaved_edit_layer_ids
             .retain(|id| retained_ids.contains(id));
     }
 
@@ -46,10 +47,10 @@ impl OccluViewApp {
 
         let reconciled_paths = previous_scene.map_or_else(
             || vec![PathBuf::new(); draft.meshes().len()],
-            |scene| reconcile_scene_paths(scene, &self.current_paths, &draft),
+            |scene| reconcile_scene_paths(scene, &self.persistence.current_paths, &draft),
         );
         self.retain_unsaved_edit_layer_ids(&draft);
-        self.current_paths = reconciled_paths;
+        self.persistence.current_paths = reconciled_paths;
         self.set_scene(draft, false);
         ctx.request_repaint();
     }

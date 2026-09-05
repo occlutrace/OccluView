@@ -13,7 +13,13 @@ use tracing_subscriber::EnvFilter;
 /// enough to see what led to a crash without bloating the report.
 const CRASH_LOG_CAPACITY: usize = 50;
 
-pub(crate) fn main_entry() {
+/// Binary entry behind the library boundary: install the panic hook, then run
+/// fallible startup and report failures instead of unwinding through `main`.
+///
+/// Never returns a `Result`: startup failures are written under `crashes/`
+/// and shown (dialog on Windows, log elsewhere), then swallowed. Blocks
+/// running the event loop; `--version` and `--shell-refresh` exit first.
+pub fn main_entry() {
     install_panic_hook();
     if let Err(error) = real_main() {
         let details = format!("Startup failure\n\n{error:#}");
@@ -38,7 +44,7 @@ fn real_main() -> Result<()> {
 
     set_process_app_user_model_id();
 
-    let args = app::parse_args();
+    let args = crate::parse_args();
     if args.version {
         print_version_line();
         return Ok(());
@@ -63,7 +69,7 @@ fn real_main() -> Result<()> {
     // should not be attaching patient identifiers with it.
     tracing::info!(
         file_count = args.files.len(),
-        formats = ?file_extensions(&args.files),
+        formats = ?crate::file_extensions(&args.files),
         "OccluView starting"
     );
     let single_instance = single_instance::SingleInstance::acquire()?;
@@ -220,24 +226,6 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
         "OccluView crash report\nversion: {}\nthread: {thread_name}\nlocation: {location}\n\n{payload}",
         env!("CARGO_PKG_VERSION")
     )
-}
-
-/// The distinct lowercase extensions of `files`, sorted: a log line that says
-/// what kind of session this is without saying whose.
-///
-/// This is what the logs are allowed to say about a set of scans: how many and
-/// of which kinds. The paths themselves name the case, and the crash report
-/// they would end up in is a file operators are asked to attach to a public
-/// issue.
-pub(crate) fn file_extensions(files: &[PathBuf]) -> Vec<String> {
-    let mut extensions: Vec<String> = files
-        .iter()
-        .filter_map(|path| path.extension().and_then(|extension| extension.to_str()))
-        .map(str::to_ascii_lowercase)
-        .collect();
-    extensions.sort();
-    extensions.dedup();
-    extensions
 }
 
 fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
