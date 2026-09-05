@@ -220,7 +220,12 @@ fn the_viewer_answers_version_before_any_windowing() {
     // --version must never focus a running instance or open a window; the
     // early exit has to sit before the single-instance handshake.
     assert!(version_exit < single_instance);
-    assert!(app_module_source().contains("\"--version\" | \"-V\""));
+    assert!(startup_source().contains("\"--version\" | \"-V\""));
+    assert!(
+        occluview_app::parse_args_from(["-V"]).version
+            && occluview_app::parse_args_from(["--version"]).version,
+        "both version spellings must exit before any windowing"
+    );
 }
 
 #[test]

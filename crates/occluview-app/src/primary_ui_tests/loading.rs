@@ -112,8 +112,16 @@ fn incoming_files_append_while_scene_or_load_is_active() {
         "incoming open requests should reuse the shared append helper"
     );
     assert!(
-        shared_logic.contains("has_scene || has_active_load || queued_load_count != 0"),
+        shared_logic.contains("occluview_app::should_append_incoming_open_state"),
+        "the binary must delegate the append decision to the shared helper"
+    );
+    assert!(
+        occluview_app::should_append_incoming_open_state(false, true, 0),
         "incoming files should append when a scene load is still pending"
+    );
+    assert!(
+        !occluview_app::should_append_incoming_open_state(false, false, 0),
+        "incoming files replace an idle empty session"
     );
 }
 

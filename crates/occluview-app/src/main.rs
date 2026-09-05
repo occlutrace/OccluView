@@ -91,7 +91,7 @@ fn should_append_incoming_open_state(
     has_active_load: bool,
     queued_load_count: usize,
 ) -> bool {
-    has_scene || has_active_load || queued_load_count != 0
+    occluview_app::should_append_incoming_open_state(has_scene, has_active_load, queued_load_count)
 }
 
 fn main() {

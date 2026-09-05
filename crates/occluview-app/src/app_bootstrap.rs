@@ -230,14 +230,7 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
 /// they would end up in is a file operators are asked to attach to a public
 /// issue.
 pub(crate) fn file_extensions(files: &[PathBuf]) -> Vec<String> {
-    let mut extensions: Vec<String> = files
-        .iter()
-        .filter_map(|path| path.extension().and_then(|extension| extension.to_str()))
-        .map(str::to_ascii_lowercase)
-        .collect();
-    extensions.sort();
-    extensions.dedup();
-    extensions
+    occluview_app::file_extensions(files)
 }
 
 fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
