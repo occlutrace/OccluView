@@ -26,6 +26,15 @@ fn frame_occlusal_centers_on_bbox() {
 }
 
 #[test]
+fn framing_resets_the_orbit_pivot_to_the_bbox_center() {
+    let bbox = Aabb::from_min_max(Vec3::new(10.0, -4.0, 2.0), Vec3::new(34.0, 8.0, 18.0));
+    let camera = Camera::default().frame_occlusal(bbox, 45.0_f32.to_radians());
+
+    assert_eq!(camera.target, bbox.center());
+    assert_eq!(camera.orbit_pivot, bbox.center());
+}
+
+#[test]
 fn frame_occlusal_handles_empty_bbox() {
     let c = Camera::default().frame_occlusal(Aabb::EMPTY, 45.0_f32.to_radians());
     assert_eq!(c, Camera::default());
@@ -591,7 +600,7 @@ fn axis_views_have_stable_labels() {
 }
 
 #[test]
-fn snap_to_axis_preserves_target_distance_and_planes() {
+fn snap_to_axis_preserves_distance_and_planes() {
     let mut camera = Camera {
         target: Vec3::new(10.0, 20.0, 30.0),
         distance: 250.0,

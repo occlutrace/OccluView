@@ -39,3 +39,122 @@ fn centered_zoom_does_not_pan_the_camera_target() {
 
     assert_eq!(camera.target, target_before);
 }
+
+#[test]
+fn cursor_zoom_keeps_the_orbit_pivot_when_it_pans_the_view_center() {
+    let viewport = Vec2::new(800.0, 600.0);
+    let pointer = Vec2::new(620.0, 180.0);
+    let mut camera = Camera::default();
+    let pivot_before = camera.orbit_pivot;
+
+    camera.zoom_at_screen_point(0.5, pointer, viewport);
+
+    assert_eq!(camera.orbit_pivot, pivot_before);
+    assert_ne!(camera.target, pivot_before);
+}
+
+#[test]
+fn orbit_after_cursor_zoom_rotates_the_camera_rig_around_the_stable_pivot() {
+    let viewport = Vec2::new(800.0, 600.0);
+    let pointer = Vec2::new(620.0, 180.0);
+    let mut camera = Camera::default();
+    camera.zoom_at_screen_point(0.5, pointer, viewport);
+    let pivot = camera.orbit_pivot;
+    let target_before = camera.target;
+    let eye_radius_before = camera.eye().distance(pivot);
+    let pivot_ndc_before = view_plane_ndc(&camera, pivot, viewport);
+
+    camera.orbit_view_by(0.35, -0.2);
+
+    assert_eq!(camera.orbit_pivot, pivot);
+    assert!(camera.target.distance(target_before) > 1.0e-4);
+    assert!((camera.eye().distance(pivot) - eye_radius_before).abs() < 1.0e-4);
+    assert!(
+        (view_plane_ndc(&camera, pivot, viewport) - pivot_ndc_before).length() < 1.0e-4,
+        "orbit pivot should stay visually planted in the viewport"
+    );
+}
+
+#[test]
+fn trackball_after_cursor_zoom_rotates_the_camera_rig_around_the_stable_pivot() {
+    let mut camera = Camera::default();
+    camera.zoom_at_screen_point(0.5, Vec2::new(620.0, 180.0), Vec2::new(800.0, 600.0));
+    let pivot = camera.orbit_pivot;
+    let target_before = camera.target;
+    let eye_radius_before = camera.eye().distance(pivot);
+
+    camera.orbit_trackball(Vec2::new(0.0, 0.0), Vec2::new(0.25, -0.15));
+
+    assert_eq!(camera.orbit_pivot, pivot);
+    assert!(camera.target.distance(target_before) > 1.0e-4);
+    assert!((camera.eye().distance(pivot) - eye_radius_before).abs() < 1.0e-4);
+}
+
+#[test]
+fn yaw_pitch_orbit_after_cursor_zoom_rotates_the_camera_rig_around_the_stable_pivot() {
+    let mut camera = Camera::default();
+    camera.zoom_at_screen_point(0.5, Vec2::new(620.0, 180.0), Vec2::new(800.0, 600.0));
+    let pivot = camera.orbit_pivot;
+    let target_before = camera.target;
+    let eye_radius_before = camera.eye().distance(pivot);
+
+    camera.orbit_by(0.35, -0.2);
+
+    assert_eq!(camera.orbit_pivot, pivot);
+    assert!(camera.target.distance(target_before) > 1.0e-4);
+    assert!((camera.eye().distance(pivot) - eye_radius_before).abs() < 1.0e-4);
+}
+
+#[test]
+fn focus_on_resets_the_view_center_and_orbit_pivot_to_the_picked_surface() {
+    let mut camera = Camera::default();
+    camera.zoom_at_screen_point(0.5, Vec2::new(620.0, 180.0), Vec2::new(800.0, 600.0));
+    let picked_surface = Vec3::new(12.0, -3.0, 7.0);
+
+    camera.focus_on(picked_surface);
+
+    assert_eq!(camera.target, picked_surface);
+    assert_eq!(camera.orbit_pivot, picked_surface);
+}
+
+#[test]
+fn panning_the_view_center_does_not_replace_the_orbit_pivot() {
+    let mut camera = Camera::default();
+    let pivot = camera.orbit_pivot;
+
+    camera.pan_screen(Vec2::new(80.0, -40.0), Vec2::new(800.0, 600.0));
+
+    assert_eq!(camera.orbit_pivot, pivot);
+    assert_ne!(camera.target, pivot);
+}
+
+#[test]
+fn axis_snap_after_cursor_zoom_keeps_the_stable_pivot_visually_planted() {
+    let viewport = Vec2::new(800.0, 600.0);
+    let mut camera = Camera::default();
+    camera.zoom_at_screen_point(0.5, Vec2::new(620.0, 180.0), viewport);
+    let pivot = camera.orbit_pivot;
+    let target_before = camera.target;
+    let pivot_ndc_before = view_plane_ndc(&camera, pivot, viewport);
+
+    camera.snap_to_axis(CameraAxisView::PositiveX);
+
+    assert_eq!(camera.orbit_pivot, pivot);
+    assert!(camera.target.distance(target_before) > 1.0e-4);
+    assert!(
+        (view_plane_ndc(&camera, pivot, viewport) - pivot_ndc_before).length() < 1.0e-4,
+        "axis snap should keep the orbit pivot visually planted"
+    );
+}
+
+fn view_plane_ndc(camera: &Camera, point: Vec3, viewport: Vec2) -> Vec2 {
+    let forward = camera.view_direction();
+    let up = camera.view_up();
+    let right = forward.cross(up).normalize_or_zero();
+    assert!(right.length_squared() > f32::EPSILON);
+
+    let half_height = camera.orthographic_height * 0.5;
+    let half_width = half_height * viewport.x / viewport.y;
+    let offset = point - camera.target;
+    Vec2::new(offset.dot(right) / half_width, offset.dot(up) / half_height)
+}

@@ -105,7 +105,7 @@ impl PreviewSceneState {
         }
         let radius = (0.5 * bbox.size().length()).max(1.0);
         let half_fov = 0.5 * self.camera.fovy;
-        self.camera.target = bbox.center();
+        self.camera.focus_on(bbox.center());
         self.camera.orthographic_height =
             (radius * 2.0 / BBOX_FRAME_FILL).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
         self.camera.distance = if half_fov > 1e-5 {
@@ -130,7 +130,7 @@ impl PreviewSceneState {
         else {
             return false;
         };
-        self.camera.target = target;
+        self.camera.focus_on(target);
         true
     }
 }
@@ -177,9 +177,14 @@ mod tests {
         let Ok(mut state) = state else {
             return;
         };
+        state.camera.orbit_pivot = Vec3::new(999.0, 999.0, 999.0);
 
         let moved = state.focus_pointer(Vec2::new(160.0, 90.0), [320, 180]);
         assert!(moved, "center focus should hit the scene");
+        assert_eq!(
+            state.camera.orbit_pivot, state.camera.target,
+            "a picked preview surface should become the next orbit pivot"
+        );
     }
 
     #[test]
@@ -407,6 +412,7 @@ mod tests {
 
         assert!(state.pan_drag(Vec2::new(240.0, -180.0), [320, 180]));
         assert!(state.zoom_scroll(600.0));
+        state.camera.orbit_pivot = Vec3::new(999.0, 999.0, 999.0);
 
         assert!(state.fit_view(), "fit should succeed on a non-empty scene");
         let center = state.scene.bbox().center();
@@ -414,6 +420,11 @@ mod tests {
             (state.camera.target - center).length() < 1e-3,
             "fit should recenter the target on the scene: {} vs {center}",
             state.camera.target
+        );
+        assert!(
+            (state.camera.orbit_pivot - center).length() < 1e-3,
+            "fit should reset the orbit pivot on the scene: {} vs {center}",
+            state.camera.orbit_pivot
         );
         assert!(
             state.camera.orthographic_height.is_finite() && state.camera.orthographic_height > 0.0,

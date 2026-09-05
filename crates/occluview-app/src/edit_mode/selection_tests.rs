@@ -6,6 +6,7 @@ use occluview_core::{CameraProjection, Mesh, SceneMesh, Vertex};
 fn ortho_camera_above() -> Camera {
     Camera {
         target: Vec3::ZERO,
+        orbit_pivot: Vec3::ZERO,
         distance: 100.0,
         yaw: 0.0,
         pitch: 0.0,

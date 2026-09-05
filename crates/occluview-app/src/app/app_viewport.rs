@@ -261,14 +261,14 @@ impl OccluViewApp {
 
         if response.double_clicked() {
             if let Some(target) = scene_pick {
-                camera.target = target;
+                camera.focus_on(target);
                 self.request_camera_repaint(ctx);
             }
             return;
         }
 
         if let Some(target) = scene_pick {
-            camera.target = target;
+            camera.focus_on(target);
             self.request_camera_repaint(ctx);
             return;
         }
