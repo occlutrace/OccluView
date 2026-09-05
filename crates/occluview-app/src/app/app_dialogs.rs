@@ -576,6 +576,7 @@ impl OccluViewApp {
             &self.current_paths,
             &scene.meshes()[index],
             index,
+            &self.locale,
         ))
     }
 

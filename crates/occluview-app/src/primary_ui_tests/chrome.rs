@@ -244,7 +244,7 @@ fn layer_overlay_is_split_by_responsibility_not_single_file() {
     );
     assert!(
         facade.contains("pub(crate) fn show(")
-            && facade.contains("pub(crate) use label::layer_label;"),
+            && facade.contains("pub(crate) use label::{ascii_layer_stem, layer_label};"),
         "layers overlay facade should keep the existing crate API"
     );
     assert!(

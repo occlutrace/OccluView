@@ -230,7 +230,12 @@ impl OccluViewApp {
             return None;
         }
         Some(layers_overlay::LayerContextMenuTarget {
-            label: layers_overlay::layer_label(&self.current_paths, entry, hit.layer_index),
+            label: layers_overlay::layer_label(
+                &self.current_paths,
+                entry,
+                hit.layer_index,
+                &self.locale,
+            ),
             index: hit.layer_index,
             layer_id: hit.layer_id,
             visible: entry.visible,

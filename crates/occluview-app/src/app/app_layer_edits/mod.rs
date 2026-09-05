@@ -92,7 +92,7 @@ pub(super) fn apply_layer_context_action_with_status(
         return layer_actions::apply_layer_context_action(scene, request);
     }
 
-    let Some((_, removed_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((_, removed_label)) = resolve_layer(scene, paths, &request, &app.locale) else {
         return LayerContextApply::default();
     };
     let apply = layer_actions::apply_layer_context_action(scene, request);
@@ -111,7 +111,7 @@ fn begin_face_selection_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) {
-    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request, &app.locale) else {
         return;
     };
     let switching_target = app.edit_mode.selected_layer_id() != Some(entry.id());
@@ -148,6 +148,7 @@ pub(super) fn resolve_layer<'s>(
     scene: &'s Scene,
     paths: &[PathBuf],
     request: &LayerContextRequest,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<(&'s SceneMesh, String)> {
     let entry = scene.meshes().get(request.index)?;
     if entry.id() != request.layer_id {
@@ -155,7 +156,7 @@ pub(super) fn resolve_layer<'s>(
     }
     Some((
         entry,
-        layers_overlay::layer_label(paths, entry, request.index),
+        layers_overlay::layer_label(paths, entry, request.index, locale),
     ))
 }
 

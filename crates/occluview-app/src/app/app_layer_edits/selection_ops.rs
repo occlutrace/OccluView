@@ -23,7 +23,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let layer_label = resolve_layer(scene, paths, &request).map_or_else(
+    let layer_label = resolve_layer(scene, paths, &request, &app.locale).map_or_else(
         || {
             app.locale
                 .tr_with("layer-unnamed", &[("n", &(request.index + 1).to_string())])

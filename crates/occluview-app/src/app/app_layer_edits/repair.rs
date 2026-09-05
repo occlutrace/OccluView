@@ -28,7 +28,7 @@ pub(super) fn apply_layer_repair_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request, &app.locale) else {
         return LayerContextApply::default();
     };
     let Some(token) = app

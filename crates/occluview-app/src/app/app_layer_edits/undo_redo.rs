@@ -59,7 +59,7 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
     let Some(current) = scene.meshes().get(index).cloned() else {
         return LayerContextApply::default();
     };
-    let layer_label = layers_overlay::layer_label(paths, &current, index);
+    let layer_label = layers_overlay::layer_label(paths, &current, index, &app.locale);
 
     match app.edit_mode.redo_last_scene_edit(scene, layer_id) {
         StructuralHistoryStep::Restored(restored_scene) => {
@@ -104,7 +104,7 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let Some((_, layer_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((_, layer_label)) = resolve_layer(scene, paths, &request, &app.locale) else {
         return LayerContextApply::default();
     };
     // Structural (whole-scene) undo first, with an honest refusal when the
