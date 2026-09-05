@@ -405,3 +405,69 @@ fn rebuild_supersedes_queued_sparse_updates() {
         "the authoritative rebuild must remain queued"
     );
 }
+
+/// Restoring a drained update is a lossless round-trip: the next drain
+/// returns the same sparse ids when no rebuild intervened.
+#[test]
+fn restored_update_redrains_identical_sparse_ids() {
+    let worker = test_worker();
+    worker.state.record_touched(vec![3, 1, 2, 1]);
+    let drained = worker.take_update().expect("pending update must drain");
+    worker.restore_update(drained);
+    let retry = worker.take_update().expect("restored update must redrain");
+    assert!(!retry.full_sync, "sparse restore must not escalate");
+    let mut ids = retry.touched;
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids, vec![1, 2, 3]);
+}
+
+/// A restore that would overflow the backlog escalates to a full sync at the
+/// same site as the record path, not just in `record_touched`.
+#[test]
+fn restore_overflow_escalates_to_full_sync() {
+    let worker = test_worker();
+    worker.restore_update(SculptUpdate {
+        touched: vec![0; MAX_PENDING_TOUCHES + 1],
+        full_sync: false,
+    });
+    let update = worker.take_update().expect("overflow must stay visible");
+    assert!(
+        update.full_sync,
+        "restore overflow must become an authoritative full sync"
+    );
+}
+
+/// A drained sparse update restored after a rebuild queued must not come
+/// back as stale ids: it escalates to a full sync of the latest shadow.
+#[test]
+fn restore_after_rebuild_escalates_to_full_sync() {
+    let worker = test_worker();
+    worker.state.record_touched(vec![0, 1, 2]);
+    let drained = worker.take_update().expect("pending update must drain");
+    let mesh = Mesh::new(
+        Some("restore-rebuild".to_string()),
+        vec![
+            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("rebuild mesh");
+    worker.state.record_rebuild(SculptRebuild {
+        topology: PreparedSceneTopology::from_mesh(&mesh),
+        mesh,
+    });
+    worker.restore_update(drained);
+    let retry = worker.take_update().expect("restore must stay visible");
+    assert!(
+        retry.full_sync,
+        "post-rebuild restore must escalate, never resurrect stale ids"
+    );
+    assert!(
+        worker.take_rebuild().is_some(),
+        "the authoritative rebuild must remain queued"
+    );
+}
