@@ -40,11 +40,21 @@ image             = { workspace = true }
 resvg             = { version = "0.48", default-features = false }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
+# Localization runtime (ADR-001): Fluent catalogs + OS locale detection.
+fluent-bundle     = { workspace = true }
+unic-langid       = { workspace = true }
+sys-locale        = { workspace = true }
 # Read the top-level window handle for the single-instance file handoff (used
 # to raise the running window). The X11-specific raise lives behind a Linux
 # target dep (x11rb); this crate only provides the handle type, so it stays
 # cross-platform. See `src/single_instance/activation.rs`.
 raw-window-handle = "0.6"
+
+# Test-only: catalog contract validation (AST walk) + font-coverage probing.
+[dev-dependencies]
+fluent-syntax        = { workspace = true }
+epaint_default_fonts = { workspace = true }
+skrifa               = { workspace = true }
 
 # Linux-only: send `_NET_ACTIVE_WINDOW` ourselves to raise the window past WM
 # focus-stealing prevention on the file handoff. See activation.rs.
