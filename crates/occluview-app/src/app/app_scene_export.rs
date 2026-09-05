@@ -35,9 +35,11 @@ impl OccluViewApp {
             .set_file_name("scene.ply");
         // Index zero with the neighbour fallback resolves to the first layer
         // that has a file, so a merged scene lands next to its scans.
-        if let Some(directory) =
-            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
-        {
+        if let Some(directory) = default_layer_export_directory(
+            &self.persistence.current_paths,
+            0,
+            self.persistence.last_export_dir.as_deref(),
+        ) {
             dialog = dialog.set_directory(directory);
         }
         let Some(selected) = dialog.save_file() else {
@@ -96,23 +98,25 @@ impl OccluViewApp {
             return;
         }
         let mut dialog = rfd::FileDialog::new();
-        if let Some(start) =
-            default_layer_export_directory(&self.current_paths, 0, self.last_export_dir.as_deref())
-        {
+        if let Some(start) = default_layer_export_directory(
+            &self.persistence.current_paths,
+            0,
+            self.persistence.last_export_dir.as_deref(),
+        ) {
             dialog = dialog.set_directory(start);
         }
         let Some(directory) = dialog.pick_folder() else {
             return;
         };
 
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         let visible: Vec<(usize, &SceneMesh)> = scene
             .meshes()
             .iter()
             .enumerate()
             .filter(|(_, entry)| entry.visible)
             .collect();
-        let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
+        let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
             .map(|(index, entry)| {
@@ -157,7 +161,7 @@ impl OccluViewApp {
         if written > 0 {
             // Even a partial batch is a real destination choice worth
             // remembering for the next save dialog.
-            self.last_export_dir = Some(directory.clone());
+            self.persistence.last_export_dir = Some(directory.clone());
         }
         if failed == 0 {
             // Same rule as the whole-scene save: a hidden layer was not written,

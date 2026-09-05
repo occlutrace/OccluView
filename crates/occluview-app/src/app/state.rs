@@ -1,7 +1,8 @@
 //! `OccluViewApp` itself: the root coordinator over owned state domains.
 //!
 //! Extracted domains live in their own modules with their invariants (see
-//! `state_render`); the root only orchestrates transitions across domains.
+//! `state_render`, `state_document`, `state_persistence`); the root only
+//! orchestrates transitions across domains.
 //! The remaining flat fields are mapped to their intended owners below and
 //! move slice by slice, never mechanically all at once.
 //!
@@ -19,25 +20,16 @@
 //!   worker/domain results into user-facing copy at the boundary.
 //! - Platform (`_single_instance`, `incoming_open_requests`, `raise_target`,
 //!   `pending_raise_token`, window handles): native handoff and activation.
-//! - Persistence (`settings`, `settings_persistence`, `recent_files`,
-//!   `last_export_dir`, save/export coordination): update-compatible stored
-//!   state; workers never touch it directly.
-
+//! - Persistence: extracted into [`PersistenceState`].
+//!
 use super::app_settings_panel::settings_popup_id;
 use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
 use super::state_document::DocumentState;
+use super::state_persistence::PersistenceState;
 use super::state_render::RenderState;
-use super::{
-    egui, home_camera_for_scene, load_recent_files, save_recent_files, single_instance, CutTool,
-    Duration, Instant, PathBuf, RecentFiles,
-};
-use crate::app_settings::SettingsPersistence;
+use super::{egui, home_camera_for_scene, single_instance, CutTool, Duration, Instant, PathBuf};
 use crate::live_viewport::SharedLiveViewport;
-
-/// How long the sculpt sliders must stay still before the debounced preference
-/// persist marks settings dirty (one fsync per settled drag, not per frame).
-const SCULPT_SETTINGS_PERSIST_DELAY: Duration = Duration::from_secs(1);
 
 /// Global egui zoom changes the geometry of every widget. Keep it stable while
 /// a pointer gesture is active so the UI Scale slider cannot move under the
@@ -62,12 +54,8 @@ pub(crate) struct OccluViewApp {
     pub(super) render: RenderState,
     /// Scene content, selection, undo, and the load pipeline; see `state_document`.
     pub(super) document: DocumentState,
-    pub(super) current_paths: Vec<PathBuf>,
-    /// Where the last successful export of this session landed. Save dialogs
-    /// fall back here for a layer with no file of its own before leaving the
-    /// choice to the platform.
-    pub(super) last_export_dir: Option<PathBuf>,
-    pub(super) recent_files: RecentFiles,
+    /// Settings, paths, save/export coordination; see `state_persistence`.
+    pub(super) persistence: PersistenceState,
     pub(super) status_message: Option<String>,
     pub(super) status_message_since: Option<Instant>,
     pub(super) status_message_snapshot: Option<String>,
@@ -94,9 +82,6 @@ pub(crate) struct OccluViewApp {
     /// provenance for the raise. Cleared once the raise's attention pulse ends.
     pub(super) pending_raise_token: Option<String>,
     pub(super) information_dialog: InformationDialog,
-    /// Operator preferences, loaded once at startup and saved on change.
-    pub(super) settings: crate::app_settings::Settings,
-    pub(super) settings_persistence: SettingsPersistence,
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
@@ -114,15 +99,10 @@ pub(crate) struct OccluViewApp {
     pub(super) align: crate::align_state::AlignState,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
-    pub(super) update_notice: crate::update_notice::UpdateNotice,
     /// Layer count the automatic window-growth hint last reacted to. The hint
     /// fires only when this count changes and only ever grows the window, so a
     /// manual user resize is never fought frame by frame.
     pub(super) layers_window_layer_count: Option<usize>,
-    /// When the sculpt sliders last changed during the current drag: the
-    /// debounced persist in [`Self::sync_sculpt_preferences`] waits for them
-    /// to settle before marking settings dirty.
-    pub(super) sculpt_settings_dirty_since: Option<Instant>,
     /// The empty-viewport card was clicked: open the native Open dialog once,
     /// after the panel pass (the toolbar dispatches its dialog the same way).
     pub(super) open_dialog_requested: bool,
@@ -184,13 +164,6 @@ impl OccluViewApp {
         live_viewport: Option<SharedLiveViewport>,
         startup: StartupHandles,
     ) -> Self {
-        let settings = crate::app_settings::Settings::load();
-        let last_export_dir = if settings.remember_export_dir {
-            settings.last_export_dir.as_ref().map(PathBuf::from)
-        } else {
-            None
-        };
-        let update_check_on_start = settings.update_check_on_start;
         // UI scale is owned by settings, so egui's own keyboard zoom
         // (Cmd+=/Cmd+-) would fight the per-frame `set_zoom_factor` and blink.
         repaint_ctx.options_mut(|options| options.zoom_with_keyboard = false);
@@ -198,11 +171,7 @@ impl OccluViewApp {
             repaint_ctx: repaint_ctx.clone(),
             render: RenderState::new(live_viewport),
             document: DocumentState::new(),
-            current_paths: Vec::new(),
-            last_export_dir,
-            recent_files: load_recent_files(settings.recent_files_limit()),
-            settings,
-            settings_persistence: SettingsPersistence::default(),
+            persistence: PersistenceState::new(),
             information_dialog: InformationDialog::default(),
             status_message: None,
             status_message_since: None,
@@ -225,19 +194,20 @@ impl OccluViewApp {
             sculpt: crate::sculpt_tool::SculptTool::default(),
             align: crate::align_state::AlignState::default(),
             editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
-            update_notice: crate::update_notice::UpdateNotice::begin_check(update_check_on_start),
             layers_window_layer_count: None,
-            sculpt_settings_dirty_since: None,
             open_dialog_requested: false,
             close_guard_open: false,
             close_confirmed: false,
             pending_replace_open: None,
         };
-        if app.settings.remember_sculpt_brush {
-            crate::mesh_editor_overlay::set_sculpt_size(&app.repaint_ctx, app.settings.sculpt_size);
+        if app.persistence.settings.remember_sculpt_brush {
+            crate::mesh_editor_overlay::set_sculpt_size(
+                &app.repaint_ctx,
+                app.persistence.settings.sculpt_size,
+            );
             crate::mesh_editor_overlay::set_sculpt_intensity(
                 &app.repaint_ctx,
-                app.settings.sculpt_intensity,
+                app.persistence.settings.sculpt_intensity,
             );
         }
         if !startup_paths.is_empty() {
@@ -308,10 +278,6 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    pub(super) fn push_recent_scene(&mut self, paths: &[PathBuf]) {
-        self.recent_files.push_paths(paths);
-    }
-
     pub(super) fn can_render_cut_view(&self) -> bool {
         self.document
             .scene
@@ -337,57 +303,6 @@ impl OccluViewApp {
     #[cfg(windows)]
     pub(super) fn schedule_linux_open_request_repaint(_ctx: &egui::Context) {}
 
-    pub(super) fn save_recent_files(&self) {
-        save_recent_files(&self.recent_files);
-    }
-
-    fn persist_settings_if_due(&mut self, ctx: &egui::Context) {
-        let now = Instant::now();
-        if self.settings_persistence.should_attempt(now) {
-            match self.settings.save() {
-                Ok(()) => self.settings_persistence.record_success(),
-                Err(error) => {
-                    tracing::warn!(%error, "could not persist viewer preferences");
-                    self.settings_persistence
-                        .record_failure(now, error.to_string());
-                }
-            }
-        }
-        if let Some(delay) = self.settings_persistence.retry_after(now) {
-            ctx.request_repaint_after(delay);
-        }
-    }
-
-    /// Mirror the sculpt sliders into settings while "remember brush settings"
-    /// is on. The sliders themselves live in egui memory while the editor is
-    /// open; this one-way sync makes the next launch restore exactly what the
-    /// operator last used. The persist is debounced: a drag changes the sliders
-    /// about sixty times a second, and every dirty frame would cost an fsync.
-    fn sync_sculpt_preferences(&mut self, ctx: &egui::Context) {
-        if !self.settings.remember_sculpt_brush {
-            self.sculpt_settings_dirty_since = None;
-            return;
-        }
-        let size = crate::mesh_editor_overlay::sculpt_size(ctx);
-        let intensity = crate::mesh_editor_overlay::sculpt_intensity(ctx);
-        if (self.settings.sculpt_size - size).abs() > f32::EPSILON
-            || (self.settings.sculpt_intensity - intensity).abs() > f32::EPSILON
-        {
-            self.settings.sculpt_size = size;
-            self.settings.sculpt_intensity = intensity;
-            self.sculpt_settings_dirty_since
-                .get_or_insert(Instant::now());
-        } else if let Some(since) = self.sculpt_settings_dirty_since {
-            let settled = SCULPT_SETTINGS_PERSIST_DELAY.saturating_sub(since.elapsed());
-            if settled.is_zero() {
-                self.sculpt_settings_dirty_since = None;
-                self.settings_persistence.mark_dirty();
-            } else {
-                ctx.request_repaint_after(settled);
-            }
-        }
-    }
-
     /// Render the information route that was active at the start of this UI
     /// pass. A selection inside About therefore replaces it on the following
     /// frame instead of briefly stacking two modal backdrops.
@@ -406,8 +321,8 @@ impl OccluViewApp {
 
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.persist_settings_if_due(ctx);
-        self.sync_sculpt_preferences(ctx);
+        self.persistence.persist_settings_if_due(ctx);
+        self.persistence.sync_sculpt_preferences(ctx);
         self.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
@@ -415,17 +330,17 @@ impl eframe::App for OccluViewApp {
         self.poll_sculpt_worker(ctx);
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);
-        self.update_notice.poll(ctx);
+        self.persistence.update_notice.poll(ctx);
         self.intercept_unsaved_close(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        crate::ui_theme::set_active(self.settings.theme);
-        ctx.set_visuals(super::viewer_visuals(self.settings.theme));
+        crate::ui_theme::set_active(self.persistence.settings.theme);
+        ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));
         // UI scale rides egui's zoom factor: a multiplier over the platform's
         // own pixel density, so HiDPI setups keep their native baseline.
-        let target_ui_scale = self.settings.ui_scale();
+        let target_ui_scale = self.persistence.settings.ui_scale();
         if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(target_ui_scale);
         }
@@ -448,7 +363,7 @@ impl eframe::App for OccluViewApp {
         self.show_error_dialog(&ctx);
         self.show_information_dialog(&ctx);
         self.repair_report.ui(&ctx);
-        self.update_notice.show(&ctx);
+        self.persistence.update_notice.show(&ctx);
         self.show_unsaved_close_guard(&ctx);
         self.guard_pending_replace_open(&ctx);
     }

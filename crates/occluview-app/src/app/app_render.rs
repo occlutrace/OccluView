@@ -169,7 +169,7 @@ impl OccluViewApp {
             );
             let spec = ThumbnailSpec {
                 size_px: CutTool::preview_size_px(),
-                background: self.settings.viewport_background.linear(),
+                background: self.persistence.settings.viewport_background.linear(),
             };
             match pollster::block_on(offscreen.render_prepared_scene_with_clip_with_deadline(
                 PreparedSceneClipRequest {
@@ -261,7 +261,7 @@ impl OccluViewApp {
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let spec = ViewportSpec {
             size_px: self.render.render_extent_px,
-            background: self.settings.viewport_background.linear(),
+            background: self.persistence.settings.viewport_background.linear(),
         };
 
         let offscreen = self
@@ -317,7 +317,7 @@ impl OccluViewApp {
                         camera: &gpu_cam,
                         clip: &clip_plane,
                         spec,
-                        show_ghost: self.settings.show_cut_ghost,
+                        show_ghost: self.persistence.settings.show_cut_ghost,
                         deadline: RenderDeadline::after(APP_OFFSCREEN_RENDER_TIMEOUT),
                     },
                 ),
@@ -369,7 +369,7 @@ impl OccluViewApp {
 
         let repush = match live_viewport.lock() {
             Ok(mut viewport) => {
-                viewport.set_show_ghost(self.settings.show_cut_ghost);
+                viewport.set_show_ghost(self.persistence.settings.show_cut_ghost);
                 viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
                 let mut rebuilt = false;
                 if self.render.invalidation.live_scene_stale() {
@@ -532,7 +532,7 @@ impl OccluViewApp {
         self.clear_live_viewport();
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
-        self.current_paths.clear();
+        self.persistence.current_paths.clear();
         self.render.camera = None;
         self.render.rendered = None;
         self.render.invalidation.reset();
@@ -554,8 +554,11 @@ impl OccluViewApp {
         // visible strip between the application chrome and the render surface;
         // this panel owns the viewport background, so it must be edge-to-edge.
         egui::CentralPanel::no_frame().show(root_ui, |ui| {
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, self.settings.viewport_background.srgb());
+            ui.painter().rect_filled(
+                ui.max_rect(),
+                0.0,
+                self.persistence.settings.viewport_background.srgb(),
+            );
             self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
             let live_viewport = self.render.live_viewport.clone();
             if let Some(live_viewport) = live_viewport {
@@ -623,8 +626,8 @@ impl OccluViewApp {
                 ui,
                 response.rect,
                 camera,
-                self.settings.unit_display,
-                self.settings.viewport_background,
+                self.persistence.settings.unit_display,
+                self.persistence.settings.viewport_background,
             );
         }
         if let Some(camera) = self.render.camera.as_ref() {
@@ -637,7 +640,7 @@ impl OccluViewApp {
                     camera,
                     response,
                     avoid: gizmo_avoid,
-                    background: self.settings.viewport_background,
+                    background: self.persistence.settings.viewport_background,
                 });
             }
         }

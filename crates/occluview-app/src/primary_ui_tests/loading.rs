@@ -260,7 +260,7 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
     );
 
     let ordered_nonvisual_work = [
-        "self.persist_settings_if_due(ctx);",
+        "self.persistence.persist_settings_if_due(ctx);",
         "self.expire_status_message(ctx);",
         "Self::schedule_linux_open_request_repaint(ctx);",
         "self.process_scene_loads(ctx);",
@@ -268,7 +268,7 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
         "self.poll_sculpt_worker(ctx);",
         "self.handle_open_requests(ctx);",
         "self.finish_foreground_pulse_if_due(ctx);",
-        "self.update_notice.poll(ctx);",
+        "self.persistence.update_notice.poll(ctx);",
         "self.intercept_unsaved_close(ctx);",
     ];
     for pair in ordered_nonvisual_work.windows(2) {
@@ -394,8 +394,9 @@ fn append_scene_load_preserves_existing_camera() {
         "queued append loads must not re-home after the user has already moved the camera"
     );
     assert!(
-        !app_source
-            .contains("self.set_scene(scene, true);\n                    self.current_paths"),
+        !app_source.contains(
+            "self.set_scene(scene, true);\n                    self.persistence.current_paths"
+        ),
         "scene load completion should not always reset the camera"
     );
     assert!(

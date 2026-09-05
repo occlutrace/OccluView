@@ -27,14 +27,16 @@ impl OccluViewApp {
         paths: &[PathBuf],
         request: LayerContextRequest,
     ) -> bool {
-        let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
+        let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
         let default_format = default_layer_export_format(paths, request.index, fallback);
         let mut dialog = layer_export_file_dialog(default_format).set_file_name(
             default_layer_export_name(paths, scene, request.index, default_format),
         );
-        if let Some(directory) =
-            default_layer_export_directory(paths, request.index, self.last_export_dir.as_deref())
-        {
+        if let Some(directory) = default_layer_export_directory(
+            paths,
+            request.index,
+            self.persistence.last_export_dir.as_deref(),
+        ) {
             dialog = dialog.set_directory(directory);
         }
 
@@ -97,10 +99,10 @@ impl OccluViewApp {
         let Some(parent) = written.parent().filter(|dir| !dir.as_os_str().is_empty()) else {
             return;
         };
-        self.last_export_dir = Some(parent.to_path_buf());
-        if self.settings.remember_export_dir {
-            self.settings.last_export_dir = parent.to_str().map(str::to_owned);
-            self.settings_persistence.mark_dirty();
+        self.persistence.last_export_dir = Some(parent.to_path_buf());
+        if self.persistence.settings.remember_export_dir {
+            self.persistence.settings.last_export_dir = parent.to_str().map(str::to_owned);
+            self.persistence.settings_persistence.mark_dirty();
         }
     }
 
@@ -111,7 +113,7 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return SaveEditedLayersOutcome::NothingToSave;
         };
-        let paths = self.current_paths.clone();
+        let paths = self.persistence.current_paths.clone();
         let pending: Vec<(usize, occluview_core::SceneMeshId)> = scene
             .meshes()
             .iter()

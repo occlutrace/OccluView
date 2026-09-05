@@ -121,7 +121,7 @@ fn viewport_double_click_focuses_scene_point_not_home_reset() {
 
     assert!(
         source.contains(
-            "(self.settings.double_click_resets_camera && response.double_clicked())\n            || response.clicked_by(egui::PointerButton::Middle)"
+            "(self.persistence.settings.double_click_resets_camera\n            && response.double_clicked())\n            || response.clicked_by(egui::PointerButton::Middle)"
         ),
         "viewport input should pick a scene point for double-click focus, gated by the preference"
     );
@@ -349,8 +349,8 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
          encodes THIS frame's camera (removes one frame of orbit latency)"
     );
     let ordered_visible_work = [
-        "crate::ui_theme::set_active(self.settings.theme);",
-        "ctx.set_visuals(super::viewer_visuals(self.settings.theme));",
+        "crate::ui_theme::set_active(self.persistence.settings.theme);",
+        "ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));",
         "self.handle_dropped_files(&ctx);",
         "self.release_viewport_orbit_cursor_if_inactive(&ctx);",
         "self.render_pending_frame(&ctx);",
@@ -378,7 +378,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
         "self.show_error_dialog(&ctx);",
         "self.show_information_dialog(&ctx);",
         "self.repair_report.ui(&ctx);",
-        "self.update_notice.show(&ctx);",
+        "self.persistence.update_notice.show(&ctx);",
         "self.show_unsaved_close_guard(&ctx);",
         "self.guard_pending_replace_open(&ctx);",
     ];

@@ -1,7 +1,5 @@
 use super::app_chrome::{load_app_logo_color_image, status_overlay_rect, viewer_visuals};
-use super::app_files::{
-    load_recent_files, recent_scene_hover, recent_scene_label, save_recent_files,
-};
+use super::app_files::{recent_scene_hover, recent_scene_label};
 use super::cut_tool::CutTool;
 use super::edit_mode::{EditModeCommand, EditModeController, ScreenPolygonSelectionRequest};
 use super::layer_actions::{self, LayerContextAction, LayerContextApply, LayerContextRequest};
@@ -21,7 +19,6 @@ use super::viewer::{
 use super::{
     read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
 };
-use crate::recent_files::RecentFiles;
 use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
@@ -81,6 +78,7 @@ mod open_dialogs;
 mod selection_overlay;
 mod state;
 mod state_document;
+mod state_persistence;
 mod state_render;
 
 use app_layer_edits::{

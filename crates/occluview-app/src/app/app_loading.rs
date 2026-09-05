@@ -256,7 +256,7 @@ impl OccluViewApp {
                 let (scene, current_paths) = if append {
                     combine_loaded_scene(
                         self.document.scene.as_deref(),
-                        &self.current_paths,
+                        &self.persistence.current_paths,
                         scene,
                         &pending.paths,
                     )
@@ -289,7 +289,7 @@ impl OccluViewApp {
                     // The "Frame a scene when it opens" preference only owns the
                     // replacement path; a first-ever load always frames (there is
                     // no pose worth keeping yet) and appends never steal the view.
-                    self.settings.frame_scene_on_open
+                    self.persistence.settings.frame_scene_on_open
                 };
                 self.set_scene(scene, reset_camera);
                 if self.document.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
@@ -299,9 +299,9 @@ impl OccluViewApp {
                     self.render.rendered = None;
                     self.clear_live_viewport();
                 }
-                self.current_paths = current_paths;
-                self.push_recent_scene(&recent_paths);
-                self.save_recent_files();
+                self.persistence.current_paths = current_paths;
+                self.persistence.push_recent_scene(&recent_paths);
+                self.persistence.save_recent_files();
                 self.status_message = None;
                 tracing::info!(
                     source = pending.source,

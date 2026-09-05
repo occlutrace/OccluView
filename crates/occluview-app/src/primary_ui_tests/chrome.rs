@@ -442,7 +442,7 @@ fn axis_gizmo_uses_the_viewport_background_palette() {
 
     assert!(
         render.contains("paint_axis_gizmo(")
-            && render.contains("self.settings.viewport_background"),
+            && render.contains("self.persistence.settings.viewport_background"),
         "axis gizmo must receive the same viewport background setting as the scale bar"
     );
     assert!(

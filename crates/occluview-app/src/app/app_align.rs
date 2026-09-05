@@ -197,7 +197,7 @@ impl OccluViewApp {
             .iter()
             .position(|entry| entry.id() == layer)?;
         Some(crate::layers_overlay::layer_label(
-            &self.current_paths,
+            &self.persistence.current_paths,
             &scene.meshes()[index],
             index,
         ))
