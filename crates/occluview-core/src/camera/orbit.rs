@@ -3,8 +3,9 @@ use glam::{Quat, Vec2, Vec3};
 use super::{orientation::wrap_angle_rad, Camera};
 
 impl Camera {
-    /// Orbit around the current target by yaw/pitch deltas in radians.
+    /// Orbit the camera rig around the stable pivot by yaw/pitch deltas in radians.
     pub fn orbit_by(&mut self, yaw_delta: f32, pitch_delta: f32) {
+        let orientation_before = self.resolved_orientation();
         let mut yaw = self.yaw;
         let mut pitch = self.pitch;
         if yaw_delta.is_finite() {
@@ -14,6 +15,8 @@ impl Camera {
             pitch = wrap_angle_rad(pitch + pitch_delta);
         }
         self.set_yaw_pitch(yaw, pitch);
+        let rotation = self.resolved_orientation() * orientation_before.inverse();
+        self.rotate_view_center_around_pivot(rotation);
     }
 
     /// Orbit using the current viewport axes instead of fixed world axes.
@@ -42,6 +45,7 @@ impl Camera {
             return;
         }
 
+        self.rotate_view_center_around_pivot(yaw_rotation * pitch_rotation);
         self.orientation = Some(next_orientation);
         self.sync_yaw_pitch_from_orientation();
     }
@@ -73,8 +77,19 @@ impl Camera {
             return;
         }
 
+        self.rotate_view_center_around_pivot(world_delta);
         self.orientation = Some(next_orientation);
         self.sync_yaw_pitch_from_orientation();
+    }
+
+    pub(super) fn rotate_view_center_around_pivot(&mut self, rotation: Quat) {
+        if !rotation.is_finite() || !self.target.is_finite() || !self.orbit_pivot.is_finite() {
+            return;
+        }
+        let next = self.orbit_pivot + rotation * (self.target - self.orbit_pivot);
+        if next.is_finite() {
+            self.target = next;
+        }
     }
 }
 

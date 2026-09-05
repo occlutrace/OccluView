@@ -131,7 +131,7 @@ fn frame_planar(bbox: Aabb, fovy: f32, yaw: f32, pitch: f32) -> Camera {
     let radius = (0.5 * size.length()).max(1.0);
     let half_fov = 0.5 * fovy;
 
-    camera.target = bbox.center();
+    camera.focus_on(bbox.center());
     camera.set_yaw_pitch(yaw, pitch);
     camera.projection = CameraProjection::Orthographic;
     camera.fovy = fovy;
@@ -146,10 +146,12 @@ fn frame_planar(bbox: Aabb, fovy: f32, yaw: f32, pitch: f32) -> Camera {
 }
 
 impl Camera {
-    /// Snap the camera orientation to an exact axis-aligned view while
-    /// preserving the current target, distance, FOV, and clip planes.
+    /// Snap the camera rig to an exact axis-aligned view around the orbit pivot.
     pub fn snap_to_axis(&mut self, axis: CameraAxisView) {
+        let orientation_before = self.resolved_orientation();
         let (yaw, pitch) = axis.yaw_pitch();
         self.set_yaw_pitch(yaw, pitch);
+        let rotation = self.resolved_orientation() * orientation_before.inverse();
+        self.rotate_view_center_around_pivot(rotation);
     }
 }

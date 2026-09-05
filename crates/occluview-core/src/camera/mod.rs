@@ -50,8 +50,10 @@ pub enum CameraProjection {
 /// An orbital camera, the natural model for inspecting a mesh.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Camera {
-    /// World-space point the camera orbits around.
+    /// World-space point at the center of the view plane.
     pub target: Vec3,
+    /// World-space point that orbit gestures rotate around.
+    pub orbit_pivot: Vec3,
     /// Distance from target to eye, in millimeters.
     pub distance: f32,
     /// Yaw (around world Y), in radians.

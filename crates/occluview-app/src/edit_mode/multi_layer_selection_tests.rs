@@ -17,6 +17,7 @@ fn hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) -> Scen
 fn camera() -> occluview_core::Camera {
     occluview_core::Camera {
         target: glam::Vec3::ZERO,
+        orbit_pivot: glam::Vec3::ZERO,
         distance: 100.0,
         yaw: 0.0,
         pitch: 0.0,

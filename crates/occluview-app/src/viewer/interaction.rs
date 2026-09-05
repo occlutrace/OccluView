@@ -252,6 +252,7 @@ mod tests {
     fn viewport_center_pick_hits_scene_surface() {
         let camera = Camera {
             target: Vec3::ZERO,
+            orbit_pivot: Vec3::ZERO,
             distance: 100.0,
             yaw: 0.0,
             pitch: 0.0,
@@ -292,6 +293,7 @@ mod tests {
     fn viewport_center_pick_can_return_editable_scene_hit_identity() {
         let camera = Camera {
             target: Vec3::ZERO,
+            orbit_pivot: Vec3::ZERO,
             distance: 100.0,
             yaw: 0.0,
             pitch: 0.0,
@@ -335,6 +337,7 @@ mod tests {
     fn orthographic_ray_origin_follows_pointer_in_view_plane() {
         let camera = Camera {
             target: Vec3::ZERO,
+            orbit_pivot: Vec3::ZERO,
             distance: 100.0,
             yaw: 0.0,
             pitch: 0.0,
@@ -366,6 +369,7 @@ mod tests {
     fn world_projection_maps_target_center_to_viewport_center() {
         let camera = Camera {
             target: Vec3::ZERO,
+            orbit_pivot: Vec3::ZERO,
             distance: 100.0,
             yaw: 0.0,
             pitch: 0.0,

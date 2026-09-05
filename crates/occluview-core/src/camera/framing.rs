@@ -8,6 +8,7 @@ impl Default for Camera {
     fn default() -> Self {
         Self {
             target: Vec3::ZERO,
+            orbit_pivot: Vec3::ZERO,
             distance: 100.0,
             yaw: 0.0,
             // Looking slightly down from above — the occlusal bias.
@@ -95,7 +96,7 @@ impl Camera {
         let radius = planar_half.hypot(vertical_half).max(1.0);
 
         // Place the camera above, looking down at the occlusal plane.
-        self.target = center;
+        self.focus_on(center);
         self.set_yaw_pitch(0.0, 0.6); // ~34° from horizontal: occlusal bias, not straight down
         self.projection = CameraProjection::Orthographic;
         self.fovy = fovy;

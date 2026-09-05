@@ -1,8 +1,16 @@
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 
 use super::{Camera, MAX_ORTHOGRAPHIC_HEIGHT_MM, MIN_ORTHOGRAPHIC_HEIGHT_MM};
 
 impl Camera {
+    /// Focus the view and subsequent orbit gestures on a picked world-space point.
+    pub fn focus_on(&mut self, point: Vec3) {
+        if point.is_finite() {
+            self.target = point;
+            self.orbit_pivot = point;
+        }
+    }
+
     /// Scale the camera distance and clip planes by a multiplicative factor.
     ///
     /// The height is clamped on BOTH sides: without the ceiling, a few hundred

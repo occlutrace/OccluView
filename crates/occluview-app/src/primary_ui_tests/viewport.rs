@@ -422,8 +422,8 @@ fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
         "camera mutation paths should route through the shared camera repaint helper"
     );
     assert!(
-        count_occurrences(input, "camera.target = target;") == 2,
-        "scene targeting should still have two target-setting branches"
+        count_occurrences(input, "camera.focus_on(target);") == 2,
+        "scene targeting should route both pick branches through the pivot-aware camera API"
     );
     assert!(
         repaint_helper.contains("self.render.invalidation.request_redraw();"),
