@@ -330,16 +330,7 @@ impl OccluViewApp {
                     self.locale
                         .tr_with("load-action-failed-open", &[("detail", &format!("{e:#}"))])
                 });
-                self.app_error = Some(load_error_dialog(action, &e, &pending.paths));
-                // Technical summary/details stay English (support payload);
-                // only the user-facing title is localized.
-                if let Some(dialog) = self.app_error.as_mut() {
-                    dialog.title = if append {
-                        self.locale.text("error-add-title")
-                    } else {
-                        self.locale.text("error-open-title")
-                    };
-                }
+                self.app_error = Some(load_error_dialog(&self.locale, action, &e, &pending.paths));
                 tracing::error!(
                     error = %failure_without_paths(&e, &pending.paths),
                     path_count = pending.paths.len(),

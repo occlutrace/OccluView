@@ -124,11 +124,9 @@ impl OccluViewApp {
         let fallback = fallback_mesh_write_format(self.settings.fallback_export_format);
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
-            .map(|(index, entry)| {
+            .map(|(index, _entry)| {
                 (
-                    sanitize_filename_stem(&crate::layers_overlay::layer_label(
-                        &paths, entry, *index,
-                    )),
+                    sanitize_filename_stem(&crate::layers_overlay::ascii_layer_stem(*index)),
                     default_layer_export_format(&paths, *index, fallback),
                 )
             })

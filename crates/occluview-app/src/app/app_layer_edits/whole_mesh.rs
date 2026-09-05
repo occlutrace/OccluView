@@ -30,7 +30,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request, &app.locale) else {
         return LayerContextApply::default();
     };
     let Some(command) = edit_command_for_layer_action(request.action) else {

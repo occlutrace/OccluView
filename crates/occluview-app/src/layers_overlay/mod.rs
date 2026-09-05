@@ -18,7 +18,7 @@ use row::{show_layer_row, LayerRowState, LayerRowView};
 use std::path::PathBuf;
 
 use label::layer_hover;
-pub(crate) use label::layer_label;
+pub(crate) use label::{ascii_layer_stem, layer_label};
 pub(crate) use menu::{show_layer_context_menu, LayerContextMenuTarget};
 pub(crate) use row::LayerRowChange;
 pub(crate) use scene_menu::{show_scene_context_menu, SceneContextAction};
@@ -61,8 +61,8 @@ pub(crate) fn show(
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     for (index, entry) in scene.meshes().iter().enumerate() {
-                        let label = layer_label(paths, entry, index);
-                        let hover = layer_hover(paths, entry, index);
+                        let label = layer_label(paths, entry, index, locale);
+                        let hover = layer_hover(paths, entry, index, locale);
                         if let Some(edit) = show_layer_row(
                             ui,
                             overlay_inner_width,
@@ -152,7 +152,8 @@ mod tests {
         );
         assert!(
             production_source.contains("pub(crate) fn show(")
-                && production_source.contains("pub(crate) use label::layer_label;"),
+                && production_source
+                    .contains("pub(crate) use label::{ascii_layer_stem, layer_label};"),
             "facade should preserve the crate API used by app internals"
         );
         assert!(
@@ -198,7 +199,7 @@ mod tests {
             .map_or(source.as_str(), |(source, _)| source);
 
         assert!(
-            production_source.contains("let hover = layer_hover(paths, entry, index);"),
+            production_source.contains("let hover = layer_hover(paths, entry, index, locale);"),
             "layer rows should derive hover text from the shared path/name helper"
         );
         assert!(

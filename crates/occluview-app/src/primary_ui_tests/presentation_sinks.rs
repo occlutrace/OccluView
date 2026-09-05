@@ -552,6 +552,19 @@ fn presentation_sinks_route_through_catalogs() {
                 from = hit + sink.len();
             }
         }
+        // 9. Capital-L `Layer` display fallbacks (`format!("Layer {}")`):
+        // the ASCII filename stem helper uses lowercase `layer-`; a
+        // capital `Layer` display literal is an unkeyed operator-visible
+        // name (route via `layer-unnamed`). Support `details:` blocks
+        // stay out by design (documented above).
+        let mut from = 0_usize;
+        while let Some(hit) = find_code(production, "format!(\"Layer {", from) {
+            failures.push(format!(
+                "{name}: unkeyed Layer fallback: {}",
+                snippet(production, hit)
+            ));
+            from = hit + "format!(\"Layer {".len();
+        }
     }
     assert!(
         failures.is_empty(),

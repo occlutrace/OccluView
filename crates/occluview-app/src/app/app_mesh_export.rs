@@ -386,9 +386,9 @@ fn default_layer_export_name(
         .map(sanitize_filename_stem)
         .filter(|stem| !stem.is_empty())
         // Deliberately ASCII: a default filename stem must survive any
-        // filesystem locale, so it never routes through the catalogs (the
-        // localized layer name already shows in the export status line).
-        .unwrap_or_else(|| format!("layer-{}", index + 1));
+        // filesystem locale (the localized name shows in the status line
+        // via the mesh-exported-* keys).
+        .unwrap_or_else(|| crate::layers_overlay::ascii_layer_stem(index));
 
     format!("{stem}-edited.{}", mesh_write_extension(format))
 }
