@@ -1,7 +1,7 @@
 use super::{
-    desired_render_extent_px, egui, orbit_delta_from_drag, pick_scene_point,
+    desired_render_extent_px, egui, mesh_editor_overlay, orbit_delta_from_drag, pick_scene_point,
     render_extent_change_requires_rerender, viewport_orbit_drag_active, viewport_pan_drag_active,
-    zoom_factor_from_scroll, OccluViewApp,
+    zoom_factor_from_scroll, MeshSelectionDrag, OccluViewApp,
 };
 use glam::Vec2;
 
@@ -93,7 +93,7 @@ impl OccluViewApp {
         viewport_points: egui::Vec2,
         pixels_per_point: f32,
     ) {
-        if self.scene.is_none() {
+        if self.document.scene.is_none() {
             return;
         }
         let Some(desired) = desired_render_extent_px(viewport_points, pixels_per_point) else {
@@ -210,7 +210,7 @@ impl OccluViewApp {
             || response.clicked_by(egui::PointerButton::Middle)
         {
             let camera = self.render.camera;
-            let scene = self.scene.as_ref();
+            let scene = self.document.scene.as_ref();
             response
                 .interact_pointer_pos()
                 .zip(camera)
@@ -238,9 +238,9 @@ impl OccluViewApp {
         // A click the axis gizmo answered is a view change, not a pick. The
         // gizmo markers sit over the model, so without this the same click
         // snapped the camera AND marked the facet behind the marker.
-        if self.editor_tab == crate::mesh_editor_overlay::EditorTab::EditMesh
+        if self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !gizmo_click
-            && !self.edit_mode.lasso_armed()
+            && !self.document.edit_mode.lasso_armed()
             && response.clicked_by(egui::PointerButton::Primary)
             && !response.dragged()
             && self.handle_primary_face_selection_click(ctx, response)
@@ -310,6 +310,35 @@ impl OccluViewApp {
 
         if changed {
             self.request_camera_repaint(ctx);
+        }
+    }
+
+    /// Start a mesh-selection marquee on an explicit primary drag. Lives with
+    /// the viewport input that gates it; the drag state itself is document
+    /// state consumed by the mesh editor.
+    pub(super) fn begin_mesh_selection_drag(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        pan_drag_active: bool,
+    ) {
+        let drag_allowed = self.document.edit_mode.has_active_session()
+            && self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
+            && !pan_drag_active
+            && !ctx.input(|input| {
+                input.pointer.button_down(egui::PointerButton::Secondary)
+                    || input.pointer.button_down(egui::PointerButton::Middle)
+            });
+        if drag_allowed && response.drag_started_by(egui::PointerButton::Primary) {
+            let origin = ctx.input(|input| input.pointer.press_origin());
+            let current = response.interact_pointer_pos();
+            if let (Some(origin), Some(current)) = (origin, current) {
+                self.document.mesh_selection_drag =
+                    Some(MeshSelectionDrag::Rect { origin, current });
+                ctx.request_repaint();
+            }
+        } else if !response.dragged_by(egui::PointerButton::Primary) && !response.drag_stopped() {
+            self.document.mesh_selection_drag = None;
         }
     }
 }

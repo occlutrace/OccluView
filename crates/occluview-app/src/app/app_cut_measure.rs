@@ -181,6 +181,7 @@ impl OccluViewApp {
             return false;
         }
         let can_cut = self
+            .document
             .scene
             .as_ref()
             .is_some_and(|scene| CutTool::can_render_bbox(scene.bbox()));
@@ -196,7 +197,7 @@ impl OccluViewApp {
         let Some(camera) = self.render.camera else {
             return false;
         };
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
 
@@ -352,9 +353,9 @@ impl OccluViewApp {
         // PROBE-LINKED cut is the exception: it was opened by this very tool and
         // is passive, so the marker and the section coexist. The tool stands down
         // instead of fighting the others.
-        if self.edit_mode.has_active_session()
+        if self.document.edit_mode.has_active_session()
             || (self.cut_view.is_active() && !self.cut_view.is_probe_linked())
-            || self.scene.is_none()
+            || self.document.scene.is_none()
             || self.render.camera.is_none()
         {
             self.measure.disarm();
@@ -437,7 +438,11 @@ impl OccluViewApp {
         {
             return false;
         }
-        let layer_count = self.scene.as_ref().map_or(0, |scene| scene.meshes().len());
+        let layer_count = self
+            .document
+            .scene
+            .as_ref()
+            .map_or(0, |scene| scene.meshes().len());
         if layers_overlay::layer_overlay_rect(viewport_rect, layer_count).contains(pos) {
             return false;
         }
@@ -468,7 +473,7 @@ impl OccluViewApp {
         if self.measure.dragged_ruler_anchor().is_some() {
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
             if primary_down && response.rect.contains(pointer) {
-                if let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) {
+                if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
                     if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
                         if let Some(distance_mm) = self.measure.update_ruler_drag(hit.point) {
                             self.status_message = Some(format!(
@@ -535,7 +540,7 @@ impl OccluViewApp {
         if suppress_click || !response.clicked_by(egui::PointerButton::Primary) {
             return false;
         }
-        let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
+        let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
             return false;
         };
         if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
@@ -674,7 +679,8 @@ impl OccluViewApp {
         // convention dental CAD software uses); the follow-mode plant yields
         // to it. A *planted* disc still owns its handle presses, so only the
         // follow-mode plant is gated here.
-        let lasso_owns_lmb = self.edit_mode.lasso_armed() && self.edit_mode.has_active_session();
+        let lasso_owns_lmb =
+            self.document.edit_mode.lasso_armed() && self.document.edit_mode.has_active_session();
         let plant_suppressed = lasso_owns_lmb && !self.cut_view.is_planted();
         let primary_pressed = raw_pressed && !plant_suppressed && !probe_linked;
 

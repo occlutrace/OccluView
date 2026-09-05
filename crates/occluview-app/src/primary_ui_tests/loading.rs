@@ -280,7 +280,7 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
         );
     }
     assert!(
-        loading_source.contains("let load_settled = self.queued_loads.is_empty();")
+        loading_source.contains("let load_settled = self.document.queued_loads.is_empty();")
             && loading_source.contains("active.source == \"single-instance\" && load_settled")
             && loading_source.contains("if raise_after_handoff {")
             && loading_source.contains("self.raise_window_for_incoming_open(ctx);"),
@@ -310,7 +310,9 @@ fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
 
     assert!(
         loading.contains("fn replace_open_needs_guard(&self) -> bool")
-            && loading.contains("self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()"),
+            && loading.contains(
+                "self.document.edit_mode.is_dirty() || self.document.has_unsaved_mesh_edits()"
+            ),
         "a replace open must be gated on a live dirty session OR unsaved edits, \
          not proceed straight to a scene-destroying load"
     );
@@ -388,7 +390,7 @@ fn append_scene_load_preserves_existing_camera() {
         app_source.contains("if append {")
             && app_source.contains("LoadQueueCameraReset::WhenQueueDrains")
             && app_source.contains("&& !queued_after_current")
-            && app_source.contains("!self.camera_modified_during_load"),
+            && app_source.contains("!self.document.camera_modified_during_load"),
         "queued append loads must not re-home after the user has already moved the camera"
     );
     assert!(
@@ -415,7 +417,7 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         "multi-file bursts need to distinguish automatic framing from user camera movement"
     );
     assert!(
-        app_source.contains("let queued_after_current = !self.queued_loads.is_empty();"),
+        app_source.contains("let queued_after_current = !self.document.queued_loads.is_empty();"),
         "camera reset should be deferred while more files from the open burst are queued"
     );
     assert!(
@@ -429,8 +431,8 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         "intermediate burst loads should not render or publish a half-framed scene"
     );
     assert!(
-        app_source.contains("} else if self.load_queue_camera_reset")
-            && app_source.contains("&& self.queued_loads.is_empty()"),
+        app_source.contains("} else if self.document.load_queue_camera_reset")
+            && app_source.contains("&& self.document.queued_loads.is_empty()"),
         "a final append failure should still frame the successfully loaded partial scene"
     );
 }

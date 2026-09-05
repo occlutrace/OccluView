@@ -130,27 +130,27 @@ impl OccluViewApp {
         let layer_id = worker.layer_id;
         let expected = worker.topology_id;
         let new_topology_id = rebuild.mesh.topology_id();
-        let Some(mut scene_arc) = self.scene.take() else {
+        let Some(mut scene_arc) = self.document.scene.take() else {
             return false;
         };
         {
-            let scene = super::state::taken_scene_mut(&mut scene_arc);
+            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
                 .find(|entry| entry.id() == layer_id)
             else {
-                self.scene = Some(scene_arc);
+                self.document.scene = Some(scene_arc);
                 return false;
             };
             if entry.mesh.topology_id() != expected {
-                self.scene = Some(scene_arc);
+                self.document.scene = Some(scene_arc);
                 return false;
             }
             entry.mesh = Arc::new(rebuild.mesh);
         }
-        self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene = Some(scene_arc);
+        self.document.edit_mode.sync_to_scene(&scene_arc);
+        self.document.scene = Some(scene_arc);
         if let Some(worker) = self.sculpt.worker.as_mut() {
             worker.topology_id = new_topology_id;
             worker.topology = rebuild.topology;
@@ -266,7 +266,7 @@ impl OccluViewApp {
         };
         let layer_id = worker.layer_id;
         let topology_id = worker.topology_id;
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
@@ -275,17 +275,18 @@ impl OccluViewApp {
         if entry.mesh.topology_id() != topology_id {
             return false;
         }
-        let Some(token) =
-            self.edit_mode
-                .begin_layer_edit_with_snapshot(entry, before, EditModeCommand::Sculpt)
-        else {
+        let Some(token) = self.document.edit_mode.begin_layer_edit_with_snapshot(
+            entry,
+            before,
+            EditModeCommand::Sculpt,
+        ) else {
             self.status_message = Some("Layer edit already in progress".to_string());
             return false;
         };
         drop(scene);
         if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
-            let _ = self.edit_mode.finish_layer_edit_success(token);
-            self.mark_mesh_edits_unsaved(layer_id);
+            let _ = self.document.edit_mode.finish_layer_edit_success(token);
+            self.document.mark_mesh_edits_unsaved(layer_id);
             // Only promise the undo that exists. `begin_layer_edit_with_snapshot`
             // skips an oversized pre-op snapshot -- the edit still applies, but
             // Ctrl+Z will not bring the layer back. Telling the operator
@@ -293,7 +294,7 @@ impl OccluViewApp {
             // it, on work they have already moved on from. Every other mesh-edit
             // status goes through `with_undoable_note` for the same reason.
             self.status_message = Some(
-                if self.edit_mode.last_edit_undoable() {
+                if self.document.edit_mode.last_edit_undoable() {
                     "Sculpt applied (Ctrl+Z undoes)"
                 } else {
                     "Sculpt applied (not undoable: snapshot too large)"
@@ -303,6 +304,7 @@ impl OccluViewApp {
             true
         } else {
             let _ = self
+                .document
                 .edit_mode
                 .finish_layer_edit_error(token, "sculpt commit failed".to_string());
             false
@@ -315,23 +317,23 @@ impl OccluViewApp {
         mesh: Mesh,
         ctx: &egui::Context,
     ) -> bool {
-        let Some(mut scene_arc) = self.scene.take() else {
+        let Some(mut scene_arc) = self.document.scene.take() else {
             return false;
         };
         {
-            let scene = super::state::taken_scene_mut(&mut scene_arc);
+            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
                 .iter_mut()
                 .find(|entry| entry.id() == layer_id)
             else {
-                self.scene = Some(scene_arc);
+                self.document.scene = Some(scene_arc);
                 return false;
             };
             entry.mesh = Arc::new(mesh);
         }
-        self.edit_mode.sync_to_scene(&scene_arc);
-        self.scene = Some(scene_arc);
+        self.document.edit_mode.sync_to_scene(&scene_arc);
+        self.document.scene = Some(scene_arc);
         // The commit swaps the layer's mesh Arc after the stroke's bytes were
         // already pushed to the GPU by sparse writes; only a repaint is owed.
         self.render.invalidation.request_redraw();

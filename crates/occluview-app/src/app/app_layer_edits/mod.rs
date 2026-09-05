@@ -111,14 +111,14 @@ fn begin_face_selection_with_status(
     let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
         return;
     };
-    let switching_target = app.edit_mode.selected_layer_id() != Some(entry.id());
-    if app.edit_mode.begin_face_selection(entry, scene) {
+    let switching_target = app.document.edit_mode.selected_layer_id() != Some(entry.id());
+    if app.document.edit_mode.begin_face_selection(entry, scene) {
         // Open on the Edit Mesh tab so the session starts in selection/repair.
         app.editor_tab = crate::mesh_editor_overlay::EditorTab::EditMesh;
         if switching_target {
             // A lasso's screen points belong to its previous mesh. Do not let
             // a layer-row context action carry that outline into a new target.
-            app.mesh_selection_drag = None;
+            app.document.mesh_selection_drag = None;
         }
         app.render.invalidation.selection_changed();
         // Start the sculpt preparation while the operator is still choosing a
@@ -152,7 +152,7 @@ pub(super) fn resolve_layer<'s>(
 /// Append the "not undoable" note when the last edit's pre-op snapshot was
 /// skipped (oversized) — the suffix shared by the mesh-edit status lines.
 pub(super) fn with_undoable_note(app: &OccluViewApp, status: String) -> String {
-    if app.edit_mode.last_edit_undoable() {
+    if app.document.edit_mode.last_edit_undoable() {
         status
     } else {
         format!("{status} (not undoable: snapshot too large)")

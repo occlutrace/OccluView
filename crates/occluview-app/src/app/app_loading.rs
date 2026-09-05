@@ -105,7 +105,7 @@ impl OccluViewApp {
     /// a live session carrying uncommitted edits, or any layer with edits not
     /// yet written to disk, would be lost by a blind scene replace.
     fn replace_open_needs_guard(&self) -> bool {
-        self.edit_mode.is_dirty() || self.has_unsaved_mesh_edits()
+        self.document.edit_mode.is_dirty() || self.document.has_unsaved_mesh_edits()
     }
 
     pub(super) fn append_paths(&mut self, paths: &[PathBuf], source: &'static str) {
@@ -126,7 +126,7 @@ impl OccluViewApp {
             source,
             mode,
         };
-        if self.active_load.is_some() {
+        if self.document.active_load.is_some() {
             if mode == SceneLoadMode::Replace {
                 // The evicted loader thread is abandoned, not cancelled. Its
                 // receiver is dropped, so its `send` fails and it exits -- but
@@ -143,13 +143,13 @@ impl OccluViewApp {
                 // single-file case anyway, since the check can only sit
                 // between files. Left as it is. It takes sustained impatience
                 // to reach, and it clears itself.
-                self.queued_loads.clear();
-                self.active_load = None;
-                self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                self.camera_modified_during_load = false;
+                self.document.queued_loads.clear();
+                self.document.active_load = None;
+                self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                self.document.camera_modified_during_load = false;
                 self.start_scene_load(request);
             } else {
-                self.queued_loads.push_back(request);
+                self.document.queued_loads.push_back(request);
                 self.status_message = Some(format!(
                     "Queued {} layer{}",
                     paths.len(),
@@ -189,7 +189,7 @@ impl OccluViewApp {
             return;
         }
         self.status_message = Some(load_status_message(mode, paths.len()));
-        self.active_load = Some(PendingSceneLoad {
+        self.document.active_load = Some(PendingSceneLoad {
             paths,
             source,
             mode,
@@ -199,7 +199,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn process_scene_loads(&mut self, ctx: &egui::Context) {
-        let Some(active) = self.active_load.as_ref() else {
+        let Some(active) = self.document.active_load.as_ref() else {
             self.start_next_queued_load();
             return;
         };
@@ -209,7 +209,7 @@ impl OccluViewApp {
             Err(TryRecvError::Disconnected) => {
                 let source = active.source;
                 let startup_token = self.pending_raise_token.take();
-                self.active_load = None;
+                self.document.active_load = None;
                 self.status_message = Some("Open failed: loader stopped".to_string());
                 tracing::error!(source, "scene loader disconnected");
                 if source == "startup" || source == "single-instance" {
@@ -220,10 +220,10 @@ impl OccluViewApp {
             }
         };
 
-        let Some(active) = self.active_load.take() else {
+        let Some(active) = self.document.active_load.take() else {
             return;
         };
-        let load_settled = self.queued_loads.is_empty();
+        let load_settled = self.document.queued_loads.is_empty();
         let raise_after_handoff = active.source == "single-instance" && load_settled;
         let raise_after_startup = active.source == "startup" && load_settled;
         self.apply_scene_load_result(active, result);
@@ -241,8 +241,8 @@ impl OccluViewApp {
     }
 
     fn start_next_queued_load(&mut self) {
-        if self.active_load.is_none() {
-            if let Some(request) = self.queued_loads.pop_front() {
+        if self.document.active_load.is_none() {
+            if let Some(request) = self.document.queued_loads.pop_front() {
                 self.start_scene_load(request);
             }
         }
@@ -255,7 +255,7 @@ impl OccluViewApp {
                 let scene_ready_ms = pending.started_at.elapsed().as_millis();
                 let (scene, current_paths) = if append {
                     combine_loaded_scene(
-                        self.scene.as_deref(),
+                        self.document.scene.as_deref(),
                         &self.current_paths,
                         scene,
                         &pending.paths,
@@ -264,35 +264,35 @@ impl OccluViewApp {
                     (scene, pending.paths.clone())
                 };
                 let recent_paths = current_paths.clone();
-                let queued_after_current = !self.queued_loads.is_empty();
+                let queued_after_current = !self.document.queued_loads.is_empty();
                 if !append {
-                    self.edit_mode.clear();
+                    self.document.edit_mode.clear();
                     // The old scene (and any unsaved edits on it) is gone.
-                    self.clear_unsaved_mesh_edits();
-                    self.hidden_layer_stack.clear();
-                    self.translucent_layer_restore.clear();
+                    self.document.clear_unsaved_mesh_edits();
+                    self.document.hidden_layer_stack.clear();
+                    self.document.translucent_layer_restore.clear();
                 }
                 let reset_camera = if append {
-                    let reset = self.load_queue_camera_reset
+                    let reset = self.document.load_queue_camera_reset
                         == LoadQueueCameraReset::WhenQueueDrains
                         && !queued_after_current
-                        && !self.camera_modified_during_load;
+                        && !self.document.camera_modified_during_load;
                     if reset {
-                        self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                        self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
                     }
                     reset
                 } else if queued_after_current {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::WhenQueueDrains;
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::WhenQueueDrains;
                     self.render.camera.is_none()
                 } else {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
                     // The "Frame a scene when it opens" preference only owns the
                     // replacement path; a first-ever load always frames (there is
                     // no pose worth keeping yet) and appends never steal the view.
                     self.settings.frame_scene_on_open
                 };
                 self.set_scene(scene, reset_camera);
-                if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
+                if self.document.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
                     && queued_after_current
                 {
                     self.render.invalidation.suppress_redraw();
@@ -314,12 +314,13 @@ impl OccluViewApp {
             Err(e) => {
                 let action = if append { "Add" } else { "Open" };
                 if !append {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                } else if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
-                    && self.queued_loads.is_empty()
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                } else if self.document.load_queue_camera_reset
+                    == LoadQueueCameraReset::WhenQueueDrains
+                    && self.document.queued_loads.is_empty()
                 {
-                    self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-                    if self.scene.is_some() {
+                    self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+                    if self.document.scene.is_some() {
                         self.reset_camera_to_home();
                     }
                 }
@@ -339,9 +340,9 @@ impl OccluViewApp {
 
     fn should_append_incoming_open(&self) -> bool {
         crate::should_append_incoming_open_state(
-            self.scene.is_some(),
-            self.active_load.is_some(),
-            self.queued_loads.len(),
+            self.document.scene.is_some(),
+            self.document.active_load.is_some(),
+            self.document.queued_loads.len(),
         )
     }
 

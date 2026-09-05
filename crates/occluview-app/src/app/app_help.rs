@@ -129,7 +129,7 @@ impl OccluViewApp {
             HintContext::Cut
         } else if self.align_active() {
             HintContext::Align
-        } else if self.edit_mode.has_active_session() {
+        } else if self.document.edit_mode.has_active_session() {
             match self.editor_tab {
                 crate::mesh_editor_overlay::EditorTab::EditMesh => HintContext::MeshEditing,
                 crate::mesh_editor_overlay::EditorTab::Sculpt => HintContext::Sculpt,

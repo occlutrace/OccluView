@@ -80,6 +80,7 @@ mod information_dialog;
 mod open_dialogs;
 mod selection_overlay;
 mod state;
+mod state_document;
 mod state_render;
 
 use app_layer_edits::{
@@ -89,8 +90,9 @@ use app_layer_edits::{
 };
 use app_load_errors::load_error_dialog;
 use app_scale_bar::paint_scale_bar;
-use state::{AppErrorDialog, MeshSelectionDrag, PendingReplaceOpen};
+use state::{AppErrorDialog, PendingReplaceOpen};
 pub(crate) use state::{OccluViewApp, StartupHandles};
+use state_document::MeshSelectionDrag;
 use state_render::RenderedFrame;
 
 #[cfg(test)]

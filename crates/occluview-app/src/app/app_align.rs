@@ -44,7 +44,7 @@ impl OccluViewApp {
         }
 
         let hover = ctx.input(|input| input.pointer.hover_pos());
-        if let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) {
+        if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
             crate::align_overlay::paint_pairs(
                 ui.painter(),
                 &crate::align_overlay::PairPaint {
@@ -84,7 +84,7 @@ impl OccluViewApp {
     /// Drop a pair whose layer has left the scene. Half a pair is not a pair,
     /// and a stale layer id would send a fit at whatever inherited it.
     fn forget_removed_align_layers(&mut self) {
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             self.align.tool.clear();
             return;
         };
@@ -132,7 +132,7 @@ impl OccluViewApp {
         self.align.tool.arm();
         // Remember where every scan started. Cancel is only honest if there is
         // something to go back to.
-        self.align.session_poses = self.scene.as_ref().map_or_else(Vec::new, |scene| {
+        self.align.session_poses = self.document.scene.as_ref().map_or_else(Vec::new, |scene| {
             scene
                 .meshes()
                 .iter()
@@ -191,7 +191,7 @@ impl OccluViewApp {
     /// hand" cannot tell which of two arches moved, and in this tool whichever
     /// one they grabbed is the one that moves — so the name is the whole message.
     pub(super) fn layer_display_name(&self, layer: SceneMeshId) -> Option<String> {
-        let scene = self.scene.as_ref()?;
+        let scene = self.document.scene.as_ref()?;
         let index = scene
             .meshes()
             .iter()
@@ -210,7 +210,7 @@ impl OccluViewApp {
 
     /// Adopt the pair a two-layer scene implies.
     fn imply_align_pair(&mut self) {
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             return;
         };
         let eligible: Vec<SceneMeshId> = scene
@@ -243,7 +243,7 @@ impl OccluViewApp {
         let Some(pointer) = response.interact_pointer_pos() else {
             return false;
         };
-        let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
+        let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
             return false;
         };
         let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
@@ -305,7 +305,7 @@ impl OccluViewApp {
     /// The clicked pairs, with the moving half in its layer's local frame and
     /// the fixed half in world — the frames each stage expects.
     fn align_world_pairs(&self) -> Vec<WorldPair> {
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             return Vec::new();
         };
         let Some(fixed_pose) = self
@@ -336,7 +336,7 @@ impl OccluViewApp {
 
     /// Build and queue one job.
     fn submit_align_job(&mut self, kind: AlignJobKind, pairs: Vec<WorldPair>) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         if self.align.worker.is_none() {

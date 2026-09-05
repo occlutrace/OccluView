@@ -47,7 +47,9 @@ impl OccluViewApp {
             Ok(report) => {
                 // The layer on disk now matches the scene: it no longer
                 // counts toward the unsaved-edits close guard.
-                self.unsaved_edit_layer_ids.remove(&request.layer_id);
+                self.document
+                    .unsaved_edit_layer_ids
+                    .remove(&request.layer_id);
                 self.remember_export_directory(&path);
                 let warning_suffix = mesh_export_warning_summary(&report.warnings)
                     .map(|summary| format!(" (warnings: {summary})"))
@@ -106,7 +108,7 @@ impl OccluViewApp {
     /// a time. Stops at the first cancelled dialog or failed write so the
     /// operator is never told edits were saved when they were not.
     pub(super) fn save_edited_layers_flow(&mut self) -> SaveEditedLayersOutcome {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return SaveEditedLayersOutcome::NothingToSave;
         };
         let paths = self.current_paths.clone();
@@ -114,13 +116,13 @@ impl OccluViewApp {
             .meshes()
             .iter()
             .enumerate()
-            .filter(|(_, entry)| self.unsaved_edit_layer_ids.contains(&entry.id()))
+            .filter(|(_, entry)| self.document.unsaved_edit_layer_ids.contains(&entry.id()))
             .map(|(index, entry)| (index, entry.id()))
             .collect();
         if pending.is_empty() {
             // Edited layers may have been removed from the scene since; the
             // guard has nothing actionable left.
-            self.clear_unsaved_mesh_edits();
+            self.document.clear_unsaved_mesh_edits();
             return SaveEditedLayersOutcome::NothingToSave;
         }
         for (index, layer_id) in pending {
@@ -133,7 +135,7 @@ impl OccluViewApp {
                 return SaveEditedLayersOutcome::Aborted;
             }
         }
-        if self.unsaved_edit_layer_ids.is_empty() {
+        if self.document.unsaved_edit_layer_ids.is_empty() {
             SaveEditedLayersOutcome::AllSaved
         } else {
             SaveEditedLayersOutcome::Aborted

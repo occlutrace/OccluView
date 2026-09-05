@@ -19,7 +19,7 @@ impl OccluViewApp {
     /// one mesh and cannot survive the merge, so the status line says so
     /// instead of letting the operator discover it later.
     pub(super) fn save_scene_dialog(&mut self) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let Some(mesh) = merged_scene_mesh(scene.as_ref()) else {
@@ -66,7 +66,7 @@ impl OccluViewApp {
                 } else {
                     ""
                 };
-                self.forget_unsaved_edits(&written);
+                self.document.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
                 self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
@@ -88,7 +88,7 @@ impl OccluViewApp {
     /// Write every visible layer to its own file in a chosen folder, each in
     /// its current pose.
     pub(super) fn save_each_layer_dialog(&mut self) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         if !scene.meshes().iter().any(|entry| entry.visible) {
@@ -168,7 +168,7 @@ impl OccluViewApp {
                 .filter(|entry| entry.visible)
                 .map(SceneMesh::id)
                 .collect();
-            self.forget_unsaved_edits(&written);
+            self.document.forget_unsaved_edits(&written);
         }
         let mut status = if failed == 0 {
             format!("Saved {written} layers to {}", directory.display())

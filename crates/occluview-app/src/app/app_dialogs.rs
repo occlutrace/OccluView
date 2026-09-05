@@ -131,7 +131,7 @@ impl OccluViewApp {
                         ToolbarToggle::new(
                             AppIcon::Add,
                             "Add",
-                            self.scene.is_some(),
+                            self.document.scene.is_some(),
                             false,
                             "Add more files to the current scene",
                         ),
@@ -169,7 +169,7 @@ impl OccluViewApp {
 
                     toolbar_divider(ui);
 
-                    let edit_session_active = self.edit_mode.has_active_session();
+                    let edit_session_active = self.document.edit_mode.has_active_session();
                     let has_pickable_layer = self.has_measurable_layer();
                     let can_measure =
                         measure_tool::measure_menu_enabled(has_pickable_layer, edit_session_active);
@@ -227,12 +227,12 @@ impl OccluViewApp {
                         toggle_align = true;
                     }
 
-                    let can_edit_mesh = self.scene.is_some()
-                        && self
-                            .scene
-                            .as_ref()
-                            .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
-                    let edit_active = self.edit_mode.has_active_session();
+                    let can_edit_mesh =
+                        self.document.scene.is_some()
+                            && self.document.scene.as_ref().is_some_and(|s| {
+                                s.meshes().iter().any(|m| !m.mesh.is_point_cloud())
+                            });
+                    let edit_active = self.document.edit_mode.has_active_session();
                     let edit_hint = if edit_active {
                         "Mesh Editing is open".to_string()
                     } else {
@@ -275,16 +275,19 @@ impl OccluViewApp {
         // button's: a second session over a live one would discard the first
         // one's selection.
         if toggle_edit_mesh {
-            let edit_active = self.edit_mode.has_active_session();
-            let can_edit_mesh = self.scene.is_some()
+            let edit_active = self.document.edit_mode.has_active_session();
+            let can_edit_mesh = self.document.scene.is_some()
                 && self
+                    .document
                     .scene
                     .as_ref()
                     .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
-            if let (false, true, Some(scene)) = (edit_active, can_edit_mesh, self.scene.clone()) {
+            if let (false, true, Some(scene)) =
+                (edit_active, can_edit_mesh, self.document.scene.clone())
+            {
                 for entry in scene.meshes() {
                     if !entry.mesh.is_point_cloud() && entry.visible {
-                        let _ = self.edit_mode.begin_face_selection(entry, &scene);
+                        let _ = self.document.edit_mode.begin_face_selection(entry, &scene);
                         break;
                     }
                 }
@@ -382,7 +385,10 @@ impl OccluViewApp {
             .ctx()
             .pointer_hover_pos()
             .is_some_and(|pointer| viewport_rect.contains(pointer));
-        if self.status_message.is_none() && self.active_load.is_none() && !pointer_over_viewport {
+        if self.status_message.is_none()
+            && self.document.active_load.is_none()
+            && !pointer_over_viewport
+        {
             return;
         }
         let rect = status_overlay_rect(viewport_rect);
@@ -392,7 +398,7 @@ impl OccluViewApp {
             ui.horizontal(|ui| {
                 // A scene load is invisible otherwise: the row gains a small
                 // spinner for its duration, alongside any transient status.
-                if self.active_load.is_some() {
+                if self.document.active_load.is_some() {
                     ui.add(egui::Spinner::new().size(13.0));
                     ui.add(
                         egui::Label::new(
@@ -418,7 +424,7 @@ impl OccluViewApp {
     pub(super) fn intercept_unsaved_close(&mut self, ctx: &egui::Context) {
         intercept_unsaved_close_request(
             ctx,
-            self.has_unsaved_mesh_edits(),
+            self.document.has_unsaved_mesh_edits(),
             self.close_confirmed,
             &mut self.close_guard_open,
         );
@@ -431,7 +437,7 @@ impl OccluViewApp {
         if !self.close_guard_open {
             return;
         }
-        let edited_count = self.unsaved_edit_layer_ids.len().max(1);
+        let edited_count = self.document.unsaved_edit_layer_ids.len().max(1);
         let mut do_save = false;
         let headline = if edited_count == 1 {
             "1 edited layer has not been saved to disk."
@@ -489,7 +495,7 @@ impl OccluViewApp {
             return;
         }
         let session_layer = self.active_session_layer_label();
-        let edited_count = self.unsaved_edit_layer_ids.len();
+        let edited_count = self.document.unsaved_edit_layer_ids.len();
         let mut do_save = false;
         let mut do_discard = false;
         let mut do_cancel = false;
@@ -550,8 +556,8 @@ impl OccluViewApp {
     /// unsaved edits left by a closed session) or the layer has since left the
     /// scene.
     fn active_session_layer_label(&self) -> Option<String> {
-        let id = self.edit_mode.session_layer_id()?;
-        let scene = self.scene.as_ref()?;
+        let id = self.document.edit_mode.session_layer_id()?;
+        let scene = self.document.scene.as_ref()?;
         let index = scene.meshes().iter().position(|entry| entry.id() == id)?;
         Some(crate::layers_overlay::layer_label(
             &self.current_paths,

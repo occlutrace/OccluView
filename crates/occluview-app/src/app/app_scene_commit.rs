@@ -28,7 +28,8 @@ impl OccluViewApp {
             .iter()
             .map(occluview_core::SceneMesh::id)
             .collect();
-        self.unsaved_edit_layer_ids
+        self.document
+            .unsaved_edit_layer_ids
             .retain(|id| retained_ids.contains(id));
     }
 

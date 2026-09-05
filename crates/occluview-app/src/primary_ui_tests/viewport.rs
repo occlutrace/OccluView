@@ -91,7 +91,7 @@ fn edit_mesh_entry_opens_one_scene_wide_session() {
         "the existing RMB Edit mesh action should keep routing through the mesh-edit entry point"
     );
     assert!(
-        layer_edits.contains("app.edit_mode.begin_face_selection(entry, scene)"),
+        layer_edits.contains("app.document.edit_mode.begin_face_selection(entry, scene)"),
         "RMB Edit mesh should open the shared scene edit session"
     );
     assert!(
@@ -152,7 +152,7 @@ fn viewport_face_selection_uses_typed_hit_before_camera_focus() {
     let click = function_source(source, "fn handle_primary_face_selection_click(");
 
     assert!(
-        click.contains("self.edit_mode.has_active_session()"),
+        click.contains("self.document.edit_mode.has_active_session()"),
         "face selection should be gated by the scene-wide edit session"
     );
     assert!(
@@ -181,7 +181,7 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
         "mesh edit marquee selection should begin from an explicit primary drag gate"
     );
     assert!(
-        drag.contains("self.mesh_selection_drag = Some("),
+        drag.contains("self.document.mesh_selection_drag ="),
         "viewport input should keep marquee state in app state while dragging"
     );
     assert!(
@@ -202,7 +202,7 @@ fn viewport_mesh_edit_drag_selection_tracks_marquee_before_camera_branches() {
     );
     let commit = function_source(source, "fn commit_screen_polygon_selection(");
     assert!(
-        commit.contains("self.edit_mode.select_faces_in_screen_polygon("),
+        commit.contains("self.document.edit_mode.select_faces_in_screen_polygon("),
         "marquee and lasso must commit through the single screen-polygon selection API"
     );
     assert!(
@@ -253,7 +253,7 @@ fn armed_lasso_places_points_on_press_through_pure_state_machine() {
     assert!(
         appears_before(
             input,
-            "!self.edit_mode.lasso_armed()",
+            "!self.document.edit_mode.lasso_armed()",
             "self.handle_primary_face_selection_click(ctx, response)",
         ),
         "face pick must be gated off while the lasso owns primary clicks"
@@ -288,7 +288,7 @@ fn viewport_right_click_opens_shared_layer_menu_without_breaking_orbit() {
         interaction.contains("fn discard_lasso_outline")
             && appears_before(
                 menu,
-                "discard_lasso_outline(&mut self.mesh_selection_drag)",
+                "discard_lasso_outline(&mut self.document.mesh_selection_drag)",
                 "viewport_menu_target_id",
             ),
         "a stationary right-click must drop an in-progress lasso outline before \
@@ -430,7 +430,7 @@ fn viewport_input_uses_shared_camera_repaint_helper_for_all_camera_mutations() {
         "the shared camera repaint helper should still mark the viewport dirty"
     );
     assert!(
-        repaint_helper.contains("self.mark_camera_modified();"),
+        repaint_helper.contains("self.document.mark_camera_modified();"),
         "the shared camera repaint helper should still track camera mutation"
     );
     assert!(

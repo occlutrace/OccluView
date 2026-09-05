@@ -28,7 +28,7 @@ struct BridgeSectionInput<'a> {
 
 impl OccluViewApp {
     pub(super) fn begin_bridge_split_from_layer(&mut self, scene: &Scene, layer_id: SceneMeshId) {
-        if self.edit_mode.has_active_session() {
+        if self.document.edit_mode.has_active_session() {
             self.status_message = Some("Finish or cancel mesh editing first".to_string());
             return;
         }
@@ -56,7 +56,7 @@ impl OccluViewApp {
 
         self.cut_view.disable();
         self.measure.disarm();
-        self.mesh_selection_drag = None;
+        self.document.mesh_selection_drag = None;
         self.bridge_split.start(entry);
         self.bridge_split_disc.arm_with_radius(object_radius);
         // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
@@ -68,6 +68,7 @@ impl OccluViewApp {
         // second on a full arch. The mesh is shared, so this costs a pointer
         // and the thread warms the very cell the scene will read.
         let target_mesh = self
+            .document
             .scene
             .as_ref()
             .and_then(|scene| scene.meshes().iter().find(|e| e.id() == layer_id))
@@ -94,7 +95,7 @@ impl OccluViewApp {
         if !self.bridge_split_active() {
             return false;
         }
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             self.cancel_bridge_split("Bridge split canceled: scene closed");
             return false;
         };
@@ -414,21 +415,23 @@ impl OccluViewApp {
             self.cancel_bridge_split("Bridge split canceled: source mesh changed");
             return;
         };
-        let Some(token) =
-            self.edit_mode
-                .begin_scene_edit(scene, entry.id(), EditModeCommand::BridgeSplit)
-        else {
+        let Some(token) = self.document.edit_mode.begin_scene_edit(
+            scene,
+            entry.id(),
+            EditModeCommand::BridgeSplit,
+        ) else {
             self.status_message = Some("Bridge split is temporarily unavailable".to_string());
             return;
         };
-        let undoable = self.edit_mode.last_edit_undoable();
+        let undoable = self.document.edit_mode.last_edit_undoable();
         let applied = apply_preview_to_scene(scene, preview.guard.target, &preview.result);
         let Ok(applied) = applied else {
-            let _ = self.edit_mode.finish_layer_edit_noop(token);
+            let _ = self.document.edit_mode.finish_layer_edit_noop(token);
             self.cancel_bridge_split("Bridge split preview is no longer valid");
             return;
         };
         if self
+            .document
             .edit_mode
             .finish_scene_edit_success(token, &applied.scene)
             != BusyFinish::Applied
@@ -439,8 +442,8 @@ impl OccluViewApp {
         let source_layer_id = applied.source_layer_id;
         let part_b_layer_id = applied.part_b_layer_id;
         self.commit_structural_scene(Some(scene), applied.scene, ctx);
-        self.mark_mesh_edits_unsaved(source_layer_id);
-        self.mark_mesh_edits_unsaved(part_b_layer_id);
+        self.document.mark_mesh_edits_unsaved(source_layer_id);
+        self.document.mark_mesh_edits_unsaved(part_b_layer_id);
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
@@ -458,7 +461,7 @@ impl OccluViewApp {
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
-        self.mesh_selection_drag = None;
+        self.document.mesh_selection_drag = None;
         self.status_message = Some(message.to_string());
         self.render.invalidation.overlay_tools_changed();
         self.repaint_ctx.request_repaint();

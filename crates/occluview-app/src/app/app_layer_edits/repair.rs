@@ -32,6 +32,7 @@ pub(super) fn apply_layer_repair_action_with_status(
         return LayerContextApply::default();
     };
     let Some(token) = app
+        .document
         .edit_mode
         .begin_layer_edit(entry, EditModeCommand::RepairMesh)
     else {
@@ -43,8 +44,8 @@ pub(super) fn apply_layer_repair_action_with_status(
     // any live face selection is ignored, the pipeline decides what is damage.
     match apply_layer_repair_action(scene, request) {
         Ok(LayerRepairOutcome::Repaired(report)) => {
-            app.mark_mesh_edits_unsaved(request.layer_id);
-            let _ = app.edit_mode.finish_layer_edit_success(token);
+            app.document.mark_mesh_edits_unsaved(request.layer_id);
+            let _ = app.document.edit_mode.finish_layer_edit_success(token);
             let status = repaired_status(&layer_label, &report);
             app.status_message = Some(with_undoable_note(app, status));
             // The toast above is the glance; the card is the detail — one human
@@ -55,7 +56,7 @@ pub(super) fn apply_layer_repair_action_with_status(
         Ok(LayerRepairOutcome::Clean(report)) => {
             // Honest no-op: mesh untouched, snapshot discarded, session not
             // dirtied — but the operator still hears about open rims left.
-            let _ = app.edit_mode.finish_layer_edit_noop(token);
+            let _ = app.document.edit_mode.finish_layer_edit_noop(token);
             app.status_message = Some(clean_status(&layer_label, &report));
             // Positive confirmation, matching the convention dental CAD
             // software uses: a clean scan still gets a card ("Nothing to
@@ -64,12 +65,13 @@ pub(super) fn apply_layer_repair_action_with_status(
             LayerContextApply::default()
         }
         Ok(LayerRepairOutcome::Stale) => {
-            let _ = app.edit_mode.finish_layer_edit_noop(token);
+            let _ = app.document.edit_mode.finish_layer_edit_noop(token);
             LayerContextApply::default()
         }
         Err(error) => {
             let summary = format!("Could not edit layer: {error}");
             let _ = app
+                .document
                 .edit_mode
                 .finish_layer_edit_error(token, error.to_string());
             app.status_message = Some(summary.clone());
