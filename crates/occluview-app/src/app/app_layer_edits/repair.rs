@@ -4,11 +4,10 @@
 //! semantics and a per-pass status line that reports only what happened.
 
 use super::super::{
-    AppErrorDialog, EditModeCommand, LayerContextApply, LayerContextRequest, OccluViewApp, PathBuf,
-    Scene,
+    EditModeCommand, LayerContextApply, LayerContextRequest, OccluViewApp, PathBuf, Scene,
 };
+use super::resolve_layer;
 use super::structural::structural_scene_apply;
-use super::{resolve_layer, with_undoable_note};
 use occluview_core::{repair_mesh_in_mesh, CoreError, RepairOptions, RepairReport};
 use std::sync::Arc;
 
@@ -36,18 +35,24 @@ pub(super) fn apply_layer_repair_action_with_status(
         .edit_mode
         .begin_layer_edit(entry, EditModeCommand::RepairMesh)
     else {
-        app.ui.status_message = Some("Layer edit already in progress".to_string());
-        return LayerContextApply::default();
+        return super::refuse_busy_layer_edit(&mut app.ui);
     };
 
     // Repair is a whole-mesh operation by design (like Keep Largest Island):
     // any live face selection is ignored, the pipeline decides what is damage.
     match apply_layer_repair_action(scene, request) {
         Ok(LayerRepairOutcome::Repaired(report)) => {
-            app.document.mark_mesh_edits_unsaved(request.layer_id);
-            let _ = app.document.edit_mode.finish_layer_edit_success(token);
             let status = repaired_status(&layer_label, &report);
-            app.ui.status_message = Some(with_undoable_note(app, status));
+            super::commit_layer_edit(
+                &mut app.document,
+                &mut app.ui,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Applied {
+                    changed: true,
+                    status,
+                },
+            );
             // The toast above is the glance; the card is the detail — one human
             // line per non-zero pass, kept open until the operator dismisses it.
             app.ui.repair_report.present(&layer_label, report);
@@ -56,8 +61,17 @@ pub(super) fn apply_layer_repair_action_with_status(
         Ok(LayerRepairOutcome::Clean(report)) => {
             // Honest no-op: mesh untouched, snapshot discarded, session not
             // dirtied — but the operator still hears about open rims left.
-            let _ = app.document.edit_mode.finish_layer_edit_noop(token);
-            app.ui.status_message = Some(clean_status(&layer_label, &report));
+            let status = clean_status(&layer_label, &report);
+            super::commit_layer_edit(
+                &mut app.document,
+                &mut app.ui,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Applied {
+                    changed: false,
+                    status,
+                },
+            );
             // Positive confirmation, matching the convention dental CAD
             // software uses: a clean scan still gets a card ("Nothing to
             // repair — mesh is clean"), not silence.
@@ -69,17 +83,13 @@ pub(super) fn apply_layer_repair_action_with_status(
             LayerContextApply::default()
         }
         Err(error) => {
-            let summary = format!("Could not edit layer: {error}");
-            let _ = app
-                .document
-                .edit_mode
-                .finish_layer_edit_error(token, error.to_string());
-            app.ui.status_message = Some(summary.clone());
-            app.ui.app_error = Some(AppErrorDialog {
-                title: "Could not edit layer".to_string(),
-                summary,
-                details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),
-            });
+            super::commit_layer_edit(
+                &mut app.document,
+                &mut app.ui,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Failed { error, layer_label },
+            );
             LayerContextApply::default()
         }
     }

@@ -72,7 +72,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                     }
                 }
                 let status = layer_edit_status(&layer_label, request.action, None);
-                app.ui.status_message = Some(with_undoable_note(app, status));
+                app.ui.status_message = Some(with_undoable_note(&app.document.edit_mode, status));
             } else {
                 let has_selection = app
                     .document

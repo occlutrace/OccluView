@@ -422,6 +422,7 @@ fn visible_selection_batch_cut_and_separate_keep_deterministic_source_order() {
     );
 }
 
+mod commit_tests;
 mod holes;
 mod operations;
 #[path = "tests/repair_tests.rs"]

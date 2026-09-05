@@ -352,7 +352,6 @@ fn unsaved_mesh_edits_guard_the_window_close() {
 
     // Every mesh-edit apply path must mark the unsaved state.
     for file in [
-        "src/app/app_layer_edits/whole_mesh.rs",
         "src/app/app_layer_edits/selection_ops.rs",
         "src/app/app_layer_edits/undo_redo.rs",
     ] {
@@ -360,6 +359,18 @@ fn unsaved_mesh_edits_guard_the_window_close() {
             repo_source_file(file).contains("app.document.mark_mesh_edits_unsaved("),
             "{file} must mark unsaved mesh edits per layer so the save flow \
              knows exactly what to export"
+        );
+    }
+    // Whole-mesh and repair edits route through the shared commit seam,
+    // which marks unsaved state (pinned headlessly by commit_tests).
+    for file in [
+        "src/app/app_layer_edits/whole_mesh.rs",
+        "src/app/app_layer_edits/repair.rs",
+    ] {
+        assert!(
+            repo_source_file(file).contains("super::commit_layer_edit("),
+            "{file} must commit through the shared layer-edit seam so the \
+             save flow knows exactly what to export"
         );
     }
 }
