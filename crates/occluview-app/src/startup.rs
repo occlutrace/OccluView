@@ -30,11 +30,13 @@ where
 {
     let mut parsed = Args::default();
     for arg in args {
-        let arg = arg.as_ref().to_string_lossy();
-        match arg.as_ref() {
+        // Match flags on the lossy view but keep the original bytes for file
+        // paths: a non-UTF8 scan name must survive verbatim on Unix.
+        let os = arg.as_ref();
+        match os.to_string_lossy().as_ref() {
             "--shell-refresh" => parsed.shell_refresh = true,
             "--version" | "-V" => parsed.version = true,
-            _ => parsed.files.push(PathBuf::from(arg.into_owned())),
+            _ => parsed.files.push(PathBuf::from(os)),
         }
     }
     parsed
@@ -111,6 +113,16 @@ mod tests {
             PathBuf::from("no-extension"),
         ];
         assert_eq!(file_extensions(&files), vec!["obj", "stl"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_file_names_survive_verbatim() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = OsStr::from_bytes(b"scan-\xff.stl");
+        let parsed = parse_args_from([raw]);
+        assert!(!parsed.version && !parsed.shell_refresh);
+        assert_eq!(parsed.files, vec![PathBuf::from(raw)]);
     }
 
     #[test]

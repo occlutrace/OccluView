@@ -299,7 +299,9 @@ mod tests {
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
         let gizmo = axis_gizmo_markers(&camera, viewport, None);
         assert!(gizmo.is_some(), "camera basis should be valid");
-        let (center, markers) = gizmo.unwrap_or_default();
+        let Some((center, markers)) = gizmo else {
+            return;
+        };
 
         assert_eq!(markers.len(), 6);
         for marker in &markers {
