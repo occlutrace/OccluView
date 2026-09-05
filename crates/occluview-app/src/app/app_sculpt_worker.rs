@@ -37,28 +37,28 @@ fn describe_sculpt_failure(failure: &SculptFailure) -> String {
 
 impl OccluViewApp {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
-        if !self.sculpt.finish_requested || self.sculpt.worker_has_pending_work() {
+        if !self.tools.sculpt.finish_requested || self.tools.sculpt.worker_has_pending_work() {
             return;
         }
-        self.sculpt.finish_requested = false;
+        self.tools.sculpt.finish_requested = false;
         self.finish_mesh_edit_session_now(ctx);
     }
 
     pub(super) fn complete_pending_history_navigation(&mut self, ctx: &egui::Context) {
-        let Some(redo) = self.sculpt.pending_history else {
+        let Some(redo) = self.tools.sculpt.pending_history else {
             return;
         };
-        if self.sculpt.worker_has_pending_work() {
+        if self.tools.sculpt.worker_has_pending_work() {
             return;
         }
-        self.sculpt.pending_history = None;
+        self.tools.sculpt.pending_history = None;
         self.apply_history_navigation_now(redo, ctx);
     }
 
     /// Drain worker updates and commit completed strokes without making the
     /// viewport wait for geometry work.
     pub(super) fn poll_sculpt_worker(&mut self, ctx: &egui::Context) {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return;
         };
         // Topology first: a densifying dab replaced the layer, and any sparse
@@ -124,7 +124,7 @@ impl OccluViewApp {
     /// Returns `false` if the scene no longer matches, which makes the caller
     /// drop the session rather than sculpt against stale geometry.
     fn install_sculpt_rebuild(&mut self, rebuild: SculptRebuild) -> bool {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return false;
         };
         let layer_id = worker.layer_id;
@@ -151,7 +151,7 @@ impl OccluViewApp {
         }
         self.document.edit_mode.sync_to_scene(&scene_arc);
         self.document.scene = Some(scene_arc);
-        if let Some(worker) = self.sculpt.worker.as_mut() {
+        if let Some(worker) = self.tools.sculpt.worker.as_mut() {
             worker.topology_id = new_topology_id;
             worker.topology = rebuild.topology;
         }
@@ -159,13 +159,13 @@ impl OccluViewApp {
         // must be rebuilt rather than reconciled.
         self.render.invalidation.sculpt_topology_changed();
         if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         }
         true
     }
 
     fn flush_sculpt_update(&mut self, update: SculptUpdate) -> SculptFlushOutcome {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             // Single-threaded poll drained this from a live worker, so a
             // missing worker means the session was invalidated mid-poll and
             // teardown owns recovery; the drained delta dies with it.
@@ -203,7 +203,7 @@ impl OccluViewApp {
                 worker.request_full_sync();
                 self.render.invalidation.sculpt_topology_changed();
                 if self.can_render_cut_view() {
-                    self.cut_view.mark_dirty();
+                    self.tools.cut_view.mark_dirty();
                 }
                 SculptFlushOutcome::GpuRejected
             }
@@ -227,7 +227,7 @@ impl OccluViewApp {
                 worker.request_full_sync();
                 self.render.invalidation.sculpt_topology_changed();
                 if self.can_render_cut_view() {
-                    self.cut_view.mark_dirty();
+                    self.tools.cut_view.mark_dirty();
                 }
                 SculptFlushOutcome::GpuRejected
             }
@@ -241,10 +241,11 @@ impl OccluViewApp {
     /// Finish the drag: the worker creates the mesh off the UI thread and the
     /// next worker poll installs it as one undoable layer edit.
     pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) {
-        if self.sculpt.stroke.take().is_none() {
+        if self.tools.sculpt.stroke.take().is_none() {
             return;
         }
         if self
+            .tools
             .sculpt
             .worker
             .as_ref()
@@ -261,7 +262,7 @@ impl OccluViewApp {
         sculpted: Mesh,
         ctx: &egui::Context,
     ) -> bool {
-        let Some(worker) = self.sculpt.worker.as_ref() else {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return false;
         };
         let layer_id = worker.layer_id;
@@ -338,7 +339,7 @@ impl OccluViewApp {
         // already pushed to the GPU by sparse writes; only a repaint is owed.
         self.render.invalidation.request_redraw();
         if self.can_render_cut_view() {
-            self.cut_view.mark_dirty();
+            self.tools.cut_view.mark_dirty();
         }
         ctx.request_repaint();
         true

@@ -32,7 +32,7 @@ impl OccluViewApp {
             self.status_message = Some("Finish or cancel mesh editing first".to_string());
             return;
         }
-        if self.bridge_split.session().mode() != BridgeSplitMode::Off {
+        if self.tools.bridge_split.session().mode() != BridgeSplitMode::Off {
             self.status_message = Some("Bridge split is already active".to_string());
             return;
         }
@@ -54,11 +54,11 @@ impl OccluViewApp {
             (0.22 * world_diagonal).max(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM)
         };
 
-        self.cut_view.disable();
-        self.measure.disarm();
+        self.tools.cut_view.disable();
+        self.tools.measure.disarm();
         self.document.mesh_selection_drag = None;
-        self.bridge_split.start(entry);
-        self.bridge_split_disc.arm_with_radius(object_radius);
+        self.tools.bridge_split.start(entry);
+        self.tools.bridge_split_disc.arm_with_radius(object_radius);
         // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
         // first hover/plant doesn't freeze the UI building it on a big scan.
         //
@@ -76,14 +76,10 @@ impl OccluViewApp {
         if let Some(mesh) = target_mesh {
             std::thread::spawn(move || mesh.warm_bvh());
         }
-        self.bridge_split_section.reset();
+        self.tools.bridge_split_section.reset();
         self.render.invalidation.overlay_tools_changed();
         self.status_message = Some("Bridge split: place separator disc".to_string());
         self.repaint_ctx.request_repaint();
-    }
-
-    pub(super) fn bridge_split_active(&self) -> bool {
-        self.bridge_split.session().mode() != BridgeSplitMode::Off
     }
 
     pub(super) fn show_bridge_split_overlay(
@@ -92,7 +88,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.bridge_split_active() {
+        if !self.tools.bridge_split_active() {
             return false;
         }
         let Some(scene) = self.document.scene.clone() else {
@@ -103,7 +99,8 @@ impl OccluViewApp {
             self.cancel_bridge_split("Bridge split canceled: camera unavailable");
             return false;
         };
-        let Some(entry) = live_bridge_entry(&scene, self.bridge_split.session().target()) else {
+        let Some(entry) = live_bridge_entry(&scene, self.tools.bridge_split.session().target())
+        else {
             self.cancel_bridge_split("Bridge split canceled: source mesh changed");
             return false;
         };
@@ -134,7 +131,7 @@ impl OccluViewApp {
             return true;
         }
         if matches!(
-            self.bridge_split.session().mode(),
+            self.tools.bridge_split.session().mode(),
             BridgeSplitMode::PlantedPending
         ) {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
@@ -148,15 +145,16 @@ impl OccluViewApp {
         entry: &SceneMesh,
         ctx: &egui::Context,
     ) -> crate::cut_manipulator::CutUpdate {
-        let update = self.bridge_split_disc.update(frame);
+        let update = self.tools.bridge_split_disc.update(frame);
         match update.cursor {
             CutCursor::Grab => ctx.set_cursor_icon(egui::CursorIcon::Grab),
             CutCursor::Grabbing => ctx.set_cursor_icon(egui::CursorIcon::Grabbing),
             CutCursor::Default => {}
         }
         if update.planted {
-            if let Some(pose) = self.bridge_split_disc.pose() {
+            if let Some(pose) = self.tools.bridge_split_disc.pose() {
                 if self
+                    .tools
                     .bridge_split
                     .session_mut()
                     .plant(to_bridge_pose(pose))
@@ -180,11 +178,13 @@ impl OccluViewApp {
             panel_zoom_notches,
         } = input;
         let section_frame = self
+            .tools
             .bridge_split_disc
             .pose()
             .and_then(|pose| SectionViewFrame::new(pose, pose.plane_normal));
-        let frame_changed = self.bridge_split_section.sync(section_frame);
+        let frame_changed = self.tools.bridge_split_section.sync(section_frame);
         let orientation_changed = self
+            .tools
             .bridge_split_section
             .sync_main_view(SectionMainView::from_camera(*frame_context.camera));
         if frame_changed || orientation_changed {
@@ -192,7 +192,7 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
         if panel_zoom_notches != 0.0
-            && self.bridge_split_section.zoom_at_cursor(
+            && self.tools.bridge_split_section.zoom_at_cursor(
                 frame_context.viewport_rect,
                 frame.pointer,
                 panel_zoom_notches,
@@ -201,21 +201,21 @@ impl OccluViewApp {
             self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
-        if let Some(pose) = self.bridge_split_disc.pose() {
+        if let Some(pose) = self.tools.bridge_split_disc.pose() {
             paint_separator_disc(
                 ui.painter(),
                 frame_context.camera,
                 frame_context.viewport_rect,
                 SeparatorDisc {
                     pose,
-                    kerf_mm: self.bridge_split.session().kerf_mm(),
-                    mode: self.bridge_split.session().mode(),
+                    kerf_mm: self.tools.bridge_split.session().kerf_mm(),
+                    mode: self.tools.bridge_split.session().mode(),
                 },
             );
         }
         let section = self.section_for_plane(
             frame_context.scene,
-            self.bridge_split_section.section_plane(),
+            self.tools.bridge_split_section.section_plane(),
         );
         let color_for = super::app_cut_measure::contour_tint(frame_context.scene);
         if let Some(section) = section.as_deref() {
@@ -228,7 +228,7 @@ impl OccluViewApp {
             );
         }
         self.maybe_render_bridge_split_section(ctx);
-        let panel = self.bridge_split_section.show(
+        let panel = self.tools.bridge_split_section.show(
             ui,
             frame_context.viewport_rect,
             section.as_deref(),
@@ -250,16 +250,17 @@ impl OccluViewApp {
             ctx,
             viewport_rect,
             BridgeSplitPanelState {
-                mode: self.bridge_split.session().mode(),
-                kerf_mm: self.bridge_split.session().kerf_mm(),
+                mode: self.tools.bridge_split.session().mode(),
+                kerf_mm: self.tools.bridge_split.session().kerf_mm(),
                 disc_radius_mm: self
+                    .tools
                     .bridge_split_disc
                     .pose()
                     .map_or(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM, |pose| {
                         pose.radius_mm
                     }),
-                can_apply: self.bridge_split.session().can_apply(),
-                failure: self.bridge_split.session().failure(),
+                can_apply: self.tools.bridge_split.session().can_apply(),
+                failure: self.tools.bridge_split.session().failure(),
             },
         )
     }
@@ -274,6 +275,7 @@ impl OccluViewApp {
         match action {
             Some(BridgeSplitPanelAction::SetKerfMm(kerf_mm)) => {
                 if self
+                    .tools
                     .bridge_split
                     .session_mut()
                     .set_kerf_mm(kerf_mm)
@@ -283,7 +285,7 @@ impl OccluViewApp {
                 }
             }
             Some(BridgeSplitPanelAction::SetDiscRadiusMm(radius_mm)) => {
-                if self.bridge_split_disc.set_radius_mm(radius_mm) {
+                if self.tools.bridge_split_disc.set_radius_mm(radius_mm) {
                     self.sync_bridge_split_pose(entry);
                     self.render.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
@@ -301,6 +303,7 @@ impl OccluViewApp {
 
     fn poll_bridge_split_result(&mut self, entry: &SceneMesh, ctx: &egui::Context) {
         if self
+            .tools
             .bridge_split
             .poll(Some(BridgeSplitTarget::capture(entry)))
         {
@@ -310,22 +313,28 @@ impl OccluViewApp {
     }
 
     fn submit_bridge_preview(&mut self, entry: &SceneMesh) {
-        if self.bridge_split.submit_current_request(entry) {
+        if self.tools.bridge_split.submit_current_request(entry) {
             self.status_message = Some("Bridge split: calculating".to_string());
             self.repaint_ctx.request_repaint();
         }
     }
 
     fn sync_bridge_split_pose(&mut self, entry: &SceneMesh) {
-        let pose = self.bridge_split_disc.pose().map(to_bridge_pose);
-        if self.bridge_split_disc.is_planted() {
+        let pose = self.tools.bridge_split_disc.pose().map(to_bridge_pose);
+        if self.tools.bridge_split_disc.is_planted() {
             if let Some(pose) = pose {
-                if self.bridge_split.session_mut().update_pose(pose).is_some() {
+                if self
+                    .tools
+                    .bridge_split
+                    .session_mut()
+                    .update_pose(pose)
+                    .is_some()
+                {
                     self.submit_bridge_preview(entry);
                 }
             }
         } else {
-            self.bridge_split.session_mut().set_follow_pose(pose);
+            self.tools.bridge_split.session_mut().set_follow_pose(pose);
         }
     }
 
@@ -356,7 +365,7 @@ impl OccluViewApp {
             ctx,
             *viewport_rect,
             scene,
-            self.bridge_split_section.slice_visible(),
+            self.tools.bridge_split_section.slice_visible(),
         );
         let ctrl = ctx.input(|input| input.modifiers.command);
         // The wheel scoping and the camera basis are the cut tool's, not a
@@ -371,7 +380,7 @@ impl OccluViewApp {
             camera_right,
             ray_origin,
         } = super::disc_frame::disc_view_geometry(camera, *viewport_rect, pointer);
-        let surface_hit = (!self.bridge_split_disc.is_planted() && over_viewport)
+        let surface_hit = (!self.tools.bridge_split_disc.is_planted() && over_viewport)
             .then(|| {
                 pointer.and_then(|point| {
                     bridge_surface_sample(camera, *viewport_rect, point, scene, entry.id())
@@ -381,7 +390,7 @@ impl OccluViewApp {
         let (disc_center_screen, disc_radius_screen) = super::disc_frame::disc_screen_placement(
             camera,
             *viewport_rect,
-            self.bridge_split_disc.pose(),
+            self.tools.bridge_split_disc.pose(),
         );
         let frame = CutFrameInput {
             pointer,
@@ -407,7 +416,7 @@ impl OccluViewApp {
     }
 
     fn apply_bridge_split_preview(&mut self, scene: &Scene, ctx: &egui::Context) {
-        let Some(preview) = self.bridge_split.session().preview().cloned() else {
+        let Some(preview) = self.tools.bridge_split.session().preview().cloned() else {
             return;
         };
         let surface_result = !preview.result.report.parts_closed;
@@ -444,9 +453,9 @@ impl OccluViewApp {
         self.commit_structural_scene(Some(scene), applied.scene, ctx);
         self.document.mark_mesh_edits_unsaved(source_layer_id);
         self.document.mark_mesh_edits_unsaved(part_b_layer_id);
-        self.bridge_split.cancel();
-        self.bridge_split_disc.disarm();
-        self.bridge_split_section.reset();
+        self.tools.bridge_split.cancel();
+        self.tools.bridge_split_disc.disarm();
+        self.tools.bridge_split_section.reset();
         self.status_message = Some(if surface_result {
             "Bridge split complete (surface result; natural borders preserved)".to_string()
         } else if undoable {
@@ -458,9 +467,9 @@ impl OccluViewApp {
     }
 
     fn cancel_bridge_split(&mut self, message: &str) {
-        self.bridge_split.cancel();
-        self.bridge_split_disc.disarm();
-        self.bridge_split_section.reset();
+        self.tools.bridge_split.cancel();
+        self.tools.bridge_split_disc.disarm();
+        self.tools.bridge_split_section.reset();
         self.document.mesh_selection_drag = None;
         self.status_message = Some(message.to_string());
         self.render.invalidation.overlay_tools_changed();

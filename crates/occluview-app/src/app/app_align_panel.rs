@@ -48,11 +48,16 @@ impl OccluViewApp {
 
     /// Draw the panel and the Brush tool window, then run what they asked for.
     pub(super) fn show_align_panel(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
-        let busy = self.align.worker.as_ref().is_some_and(AlignWorker::is_busy);
-        let mut settings = self.align.settings;
-        let mut constraint = self.align.constraint;
-        let mut brush = self.align.brush;
-        let mut tab = self.align.tab;
+        let busy = self
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::is_busy);
+        let mut settings = self.tools.align.settings;
+        let mut constraint = self.tools.align.constraint;
+        let mut brush = self.tools.align.brush;
+        let mut tab = self.tools.align.tab;
         let mut excluding = brush.is_armed();
         let was_excluding = excluding;
         let mut drop_pending = false;
@@ -61,10 +66,10 @@ impl OccluViewApp {
             ctx,
             viewport_rect,
             crate::align_panel::AlignPanelView {
-                tool: &self.align.tool,
+                tool: &self.tools.align.tool,
                 settings: &mut settings,
-                status: self.align.status.as_deref(),
-                stats: self.align.stats,
+                status: self.tools.align.status.as_deref(),
+                stats: self.tools.align.stats,
                 roles: self.align_roles(),
                 busy,
                 moved,
@@ -96,14 +101,14 @@ impl OccluViewApp {
         brush.set_armed(excluding);
 
         if drop_pending {
-            self.align.tool.back();
-            self.align.status = Some("Half-placed arrow dropped".into());
+            self.tools.align.tool.back();
+            self.tools.align.status = Some("Half-placed arrow dropped".into());
         }
-        self.align.settings = settings;
-        self.align.constraint = constraint;
-        self.align.brush = brush;
-        let tab_changed = self.align.tab != tab;
-        self.align.tab = tab;
+        self.tools.align.settings = settings;
+        self.tools.align.constraint = constraint;
+        self.tools.align.brush = brush;
+        let tab_changed = self.tools.align.tab != tab;
+        self.tools.align.tab = tab;
         // Opening and closing the brush changes what is on the surface: the
         // markings go up, and the scan's own colours come back.
         if was_excluding != excluding {
@@ -143,47 +148,47 @@ impl OccluViewApp {
     /// Which scan the fit will move, named the way the operator named the files.
     fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
         Some(crate::align_panel_roles::AlignRoles {
-            moving: self.layer_display_name(self.align.tool.moving_layer()?)?,
-            fixed: self.layer_display_name(self.align.tool.fixed_layer()?)?,
-            implied: self.align.tool.roles_are_implied(),
+            moving: self.layer_display_name(self.tools.align.tool.moving_layer()?)?,
+            fixed: self.layer_display_name(self.tools.align.tool.fixed_layer()?)?,
+            implied: self.tools.align.tool.roles_are_implied(),
         })
     }
 
     /// Turn the pair around, and take everything that described the old
     /// direction down with it.
     fn swap_align_roles(&mut self) {
-        if !self.align.tool.swap_roles() {
+        if !self.tools.align.tool.swap_roles() {
             return;
         }
         // The markings belong to surfaces, not to roles.
-        self.align.markings.swap_sides();
+        self.tools.align.markings.swap_sides();
         // A map is a measurement of one scan against the other, in that order.
         self.forget_align_fit("Pair turned around");
         let named = self.align_roles().map_or_else(
             || "Pair turned around".to_owned(),
             |roles| format!("{} moves now, {} stays put", roles.moving, roles.fixed),
         );
-        self.align.status = Some(named);
+        self.tools.align.status = Some(named);
     }
 
     /// Drop the pair so a different two scans can be picked, without closing the
     /// tool and without moving anything back.
     fn clear_align_pair(&mut self) {
-        self.align.tool.clear();
+        self.tools.align.tool.clear();
         self.clear_align_mask();
         self.forget_align_fit("Pair cleared");
-        self.align.status = Some("Click a point on the scan that should move".into());
+        self.tools.align.status = Some("Click a point on the scan that should move".into());
     }
 
     /// The operator's dental CAD "Back": drop the half-placed point, else the
     /// last whole arrow.
     fn take_align_arrow_back(&mut self) -> bool {
-        if !self.align.tool.back() {
+        if !self.tools.align.tool.back() {
             return false;
         }
-        self.align.rejected.clear();
-        self.align.status = Some(match self.align.tool.pairs().len() {
-            0 if self.align.tool.pending().is_none() => {
+        self.tools.align.rejected.clear();
+        self.tools.align.status = Some(match self.tools.align.tool.pairs().len() {
+            0 if self.tools.align.tool.pending().is_none() => {
                 "Click alternating points at the same positions on the two meshes".to_owned()
             }
             remaining => format!("Arrow removed — {remaining} left"),

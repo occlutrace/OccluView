@@ -12,9 +12,7 @@
 //! - Render: extracted into [`RenderState`]. Call sites name a semantic
 //!   invalidation cause; each render path consumes its own cursor, so
 //!   camera-only redraws never touch uploaded geometry.
-//! - Tools (`cut_view`, `bridge_split*`, `measure`, `sculpt`, `align`,
-//!   `edit_mode`, `editor_tab`): each tool owns its workflow; cross-tool
-//!   arbitration lives in the overlay orchestration, not in the tools.
+//! - Tools: extracted into [`ToolState`].
 //! - UI (`status_message*`, `app_error`, dialogs, `open_dialogs`,
 //!   `information_dialog`, panel transient flags): presentation only, renders
 //!   worker/domain results into user-facing copy at the boundary.
@@ -28,6 +26,7 @@ use super::open_dialogs::OpenDialogs;
 use super::state_document::DocumentState;
 use super::state_persistence::PersistenceState;
 use super::state_render::RenderState;
+use super::state_tool::ToolState;
 use super::{egui, home_camera_for_scene, single_instance, CutTool, Duration, Instant, PathBuf};
 use crate::live_viewport::SharedLiveViewport;
 
@@ -56,23 +55,12 @@ pub(crate) struct OccluViewApp {
     pub(super) document: DocumentState,
     /// Settings, paths, save/export coordination; see `state_persistence`.
     pub(super) persistence: PersistenceState,
+    /// Tool controllers and cross-tool arbitration; see `state_tool`.
+    pub(super) tools: ToolState,
     pub(super) status_message: Option<String>,
     pub(super) status_message_since: Option<Instant>,
     pub(super) status_message_snapshot: Option<String>,
     pub(super) app_error: Option<AppErrorDialog>,
-    pub(super) cut_view: CutTool,
-    /// Bridge-separator controller and its world-fixed placement disc. Kept
-    /// separate from Cut View: one previews a structural mesh operation, the
-    /// other only changes viewport clipping.
-    pub(super) bridge_split: crate::bridge_split::BridgeSplitController,
-    pub(super) bridge_split_disc: crate::cut_manipulator::CutManipulator,
-    /// Passive Cut View panel driven by the Bridge Split disc. It owns no
-    /// placement interaction, so the bridge tool remains the single pose owner.
-    pub(super) bridge_split_section: crate::section_view::SectionView,
-    /// Viewport measurement tools (ruler + wall-thickness probe). Mutually
-    /// exclusive with `cut_view`; anchors are world-space and re-project every
-    /// frame.
-    pub(super) measure: crate::measure_tool::MeasureTool,
     pub(super) incoming_open_requests: single_instance::OpenRequestListener,
     pub(super) _single_instance: single_instance::SingleInstance,
     /// Raises the window on an open-file handoff through the native compositor
@@ -91,14 +79,6 @@ pub(crate) struct OccluViewApp {
     /// Suppresses the stationary RMB context menu when the same press already
     /// moved the camera, including motion below egui's click/drag threshold.
     pub(super) viewport_secondary_gesture_moved_since_press: bool,
-    /// Interactive sculpt-brush tool and active stroke state.
-    pub(super) sculpt: crate::sculpt_tool::SculptTool,
-    /// The Align Scans tool's whole state: tool, worker, settings, deviation
-    /// display, markings, drag, brush and session poses. One struct so the app
-    /// carries a single `align` field instead of eighteen loose ones.
-    pub(super) align: crate::align_state::AlignState,
-    /// Which mesh-editor tab is showing (selection/repair vs sculpt).
-    pub(super) editor_tab: crate::mesh_editor_overlay::EditorTab,
     /// Layer count the automatic window-growth hint last reacted to. The hint
     /// fires only when this count changes and only ever grows the window, so a
     /// manual user resize is never fought frame by frame.
@@ -172,16 +152,12 @@ impl OccluViewApp {
             render: RenderState::new(live_viewport),
             document: DocumentState::new(),
             persistence: PersistenceState::new(),
+            tools: ToolState::new(),
             information_dialog: InformationDialog::default(),
             status_message: None,
             status_message_since: None,
             status_message_snapshot: None,
             app_error: None,
-            cut_view: CutTool::default(),
-            bridge_split: crate::bridge_split::BridgeSplitController::default(),
-            bridge_split_disc: crate::cut_manipulator::CutManipulator::default(),
-            bridge_split_section: crate::section_view::SectionView::default(),
-            measure: crate::measure_tool::MeasureTool::default(),
             incoming_open_requests: single_instance::OpenRequestListener::spawn(repaint_ctx),
             _single_instance: startup.single_instance,
             raise_target: startup.raise_target,
@@ -191,9 +167,6 @@ impl OccluViewApp {
             foreground_pulse_until: None,
             viewport_orbit_cursor_grabbed: false,
             viewport_secondary_gesture_moved_since_press: false,
-            sculpt: crate::sculpt_tool::SculptTool::default(),
-            align: crate::align_state::AlignState::default(),
-            editor_tab: crate::mesh_editor_overlay::EditorTab::default(),
             layers_window_layer_count: None,
             open_dialog_requested: false,
             close_guard_open: false,
@@ -257,7 +230,7 @@ impl OccluViewApp {
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
         // The bridge tool owns the scene while it is armed, which is not a
         // dialog and so is not part of the shared predicate.
-        if self.modal_dialog_open() || self.bridge_split_active() {
+        if self.modal_dialog_open() || self.tools.bridge_split_active() {
             return;
         }
         self.handle_edit_shortcuts_unguarded(ctx);

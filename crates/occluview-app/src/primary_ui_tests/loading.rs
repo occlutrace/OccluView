@@ -369,7 +369,7 @@ fn replace_guard_suppresses_edit_shortcuts_and_runs_each_frame() {
         "the parked open must still count as a dialog in front"
     );
     assert!(
-        app_source.contains("if self.modal_dialog_open() || self.bridge_split_active()"),
+        app_source.contains("if self.modal_dialog_open() || self.tools.bridge_split_active()"),
         "edit hotkeys must not act behind the open-guard dialog"
     );
     assert!(

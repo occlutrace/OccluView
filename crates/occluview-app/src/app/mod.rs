@@ -80,6 +80,7 @@ mod state;
 mod state_document;
 mod state_persistence;
 mod state_render;
+mod state_tool;
 
 use app_layer_edits::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,

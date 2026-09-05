@@ -159,7 +159,7 @@ impl OccluViewApp {
                             AppIcon::Cut,
                             "Cut view",
                             can_cut,
-                            self.cut_view.is_active(),
+                            self.tools.cut_view.is_active(),
                             &cut_hint,
                         ),
                     )
@@ -198,7 +198,7 @@ impl OccluViewApp {
                         } else {
                             format!("{hint} ({})", ui.ctx().format_shortcut(&shortcut))
                         };
-                        let active = self.measure.mode() == Some(mode);
+                        let active = self.tools.measure.mode() == Some(mode);
                         if toolbar_toggle(
                             ui,
                             ToolbarToggle::new(icon, label, can_measure, active, &tooltip),
@@ -305,13 +305,13 @@ impl OccluViewApp {
             }
         }
         if toggle_cut_view {
-            if self.cut_view.is_active() {
-                self.cut_view.disable();
+            if self.tools.cut_view.is_active() {
+                self.tools.cut_view.disable();
             } else {
                 // The viewport-owning tools are mutually exclusive: entering
                 // the cut view stands the measurement tool down cleanly.
-                self.measure.disarm();
-                self.cut_view.enable();
+                self.tools.measure.disarm();
+                self.tools.cut_view.enable();
             }
             self.render.invalidation.overlay_tools_changed();
         }
@@ -322,17 +322,17 @@ impl OccluViewApp {
         }
         if let Some(clicked) = toggle_measure {
             let (next, disable_cut) = measure_tool::apply_menu_toggle(
-                self.measure.mode(),
-                self.cut_view.is_active(),
+                self.tools.measure.mode(),
+                self.tools.cut_view.is_active(),
                 clicked,
             );
             if disable_cut {
-                self.cut_view.disable();
+                self.tools.cut_view.disable();
                 self.render.invalidation.overlay_tools_changed();
             }
             match next {
-                Some(mode) => self.measure.arm(mode),
-                None => self.measure.disarm(),
+                Some(mode) => self.tools.measure.arm(mode),
+                None => self.tools.measure.disarm(),
             }
             ctx.request_repaint();
         }

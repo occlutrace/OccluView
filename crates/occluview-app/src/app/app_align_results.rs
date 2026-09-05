@@ -19,7 +19,7 @@ const POSE_REFUSED: &str = "The fit finished, but the scan it was for is no long
 impl OccluViewApp {
     /// Drain finished jobs and apply them.
     pub(super) fn drain_align_worker(&mut self, ctx: &egui::Context) {
-        let Some(worker) = self.align.worker.as_ref() else {
+        let Some(worker) = self.tools.align.worker.as_ref() else {
             return;
         };
         let completions: Vec<AlignCompletion> = worker.drain();
@@ -30,6 +30,7 @@ impl OccluViewApp {
             // Re-read the generation for each completion because applying one
             // result can invalidate the remaining jobs.
             let current = self
+                .tools
                 .align
                 .worker
                 .as_ref()
@@ -51,17 +52,18 @@ impl OccluViewApp {
                 rejected,
             } => {
                 if !self.commit_align_pose(pose) {
-                    self.align.status = Some(POSE_REFUSED.into());
+                    self.tools.align.status = Some(POSE_REFUSED.into());
                     return;
                 }
                 // A point fit changes the pose and invalidates any previous
                 // map; refinement performs the next measurement.
                 self.forget_align_fit("Aligned on points");
-                self.align.rejected = rejected;
-                let dropped = if self.align.rejected.is_empty() {
+                self.tools.align.rejected = rejected;
+                let dropped = if self.tools.align.rejected.is_empty() {
                     String::new()
                 } else {
                     let names: Vec<String> = self
+                        .tools
                         .align
                         .rejected
                         .iter()
@@ -69,19 +71,19 @@ impl OccluViewApp {
                         .collect();
                     format!(", pair {} ignored as an outlier", names.join(" and "))
                 };
-                self.align.status = Some(format!(
+                self.tools.align.status = Some(format!(
                     "Aligned — {rms:.3} mm on the points{dropped}. Refine to seat it."
                 ));
             }
             AlignOutcome::Refined { pose, report } => {
                 if !self.commit_align_pose(pose) {
-                    self.align.status = Some(POSE_REFUSED.into());
+                    self.tools.align.status = Some(POSE_REFUSED.into());
                     return;
                 }
                 let weak = weak_axis_note(report.weak_trans_axes, report.weak_rot_axes);
                 // Excluded regions are omitted from both the sample and coverage
                 // counts, so report the measured region explicitly.
-                let measured_over = if self.align.markings.any() {
+                let measured_over = if self.tools.align.markings.any() {
                     "the unmarked surface"
                 } else {
                     "the surface"
@@ -92,7 +94,7 @@ impl OccluViewApp {
                 } else {
                     ", stopped at the iteration limit"
                 };
-                self.align.status = Some(format!(
+                self.tools.align.status = Some(format!(
                     "Refined — {:.3} mm over {:.0}% of {measured_over}{settled}{weak}",
                     report.rms,
                     report.coverage * 100.0
@@ -106,42 +108,42 @@ impl OccluViewApp {
                 scale_mm,
             } => {
                 // The brush owns the per-vertex colour channel while it is open.
-                if self.align.brush.is_armed() {
-                    self.align.status =
+                if self.tools.align.brush.is_armed() {
+                    self.tools.align.status =
                         Some("Measurement dropped — the marking brush owns the colours".into());
                     ctx.request_repaint();
                     return;
                 }
                 // Keep the legend in sync with the scale used for colouring.
-                if self.align.settings.auto_scale {
-                    self.align.settings.scale_mm = scale_mm;
+                if self.tools.align.settings.auto_scale {
+                    self.tools.align.settings.scale_mm = scale_mm;
                 }
                 // Do not paint a map when no valid summary exists.
                 let Some(summary) = stats.summary else {
                     self.clear_deviation_overlay();
-                    self.align.stats = Some(stats);
-                    self.align.status = Some(format!(
+                    self.tools.align.stats = Some(stats);
+                    self.tools.align.status = Some(format!(
                         "Nothing to measure at {:.1} mm reach — {} of {} vertices found the other scan. \
                          Move the scans closer, or widen the reach under More settings.",
-                        self.align.settings.influence_radius_mm,
+                        self.tools.align.settings.influence_radius_mm,
                         stats.measured,
                         stats.measured.saturating_add(stats.unmeasured.total())
                     ));
                     ctx.request_repaint();
                     return;
                 };
-                self.align.stats = Some(stats);
+                self.tools.align.stats = Some(stats);
                 self.apply_deviation_colors(colors);
-                self.align.status = Some(format!(
+                self.tools.align.status = Some(format!(
                     "{:.0}% within {:.2} mm, {} vertices had nothing to measure against{}",
                     summary.within_tolerance * 100.0,
-                    self.align.settings.tolerance_mm,
+                    self.tools.align.settings.tolerance_mm,
                     stats.unmeasured.total(),
                     blind_note(seen.as_ref(), summary.rms)
                 ));
             }
             AlignOutcome::Failed { rejection } => {
-                self.align.status = Some(describe_align_failure(rejection));
+                self.tools.align.status = Some(describe_align_failure(rejection));
             }
         }
         ctx.request_repaint();
@@ -152,10 +154,10 @@ impl OccluViewApp {
         // Not while the brush is open. The markings and the map are both
         // per-vertex colours on the same layer, so a measurement landing here
         // would take the operator's own paint off the surface mid-stroke.
-        if self.align.brush.is_armed() {
+        if self.tools.align.brush.is_armed() {
             return;
         }
-        if self.align.settings.show_deviation && self.align.tool.can_measure() {
+        if self.tools.align.settings.show_deviation && self.tools.align.tool.can_measure() {
             self.run_align_measure();
         }
     }
@@ -169,11 +171,12 @@ impl OccluViewApp {
         // Cancel work based on the previous pose before clearing its map.
         self.abandon_align_jobs();
         // Preserve operator markings; only the derived map is stale.
-        if self.align.overlay != super::app_align_display::AlignOverlay::Map {
+        if self.tools.align.overlay != super::app_align_display::AlignOverlay::Map {
             return;
         }
         self.clear_deviation_overlay();
-        self.align.status = Some(format!("{reason} — run Best fit matching to measure again"));
+        self.tools.align.status =
+            Some(format!("{reason} — run Best fit matching to measure again"));
     }
 
     /// Throw away every alignment job in flight, queued, or already finished and
@@ -182,7 +185,7 @@ impl OccluViewApp {
     /// Cheap: it moves a counter and empties two small lists. Nothing here waits
     /// on the worker thread.
     pub(super) fn abandon_align_jobs(&self) {
-        if let Some(worker) = self.align.worker.as_ref() {
+        if let Some(worker) = self.tools.align.worker.as_ref() {
             worker.bump_generation();
         }
     }
@@ -197,8 +200,8 @@ impl OccluViewApp {
         // frame later, and one frame is enough for the release to land somewhere
         // that no longer expects it.
         self.finish_align_drag();
-        self.align.drag = None;
-        if self.align.tab == crate::align_panel::AlignTab::Automatically {
+        self.tools.align.drag = None;
+        if self.tools.align.tab == crate::align_panel::AlignTab::Automatically {
             self.measure_if_shown();
             return;
         }
@@ -208,16 +211,16 @@ impl OccluViewApp {
         // that no longer holds — and the operator asked for a clean slate here by
         // name. The pair itself stays: they chose those two scans and did not
         // un-choose them.
-        let dropped_arrows = self.align.tool.clear_points();
+        let dropped_arrows = self.tools.align.tool.clear_points();
         if dropped_arrows {
-            self.align.rejected.clear();
+            self.tools.align.rejected.clear();
         }
-        if self.align.overlay == super::app_align_display::AlignOverlay::Map {
+        if self.tools.align.overlay == super::app_align_display::AlignOverlay::Map {
             self.clear_deviation_overlay();
-            self.align.status =
+            self.tools.align.status =
                 Some("Distance map is on the Automatically tab — it comes back there".into());
         } else if dropped_arrows {
-            self.align.status = Some("Arrows cleared — moving by hand from here".into());
+            self.tools.align.status = Some("Arrows cleared — moving by hand from here".into());
         }
     }
 
@@ -231,7 +234,7 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return false;
         };
-        let Some(moving_id) = self.align.tool.moving_layer() else {
+        let Some(moving_id) = self.tools.align.tool.moving_layer() else {
             return false;
         };
         let mut next = scene.as_ref().clone();
@@ -274,7 +277,7 @@ impl OccluViewApp {
     /// left up after a Ctrl+Z they marked pairs as rejected by a fit that had
     /// been undone.
     pub(super) fn forget_align_fit(&mut self, reason: &str) {
-        self.align.rejected.clear();
+        self.tools.align.rejected.clear();
         self.invalidate_deviation_map(reason);
     }
 }
@@ -551,7 +554,7 @@ mod tests {
             .map(|(body, _)| body)
             .unwrap_or_default();
         let before_early_return = invalidate
-            .split_once("if self.align.overlay !=")
+            .split_once("if self.tools.align.overlay !=")
             .map_or("", |(before, _)| before);
         assert!(
             !before_early_return.is_empty(),

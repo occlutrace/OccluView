@@ -78,9 +78,9 @@ impl OccluViewApp {
     pub(super) fn maybe_render_cut_view(&mut self, ctx: &egui::Context) {
         // `take_needs_render` always clears the flag; the GPU slice render runs
         // only in Mesh mode (Lines draws the cached contour, no offscreen work).
-        if self.cut_view.take_needs_render()
-            && self.cut_view.is_active()
-            && self.cut_view.wants_offscreen_slice()
+        if self.tools.cut_view.take_needs_render()
+            && self.tools.cut_view.is_active()
+            && self.tools.cut_view.wants_offscreen_slice()
             && self.can_render_cut_view()
         {
             self.render_cut_now(ctx);
@@ -239,7 +239,7 @@ impl OccluViewApp {
         // A click the axis gizmo answered is a view change, not a pick. The
         // gizmo markers sit over the model, so without this the same click
         // snapped the camera AND marked the facet behind the marker.
-        if self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
+        if self.tools.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !gizmo_click
             && !self.document.edit_mode.lasso_armed()
             && response.clicked_by(egui::PointerButton::Primary)
@@ -324,7 +324,7 @@ impl OccluViewApp {
         pan_drag_active: bool,
     ) {
         let drag_allowed = self.document.edit_mode.has_active_session()
-            && self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
+            && self.tools.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !pan_drag_active
             && !ctx.input(|input| {
                 input.pointer.button_down(egui::PointerButton::Secondary)
