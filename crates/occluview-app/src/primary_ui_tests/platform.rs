@@ -80,7 +80,6 @@ fn binary_entry_delegates_to_the_public_library_entry() {
         "main.rs must stay a thin delegate of at most 20 meaningful lines, found {meaningful}"
     );
 }
-
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_window_identity_value_matches_desktop_metadata() {
@@ -99,6 +98,19 @@ fn windows_app_identity_value_matches_shell_registration() {
     );
 }
 
+#[test]
+fn platform_identity_values_are_pinned_unconditionally() {
+    // The cfg-gated asserts above only run on their platform; pin both
+    // values everywhere so cross-platform drift cannot hide.
+    assert!(
+        lib_source().contains("LINUX_DESKTOP_APP_ID: &str = \"ai.occlutrace.OccluView\""),
+        "Wayland app_id value must match the installed desktop file id"
+    );
+    assert!(
+        lib_source().contains("APP_USER_MODEL_ID: &str = \"OccluTrace.OccluView\""),
+        "AppUserModelID value must match the shell registration"
+    );
+}
 #[test]
 fn linux_window_identity_matches_desktop_metadata() {
     let bootstrap_source = app_bootstrap_source();

@@ -141,6 +141,11 @@ fn perf_sculpt_large_dab() {
     let mesh = grid_mesh(150, 150, 1.0);
     let mut session = session_for(&mesh);
     let stroke = dab([75.0, 75.0, 0.0], 10.0);
+    let first = session.apply_dab(stroke, BrushMode::Add);
+    assert!(
+        !first.touched.is_empty(),
+        "the large dab must touch vertices"
+    );
     let start = Instant::now();
     let iterations = 5;
     for _ in 0..iterations {

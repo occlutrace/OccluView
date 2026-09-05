@@ -162,9 +162,11 @@ impl SculptCommandQueue {
     }
 
     fn is_empty(&self) -> bool {
-        self.state.lock().map_or(true, |state| {
-            state.commands.is_empty() && !self.active.load(Ordering::Acquire)
-        })
+        // Fail active on contention: a skipped drain retries on the repaint
+        // this returns, while a false quiet would stall the worker's output.
+        self.state
+            .try_lock()
+            .is_ok_and(|state| state.commands.is_empty() && !self.active.load(Ordering::Acquire))
     }
 }
 
@@ -389,23 +391,24 @@ impl SculptWorker {
     }
 
     pub(crate) fn take_update(&self) -> Option<SculptUpdate> {
+        // Non-blocking: a contended backlog (and its full-sync flag) stays
+        // queued for the next frame instead of stalling the egui frame.
+        let Ok(mut pending) = self.state.pending_touched.try_lock() else {
+            return None;
+        };
         let full_sync = self.state.full_sync.swap(false, Ordering::AcqRel);
-        let touched = self
-            .state
-            .pending_touched
-            .lock()
-            .map(|mut pending| std::mem::take(&mut *pending))
-            .unwrap_or_default();
+        let touched = std::mem::take(&mut *pending);
         (full_sync || !touched.is_empty()).then_some(SculptUpdate { touched, full_sync })
     }
 
     /// Take the pending whole-layer rebuild, if a dab densified the mesh.
     /// Must be drained BEFORE `take_update`, so a sparse write never lands on
-    /// buffers the rebuild is about to replace.
+    /// buffers the rebuild is about to replace. Defers on contention like
+    /// [`Self::take_update`].
     pub(crate) fn take_rebuild(&self) -> Option<SculptRebuild> {
         self.state
             .rebuild
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|mut slot| slot.take())
     }
@@ -413,7 +416,7 @@ impl SculptWorker {
     pub(crate) fn take_completion(&self) -> Option<SculptCompletion> {
         self.state
             .completions
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|mut completions| completions.pop_front())
     }
@@ -421,7 +424,7 @@ impl SculptWorker {
     pub(crate) fn take_error(&self) -> Option<SculptFailure> {
         self.state
             .error
-            .lock()
+            .try_lock()
             .ok()
             .and_then(|mut error| error.take())
     }
@@ -441,7 +444,7 @@ impl SculptWorker {
             && self
                 .state
                 .completions
-                .lock()
+                .try_lock()
                 .is_ok_and(|completions| completions.is_empty())
     }
 }

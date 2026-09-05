@@ -3,8 +3,9 @@
 //!
 //! Owned invariants:
 //!
-//! - Each tool owns its workflow state; at most one modal geometry tool
-//!   drives the viewport at a time (cut vs measure, bridge vs the rest).
+//! - Each tool owns its workflow state. Bridge Split owns the scene while
+//!   armed (checked via [`ToolState::bridge_split_active`]); cut and measure
+//!   arm independently and callers gate through the modal predicate.
 //! - `edit_mode` (selection/undo) lives in [`DocumentState`](super::state_document::DocumentState);
 //!   this owner coordinates exclusion and cancellation across controllers,
 //!   it does not duplicate selection.
