@@ -2,9 +2,38 @@
 
 use super::{egui, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::SculptRebuild;
-use crate::sculpt_worker::{SculptCompletion, SculptUpdate};
+use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
 use std::sync::Arc;
+
+/// Outcome of one GPU-upload attempt. Contention restores the update for
+/// retry; a rejected write escalates to a full sync plus a topology rebuild.
+pub(super) enum SculptFlushOutcome {
+    Applied,
+    Deferred,
+    GpuRejected,
+    NoTarget,
+    WorkerGone,
+}
+
+/// Render a worker failure at the presentation boundary. The worker returns
+/// the typed reason; only this layer owns the English copy.
+fn describe_sculpt_failure(failure: &SculptFailure) -> String {
+    match failure {
+        SculptFailure::WorkerPanicked { message } => {
+            format!("sculpt worker panicked: {message}")
+        }
+        SculptFailure::Spawn { detail } => {
+            format!("could not start sculpt worker: {detail}")
+        }
+        SculptFailure::KernelPool { detail } => {
+            format!("could not create sculpt kernel pool: {detail}")
+        }
+        SculptFailure::MissingUndoBaseline => "sculpt stroke has no undo baseline".to_string(),
+        SculptFailure::ShadowPoisoned => "sculpt shadow lock was poisoned".to_string(),
+        SculptFailure::VertexCountChanged => "sculpt result changed the vertex count".to_string(),
+    }
+}
 
 impl OccluViewApp {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
@@ -60,8 +89,11 @@ impl OccluViewApp {
         for update in updates {
             self.flush_sculpt_update(update);
         }
-        if let Some(error) = error {
-            self.status_message = Some(format!("Sculpt worker stopped: {error}"));
+        if let Some(failure) = error {
+            self.status_message = Some(format!(
+                "Sculpt worker stopped: {}",
+                describe_sculpt_failure(&failure)
+            ));
             self.invalidate_sculpt_session_silent();
         }
         for SculptCompletion { before, mesh } in completions {
@@ -132,37 +164,48 @@ impl OccluViewApp {
         true
     }
 
-    fn flush_sculpt_update(&mut self, update: SculptUpdate) {
+    fn flush_sculpt_update(&mut self, update: SculptUpdate) -> SculptFlushOutcome {
         let Some(worker) = self.sculpt.worker.as_ref() else {
-            return;
-        };
-        let touched = if update.full_sync {
-            Vec::new()
-        } else {
-            let mut touched = update.touched;
-            touched.sort_unstable();
-            touched.dedup();
-            touched
+            return SculptFlushOutcome::WorkerGone;
         };
         let shadow = worker.shadow();
         // The worker briefly holds the write lock while it patches a large
-        // brush region. Never make the egui frame wait behind that write: skip
-        // this GPU upload and repaint on the next frame instead.
+        // brush region. Never make the egui frame wait behind that write:
+        // restore the drained update and retry on a later frame instead.
         let Ok(shadow) = shadow.try_read() else {
-            return;
+            worker.restore_update(update);
+            return SculptFlushOutcome::Deferred;
         };
+        let full_sync = update.full_sync;
+        let mut touched = update.touched;
+        if !full_sync {
+            touched.sort_unstable();
+            touched.dedup();
+        }
         if let Some(live_viewport) = self.live_viewport.as_ref() {
-            if let Ok(viewport) = live_viewport.lock() {
-                let _ = if update.full_sync {
-                    viewport.write_scene_vertices(&worker.topology, &shadow)
-                } else {
-                    viewport.write_scene_vertices_sparse(&worker.topology, &shadow, &touched)
-                };
+            let Ok(viewport) = live_viewport.lock() else {
+                worker.restore_update(SculptUpdate { touched, full_sync });
+                return SculptFlushOutcome::Deferred;
+            };
+            let applied = if full_sync {
+                viewport.write_scene_vertices(&worker.topology, &shadow)
+            } else {
+                viewport.write_scene_vertices_sparse(&worker.topology, &shadow, &touched)
+            };
+            if applied {
+                SculptFlushOutcome::Applied
+            } else {
+                worker.request_full_sync();
+                self.invalidation.sculpt_topology_changed();
+                if self.can_render_cut_view() {
+                    self.cut_view.mark_dirty();
+                }
+                SculptFlushOutcome::GpuRejected
             }
         } else if let (Some(offscreen), Some(prepared)) =
             (self.offscreen.as_ref(), self.prepared_scene.as_ref())
         {
-            let _ = if update.full_sync {
+            let applied = if full_sync {
                 prepared.write_entry_vertices(offscreen.renderer(), &worker.topology, &shadow)
             } else {
                 prepared.write_entry_vertices_sparse(
@@ -172,6 +215,20 @@ impl OccluViewApp {
                     &touched,
                 )
             };
+            if applied {
+                SculptFlushOutcome::Applied
+            } else {
+                worker.request_full_sync();
+                self.invalidation.sculpt_topology_changed();
+                if self.can_render_cut_view() {
+                    self.cut_view.mark_dirty();
+                }
+                SculptFlushOutcome::GpuRejected
+            }
+        } else {
+            // No GPU target: the CPU shadow stays authoritative and the
+            // commit path sources it, so there is no stale GPU state to fix.
+            SculptFlushOutcome::NoTarget
         }
     }
 
