@@ -153,6 +153,7 @@ load-adding = { $count ->
    *[other] Adicionando { $count } arquivos…
 }
 load-open-failed-start = Falha ao abrir: carregador não iniciou
+load-add-failed-start = Falha ao adicionar: carregador não iniciou
 load-open-failed-stopped = Falha ao abrir: carregador parou
 load-loader-failed-summary = Não deu para iniciar o carregador de cena.
 load-action-failed-open = Falha ao abrir: { $detail }

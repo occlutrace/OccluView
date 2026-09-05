@@ -152,6 +152,7 @@ load-adding = { $count ->
    *[other] { $count } Dateien werden hinzugefügt…
 }
 load-open-failed-start = Öffnen fehlgeschlagen: Loader startet nicht
+load-add-failed-start = Hinzufügen fehlgeschlagen: Loader startet nicht
 load-open-failed-stopped = Öffnen fehlgeschlagen: Loader angehalten
 load-loader-failed-summary = Szenen-Loader konnte nicht gestartet werden.
 load-action-failed-open = Öffnen fehlgeschlagen: { $detail }

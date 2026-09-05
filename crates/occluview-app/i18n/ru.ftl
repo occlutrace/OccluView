@@ -158,6 +158,7 @@ load-adding = { $count ->
    *[other] Добавление { $count } файлов…
 }
 load-open-failed-start = Не удалось открыть: загрузчик не запустился
+load-add-failed-start = Не удалось добавить: загрузчик не запустился
 load-open-failed-stopped = Не удалось открыть: загрузчик остановлен
 load-loader-failed-summary = Не удалось запустить фоновый загрузчик сцены.
 load-action-failed-open = Не удалось открыть: { $detail }

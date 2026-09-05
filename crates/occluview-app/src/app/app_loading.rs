@@ -179,9 +179,18 @@ impl OccluViewApp {
                 repaint_ctx.request_repaint();
             });
         if let Err(error) = spawn_result {
-            self.status_message = Some(self.locale.tr("load-open-failed-start"));
+            let append = mode == SceneLoadMode::Append;
+            self.status_message = Some(if append {
+                self.locale.tr("load-add-failed-start")
+            } else {
+                self.locale.tr("load-open-failed-start")
+            });
             self.app_error = Some(AppErrorDialog {
-                title: self.locale.tr("error-open-title"),
+                title: self.locale.tr(if append {
+                    "error-add-title"
+                } else {
+                    "error-open-title"
+                }),
                 summary: self.locale.tr("load-loader-failed-summary"),
                 details: format!("Loader thread start failed\n\n{error:#}"),
             });

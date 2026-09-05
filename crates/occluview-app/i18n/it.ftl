@@ -152,6 +152,7 @@ load-adding = { $count ->
    *[other] Aggiunta di { $count } file…
 }
 load-open-failed-start = Apertura fallita: loader non partito
+load-add-failed-start = Aggiunta fallita: loader non partito
 load-open-failed-stopped = Apertura fallita: loader fermo
 load-loader-failed-summary = Il loader di scena non si è avviato.
 load-action-failed-open = Apertura fallita: { $detail }

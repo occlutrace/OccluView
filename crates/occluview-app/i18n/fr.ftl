@@ -152,6 +152,7 @@ load-adding = { $count ->
    *[other] Ajout de { $count } fichiers…
 }
 load-open-failed-start = Échec d’ouverture : chargeur non démarré
+load-add-failed-start = Échec d’ajout : chargeur non démarré
 load-open-failed-stopped = Échec d’ouverture : chargeur arrêté
 load-loader-failed-summary = Le chargeur de scène n’a pas pu démarrer.
 load-action-failed-open = Échec d’ouverture : { $detail }

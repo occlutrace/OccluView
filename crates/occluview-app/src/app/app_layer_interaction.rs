@@ -370,15 +370,8 @@ impl OccluViewApp {
             return;
         }
         entry.visible = false;
-        let label = entry.mesh.name().map_or_else(
-            || {
-                self.locale.tr_with(
-                    "layer-unnamed",
-                    &[("n", &(hit.layer_index + 1).to_string())],
-                )
-            },
-            String::from,
-        );
+        let label =
+            layers_overlay::layer_label(&self.current_paths, entry, hit.layer_index, &self.locale);
         self.status_message = Some(self.locale.tr_with("layer-hidden", &[("label", &label)]));
         self.remember_visibility_changes(&scene, &draft);
         self.update_scene_materials(draft);
@@ -413,15 +406,8 @@ impl OccluViewApp {
         else {
             return;
         };
-        let label = entry.mesh.name().map_or_else(
-            || {
-                self.locale.tr_with(
-                    "layer-unnamed",
-                    &[("n", &(hit.layer_index + 1).to_string())],
-                )
-            },
-            String::from,
-        );
+        let label =
+            layers_overlay::layer_label(&self.current_paths, entry, hit.layer_index, &self.locale);
         if let Some(previous) = self.translucent_layer_restore.remove(&hit.layer_id) {
             entry.opacity = previous;
             self.status_message = Some(
@@ -472,13 +458,8 @@ impl OccluViewApp {
                 .iter()
                 .position(|probe| probe.id() == layer_id)
                 .map_or(1, |index| index + 1);
-            let label = entry.mesh.name().map_or_else(
-                || {
-                    self.locale
-                        .tr_with("layer-unnamed", &[("n", &position.to_string())])
-                },
-                String::from,
-            );
+            let label =
+                layers_overlay::layer_label(&self.current_paths, entry, position - 1, &self.locale);
             self.status_message = Some(self.locale.tr_with("layer-restored", &[("label", &label)]));
             self.update_scene_materials(draft);
             ctx.request_repaint();

@@ -155,6 +155,7 @@ load-adding = { $count ->
    *[other] Adding { $count } files…
 }
 load-open-failed-start = Open failed: could not start loader
+load-add-failed-start = Add failed: could not start loader
 load-open-failed-stopped = Open failed: loader stopped
 load-loader-failed-summary = The background scene loader could not be started.
 load-action-failed-open = Open failed: { $detail }
