@@ -2,11 +2,11 @@
 //! honest content no-ops, plus the operator status lines.
 
 use super::super::{
-    AppErrorDialog, EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest,
-    OccluViewApp, PathBuf, Scene,
+    EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, OccluViewApp,
+    PathBuf, Scene,
 };
+use super::resolve_layer;
 use super::structural::structural_scene_apply;
-use super::{resolve_layer, with_undoable_note};
 use occluview_core::{
     fill_selected_holes_in_mesh, invert_mesh_orientation, CoreError, CoreMeshEditResult,
     FaceSelection, Mesh, MeshEditOptions, MeshEditReport,
@@ -54,8 +54,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     }
 
     let Some(token) = app.document.edit_mode.begin_layer_edit(entry, command) else {
-        app.ui.status_message = Some("Layer edit already in progress".to_string());
-        return LayerContextApply::default();
+        return super::refuse_busy_layer_edit(&mut app.ui);
     };
 
     // Close Holes is always explicitly selection-scoped in the interactive
@@ -70,8 +69,6 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     ) {
         Ok((apply, report)) => {
             if apply.scene_changed {
-                app.document.mark_mesh_edits_unsaved(request.layer_id);
-                let _ = app.document.edit_mode.finish_layer_edit_success(token);
                 let status = close_holes_aware_status(
                     &layer_label,
                     request.action,
@@ -79,31 +76,45 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                     close_holes_limit_mm,
                     true,
                 );
-                app.ui.status_message = Some(with_undoable_note(app, status));
+                super::commit_layer_edit(
+                    &mut app.document,
+                    &mut app.ui,
+                    token,
+                    request.layer_id,
+                    super::LayerEditResolution::Applied {
+                        changed: true,
+                        status,
+                    },
+                );
             } else {
-                let _ = app.document.edit_mode.finish_layer_edit_noop(token);
-                app.ui.status_message = Some(close_holes_aware_status(
+                let status = close_holes_aware_status(
                     &layer_label,
                     request.action,
                     report.as_ref(),
                     close_holes_limit_mm,
                     false,
-                ));
+                );
+                super::commit_layer_edit(
+                    &mut app.document,
+                    &mut app.ui,
+                    token,
+                    request.layer_id,
+                    super::LayerEditResolution::Applied {
+                        changed: false,
+                        status,
+                    },
+                );
             }
             apply
         }
         Err(error) => {
-            let summary = format!("Could not edit layer: {error}");
-            let _ = app
-                .document
-                .edit_mode
-                .finish_layer_edit_error(token, error.to_string());
-            app.ui.status_message = Some(summary.clone());
-            app.ui.app_error = Some(AppErrorDialog {
-                title: "Could not edit layer".to_string(),
-                summary,
-                details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),
-            });
+            super::commit_layer_edit(
+                &mut app.document,
+                &mut app.ui,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Failed { error, layer_label },
+            );
             LayerContextApply::default()
         }
     }
