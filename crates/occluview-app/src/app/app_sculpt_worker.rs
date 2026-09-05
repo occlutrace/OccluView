@@ -166,24 +166,29 @@ impl OccluViewApp {
 
     fn flush_sculpt_update(&mut self, update: SculptUpdate) -> SculptFlushOutcome {
         let Some(worker) = self.sculpt.worker.as_ref() else {
+            // Single-threaded poll drained this from a live worker, so a
+            // missing worker means the session was invalidated mid-poll and
+            // teardown owns recovery; the drained delta dies with it.
             return SculptFlushOutcome::WorkerGone;
         };
-        let shadow = worker.shadow();
-        // The worker briefly holds the write lock while it patches a large
-        // brush region. Never make the egui frame wait behind that write:
-        // restore the drained update and retry on a later frame instead.
-        let Ok(shadow) = shadow.try_read() else {
-            worker.restore_update(update);
-            return SculptFlushOutcome::Deferred;
-        };
         let full_sync = update.full_sync;
+        // Sort before touching the shadow so the shared read is held only for
+        // the upload. Restoring keeps the order; the next flush re-sorts.
         let mut touched = update.touched;
         if !full_sync {
             touched.sort_unstable();
             touched.dedup();
         }
+        let shadow = worker.shadow();
+        // The worker briefly holds the write lock while it patches a large
+        // brush region. Never make the egui frame wait behind that write:
+        // restore the drained update and retry on a later frame instead.
+        let Ok(shadow) = shadow.try_read() else {
+            worker.restore_update(SculptUpdate { touched, full_sync });
+            return SculptFlushOutcome::Deferred;
+        };
         if let Some(live_viewport) = self.live_viewport.as_ref() {
-            let Ok(viewport) = live_viewport.lock() else {
+            let Ok(viewport) = live_viewport.try_lock() else {
                 worker.restore_update(SculptUpdate { touched, full_sync });
                 return SculptFlushOutcome::Deferred;
             };

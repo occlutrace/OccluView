@@ -249,7 +249,21 @@ impl WorkerState {
         if update.touched.is_empty() {
             return;
         }
-        let Ok(mut pending) = self.pending_touched.lock() else {
+        // A queued rebuild supersedes sparse ids: they index the pre-rebuild
+        // array, so escalate to a full sync of the latest shadow instead of
+        // resurrecting stale ids behind the rebuild. A contended rebuild
+        // lock means the worker is mid-publish; a full sync covers either
+        // outcome.
+        let Ok(slot) = self.rebuild.try_lock() else {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        };
+        if slot.is_some() {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        }
+        drop(slot);
+        let Ok(mut pending) = self.pending_touched.try_lock() else {
             self.full_sync.store(true, Ordering::Release);
             return;
         };
