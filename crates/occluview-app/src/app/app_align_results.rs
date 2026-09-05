@@ -4,10 +4,10 @@
 //! has changed.
 
 use eframe::egui;
-use occluview_align::Rigid;
+use occluview_align::{FitRejection, Rigid};
 
 use super::OccluViewApp;
-use crate::align_worker::{align_failure_parts, AlignCompletion, AlignOutcome, AlignWorker};
+use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
 /// What the operator is told when a finished fit could not be written.
@@ -335,6 +335,74 @@ impl OccluViewApp {
     }
 }
 
+/// Catalog coordinates for a typed align failure, resolved here at the
+/// presentation boundary. English values mirror the former inline sentences.
+fn align_failure_parts(failure: AlignFailure) -> (&'static str, String, String) {
+    match failure {
+        AlignFailure::FixedSurfaceMissing => {
+            ("align-fail-no-surface-fixed", String::new(), String::new())
+        }
+        AlignFailure::MovingSurfaceMissing => {
+            ("align-fail-no-surface-moving", String::new(), String::new())
+        }
+        AlignFailure::MeasurementDropped => ("align-fail-recolor", String::new(), String::new()),
+        AlignFailure::Fit(rejection) => fit_rejection_parts(rejection),
+    }
+}
+
+fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String) {
+    match rejection {
+        FitRejection::TooFewPairs { have, need } => {
+            ("align-reject-toofew", have.to_string(), need.to_string())
+        }
+        FitRejection::Unpaired { moving, fixed } => (
+            "align-reject-unpaired",
+            moving.to_string(),
+            fixed.to_string(),
+        ),
+        FitRejection::Degenerate { weak_axes } => {
+            let named = axis_names(weak_axes);
+            if named.is_empty() {
+                (
+                    "align-reject-degenerate-plain",
+                    String::new(),
+                    String::new(),
+                )
+            } else {
+                ("align-reject-degenerate-line", named, String::new())
+            }
+        }
+        FitRejection::UnitMismatch { ratio } => {
+            ("align-reject-unit", format!("{ratio:.1}"), String::new())
+        }
+        FitRejection::Apart {
+            separation,
+            allowed,
+        } => (
+            "align-reject-apart",
+            format!("{separation:.0}"),
+            format!("{allowed:.0}"),
+        ),
+        FitRejection::Runaway { moved_by, allowed } => (
+            "align-reject-runaway",
+            format!("{moved_by:.0}"),
+            format!("{allowed:.0}"),
+        ),
+        FitRejection::NonFinite => ("align-reject-nonfinite", String::new(), String::new()),
+    }
+}
+
+/// World-axis names for a degeneracy report. Locale-neutral identifiers;
+/// the catalog sentence places them.
+fn axis_names(weak: [bool; 3]) -> String {
+    ["X", "Y", "Z"]
+        .into_iter()
+        .zip(weak)
+        .filter_map(|(name, flagged)| flagged.then_some(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// What the deviation map could not have seen, in a sentence.
 ///
 /// Nearest-surface distance is a lower bound when motion is tangential. The
@@ -371,8 +439,8 @@ fn weak_axis_note(
     rotation: [bool; 3],
     locale: &crate::i18n::LocaleManager,
 ) -> String {
-    let sliding = crate::align_worker::axis_names(translation);
-    let spinning = crate::align_worker::axis_names(rotation);
+    let sliding = axis_names(translation);
+    let spinning = axis_names(rotation);
     match (sliding.is_empty(), spinning.is_empty()) {
         (true, true) => String::new(),
         (false, true) => locale.tr_with("align-status-weak-slide", &[("axes", &sliding)]),
@@ -446,6 +514,113 @@ mod tests {
         assert!(both.contains("X, Z"), "got {both}");
         assert!(both.contains("turn about"), "got {both}");
         assert!(both.contains('Y'), "got {both}");
+    }
+
+    /// Typed failures map to their catalog keys at the presentation boundary.
+    #[test]
+    fn typed_failures_resolve_to_their_catalog_keys() {
+        use super::{align_failure_parts, axis_names};
+        use crate::align_worker::AlignFailure;
+        use occluview_align::FitRejection;
+
+        let cases = [
+            (
+                AlignFailure::FixedSurfaceMissing,
+                "align-fail-no-surface-fixed",
+                String::new(),
+                String::new(),
+            ),
+            (
+                AlignFailure::MovingSurfaceMissing,
+                "align-fail-no-surface-moving",
+                String::new(),
+                String::new(),
+            ),
+            (
+                AlignFailure::MeasurementDropped,
+                "align-fail-recolor",
+                String::new(),
+                String::new(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::TooFewPairs { have: 2, need: 3 }),
+                "align-reject-toofew",
+                "2".to_string(),
+                "3".to_string(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::Unpaired {
+                    moving: 4,
+                    fixed: 5,
+                }),
+                "align-reject-unpaired",
+                "4".to_string(),
+                "5".to_string(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::Degenerate {
+                    weak_axes: [false; 3],
+                }),
+                "align-reject-degenerate-plain",
+                String::new(),
+                String::new(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::Degenerate {
+                    weak_axes: [true, false, true],
+                }),
+                "align-reject-degenerate-line",
+                "X, Z".to_string(),
+                String::new(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::UnitMismatch { ratio: 2.5 }),
+                "align-reject-unit",
+                "2.5".to_string(),
+                String::new(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::Apart {
+                    separation: 12.0,
+                    allowed: 3.0,
+                }),
+                "align-reject-apart",
+                "12".to_string(),
+                "3".to_string(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::Runaway {
+                    moved_by: 20.0,
+                    allowed: 5.0,
+                }),
+                "align-reject-runaway",
+                "20".to_string(),
+                "5".to_string(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::NonFinite),
+                "align-reject-nonfinite",
+                String::new(),
+                String::new(),
+            ),
+        ];
+        for (failure, key, a, b) in cases {
+            assert_eq!(align_failure_parts(failure), (key, a, b));
+        }
+        assert_eq!(axis_names([false; 3]), "");
+        assert_eq!(axis_names([true, false, true]), "X, Z");
+    }
+
+    /// The worker stays presentation-free: no catalog key literals.
+    #[test]
+    fn worker_source_has_no_catalog_key_literals() {
+        let source = crate::primary_ui_tests::production_source(include_str!("../align_worker.rs"));
+        for literal in ["align-fail-", "align-reject-"] {
+            assert!(
+                !source.contains(literal),
+                "align_worker.rs must not name catalog keys: found {literal}"
+            );
+        }
     }
 
     /// A committed pose must enter undo history and mark the layer unsaved.
