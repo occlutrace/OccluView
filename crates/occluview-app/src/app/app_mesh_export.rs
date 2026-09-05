@@ -53,9 +53,7 @@ impl OccluViewApp {
                     .unsaved_edit_layer_ids
                     .remove(&request.layer_id);
                 self.remember_export_directory(&path);
-                let warning_suffix = mesh_export_warning_summary(&report.warnings)
-                    .map(|summary| format!(" (warnings: {summary})"))
-                    .unwrap_or_default();
+                let warnings = mesh_export_warning_summary(&report.warnings, &self.ui.locale);
                 // Named, and with the pose called out. An operator who aligns two
                 // scans and exports one has no other way to check they exported
                 // the arch they moved: a file written in its original position and
@@ -63,25 +61,44 @@ impl OccluViewApp {
                 // layer". Whichever it is, it is now on the status line.
                 let name = self
                     .layer_display_name(request.layer_id)
-                    .unwrap_or_else(|| "layer".to_owned());
-                let placement = if moved_from_source(scene, request) {
-                    " in its aligned position"
-                } else {
-                    " (this scan has not been moved)"
+                    .unwrap_or_else(|| {
+                        let position = scene
+                            .meshes()
+                            .iter()
+                            .position(|entry| entry.id() == request.layer_id)
+                            .map_or(1, |index| index + 1);
+                        self.ui
+                            .locale
+                            .tr_with("layer-unnamed", &[("n", &position.to_string())])
+                    });
+                let aligned = moved_from_source(scene, request);
+                let format_label = mesh_export_format_label(report.format).to_owned();
+                let path_text = path.display().to_string();
+                let status_key = match (aligned, warnings.is_some()) {
+                    (true, false) => "mesh-exported-aligned",
+                    (true, true) => "mesh-exported-aligned-warnings",
+                    (false, false) => "mesh-exported-unmoved",
+                    (false, true) => "mesh-exported-unmoved-warnings",
                 };
-                self.ui.status_message = Some(format!(
-                    "Exported {name}{placement} as {}{}: {}",
-                    mesh_export_format_label(report.format),
-                    warning_suffix,
-                    path.display()
+                self.ui.status_message = Some(self.ui.locale.tr_with(
+                    status_key,
+                    &[
+                        ("name", name.as_str()),
+                        ("format", format_label.as_str()),
+                        ("warnings", warnings.as_deref().unwrap_or("")),
+                        ("path", path_text.as_str()),
+                    ],
                 ));
                 true
             }
             Err(error) => {
-                let summary = format!("Could not export layer: {error}");
+                let summary = self.ui.locale.tr_with(
+                    "mesh-export-failed-summary",
+                    &[("detail", &error.to_string())],
+                );
                 self.ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
-                    title: "Could not export layer".to_string(),
+                    title: self.ui.locale.tr("mesh-export-failed-title"),
                     summary,
                     details: format!(
                         "Layer export failed\n\nPath:\n{}\n\nError:\n{error:#}",
@@ -373,19 +390,25 @@ fn default_layer_export_name(
         })
         .map(sanitize_filename_stem)
         .filter(|stem| !stem.is_empty())
-        .unwrap_or_else(|| format!("layer-{}", index + 1));
+        // Deliberately ASCII: a default filename stem must survive any
+        // filesystem locale (the localized name shows in the status line
+        // via the mesh-exported-* keys).
+        .unwrap_or_else(|| crate::layers_overlay::ascii_layer_stem(index));
 
     format!("{stem}-edited.{}", mesh_write_extension(format))
 }
 
-fn mesh_export_warning_summary(warnings: &[MeshWriteWarning]) -> Option<String> {
-    let labels: Vec<&str> = warnings
+fn mesh_export_warning_summary(
+    warnings: &[MeshWriteWarning],
+    locale: &crate::i18n::LocaleManager,
+) -> Option<String> {
+    let labels: Vec<String> = warnings
         .iter()
         .map(|warning| match warning {
-            MeshWriteWarning::PointCloudRejectedForStl => "point cloud omitted from STL",
-            MeshWriteWarning::VertexColorsNotWritten => "vertex colors not included",
-            MeshWriteWarning::UvsNotWritten => "UVs not included",
-            MeshWriteWarning::TextureImageNotWritten => "texture image not included",
+            MeshWriteWarning::PointCloudRejectedForStl => locale.tr("mesh-warning-point-cloud"),
+            MeshWriteWarning::VertexColorsNotWritten => locale.tr("mesh-warning-vertex-colors"),
+            MeshWriteWarning::UvsNotWritten => locale.tr("mesh-warning-uvs"),
+            MeshWriteWarning::TextureImageNotWritten => locale.tr("mesh-warning-texture-image"),
         })
         .collect();
     (!labels.is_empty()).then(|| labels.join(", "))

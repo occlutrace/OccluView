@@ -74,7 +74,7 @@ impl OccluViewApp {
             // measured, so a map drawn before them is stale — drop it rather
             // than silently recomputing behind the operator's hand.
             if self.tools.align.markings.close_stroke() {
-                self.invalidate_deviation_map("Markings changed");
+                self.invalidate_deviation_map(&self.ui.locale.tr("align-status-markings-changed"));
                 // The release frame still reads as a click. An armed brush owns
                 // it, or one dab would also drop an alignment arrow.
                 return true;
@@ -110,7 +110,7 @@ impl OccluViewApp {
             } else if Some(hit.layer_id) == self.tools.align.tool.fixed_layer() {
                 AlignSide::Fixed
             } else {
-                self.tools.align.status = Some("That mesh is not in this alignment".into());
+                self.tools.align.status = Some(self.ui.locale.tr("align-brush-not-in-alignment"));
                 return true;
             };
             let Some(entry) = layer_of(&scene, hit.layer_id) else {
@@ -180,9 +180,12 @@ impl OccluViewApp {
         if !resize_align_brush_from_wheel(&mut self.tools.align.brush, ctx) {
             return false;
         }
-        self.tools.align.status = Some(format!(
-            "Brush {:.1} mm",
-            self.tools.align.brush.radius_mm()
+        self.tools.align.status = Some(self.ui.locale.tr_with(
+            "align-brush-size-status",
+            &[(
+                "size",
+                &format!("{:.1}", self.tools.align.brush.radius_mm()),
+            )],
         ));
         ctx.request_repaint();
         true
@@ -264,13 +267,12 @@ impl OccluViewApp {
             // "Mark automatic" is the only command that can decline, and it
             // declines for one reason the operator can act on.
             if command == MaskCommand::MarkAutomatic {
-                self.tools.align.status =
-                    Some("Place at least one arrow before marking automatically".into());
+                self.tools.align.status = Some(self.ui.locale.tr("align-status-place-arrow-first"));
             }
             return;
         }
-        self.tools.align.status = Some(command.report().into());
-        self.invalidate_deviation_map(command.report());
+        self.tools.align.status = Some(self.ui.locale.tr(command.report_key()));
+        self.invalidate_deviation_map(&self.ui.locale.tr(command.report_key()));
     }
 
     /// Run one command against one side. Returns whether it reached a mask.
@@ -401,8 +403,7 @@ impl OccluViewApp {
         if !reached {
             // Silence here reads as a broken brush; the operator's actual
             // problem is that no mesh has been named.
-            self.tools.align.status =
-                Some("Click a point on each mesh first, then paint on either".into());
+            self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
         }
     }
 

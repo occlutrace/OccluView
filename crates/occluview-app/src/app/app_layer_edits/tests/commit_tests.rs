@@ -35,7 +35,13 @@ fn commit_scene() -> Option<Scene> {
 }
 
 fn owners() -> (DocumentState, UiState) {
-    (DocumentState::new(), UiState::new(egui::Context::default()))
+    (
+        DocumentState::new(),
+        UiState::new(
+            egui::Context::default(),
+            crate::i18n::LocaleManager::for_tests(),
+        ),
+    )
 }
 
 #[test]

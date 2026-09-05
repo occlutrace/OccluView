@@ -479,7 +479,12 @@ mod tests {
 
         let menu = include_str!("layers_overlay/menu.rs");
         let row = include_str!("layers_overlay/row.rs");
-        let panel = include_str!("mesh_editor_groups.rs");
+        // The editor panel spans two files (palette + session bar) under the
+        // same per-file line budget; both draw MeshEditorAction buttons.
+        let panel = concat!(
+            include_str!("mesh_editor_groups.rs"),
+            include_str!("mesh_editor_session.rs")
+        );
         let router = include_str!("app/app_mesh_editor.rs");
 
         // Crop, cut, separate, delete and close-holes are NOT in the layer

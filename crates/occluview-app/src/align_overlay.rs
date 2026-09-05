@@ -187,7 +187,11 @@ fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
 /// Paint the deviation legend: the colour ramp with the numeric bounds of the
 /// scale it was measured against, so a colour on screen can always be read as
 /// a number.
-pub(crate) fn paint_legend(ui: &mut egui::Ui, settings: AlignSettings) {
+pub(crate) fn paint_legend(
+    ui: &mut egui::Ui,
+    settings: AlignSettings,
+    locale: &crate::i18n::LocaleManager,
+) {
     const WIDTH: f32 = 200.0;
     const HEIGHT: f32 = 12.0;
     const STEPS: usize = LEGEND_STEPS;
@@ -232,7 +236,7 @@ pub(crate) fn paint_legend(ui: &mut egui::Ui, settings: AlignSettings) {
             label(ui, high);
         });
     });
-    no_data_key(ui);
+    no_data_key(ui, locale);
 }
 
 /// The grey swatch, named.
@@ -242,7 +246,7 @@ pub(crate) fn paint_legend(ui: &mut egui::Ui, settings: AlignSettings) {
 /// only painted grey and read it as a bug. The key goes here rather than in the
 /// numbers block because this is where the eye already is when it asks what a
 /// colour means.
-fn no_data_key(ui: &mut egui::Ui) {
+fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
     const SWATCH: f32 = 9.0;
 
     ui.horizontal(|ui| {
@@ -254,15 +258,11 @@ fn no_data_key(ui: &mut egui::Ui) {
             egui::Color32::from_rgb(grey[0], grey[1], grey[2]),
         );
         ui.label(
-            egui::RichText::new("not measured")
+            egui::RichText::new(locale.tr("align-map-not-measured"))
                 .size(10.0)
                 .color(ui_theme::text_muted()),
         )
-        .on_hover_text(
-            "No surface on the other scan within reach of these vertices. A tooth \
-             or a bridge that only one scan has is the usual reason, and it is not \
-             an error — there is nothing there to measure to.",
-        );
+        .on_hover_text(locale.tr("align-map-not-measured-hint"));
     });
 }
 

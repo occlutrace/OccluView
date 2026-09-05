@@ -331,20 +331,26 @@ fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
 
 #[test]
 fn replace_guard_dialog_offers_save_discard_and_cancel() {
-    let dialogs = app_dialogs_source();
+    // Guard content lives in the sibling file under the same per-file line
+    // budget; both files carry the dialog.
+    let dialogs = format!(
+        "{}{}",
+        app_dialogs_source(),
+        repo_source_file("src/app/app_guard_dialog.rs")
+    );
 
     assert!(
         dialogs.contains("fn guard_pending_replace_open(&mut self, ctx: &egui::Context)"),
         "the parked replace open needs a guard dialog"
     );
     assert!(
-        dialogs.contains("An edit session is active on {layer}."),
+        dialogs.contains("guard-replace-headline-session"),
         "the guard must name the layer whose session is at stake"
     );
     assert!(
-        dialogs.contains("\"Save…\"")
-            && dialogs.contains("\"Discard and open\"")
-            && dialogs.contains("\"Cancel\""),
+        dialogs.contains("guard-save")
+            && dialogs.contains("guard-replace-destructive")
+            && dialogs.contains("GuardDialogAction::Cancel"),
         "the guard must offer Save, Discard-and-open, and Cancel"
     );
     assert!(

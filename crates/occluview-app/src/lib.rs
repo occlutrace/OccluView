@@ -43,6 +43,7 @@ mod align_panel;
 mod align_panel_brush;
 mod align_panel_map;
 mod align_panel_roles;
+mod align_panel_settings;
 mod align_state;
 mod align_tool;
 #[cfg(test)]
@@ -62,6 +63,7 @@ mod cut_overlay;
 mod cut_ruler;
 mod cut_tool;
 mod edit_mode;
+pub(crate) mod i18n;
 mod icons;
 mod interaction_hints;
 #[cfg(windows)]

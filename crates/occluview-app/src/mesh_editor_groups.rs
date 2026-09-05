@@ -24,13 +24,14 @@ const TAB_H: f32 = 28.0;
 /// button style dental CAD software uses). The text commit buttons share the
 /// height so the bottom row aligns. Trimmed to keep the palette compact
 /// while the glyphs stay legible.
-const ROW_H: f32 = 46.0;
+pub(super) const ROW_H: f32 = 46.0;
 
 /// The Sculpt / Mesh Editing tab strip plus the window close button. Doubles as
 /// the window's top bar (the native title bar is off).
 pub(super) fn tab_strip(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
     let gap = 4.0;
@@ -40,7 +41,7 @@ pub(super) fn tab_strip(
         ui.spacing_mut().item_spacing.x = gap;
         if tab_pill(
             ui,
-            "Mesh Editing",
+            &locale.tr("meshedit-tab-edit"),
             tab_w,
             state.active_tab == EditorTab::EditMesh,
         )
@@ -48,10 +49,17 @@ pub(super) fn tab_strip(
         {
             action = Some(MeshEditorAction::SwitchTab(EditorTab::EditMesh));
         }
-        if tab_pill(ui, "Sculpt", tab_w, state.active_tab == EditorTab::Sculpt).clicked() {
+        if tab_pill(
+            ui,
+            &locale.tr("meshedit-tab-sculpt"),
+            tab_w,
+            state.active_tab == EditorTab::Sculpt,
+        )
+        .clicked()
+        {
             action = Some(MeshEditorAction::SwitchTab(EditorTab::Sculpt));
         }
-        if close_cross(ui, close_w).clicked() {
+        if close_cross(ui, close_w, locale).clicked() {
             action = Some(MeshEditorAction::Cancel);
         }
     });
@@ -87,7 +95,11 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
 
 /// The window close cross cancels the session. Applying edits is explicit via
 /// `Done`; closing a native-looking editor must never silently commit changes.
-fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
+fn close_cross(
+    ui: &mut egui::Ui,
+    size: f32,
+    locale: &crate::i18n::LocaleManager,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, TAB_H), egui::Sense::click());
     crate::icons::paint(
         ui.painter(),
@@ -99,7 +111,7 @@ fn close_cross(ui: &mut egui::Ui, size: f32) -> egui::Response {
             ui_theme::text_weak()
         },
     );
-    response.on_hover_text("Cancel the session (edits are reverted)")
+    response.on_hover_text(locale.tr("meshedit-cancel-session"))
 }
 
 /// Selection mode (lasso + surface/through radio pair) and the dental CAD
@@ -108,9 +120,10 @@ pub(super) fn selection(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, "Selection");
+    section(ui, locale, "meshedit-section-selection");
     // Surface / Through refine Lasso and Marquee, but not Object (a whole
     // connected component is picked regardless of facing), so they grey out
     // while Object pick is armed.
@@ -120,8 +133,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::Lasso,
-            "Lasso",
-            "Freehand outline: click to place points, double-click to close · Shift unmarks",
+            &locale.tr("meshedit-cell-lasso"),
+            &locale.tr("meshedit-cell-lasso-hint"),
             enabled,
             state.lasso_armed,
         )
@@ -135,8 +148,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::Object,
-            "Object",
-            "Click a whole object of a multi-part STL to select it · Shift unmarks",
+            &locale.tr("meshedit-cell-object"),
+            &locale.tr("meshedit-cell-object-hint"),
             enabled,
             state.object_mode,
         )
@@ -150,8 +163,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::SurfaceMode,
-            "Surface",
-            "Mark only the visible front-facing surface",
+            &locale.tr("meshedit-cell-surface"),
+            &locale.tr("meshedit-cell-surface-hint"),
             depth_enabled,
             !state.through_mesh,
         )
@@ -164,8 +177,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::ThroughMode,
-            "Through",
-            "Mark straight through the mesh, including hidden backsides",
+            &locale.tr("meshedit-cell-through"),
+            &locale.tr("meshedit-cell-through-hint"),
             depth_enabled,
             state.through_mesh,
         )
@@ -175,21 +188,25 @@ pub(super) fn selection(
             action = Some(MeshEditorAction::ToggleThroughMesh);
         }
     });
-    action.or(selection_bulk(ui, enabled))
+    action.or(selection_bulk(ui, enabled, locale))
 }
 
 /// The dental CAD All / None / Invert bulk-marking row. Split out of
 /// [`selection`] so that function stays within the line budget after the
 /// Object cell landed.
-fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> {
+fn selection_bulk(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<MeshEditorAction> {
     let mut action = None;
     row(ui, 3, |ui, width| {
         if icon(
             ui,
             width,
             AppIcon::SelectAll,
-            "All",
-            "Mark every face (Ctrl+A)",
+            &locale.tr("meshedit-cell-all"),
+            &locale.tr("meshedit-cell-all-hint"),
             enabled,
             false,
         )
@@ -201,8 +218,8 @@ fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> 
             ui,
             width,
             AppIcon::SelectNone,
-            "None",
-            "Clear the marking",
+            &locale.tr("meshedit-cell-none"),
+            &locale.tr("meshedit-cell-none-hint"),
             enabled,
             false,
         )
@@ -214,8 +231,8 @@ fn selection_bulk(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> 
             ui,
             width,
             AppIcon::SelectInvert,
-            "Invert",
-            "Swap marked and unmarked faces",
+            &locale.tr("meshedit-cell-invert"),
+            &locale.tr("meshedit-cell-invert-hint"),
             enabled,
             false,
         )
@@ -234,17 +251,18 @@ pub(super) fn edit_selection(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
     let selection_enabled = enabled && state.selected_face_count > 0;
-    section(ui, "Edit selection");
+    section(ui, locale, "meshedit-section-edit-selection");
     row(ui, 4, |ui, width| {
         if icon(
             ui,
             width,
             AppIcon::Delete,
-            "Delete",
-            "Delete the marked faces",
+            &locale.tr("meshedit-cell-delete"),
+            &locale.tr("meshedit-cell-delete-hint"),
             selection_enabled,
             false,
         )
@@ -256,8 +274,8 @@ pub(super) fn edit_selection(
             ui,
             width,
             AppIcon::Keep,
-            "Crop",
-            "Keep only the marked area, remove the rest",
+            &locale.tr("meshedit-cell-crop"),
+            &locale.tr("meshedit-cell-crop-hint"),
             selection_enabled,
             false,
         )
@@ -269,8 +287,8 @@ pub(super) fn edit_selection(
             ui,
             width,
             AppIcon::Cut,
-            "Cut",
-            "Move the marked faces to a new mesh — the original stays put",
+            &locale.tr("meshedit-cell-cut"),
+            &locale.tr("meshedit-cell-cut-hint"),
             selection_enabled,
             false,
         )
@@ -282,8 +300,8 @@ pub(super) fn edit_selection(
             ui,
             width,
             AppIcon::Separate,
-            "Separate",
-            "Split the marked region into one mesh per connected part",
+            &locale.tr("meshedit-cell-separate"),
+            &locale.tr("meshedit-cell-separate-hint"),
             selection_enabled,
             false,
         )
@@ -299,9 +317,13 @@ pub(super) fn edit_selection(
 /// repair is scoped to those marks; without marks every visible layer is
 /// considered. The optional perimeter restraint is deliberately off by
 /// default, because outer scan borders are protected by the kernel already.
-pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditorAction> {
+pub(super) fn close_holes(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, "Close holes");
+    section(ui, locale, "meshedit-section-close-holes");
     ui.horizontal(|ui| {
         let spacing = ui.spacing().item_spacing.x;
         let cell_width = 92.0_f32.min((ui.available_width() - spacing).max(56.0));
@@ -309,8 +331,8 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
             ui,
             cell_width,
             AppIcon::CloseHoles,
-            "Close holes",
-            "Close holes only when the surrounding faces are selected. Scan borders stay open.",
+            &locale.tr("meshedit-cell-close-holes"),
+            &locale.tr("meshedit-cell-close-holes-hint"),
             enabled,
             false,
         )
@@ -321,7 +343,7 @@ pub(super) fn close_holes(ui: &mut egui::Ui, enabled: bool) -> Option<MeshEditor
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), ROW_H),
             egui::Layout::left_to_right(egui::Align::Center),
-            |ui| close_holes_limit_control(ui, enabled),
+            |ui| close_holes_limit_control(ui, enabled, locale),
         );
     });
     ui.add_space(2.0);
@@ -337,17 +359,17 @@ pub(super) fn sculpt(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, "Sculpt");
+    section(ui, locale, "meshedit-section-sculpt");
     row(ui, 2, |ui, width| {
         if icon(
             ui,
             width,
             AppIcon::SculptAdd,
-            "Add / Remove  [1]",
-            "Build material up by dragging on the scan; hold Shift to carve it away. \
-             Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 1.",
+            &locale.tr("meshedit-sculpt-addremove"),
+            &locale.tr("meshedit-sculpt-addremove-hint"),
             enabled,
             state.sculpt_armed == Some(SculptToolKind::AddRemove),
         )
@@ -359,9 +381,8 @@ pub(super) fn sculpt(
             ui,
             width,
             AppIcon::Smooth,
-            "Smooth  [2]",
-            "Relax the surface by dragging on the scan; hold Shift to force maximum smoothing. \
-             Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 2.",
+            &locale.tr("meshedit-sculpt-smooth"),
+            &locale.tr("meshedit-sculpt-smooth-hint"),
             enabled,
             state.sculpt_armed == Some(SculptToolKind::Smooth),
         )
@@ -370,14 +391,14 @@ pub(super) fn sculpt(
             action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::Smooth));
         }
     });
-    sculpt_settings_row(ui, enabled);
+    sculpt_settings_row(ui, enabled, locale);
     action
 }
 
 /// Size/intensity sliders for the sculpt tools. Both live in egui memory (like
 /// the Close Holes limit) so they hold while the editor is open, and both are
 /// abstract 0..100 feel sliders — not millimeters — per the operator's request.
-fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
+fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::LocaleManager) {
     let ctx = ui.ctx().clone();
     let mut size = super::sculpt_size(&ctx);
     let mut intensity = super::sculpt_intensity(&ctx);
@@ -385,10 +406,10 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
         ui,
         enabled,
         SculptSliderControl {
-            label: "size",
+            label: &locale.tr("meshedit-slider-size"),
             value: &mut size,
             range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
-            tooltip: "Brush size (Shift + mouse wheel)",
+            tooltip: &locale.tr("meshedit-slider-size-hint"),
         },
     );
     ui.add_space(2.0);
@@ -396,10 +417,10 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool) {
         ui,
         enabled,
         SculptSliderControl {
-            label: "force",
+            label: &locale.tr("meshedit-slider-force"),
             value: &mut intensity,
             range: SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX,
-            tooltip: "Brush intensity (Ctrl + mouse wheel)",
+            tooltip: &locale.tr("meshedit-slider-force-hint"),
         },
     );
     super::set_sculpt_size(&ctx, size);
@@ -449,7 +470,11 @@ fn sculpt_slider_width(available_width: f32) -> f32 {
     (available_width * 0.5).max(0.0)
 }
 
-fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
+fn close_holes_limit_control(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) {
     let id = super::close_holes_limit_id();
     let mut armed = super::close_holes_limit_enabled(ui.ctx());
     let mut limit = ui
@@ -457,8 +482,12 @@ fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
         .data(|data| data.get_temp::<f32>(id))
         .unwrap_or(super::CLOSE_HOLES_LIMIT_DEFAULT_MM);
     ui.add_enabled(enabled, egui::Checkbox::without_text(&mut armed))
-        .on_hover_text("Restrict repair to rims no larger than this perimeter");
-    ui.label(egui::RichText::new("limit").size(11.0).weak());
+        .on_hover_text(locale.tr("meshedit-limit-checkbox-hint"));
+    ui.label(
+        egui::RichText::new(locale.tr("meshedit-limit-label"))
+            .size(11.0)
+            .weak(),
+    );
     ui.add_enabled(
         enabled && armed,
         egui::DragValue::new(&mut limit)
@@ -466,105 +495,9 @@ fn close_holes_limit_control(ui: &mut egui::Ui, enabled: bool) {
             .speed(0.5)
             .suffix(" mm"),
     )
-    .on_hover_text(
-        "Off closes every safe hole inside the selected area; the scan border stays open",
-    );
+    .on_hover_text(locale.tr("meshedit-limit-drag-hint"));
     super::set_close_holes_limit_enabled(ui.ctx(), armed);
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
-}
-
-/// One dim line of operator context: the pending-edits marker (only when it has
-/// something to say) and the interaction hint for the active selection mode. The
-/// raw selected-face count is intentionally NOT shown — it is noise that just ate
-/// an info line.
-pub(super) fn status(ui: &mut egui::Ui, state: &MeshEditorPanelState) {
-    ui.add_space(3.0);
-    if state.busy {
-        ui.spinner();
-    } else if state.dirty {
-        ui.horizontal(|ui| {
-            let (icon_rect, _) =
-                ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
-            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
-            ui.label(
-                egui::RichText::new("Unsaved edits")
-                    .color(ui_theme::warning())
-                    .size(11.0),
-            );
-        })
-        .response
-        .on_hover_text("Uncommitted edits: Done to apply, Cancel to revert");
-    }
-    let hint = if state.sculpt_armed.is_some() {
-        "Drag on the surface to sculpt · RMB orbits"
-    } else if state.object_mode {
-        "Click an object to select it whole · Shift unmarks"
-    } else if state.lasso_armed {
-        "Click to outline · double-click closes · Shift unmarks"
-    } else {
-        "Drag a box to mark · Shift to unmark · Del deletes"
-    };
-    ui.label(egui::RichText::new(hint).weak().size(10.0));
-}
-
-/// History and session boundary, laid out as an OK/Cancel bar matching the
-/// dental CAD convention: Undo/Redo as light history cells on the left, then
-/// `Cancel` and the accented `Done` pinned bottom-right. Done confirms and
-/// dismisses; Cancel reverts to baseline.
-pub(super) fn session(
-    ui: &mut egui::Ui,
-    state: &MeshEditorPanelState,
-    enabled: bool,
-) -> Option<MeshEditorAction> {
-    let mut action = None;
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        let spacing = ui.spacing().item_spacing.x;
-        // History cluster (left).
-        let history_w = 42.0;
-        if icon(
-            ui,
-            history_w,
-            AppIcon::Undo,
-            "Undo",
-            "Undo the last mesh edit (Ctrl+Z)",
-            state.can_undo && enabled,
-            false,
-        )
-        .clicked()
-        {
-            action = Some(MeshEditorAction::Undo);
-        }
-        if icon(
-            ui,
-            history_w,
-            AppIcon::Redo,
-            "Redo",
-            "Redo the undone mesh edit (Ctrl+Y)",
-            state.can_redo && enabled,
-            false,
-        )
-        .clicked()
-        {
-            action = Some(MeshEditorAction::Redo);
-        }
-        // Commit cluster (right): Cancel + Done fill the remaining width, so
-        // Done lands flush against the right edge as the primary action.
-        let commit_w = ((ui.available_width() - spacing) / 2.0).max(48.0);
-        if tall_text_button(ui, commit_w, "Cancel", enabled, false)
-            .on_hover_text("Discard every edit from this session")
-            .clicked()
-        {
-            action = Some(MeshEditorAction::Cancel);
-        }
-        if tall_text_button(ui, commit_w, "Done", enabled, true)
-            .on_hover_text("Apply the edits and close the editor")
-            .clicked()
-        {
-            action = Some(MeshEditorAction::Done);
-        }
-    });
-    action
 }
 
 /// Draw a tool-panel header.
@@ -577,11 +510,15 @@ pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
     ui.add_space(2.0);
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
+fn section(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager, title_key: &str) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let label_color = ui.visuals().weak_text_color();
-        ui.label(egui::RichText::new(title).size(10.0).color(label_color));
+        ui.label(
+            egui::RichText::new(locale.tr(title_key))
+                .size(10.0)
+                .color(label_color),
+        );
         let avail = ui.available_width();
         if avail > 6.0 {
             let hairline = ui.visuals().widgets.noninteractive.bg_stroke;
@@ -618,7 +555,7 @@ fn row(ui: &mut egui::Ui, count: usize, add_contents: impl FnOnce(&mut egui::Ui,
 /// One icon tool cell of the given width and the shared row height.
 // Thin forwarder to `icon_button`; the arg list mirrors it deliberately.
 #[allow(clippy::too_many_arguments)]
-fn icon(
+pub(super) fn icon(
     ui: &mut egui::Ui,
     width: f32,
     glyph: AppIcon,
@@ -641,7 +578,7 @@ fn icon(
 /// A text-only session button sized to match the icon rows. `primary` renders
 /// the accented commit style (Done): a solid accent fill with light text so it
 /// is the one obvious action, mirroring the dental CAD OK button.
-fn tall_text_button(
+pub(super) fn tall_text_button(
     ui: &mut egui::Ui,
     width: f32,
     label: &str,
@@ -710,13 +647,14 @@ mod tests {
         let production = source
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
-        // The `section(ui, ...)` calls, not the bare titles: the tab strip also
-        // spells "Sculpt"/"Mesh Editing" and would collide with a bare search.
+        // The `section(ui, locale, key)` calls, not the bare titles: the tab
+        // strip also spells "Sculpt"/"Mesh Editing" and would collide with
+        // a bare search.
         let order = [
-            "section(ui, \"Selection\")",
-            "section(ui, \"Edit selection\")",
-            "section(ui, \"Close holes\")",
-            "section(ui, \"Sculpt\")",
+            "section(ui, locale, \"meshedit-section-selection\")",
+            "section(ui, locale, \"meshedit-section-edit-selection\")",
+            "section(ui, locale, \"meshedit-section-close-holes\")",
+            "section(ui, locale, \"meshedit-section-sculpt\")",
         ];
         let mut last = 0;
         for title in order {
@@ -758,15 +696,16 @@ mod tests {
         ];
         for state in states {
             let enabled = !state.busy;
+            let locale = crate::i18n::LocaleManager::for_tests();
             egui::__run_test_ui(|ui| {
                 ui.set_width(212.0);
-                let _ = tab_strip(ui, &state);
-                let _ = selection(ui, &state, enabled);
-                let _ = edit_selection(ui, &state, enabled);
-                let _ = close_holes(ui, enabled);
-                let _ = sculpt(ui, &state, enabled);
-                status(ui, &state);
-                let _ = session(ui, &state, enabled);
+                let _ = tab_strip(ui, &state, &locale);
+                let _ = selection(ui, &state, enabled, &locale);
+                let _ = edit_selection(ui, &state, enabled, &locale);
+                let _ = close_holes(ui, enabled, &locale);
+                let _ = sculpt(ui, &state, enabled, &locale);
+                super::super::session_bar::status(ui, &state, &locale);
+                let _ = super::super::session_bar::session(ui, &state, enabled, &locale);
             });
         }
     }

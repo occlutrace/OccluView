@@ -48,13 +48,13 @@ impl OccluViewApp {
                 );
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new("Open a 3D file")
+                    egui::RichText::new(self.ui.locale.text("empty-open-file"))
                         .color(crate::ui_theme::text())
                         .size(14.0)
                         .strong(),
                 );
                 ui.label(
-                    egui::RichText::new("STL · PLY · OBJ · GLB · HPS — or drop files here")
+                    egui::RichText::new(self.ui.locale.text("empty-formats-hint"))
                         .color(crate::ui_theme::text_weak())
                         .size(11.5),
                 );

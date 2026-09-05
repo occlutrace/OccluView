@@ -6,6 +6,7 @@
 
 #![allow(clippy::print_stdout)]
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,14 @@ use std::process::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=assets/windows/occluview.ico");
+    println!("cargo:rerun-if-changed=i18n");
+
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    // i18n contract gate: every `i18n/*.ftl` catalog must carry exactly
+    // the `en` key set. Test-time validation covers variables, variant
+    // names and plurals; this fails the BUILD on drift so a broken or
+    // half-added catalog never ships in any binary.
+    check_i18n_key_parity(&manifest_dir)?;
 
     let target_is_windows = env::var_os("CARGO_CFG_WINDOWS").is_some();
     if !target_is_windows {
@@ -39,6 +48,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rustc-link-arg-bin=occluview={}", res_path.display());
     Ok(())
+}
+
+/// Fail the build when any `i18n/*.ftl` catalog drifts from the `en` key
+/// set (missing/extra keys). Only top-level `key =` lines count:
+/// comments, indented continuations and select syntax never start at
+/// column zero with a key-shaped head.
+fn check_i18n_key_parity(manifest_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = manifest_dir.join("i18n");
+    let mut catalogs: Vec<(String, BTreeSet<String>)> = Vec::new();
+    let mut entries = fs::read_dir(&dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("ftl") {
+            continue;
+        }
+        let tag = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| format!("unreadable catalog name: {}", path.display()))?
+            .to_owned();
+        let source = fs::read_to_string(&path)?;
+        catalogs.push((tag, ftl_top_level_keys(&source)));
+    }
+    let baseline = catalogs
+        .iter()
+        .find(|(tag, _)| tag == "en")
+        .ok_or("i18n/en.ftl is missing")?;
+    if baseline.1.is_empty() {
+        return Err("i18n/en.ftl carries no keys".into());
+    }
+    let mut problems = Vec::new();
+    for (tag, keys) in &catalogs {
+        if tag == "en" {
+            continue;
+        }
+        for key in baseline.1.difference(keys) {
+            problems.push(format!("{tag}: missing key '{key}'"));
+        }
+        for key in keys.difference(&baseline.1) {
+            problems.push(format!("{tag}: unused key '{key}'"));
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        problems.sort();
+        Err(format!(
+            "i18n catalog key drift vs en (see also the test-time contract):\n{}",
+            problems.join("\n")
+        )
+        .into())
+    }
+}
+
+fn ftl_top_level_keys(source: &str) -> BTreeSet<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let head = line.split('=').next()?.trim_end();
+            if head.is_empty()
+                || head.starts_with('#')
+                || head.starts_with(char::is_whitespace)
+                || !head
+                    .chars()
+                    .all(|cell| cell.is_ascii_alphanumeric() || cell == '-' || cell == '_')
+            {
+                return None;
+            }
+            Some(head.to_owned())
+        })
+        .collect()
 }
 
 fn find_resource_compiler() -> Result<PathBuf, Box<dyn std::error::Error>> {

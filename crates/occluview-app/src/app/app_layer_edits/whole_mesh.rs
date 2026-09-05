@@ -30,7 +30,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request, &app.ui.locale) else {
         return LayerContextApply::default();
     };
     let Some(command) = edit_command_for_layer_action(request.action) else {
@@ -49,7 +49,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         None
     };
     if request.action == LayerContextAction::CloseHoles && selection.is_none() {
-        app.ui.status_message = Some("Select mesh faces first".to_string());
+        app.ui.status_message = Some(app.ui.locale.tr("edit-select-faces-first"));
         return LayerContextApply::default();
     }
 
@@ -75,6 +75,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                     report.as_ref(),
                     close_holes_limit_mm,
                     true,
+                    &app.ui.locale,
                 );
                 super::commit_layer_edit(
                     &mut app.document,
@@ -93,6 +94,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                     report.as_ref(),
                     close_holes_limit_mm,
                     false,
+                    &app.ui.locale,
                 );
                 super::commit_layer_edit(
                     &mut app.document,
@@ -231,20 +233,25 @@ fn close_holes_options(close_holes_limit_mm: Option<f32>) -> MeshEditOptions {
 
 /// Route the status line: Close Holes gets the mm-aware phrasing, every other
 /// layer action keeps the shared status helpers untouched.
+/// Dispatch to the Close-Holes-aware status when the action needs it.
+/// Six cohesive dispatch inputs (label, action, report, limit, outcome,
+/// locale); a struct would only be built to be destructured again.
+#[expect(clippy::too_many_arguments)]
 fn close_holes_aware_status(
     layer_label: &str,
     action: LayerContextAction,
     report: Option<&MeshEditReport>,
     close_holes_limit_mm: Option<f32>,
     changed: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> String {
     if action == LayerContextAction::CloseHoles {
-        return close_holes_status(layer_label, report, close_holes_limit_mm, changed);
+        return close_holes_status(layer_label, report, close_holes_limit_mm, changed, locale);
     }
     if changed {
-        layer_edit_status(layer_label, action, report)
+        layer_edit_status(layer_label, action, report, locale)
     } else {
-        layer_edit_noop_status(layer_label, action)
+        layer_edit_noop_status(layer_label, locale)
     }
 }
 
@@ -257,6 +264,7 @@ fn close_holes_status(
     report: Option<&MeshEditReport>,
     close_holes_limit_mm: Option<f32>,
     changed: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> String {
     let (filled, border, oversize, damaged, healed) = report.map_or((0, 0, 0, 0, 0), |report| {
         (
@@ -272,64 +280,93 @@ fn close_holes_status(
         // Pre-cleaning healed the jagged cut line (dropped needle/lone
         // triangles, welded seam vertices) before capping — the operator sees
         // why the socket closed cleanly instead of leaving nick rims.
-        let noun = if healed == 1 { "nick" } else { "nicks" };
-        segments.push(format!("{healed} {noun} healed"));
+        segments.push(locale.tr_plural("holes-seg-healed", &[], &[("n", healed)]));
     }
     if border > 0 {
-        segments.push(if border == 1 {
-            "scan border kept open".to_string()
-        } else {
-            format!("{border} border rims kept open")
-        });
+        segments.push(locale.tr("holes-seg-border"));
     }
     if oversize > 0 {
-        let noun = if oversize == 1 { "hole" } else { "holes" };
         segments.push(match close_holes_limit_mm {
-            Some(limit_mm) => format!("{oversize} {noun} over the {limit_mm:.0} mm limit"),
-            None => format!("{oversize} {noun} too large"),
+            Some(limit_mm) => locale.tr_with(
+                "holes-seg-oversize-limit",
+                &[
+                    ("n", &oversize.to_string()),
+                    ("limit", &format!("{limit_mm:.0}")),
+                ],
+            ),
+            None => locale.tr_plural("holes-seg-oversize", &[], &[("n", oversize)]),
         });
     }
     if damaged > 0 {
-        let noun = if damaged == 1 { "rim" } else { "rims" };
-        segments.push(format!("{damaged} damaged {noun} skipped"));
+        segments.push(locale.tr_plural("holes-seg-damaged", &[], &[("n", damaged)]));
     }
 
     if !changed {
         return if segments.is_empty() {
-            format!("No holes to close: {layer_label}")
+            locale.tr_with("holes-nothing", &[("layer", layer_label)])
         } else {
-            format!("{}, none closed: {layer_label}", segments.join(", "))
+            locale.tr_with(
+                "holes-partial",
+                &[("segments", &segments.join(", ")), ("layer", layer_label)],
+            )
         };
     }
-    let closed = if filled == 1 {
-        "Closed 1 hole".to_string()
-    } else {
-        format!("Closed {filled} holes")
-    };
+    let closed = locale.tr_plural("holes-closed", &[], &[("filled", filled)]);
     if segments.is_empty() {
-        format!("{closed}: {layer_label}")
+        locale.tr_with(
+            "holes-closed-detail",
+            &[("closed", &closed), ("layer", layer_label)],
+        )
     } else {
-        format!("{closed} ({}): {layer_label}", segments.join(", "))
+        locale.tr_with(
+            "holes-closed-segments",
+            &[
+                ("closed", &closed),
+                ("segments", &segments.join(", ")),
+                ("layer", layer_label),
+            ],
+        )
     }
 }
 
 /// Status for a whole-mesh op (other than Close Holes) that changed nothing.
-fn layer_edit_noop_status(layer_label: &str, _action: LayerContextAction) -> String {
-    format!("No changes: {layer_label}")
+fn layer_edit_noop_status(layer_label: &str, locale: &crate::i18n::LocaleManager) -> String {
+    locale.tr_with("edit-no-changes", &[("layer", layer_label)])
 }
 
 pub(super) fn layer_edit_status(
     layer_label: &str,
     action: LayerContextAction,
     _report: Option<&MeshEditReport>,
+    locale: &crate::i18n::LocaleManager,
 ) -> String {
-    let action_label = match action {
-        LayerContextAction::InvertNormals => "Inverted normals",
-        LayerContextAction::DeleteSelectedFaces => "Deleted selected faces",
-        LayerContextAction::CropToSelectedFaces => "Cropped to selection",
-        LayerContextAction::CutSelectionToNewLayer => "Cut selection to new layer",
-        LayerContextAction::SeparateSelectedComponents => "Separated selected components",
-        _ => "Edited layer",
+    // English labels are pinned by the lock test below; rendering uses keys.
+    let action_key = match action {
+        LayerContextAction::InvertNormals => "batchedit-invert",
+        LayerContextAction::DeleteSelectedFaces => "batchedit-delete",
+        LayerContextAction::CropToSelectedFaces => "batchedit-crop",
+        LayerContextAction::CutSelectionToNewLayer => "batchedit-cut",
+        LayerContextAction::SeparateSelectedComponents => "batchedit-separate",
+        _ => "batchedit-edited",
     };
-    format!("{action_label}: {layer_label}")
+    locale.tr_with(
+        "edit-applied-status",
+        &[("action", &locale.tr(action_key)), ("layer", layer_label)],
+    )
+}
+
+// Batch action labels render through the `batch-*` catalog keys.
+pub(crate) fn batch_action_label(
+    action: LayerContextAction,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let key = match action {
+        LayerContextAction::CloseHoles => "batch-close-holes",
+        LayerContextAction::DeleteSelectedFaces => "batch-delete",
+        LayerContextAction::CropToSelectedFaces => "batch-crop",
+        LayerContextAction::CutSelectionToNewLayer => "batch-cut",
+        LayerContextAction::SeparateSelectedComponents => "batch-separate",
+        _ => "batch-edited",
+    };
+    locale.tr(key)
 }

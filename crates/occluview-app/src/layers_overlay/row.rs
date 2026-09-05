@@ -51,12 +51,15 @@ pub(crate) struct LayerRowChange {
 }
 
 #[allow(clippy::too_many_lines)]
+// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn show_layer_row(
     ui: &mut egui::Ui,
     row_width: f32,
     state: LayerRowState,
     view: LayerRowView<'_>,
     context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<LayerRowChange> {
     let mut changed = false;
     let mut visible = state.visible;
@@ -137,13 +140,17 @@ pub(super) fn show_layer_row(
                     ui_theme::text_muted()
                 },
             );
-            let eye_response =
-                eye_response.on_hover_text(if visible { "Hide layer" } else { "Show layer" });
+            let eye_hint = if visible {
+                locale.tr("layers-row-hide")
+            } else {
+                locale.tr("layers-row-show")
+            };
+            let eye_response = eye_response.on_hover_text(eye_hint);
             if eye_response.clicked() {
                 visible = !visible;
                 changed = true;
             }
-            attach_layer_context_menu(eye_response, &target(visible), context_request);
+            attach_layer_context_menu(eye_response, &target(visible), context_request, locale);
 
             ui.add_space(LAYER_ROW_GAP_PX);
 
@@ -162,7 +169,7 @@ pub(super) fn show_layer_row(
             } else {
                 label_response
             };
-            attach_layer_context_menu(label_response, &target(visible), context_request);
+            attach_layer_context_menu(label_response, &target(visible), context_request, locale);
 
             ui.add_space(LAYER_ROW_GAP_PX);
 
@@ -177,21 +184,22 @@ pub(super) fn show_layer_row(
                     )
                 })
                 .inner
-                .on_hover_text("Layer opacity");
+                .on_hover_text(locale.tr("layers-row-opacity"));
             changed |= slider_response.changed();
-            attach_layer_context_menu(slider_response, &target(visible), context_request);
+            attach_layer_context_menu(slider_response, &target(visible), context_request, locale);
 
             ui.add_space(LAYER_ROW_GAP_PX);
 
             // Tint swatch + palette popup. The swatch is a real button, so
             // it eats its own presses: it carries the context menu itself
             // rather than relying on the row around it.
-            let (swatch_changed, swatch_response) = tint_swatch(ui, &view, visible, &mut tint);
+            let (swatch_changed, swatch_response) =
+                tint_swatch(ui, &view, visible, &mut tint, locale);
             if swatch_changed {
                 changed = true;
                 tint_clicked = true;
             }
-            attach_layer_context_menu(swatch_response, &target(visible), context_request);
+            attach_layer_context_menu(swatch_response, &target(visible), context_request, locale);
 
             ui.add_space(LAYER_ROW_ACTION_GAP_PX);
 
@@ -210,7 +218,7 @@ pub(super) fn show_layer_row(
                     ui_theme::text_muted()
                 },
             );
-            let remove_response = remove_response.on_hover_text("Remove layer");
+            let remove_response = remove_response.on_hover_text(locale.tr("layers-row-remove"));
             if remove_response.clicked() {
                 *context_request = Some(LayerContextRequest {
                     index: view.index,
@@ -218,10 +226,10 @@ pub(super) fn show_layer_row(
                     action: LayerContextAction::Remove,
                 });
             }
-            attach_layer_context_menu(remove_response, &target(visible), context_request);
+            attach_layer_context_menu(remove_response, &target(visible), context_request, locale);
         },
     );
-    attach_layer_context_menu(row_hit, &target(visible), context_request);
+    attach_layer_context_menu(row_hit, &target(visible), context_request, locale);
 
     changed.then_some(LayerRowChange {
         index: view.index,
@@ -246,6 +254,7 @@ fn tint_swatch(
     view: &LayerRowView<'_>,
     enabled: bool,
     tint: &mut [f32; 4],
+    locale: &crate::i18n::LocaleManager,
 ) -> (bool, egui::Response) {
     let mut changed = false;
     let swatch = egui::Button::new("")
@@ -259,7 +268,7 @@ fn tint_swatch(
             )
         })
         .inner
-        .on_hover_text("Choose tint");
+        .on_hover_text(locale.tr("tint-choose"));
 
     let popup_id = ui.make_persistent_id(("layer_tint_palette", view.layer_id));
     egui::Popup::from_toggle_button_response(&response)

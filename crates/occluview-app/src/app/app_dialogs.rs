@@ -1,6 +1,7 @@
+use super::app_guard_dialog::{show_guard_dialog, GuardDialogAction, GuardDialogSpec};
 use super::app_help::{render_contextual_hint, show_help_toolbar_toggle};
 use super::app_recent_popup::RecentFilesAction;
-use super::app_settings_panel::settings_popup_id;
+use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
@@ -13,19 +14,6 @@ use eframe::egui;
 #[cfg(test)]
 pub(super) use super::app_recent_popup::recent_files_popup_id;
 pub(super) use super::app_recent_popup::show_recent_files_popup;
-
-pub(super) fn show_settings_toolbar_toggle(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
-    toolbar_toggle(
-        ui,
-        ToolbarToggle::new(
-            AppIcon::Settings,
-            "Settings",
-            enabled,
-            egui::Popup::is_id_open(ui.ctx(), settings_popup_id()),
-            "Open preferences",
-        ),
-    )
-}
 
 impl OccluViewApp {
     /// Draw the top toolbar and dispatch its actions after layout.
@@ -90,13 +78,21 @@ impl OccluViewApp {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
 
-                    let open_hint = format!(
-                        "Open 3D files ({})",
-                        ui.ctx().format_shortcut(&open_shortcut)
-                    );
+                    // Shortcut glyphs interpolate as catalog variables and stay invariant.
+                    let open_shortcut_text = ui.ctx().format_shortcut(&open_shortcut);
+                    let open_hint = self
+                        .ui
+                        .locale
+                        .tr_with("toolbar-open-hint", &[("shortcut", &open_shortcut_text)]);
                     if toolbar_toggle(
                         ui,
-                        ToolbarToggle::new(AppIcon::Open, "Open", true, false, &open_hint),
+                        ToolbarToggle::new(
+                            AppIcon::Open,
+                            &self.ui.locale.tr("toolbar-open-label"),
+                            true,
+                            false,
+                            &open_hint,
+                        ),
                     )
                     .clicked()
                     {
@@ -116,10 +112,13 @@ impl OccluViewApp {
                                 ui_theme::text_weak()
                             },
                         );
-                        let response = response.on_hover_text("Recent files");
-                        if let Some(action) =
-                            show_recent_files_popup(&response, &self.persistence.recent_files)
-                        {
+                        let response =
+                            response.on_hover_text(self.ui.locale.tr("toolbar-recent-hint"));
+                        if let Some(action) = show_recent_files_popup(
+                            &response,
+                            &self.persistence.recent_files,
+                            &self.ui.locale,
+                        ) {
                             match action {
                                 RecentFilesAction::Open(paths) => recent_to_open = Some(paths),
                                 RecentFilesAction::Clear => clear_recent = true,
@@ -131,10 +130,10 @@ impl OccluViewApp {
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Add,
-                            "Add",
+                            &self.ui.locale.tr("toolbar-add-label"),
                             self.document.scene.is_some(),
                             false,
-                            "Add more files to the current scene",
+                            &self.ui.locale.tr("toolbar-add-hint"),
                         ),
                     )
                     .clicked()
@@ -145,19 +144,19 @@ impl OccluViewApp {
                     toolbar_divider(ui);
 
                     let can_cut = self.can_render_cut_view();
+                    let cut_shortcut_text = ui.ctx().format_shortcut(&cut_shortcut);
                     let cut_hint = if can_cut {
-                        format!(
-                            "Slice the model along a plane ({})",
-                            ui.ctx().format_shortcut(&cut_shortcut)
-                        )
+                        self.ui
+                            .locale
+                            .tr_with("toolbar-cut-hint", &[("shortcut", &cut_shortcut_text)])
                     } else {
-                        "Cut view needs a visible layer".to_string()
+                        self.ui.locale.tr("toolbar-cut-unavailable")
                     };
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Cut,
-                            "Cut view",
+                            &self.ui.locale.tr("toolbar-cut-label"),
                             can_cut,
                             self.tools.cut_view.is_active(),
                             &cut_hint,
@@ -178,30 +177,33 @@ impl OccluViewApp {
                         (
                             AppIcon::Ruler,
                             MeasureMode::Ruler,
-                            "Ruler",
-                            "Measure a distance: click two points on the model",
+                            self.ui.locale.tr("toolbar-ruler-label"),
+                            "toolbar-ruler-hint",
                             ruler_shortcut,
                         ),
                         (
                             AppIcon::Thickness,
                             MeasureMode::Thickness,
-                            "Thickness",
-                            "Probe the local wall thickness: click a point on the shell",
+                            self.ui.locale.tr("toolbar-thickness-label"),
+                            "toolbar-thickness-hint",
                             thickness_shortcut,
                         ),
                     ];
-                    for (icon, mode, label, hint, shortcut) in entries {
+                    for (icon, mode, label, hint_key, shortcut) in entries {
+                        let shortcut_text = ui.ctx().format_shortcut(&shortcut);
                         let tooltip = if edit_session_active {
-                            "Finish or cancel the mesh edit session first".to_string()
+                            self.ui.locale.tr("toolbar-measure-blocked")
                         } else if !has_pickable_layer {
-                            "Measuring needs a visible mesh layer".to_string()
+                            self.ui.locale.tr("toolbar-measure-needs-layer")
                         } else {
-                            format!("{hint} ({})", ui.ctx().format_shortcut(&shortcut))
+                            self.ui
+                                .locale
+                                .tr_with(hint_key, &[("shortcut", &shortcut_text)])
                         };
                         let active = self.tools.measure.mode() == Some(mode);
                         if toolbar_toggle(
                             ui,
-                            ToolbarToggle::new(icon, label, can_measure, active, &tooltip),
+                            ToolbarToggle::new(icon, &label, can_measure, active, &tooltip),
                         )
                         .clicked()
                         {
@@ -209,15 +211,16 @@ impl OccluViewApp {
                         }
                     }
 
-                    let align_hint = format!(
-                        "Bring two scans together: click a point on each ({})",
-                        ui.ctx().format_shortcut(&align_shortcut)
-                    );
+                    let align_shortcut_text = ui.ctx().format_shortcut(&align_shortcut);
+                    let align_hint = self
+                        .ui
+                        .locale
+                        .tr_with("toolbar-align-hint", &[("shortcut", &align_shortcut_text)]);
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Align,
-                            "Align",
+                            &self.ui.locale.tr("toolbar-align-label"),
                             can_measure,
                             self.align_active(),
                             &align_hint,
@@ -234,19 +237,19 @@ impl OccluViewApp {
                                 s.meshes().iter().any(|m| !m.mesh.is_point_cloud())
                             });
                     let edit_active = self.document.edit_mode.has_active_session();
+                    let edit_shortcut_text = ui.ctx().format_shortcut(&edit_shortcut);
                     let edit_hint = if edit_active {
-                        "Mesh Editing is open".to_string()
+                        self.ui.locale.tr("toolbar-edit-open")
                     } else {
-                        format!(
-                            "Mesh Editing: selection and sculpting ({})",
-                            ui.ctx().format_shortcut(&edit_shortcut)
-                        )
+                        self.ui
+                            .locale
+                            .tr_with("toolbar-edit-hint", &[("shortcut", &edit_shortcut_text)])
                     };
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::EditMesh,
-                            "Edit",
+                            &self.ui.locale.tr("toolbar-edit-label"),
                             can_edit_mesh,
                             edit_active,
                             &edit_hint,
@@ -258,11 +261,19 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let help_response = show_help_toolbar_toggle(ui, !self.ui.close_guard_open);
+                        let help_response = show_help_toolbar_toggle(
+                            ui,
+                            !self.ui.close_guard_open,
+                            &self.ui.locale,
+                        );
                         if help_response.clicked() {
                             self.ui.information_dialog = InformationDialog::KeyboardMouse;
                         }
-                        let response = show_settings_toolbar_toggle(ui, !self.ui.close_guard_open);
+                        let response = show_settings_toolbar_toggle(
+                            ui,
+                            !self.ui.close_guard_open,
+                            &self.ui.locale,
+                        );
                         if response.clicked() {
                             self.ui.information_dialog = InformationDialog::None;
                         }
@@ -403,7 +414,9 @@ impl OccluViewApp {
                     ui.add(egui::Spinner::new().size(13.0));
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new("Loading scene…").color(ink).size(11.5),
+                            egui::RichText::new(self.ui.locale.tr("loading-scene"))
+                                .color(ink)
+                                .size(11.5),
                         )
                         .truncate(),
                     );
@@ -415,7 +428,13 @@ impl OccluViewApp {
                     );
                     response.on_hover_text(message);
                 } else if pointer_over_viewport {
-                    render_contextual_hint(ui, rect, self.interaction_hint_context(), ink);
+                    render_contextual_hint(
+                        ui,
+                        rect,
+                        self.interaction_hint_context(),
+                        ink,
+                        &self.ui.locale,
+                    );
                 }
             });
         });
@@ -440,22 +459,28 @@ impl OccluViewApp {
         }
         let edited_count = self.document.unsaved_edit_layer_ids.len().max(1);
         let mut do_save = false;
+        // Canonical wording pinned by source guards; rendering resolves the
+        // `guard-close-*` catalog keys below.
         let headline = if edited_count == 1 {
-            "1 edited layer has not been saved to disk."
+            self.ui.locale.tr("guard-close-headline-one")
         } else {
-            "Edited layers have not been saved to disk."
+            self.ui.locale.tr("guard-close-headline-many")
         };
-        let note =
-            (edited_count > 1).then(|| format!("{edited_count} edited layers are affected."));
+        let note = (edited_count > 1).then(|| {
+            self.ui
+                .locale
+                .tr_with("guard-close-note", &[("count", &edited_count.to_string())])
+        });
         let response = show_guard_dialog(
             ctx,
+            &self.ui.locale,
             GuardDialogSpec {
                 id: "unsaved-mesh-edits-guard",
-                title: "Unsaved mesh edits",
-                headline,
+                title: &self.ui.locale.tr("guard-close-title"),
+                headline: &headline,
                 note: note.as_deref(),
-                detail: "Save exports each edited layer (PLY, STL, or OBJ) and then closes.",
-                destructive_label: "Close without saving",
+                detail: &self.ui.locale.tr("guard-close-detail"),
+                destructive_label: &self.ui.locale.tr("guard-close-destructive"),
             },
         );
         match response.action {
@@ -501,21 +526,28 @@ impl OccluViewApp {
         let mut do_discard = false;
         let mut do_cancel = false;
         let headline = if let Some(layer) = &session_layer {
-            format!("An edit session is active on {layer}.")
+            self.ui.locale.tr_with(
+                "guard-replace-headline-session",
+                &[("layer", layer.as_str())],
+            )
         } else if edited_count <= 1 {
-            "1 edited layer has unsaved changes.".to_string()
+            self.ui.locale.tr("guard-replace-headline-one")
         } else {
-            format!("{edited_count} edited layers have unsaved changes.")
+            self.ui.locale.tr_with(
+                "guard-replace-headline-many",
+                &[("count", &edited_count.to_string())],
+            )
         };
         let response = show_guard_dialog(
             ctx,
+            &self.ui.locale,
             GuardDialogSpec {
                 id: "edit-in-progress-guard",
-                title: "Edit in progress",
+                title: &self.ui.locale.tr("guard-replace-title"),
                 headline: &headline,
                 note: None,
-                detail: "Opening a scene closes the session and discards edits not saved to disk.",
-                destructive_label: "Discard and open",
+                detail: &self.ui.locale.tr("guard-replace-detail"),
+                destructive_label: &self.ui.locale.tr("guard-replace-destructive"),
             },
         );
         match response.action {
@@ -564,6 +596,7 @@ impl OccluViewApp {
             &self.persistence.current_paths,
             &scene.meshes()[index],
             index,
+            &self.ui.locale,
         ))
     }
 
@@ -604,10 +637,10 @@ impl OccluViewApp {
                 );
                 ui.add_space(4.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
+                    if ui.button(self.ui.locale.tr("error-close")).clicked() {
                         close_clicked = true;
                     }
-                    if ui.button("Copy Details").clicked() {
+                    if ui.button(self.ui.locale.tr("error-copy-details")).clicked() {
                         ui.ctx().copy_text(error.details.clone());
                     }
                 });
@@ -634,72 +667,6 @@ fn intercept_unsaved_close_request(
     }
 }
 
-struct GuardDialogSpec<'a> {
-    id: &'static str,
-    title: &'a str,
-    headline: &'a str,
-    note: Option<&'a str>,
-    detail: &'a str,
-    destructive_label: &'a str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GuardDialogAction {
-    Save,
-    Destructive,
-    Cancel,
-}
-
-struct GuardDialogResponse {
-    action: Option<GuardDialogAction>,
-}
-
-fn show_guard_dialog(ctx: &egui::Context, spec: GuardDialogSpec<'_>) -> GuardDialogResponse {
-    const CONTENT_WIDTH: f32 = 416.0;
-    let mut open = true;
-    let mut action = None;
-    egui::Window::new(spec.title)
-        .id(egui::Id::new(spec.id))
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .constrain_to(ctx.content_rect().shrink(8.0))
-        .collapsible(false)
-        .resizable(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.set_width(CONTENT_WIDTH);
-            ui.horizontal(|ui| {
-                let (icon_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
-                ui.label(egui::RichText::new(spec.headline).strong());
-            });
-            if let Some(note) = spec.note {
-                ui.label(note);
-            }
-            ui.label(egui::RichText::new(spec.detail).weak().size(11.0));
-            ui.add_space(10.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 30.0),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    if ui.add(dialog_primary_button("Save…")).clicked() {
-                        action = Some(GuardDialogAction::Save);
-                    }
-                    if ui.button(spec.destructive_label).clicked() {
-                        action = Some(GuardDialogAction::Destructive);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        action = Some(GuardDialogAction::Cancel);
-                    }
-                },
-            );
-        });
-    if !open && action.is_none() {
-        action = Some(GuardDialogAction::Cancel);
-    }
-    GuardDialogResponse { action }
-}
-
 /// Slim vertical hairline between toolbar groups.
 fn toolbar_divider(ui: &mut egui::Ui) {
     ui.add_space(6.0);
@@ -710,17 +677,6 @@ fn toolbar_divider(ui: &mut egui::Ui) {
         egui::Stroke::new(1.0_f32, ui_theme::hairline()),
     );
     ui.add_space(6.0);
-}
-
-/// Primary dialog action.
-fn dialog_primary_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .strong()
-            .color(ui_theme::on_accent()),
-    )
-    .fill(ui_theme::accent())
-    .corner_radius(ui_theme::RADIUS_CONTROL)
 }
 
 #[cfg(test)]
@@ -764,8 +720,10 @@ mod tests {
             ..Default::default()
         };
         ctx.run_ui(input, |ui| {
+            let locale = crate::i18n::LocaleManager::for_tests();
             let _ = show_guard_dialog(
                 ui.ctx(),
+                &locale,
                 GuardDialogSpec {
                     id: "guard-size-contract",
                     title: "Unsaved mesh edits",

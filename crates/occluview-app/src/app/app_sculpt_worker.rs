@@ -90,10 +90,12 @@ impl OccluViewApp {
             self.flush_sculpt_update(update);
         }
         if let Some(failure) = error {
-            self.ui.status_message = Some(format!(
-                "Sculpt worker stopped: {}",
-                describe_sculpt_failure(&failure)
-            ));
+            let detail = describe_sculpt_failure(&failure);
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
+            );
             self.invalidate_sculpt_session_silent();
         }
         for SculptCompletion { before, mesh } in completions {
@@ -251,7 +253,7 @@ impl OccluViewApp {
             .as_ref()
             .is_none_or(|worker| !worker.finish_stroke())
         {
-            self.ui.status_message = Some("Sculpt worker is unavailable".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-worker-unavailable"));
         }
         ctx.request_repaint();
     }
@@ -281,7 +283,7 @@ impl OccluViewApp {
             before,
             EditModeCommand::Sculpt,
         ) else {
-            self.ui.status_message = Some("Layer edit already in progress".to_string());
+            self.ui.status_message = Some(self.ui.locale.tr("repair-edit-busy"));
             return false;
         };
         drop(scene);
@@ -294,14 +296,11 @@ impl OccluViewApp {
             // otherwise is worse than saying nothing: they find out by pressing
             // it, on work they have already moved on from. Every other mesh-edit
             // status goes through `with_undoable_note` for the same reason.
-            self.ui.status_message = Some(
-                if self.document.edit_mode.last_edit_undoable() {
-                    "Sculpt applied (Ctrl+Z undoes)"
-                } else {
-                    "Sculpt applied (not undoable: snapshot too large)"
-                }
-                .to_string(),
-            );
+            self.ui.status_message = Some(if self.document.edit_mode.last_edit_undoable() {
+                self.ui.locale.tr("sculpt-applied-undo")
+            } else {
+                self.ui.locale.tr("sculpt-applied-locked")
+            });
             true
         } else {
             let _ = self

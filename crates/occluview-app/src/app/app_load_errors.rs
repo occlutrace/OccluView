@@ -1,10 +1,26 @@
 use super::{AppErrorDialog, Error, PathBuf};
 
-pub(super) fn load_error_dialog(action: &str, error: &Error, paths: &[PathBuf]) -> AppErrorDialog {
+pub(super) fn load_error_dialog(
+    locale: &crate::i18n::LocaleManager,
+    action: &str,
+    error: &Error,
+    paths: &[PathBuf],
+) -> AppErrorDialog {
     let title = if action == "Add" {
-        "Could not add file"
+        locale.text("error-add-title")
     } else {
-        "Could not open file"
+        locale.text("error-open-title")
+    };
+    let summary = if action == "Add" {
+        locale.tr_with(
+            "load-action-failed-add",
+            &[("detail", &format!("{error:#}"))],
+        )
+    } else {
+        locale.tr_with(
+            "load-action-failed-open",
+            &[("detail", &format!("{error:#}"))],
+        )
     };
     let files = paths
         .iter()
@@ -12,8 +28,9 @@ pub(super) fn load_error_dialog(action: &str, error: &Error, paths: &[PathBuf]) 
         .collect::<Vec<_>>()
         .join("\n");
     AppErrorDialog {
-        title: title.to_string(),
-        summary: format!("{action} failed: {error:#}"),
+        title,
+        summary,
+        // Support payload stays verbatim (see `AppErrorDialog.details`).
         details: format!("{action} failed\n\nFiles:\n{files}\n\nError:\n{error:#}"),
     }
 }

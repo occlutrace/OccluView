@@ -57,8 +57,21 @@ impl OccluViewApp {
         // UI scale is owned by settings, so egui's own keyboard zoom
         // (Cmd+=/Cmd+-) would fight the per-frame `set_zoom_factor` and blink.
         repaint_ctx.options_mut(|options| options.zoom_with_keyboard = false);
+        // Single locale startup: sidecar preference → OS list → catalog.
+        // Runtime lives in `UiState`, sidecar retry in `PersistenceState`.
+        let state_dir = crate::app_paths::app_state_dir();
+        let (locale, locale_snapshot) = crate::i18n::LocaleManager::startup(
+            state_dir.as_deref(),
+            &crate::i18n::os::SystemLocaleSource,
+        );
+        if let Some(diagnostic) = locale_snapshot.diagnostic {
+            tracing::warn!(
+                ?diagnostic,
+                "language preference sidecar was unusable; using Auto/English"
+            );
+        }
         let mut app = Self {
-            ui: UiState::new(repaint_ctx.clone()),
+            ui: UiState::new(repaint_ctx.clone(), locale),
             render: RenderState::new(live_viewport),
             document: DocumentState::new(),
             persistence: PersistenceState::new(),
@@ -154,7 +167,10 @@ impl OccluViewApp {
 
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui.sync_native_title(ctx);
         self.persistence.persist_settings_if_due(ctx);
+        let preference = self.ui.locale.snapshot().preference.clone();
+        self.persistence.persist_language_if_due(ctx, &preference);
         self.persistence.sync_sculpt_preferences(ctx);
         self.ui.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
@@ -195,8 +211,8 @@ impl eframe::App for OccluViewApp {
         self.poll_gpu_errors();
         self.show_error_dialog(&ctx);
         self.show_information_dialog(&ctx);
-        self.ui.repair_report.ui(&ctx);
-        self.persistence.update_notice.show(&ctx);
+        self.ui.repair_report.ui(&ctx, &self.ui.locale);
+        self.persistence.update_notice.show(&ctx, &self.ui.locale);
         self.show_unsaved_close_guard(&ctx);
         self.guard_pending_replace_open(&ctx);
     }

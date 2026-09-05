@@ -10,7 +10,7 @@ mod structural_tests;
 #[cfg(test)]
 mod tests;
 mod undo_redo;
-mod whole_mesh;
+pub(super) mod whole_mesh;
 
 pub(super) use undo_redo::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
@@ -46,7 +46,7 @@ pub(super) fn apply_layer_context_action_with_status(
     request: LayerContextRequest,
 ) -> LayerContextApply {
     if app.tools.bridge_split_active() {
-        app.ui.status_message = Some("Finish or cancel Bridge split first".to_string());
+        app.ui.status_message = Some(app.ui.locale.tr("bridge-busy"));
         return LayerContextApply::default();
     }
 
@@ -94,12 +94,16 @@ pub(super) fn apply_layer_context_action_with_status(
         return layer_actions::apply_layer_context_action(scene, request);
     }
 
-    let Some((_, removed_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((_, removed_label)) = resolve_layer(scene, paths, &request, &app.ui.locale) else {
         return LayerContextApply::default();
     };
     let apply = layer_actions::apply_layer_context_action(scene, request);
     if apply.scene_changed {
-        app.ui.status_message = Some(format!("Removed layer: {removed_label}"));
+        app.ui.status_message = Some(
+            app.ui
+                .locale
+                .tr_with("layer-removed", &[("label", &removed_label)]),
+        );
     }
     apply
 }
@@ -110,7 +114,7 @@ fn begin_face_selection_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) {
-    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request) else {
+    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request, &app.ui.locale) else {
         return;
     };
     let switching_target = app.document.edit_mode.selected_layer_id() != Some(entry.id());
@@ -127,9 +131,17 @@ fn begin_face_selection_with_status(
         // mesh-editor action. This removes the one-time weld/adjacency wait
         // from the first sculpt stroke without blocking the editor UI.
         app.prepare_armed_sculpt_session();
-        app.ui.status_message = Some(format!("Face selection: {layer_label}"));
+        app.ui.status_message = Some(
+            app.ui
+                .locale
+                .tr_with("layer-face-selection", &[("label", &layer_label)]),
+        );
     } else {
-        app.ui.status_message = Some(format!("Cannot select faces: {layer_label}"));
+        app.ui.status_message = Some(
+            app.ui
+                .locale
+                .tr_with("select-faces-cannot", &[("layer", &layer_label)]),
+        );
     }
 }
 
@@ -140,6 +152,7 @@ pub(super) fn resolve_layer<'s>(
     scene: &'s Scene,
     paths: &[PathBuf],
     request: &LayerContextRequest,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<(&'s SceneMesh, String)> {
     let entry = scene.meshes().get(request.index)?;
     if entry.id() != request.layer_id {
@@ -147,17 +160,25 @@ pub(super) fn resolve_layer<'s>(
     }
     Some((
         entry,
-        layers_overlay::layer_label(paths, entry, request.index),
+        layers_overlay::layer_label(paths, entry, request.index, locale),
     ))
 }
 
 /// Append the "not undoable" note when the last edit's pre-op snapshot was
 /// skipped (oversized) — the suffix shared by the mesh-edit status lines.
-pub(super) fn with_undoable_note(edit_mode: &EditModeController, status: String) -> String {
+///
+/// Canonical English: "{status} (not undoable: snapshot too large)".
+/// One whole message (`edit-locked-status` with `$status` data) so no
+/// language freezes English word order around the note.
+pub(super) fn with_undoable_note(
+    edit_mode: &EditModeController,
+    locale: &crate::i18n::LocaleManager,
+    status: String,
+) -> String {
     if edit_mode.last_edit_undoable() {
         status
     } else {
-        format!("{status} (not undoable: snapshot too large)")
+        locale.tr_with("edit-locked-status", &[("status", &status)])
     }
 }
 
@@ -179,7 +200,8 @@ pub(super) enum LayerEditResolution {
 /// The busy-session refusal shared by every token-based executor: no
 /// snapshot is taken, so there is nothing to finish.
 pub(super) fn refuse_busy_layer_edit(ui: &mut UiState) -> LayerContextApply {
-    ui.status_message = Some("Layer edit already in progress".to_string());
+    let busy = ui.locale.tr("repair-edit-busy");
+    ui.status_message = Some(busy);
     LayerContextApply::default()
 }
 
@@ -203,7 +225,7 @@ pub(super) fn commit_layer_edit(
         } => {
             document.mark_mesh_edits_unsaved(layer_id);
             let _ = document.edit_mode.finish_layer_edit_success(token);
-            ui.status_message = Some(with_undoable_note(&document.edit_mode, status));
+            ui.status_message = Some(with_undoable_note(&document.edit_mode, &ui.locale, status));
         }
         LayerEditResolution::Applied {
             changed: false,
@@ -213,13 +235,17 @@ pub(super) fn commit_layer_edit(
             ui.status_message = Some(status);
         }
         LayerEditResolution::Failed { error, layer_label } => {
-            let summary = format!("Could not edit layer: {error}");
+            let summary = ui.locale.tr_with(
+                "repair-edit-failed-summary",
+                &[("detail", &error.to_string())],
+            );
             let _ = document
                 .edit_mode
                 .finish_layer_edit_error(token, error.to_string());
             ui.status_message = Some(summary.clone());
+            let title = ui.locale.tr("repair-edit-failed-title");
             ui.app_error = Some(AppErrorDialog {
-                title: "Could not edit layer".to_string(),
+                title,
                 summary,
                 details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),
             });

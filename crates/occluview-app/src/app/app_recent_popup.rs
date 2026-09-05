@@ -18,6 +18,7 @@ pub(super) enum RecentFilesAction {
 pub(super) fn show_recent_files_popup(
     trigger: &egui::Response,
     recent_files: &RecentFiles,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<RecentFilesAction> {
     let action = egui::Popup::from_toggle_button_response(trigger)
         .id(recent_files_popup_id())
@@ -37,7 +38,8 @@ pub(super) fn show_recent_files_popup(
                 }
             }
             ui.separator();
-            ui.button("Clear recent")
+            // Canonical label "Clear recent" pinned by source guards.
+            ui.button(locale.tr("recent-clear"))
                 .clicked()
                 .then_some(RecentFilesAction::Clear)
         })

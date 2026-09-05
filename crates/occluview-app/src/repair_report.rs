@@ -14,11 +14,14 @@
 use eframe::egui;
 use occluview_core::RepairReport;
 
+use crate::i18n::LocaleManager;
 use crate::icons::AppIcon;
 use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
 
-/// Headline shown when Repair ran but found nothing to fix.
+/// Headline shown when Repair ran but found nothing to fix. English source
+/// wording (pinned by tests); rendering goes through `repair-clean-headline`.
+#[cfg(test)]
 pub(crate) const CLEAN_HEADLINE: &str = "Nothing to repair — mesh is clean";
 
 /// The small glyph painted in a report line's gutter. Removals borrow the
@@ -46,92 +49,73 @@ pub(crate) struct ReportLine {
 
 /// One human line per non-zero pass, in pipeline order. Zero passes are
 /// suppressed, so an all-clean report yields an empty vector (the caller shows
-/// [`CLEAN_HEADLINE`] instead).
+/// the clean headline instead). Counts render through the catalog with a
+/// numeric select operand and a thousands-grouped display string.
 #[must_use]
-pub(crate) fn report_lines(report: &RepairReport) -> Vec<ReportLine> {
-    // (icon, count, verb, singular, plural) in pipeline order. Zero counts are
-    // filtered out; digits over 999 are grouped for readability ("1 240").
-    let passes: [(LineIcon, usize, &str, &str, &str); 10] = [
+pub(crate) fn report_lines(report: &RepairReport, locale: &LocaleManager) -> Vec<ReportLine> {
+    // (icon, count, catalog key) in pipeline order. Zero counts are filtered
+    // out; digits over 999 are grouped for readability ("1 240").
+    let passes: [(LineIcon, usize, &str); 10] = [
         (
             LineIcon::Fixed,
             report.welded_vertices,
-            "Welded",
-            "duplicate vertex",
-            "duplicate vertices",
+            "repair-line-welded",
         ),
         (
             LineIcon::Removed,
             report.removed_degenerate_triangles,
-            "Removed",
-            "sliver face",
-            "sliver faces",
+            "repair-line-slivers",
         ),
         (
             LineIcon::Removed,
             report.removed_duplicate_triangles,
-            "Removed",
-            "duplicate face",
-            "duplicate faces",
+            "repair-line-duplicate-faces",
         ),
         (
             LineIcon::Fixed,
             report.split_nonmanifold_edges,
-            "Fixed",
-            "non-manifold edge",
-            "non-manifold edges",
+            "repair-line-nonmanifold",
         ),
         (
             LineIcon::Fixed,
             report.split_bowtie_vertices,
-            "Split",
-            "bowtie vertex",
-            "bowtie vertices",
+            "repair-line-bowtie",
         ),
         (
             LineIcon::Fixed,
             report.reoriented_triangles,
-            "Reoriented",
-            "triangle",
-            "triangles",
+            "repair-line-reoriented",
         ),
         (
             LineIcon::Fixed,
             report.flipped_components,
-            "Flipped",
-            "inside-out part",
-            "inside-out parts",
+            "repair-line-flipped",
         ),
         (
             LineIcon::Removed,
             report.removed_debris_components,
-            "Removed",
-            "debris part",
-            "debris parts",
+            "repair-line-debris",
         ),
         (
             LineIcon::Closed,
             report.filled_holes,
-            "Closed",
-            "pinhole",
-            "pinholes",
+            "repair-line-pinholes",
         ),
         (
             LineIcon::Removed,
             report.removed_unreferenced_vertices,
-            "Removed",
-            "unused vertex",
-            "unused vertices",
+            "repair-line-unused",
         ),
     ];
     passes
         .into_iter()
-        .filter(|&(_, count, ..)| count > 0)
-        .map(|(icon, count, verb, singular, plural_noun)| ReportLine {
+        .filter(|&(_, count, _)| count > 0)
+        .map(|(icon, count, key)| ReportLine {
             icon,
-            text: format!(
-                "{verb} {} {}",
-                group_thousands(count),
-                plural(count, singular, plural_noun)
+            text: locale.tr_plural(
+                key,
+                &[("grouped", &group_thousands(count))],
+                &[("count", count)],
             ),
         })
         .collect()
@@ -140,13 +124,13 @@ pub(crate) fn report_lines(report: &RepairReport) -> Vec<ReportLine> {
 /// Informational line for rims left open on purpose (the scan's natural
 /// boundary is not damage). `None` when every rim was closed or oversized-none.
 #[must_use]
-pub(crate) fn open_rims_line(report: &RepairReport) -> Option<String> {
+pub(crate) fn open_rims_line(report: &RepairReport, locale: &LocaleManager) -> Option<String> {
     let rims = report.open_rims_left;
     (rims > 0).then(|| {
-        format!(
-            "{} open {} left (scan boundary)",
-            group_thousands(rims),
-            plural(rims, "rim", "rims")
+        locale.tr_plural(
+            "repair-open-rims",
+            &[("grouped", &group_thousands(rims))],
+            &[("count", rims)],
         )
     })
 }
@@ -154,12 +138,13 @@ pub(crate) fn open_rims_line(report: &RepairReport) -> Option<String> {
 /// Informational line for rims the fill pass refused because they were not
 /// simple closed loops. `None` when there were no such warnings.
 #[must_use]
-pub(crate) fn skipped_rims_line(report: &RepairReport) -> Option<String> {
+pub(crate) fn skipped_rims_line(report: &RepairReport, locale: &LocaleManager) -> Option<String> {
     let count = report.warnings.len();
     (count > 0).then(|| {
-        format!(
-            "{count} {} could not be filled (non-simple)",
-            plural(count, "rim", "rims")
+        locale.tr_plural(
+            "repair-skipped-rims",
+            &[("grouped", &group_thousands(count))],
+            &[("count", count)],
         )
     })
 }
@@ -230,15 +215,6 @@ fn group_thousands(n: usize) -> String {
         out.push(char::from(*byte));
     }
     out
-}
-
-/// Singular or plural noun for `count`.
-fn plural<'a>(count: usize, singular: &'a str, plural_noun: &'a str) -> &'a str {
-    if count == 1 {
-        singular
-    } else {
-        plural_noun
-    }
 }
 
 /// The card currently on screen.
@@ -329,7 +305,7 @@ impl RepairReportDialog {
 
     /// Draw the card if open. Closing (X or the Close button) clears it.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn ui(&mut self, ctx: &egui::Context) {
+    pub(crate) fn ui(&mut self, ctx: &egui::Context, locale: &LocaleManager) {
         let Some(card) = self.card.as_ref() else {
             return;
         };
@@ -339,12 +315,12 @@ impl RepairReportDialog {
         let changed = card.report.changed_content();
         let layer_label = card.layer_label.clone();
         let lines = if changed {
-            report_lines(&card.report)
+            report_lines(&card.report, locale)
         } else {
             Vec::new()
         };
-        let open_rims = open_rims_line(&card.report);
-        let skipped = skipped_rims_line(&card.report);
+        let open_rims = open_rims_line(&card.report, locale);
+        let skipped = skipped_rims_line(&card.report, locale);
         let details = copy_details(&card.layer_label, &card.report);
         let body_height =
             repair_body_height(changed, lines.len(), open_rims.is_some(), skipped.is_some());
@@ -359,7 +335,7 @@ impl RepairReportDialog {
                 gutter_icon(ui, LineIcon::Fixed);
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new("Mesh Repair")
+                        egui::RichText::new(locale.tr("repair-title"))
                             .size(14.0)
                             .strong()
                             .color(ui_theme::text()),
@@ -403,7 +379,8 @@ impl RepairReportDialog {
                                 ui.horizontal(|ui| {
                                     gutter_icon(ui, LineIcon::Fixed);
                                     ui.label(
-                                        egui::RichText::new(CLEAN_HEADLINE).color(ui_theme::text()),
+                                        egui::RichText::new(locale.tr("repair-clean-headline"))
+                                            .color(ui_theme::text()),
                                     );
                                 });
                             }
@@ -428,12 +405,12 @@ impl RepairReportDialog {
             ui.separator();
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Close").clicked() {
+                if ui.button(locale.tr("help-close")).clicked() {
                     close_clicked = true;
                 }
                 if ui
-                    .button("Copy details")
-                    .on_hover_text("Copy the full per-pass report to the clipboard")
+                    .button(locale.tr("repair-copy-details"))
+                    .on_hover_text(locale.tr("repair-copy-tooltip"))
                     .clicked()
                 {
                     copy_clicked = true;
@@ -475,8 +452,72 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use occluview_core::MeshEditWarning;
+
+    fn english() -> LocaleManager {
+        LocaleManager::for_tests()
+    }
+
+    fn russian() -> LocaleManager {
+        use crate::i18n::preference::UiLanguagePreference;
+        let mut manager = LocaleManager::for_tests();
+        manager.set_preference(UiLanguagePreference::Explicit("ru"));
+        manager
+    }
+
+    /// Wireframe screenshots of the repair card in every embedded locale
+    /// for human visual review (`target/i18n-shots/`, never committed).
+    /// Solid fills are painted shapes; magenta boxes are text extents.
+    #[test]
+    fn repair_card_wireframes_for_visual_review() {
+        #![allow(clippy::expect_used)]
+        use crate::i18n::catalog::EMBEDDED_TAGS;
+        use crate::i18n::preference::UiLanguagePreference;
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for tag in EMBEDDED_TAGS {
+            let ctx = egui::Context::default();
+            let mut manager = LocaleManager::for_tests();
+            if *tag != "en" {
+                manager.set_preference(UiLanguagePreference::Explicit(tag));
+            }
+            for (variant, report) in [
+                ("repaired", multi_report()),
+                ("clean", RepairReport::default()),
+            ] {
+                let mut dialog = RepairReportDialog::default();
+                dialog.present("scan.stl", report);
+                // Two frames: sizing pass, then the positioned card.
+                for _ in 0..2 {
+                    let input = egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    };
+                    ctx.run_ui(input, |ui| {
+                        dialog.ui(ui.ctx(), &manager);
+                    })
+                    .drop_without_applying_deltas();
+                }
+                let input = egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                };
+                let output = ctx.run_ui(input, |ui| {
+                    dialog.ui(ui.ctx(), &manager);
+                });
+                let path = crate::i18n::shots::save_shot_with_texts(
+                    &format!("repair-{variant}-{tag}"),
+                    &ctx,
+                    output,
+                    800,
+                    600,
+                );
+                assert!(path.is_file(), "shot missing: {}", path.display());
+            }
+        }
+    }
 
     fn multi_report() -> RepairReport {
         RepairReport {
@@ -507,17 +548,17 @@ mod tests {
 
     #[test]
     fn report_lines_suppress_zeros_and_group_digits() {
-        let lines = report_lines(&multi_report());
+        let lines = report_lines(&multi_report(), &english());
         let text: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
         assert_eq!(
             text,
             vec![
-                "Welded 1 240 duplicate vertices",
-                "Removed 86 sliver faces",
-                "Removed 12 duplicate faces",
-                "Fixed 3 non-manifold edges",
-                "Removed 4 debris parts",
-                "Closed 12 pinholes",
+                "Welded \u{2068}1 240\u{2069} duplicate vertices",
+                "Removed \u{2068}86\u{2069} sliver faces",
+                "Removed \u{2068}12\u{2069} duplicate faces",
+                "Fixed \u{2068}3\u{2069} non-manifold edges",
+                "Removed \u{2068}4\u{2069} debris parts",
+                "Closed \u{2068}12\u{2069} pinholes",
             ]
         );
         // Icons carry the right visual language: removals trash, holes close.
@@ -535,52 +576,90 @@ mod tests {
             removed_unreferenced_vertices: 1,
             ..RepairReport::default()
         };
-        let lines = report_lines(&report);
+        let lines = report_lines(&report, &english());
         let text: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
         assert_eq!(
             text,
             vec![
-                "Welded 1 duplicate vertex",
-                "Fixed 1 non-manifold edge",
-                "Closed 1 pinhole",
-                "Removed 1 unused vertex",
+                "Welded \u{2068}1\u{2069} duplicate vertex",
+                "Fixed \u{2068}1\u{2069} non-manifold edge",
+                "Closed \u{2068}1\u{2069} pinhole",
+                "Removed \u{2068}1\u{2069} unused vertex",
             ]
         );
     }
 
     #[test]
     fn a_clean_report_produces_no_lines() {
-        assert!(report_lines(&RepairReport::default()).is_empty());
+        assert!(report_lines(&RepairReport::default(), &english()).is_empty());
+    }
+
+    #[test]
+    fn english_clean_headline_matches_source_wording() {
+        // Keeps CLEAN_HEADLINE live and locks the catalog rendering to it.
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        assert_eq!(
+            catalog.text("repair-clean-headline").as_deref(),
+            Some(CLEAN_HEADLINE)
+        );
+    }
+
+    #[test]
+    fn russian_lines_use_paucal_and_plural_forms() {
+        let report = RepairReport {
+            welded_vertices: 1,
+            removed_degenerate_triangles: 3,
+            filled_holes: 5,
+            open_rims_left: 2,
+            ..RepairReport::default()
+        };
+        let lines = report_lines(&report, &russian());
+        let text: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+        assert_eq!(
+            text,
+            vec![
+                "Сварена \u{2068}1\u{2069} дублирующаяся вершина",
+                "Удалены \u{2068}3\u{2069} тонкие грани",
+                "Закрыто \u{2068}5\u{2069} точечных отверстий",
+            ]
+        );
+        assert_eq!(
+            open_rims_line(&report, &russian()).as_deref(),
+            Some("Остались \u{2068}2\u{2069} открытые кромки (граница скана)")
+        );
     }
 
     #[test]
     fn open_and_skipped_rim_lines_handle_plurality_and_absence() {
-        assert_eq!(open_rims_line(&RepairReport::default()), None);
+        assert_eq!(open_rims_line(&RepairReport::default(), &english()), None);
         let one = RepairReport {
             open_rims_left: 1,
             ..RepairReport::default()
         };
         assert_eq!(
-            open_rims_line(&one).as_deref(),
-            Some("1 open rim left (scan boundary)")
+            open_rims_line(&one, &english()).as_deref(),
+            Some("\u{2068}1\u{2069} open rim left (scan boundary)")
         );
         let many = RepairReport {
             open_rims_left: 2,
             ..RepairReport::default()
         };
         assert_eq!(
-            open_rims_line(&many).as_deref(),
-            Some("2 open rims left (scan boundary)")
+            open_rims_line(&many, &english()).as_deref(),
+            Some("\u{2068}2\u{2069} open rims left (scan boundary)")
         );
 
-        assert_eq!(skipped_rims_line(&RepairReport::default()), None);
+        assert_eq!(
+            skipped_rims_line(&RepairReport::default(), &english()),
+            None
+        );
         let warned = RepairReport {
             warnings: vec![MeshEditWarning::DegenerateGeometry],
             ..RepairReport::default()
         };
         assert_eq!(
-            skipped_rims_line(&warned).as_deref(),
-            Some("1 rim could not be filled (non-simple)")
+            skipped_rims_line(&warned, &english()).as_deref(),
+            Some("\u{2068}1\u{2069} rim could not be filled (non-simple)")
         );
     }
 
@@ -620,22 +699,28 @@ mod tests {
         dialog.present("scan.stl", multi_report());
         assert!(dialog.is_open());
         assert_eq!(dialog.showing_clean(), Some(false));
-        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
-            .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            dialog.ui(ui.ctx(), &english());
+        })
+        .drop_without_applying_deltas();
         assert!(dialog.is_open());
 
         // Clean: positive confirmation, still an open card.
         dialog.present("scan.stl", RepairReport::default());
         assert_eq!(dialog.showing_clean(), Some(true));
-        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
-            .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            dialog.ui(ui.ctx(), &english());
+        })
+        .drop_without_applying_deltas();
         assert!(dialog.is_open());
 
         // Close clears it; drawing while closed is a no-op.
         dialog.close();
         assert!(!dialog.is_open());
-        ctx.run_ui(egui::RawInput::default(), |ui| dialog.ui(ui.ctx()))
-            .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            dialog.ui(ui.ctx(), &english());
+        })
+        .drop_without_applying_deltas();
         assert!(!dialog.is_open());
     }
 
@@ -651,7 +736,7 @@ mod tests {
                 screen_rect: Some(screen),
                 ..Default::default()
             },
-            |ui| dialog.ui(ui.ctx()),
+            |ui| dialog.ui(ui.ctx(), &english()),
         )
         .drop_without_applying_deltas();
         // egui deliberately uses the first frame as a sizing pass for areas;
@@ -662,7 +747,7 @@ mod tests {
                 screen_rect: Some(screen),
                 ..Default::default()
             },
-            |ui| dialog.ui(ui.ctx()),
+            |ui| dialog.ui(ui.ctx(), &english()),
         )
         .drop_without_applying_deltas();
         let rect = ctx.memory(|memory| memory.area_rect(egui::Id::new(REPAIR_MODAL_ID)));
