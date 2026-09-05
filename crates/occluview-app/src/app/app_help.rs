@@ -30,7 +30,7 @@ pub(super) fn show_help_toolbar_toggle(ui: &mut egui::Ui, enabled: bool) -> egui
 
 impl OccluViewApp {
     pub(super) fn show_help_dialog(&mut self, ctx: &egui::Context) {
-        if self.information_dialog != InformationDialog::KeyboardMouse {
+        if self.ui.information_dialog != InformationDialog::KeyboardMouse {
             return;
         }
 
@@ -118,7 +118,7 @@ impl OccluViewApp {
         );
 
         if close || modal_response.should_close() {
-            self.information_dialog = InformationDialog::None;
+            self.ui.information_dialog = InformationDialog::None;
         }
     }
 

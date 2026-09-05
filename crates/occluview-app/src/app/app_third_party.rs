@@ -23,7 +23,7 @@ fn notice_lines() -> &'static [&'static str] {
 
 impl OccluViewApp {
     pub(super) fn show_third_party_window(&mut self, ctx: &egui::Context) {
-        if self.information_dialog != InformationDialog::ThirdPartyNotices {
+        if self.ui.information_dialog != InformationDialog::ThirdPartyNotices {
             return;
         }
         let mut close = false;
@@ -74,7 +74,7 @@ impl OccluViewApp {
         );
 
         if close || modal_response.should_close() {
-            self.information_dialog = InformationDialog::None;
+            self.ui.information_dialog = InformationDialog::None;
         }
     }
 }

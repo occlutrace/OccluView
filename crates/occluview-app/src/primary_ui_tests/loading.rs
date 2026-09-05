@@ -149,7 +149,7 @@ fn incoming_files_raise_existing_window_temporarily() {
         "taskbar attention should be requested for a background handoff and reset after the pulse"
     );
     assert!(
-        loading_source.contains("self.raise_target.try_activate("),
+        loading_source.contains("self.platform.raise_target.try_activate("),
         "the handoff should first attempt a real WM activation (X11) before the \
          focus-stealing-prevention-limited fallback"
     );
@@ -162,11 +162,13 @@ fn incoming_files_use_event_driven_ipc_instead_of_250ms_polling() {
     let single_instance_fallback = include_str!("../single_instance/fallback.rs");
 
     assert!(
-        app_source.contains("single_instance::OpenRequestListener::spawn"),
+        repo_source_file("src/app/state_platform.rs")
+            .contains("single_instance::OpenRequestListener::spawn"),
         "primary instance should start a dedicated open-request listener instead of passive polling"
     );
     assert!(
-        app_source.contains("incoming_open_requests: single_instance::OpenRequestListener"),
+        repo_source_file("src/app/state_platform.rs")
+            .contains("incoming_open_requests: single_instance::OpenRequestListener"),
         "app state should own an explicit incoming-open listener"
     );
     assert!(
@@ -261,7 +263,7 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
 
     let ordered_nonvisual_work = [
         "self.persistence.persist_settings_if_due(ctx);",
-        "self.expire_status_message(ctx);",
+        "self.ui.expire_status_message(ctx);",
         "Self::schedule_linux_open_request_repaint(ctx);",
         "self.process_scene_loads(ctx);",
         "self.poll_sculpt_preparation(ctx);",
@@ -317,7 +319,7 @@ fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
          not proceed straight to a scene-destroying load"
     );
     assert!(
-        loading.contains("self.pending_replace_open = Some(PendingReplaceOpen {"),
+        loading.contains("self.ui.pending_replace_open = Some(PendingReplaceOpen {"),
         "a guarded replace open must be parked, not silently dropped or applied"
     );
     assert!(
@@ -365,11 +367,12 @@ fn replace_guard_suppresses_edit_shortcuts_and_runs_each_frame() {
     // app::open_dialogs tests the predicate itself; what matters here is that
     // the parked open still feeds it and that the hotkeys still ask.
     assert!(
-        app_source.contains("pending_replace: self.pending_replace_open.is_some(),"),
+        repo_source_file("src/app/state_ui.rs")
+            .contains("pending_replace: self.pending_replace_open.is_some(),"),
         "the parked open must still count as a dialog in front"
     );
     assert!(
-        app_source.contains("if self.modal_dialog_open() || self.tools.bridge_split_active()"),
+        app_source.contains("if self.ui.modal_dialog_open() || self.tools.bridge_split_active()"),
         "edit hotkeys must not act behind the open-guard dialog"
     );
     assert!(

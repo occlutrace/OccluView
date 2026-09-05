@@ -32,10 +32,10 @@ impl OccluViewApp {
     #[allow(clippy::too_many_lines)]
     pub(super) fn show_toolbar(&mut self, root_ui: &mut egui::Ui) {
         let ctx = root_ui.ctx().clone();
-        if self.close_guard_open
-            || self.pending_replace_open.is_some()
-            || self.app_error.is_some()
-            || self.information_dialog.is_open()
+        if self.ui.close_guard_open
+            || self.ui.pending_replace_open.is_some()
+            || self.ui.app_error.is_some()
+            || self.ui.information_dialog.is_open()
         {
             egui::Popup::close_id(&ctx, settings_popup_id());
         }
@@ -53,7 +53,7 @@ impl OccluViewApp {
         let mut toggle_measure: Option<MeasureMode> = None;
         let mut toggle_align = false;
         let mut toggle_edit_mesh = false;
-        if !self.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
+        if !self.ui.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
             let consume = |ctx: &egui::Context, shortcut: &egui::KeyboardShortcut| {
                 ctx.input_mut(|input| input.consume_key(shortcut.modifiers, shortcut.logical_key))
             };
@@ -258,13 +258,13 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let help_response = show_help_toolbar_toggle(ui, !self.close_guard_open);
+                        let help_response = show_help_toolbar_toggle(ui, !self.ui.close_guard_open);
                         if help_response.clicked() {
-                            self.information_dialog = InformationDialog::KeyboardMouse;
+                            self.ui.information_dialog = InformationDialog::KeyboardMouse;
                         }
-                        let response = show_settings_toolbar_toggle(ui, !self.close_guard_open);
+                        let response = show_settings_toolbar_toggle(ui, !self.ui.close_guard_open);
                         if response.clicked() {
-                            self.information_dialog = InformationDialog::None;
+                            self.ui.information_dialog = InformationDialog::None;
                         }
                         self.show_settings_popup(&response);
                     });
@@ -358,16 +358,16 @@ impl OccluViewApp {
     }
 
     pub(super) fn app_logo_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
-        if self.app_logo.is_none() {
+        if self.ui.app_logo.is_none() {
             if let Some(color_image) = load_app_logo_color_image() {
-                self.app_logo = Some(ctx.load_texture(
+                self.ui.app_logo = Some(ctx.load_texture(
                     "occluview-app-logo",
                     color_image,
                     egui::TextureOptions::LINEAR,
                 ));
             }
         }
-        self.app_logo.as_ref()
+        self.ui.app_logo.as_ref()
     }
 
     /// The native Open dialog, shared by the toolbar Open button, the Ctrl+O
@@ -386,7 +386,7 @@ impl OccluViewApp {
             .ctx()
             .pointer_hover_pos()
             .is_some_and(|pointer| viewport_rect.contains(pointer));
-        if self.status_message.is_none()
+        if self.ui.status_message.is_none()
             && self.document.active_load.is_none()
             && !pointer_over_viewport
         {
@@ -408,7 +408,7 @@ impl OccluViewApp {
                         .truncate(),
                     );
                 }
-                if let Some(message) = &self.status_message {
+                if let Some(message) = &self.ui.status_message {
                     let response = ui.add(
                         egui::Label::new(egui::RichText::new(message).color(ink).size(11.5))
                             .truncate(),
@@ -426,8 +426,8 @@ impl OccluViewApp {
         intercept_unsaved_close_request(
             ctx,
             self.document.has_unsaved_mesh_edits(),
-            self.close_confirmed,
-            &mut self.close_guard_open,
+            self.ui.close_confirmed,
+            &mut self.ui.close_guard_open,
         );
     }
 
@@ -435,7 +435,7 @@ impl OccluViewApp {
     /// "Save…" exports each edited layer before closing; the destructive path
     /// re-issues the close only after explicit consent.
     pub(super) fn show_unsaved_close_guard(&mut self, ctx: &egui::Context) {
-        if !self.close_guard_open {
+        if !self.ui.close_guard_open {
             return;
         }
         let edited_count = self.document.unsaved_edit_layer_ids.len().max(1);
@@ -461,19 +461,19 @@ impl OccluViewApp {
         match response.action {
             Some(GuardDialogAction::Save) => do_save = true,
             Some(GuardDialogAction::Destructive) => {
-                self.close_confirmed = true;
-                self.close_guard_open = false;
+                self.ui.close_confirmed = true;
+                self.ui.close_guard_open = false;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            Some(GuardDialogAction::Cancel) => self.close_guard_open = false,
+            Some(GuardDialogAction::Cancel) => self.ui.close_guard_open = false,
             None => {}
         }
         if do_save {
             match self.save_edited_layers_flow() {
                 super::app_mesh_export::SaveEditedLayersOutcome::AllSaved
                 | super::app_mesh_export::SaveEditedLayersOutcome::NothingToSave => {
-                    self.close_confirmed = true;
-                    self.close_guard_open = false;
+                    self.ui.close_confirmed = true;
+                    self.ui.close_guard_open = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 // A cancelled dialog or failed write keeps the app open —
@@ -487,12 +487,12 @@ impl OccluViewApp {
     /// live edit session is dirty or unsaved edits exist. Mirrors the
     /// close-guard wording: "Save…" writes each edited layer then opens,
     pub(super) fn guard_pending_replace_open(&mut self, ctx: &egui::Context) {
-        if self.pending_replace_open.is_none() {
+        if self.ui.pending_replace_open.is_none() {
             return;
         }
         // Never stack over the close guard; it takes precedence (the app is
         // trying to exit). The parked open waits until that resolves.
-        if self.close_guard_open {
+        if self.ui.close_guard_open {
             return;
         }
         let session_layer = self.active_session_layer_label();
@@ -527,11 +527,11 @@ impl OccluViewApp {
 
         if do_cancel {
             // Drop the parked open; keep the current scene and session.
-            self.pending_replace_open = None;
+            self.ui.pending_replace_open = None;
             return;
         }
         if do_discard {
-            if let Some(pending) = self.pending_replace_open.take() {
+            if let Some(pending) = self.ui.pending_replace_open.take() {
                 self.replace_paths_confirmed(&pending.paths, pending.source);
             }
             return;
@@ -540,7 +540,7 @@ impl OccluViewApp {
             match self.save_edited_layers_flow() {
                 super::app_mesh_export::SaveEditedLayersOutcome::AllSaved
                 | super::app_mesh_export::SaveEditedLayersOutcome::NothingToSave => {
-                    if let Some(pending) = self.pending_replace_open.take() {
+                    if let Some(pending) = self.ui.pending_replace_open.take() {
                         self.replace_paths_confirmed(&pending.paths, pending.source);
                     }
                 }
@@ -568,7 +568,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn show_error_dialog(&mut self, ctx: &egui::Context) {
-        let Some(error) = self.app_error.clone() else {
+        let Some(error) = self.ui.app_error.clone() else {
             return;
         };
         let mut open = true;
@@ -613,7 +613,7 @@ impl OccluViewApp {
                 });
             });
         if !open || close_clicked {
-            self.app_error = None;
+            self.ui.app_error = None;
         }
     }
 }

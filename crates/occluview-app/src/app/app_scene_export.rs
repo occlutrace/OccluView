@@ -23,7 +23,7 @@ impl OccluViewApp {
             return;
         };
         let Some(mesh) = merged_scene_mesh(scene.as_ref()) else {
-            self.status_message = Some("Nothing visible to save".into());
+            self.ui.status_message = Some("Nothing visible to save".into());
             return;
         };
         let dropped_texture = scene
@@ -47,7 +47,7 @@ impl OccluViewApp {
         };
         let path = normalize_layer_export_path(selected, MeshWriteFormat::PlyBinaryLittleEndian);
         let Ok(format) = mesh_export_format_from_path(&path) else {
-            self.status_message = Some("Unsupported output format".into());
+            self.ui.status_message = Some("Unsupported output format".into());
             return;
         };
 
@@ -70,12 +70,12 @@ impl OccluViewApp {
                 };
                 self.document.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
-                self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
+                self.ui.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
             }
             Err(error) => {
                 let summary = format!("Could not save the scene: {error}");
-                self.status_message = Some(summary.clone());
-                self.app_error = Some(AppErrorDialog {
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not save the scene".to_string(),
                     summary,
                     details: format!(
@@ -94,7 +94,7 @@ impl OccluViewApp {
             return;
         };
         if !scene.meshes().iter().any(|entry| entry.visible) {
-            self.status_message = Some("Nothing visible to save".into());
+            self.ui.status_message = Some("Nothing visible to save".into());
             return;
         }
         let mut dialog = rfd::FileDialog::new();
@@ -190,7 +190,7 @@ impl OccluViewApp {
                 "; {renamed} {files} renamed to keep what was already there"
             );
         }
-        self.status_message = Some(status);
+        self.ui.status_message = Some(status);
     }
 }
 

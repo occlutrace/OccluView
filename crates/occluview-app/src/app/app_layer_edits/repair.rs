@@ -36,7 +36,7 @@ pub(super) fn apply_layer_repair_action_with_status(
         .edit_mode
         .begin_layer_edit(entry, EditModeCommand::RepairMesh)
     else {
-        app.status_message = Some("Layer edit already in progress".to_string());
+        app.ui.status_message = Some("Layer edit already in progress".to_string());
         return LayerContextApply::default();
     };
 
@@ -47,21 +47,21 @@ pub(super) fn apply_layer_repair_action_with_status(
             app.document.mark_mesh_edits_unsaved(request.layer_id);
             let _ = app.document.edit_mode.finish_layer_edit_success(token);
             let status = repaired_status(&layer_label, &report);
-            app.status_message = Some(with_undoable_note(app, status));
+            app.ui.status_message = Some(with_undoable_note(app, status));
             // The toast above is the glance; the card is the detail — one human
             // line per non-zero pass, kept open until the operator dismisses it.
-            app.repair_report.present(&layer_label, report);
+            app.ui.repair_report.present(&layer_label, report);
             structural_scene_apply()
         }
         Ok(LayerRepairOutcome::Clean(report)) => {
             // Honest no-op: mesh untouched, snapshot discarded, session not
             // dirtied — but the operator still hears about open rims left.
             let _ = app.document.edit_mode.finish_layer_edit_noop(token);
-            app.status_message = Some(clean_status(&layer_label, &report));
+            app.ui.status_message = Some(clean_status(&layer_label, &report));
             // Positive confirmation, matching the convention dental CAD
             // software uses: a clean scan still gets a card ("Nothing to
             // repair — mesh is clean"), not silence.
-            app.repair_report.present(&layer_label, report);
+            app.ui.repair_report.present(&layer_label, report);
             LayerContextApply::default()
         }
         Ok(LayerRepairOutcome::Stale) => {
@@ -74,8 +74,8 @@ pub(super) fn apply_layer_repair_action_with_status(
                 .document
                 .edit_mode
                 .finish_layer_edit_error(token, error.to_string());
-            app.status_message = Some(summary.clone());
-            app.app_error = Some(AppErrorDialog {
+            app.ui.status_message = Some(summary.clone());
+            app.ui.app_error = Some(AppErrorDialog {
                 title: "Could not edit layer".to_string(),
                 summary,
                 details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),

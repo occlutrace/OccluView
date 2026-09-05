@@ -36,7 +36,7 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         layer_count: usize,
     ) {
-        if self.layers_window_layer_count == Some(layer_count) {
+        if self.ui.layers_window_layer_count == Some(layer_count) {
             return;
         }
         let wanted = layers_overlay::layer_overlay_desired_height(layer_count)
@@ -44,7 +44,7 @@ impl OccluViewApp {
             + layers_overlay::LAYER_OVERLAY_BOTTOM_RESERVE_PX;
         let deficit = wanted - viewport_rect.height();
         if deficit <= 0.0 {
-            self.layers_window_layer_count = Some(layer_count);
+            self.ui.layers_window_layer_count = Some(layer_count);
             return;
         }
         // A maximized/fullscreen window shrinks back out of its state if a
@@ -52,7 +52,7 @@ impl OccluViewApp {
         // in-panel scrollbar covers the difference.
         let viewport_info = ctx.input(|input| input.viewport().clone());
         if viewport_info.maximized == Some(true) || viewport_info.fullscreen == Some(true) {
-            self.layers_window_layer_count = Some(layer_count);
+            self.ui.layers_window_layer_count = Some(layer_count);
             return;
         }
         // screen_rect unavailable (first frame): leave the count unrecorded so
@@ -60,7 +60,7 @@ impl OccluViewApp {
         let Some(screen) = ctx.input(|input| input.raw.screen_rect) else {
             return;
         };
-        self.layers_window_layer_count = Some(layer_count);
+        self.ui.layers_window_layer_count = Some(layer_count);
         let target_height = (screen.height() + deficit).min(LAYER_WINDOW_MAX_HEIGHT_PX);
         if target_height > screen.height() + 1.0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
@@ -261,7 +261,7 @@ impl OccluViewApp {
         if response.secondary_clicked()
             && discard_lasso_outline(&mut self.document.mesh_selection_drag)
         {
-            self.status_message = Some("Lasso outline dropped".to_string());
+            self.ui.status_message = Some("Lasso outline dropped".to_string());
             ctx.request_repaint();
         }
         let menu_id = Self::viewport_menu_target_id();
@@ -370,7 +370,7 @@ impl OccluViewApp {
             .mesh
             .name()
             .map_or_else(|| format!("layer {}", hit.layer_index + 1), String::from);
-        self.status_message = Some(format!(
+        self.ui.status_message = Some(format!(
             "Hidden: {label} (Shift+Ctrl+Middle click restores)"
         ));
         self.remember_visibility_changes(&scene, &draft);
@@ -416,13 +416,13 @@ impl OccluViewApp {
             .remove(&hit.layer_id)
         {
             entry.opacity = previous;
-            self.status_message = Some(format!("Opaque again: {label}"));
+            self.ui.status_message = Some(format!("Opaque again: {label}"));
         } else {
             self.document
                 .translucent_layer_restore
                 .insert(hit.layer_id, entry.opacity);
             entry.opacity = TRANSLUCENT_OPACITY;
-            self.status_message = Some(format!(
+            self.ui.status_message = Some(format!(
                 "Translucent: {label} (Shift+Middle click restores)"
             ));
         }
@@ -459,12 +459,12 @@ impl OccluViewApp {
                 .mesh
                 .name()
                 .map_or_else(|| "layer".to_string(), String::from);
-            self.status_message = Some(format!("Restored: {label}"));
+            self.ui.status_message = Some(format!("Restored: {label}"));
             self.update_scene_materials(draft);
             ctx.request_repaint();
             return;
         }
-        self.status_message = Some("No hidden layers to restore".to_string());
+        self.ui.status_message = Some("No hidden layers to restore".to_string());
         ctx.request_repaint();
     }
 }

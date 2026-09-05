@@ -27,7 +27,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
         .map_or_else(|| "layer".to_string(), |(_, label)| label);
 
     if selection_covers_whole_mesh(scene, &request, &app.document.edit_mode) {
-        app.status_message = Some(match request.action {
+        app.ui.status_message = Some(match request.action {
             LayerContextAction::CropToSelectedFaces => {
                 format!("Selection already covers the whole mesh: {layer_label}")
             }
@@ -42,7 +42,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     // scene for the undo snapshot — the refusal needs no snapshot at all.
     if request.action == LayerContextAction::SeparateSelectedComponents {
         if let Some(parts) = separate_component_overflow(scene, &request, &app.document.edit_mode) {
-            app.status_message = Some(format!(
+            app.ui.status_message = Some(format!(
                 "Selection splits into {parts} parts — refine the selection: {layer_label}"
             ));
             return LayerContextApply::default();
@@ -72,14 +72,14 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                     }
                 }
                 let status = layer_edit_status(&layer_label, request.action, None);
-                app.status_message = Some(with_undoable_note(app, status));
+                app.ui.status_message = Some(with_undoable_note(app, status));
             } else {
                 let has_selection = app
                     .document
                     .edit_mode
                     .selected_faces_for_layer(request.layer_id)
                     .is_some_and(|selection| selection.selected_count() > 0);
-                app.status_message = Some(
+                app.ui.status_message = Some(
                     if let Some(parts) =
                         separate_component_overflow(scene, &request, &app.document.edit_mode)
                     {
@@ -97,8 +97,8 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
         }
         Err(error) => {
             let summary = format!("Could not edit selection: {error}");
-            app.status_message = Some(summary.clone());
-            app.app_error = Some(AppErrorDialog {
+            app.ui.status_message = Some(summary.clone());
+            app.ui.app_error = Some(AppErrorDialog {
                 title: "Could not edit selection".to_string(),
                 summary,
                 details: format!(

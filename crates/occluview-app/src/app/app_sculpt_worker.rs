@@ -90,7 +90,7 @@ impl OccluViewApp {
             self.flush_sculpt_update(update);
         }
         if let Some(failure) = error {
-            self.status_message = Some(format!(
+            self.ui.status_message = Some(format!(
                 "Sculpt worker stopped: {}",
                 describe_sculpt_failure(&failure)
             ));
@@ -251,7 +251,7 @@ impl OccluViewApp {
             .as_ref()
             .is_none_or(|worker| !worker.finish_stroke())
         {
-            self.status_message = Some("Sculpt worker is unavailable".to_string());
+            self.ui.status_message = Some("Sculpt worker is unavailable".to_string());
         }
         ctx.request_repaint();
     }
@@ -281,7 +281,7 @@ impl OccluViewApp {
             before,
             EditModeCommand::Sculpt,
         ) else {
-            self.status_message = Some("Layer edit already in progress".to_string());
+            self.ui.status_message = Some("Layer edit already in progress".to_string());
             return false;
         };
         drop(scene);
@@ -294,7 +294,7 @@ impl OccluViewApp {
             // otherwise is worse than saying nothing: they find out by pressing
             // it, on work they have already moved on from. Every other mesh-edit
             // status goes through `with_undoable_note` for the same reason.
-            self.status_message = Some(
+            self.ui.status_message = Some(
                 if self.document.edit_mode.last_edit_undoable() {
                     "Sculpt applied (Ctrl+Z undoes)"
                 } else {

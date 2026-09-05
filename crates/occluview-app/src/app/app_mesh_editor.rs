@@ -27,7 +27,7 @@ impl OccluViewApp {
                 });
         if selected_all {
             self.render.invalidation.selection_changed();
-            self.status_message = self.document.scene.as_ref().map(|scene| {
+            self.ui.status_message = self.document.scene.as_ref().map(|scene| {
                 format!(
                     "Selected {} faces",
                     self.document.edit_mode.visible_selected_face_count(scene)
@@ -141,7 +141,7 @@ impl OccluViewApp {
             .collect::<Vec<_>>();
         let target_layers = selected_layers;
         if target_layers.is_empty() {
-            self.status_message = Some("Select mesh faces first".to_string());
+            self.ui.status_message = Some("Select mesh faces first".to_string());
             return;
         }
         let ids_before = scene
@@ -170,7 +170,7 @@ impl OccluViewApp {
                 for layer_id in target_layers.iter().chain(&spawned) {
                     self.document.mark_mesh_edits_unsaved(*layer_id);
                 }
-                self.status_message = Some(format!(
+                self.ui.status_message = Some(format!(
                     "{} on {} visible layer{}",
                     batch_action_label(layer_action),
                     target_layers.len(),
@@ -178,15 +178,15 @@ impl OccluViewApp {
                 ));
             }
             Ok(_) => {
-                self.status_message = Some(
+                self.ui.status_message = Some(
                     "No changes: refine the selection; hidden layers stay untouched".to_string(),
                 );
                 ctx.request_repaint();
             }
             Err(error) => {
                 let summary = format!("Could not edit selection: {error}");
-                self.status_message = Some(summary.clone());
-                self.app_error = Some(AppErrorDialog {
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
                     title: "Could not edit selection".to_string(),
                     summary,
                     details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
@@ -210,7 +210,7 @@ impl OccluViewApp {
         self.tools.sculpt.disarm();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
-        self.status_message = Some(if self.document.edit_mode.lasso_armed() {
+        self.ui.status_message = Some(if self.document.edit_mode.lasso_armed() {
             "Lasso armed: click or drag to outline; Enter, double-click, \
              or click the start closes"
                 .to_string()
@@ -235,7 +235,7 @@ impl OccluViewApp {
         self.tools.sculpt.disarm();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
-        self.status_message = Some(if self.document.edit_mode.object_mode() {
+        self.ui.status_message = Some(if self.document.edit_mode.object_mode() {
             "Object select: click an object to select it whole".to_string()
         } else {
             "Object select off".to_string()
@@ -284,7 +284,7 @@ impl OccluViewApp {
                     .is_some_and(|scene| self.document.edit_mode.clear_visible_selections(scene))
                 {
                     self.render.invalidation.selection_changed();
-                    self.status_message = Some("Selection cleared".to_string());
+                    self.ui.status_message = Some("Selection cleared".to_string());
                     ctx.request_repaint();
                 }
                 true
@@ -308,7 +308,7 @@ impl OccluViewApp {
                     .set_through_mesh(!self.document.edit_mode.through_mesh())
                 {
                     self.render.invalidation.overlay_tools_changed();
-                    self.status_message = Some(if self.document.edit_mode.through_mesh() {
+                    self.ui.status_message = Some(if self.document.edit_mode.through_mesh() {
                         "Through-mesh selection".to_string()
                     } else {
                         "Surface selection".to_string()
@@ -342,7 +342,7 @@ impl OccluViewApp {
     }
 
     fn update_visible_selection_status(&mut self) {
-        self.status_message = self.document.scene.as_ref().map(|scene| {
+        self.ui.status_message = self.document.scene.as_ref().map(|scene| {
             let faces = self.document.edit_mode.visible_selected_face_count(scene);
             let layers = self.document.edit_mode.visible_selected_layer_count(scene);
             if layers > 1 {
@@ -360,7 +360,7 @@ impl OccluViewApp {
         self.commit_sculpt_stroke(ctx);
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.finish_requested = true;
-            self.status_message = Some("Finishing sculpt stroke...".to_string());
+            self.ui.status_message = Some("Finishing sculpt stroke...".to_string());
             ctx.request_repaint();
             return;
         }
@@ -372,7 +372,7 @@ impl OccluViewApp {
         self.document.edit_mode.finish_edit_session();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.selection_changed();
-        self.status_message = Some("Mesh Editing session applied".to_string());
+        self.ui.status_message = Some("Mesh Editing session applied".to_string());
         ctx.request_repaint();
     }
 
@@ -389,7 +389,7 @@ impl OccluViewApp {
             return;
         };
         self.commit_scene_draft(current_scene.as_deref(), baseline, ctx);
-        self.status_message = Some("Mesh Editing session reverted".to_string());
+        self.ui.status_message = Some("Mesh Editing session reverted".to_string());
     }
 
     /// Undo (`redo == false`) or redo (`redo == true`) the last mesh edit and
@@ -402,7 +402,7 @@ impl OccluViewApp {
         self.commit_sculpt_stroke(ctx);
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.pending_history = Some(redo);
-            self.status_message = Some("Finishing sculpt before history change...".to_string());
+            self.ui.status_message = Some("Finishing sculpt before history change...".to_string());
             ctx.request_repaint();
             return;
         }
@@ -670,7 +670,7 @@ impl OccluViewApp {
             }
             LassoEvent::Drop => {
                 self.document.mesh_selection_drag = None;
-                self.status_message = Some("Lasso outline dropped".to_string());
+                self.ui.status_message = Some("Lasso outline dropped".to_string());
                 ctx.request_repaint();
                 true
             }
@@ -681,7 +681,7 @@ impl OccluViewApp {
                     && (enter || double_clicked)
                     && point_count < lasso_capture::MIN_LASSO_POINTS
                 {
-                    self.status_message = Some("Lasso needs at least 3 points".to_string());
+                    self.ui.status_message = Some("Lasso needs at least 3 points".to_string());
                 }
                 if outline_active {
                     // Keep the rubber-band segment tracking the live cursor.

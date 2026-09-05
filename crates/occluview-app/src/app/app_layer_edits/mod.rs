@@ -44,7 +44,7 @@ pub(super) fn apply_layer_context_action_with_status(
     request: LayerContextRequest,
 ) -> LayerContextApply {
     if app.tools.bridge_split_active() {
-        app.status_message = Some("Finish or cancel Bridge split first".to_string());
+        app.ui.status_message = Some("Finish or cancel Bridge split first".to_string());
         return LayerContextApply::default();
     }
 
@@ -97,7 +97,7 @@ pub(super) fn apply_layer_context_action_with_status(
     };
     let apply = layer_actions::apply_layer_context_action(scene, request);
     if apply.scene_changed {
-        app.status_message = Some(format!("Removed layer: {removed_label}"));
+        app.ui.status_message = Some(format!("Removed layer: {removed_label}"));
     }
     apply
 }
@@ -125,9 +125,9 @@ fn begin_face_selection_with_status(
         // mesh-editor action. This removes the one-time weld/adjacency wait
         // from the first sculpt stroke without blocking the editor UI.
         app.prepare_armed_sculpt_session();
-        app.status_message = Some(format!("Face selection: {layer_label}"));
+        app.ui.status_message = Some(format!("Face selection: {layer_label}"));
     } else {
-        app.status_message = Some(format!("Cannot select faces: {layer_label}"));
+        app.ui.status_message = Some(format!("Cannot select faces: {layer_label}"));
     }
 }
 

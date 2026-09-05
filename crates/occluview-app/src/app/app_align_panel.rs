@@ -31,12 +31,12 @@ impl OccluViewApp {
         // Tracked here as well as in the camera path, because a frame this
         // method consumes never reaches the camera path at all.
         if pressed {
-            self.viewport_secondary_gesture_moved_since_press = false;
+            self.ui.viewport_secondary_gesture_moved_since_press = false;
         }
         if down && motion.length_sq() > f32::EPSILON {
-            self.viewport_secondary_gesture_moved_since_press = true;
+            self.ui.viewport_secondary_gesture_moved_since_press = true;
         }
-        if !response.secondary_clicked() || self.viewport_secondary_gesture_moved_since_press {
+        if !response.secondary_clicked() || self.ui.viewport_secondary_gesture_moved_since_press {
             return false;
         }
         if !self.take_align_arrow_back() {
