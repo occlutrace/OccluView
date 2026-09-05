@@ -76,13 +76,13 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
     ) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         self.grow_window_for_layers(ctx, viewport_rect, scene.meshes().len());
 
         let paths = self.current_paths.clone();
-        let active_layer_id = self.edit_mode.selected_layer_id();
+        let active_layer_id = self.document.edit_mode.selected_layer_id();
         let changes =
             layers_overlay::show(ui, viewport_rect, scene.as_ref(), &paths, active_layer_id);
         // Ownership is handed over, not borrowed: the material-only path
@@ -151,7 +151,7 @@ impl OccluViewApp {
     /// The assertion below makes a future caller that holds one fail a test
     /// rather than silently cost tens of milliseconds a frame.
     fn apply_layer_material_edits(&mut self, edits: &[LayerRowChange], ctx: &egui::Context) {
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         let mut hidden: Vec<occluview_core::SceneMeshId> = Vec::new();
@@ -172,8 +172,8 @@ impl OccluViewApp {
             return;
         }
         for layer in hidden {
-            self.hidden_layer_stack.retain(|id| *id != layer);
-            self.hidden_layer_stack.push(layer);
+            self.document.hidden_layer_stack.retain(|id| *id != layer);
+            self.document.hidden_layer_stack.push(layer);
         }
         self.mark_scene_materials_changed();
         ctx.request_repaint();
@@ -190,16 +190,19 @@ impl OccluViewApp {
                 .find(|candidate| candidate.id() == entry.id())
                 .map(|candidate| candidate.visible);
             match (previous, entry.visible) {
-                (Some(true), false) if !self.hidden_layer_stack.contains(&entry.id()) => {
-                    self.hidden_layer_stack.push(entry.id());
+                (Some(true), false) if !self.document.hidden_layer_stack.contains(&entry.id()) => {
+                    self.document.hidden_layer_stack.push(entry.id());
                 }
                 (Some(false), true) => {
-                    self.hidden_layer_stack.retain(|id| *id != entry.id());
+                    self.document
+                        .hidden_layer_stack
+                        .retain(|id| *id != entry.id());
                 }
                 _ => {}
             }
         }
-        self.hidden_layer_stack
+        self.document
+            .hidden_layer_stack
             .retain(|id| after.meshes().iter().any(|entry| entry.id() == *id));
     }
 
@@ -216,7 +219,7 @@ impl OccluViewApp {
         response: &egui::Response,
     ) -> Option<layers_overlay::LayerContextMenuTarget> {
         let camera = self.render.camera?;
-        let scene = self.scene.as_ref()?;
+        let scene = self.document.scene.as_ref()?;
         let pointer = response.interact_pointer_pos()?;
         let hit = pick_scene_hit(&camera, response.rect, pointer, scene)?;
         let entry = scene.meshes().get(hit.layer_index)?;
@@ -251,7 +254,9 @@ impl OccluViewApp {
         // the same layer menu. One click therefore never leaves stale lasso
         // state behind or forces the operator to right-click twice to switch
         // the editable mesh. RMB-drag orbit remains untouched.
-        if response.secondary_clicked() && discard_lasso_outline(&mut self.mesh_selection_drag) {
+        if response.secondary_clicked()
+            && discard_lasso_outline(&mut self.document.mesh_selection_drag)
+        {
             self.status_message = Some("Lasso outline dropped".to_string());
             ctx.request_repaint();
         }
@@ -263,6 +268,7 @@ impl OccluViewApp {
             ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
         if let Some(target) = &stored {
             let still_valid = self
+                .document
                 .scene
                 .as_ref()
                 .and_then(|scene| scene.meshes().get(target.index))
@@ -309,7 +315,7 @@ impl OccluViewApp {
         let Some(request) = request else {
             return;
         };
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let paths = self.current_paths.clone();
@@ -336,7 +342,7 @@ impl OccluViewApp {
             return;
         }
         let camera = self.render.camera;
-        let scene = self.scene.clone();
+        let scene = self.document.scene.clone();
         let pointer = response.interact_pointer_pos();
         let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
             return;
@@ -380,7 +386,7 @@ impl OccluViewApp {
             return;
         }
         let camera = self.render.camera;
-        let scene = self.scene.clone();
+        let scene = self.document.scene.clone();
         let pointer = response.interact_pointer_pos();
         let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
             return;
@@ -400,11 +406,16 @@ impl OccluViewApp {
             .mesh
             .name()
             .map_or_else(|| format!("layer {}", hit.layer_index + 1), String::from);
-        if let Some(previous) = self.translucent_layer_restore.remove(&hit.layer_id) {
+        if let Some(previous) = self
+            .document
+            .translucent_layer_restore
+            .remove(&hit.layer_id)
+        {
             entry.opacity = previous;
             self.status_message = Some(format!("Opaque again: {label}"));
         } else {
-            self.translucent_layer_restore
+            self.document
+                .translucent_layer_restore
                 .insert(hit.layer_id, entry.opacity);
             entry.opacity = TRANSLUCENT_OPACITY;
             self.status_message = Some(format!(
@@ -421,11 +432,11 @@ impl OccluViewApp {
         if self.bridge_split_active() {
             return;
         }
-        let Some(scene) = self.scene.clone() else {
-            self.hidden_layer_stack.clear();
+        let Some(scene) = self.document.scene.clone() else {
+            self.document.hidden_layer_stack.clear();
             return;
         };
-        while let Some(layer_id) = self.hidden_layer_stack.pop() {
+        while let Some(layer_id) = self.document.hidden_layer_stack.pop() {
             let mut draft = scene.as_ref().clone();
             let Some(entry) = draft
                 .meshes_mut()

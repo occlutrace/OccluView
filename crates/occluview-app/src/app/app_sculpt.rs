@@ -161,7 +161,7 @@ impl OccluViewApp {
         if self.sculpt.armed.is_some() {
             // Arming a brush means the Sculpt tab: show it and drop selection.
             self.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
-            self.mesh_selection_drag = None;
+            self.document.mesh_selection_drag = None;
             // Prepare the target off the UI thread. Selection gesture state is
             // intentionally preserved; sculpt owns LMB while armed and must
             // not silently turn Lasso into Marquee.
@@ -210,7 +210,7 @@ impl OccluViewApp {
     /// Edit-Mesh-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
     /// Consumed only while a session is open and no text field has focus.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
-        if !self.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
+        if !self.document.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
             return false;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)) {
@@ -241,7 +241,7 @@ impl OccluViewApp {
         pan_drag_active: bool,
     ) -> bool {
         self.poll_sculpt_preparation(ctx);
-        if !self.edit_mode.has_active_session() {
+        if !self.document.edit_mode.has_active_session() {
             if self.sculpt.armed.is_some() || self.sculpt.stroke.is_some() {
                 self.abort_sculpt_stroke();
                 self.sculpt.disarm();
@@ -365,10 +365,11 @@ impl OccluViewApp {
 
     /// Prepare the target without requiring a successful BVH hit first.
     fn ensure_sculpt_session_for_target(&mut self) -> bool {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
-        let Some((index, layer_id)) = sculpt_target(&scene, self.edit_mode.session_layer_id())
+        let Some((index, layer_id)) =
+            sculpt_target(&scene, self.document.edit_mode.session_layer_id())
         else {
             return false;
         };
@@ -376,7 +377,7 @@ impl OccluViewApp {
     }
 
     fn ensure_sculpt_session_for_hit(&mut self, hit: &ScenePickHit) -> bool {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
@@ -413,10 +414,11 @@ impl OccluViewApp {
     /// available. The one-time O(n) weld/adjacency/grid build stays off the UI
     /// thread and normally completes before the first brush press.
     pub(super) fn prepare_armed_sculpt_session(&mut self) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let target = self
+            .document
             .edit_mode
             .session_layer_id()
             .and_then(|layer_id| {
@@ -443,13 +445,13 @@ impl OccluViewApp {
         };
         match result {
             Ok(session) => {
-                let valid = self.scene.as_ref().is_some_and(|scene| {
+                let valid = self.document.scene.as_ref().is_some_and(|scene| {
                     scene.meshes().iter().any(|entry| {
                         entry.id() == session.layer_id
                             && entry.mesh.topology_id() == session.topology_id
                     })
                 });
-                if valid && self.edit_mode.has_active_session() {
+                if valid && self.document.edit_mode.has_active_session() {
                     self.sculpt.worker = Some(SculptWorker::spawn(session));
                     if self.sculpt.armed.is_some() {
                         self.status_message = None;
@@ -492,7 +494,10 @@ impl OccluViewApp {
         ctx: &egui::Context,
         over_viewport: bool,
     ) -> bool {
-        if !over_viewport || self.sculpt.armed.is_none() || !self.edit_mode.has_active_session() {
+        if !over_viewport
+            || self.sculpt.armed.is_none()
+            || !self.document.edit_mode.has_active_session()
+        {
             return false;
         }
         if !apply_sculpt_wheel_settings(ctx) {
@@ -509,7 +514,7 @@ impl OccluViewApp {
         pointer: egui::Pos2,
     ) -> Option<ScenePickHit> {
         let camera = self.render.camera?;
-        let scene = self.scene.as_ref()?;
+        let scene = self.document.scene.as_ref()?;
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
         // The preparation worker warms this exact layer. Never allow a cold
@@ -523,7 +528,8 @@ impl OccluViewApp {
     }
 
     fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
-        sculpt_target(scene, self.edit_mode.session_layer_id()).map(|(_, layer_id)| layer_id)
+        sculpt_target(scene, self.document.edit_mode.session_layer_id())
+            .map(|(_, layer_id)| layer_id)
     }
 
     /// The brush cursor is deliberately screen-space: a surface-projected ring
@@ -534,7 +540,7 @@ impl OccluViewApp {
         let Some(kind) = self.sculpt.armed else {
             return;
         };
-        if !self.edit_mode.has_active_session() {
+        if !self.document.edit_mode.has_active_session() {
             return;
         }
         let Some(camera) = self.render.camera.as_ref() else {

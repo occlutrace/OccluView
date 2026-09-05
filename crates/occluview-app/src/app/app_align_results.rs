@@ -228,7 +228,7 @@ impl OccluViewApp {
     /// another tool may hold the edit state machine. The caller has to know,
     /// because it is about to tell the operator the scan was aligned.
     fn commit_align_pose(&mut self, pose: Rigid) -> bool {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(moving_id) = self.align.tool.moving_layer() else {
@@ -239,7 +239,8 @@ impl OccluViewApp {
             return false;
         }
         let Some(token) =
-            self.edit_mode
+            self.document
+                .edit_mode
                 .begin_scene_edit(&next, moving_id, EditModeCommand::MoveLayer)
         else {
             return false;
@@ -251,14 +252,16 @@ impl OccluViewApp {
         {
             entry.transform = pose.to_affine();
         }
-        self.edit_mode.finish_scene_edit_success(token, &next);
+        self.document
+            .edit_mode
+            .finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
         // An aligned scan is unsaved work, exactly as a hand-dragged one is. The
         // viewer has no project file, so the pose IS the work product — and the
         // close guard reads this one flag. Without it the app closed without
         // asking and the whole alignment was gone: the fit the operator had just
         // watched land, and every fit before it.
-        self.mark_mesh_edits_unsaved(moving_id);
+        self.document.mark_mesh_edits_unsaved(moving_id);
         true
     }
 
@@ -429,7 +432,7 @@ mod tests {
             "a fit that cannot be undone is not an edit, it is an accident"
         );
         assert!(
-            commit.contains("self.mark_mesh_edits_unsaved(moving_id)"),
+            commit.contains("self.document.mark_mesh_edits_unsaved(moving_id)"),
             "an aligned scan that the close guard cannot see is an alignment the \
              operator loses without being asked"
         );

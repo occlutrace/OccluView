@@ -206,7 +206,7 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         viewport_source.contains("drop(scene);"),
         "the handle must be released before the in-place material edit"
     );
-    let state = repo_source_file("src/app/state.rs");
+    let state = repo_source_file("src/app/state_document.rs");
     assert!(
         state.contains("let handles = Arc::strong_count(scene);"),
         "a future caller that holds a second handle must be caught"
@@ -341,7 +341,7 @@ fn unsaved_mesh_edits_guard_the_window_close() {
     let guard = function_source(&dialogs, "pub(super) fn show_unsaved_close_guard(");
 
     assert!(
-        intercept.contains("self.has_unsaved_mesh_edits()")
+        intercept.contains("self.document.has_unsaved_mesh_edits()")
             && intercept.contains("intercept_unsaved_close_request("),
         "closing with unsaved mesh edits must be intercepted, not silently lost"
     );
@@ -357,7 +357,7 @@ fn unsaved_mesh_edits_guard_the_window_close() {
         "src/app/app_layer_edits/undo_redo.rs",
     ] {
         assert!(
-            repo_source_file(file).contains("app.mark_mesh_edits_unsaved("),
+            repo_source_file(file).contains("app.document.mark_mesh_edits_unsaved("),
             "{file} must mark unsaved mesh edits per layer so the save flow \
              knows exactly what to export"
         );
@@ -468,7 +468,7 @@ fn the_unsaved_edits_flag_stays_derived() {
     // Derived from the layer set, not kept beside it: a parallel `bool` takes
     // four assignments to maintain, the export path skipped one, and the close
     // guard was told a hidden layer's edits were already on disk.
-    let state = repo_source_file("src/app/state.rs");
+    let state = repo_source_file("src/app/state_document.rs");
     assert!(
         state.contains("pub(super) fn has_unsaved_mesh_edits(&self) -> bool"),
         "the unsaved-edits answer should be computed from the layer set"

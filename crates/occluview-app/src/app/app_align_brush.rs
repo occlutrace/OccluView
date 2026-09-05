@@ -98,7 +98,7 @@ impl OccluViewApp {
         // below. `Arc::make_mut` copies the whole case while a second handle
         // is alive, and this is a per-frame path.
         let (layer_id, painting, changed) = {
-            let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
+            let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
             let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
@@ -242,7 +242,7 @@ impl OccluViewApp {
             // so taking both up front doubles peak transient memory to save
             // nothing.
             let taken = {
-                let Some(scene) = self.scene.clone() else {
+                let Some(scene) = self.document.scene.clone() else {
                     return;
                 };
                 self.side_layer(side)
@@ -338,7 +338,7 @@ impl OccluViewApp {
     /// to answer would be a two-million-byte scan per frame, so the counts are
     /// maintained where the masks are edited and this only reads them.
     pub(super) fn align_marked_fraction(&self) -> Option<f32> {
-        let scene = self.scene.as_ref()?;
+        let scene = self.document.scene.as_ref()?;
         self.align.markings.marked_fraction(
             self.side_identity(AlignSide::Moving, scene),
             self.side_identity(AlignSide::Fixed, scene),
@@ -433,7 +433,7 @@ impl OccluViewApp {
         side: AlignSide,
         touched: &[u32],
     ) -> Option<Vec<[u8; 4]>> {
-        let scene = self.scene.clone()?;
+        let scene = self.document.scene.clone()?;
         let entry = layer_of(&scene, layer)?;
         let mask = self.align.markings.mask_for(side, marked_on(entry))?;
         let own_colors = entry.mesh.has_vertex_colors();
@@ -449,7 +449,7 @@ impl OccluViewApp {
     /// One colour per vertex of one side: its own colour where nothing is
     /// marked, blue where it is.
     fn region_colors(&self, layer: SceneMeshId, side: AlignSide) -> Option<Vec<[u8; 4]>> {
-        let scene = self.scene.as_ref()?;
+        let scene = self.document.scene.as_ref()?;
         let entry = layer_of(scene, layer)?;
         let vertices = entry.mesh.vertices();
         let count = vertices.len();

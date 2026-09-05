@@ -61,7 +61,7 @@ impl OccluViewApp {
             if !response.drag_started_by(egui::PointerButton::Primary) {
                 return false;
             }
-            let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
+            let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
             // The scan being placed gets first refusal on the grab.
@@ -172,7 +172,7 @@ impl OccluViewApp {
     /// copying it per mouse-move frame moved forty megabytes of mesh on a full
     /// arch to change sixteen floats that live in the layer's uniform.
     fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         if let Some(entry) = live
@@ -190,7 +190,7 @@ impl OccluViewApp {
         let Some(drag) = self.align.drag.take() else {
             return false;
         };
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(current) = layer_of(&scene, drag.layer).map(|entry| entry.transform) else {
@@ -215,11 +215,12 @@ impl OccluViewApp {
         // function returned here, and the move went unrecorded AND unflagged: the
         // scan sat in its new pose, the close guard could not see it, and the app
         // shut without asking.
-        self.mark_mesh_edits_unsaved(drag.layer);
-        let Some(token) =
-            self.edit_mode
-                .begin_scene_edit(&before, drag.layer, EditModeCommand::MoveLayer)
-        else {
+        self.document.mark_mesh_edits_unsaved(drag.layer);
+        let Some(token) = self.document.edit_mode.begin_scene_edit(
+            &before,
+            drag.layer,
+            EditModeCommand::MoveLayer,
+        ) else {
             self.align.status = Some(
                 "Moved by hand, but this step could not be added to the history — \
                  Ctrl+Z will not undo it"
@@ -235,7 +236,9 @@ impl OccluViewApp {
         {
             entry.transform = current;
         }
-        self.edit_mode.finish_scene_edit_success(token, &after);
+        self.document
+            .edit_mode
+            .finish_scene_edit_success(token, &after);
         self.set_scene(after, false);
         // A moved scan is unsaved work. The viewer has no project file, so the
         // pose IS the work product: without this the app closes without asking

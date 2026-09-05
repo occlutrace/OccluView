@@ -41,7 +41,8 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         request.action,
         LayerContextAction::CloseHoles | LayerContextAction::InvertNormals
     ) {
-        app.edit_mode
+        app.document
+            .edit_mode
             .selected_faces_for_layer(request.layer_id)
             .filter(|selection| selection.selected_count() > 0)
     } else {
@@ -52,7 +53,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         return LayerContextApply::default();
     }
 
-    let Some(token) = app.edit_mode.begin_layer_edit(entry, command) else {
+    let Some(token) = app.document.edit_mode.begin_layer_edit(entry, command) else {
         app.status_message = Some("Layer edit already in progress".to_string());
         return LayerContextApply::default();
     };
@@ -69,8 +70,8 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     ) {
         Ok((apply, report)) => {
             if apply.scene_changed {
-                app.mark_mesh_edits_unsaved(request.layer_id);
-                let _ = app.edit_mode.finish_layer_edit_success(token);
+                app.document.mark_mesh_edits_unsaved(request.layer_id);
+                let _ = app.document.edit_mode.finish_layer_edit_success(token);
                 let status = close_holes_aware_status(
                     &layer_label,
                     request.action,
@@ -80,7 +81,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                 );
                 app.status_message = Some(with_undoable_note(app, status));
             } else {
-                let _ = app.edit_mode.finish_layer_edit_noop(token);
+                let _ = app.document.edit_mode.finish_layer_edit_noop(token);
                 app.status_message = Some(close_holes_aware_status(
                     &layer_label,
                     request.action,
@@ -94,6 +95,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         Err(error) => {
             let summary = format!("Could not edit layer: {error}");
             let _ = app
+                .document
                 .edit_mode
                 .finish_layer_edit_error(token, error.to_string());
             app.status_message = Some(summary.clone());

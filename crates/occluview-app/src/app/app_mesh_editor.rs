@@ -18,19 +18,19 @@ impl OccluViewApp {
 
         // Consume a shortcut only when the editor can actually act on it, so
         // other contexts keep their Cmd+A/Z/Y when nothing is editable.
-        let select_all_pressed = self.edit_mode.has_active_session()
+        let select_all_pressed = self.document.edit_mode.has_active_session()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::A));
-        let selected_all = select_all_pressed
-            && self
-                .scene
-                .as_ref()
-                .is_some_and(|scene| self.edit_mode.select_all_visible_selections(scene));
+        let selected_all =
+            select_all_pressed
+                && self.document.scene.as_ref().is_some_and(|scene| {
+                    self.document.edit_mode.select_all_visible_selections(scene)
+                });
         if selected_all {
             self.render.invalidation.selection_changed();
-            self.status_message = self.scene.as_ref().map(|scene| {
+            self.status_message = self.document.scene.as_ref().map(|scene| {
                 format!(
                     "Selected {} faces",
-                    self.edit_mode.visible_selected_face_count(scene)
+                    self.document.edit_mode.visible_selected_face_count(scene)
                 )
             });
             ctx.request_repaint();
@@ -39,12 +39,11 @@ impl OccluViewApp {
 
         // Delete/Backspace removes the selected faces during an edit session
         // (the dental CAD convention). Consumed only when it can actually act.
-        let delete_pressed = self.edit_mode.has_active_session()
-            && self
-                .scene
-                .as_ref()
-                .is_some_and(|scene| self.edit_mode.visible_selected_face_count(scene) > 0)
-            && !self.edit_mode.is_busy()
+        let delete_pressed = self.document.edit_mode.has_active_session()
+            && self.document.scene.as_ref().is_some_and(|scene| {
+                self.document.edit_mode.visible_selected_face_count(scene) > 0
+            })
+            && !self.document.edit_mode.is_busy()
             && ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -55,7 +54,7 @@ impl OccluViewApp {
         }
 
         // Redo before undo: Ctrl+Shift+Z must not fall through to plain Ctrl+Z.
-        let redo_pressed = self.edit_mode.redo_layer_id().is_some()
+        let redo_pressed = self.document.edit_mode.redo_layer_id().is_some()
             && ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y)
                     || input.consume_key(
@@ -64,7 +63,7 @@ impl OccluViewApp {
                     )
             });
         let undo_pressed = !redo_pressed
-            && self.edit_mode.undo_layer_id().is_some()
+            && self.document.edit_mode.undo_layer_id().is_some()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z));
         if !redo_pressed && !undo_pressed {
             return;
@@ -77,22 +76,22 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
     ) {
-        if !self.edit_mode.has_active_session() {
+        if !self.document.edit_mode.has_active_session() {
             return;
         }
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             return;
         };
         let state = mesh_editor_overlay::MeshEditorPanelState {
-            selected_face_count: self.edit_mode.visible_selected_face_count(scene),
-            can_undo: self.edit_mode.undo_layer_id().is_some(),
-            can_redo: self.edit_mode.redo_layer_id().is_some(),
-            lasso_armed: self.edit_mode.lasso_armed(),
-            object_mode: self.edit_mode.object_mode(),
-            through_mesh: self.edit_mode.through_mesh(),
+            selected_face_count: self.document.edit_mode.visible_selected_face_count(scene),
+            can_undo: self.document.edit_mode.undo_layer_id().is_some(),
+            can_redo: self.document.edit_mode.redo_layer_id().is_some(),
+            lasso_armed: self.document.edit_mode.lasso_armed(),
+            object_mode: self.document.edit_mode.object_mode(),
+            through_mesh: self.document.edit_mode.through_mesh(),
             sculpt_armed: self.sculpt.armed,
-            dirty: self.edit_mode.is_dirty(),
-            busy: self.edit_mode.is_busy(),
+            dirty: self.document.edit_mode.is_dirty(),
+            busy: self.document.edit_mode.is_busy(),
             active_tab: self.editor_tab,
         };
         let Some(action) = mesh_editor_overlay::show(ctx, viewport_rect, state) else {
@@ -130,10 +129,11 @@ impl OccluViewApp {
         layer_action: LayerContextAction,
         ctx: &egui::Context,
     ) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let selected_layers = self
+            .document
             .edit_mode
             .visible_selection_plan(&scene)
             .into_iter()
@@ -155,7 +155,7 @@ impl OccluViewApp {
             .flatten();
         match apply_visible_selected_face_mesh_edit_action_with_limit(
             &mut draft,
-            &mut self.edit_mode,
+            &mut self.document.edit_mode,
             layer_action,
             close_holes_limit_mm,
         ) {
@@ -168,7 +168,7 @@ impl OccluViewApp {
                     .collect::<Vec<_>>();
                 self.commit_scene_draft(Some(scene.as_ref()), draft, ctx);
                 for layer_id in target_layers.iter().chain(&spawned) {
-                    self.mark_mesh_edits_unsaved(*layer_id);
+                    self.document.mark_mesh_edits_unsaved(*layer_id);
                 }
                 self.status_message = Some(format!(
                     "{} on {} visible layer{}",
@@ -200,16 +200,17 @@ impl OccluViewApp {
     /// and drops any half-drawn outline/marquee.
     fn toggle_lasso_mode(&mut self, ctx: &egui::Context) {
         if !self
+            .document
             .edit_mode
-            .set_lasso_armed(!self.edit_mode.lasso_armed())
+            .set_lasso_armed(!self.document.edit_mode.lasso_armed())
         {
             return;
         }
         self.abort_sculpt_stroke();
         self.sculpt.disarm();
-        self.mesh_selection_drag = None;
+        self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
-        self.status_message = Some(if self.edit_mode.lasso_armed() {
+        self.status_message = Some(if self.document.edit_mode.lasso_armed() {
             "Lasso armed: click or drag to outline; Enter, double-click, \
              or click the start closes"
                 .to_string()
@@ -224,16 +225,17 @@ impl OccluViewApp {
     /// stale lingers under the new gesture.
     fn toggle_object_select_mode(&mut self, ctx: &egui::Context) {
         if !self
+            .document
             .edit_mode
-            .set_object_mode(!self.edit_mode.object_mode())
+            .set_object_mode(!self.document.edit_mode.object_mode())
         {
             return;
         }
         self.abort_sculpt_stroke();
         self.sculpt.disarm();
-        self.mesh_selection_drag = None;
+        self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
-        self.status_message = Some(if self.edit_mode.object_mode() {
+        self.status_message = Some(if self.document.edit_mode.object_mode() {
             "Object select: click an object to select it whole".to_string()
         } else {
             "Object select off".to_string()
@@ -252,11 +254,9 @@ impl OccluViewApp {
                 true
             }
             MeshEditorAction::SelectAll => {
-                if self
-                    .scene
-                    .as_ref()
-                    .is_some_and(|scene| self.edit_mode.select_all_visible_selections(scene))
-                {
+                if self.document.scene.as_ref().is_some_and(|scene| {
+                    self.document.edit_mode.select_all_visible_selections(scene)
+                }) {
                     self.render.invalidation.selection_changed();
                     self.update_visible_selection_status();
                     ctx.request_repaint();
@@ -265,9 +265,10 @@ impl OccluViewApp {
             }
             MeshEditorAction::InvertSelection => {
                 if self
+                    .document
                     .scene
                     .as_ref()
-                    .is_some_and(|scene| self.edit_mode.invert_visible_selections(scene))
+                    .is_some_and(|scene| self.document.edit_mode.invert_visible_selections(scene))
                 {
                     self.render.invalidation.selection_changed();
                     self.update_visible_selection_status();
@@ -277,9 +278,10 @@ impl OccluViewApp {
             }
             MeshEditorAction::ClearSelection => {
                 if self
+                    .document
                     .scene
                     .as_ref()
-                    .is_some_and(|scene| self.edit_mode.clear_visible_selections(scene))
+                    .is_some_and(|scene| self.document.edit_mode.clear_visible_selections(scene))
                 {
                     self.render.invalidation.selection_changed();
                     self.status_message = Some("Selection cleared".to_string());
@@ -301,11 +303,12 @@ impl OccluViewApp {
             }
             MeshEditorAction::ToggleThroughMesh => {
                 if self
+                    .document
                     .edit_mode
-                    .set_through_mesh(!self.edit_mode.through_mesh())
+                    .set_through_mesh(!self.document.edit_mode.through_mesh())
                 {
                     self.render.invalidation.overlay_tools_changed();
-                    self.status_message = Some(if self.edit_mode.through_mesh() {
+                    self.status_message = Some(if self.document.edit_mode.through_mesh() {
                         "Through-mesh selection".to_string()
                     } else {
                         "Surface selection".to_string()
@@ -339,9 +342,9 @@ impl OccluViewApp {
     }
 
     fn update_visible_selection_status(&mut self) {
-        self.status_message = self.scene.as_ref().map(|scene| {
-            let faces = self.edit_mode.visible_selected_face_count(scene);
-            let layers = self.edit_mode.visible_selected_layer_count(scene);
+        self.status_message = self.document.scene.as_ref().map(|scene| {
+            let faces = self.document.edit_mode.visible_selected_face_count(scene);
+            let layers = self.document.edit_mode.visible_selected_layer_count(scene);
             if layers > 1 {
                 format!("Selected {faces} faces across {layers} layers")
             } else {
@@ -366,8 +369,8 @@ impl OccluViewApp {
 
     pub(super) fn finish_mesh_edit_session_now(&mut self, ctx: &egui::Context) {
         self.sculpt.disarm();
-        self.edit_mode.finish_edit_session();
-        self.mesh_selection_drag = None;
+        self.document.edit_mode.finish_edit_session();
+        self.document.mesh_selection_drag = None;
         self.render.invalidation.selection_changed();
         self.status_message = Some("Mesh Editing session applied".to_string());
         ctx.request_repaint();
@@ -377,9 +380,9 @@ impl OccluViewApp {
     fn cancel_mesh_edit_session(&mut self, ctx: &egui::Context) {
         self.abort_sculpt_stroke();
         self.sculpt.disarm();
-        let current_scene = self.scene.clone();
-        let baseline = self.edit_mode.cancel_edit_session();
-        self.mesh_selection_drag = None;
+        let current_scene = self.document.scene.clone();
+        let baseline = self.document.edit_mode.cancel_edit_session();
+        self.document.mesh_selection_drag = None;
         let Some(baseline) = baseline else {
             self.render.invalidation.selection_changed();
             ctx.request_repaint();
@@ -407,7 +410,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn apply_history_navigation_now(&mut self, redo: bool, ctx: &egui::Context) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let paths = self.current_paths.clone();
@@ -440,7 +443,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn paint_mesh_selection_drag_overlay_impl(&self, ui: &egui::Ui) {
-        let Some(drag) = self.mesh_selection_drag.as_ref() else {
+        let Some(drag) = self.document.mesh_selection_drag.as_ref() else {
             return;
         };
         match drag {
@@ -504,20 +507,20 @@ impl OccluViewApp {
     ) -> bool {
         // The armed lasso owns primary clicks (the dental CAD outline-placement
         // convention); the default mode is the marquee rectangle drag below.
-        if self.edit_mode.lasso_armed() && self.edit_mode.has_active_session() {
+        if self.document.edit_mode.lasso_armed() && self.document.edit_mode.has_active_session() {
             return self.track_polygon_lasso(ctx, response, viewport_rect, pan_drag_active);
         }
 
         // Object pick owns no drag: a stationary primary click (handled in
         // `handle_primary_face_selection_click`) selects the whole component;
         // a drag falls through so the camera keeps orbit/pan/zoom.
-        if self.edit_mode.object_mode() {
+        if self.document.edit_mode.object_mode() {
             return false;
         }
 
         self.begin_mesh_selection_drag(ctx, response, pan_drag_active);
 
-        let Some(drag) = self.mesh_selection_drag.as_mut() else {
+        let Some(drag) = self.document.mesh_selection_drag.as_mut() else {
             return false;
         };
         if response.dragged_by(egui::PointerButton::Primary) {
@@ -537,7 +540,7 @@ impl OccluViewApp {
             return false;
         }
 
-        let finalized = self.mesh_selection_drag.take();
+        let finalized = self.document.mesh_selection_drag.take();
         let changed = match finalized {
             // The marquee is the same region select as the lasso, expressed as
             // a 4-point polygon: one inclusion rule, Surface/Through honored.
@@ -581,16 +584,16 @@ impl OccluViewApp {
             return false;
         }
 
-        let (outline_active, point_count, first_point, last_point) = match &self.mesh_selection_drag
-        {
-            Some(MeshSelectionDrag::Lasso { points }) => (
-                true,
-                points.len(),
-                points.first().copied(),
-                points.last().copied(),
-            ),
-            _ => (false, 0, None, None),
-        };
+        let (outline_active, point_count, first_point, last_point) =
+            match &self.document.mesh_selection_drag {
+                Some(MeshSelectionDrag::Lasso { points }) => (
+                    true,
+                    points.len(),
+                    points.first().copied(),
+                    points.last().copied(),
+                ),
+                _ => (false, 0, None, None),
+            };
 
         // Enter/Esc are consumed only while an outline is in progress, so they
         // keep their normal meaning everywhere else.
@@ -637,10 +640,10 @@ impl OccluViewApp {
 
         match lasso_capture::decide(&frame) {
             LassoEvent::AddPoint(pos) => {
-                match &mut self.mesh_selection_drag {
+                match &mut self.document.mesh_selection_drag {
                     Some(MeshSelectionDrag::Lasso { points }) => points.push(pos),
                     _ => {
-                        self.mesh_selection_drag =
+                        self.document.mesh_selection_drag =
                             Some(MeshSelectionDrag::Lasso { points: vec![pos] });
                     }
                 }
@@ -648,21 +651,25 @@ impl OccluViewApp {
                 true
             }
             LassoEvent::Sample(pos) => {
-                if let Some(MeshSelectionDrag::Lasso { points }) = &mut self.mesh_selection_drag {
+                if let Some(MeshSelectionDrag::Lasso { points }) =
+                    &mut self.document.mesh_selection_drag
+                {
                     points.push(pos);
                     ctx.request_repaint();
                 }
                 true
             }
             LassoEvent::Close => {
-                if let Some(MeshSelectionDrag::Lasso { points }) = self.mesh_selection_drag.take() {
+                if let Some(MeshSelectionDrag::Lasso { points }) =
+                    self.document.mesh_selection_drag.take()
+                {
                     self.commit_screen_polygon_selection(ctx, viewport_rect, &points);
                 }
                 ctx.request_repaint();
                 true
             }
             LassoEvent::Drop => {
-                self.mesh_selection_drag = None;
+                self.document.mesh_selection_drag = None;
                 self.status_message = Some("Lasso outline dropped".to_string());
                 ctx.request_repaint();
                 true
@@ -695,18 +702,18 @@ impl OccluViewApp {
     ) -> bool {
         let unmark = ctx.input(|input| input.modifiers.shift);
         let camera = self.render.camera;
-        let scene = self.scene.clone();
+        let scene = self.document.scene.clone();
         let Some((camera, scene)) = camera.zip(scene) else {
             return false;
         };
-        let changed = self.edit_mode.select_faces_in_screen_polygon(
+        let changed = self.document.edit_mode.select_faces_in_screen_polygon(
             &scene,
             &camera,
             ScreenPolygonSelectionRequest {
                 viewport_rect,
                 polygon_px,
                 unmark,
-                through_mesh: self.edit_mode.through_mesh(),
+                through_mesh: self.document.edit_mode.through_mesh(),
             },
         );
         if changed {
@@ -716,43 +723,18 @@ impl OccluViewApp {
         changed
     }
 
-    fn begin_mesh_selection_drag(
-        &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-        pan_drag_active: bool,
-    ) {
-        let drag_allowed = self.edit_mode.has_active_session()
-            && self.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
-            && !pan_drag_active
-            && !ctx.input(|input| {
-                input.pointer.button_down(egui::PointerButton::Secondary)
-                    || input.pointer.button_down(egui::PointerButton::Middle)
-            });
-        if drag_allowed && response.drag_started_by(egui::PointerButton::Primary) {
-            let origin = ctx.input(|input| input.pointer.press_origin());
-            let current = response.interact_pointer_pos();
-            if let (Some(origin), Some(current)) = (origin, current) {
-                self.mesh_selection_drag = Some(MeshSelectionDrag::Rect { origin, current });
-                ctx.request_repaint();
-            }
-        } else if !response.dragged_by(egui::PointerButton::Primary) && !response.drag_stopped() {
-            self.mesh_selection_drag = None;
-        }
-    }
-
     pub(super) fn handle_primary_face_selection_click(
         &mut self,
         ctx: &egui::Context,
         response: &egui::Response,
     ) -> bool {
-        if !self.edit_mode.has_active_session()
+        if !self.document.edit_mode.has_active_session()
             || self.editor_tab != mesh_editor_overlay::EditorTab::EditMesh
         {
             return false;
         }
         let camera = self.render.camera;
-        let scene = self.scene.clone();
+        let scene = self.document.scene.clone();
         let pointer = response.interact_pointer_pos();
         // Dental CAD convention: a click marks the face; SHIFT-click un-marks it.
         let unmark = ctx.input(|input| input.modifiers.shift);
@@ -764,10 +746,13 @@ impl OccluViewApp {
         };
         // Object pick selects the whole component under the cursor; the default
         // single-face click marks just the picked facet. SHIFT un-marks in both.
-        let acted = if self.edit_mode.object_mode() {
-            self.edit_mode.select_component_hit(&scene, hit, unmark)
+        let acted = if self.document.edit_mode.object_mode() {
+            self.document
+                .edit_mode
+                .select_component_hit(&scene, hit, unmark)
         } else {
-            self.edit_mode
+            self.document
+                .edit_mode
                 .select_face_hit_with_mode(&scene, hit, unmark)
         };
         if !acted {

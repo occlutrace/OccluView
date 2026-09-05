@@ -12,7 +12,7 @@ impl OccluViewApp {
     /// Whether the scene menu has anything to offer: any layer at all, and any
     /// layer that has actually been moved.
     pub(super) fn scene_menu_state(&self) -> (bool, bool) {
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             return (false, false);
         };
         let has_layers = !scene.meshes().is_empty();
@@ -42,7 +42,7 @@ impl OccluViewApp {
 
     /// Return every layer to the identity pose, as one undo step.
     fn reset_layer_positions(&mut self, ctx: &egui::Context) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let mut next = scene.as_ref().clone();
@@ -58,16 +58,19 @@ impl OccluViewApp {
             return;
         }
 
-        let Some(token) = self
-            .edit_mode
-            .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
+        let Some(token) =
+            self.document
+                .edit_mode
+                .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
         else {
             return;
         };
         for entry in next.meshes_mut() {
             entry.transform = Affine3A::IDENTITY;
         }
-        self.edit_mode.finish_scene_edit_success(token, &next);
+        self.document
+            .edit_mode
+            .finish_scene_edit_success(token, &next);
         let moved: Vec<occluview_core::SceneMeshId> = next
             .meshes()
             .iter()
@@ -75,7 +78,7 @@ impl OccluViewApp {
             .collect();
         self.set_scene(next, false);
         for layer in moved {
-            self.mark_mesh_edits_unsaved(layer);
+            self.document.mark_mesh_edits_unsaved(layer);
         }
         self.status_message = Some("Layer positions reset (Ctrl+Z undoes)".into());
         ctx.request_repaint();

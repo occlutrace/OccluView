@@ -50,7 +50,7 @@ impl OccluViewApp {
     /// is inside the transaction too, and reporting "nothing moved" after
     /// dragging it would be a lie Cancel then acts on.
     pub(super) fn align_session_moved(&self) -> bool {
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             return false;
         };
         scene.meshes().iter().any(|entry| {
@@ -79,16 +79,17 @@ impl OccluViewApp {
         if !self.align_session_moved() {
             return false;
         }
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let mut next = scene.as_ref().clone();
         let Some(focus) = next.meshes().first().map(occluview_core::SceneMesh::id) else {
             return false;
         };
-        let Some(token) = self
-            .edit_mode
-            .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
+        let Some(token) =
+            self.document
+                .edit_mode
+                .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
         else {
             return false;
         };
@@ -97,7 +98,9 @@ impl OccluViewApp {
                 entry.transform = pose;
             }
         }
-        self.edit_mode.finish_scene_edit_success(token, &next);
+        self.document
+            .edit_mode
+            .finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
         true
     }

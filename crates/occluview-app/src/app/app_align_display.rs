@@ -50,7 +50,7 @@ impl OccluViewApp {
         kind: AlignOverlay,
     ) -> bool {
         let shared = Arc::new(colors);
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return false;
         };
         let Some(entry) = live
@@ -82,9 +82,10 @@ impl OccluViewApp {
         touched: &[u32],
         patched: &[[u8; 4]],
     ) -> bool {
-        let (Some(scene), Some(live_viewport)) =
-            (self.scene.clone(), self.render.live_viewport.clone())
-        else {
+        let (Some(scene), Some(live_viewport)) = (
+            self.document.scene.clone(),
+            self.render.live_viewport.clone(),
+        ) else {
             return false;
         };
         let Some(entry) = layer_of(&scene, layer) else {
@@ -126,7 +127,7 @@ impl OccluViewApp {
         drop(scene);
 
         // Retain the full array so a later GPU rebuild can restore it.
-        if let Some(live) = self.live_scene_mut() {
+        if let Some(live) = self.document.live_scene_mut() {
             if let Some(entry) = live
                 .meshes_mut()
                 .iter_mut()
@@ -167,9 +168,10 @@ impl OccluViewApp {
     /// there is no prepared scene to write into yet; the caller re-pushes after
     /// the viewport has built one.
     pub(super) fn push_deviation_colors(&mut self) -> bool {
-        let (Some(scene), Some(live_viewport)) =
-            (self.scene.clone(), self.render.live_viewport.clone())
-        else {
+        let (Some(scene), Some(live_viewport)) = (
+            self.document.scene.clone(),
+            self.render.live_viewport.clone(),
+        ) else {
             return false;
         };
         if self.align.overlay_colors.is_empty() {
@@ -208,7 +210,7 @@ impl OccluViewApp {
         // A push still standing would chase colours that no longer exist.
         self.align.deviation_push_pending = false;
         self.align.painted.clear();
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         let overlaid: Vec<SceneMeshId> = live
@@ -238,9 +240,10 @@ impl OccluViewApp {
         if layers.is_empty() {
             return;
         }
-        let (Some(scene), Some(live_viewport)) =
-            (self.scene.clone(), self.render.live_viewport.clone())
-        else {
+        let (Some(scene), Some(live_viewport)) = (
+            self.document.scene.clone(),
+            self.render.live_viewport.clone(),
+        ) else {
             return;
         };
         let Ok(viewport) = live_viewport.lock() else {
@@ -280,7 +283,7 @@ impl OccluViewApp {
             return;
         };
         // Opacity is a material change; preserve the scene structure.
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         let mut remembered = Vec::new();
@@ -303,7 +306,7 @@ impl OccluViewApp {
             return;
         }
         let restore = std::mem::take(&mut self.align.ghosted);
-        let Some(live) = self.live_scene_mut() else {
+        let Some(live) = self.document.live_scene_mut() else {
             return;
         };
         for (id, opacity) in restore {
@@ -351,7 +354,7 @@ mod tests {
             "an overlay must go through the material path, not set_scene"
         );
         assert!(
-            source.contains("self.live_scene_mut()"),
+            source.contains("self.document.live_scene_mut()"),
             "the live scene is mutated in place, not cloned per re-colour"
         );
         assert!(
@@ -391,7 +394,11 @@ mod tests {
         // Same rule as above: release the cloned handle before the in-place
         // edit.
         assert!(
-            crate::primary_ui_tests::appears_before(patch, "drop(scene);", "self.live_scene_mut()",),
+            crate::primary_ui_tests::appears_before(
+                patch,
+                "drop(scene);",
+                "self.document.live_scene_mut()",
+            ),
             "the cloned scene handle must be dropped before the in-place edit"
         );
         assert!(

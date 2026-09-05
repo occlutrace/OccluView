@@ -203,7 +203,7 @@ fn escape_belongs_to_the_dialog_in_front_not_the_tool_behind() {
 
 /// The scene-editing calls that require `self.scene` to be the only handle.
 const IN_PLACE_SCENE_EDITS: &[&str] = &[
-    "self.live_scene_mut()",
+    "self.document.live_scene_mut()",
     "self.attach_overlay_colors(",
     "self.patch_overlay_colors(",
     "self.repaint_region_preview(",
@@ -233,7 +233,7 @@ fn scene_handles_alive_across_an_edit(source: &str) -> Vec<String> {
     }
 
     let mut offenders = Vec::new();
-    for (clone_at, _) in source.match_indices("self.scene.clone()") {
+    for (clone_at, _) in source.match_indices("self.document.scene.clone()") {
         let clone_index = source[..clone_at].chars().count();
         let held_at = depth_at[clone_index];
         // The handle dies with its block, or where the code says so.

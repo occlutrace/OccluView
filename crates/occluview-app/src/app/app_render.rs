@@ -82,7 +82,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn render_cut_now(&mut self, ctx: &egui::Context) {
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             self.cut_view.disable();
             return;
         };
@@ -107,7 +107,7 @@ impl OccluViewApp {
         {
             return;
         }
-        let Some(scene) = self.scene.clone() else {
+        let Some(scene) = self.document.scene.clone() else {
             return;
         };
         let Some(frame) = self.bridge_split_section.frame() else {
@@ -249,7 +249,7 @@ impl OccluViewApp {
         if self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
-        let scene = self.scene.clone().context("no scene loaded")?;
+        let scene = self.document.scene.clone().context("no scene loaded")?;
         let mut cam = self.render.camera.context("camera unavailable")?;
         cam.fit_clip_planes_to_bbox(scene.bbox());
         self.ensure_offscreen()?;
@@ -294,7 +294,7 @@ impl OccluViewApp {
             self.render.invalidation.consume_offscreen_scene();
         }
         if self.render.invalidation.offscreen_overlay_stale() {
-            let overlay = selection_overlay_for_scene(&scene, &self.edit_mode);
+            let overlay = selection_overlay_for_scene(&scene, &self.document.edit_mode);
             self.render.prepared_selection_overlay = overlay.as_ref().map(|overlay| {
                 let sources = overlay.prepared_sources();
                 offscreen.prepare_scene(&sources)
@@ -350,7 +350,7 @@ impl OccluViewApp {
         if self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
-        let Some(scene) = self.scene.as_ref() else {
+        let Some(scene) = self.document.scene.as_ref() else {
             self.clear_live_viewport();
             self.render.invalidation.consume_redraw();
             return;
@@ -385,7 +385,7 @@ impl OccluViewApp {
                 let repush_deviation =
                     (rebuilt && restore_deviation) || self.align.deviation_push_pending;
                 if self.render.invalidation.live_overlay_stale() {
-                    let overlay = selection_overlay_for_scene(scene, &self.edit_mode);
+                    let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
                     let sources = overlay.as_ref().map_or_else(
                         Vec::new,
                         super::selection_overlay::SelectionOverlayScene::prepared_sources,
@@ -455,13 +455,13 @@ impl OccluViewApp {
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
-        self.edit_mode.sync_to_scene(&scene);
+        self.document.edit_mode.sync_to_scene(&scene);
         // A structural scene swap (load, delete, another mesh edit, undo/redo)
         // reverts the geometry the persistent sculpt session was prepared over,
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
         // it), so drop the session here and re-prepare on the next stroke.
         self.sculpt.invalidate_session();
-        self.scene = Some(Arc::new(scene));
+        self.document.scene = Some(Arc::new(scene));
         self.clear_live_viewport();
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
@@ -469,7 +469,7 @@ impl OccluViewApp {
             self.reset_camera_to_home();
         }
         self.render.invalidation.scene_geometry_changed();
-        self.mesh_selection_drag = None;
+        self.document.mesh_selection_drag = None;
         self.render.rendered = None;
         // Whatever the align tool was showing described the geometry that just
         // got replaced. Undo and redo already dropped it by hand; every other
@@ -505,18 +505,18 @@ impl OccluViewApp {
     }
 
     pub(super) fn update_scene_materials(&mut self, scene: Scene) {
-        self.scene = Some(Arc::new(scene));
+        self.document.scene = Some(Arc::new(scene));
         self.mark_scene_materials_changed();
     }
 
     /// The bookkeeping a material change needs, for a caller that already owns
     /// the live scene and mutated it in place.
     pub(super) fn mark_scene_materials_changed(&mut self) {
-        if let Some(scene) = self.scene.clone() {
-            self.edit_mode.sync_to_scene(&scene);
+        if let Some(scene) = self.document.scene.clone() {
+            self.document.edit_mode.sync_to_scene(&scene);
         }
         self.render.invalidation.scene_geometry_changed();
-        self.mesh_selection_drag = None;
+        self.document.mesh_selection_drag = None;
         if self.can_render_cut_view() {
             self.cut_view.mark_dirty();
         } else {
@@ -525,10 +525,10 @@ impl OccluViewApp {
     }
 
     pub(super) fn clear_scene(&mut self) {
-        self.clear_unsaved_mesh_edits();
-        self.hidden_layer_stack.clear();
-        self.translucent_layer_restore.clear();
-        self.scene = None;
+        self.document.clear_unsaved_mesh_edits();
+        self.document.hidden_layer_stack.clear();
+        self.document.translucent_layer_restore.clear();
+        self.document.scene = None;
         self.clear_live_viewport();
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
@@ -536,10 +536,10 @@ impl OccluViewApp {
         self.render.camera = None;
         self.render.rendered = None;
         self.render.invalidation.reset();
-        self.mesh_selection_drag = None;
-        self.load_queue_camera_reset = super::LoadQueueCameraReset::Idle;
-        self.camera_modified_during_load = false;
-        self.edit_mode.clear();
+        self.document.mesh_selection_drag = None;
+        self.document.load_queue_camera_reset = super::LoadQueueCameraReset::Idle;
+        self.document.camera_modified_during_load = false;
+        self.document.edit_mode.clear();
         self.bridge_split.cancel();
         self.bridge_split_disc.disarm();
         self.bridge_split_section.reset();
@@ -579,7 +579,7 @@ impl OccluViewApp {
                         .sense(egui::Sense::click_and_drag()),
                 );
                 self.show_viewport_overlays(ui, &response, &ctx);
-            } else if self.scene.is_none() {
+            } else if self.document.scene.is_none() {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click());
@@ -611,7 +611,7 @@ impl OccluViewApp {
         // While files hover anywhere over the window the viewport advertises
         // itself as the drop target, without painting a border over the model.
         Self::set_drop_hover_cursor_if_hovering(ctx);
-        if self.scene.is_none() {
+        if self.document.scene.is_none() {
             // No scene yet: a quiet centered call to action over the clear
             // color. The overlays below are all camera/scene-gated, so the
             // right-click scene menu keeps working untouched.
