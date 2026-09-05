@@ -45,6 +45,7 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 }
 
 #[test]
+#[allow(clippy::expect_used)]
 fn no_status_line_promises_an_undo_that_was_not_stored() {
     // `begin_layer_edit_with_snapshot` skips an oversized pre-op snapshot: the
     // edit applies and Ctrl+Z will not undo it. Every mesh-edit status routes
@@ -62,7 +63,7 @@ fn no_status_line_promises_an_undo_that_was_not_stored() {
         sculpt.contains("last_edit_undoable()"),
         "the promise must be conditional on the snapshot actually being stored"
     );
-    let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+    let catalog = i18n::catalog::Catalog::build("en").expect("en builds");
     assert_eq!(
         catalog.text("sculpt-applied-undo").as_deref(),
         Some("Sculpt applied (Ctrl+Z undoes)"),
