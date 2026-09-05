@@ -6,24 +6,33 @@
 
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
-use crate::interaction_hints::{contextual_line, HintContext, ALL_SECTIONS};
+use crate::interaction_hints::{contextual_line, contextual_line_key, HintContext, ALL_SECTIONS};
 use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
 use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
 use eframe::egui;
 
+use crate::i18n::LocaleManager;
+
 const HELP_ROW_HEIGHT: f32 = 25.0;
 const HELP_GESTURE_WIDTH: f32 = 196.0;
 
-pub(super) fn show_help_toolbar_toggle(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+/// Canonical English wording (pinned by source guards): the toggle reads
+/// "Help" with the tooltip "Show keyboard and mouse controls". Rendering
+/// goes through the `help-toggle` / `help-toggle-tooltip` catalog keys.
+pub(super) fn show_help_toolbar_toggle(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    locale: &LocaleManager,
+) -> egui::Response {
     toolbar_toggle(
         ui,
         ToolbarToggle::new(
             crate::icons::AppIcon::Licenses,
-            "Help",
+            &locale.text("help-toggle"),
             enabled,
             false,
-            "Show keyboard and mouse controls",
+            &locale.text("help-toggle-tooltip"),
         ),
     )
 }
@@ -42,18 +51,16 @@ impl OccluViewApp {
             |ui| {
                 ui.set_width(668.0_f32.min(ui.available_width()));
                 ui.label(
-                    egui::RichText::new("Keyboard and mouse controls")
+                    egui::RichText::new(self.locale.text("help-title"))
                         .size(18.0)
                         .strong()
                         .color(ui_theme::text()),
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new(
-                        "The reference below matches the controls currently available in OccluView.",
-                    )
-                    .size(11.5)
-                    .color(ui_theme::text_weak()),
+                    egui::RichText::new(self.locale.text("help-subtitle"))
+                        .size(11.5)
+                        .color(ui_theme::text_weak()),
                 );
                 ui.add_space(8.0);
 
@@ -66,7 +73,7 @@ impl OccluViewApp {
                         for section in ALL_SECTIONS {
                             ui.add_space(6.0);
                             ui.label(
-                                egui::RichText::new(section.title)
+                                egui::RichText::new(self.locale.text(section.key))
                                     .size(12.5)
                                     .strong()
                                     .color(ui_theme::text()),
@@ -92,7 +99,7 @@ impl OccluViewApp {
                                         ui.add_space(12.0);
                                         ui.add(
                                             egui::Label::new(
-                                                egui::RichText::new(row.action)
+                                                egui::RichText::new(self.locale.text(row.key))
                                                     .color(ui_theme::text_weak()),
                                             )
                                             .truncate(),
@@ -109,7 +116,7 @@ impl OccluViewApp {
                     egui::vec2(ui.available_width(), 30.0),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        if ui.button("Close").clicked() {
+                        if ui.button(self.locale.text("help-close")).clicked() {
                             close = true;
                         }
                     },
@@ -145,10 +152,12 @@ pub(super) fn render_contextual_hint(
     _rect: egui::Rect,
     context: HintContext,
     ink: egui::Color32,
+    locale: &LocaleManager,
 ) {
     let line = contextual_line(context);
+    let localized = locale.text(contextual_line_key(context));
     let response =
-        ui.add(egui::Label::new(egui::RichText::new(line).color(ink).size(11.5)).truncate());
+        ui.add(egui::Label::new(egui::RichText::new(localized).color(ink).size(11.5)).truncate());
     response.on_hover_text(line);
 }
 

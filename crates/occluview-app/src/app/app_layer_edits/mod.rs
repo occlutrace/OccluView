@@ -10,7 +10,7 @@ mod structural_tests;
 #[cfg(test)]
 mod tests;
 mod undo_redo;
-mod whole_mesh;
+pub(super) mod whole_mesh;
 
 pub(super) use undo_redo::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
@@ -44,7 +44,7 @@ pub(super) fn apply_layer_context_action_with_status(
     request: LayerContextRequest,
 ) -> LayerContextApply {
     if app.bridge_split_active() {
-        app.status_message = Some("Finish or cancel Bridge split first".to_string());
+        app.status_message = Some(app.locale.tr("bridge-busy"));
         return LayerContextApply::default();
     }
 
@@ -97,7 +97,10 @@ pub(super) fn apply_layer_context_action_with_status(
     };
     let apply = layer_actions::apply_layer_context_action(scene, request);
     if apply.scene_changed {
-        app.status_message = Some(format!("Removed layer: {removed_label}"));
+        app.status_message = Some(
+            app.locale
+                .tr_with("layer-removed", &[("label", &removed_label)]),
+        );
     }
     apply
 }
@@ -126,9 +129,15 @@ fn begin_face_selection_with_status(
         // mesh-editor action. This removes the one-time weld/adjacency wait
         // from the first sculpt stroke without blocking the editor UI.
         app.prepare_armed_sculpt_session();
-        app.status_message = Some(format!("Face selection: {layer_label}"));
+        app.status_message = Some(
+            app.locale
+                .tr_with("layer-face-selection", &[("label", &layer_label)]),
+        );
     } else {
-        app.status_message = Some(format!("Cannot select faces: {layer_label}"));
+        app.status_message = Some(
+            app.locale
+                .tr_with("select-faces-cannot", &[("layer", &layer_label)]),
+        );
     }
 }
 
@@ -152,10 +161,14 @@ pub(super) fn resolve_layer<'s>(
 
 /// Append the "not undoable" note when the last edit's pre-op snapshot was
 /// skipped (oversized) — the suffix shared by the mesh-edit status lines.
+/// Canonical English: "{status} (not undoable: snapshot too large)".
+/// One whole message (`edit-locked-status` with `$status` data) so no
+/// language freezes English word order around the note.
 pub(super) fn with_undoable_note(app: &OccluViewApp, status: String) -> String {
     if app.edit_mode.last_edit_undoable() {
         status
     } else {
-        format!("{status} (not undoable: snapshot too large)")
+        app.locale
+            .tr_with("edit-locked-status", &[("status", &status)])
     }
 }

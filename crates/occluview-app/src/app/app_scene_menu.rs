@@ -54,7 +54,7 @@ impl OccluViewApp {
             .iter()
             .all(|entry| entry.transform == Affine3A::IDENTITY)
         {
-            self.status_message = Some("Every layer is already at its original position".into());
+            self.status_message = Some(self.locale.tr("scene-already-origin"));
             return;
         }
 
@@ -77,7 +77,7 @@ impl OccluViewApp {
         for layer in moved {
             self.mark_mesh_edits_unsaved(layer);
         }
-        self.status_message = Some("Layer positions reset (Ctrl+Z undoes)".into());
+        self.status_message = Some(self.locale.tr("scene-positions-reset"));
         ctx.request_repaint();
     }
 }

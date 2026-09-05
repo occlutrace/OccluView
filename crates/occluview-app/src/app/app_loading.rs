@@ -150,10 +150,10 @@ impl OccluViewApp {
                 self.start_scene_load(request);
             } else {
                 self.queued_loads.push_back(request);
-                self.status_message = Some(format!(
-                    "Queued {} layer{}",
-                    paths.len(),
-                    if paths.len() == 1 { "" } else { "s" }
+                self.status_message = Some(self.locale.tr_plural(
+                    "load-queued",
+                    &[],
+                    &[("count", paths.len())],
                 ));
             }
             return;
@@ -179,16 +179,16 @@ impl OccluViewApp {
                 repaint_ctx.request_repaint();
             });
         if let Err(error) = spawn_result {
-            self.status_message = Some("Open failed: could not start loader".to_string());
+            self.status_message = Some(self.locale.tr("load-open-failed-start"));
             self.app_error = Some(AppErrorDialog {
-                title: "Could not open file".to_string(),
-                summary: "The background scene loader could not be started.".to_string(),
+                title: self.locale.tr("error-open-title"),
+                summary: self.locale.tr("load-loader-failed-summary"),
                 details: format!("Loader thread start failed\n\n{error:#}"),
             });
             tracing::error!(?error, source, "scene loader thread spawn failed");
             return;
         }
-        self.status_message = Some(load_status_message(mode, paths.len()));
+        self.status_message = Some(load_status_message(mode, paths.len(), &self.locale));
         self.active_load = Some(PendingSceneLoad {
             paths,
             source,
@@ -210,7 +210,7 @@ impl OccluViewApp {
                 let source = active.source;
                 let startup_token = self.pending_raise_token.take();
                 self.active_load = None;
-                self.status_message = Some("Open failed: loader stopped".to_string());
+                self.status_message = Some(self.locale.tr("load-open-failed-stopped"));
                 tracing::error!(source, "scene loader disconnected");
                 if source == "startup" || source == "single-instance" {
                     single_instance::complete_startup_notification(startup_token.as_deref());
@@ -323,8 +323,23 @@ impl OccluViewApp {
                         self.reset_camera_to_home();
                     }
                 }
-                self.status_message = Some(format!("{action} failed: {e:#}"));
+                self.status_message = Some(if append {
+                    self.locale
+                        .tr_with("load-action-failed-add", &[("detail", &format!("{e:#}"))])
+                } else {
+                    self.locale
+                        .tr_with("load-action-failed-open", &[("detail", &format!("{e:#}"))])
+                });
                 self.app_error = Some(load_error_dialog(action, &e, &pending.paths));
+                // Technical summary/details stay English (support payload);
+                // only the user-facing title is localized.
+                if let Some(dialog) = self.app_error.as_mut() {
+                    dialog.title = if append {
+                        self.locale.text("error-add-title")
+                    } else {
+                        self.locale.text("error-open-title")
+                    };
+                }
                 tracing::error!(
                     error = %failure_without_paths(&e, &pending.paths),
                     path_count = pending.paths.len(),

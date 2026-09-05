@@ -1,5 +1,9 @@
 use super::*;
 
+fn english() -> crate::i18n::LocaleManager {
+    crate::i18n::LocaleManager::for_tests()
+}
+
 /// The same tetrahedron with one face duplicated — one defect for the
 /// duplicate-face pass, everything else already clean.
 fn dirty_tetrahedron() -> Option<Mesh> {
@@ -128,8 +132,8 @@ fn repair_status_lines_report_only_what_happened() {
     // Already clean, no open rims.
     let clean = RepairReport::default();
     assert_eq!(
-        super::super::repair::clean_status("scan.stl", &clean),
-        "Mesh is already clean: scan.stl"
+        super::super::repair::clean_status("scan.stl", &clean, &english()),
+        "Mesh is already clean: \u{2068}scan.stl\u{2069}"
     );
 
     // Already clean, but the natural boundary stays open — say so.
@@ -137,21 +141,23 @@ fn repair_status_lines_report_only_what_happened() {
         open_rims_left: 2,
         ..RepairReport::default()
     };
+    // Embedded selects isolate twice (whole placeable + inner variable).
     assert_eq!(
-        super::super::repair::clean_status("scan.stl", &with_rims),
-        "Mesh is already clean: scan.stl, 2 open rims left"
+        super::super::repair::clean_status("scan.stl", &with_rims, &english()),
+        "Mesh is already clean: \u{2068}scan.stl\u{2069}, \u{2068}\u{2068}2\u{2069} open rims left\u{2069}"
     );
     let one_rim = RepairReport {
         open_rims_left: 1,
         ..RepairReport::default()
     };
     assert_eq!(
-        super::super::repair::clean_status("scan.stl", &one_rim),
-        "Mesh is already clean: scan.stl, 1 open rim left"
+        super::super::repair::clean_status("scan.stl", &one_rim, &english()),
+        "Mesh is already clean: \u{2068}scan.stl\u{2069}, \u{2068}\u{2068}1\u{2069} open rim left\u{2069}"
     );
 
     // Repaired: only non-zero counts appear, in pipeline order, with correct
     // singular/plural, plus the skipped-rims tail when warnings exist.
+    // Interpolated numbers carry Fluent bidi isolation marks by design.
     let multi = RepairReport {
         welded_vertices: 1240,
         removed_degenerate_triangles: 86,
@@ -165,10 +171,10 @@ fn repair_status_lines_report_only_what_happened() {
         ..RepairReport::default()
     };
     assert_eq!(
-        super::super::repair::repaired_status("scan.stl", &multi),
-        "Repaired scan.stl: welded 1240 vertices, removed 86 slivers, 12 duplicate faces, \
-         fixed 3 non-manifold edges, split 2 bowties, reoriented 154 triangles, \
-         dropped 4 debris parts, closed 12 pinholes, 1 rim skipped (non-simple)"
+        super::super::repair::repaired_status("scan.stl", &multi, &english()),
+        "Repaired \u{2068}scan.stl\u{2069}: \u{2068}welded \u{2068}1240\u{2069} vertices, removed \u{2068}86\u{2069} slivers, \u{2068}12\u{2069} duplicate faces, \
+         fixed \u{2068}3\u{2069} non-manifold edges, split \u{2068}2\u{2069} bowties, reoriented \u{2068}154\u{2069} triangles, \
+         dropped \u{2068}4\u{2069} debris parts, closed \u{2068}12\u{2069} pinholes, \u{2068}1\u{2069} rim skipped (non-simple)\u{2069}"
     );
 
     let single = RepairReport {
@@ -177,7 +183,7 @@ fn repair_status_lines_report_only_what_happened() {
         ..RepairReport::default()
     };
     assert_eq!(
-        super::super::repair::repaired_status("scan.stl", &single),
-        "Repaired scan.stl: welded 1 vertex, closed 1 pinhole"
+        super::super::repair::repaired_status("scan.stl", &single, &english()),
+        "Repaired \u{2068}scan.stl\u{2069}: \u{2068}welded \u{2068}1\u{2069} vertex, closed \u{2068}1\u{2069} pinhole\u{2069}"
     );
 }

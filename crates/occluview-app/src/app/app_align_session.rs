@@ -16,9 +16,9 @@ impl OccluViewApp {
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.status_message = Some(if restored {
-            "Alignment cancelled — every scan is back where it was (Ctrl+Z brings it back)".into()
+            self.locale.tr("align-session-canceled")
         } else {
-            "Alignment closed".to_string()
+            self.locale.tr("align-session-closed")
         });
     }
 
@@ -34,13 +34,9 @@ impl OccluViewApp {
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
         self.status_message = Some(match (running, moved) {
-            (true, _) => {
-                "Alignment closed — a fit was still running and was dropped, so the scans are \
-                 exactly as you last saw them"
-                    .into()
-            }
-            (false, true) => "Alignment kept — save the scan to keep it on disk".to_string(),
-            (false, false) => "Alignment closed".to_string(),
+            (true, _) => self.locale.tr("align-session-closed-running"),
+            (false, true) => self.locale.tr("align-session-kept"),
+            (false, false) => self.locale.tr("align-session-closed"),
         });
     }
 

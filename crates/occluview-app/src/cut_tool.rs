@@ -204,11 +204,13 @@ impl CutTool {
         viewport_rect: egui::Rect,
         section: Option<&SceneSection>,
         color_for: F,
+        locale: &crate::i18n::LocaleManager,
     ) -> CutToolUiOutcome
     where
         F: Fn(SceneMeshId) -> egui::Color32,
     {
-        self.section.show(ui, viewport_rect, section, color_for)
+        self.section
+            .show(ui, viewport_rect, section, color_for, locale)
     }
 
     fn section_frame(&self) -> Option<SectionViewFrame> {

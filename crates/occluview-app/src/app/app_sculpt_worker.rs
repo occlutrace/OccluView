@@ -61,7 +61,10 @@ impl OccluViewApp {
             self.flush_sculpt_update(update);
         }
         if let Some(error) = error {
-            self.status_message = Some(format!("Sculpt worker stopped: {error}"));
+            self.status_message = Some(
+                self.locale
+                    .tr_with("sculpt-worker-stopped", &[("detail", error.as_str())]),
+            );
             self.invalidate_sculpt_session_silent();
         }
         for SculptCompletion { before, mesh } in completions {
@@ -187,7 +190,7 @@ impl OccluViewApp {
             .as_ref()
             .is_none_or(|worker| !worker.finish_stroke())
         {
-            self.status_message = Some("Sculpt worker is unavailable".to_string());
+            self.status_message = Some(self.locale.tr("sculpt-worker-unavailable"));
         }
         ctx.request_repaint();
     }
@@ -216,7 +219,7 @@ impl OccluViewApp {
             self.edit_mode
                 .begin_layer_edit_with_snapshot(entry, before, EditModeCommand::Sculpt)
         else {
-            self.status_message = Some("Layer edit already in progress".to_string());
+            self.status_message = Some(self.locale.tr("repair-edit-busy"));
             return false;
         };
         drop(scene);
@@ -229,14 +232,14 @@ impl OccluViewApp {
             // otherwise is worse than saying nothing: they find out by pressing
             // it, on work they have already moved on from. Every other mesh-edit
             // status goes through `with_undoable_note` for the same reason.
-            self.status_message = Some(
-                if self.edit_mode.last_edit_undoable() {
-                    "Sculpt applied (Ctrl+Z undoes)"
-                } else {
-                    "Sculpt applied (not undoable: snapshot too large)"
-                }
-                .to_string(),
-            );
+            self.status_message = Some(if self.edit_mode.last_edit_undoable() {
+                // Canonical promises "Sculpt applied (Ctrl+Z undoes)" vs
+                // "Sculpt applied (not undoable: snapshot too large)";
+                // rendering resolves `sculpt-applied-undo` / `-locked`.
+                self.locale.tr("sculpt-applied-undo")
+            } else {
+                self.locale.tr("sculpt-applied-locked")
+            });
             true
         } else {
             let _ = self

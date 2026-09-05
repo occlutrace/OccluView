@@ -51,11 +51,12 @@ pub(crate) fn show_panel(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
     state: BridgeSplitPanelState<'_>,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<BridgeSplitPanelAction> {
     let default_pos = viewport_rect.right_top() + egui::vec2(-PANEL_WIDTH - 16.0, 16.0);
     let mut action = None;
     let mut open = true;
-    egui::Window::new("Bridge split")
+    egui::Window::new(locale.tr("bridge-panel-title"))
         .id(egui::Id::new("occluview_bridge_split"))
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
@@ -66,13 +67,13 @@ pub(crate) fn show_panel(
             ui.set_width(PANEL_WIDTH - 22.0);
             ui.style_mut().animation_time = 0.05;
             ui.label(
-                egui::RichText::new(status_label(state.mode))
+                egui::RichText::new(status_label(state.mode, locale))
                     .weak()
                     .size(11.0),
             );
             if let Some(error) = state.failure {
                 ui.label(
-                    egui::RichText::new(error_label(error))
+                    egui::RichText::new(error_label(error, locale))
                         .color(ui_theme::danger())
                         .size(11.0),
                 );
@@ -85,7 +86,7 @@ pub(crate) fn show_panel(
                     &mut kerf,
                     MIN_BRIDGE_SPLIT_KERF_MM..=MAX_BRIDGE_SPLIT_KERF_MM,
                 )
-                .text("Kerf")
+                .text(locale.tr("bridge-kerf").as_str())
                 .suffix(" mm")
                 .step_by(0.01),
             );
@@ -99,7 +100,7 @@ pub(crate) fn show_panel(
                     &mut diameter_mm,
                     (MIN_DISC_RADIUS_MM * 2.0)..=(MAX_DISC_RADIUS_MM * 2.0),
                 )
-                .text("Disc size")
+                .text(locale.tr("bridge-disc-size").as_str())
                 .suffix(" mm")
                 .step_by(0.25),
             );
@@ -108,10 +109,13 @@ pub(crate) fn show_panel(
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(locale.tr("bridge-cancel")).clicked() {
                     action = Some(BridgeSplitPanelAction::Cancel);
                 }
-                let apply = ui.add_enabled(state.can_apply, egui::Button::new("Split bridge"));
+                let apply = ui.add_enabled(
+                    state.can_apply,
+                    egui::Button::new(locale.tr("bridge-apply")),
+                );
                 if apply.clicked() {
                     action = Some(BridgeSplitPanelAction::Apply);
                 }
@@ -224,77 +228,101 @@ fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
     (u, normal.cross(u).normalize_or(Vec3::Z))
 }
 
-fn status_label(mode: BridgeSplitMode) -> &'static str {
-    match mode {
-        BridgeSplitMode::Following => "Place disc",
-        BridgeSplitMode::PlantedPending => "Calculating",
-        BridgeSplitMode::PlantedReady => "Ready",
-        BridgeSplitMode::Failed => "Split attempt failed",
-        BridgeSplitMode::Off => "",
-    }
+fn status_label(mode: BridgeSplitMode, locale: &crate::i18n::LocaleManager) -> String {
+    let key = match mode {
+        BridgeSplitMode::Following => "bridge-mode-place",
+        BridgeSplitMode::PlantedPending => "bridge-mode-calculating",
+        BridgeSplitMode::PlantedReady => "bridge-mode-ready",
+        BridgeSplitMode::Failed => "bridge-mode-failed",
+        BridgeSplitMode::Off => return String::new(),
+    };
+    locale.tr(key)
 }
 
-fn error_label(error: &BridgeSplitToolError) -> String {
+fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager) -> String {
     match error {
         BridgeSplitToolError::Kernel(error) => match error {
-            occluview_core::BridgeSplitError::NoIntersection => {
-                "Disc misses the bridge. Move it into a connector.".to_string()
-            }
-            occluview_core::BridgeSplitError::TangentContact => {
-                "Disc only touches the surface. Move it through the connector.".to_string()
-            }
+            occluview_core::BridgeSplitError::NoIntersection => locale.tr("bridge-err-miss"),
+            occluview_core::BridgeSplitError::TangentContact => locale.tr("bridge-err-tangent"),
             occluview_core::BridgeSplitError::DiscTooSmall {
                 disc_radius_mm,
                 required_radius_mm,
-            } => format!(
-                "Disc diameter is {:.1} mm; at least {:.1} mm is needed here.",
-                disc_radius_mm * 2.0,
-                required_radius_mm * 2.0
+            } => locale.tr_with(
+                "bridge-err-small",
+                &[
+                    ("have", &format!("{:.1}", disc_radius_mm * 2.0)),
+                    ("need", &format!("{:.1}", required_radius_mm * 2.0)),
+                ],
             ),
             occluview_core::BridgeSplitError::DiscLimitExceeded {
                 required_radius_mm,
                 max_radius_mm,
-            } => format!(
-                "This cut needs a {:.1} mm disc, above the {:.1} mm safety limit.",
-                required_radius_mm * 2.0,
-                max_radius_mm * 2.0
+            } => locale.tr_with(
+                "bridge-err-limit",
+                &[
+                    ("need", &format!("{:.1}", required_radius_mm * 2.0)),
+                    ("max", &format!("{:.1}", max_radius_mm * 2.0)),
+                ],
             ),
             occluview_core::BridgeSplitError::OpenOrNonManifold { .. }
             | occluview_core::BridgeSplitError::DisconnectedInput { .. }
             | occluview_core::BridgeSplitError::DegenerateInput { .. } => {
-                "The split was attempted with the source surface preserved, but no usable result was produced. The original mesh was kept.".to_string()
+                locale.tr("bridge-err-no-result")
             }
             occluview_core::BridgeSplitError::DamagedCutRim { .. }
             | occluview_core::BridgeSplitError::CapFailed { .. } => {
-                "The split was attempted, but the resulting cut could not be validated. The original mesh was kept.".to_string()
+                locale.tr("bridge-err-invalid-cut")
             }
             occluview_core::BridgeSplitError::InvalidOutput { side, .. } => {
-                format!("The split was attempted, but {side} could not be validated. The original mesh was kept.")
+                locale.tr_with("bridge-err-invalid-side", &[("side", side)])
             }
             occluview_core::BridgeSplitError::SeparationViolation { .. } => {
-                "The split was attempted, but the requested gap could not be preserved. The original mesh was kept.".to_string()
+                locale.tr("bridge-err-gap")
             }
-            occluview_core::BridgeSplitError::EmptyInput => {
-                "The selected layer has no triangle mesh to split.".to_string()
-            }
+            occluview_core::BridgeSplitError::EmptyInput => locale.tr("bridge-err-empty"),
             occluview_core::BridgeSplitError::InvalidRequest { .. }
-            | occluview_core::BridgeSplitError::Mesh(_) => {
-                "Disc settings are invalid. Reset the tool and try again.".to_string()
-            }
+            | occluview_core::BridgeSplitError::Mesh(_) => locale.tr("bridge-err-invalid"),
         },
         BridgeSplitToolError::InvalidTransform { .. }
         | BridgeSplitToolError::Conversion { .. }
         | BridgeSplitToolError::Core { .. }
         | BridgeSplitToolError::RobustCsg { .. }
-        | BridgeSplitToolError::WorkerStopped => {
-            "The split could not produce a usable result. The original mesh was kept.".to_string()
-        }
+        | BridgeSplitToolError::WorkerStopped => locale.tr("bridge-err-unusable"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The kept English mode labels render from the catalog verbatim.
+    #[test]
+    fn english_mode_labels_match_source_wording() {
+        #![allow(clippy::expect_used)]
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        let locale = crate::i18n::LocaleManager::for_tests();
+        for (mode, key, label) in [
+            (
+                BridgeSplitMode::Following,
+                "bridge-mode-place",
+                "Place disc",
+            ),
+            (
+                BridgeSplitMode::PlantedPending,
+                "bridge-mode-calculating",
+                "Calculating",
+            ),
+            (BridgeSplitMode::PlantedReady, "bridge-mode-ready", "Ready"),
+            (
+                BridgeSplitMode::Failed,
+                "bridge-mode-failed",
+                "Split attempt failed",
+            ),
+        ] {
+            assert_eq!(status_label(mode, &locale), label);
+            assert_eq!(catalog.text(key).as_deref(), Some(label));
+        }
+    }
 
     #[test]
     fn plane_basis_is_finite_and_orthogonal_to_disc_normal() {
@@ -312,21 +340,29 @@ mod tests {
         }
     }
 
+    fn english() -> crate::i18n::LocaleManager {
+        crate::i18n::LocaleManager::for_tests()
+    }
+
     #[test]
     fn disc_miss_explains_how_to_correct_the_placement() {
         assert_eq!(
-            error_label(&BridgeSplitToolError::Kernel(
-                occluview_core::BridgeSplitError::NoIntersection
-            )),
+            error_label(
+                &BridgeSplitToolError::Kernel(occluview_core::BridgeSplitError::NoIntersection),
+                &english(),
+            ),
             "Disc misses the bridge. Move it into a connector."
         );
     }
 
     #[test]
     fn topology_failures_do_not_expose_repair_instructions() {
-        let label = error_label(&BridgeSplitToolError::Kernel(
-            occluview_core::BridgeSplitError::DegenerateInput { faces: 4 },
-        ));
+        let label = error_label(
+            &BridgeSplitToolError::Kernel(occluview_core::BridgeSplitError::DegenerateInput {
+                faces: 4,
+            }),
+            &english(),
+        );
         assert!(!label.to_ascii_lowercase().contains("repair"));
         assert!(!label.to_ascii_lowercase().contains("degenerate"));
         assert!(label.contains("original mesh was kept"));

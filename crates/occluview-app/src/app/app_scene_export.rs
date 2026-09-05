@@ -23,7 +23,7 @@ impl OccluViewApp {
             return;
         };
         let Some(mesh) = merged_scene_mesh(scene.as_ref()) else {
-            self.status_message = Some("Nothing visible to save".into());
+            self.status_message = Some(self.locale.tr("export-nothing-visible"));
             return;
         };
         let dropped_texture = scene
@@ -45,7 +45,7 @@ impl OccluViewApp {
         };
         let path = normalize_layer_export_path(selected, MeshWriteFormat::PlyBinaryLittleEndian);
         let Ok(format) = mesh_export_format_from_path(&path) else {
-            self.status_message = Some("Unsupported output format".into());
+            self.status_message = Some(self.locale.tr("export-unsupported-format"));
             return;
         };
 
@@ -61,20 +61,29 @@ impl OccluViewApp {
             .collect();
         match write_mesh_overwrite(&path, &mesh, format, MeshWriteOptions::default()) {
             Ok(_) => {
-                let note = if dropped_texture {
-                    " (textures are not merged)"
+                let saved = if dropped_texture {
+                    self.locale.tr_with(
+                        "export-scene-saved-unmerged",
+                        &[("path", &path.display().to_string())],
+                    )
                 } else {
-                    ""
+                    self.locale.tr_with(
+                        "export-scene-saved",
+                        &[("path", &path.display().to_string())],
+                    )
                 };
                 self.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
-                self.status_message = Some(format!("Scene saved{}: {}", note, path.display()));
+                self.status_message = Some(saved);
             }
             Err(error) => {
-                let summary = format!("Could not save the scene: {error}");
+                let summary = self.locale.tr_with(
+                    "export-scene-failed-summary",
+                    &[("detail", &error.to_string())],
+                );
                 self.status_message = Some(summary.clone());
                 self.app_error = Some(AppErrorDialog {
-                    title: "Could not save the scene".to_string(),
+                    title: self.locale.tr("export-scene-failed-title"),
                     summary,
                     details: format!(
                         "Scene export failed\n\nPath:\n{}\n\nError:\n{error:#}",
@@ -92,7 +101,7 @@ impl OccluViewApp {
             return;
         };
         if !scene.meshes().iter().any(|entry| entry.visible) {
-            self.status_message = Some("Nothing visible to save".into());
+            self.status_message = Some(self.locale.tr("export-nothing-visible"));
             return;
         }
         let mut dialog = rfd::FileDialog::new();
@@ -170,22 +179,33 @@ impl OccluViewApp {
                 .collect();
             self.forget_unsaved_edits(&written);
         }
-        let mut status = if failed == 0 {
-            format!("Saved {written} layers to {}", directory.display())
-        } else {
-            format!(
-                "Saved {written} layers to {}; {failed} could not be written",
-                directory.display()
-            )
+        let dir_text = directory.display().to_string();
+        let status = match (failed == 0, renamed == 0) {
+            (true, true) => self.locale.tr_plural(
+                "export-layers-saved",
+                &[("dir", &dir_text)],
+                &[("written", written)],
+            ),
+            (false, true) => self.locale.tr_plural(
+                "export-layers-saved-failed",
+                &[("dir", &dir_text)],
+                &[("written", written), ("failed", failed)],
+            ),
+            (true, false) => self.locale.tr_plural(
+                "export-layers-saved-renamed",
+                &[("dir", &dir_text)],
+                &[("written", written), ("renamed", renamed)],
+            ),
+            (false, false) => self.locale.tr_plural(
+                "export-layers-saved-failed-renamed",
+                &[("dir", &dir_text)],
+                &[
+                    ("written", written),
+                    ("failed", failed),
+                    ("renamed", renamed),
+                ],
+            ),
         };
-        if renamed > 0 {
-            use std::fmt::Write as _;
-            let files = if renamed == 1 { "file" } else { "files" };
-            let _ = write!(
-                status,
-                "; {renamed} {files} renamed to keep what was already there"
-            );
-        }
         self.status_message = Some(status);
     }
 }

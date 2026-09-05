@@ -8,7 +8,7 @@
 //! to the fit.
 
 use eframe::egui;
-use occluview_align::{DeviationStats, Orientation};
+use occluview_align::DeviationStats;
 
 use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
@@ -36,11 +36,21 @@ pub(crate) enum AlignTab {
 }
 
 impl AlignTab {
-    /// The label on the tab.
+    /// The English label on the tab (operator vocabulary reference, pinned
+    /// by the en-wording lock test).
+    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::Automatically => "Automatically",
             Self::Manually => "Manually",
+        }
+    }
+
+    /// Catalog key rendering the localized tab label.
+    fn label_key(self) -> &'static str {
+        match self {
+            Self::Automatically => "align-tab-auto",
+            Self::Manually => "align-tab-manual",
         }
     }
 }
@@ -111,10 +121,11 @@ pub(crate) fn show(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
     view: AlignPanelView<'_>,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let default_pos = viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 16.0, 16.0);
     let mut action = None;
-    egui::Window::new("Align Scans")
+    egui::Window::new(locale.text("align-panel-title"))
         .id(egui::Id::new("occluview_align_window"))
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
@@ -126,21 +137,29 @@ pub(crate) fn show(
             ui.set_width(WINDOW_WIDTH - 24.0);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.style_mut().animation_time = 0.05;
-            action = body(ui, view);
+            action = body(ui, view, locale);
         });
     action
 }
 
 /// The window body: the open tab, then the commit row both tabs share.
-fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAction> {
+fn body(
+    ui: &mut egui::Ui,
+    mut view: AlignPanelView<'_>,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<AlignPanelAction> {
     let enabled = !view.busy;
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
         crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
-        ui.label(egui::RichText::new("Align Scans").strong().size(14.0));
+        ui.label(
+            egui::RichText::new(locale.tr("align-title"))
+                .strong()
+                .size(14.0),
+        );
     });
     ui.add_space(2.0);
-    tab_strip(ui, view.tab);
+    tab_strip(ui, view.tab, locale);
     // The brush is available only on the automatic tab.
     if *view.tab != AlignTab::Automatically {
         *view.excluding = false;
@@ -150,17 +169,24 @@ fn body(ui: &mut egui::Ui, mut view: AlignPanelView<'_>) -> Option<AlignPanelAct
     ui.add_space(4.0);
 
     let mut action = match *view.tab {
-        AlignTab::Automatically => automatically(ui, &mut view, enabled),
-        AlignTab::Manually => manually(ui, view.constraint, view.can_undo, view.can_redo, enabled),
+        AlignTab::Automatically => automatically(ui, &mut view, enabled, locale),
+        AlignTab::Manually => manually(
+            ui,
+            view.constraint,
+            view.can_undo,
+            view.can_redo,
+            enabled,
+            locale,
+        ),
     };
     status(ui, view.status);
     // Keep Cancel and Done available while work is in flight.
-    action = action.or(commit(ui, view.moved));
+    action = action.or(commit(ui, view.moved, locale));
     action
 }
 
 /// The two-tab strip, sized so both halves are equally reachable.
-fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
+fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab, locale: &crate::i18n::LocaleManager) {
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
         for value in [AlignTab::Automatically, AlignTab::Manually] {
@@ -181,7 +207,7 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab) {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                value.label(),
+                locale.tr(value.label_key()).as_str(),
                 egui::FontId::proportional(12.5),
                 ink,
             );
@@ -204,34 +230,39 @@ fn automatically(
     ui: &mut egui::Ui,
     view: &mut AlignPanelView<'_>,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let mut action = if crate::align_panel_roles::show(ui, view.roles.as_ref(), enabled) {
+    let mut action = if crate::align_panel_roles::show(ui, view.roles.as_ref(), enabled, locale) {
         Some(AlignPanelAction::SwapRoles)
     } else {
         None
     };
-    prompt(ui, view.tool);
-    action = action.or(back(ui, view.tool, enabled));
-    action = action.or(fits(ui, view.tool, enabled));
+    prompt(ui, view.tool, locale);
+    action = action.or(back(ui, view.tool, enabled, locale));
+    action = action.or(fits(ui, view.tool, enabled, locale));
     ui.add_space(2.0);
-    matching(ui, view.settings, enabled);
+    crate::align_panel_settings::matching(ui, view.settings, enabled, locale);
     ui.separator();
-    exclude(ui, view.excluding, enabled);
+    crate::align_panel_settings::exclude(ui, view.excluding, enabled, locale);
     action.or(align_panel_map::show(
         ui,
         view.settings,
         view.stats,
         enabled,
+        locale,
     ))
 }
 
 /// The Manually tab: the three drag constraints and the history buttons.
+// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+#[expect(clippy::too_many_arguments)]
 fn manually(
     ui: &mut egui::Ui,
     constraint: &mut DragConstraint,
     can_undo: bool,
     can_redo: bool,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x * 2.0) / 3.0;
@@ -248,20 +279,20 @@ fn manually(
                 true,
                 *constraint == value,
             )
-            .on_hover_text(value.hint())
+            .on_hover_text(locale.tr(value.hint_key()))
             .clicked()
             {
                 *constraint = value;
             }
         }
     });
-    hint(ui, constraint.label());
+    hint(ui, &locale.tr(constraint.label_key()));
     ui.add_space(2.0);
     // States the rule, because the rule is not what the other tab does. There
     // the roles are fixed and named; here the scan under the cursor is the one
     // that moves, the fixed scan included — and an operator who grabbed the arch
     // they did not mean to had nothing on screen to tell them so.
-    hint(ui, "Drags whichever scan you grab · Ctrl+drag turns it");
+    hint(ui, &locale.tr("align-manual-drag-hint"));
     ui.add_space(4.0);
 
     let mut action = None;
@@ -271,11 +302,11 @@ fn manually(
             ui,
             width,
             Some(AppIcon::Undo),
-            "Undo",
+            &locale.tr("align-undo"),
             enabled && can_undo,
             false,
         )
-        .on_hover_text("Go back one step")
+        .on_hover_text(locale.tr("align-undo-hint"))
         .clicked()
         {
             action = Some(AlignPanelAction::Undo);
@@ -284,11 +315,11 @@ fn manually(
             ui,
             width,
             Some(AppIcon::Redo),
-            "Redo",
+            &locale.tr("align-redo"),
             enabled && can_redo,
             false,
         )
-        .on_hover_text("Go forward one step")
+        .on_hover_text(locale.tr("align-redo-hint"))
         .clicked()
         {
             action = Some(AlignPanelAction::Redo);
@@ -298,26 +329,28 @@ fn manually(
 }
 
 /// What the tool is waiting for, in one line.
-fn prompt(ui: &mut egui::Ui, tool: &AlignTool) {
+fn prompt(ui: &mut egui::Ui, tool: &AlignTool, locale: &crate::i18n::LocaleManager) {
     let placed = tool.pairs().len();
     let text = if tool.moving_layer().is_none() {
-        "Click a point on the mesh that should move".to_owned()
+        locale.tr("align-prompt-moving")
     } else if tool.pending().is_some() {
-        "Click the same position on the other mesh".to_owned()
+        locale.tr("align-prompt-other")
     } else if placed == 0 {
-        "Click alternating points at the same positions on the two meshes".to_owned()
+        locale.tr("align-prompt-alternate")
     } else {
-        format!(
-            "{placed} arrow{} placed",
-            if placed == 1 { "" } else { "s" }
-        )
+        locale.tr_plural("align-prompt-placed", &[], &[("count", placed)])
     };
     ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::text()));
     ui.add_space(2.0);
 }
 
 /// Point-pair history controls and pair reset.
-fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
+fn back(
+    ui: &mut egui::Ui,
+    tool: &AlignTool,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<AlignPanelAction> {
     let placed = tool.pending().is_some() || !tool.pairs().is_empty();
     let paired = tool.moving_layer().is_some();
     let mut action = None;
@@ -327,20 +360,25 @@ fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
             ui,
             width,
             Some(AppIcon::Undo),
-            "Back",
+            &locale.tr("align-back"),
             enabled && placed,
             false,
         )
-        .on_hover_text("Undo an arrow — a right-click in the view does the same")
+        .on_hover_text(locale.tr("align-back-hint"))
         .clicked()
         {
             action = Some(AlignPanelAction::Back);
         }
-        if chip(ui, width, None, "Clear", enabled && paired, false)
-            .on_hover_text(
-                "Drop every arrow and pick two scans again — the scans stay where they are",
-            )
-            .clicked()
+        if chip(
+            ui,
+            width,
+            None,
+            &locale.tr("align-clear"),
+            enabled && paired,
+            false,
+        )
+        .on_hover_text(locale.tr("align-clear-hint").as_str())
+        .clicked()
         {
             action = Some(AlignPanelAction::Clear);
         }
@@ -350,18 +388,23 @@ fn back(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
 
 /// The two fits. Best fit matching is the primary action and is sized like one:
 /// the point fit only gets the mesh close, the surface fit is what seats it.
-fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanelAction> {
+fn fits(
+    ui: &mut egui::Ui,
+    tool: &AlignTool,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<AlignPanelAction> {
     let mut action = None;
     let width = ui.available_width();
     if fit_button(
         ui,
         width,
         AppIcon::AlignFit,
-        "Perform alignment",
+        &locale.tr("align-fit-perform"),
         tool.can_align() && enabled,
         false,
     )
-    .on_hover_text("Move the mesh onto the arrows — needs at least two arrows")
+    .on_hover_text(locale.tr("align-fit-perform-hint"))
     .clicked()
     {
         action = Some(AlignPanelAction::Align);
@@ -370,79 +413,16 @@ fn fits(ui: &mut egui::Ui, tool: &AlignTool, enabled: bool) -> Option<AlignPanel
         ui,
         width,
         AppIcon::AlignRefine,
-        "Best fit matching",
+        &locale.tr("align-fit-refine"),
         tool.can_measure() && enabled,
         true,
     )
-    .on_hover_text("Seat the surfaces against each other. Only for identically shaped meshes")
+    .on_hover_text(locale.tr("align-fit-refine-hint"))
     .clicked()
     {
         action = Some(AlignPanelAction::Refine);
     }
     action
-}
-
-/// The two sliders and the orientation rule that steer best-fit matching.
-fn matching(ui: &mut egui::Ui, settings: &mut AlignSettings, enabled: bool) {
-    ui.add_enabled(
-        enabled,
-        egui::Slider::new(&mut settings.matching_ratio, 0.1..=1.0)
-            .custom_formatter(|value, _| format!("{:.0}%", value * 100.0))
-            .text("matching parts"),
-    )
-    .on_hover_text(
-        "The share of surface that exists on both meshes. 70-80% suits mesh pairs \
-         whose topology is largely the same",
-    );
-    ui.add_enabled(
-        enabled,
-        egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0)
-            .suffix(" mm")
-            .text("max influence"),
-    )
-    .on_hover_text(
-        "Only surface below this distance influences the matching. A large value can \
-         worsen the result",
-    );
-    ui.collapsing("Surfaces orientation shall match", |ui| {
-        facing(ui, &mut settings.orientation);
-    });
-}
-
-/// The surface-orientation rule. An inverted mesh flips the whole signed map,
-/// so this is the escape hatch for a scan whose winding disagrees with itself.
-fn facing(ui: &mut egui::Ui, orientation: &mut Orientation) {
-    for (value, label) in [
-        (Orientation::Match, "Surfaces orientation shall match"),
-        (
-            Orientation::Inverted,
-            "Surfaces orientation shall match inverted",
-        ),
-        (
-            Orientation::Ignored,
-            "Surfaces orientation shall be ignored",
-        ),
-    ] {
-        if ui
-            .radio(*orientation == value, label)
-            .on_hover_text(if value == Orientation::Ignored {
-                "Accepts either facing. The calculation often takes significantly longer"
-            } else {
-                "How the two surfaces are taken to face each other"
-            })
-            .clicked()
-        {
-            *orientation = value;
-        }
-    }
-}
-
-/// Toggle the exclusion brush used by matching.
-fn exclude(ui: &mut egui::Ui, excluding: &mut bool, enabled: bool) {
-    ui.add_enabled_ui(enabled, |ui| {
-        ui.checkbox(excluding, "Matching: Exclude selected parts")
-            .on_hover_text("Paint the surface best-fit matching must ignore");
-    });
 }
 
 /// A short muted line of guidance.
@@ -472,28 +452,34 @@ fn status(ui: &mut egui::Ui, status: Option<&str>) {
 /// Cancel means what it says: every scan goes back where it was. Closing a tool
 /// and silently keeping what it did is how an operator loses work they thought
 /// they had discarded.
-fn commit(ui: &mut egui::Ui, moved: bool) -> Option<AlignPanelAction> {
+fn commit(
+    ui: &mut egui::Ui,
+    moved: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<AlignPanelAction> {
     let mut action = None;
+    let cancel_hint_moved = locale.tr("align-commit-cancel-hint-moved");
+    let cancel_hint_clean = locale.tr("align-commit-cancel-hint-clean");
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        if tall_button(ui, width, "Cancel", false)
+        if tall_button(ui, width, &locale.tr("align-commit-cancel"), false)
             // Spelt out when there is something to lose. An operator who reads
             // Cancel as "close the window" loses every move they made in the
             // session, and the only clue afterwards was a status line they had
             // already scrolled past. Ctrl+Z does bring it back — the restore is
             // one history step — so that is said here, where the decision is.
             .on_hover_text(if moved {
-                "Put every scan back where it was and close — Ctrl+Z brings the alignment back"
+                cancel_hint_moved.as_str()
             } else {
-                "Close without changing anything"
+                cancel_hint_clean.as_str()
             })
             .clicked()
         {
             action = Some(AlignPanelAction::Cancel);
         }
-        if tall_button(ui, width, "Done", true)
-            .on_hover_text("Keep the alignment and close — export the scan to write it to disk")
+        if tall_button(ui, width, &locale.tr("align-commit-done"), true)
+            .on_hover_text(locale.tr("align-commit-done-hint").as_str())
             .clicked()
         {
             action = Some(AlignPanelAction::Done);
@@ -664,6 +650,17 @@ fn tall_button(ui: &mut egui::Ui, width: f32, label: &str, primary: bool) -> egu
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use super::AlignTab;
+
+    /// The kept English tab labels render from the catalog verbatim.
+    #[test]
+    fn english_tab_labels_match_source_wording() {
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        for tab in [AlignTab::Automatically, AlignTab::Manually] {
+            assert_eq!(catalog.text(tab.label_key()).as_deref(), Some(tab.label()));
+        }
+    }
+
     fn production() -> &'static str {
         let source = crate::primary_ui_tests::production_source(include_str!("align_panel.rs"));
         source
@@ -691,7 +688,9 @@ mod tests {
     #[test]
     fn the_window_is_movable_and_constrained_to_the_viewport() {
         let source = production();
-        assert!(source.contains("egui::Window::new(\"Align Scans\")"));
+        // Title resolves through `align-panel-title`; the stable explicit
+        // id is what makes the window movable/persistent.
+        assert!(source.contains("align-panel-title"));
         assert!(source.contains(".default_pos(default_pos)"));
         assert!(source.contains(".constrain_to(viewport_rect)"));
         assert!(
@@ -714,17 +713,25 @@ mod tests {
     /// Preserve the established control labels.
     #[test]
     fn the_controls_carry_the_labels_operators_already_know() {
-        let source = production();
+        // The settings cluster lives in the sibling file under the same
+        // per-file line budget; both files carry window controls.
+        let source = format!(
+            "{}{}",
+            production(),
+            crate::primary_ui_tests::production_source(include_str!("align_panel_settings.rs"))
+        );
+        // Control captions resolve through the catalog; the keys are what
+        // the window must reference.
         for label in [
-            "\"Back\"",
-            "\"Perform alignment\"",
-            "\"Best fit matching\"",
-            "\"matching parts\"",
-            "\"max influence\"",
-            "\"Surfaces orientation shall match\"",
-            "\"Surfaces orientation shall match inverted\"",
-            "\"Surfaces orientation shall be ignored\"",
-            "\"Matching: Exclude selected parts\"",
+            "\"align-back\"",
+            "\"align-fit-perform\"",
+            "\"align-fit-refine\"",
+            "\"align-matching-parts\"",
+            "\"align-max-influence\"",
+            "\"align-orientation-match\"",
+            "\"align-orientation-inverted\"",
+            "\"align-orientation-ignored\"",
+            "\"align-exclude\"",
         ] {
             assert!(source.contains(label), "the window is missing {label}");
         }
@@ -750,7 +757,7 @@ mod tests {
             .and_then(|(_, rest)| rest.split_once("\n/// The Manually tab"))
             .map(|(block, _)| block)
             .expect("an automatic tab body");
-        assert!(automatic.contains("exclude(ui, view.excluding, enabled)"));
+        assert!(automatic.contains("exclude(ui, view.excluding, enabled, locale)"));
     }
 
     /// The manual tab exposes Undo and Redo.

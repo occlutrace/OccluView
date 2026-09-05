@@ -23,17 +23,22 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    let layer_label = resolve_layer(scene, paths, &request)
-        .map_or_else(|| "layer".to_string(), |(_, label)| label);
+    let layer_label = resolve_layer(scene, paths, &request).map_or_else(
+        || {
+            app.locale
+                .tr_with("layer-unnamed", &[("n", &(request.index + 1).to_string())])
+        },
+        |(_, label)| label,
+    );
 
     if selection_covers_whole_mesh(scene, &request, &app.edit_mode) {
         app.status_message = Some(match request.action {
-            LayerContextAction::CropToSelectedFaces => {
-                format!("Selection already covers the whole mesh: {layer_label}")
-            }
-            _ => {
-                format!("Selection covers the whole mesh — remove the layer instead: {layer_label}")
-            }
+            LayerContextAction::CropToSelectedFaces => app
+                .locale
+                .tr_with("select-covers-all", &[("layer", &layer_label)]),
+            _ => app
+                .locale
+                .tr_with("select-covers-remove", &[("layer", &layer_label)]),
         });
         return LayerContextApply::default();
     }
@@ -42,8 +47,9 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     // scene for the undo snapshot — the refusal needs no snapshot at all.
     if request.action == LayerContextAction::SeparateSelectedComponents {
         if let Some(parts) = separate_component_overflow(scene, &request, &app.edit_mode) {
-            app.status_message = Some(format!(
-                "Selection splits into {parts} parts — refine the selection: {layer_label}"
+            app.status_message = Some(app.locale.tr_with(
+                "select-splits",
+                &[("parts", &parts.to_string()), ("layer", &layer_label)],
             ));
             return LayerContextApply::default();
         }
@@ -71,7 +77,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                         app.mark_mesh_edits_unsaved(id);
                     }
                 }
-                let status = layer_edit_status(&layer_label, request.action, None);
+                let status = layer_edit_status(&layer_label, request.action, None, &app.locale);
                 app.status_message = Some(with_undoable_note(app, status));
             } else {
                 let has_selection = app
@@ -82,23 +88,28 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                     if let Some(parts) =
                         separate_component_overflow(scene, &request, &app.edit_mode)
                     {
-                        format!(
-                            "Selection splits into {parts} parts — refine the selection: {layer_label}"
+                        app.locale.tr_with(
+                            "select-splits",
+                            &[("parts", &parts.to_string()), ("layer", &layer_label)],
                         )
                     } else if has_selection {
-                        format!("No changes: {layer_label}")
+                        app.locale
+                            .tr_with("edit-no-changes", &[("layer", &layer_label)])
                     } else {
-                        "Select mesh faces first".to_string()
+                        app.locale.tr("edit-select-faces-first")
                     },
                 );
             }
             apply
         }
         Err(error) => {
-            let summary = format!("Could not edit selection: {error}");
+            let summary = app.locale.tr_with(
+                "edit-apply-failed-summary",
+                &[("detail", &error.to_string())],
+            );
             app.status_message = Some(summary.clone());
             app.app_error = Some(AppErrorDialog {
-                title: "Could not edit selection".to_string(),
+                title: app.locale.tr("edit-apply-failed-title"),
                 summary,
                 details: format!(
                     "Selection edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"

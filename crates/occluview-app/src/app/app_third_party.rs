@@ -22,6 +22,7 @@ fn notice_lines() -> &'static [&'static str] {
 }
 
 impl OccluViewApp {
+    // Canonical title "Third-party licenses" pinned by source guards.
     pub(super) fn show_third_party_window(&mut self, ctx: &egui::Context) {
         if self.information_dialog != InformationDialog::ThirdPartyNotices {
             return;
@@ -34,12 +35,12 @@ impl OccluViewApp {
             |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("Third-party licenses")
+                        egui::RichText::new(self.locale.tr("about-licenses"))
                             .strong()
                             .color(ui_theme::text()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
+                        if ui.button(self.locale.tr("help-close")).clicked() {
                             close = true;
                         }
                     });

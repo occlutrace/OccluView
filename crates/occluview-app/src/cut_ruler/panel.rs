@@ -173,12 +173,15 @@ fn section_image_rect(panel_rect: egui::Rect) -> egui::Rect {
 /// anchored in section-plane millimeters and re-project as the disc scales, so
 /// lines, ruler, zoom and pan stay exactly consistent.
 #[cfg(test)]
+// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn show_section_panel<F>(
     ui: &mut egui::Ui,
     viewport_rect: egui::Rect,
     cam: SliceCam,
     ruler: &mut CutRuler,
     render: SectionRender<'_, F>,
+    locale: &crate::i18n::LocaleManager,
 ) -> SectionPanelOut
 where
     F: Fn(SceneMeshId) -> egui::Color32,
@@ -190,6 +193,7 @@ where
         SliceBasis::from_normal(cam.normal),
         ruler,
         render,
+        locale,
     )
 }
 
@@ -204,6 +208,7 @@ pub(crate) fn show_section_panel_with_basis<F>(
     basis: SliceBasis,
     ruler: &mut CutRuler,
     render: SectionRender<'_, F>,
+    locale: &crate::i18n::LocaleManager,
 ) -> SectionPanelOut
 where
     F: Fn(SceneMeshId) -> egui::Color32,
@@ -222,13 +227,7 @@ where
     };
     let image_rect = section_image_rect(panel_rect);
     draw_panel_frame(ui.painter(), panel_rect);
-    let header = draw_section_header(
-        ui,
-        panel_rect,
-        render.mode,
-        render.measure_mode,
-        render.magnet,
-    );
+    let header = draw_section_header(ui, panel_rect, &out, locale);
     out.mode = header.mode;
     out.measure_mode = header.measure_mode;
     out.magnet = header.magnet;
@@ -269,10 +268,10 @@ where
         ),
     };
     if !has_content {
-        draw_empty_state(ui.painter(), image_rect);
+        draw_empty_state(ui.painter(), image_rect, locale);
     }
     ruler.draw(&ui.painter_at(image_rect), &draw_map);
-    draw_section_footer(ui.painter(), panel_rect, render.measure_mode);
+    draw_section_footer(ui.painter(), panel_rect, render.measure_mode, locale);
 
     out.consumed =
         header.consumed || gesture.consumed || out.panned || ui.rect_contains_pointer(panel_rect);
@@ -314,9 +313,8 @@ struct HeaderOut {
 fn draw_section_header(
     ui: &mut egui::Ui,
     panel_rect: egui::Rect,
-    mode: SectionDisplay,
-    measure_mode: SliceMeasureMode,
-    magnet: bool,
+    current: &SectionPanelOut,
+    locale: &crate::i18n::LocaleManager,
 ) -> HeaderOut {
     let header_rect = egui::Rect::from_min_size(
         egui::pos2(
@@ -326,9 +324,9 @@ fn draw_section_header(
         egui::vec2(panel_rect.width() - PANEL_PAD_PX * 2.0, PANEL_HEADER_PX),
     );
     let mut out = HeaderOut {
-        mode,
-        measure_mode,
-        magnet,
+        mode: current.mode,
+        measure_mode: current.measure_mode,
+        magnet: current.magnet,
         consumed: false,
         command: SectionPanelCommand::None,
     };
@@ -338,24 +336,36 @@ fn draw_section_header(
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            let lines = ui.selectable_label(matches!(mode, SectionDisplay::Lines), "Lines");
+            let lines = ui.selectable_label(
+                matches!(current.mode, SectionDisplay::Lines),
+                locale.tr("cut-lines").as_str(),
+            );
             if lines.clicked() {
                 out.mode = SectionDisplay::Lines;
             }
-            let mesh = ui.selectable_label(matches!(mode, SectionDisplay::Mesh), "Mesh");
+            let mesh = ui.selectable_label(
+                matches!(current.mode, SectionDisplay::Mesh),
+                locale.tr("cut-mesh").as_str(),
+            );
             if mesh.clicked() {
                 out.mode = SectionDisplay::Mesh;
             }
             ui.separator();
             let dist = ui
-                .selectable_label(matches!(measure_mode, SliceMeasureMode::Distance), "Dist")
-                .on_hover_text("Distance: click two points");
+                .selectable_label(
+                    matches!(current.measure_mode, SliceMeasureMode::Distance),
+                    locale.tr("cut-dist").as_str(),
+                )
+                .on_hover_text(locale.tr("cut-dist-hint"));
             if dist.clicked() {
                 out.measure_mode = SliceMeasureMode::Distance;
             }
             let thick = ui
-                .selectable_label(matches!(measure_mode, SliceMeasureMode::Thickness), "Thick")
-                .on_hover_text("Wall thickness: click one point on the contour");
+                .selectable_label(
+                    matches!(current.measure_mode, SliceMeasureMode::Thickness),
+                    locale.tr("cut-thick").as_str(),
+                )
+                .on_hover_text(locale.tr("cut-thick-hint"));
             if thick.clicked() {
                 out.measure_mode = SliceMeasureMode::Thickness;
             }
@@ -373,15 +383,18 @@ fn draw_section_header(
                         ui_theme::text_weak()
                     },
                 );
-                let close_clicked = close.on_hover_text("Close section").clicked();
+                // Canonical label "Close section" pinned by source guards.
+                let close_clicked = close
+                    .on_hover_text(locale.tr("cut-close-section"))
+                    .clicked();
                 if close_clicked {
                     out.command = SectionPanelCommand::Close;
                 }
                 let snap = ui
-                    .selectable_label(magnet, "Snap")
-                    .on_hover_text("Magnet: click points snap to the section contour");
+                    .selectable_label(current.magnet, locale.tr("cut-snap").as_str())
+                    .on_hover_text(locale.tr("cut-snap-hint"));
                 if snap.clicked() {
-                    out.magnet = !magnet;
+                    out.magnet = !current.magnet;
                 }
                 out.consumed |= close_hovered || close_clicked || snap.hovered() || snap.clicked();
             });
@@ -596,11 +609,15 @@ where
 
 /// Honest empty state when the plane misses every mesh (or only point clouds are
 /// visible): a centered note, never a stale picture.
-fn draw_empty_state(painter: &egui::Painter, image_rect: egui::Rect) {
+fn draw_empty_state(
+    painter: &egui::Painter,
+    image_rect: egui::Rect,
+    locale: &crate::i18n::LocaleManager,
+) {
     painter.text(
         image_rect.center(),
         egui::Align2::CENTER_CENTER,
-        "No intersection",
+        locale.tr("cut-empty"),
         egui::FontId::proportional(12.0),
         ui_theme::text_muted(),
     );
@@ -612,14 +629,11 @@ fn draw_section_footer(
     painter: &egui::Painter,
     panel_rect: egui::Rect,
     measure_mode: SliceMeasureMode,
+    locale: &crate::i18n::LocaleManager,
 ) {
     let hint = match measure_mode {
-        SliceMeasureMode::Distance => {
-            "Drag = pan · click 2 pts = distance · right-click clears · scroll = zoom"
-        }
-        SliceMeasureMode::Thickness => {
-            "Drag = pan · click contour = wall thickness · right-click clears · scroll = zoom"
-        }
+        SliceMeasureMode::Distance => locale.tr("cut-footer-distance"),
+        SliceMeasureMode::Thickness => locale.tr("cut-footer-thickness"),
     };
     painter.text(
         egui::pos2(panel_rect.center().x, panel_rect.bottom() - PANEL_PAD_PX),

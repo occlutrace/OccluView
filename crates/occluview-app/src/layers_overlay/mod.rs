@@ -28,12 +28,15 @@ pub(crate) struct LayerOverlayChanges {
     pub(crate) layer_edits: Vec<LayerRowChange>,
 }
 
+// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn show(
     ui: &mut egui::Ui,
     viewport_rect: egui::Rect,
     scene: &Scene,
     paths: &[PathBuf],
     active_layer_id: Option<SceneMeshId>,
+    locale: &crate::i18n::LocaleManager,
 ) -> LayerOverlayChanges {
     let layer_count = scene.meshes().len();
     let mut layer_edits = Vec::new();
@@ -45,7 +48,7 @@ pub(crate) fn show(
             let overlay_inner_width = overlay_rect.width() - 20.0;
             ui.set_min_width(overlay_inner_width);
             ui.set_max_width(overlay_inner_width);
-            show_header(ui, overlay_inner_width, layer_count);
+            show_header(ui, overlay_inner_width, layer_count, locale);
 
             // The row budget mirrors what `layer_overlay_rect` reserved for
             // rows (chrome minus header), so a panel sized for N rows shows
@@ -82,6 +85,7 @@ pub(crate) fn show(
                                 active: active_layer_id == Some(entry.id()),
                             },
                             &mut layer_context_request,
+                            locale,
                         ) {
                             layer_edits.push(edit);
                         }
@@ -96,15 +100,16 @@ pub(crate) fn show(
     }
 }
 
-fn show_header(ui: &mut egui::Ui, inner_width: f32, layer_count: usize) {
-    let count_text = if layer_count == 1 {
-        "1 layer".to_string()
-    } else {
-        format!("{layer_count} layers")
-    };
+fn show_header(
+    ui: &mut egui::Ui,
+    inner_width: f32,
+    layer_count: usize,
+    locale: &crate::i18n::LocaleManager,
+) {
+    let count_text = locale.tr_plural("layers-count", &[], &[("count", layer_count)]);
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("Layers")
+            egui::RichText::new(locale.tr("layers-title"))
                 .color(ui_theme::text())
                 .size(12.0)
                 .strong(),

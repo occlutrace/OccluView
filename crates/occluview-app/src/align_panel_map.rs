@@ -23,21 +23,24 @@ pub(crate) fn show(
     settings: &mut AlignSettings,
     stats: Option<DeviationStats>,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let mut action = toggle(ui, settings);
+    let mut action = toggle(ui, settings, locale);
     if !settings.show_deviation {
         return action;
     }
 
-    align_overlay::paint_legend(ui, *settings);
-    action = action.or(presets(ui, settings, enabled));
-    action = action.or(range(ui, settings, enabled));
+    align_overlay::paint_legend(ui, *settings, locale);
+    action = action.or(presets(ui, settings, enabled, locale));
+    action = action.or(range(ui, settings, enabled, locale));
     if let Some(stats) = stats {
-        numbers(ui, stats, settings.tolerance_mm);
-        saturation(ui, stats, *settings);
+        numbers(ui, stats, settings.tolerance_mm, locale);
+        saturation(ui, stats, *settings, locale);
     }
-    ui.collapsing("More settings", |ui| {
-        if details(ui, settings) {
+    // "More settings" wording lives in `align-map-more`; the fold position
+    // (not its title) is what the structure tests pin.
+    ui.collapsing(locale.tr("align-map-more"), |ui| {
+        if details(ui, settings, locale) {
             action = Some(AlignPanelAction::Measure);
         }
     });
@@ -45,7 +48,11 @@ pub(crate) fn show(
 }
 
 /// The one control that decides whether the map is on screen at all.
-fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelAction> {
+fn toggle(
+    ui: &mut egui::Ui,
+    settings: &mut AlignSettings,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<AlignPanelAction> {
     let mut action = None;
     ui.horizontal(|ui| {
         let glyph = ui
@@ -62,9 +69,10 @@ fn toggle(ui: &mut egui::Ui, settings: &mut AlignSettings) -> Option<AlignPanelA
             },
         );
         let mut shown = settings.show_deviation;
+        // Toggle label "Heatmap" (spelling pinned by the test below).
         if ui
-            .checkbox(&mut shown, "Heatmap")
-            .on_hover_text("Colour one scan by how far it sits from the other")
+            .checkbox(&mut shown, locale.tr("align-map-heatmap").as_str())
+            .on_hover_text(locale.tr("align-map-heatmap-hint"))
             .changed()
         {
             settings.show_deviation = shown;
@@ -90,11 +98,12 @@ fn presets(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("range")
+            egui::RichText::new(locale.tr("align-map-range-label"))
                 .size(11.0)
                 .color(ui_theme::text_muted()),
         );
@@ -103,8 +112,12 @@ fn presets(
             let active = (settings.scale_mm - max_mm).abs() < f64::EPSILON
                 && (settings.tolerance_mm - min_mm).abs() < f64::EPSILON;
             if crate::align_panel::chip(ui, width, None, &format!("{max_mm:.2}"), enabled, active)
-                .on_hover_text(format!(
-                    "Everything under {min_mm:.3} mm reads as agreement, {max_mm:.2} mm saturates"
+                .on_hover_text(locale.tr_with(
+                    "align-map-preset-hint",
+                    &[
+                        ("min", &format!("{min_mm:.3}")),
+                        ("max", &format!("{max_mm:.2}")),
+                    ],
                 ))
                 .clicked()
             {
@@ -129,6 +142,7 @@ fn range(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
+    locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
     if ui
@@ -137,7 +151,7 @@ fn range(
             egui::Slider::new(&mut settings.tolerance_mm, 0.005..=0.10)
                 .suffix(" mm")
                 .fixed_decimals(3)
-                .text("min"),
+                .text(locale.tr("align-map-min").as_str()),
         )
         .drag_stopped()
     {
@@ -150,7 +164,7 @@ fn range(
                 egui::Slider::new(&mut settings.scale_mm, 0.05..=CLINICAL_CEILING_MM)
                     .suffix(" mm")
                     .fixed_decimals(2)
-                    .text("max"),
+                    .text(locale.tr("align-map-max").as_str()),
             )
             .drag_stopped()
         {
@@ -160,8 +174,8 @@ fn range(
         }
         if !settings.auto_scale
             && ui
-                .small_button("auto")
-                .on_hover_text("Fit the range to the measurement again")
+                .small_button(locale.tr("align-map-auto").as_str())
+                .on_hover_text(locale.tr("align-map-auto-hint"))
                 .clicked()
         {
             settings.auto_scale = true;
@@ -177,8 +191,13 @@ fn range(
 /// 0.20 mm range over a pair sitting 1.4 mm apart pins every vertex to an end
 /// stop, and the arch comes out as a red and blue mosaic with no structure in
 /// it. The colours are not wrong — the range is — and nothing on screen said so.
-fn saturation(ui: &mut egui::Ui, stats: DeviationStats, settings: AlignSettings) {
-    if let Some(text) = saturation_advice(stats, settings) {
+fn saturation(
+    ui: &mut egui::Ui,
+    stats: DeviationStats,
+    settings: AlignSettings,
+    locale: &crate::i18n::LocaleManager,
+) {
+    if let Some(text) = saturation_advice(stats, settings, locale) {
         ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::text()));
     }
 }
@@ -189,7 +208,11 @@ fn saturation(ui: &mut egui::Ui, stats: DeviationStats, settings: AlignSettings)
 /// inside the `egui` call it was only reachable by a test that read this file's
 /// own source text as a string — which passes on a logic change and fails on a
 /// rename, the exact opposite of what a test is for.
-fn saturation_advice(stats: DeviationStats, settings: AlignSettings) -> Option<String> {
+fn saturation_advice(
+    stats: DeviationStats,
+    settings: AlignSettings,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<String> {
     let summary = stats.summary.filter(|summary| summary.p95.is_finite())?;
     if summary.p95 <= settings.scale_mm {
         return None;
@@ -199,14 +222,14 @@ fn saturation_advice(stats: DeviationStats, settings: AlignSettings) -> Option<S
     // picture of an alignment that has not happened, and widening the range
     // only makes a prettier picture of the same thing.
     Some(if summary.p95 > CLINICAL_CEILING_MM {
-        format!(
-            "These meshes are about {:.1} mm apart — align them before reading the map",
-            summary.p95
+        locale.tr_with(
+            "align-map-advice-far",
+            &[("mm", &format!("{:.1}", summary.p95))],
         )
     } else {
-        format!(
-            "Most of this is past {:.2} mm, so the colours are pinned to the ends — widen the range",
-            settings.scale_mm
+        locale.tr_with(
+            "align-map-advice-saturated",
+            &[("mm", &format!("{:.2}", settings.scale_mm))],
         )
     })
 }
@@ -216,38 +239,58 @@ fn saturation_advice(stats: DeviationStats, settings: AlignSettings) -> Option<S
 /// When there was not enough measured surface to characterise, this says so
 /// instead of printing a figure. A "0.000" in the one field a clinician reads
 /// is indistinguishable from two surfaces that coincide perfectly.
-fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
+fn numbers(
+    ui: &mut egui::Ui,
+    stats: DeviationStats,
+    tolerance_mm: f64,
+    locale: &crate::i18n::LocaleManager,
+) {
     let Some(summary) = stats.summary else {
         ui.label(
-            egui::RichText::new(format!(
-                "Not enough surface to measure — {} of {} vertices reached the other scan",
-                stats.measured,
-                stats.measured.saturating_add(stats.unmeasured.total())
-            ))
+            egui::RichText::new(
+                locale.tr_with(
+                    "align-map-not-enough",
+                    &[
+                        ("measured", &stats.measured.to_string()),
+                        (
+                            "total",
+                            &stats
+                                .measured
+                                .saturating_add(stats.unmeasured.total())
+                                .to_string(),
+                        ),
+                    ],
+                ),
+            )
             .size(11.0)
             .color(ui_theme::text()),
         );
-        grey_note(ui, stats);
+        grey_note(ui, stats, locale);
         return;
     };
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!(
-                "{:.0}% within {tolerance_mm:.2} mm",
-                summary.within_tolerance * 100.0
+            egui::RichText::new(locale.tr_with(
+                "align-map-within",
+                &[
+                    ("pct", &format!("{:.0}", summary.within_tolerance * 100.0)),
+                    ("tol", &format!("{tolerance_mm:.2}")),
+                ],
             ))
             .size(11.0)
             .color(ui_theme::text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(format!("rms {:.3}", summary.rms))
-                    .size(11.0)
-                    .color(ui_theme::text_muted()),
+                egui::RichText::new(
+                    locale.tr_with("align-map-rms", &[("rms", &format!("{:.3}", summary.rms))]),
+                )
+                .size(11.0)
+                .color(ui_theme::text_muted()),
             );
         });
     });
-    grey_note(ui, stats);
+    grey_note(ui, stats, locale);
 }
 
 /// What the grey on the surface means, cause by cause.
@@ -257,86 +300,97 @@ fn numbers(ui: &mut egui::Ui, stats: DeviationStats, tolerance_mm: f64) {
 /// it to measure to. But the same grey also covers a region they painted out and
 /// a region whose vertices are broken data, and one lump total — "N vertices had
 /// nothing to measure" — said all three at once.
-fn grey_note(ui: &mut egui::Ui, stats: DeviationStats) {
-    if let Some(text) = grey_sentence(stats) {
+fn grey_note(ui: &mut egui::Ui, stats: DeviationStats, locale: &crate::i18n::LocaleManager) {
+    if let Some(text) = grey_sentence(stats, locale) {
         ui.label(
             egui::RichText::new(text)
                 .size(10.0)
                 .color(ui_theme::text_muted()),
         )
-        .on_hover_text(
-            "Grey is not a measurement. Surface with no counterpart within reach \
-             cannot be measured at all — a bridge or a tooth on one scan only is \
-             the usual reason, and it is not an error.",
-        );
+        .on_hover_text(locale.tr("align-map-grey-tooltip"));
     }
 }
 
 /// The sentence naming what is grey, or none if nothing is.
 ///
 /// Split from the drawing above so the wording can be run in a test.
-fn grey_sentence(stats: DeviationStats) -> Option<String> {
+fn grey_sentence(stats: DeviationStats, locale: &crate::i18n::LocaleManager) -> Option<String> {
     let grey = stats.unmeasured;
     if grey.total() == 0 {
         return None;
     }
     let mut parts: Vec<String> = Vec::new();
     if grey.out_of_reach > 0 {
-        parts.push(format!("{} with no surface opposite", grey.out_of_reach));
+        parts.push(locale.tr_with(
+            "align-map-grey-out",
+            &[("n", &grey.out_of_reach.to_string())],
+        ));
     }
     if grey.excluded > 0 {
-        parts.push(format!("{} marked out", grey.excluded));
+        parts.push(locale.tr_with(
+            "align-map-grey-excluded",
+            &[("n", &grey.excluded.to_string())],
+        ));
     }
     if grey.unusable > 0 {
-        parts.push(format!("{} unusable in the file", grey.unusable));
+        parts.push(locale.tr_with(
+            "align-map-grey-unusable",
+            &[("n", &grey.unusable.to_string())],
+        ));
     }
-    Some(format!(
-        "{} vertices grey: {}",
-        grey.total(),
-        parts.join(", ")
+    Some(locale.tr_with(
+        "align-map-grey-total",
+        &[
+            ("total", &grey.total().to_string()),
+            ("parts", &parts.join(", ")),
+        ],
     ))
 }
 
 /// The knobs that only matter when something looks wrong.
-fn details(ui: &mut egui::Ui, settings: &mut AlignSettings) -> bool {
+fn details(
+    ui: &mut egui::Ui,
+    settings: &mut AlignSettings,
+    locale: &crate::i18n::LocaleManager,
+) -> bool {
     let mut changed = false;
     let mut banded = settings.bands.is_some();
     if ui
-        .checkbox(&mut banded, "Stepped bands")
-        .on_hover_text("Step the ramp instead of blending it")
+        .checkbox(&mut banded, locale.tr("align-map-stepped").as_str())
+        .on_hover_text(locale.tr("align-map-stepped-hint"))
         .changed()
     {
         settings.bands = banded.then_some(10);
         changed = true;
     }
-    changed |= colours(ui, &mut settings.ramp_mode);
+    changed |= colours(ui, &mut settings.ramp_mode, locale);
     changed
 }
 
 /// Which colour scheme the map paints with.
-fn colours(ui: &mut egui::Ui, mode: &mut RampMode) -> bool {
+fn colours(ui: &mut egui::Ui, mode: &mut RampMode, locale: &crate::i18n::LocaleManager) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("Colours")
+            egui::RichText::new(locale.tr("align-map-colours"))
                 .size(11.0)
                 .color(ui_theme::text_muted()),
         );
-        for (value, label, hint) in [
+        for (value, label_key, hint_key) in [
             (
                 RampMode::Magnitude,
-                "distance",
-                "Cool where the scans agree, hot where they do not",
+                "align-map-ramp-distance",
+                "align-map-ramp-distance-hint",
             ),
             (
                 RampMode::Signed,
-                "signed",
-                "Blue below the surface, green nominal, red above",
+                "align-map-ramp-signed",
+                "align-map-ramp-signed-hint",
             ),
         ] {
             if ui
-                .selectable_label(*mode == value, label)
-                .on_hover_text(hint)
+                .selectable_label(*mode == value, locale.tr(label_key).as_str())
+                .on_hover_text(locale.tr(hint_key))
                 .clicked()
                 && *mode != value
             {
@@ -356,6 +410,10 @@ mod tests {
     use super::grey_sentence;
     use crate::align_worker::AlignSettings;
     use occluview_align::{DeviationStats, DeviationSummary, Unmeasured};
+
+    fn english() -> crate::i18n::LocaleManager {
+        crate::i18n::LocaleManager::for_tests()
+    }
 
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.
@@ -392,10 +450,10 @@ mod tests {
             .map(|(body, _)| body)
             .expect("the block's own body");
         let fold = show
-            .find("ui.collapsing(\"More settings\"")
+            .find("ui.collapsing(")
             .expect("a fold to put the diagnostics behind");
         let drawn = show
-            .find("range(ui, settings, enabled)")
+            .find("range(ui, settings, enabled, locale)")
             .expect("the range controls");
         assert!(drawn < fold, "the range controls are behind the fold");
     }
@@ -408,6 +466,7 @@ mod tests {
     /// that has not happened yet.
     #[test]
     fn a_range_too_small_for_the_measurement_says_so() {
+        let locale = english();
         let at = |p95: f64, scale_mm: f64| {
             super::saturation_advice(
                 DeviationStats {
@@ -426,6 +485,7 @@ mod tests {
                     scale_mm,
                     ..AlignSettings::default()
                 },
+                &locale,
             )
         };
 
@@ -467,6 +527,7 @@ mod tests {
                 summary: None,
             },
             AlignSettings::default(),
+            &english(),
         );
         assert!(advice.is_none());
     }
@@ -478,13 +539,15 @@ mod tests {
     fn the_rarely_used_knobs_are_only_reachable_through_the_fold() {
         let source = production();
         let fold = source
-            .find("ui.collapsing(\"More settings\"")
+            .find("ui.collapsing(")
             .expect("a fold to put the diagnostics behind");
         let call = source
-            .find("details(ui, settings)")
+            .find("details(ui, settings, locale)")
             .expect("the diagnostics are drawn by details");
         assert!(fold < call, "the diagnostics must be drawn inside the fold");
-        for knob in ["Stepped bands", "Colours"] {
+        // Knob labels resolve through the catalog; the keys are what the
+        // panel must reference behind the fold.
+        for knob in ["align-map-stepped", "align-map-colours"] {
             // A knob that has been renamed or deleted used to satisfy this:
             // `unwrap_or(usize::MAX)` made a missing needle the largest
             // possible position, which is always after the fold.
@@ -510,15 +573,18 @@ mod tests {
         };
 
         assert_eq!(
-            grey_sentence(stats(Unmeasured::default())),
+            grey_sentence(stats(Unmeasured::default()), &english()),
             None,
             "nothing grey, nothing to say"
         );
 
-        let anatomy = grey_sentence(stats(Unmeasured {
-            out_of_reach: 7,
-            ..Unmeasured::default()
-        }))
+        let anatomy = grey_sentence(
+            stats(Unmeasured {
+                out_of_reach: 7,
+                ..Unmeasured::default()
+            }),
+            &english(),
+        )
         .expect("seven grey vertices are worth a sentence");
         assert!(anatomy.contains('7'), "got {anatomy}");
         assert!(
@@ -530,14 +596,25 @@ mod tests {
             "causes that did not occur must not be listed: {anatomy}"
         );
 
-        let mixed = grey_sentence(stats(Unmeasured {
-            excluded: 2,
-            out_of_reach: 3,
-            unusable: 4,
-        }))
+        let mixed = grey_sentence(
+            stats(Unmeasured {
+                excluded: 2,
+                out_of_reach: 3,
+                unusable: 4,
+            }),
+            &english(),
+        )
         .expect("nine grey vertices");
-        assert!(mixed.starts_with("9 vertices grey"), "got {mixed}");
-        for named in ["3 with no surface opposite", "2 marked out", "4 unusable"] {
+        // Interpolated counts carry Fluent bidi isolation marks by design.
+        assert!(
+            mixed.starts_with("\u{2068}9\u{2069} vertices grey"),
+            "got {mixed}"
+        );
+        for named in [
+            "\u{2068}3\u{2069} with no surface opposite",
+            "\u{2068}2\u{2069} marked out",
+            "\u{2068}4\u{2069} unusable",
+        ] {
             assert!(mixed.contains(named), "{named} missing from {mixed}");
         }
     }
