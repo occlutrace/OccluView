@@ -127,14 +127,16 @@ fn dcm_is_offered_to_the_user_and_never_taken_from_medical_dicom() {
 fn installer_refreshes_shell_association_cache_after_registry_changes() {
     let registration = super::shell_contract_tests::registration_source();
     let app_bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    let app_state = include_str!("../../occluview-app/src/app/state.rs");
+    // Argument parsing lives behind the app library boundary; the installer
+    // flag the WiX custom actions pass must be honored at its canonical home.
+    let app_startup = include_str!("../../occluview-app/src/startup.rs");
     let wxs = include_str!("../../../install/occluview.wxs");
 
     assert!(registration.contains("SHChangeNotify"));
     assert!(registration.contains("SHCNE_ASSOCCHANGED"));
     assert!(registration.contains("SHCNF_IDLIST"));
     assert!(registration.contains("notify_shell_associations_changed();"));
-    assert!(app_state.contains("\"--shell-refresh\""));
+    assert!(app_startup.contains("\"--shell-refresh\""));
     assert!(app_bootstrap.contains("notify_shell_associations_changed"));
     assert!(wxs.contains("Id=\"RefreshShellAssociationsInstall\""));
     assert!(wxs.contains("Id=\"RefreshShellAssociationsUninstall\""));
