@@ -51,22 +51,30 @@ fn no_status_line_promises_an_undo_that_was_not_stored() {
     // through `with_undoable_note` for that reason; the sculpt path printed
     // "(Ctrl+Z undoes)" unconditionally, so an operator learned the promise was
     // empty by pressing it, on work they had already moved past.
+    // Rendering is localized: the source names catalog keys, the English
+    // catalog pins the two wordings.
     let sculpt = repo_source_file("src/app/app_sculpt_worker.rs");
-    let promise = "(Ctrl+Z undoes)";
     assert!(
-        sculpt.contains(promise),
-        "the sculpt status should still say how to undo when it can be undone"
+        sculpt.contains("sculpt-applied-undo") && sculpt.contains("sculpt-applied-locked"),
+        "the sculpt status should resolve both undo branches through the catalog"
     );
     assert!(
         sculpt.contains("last_edit_undoable()"),
         "the promise must be conditional on the snapshot actually being stored"
     );
-    assert!(
-        sculpt.contains("not undoable: snapshot too large"),
+    let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+    assert_eq!(
+        catalog.text("sculpt-applied-undo").as_deref(),
+        Some("Sculpt applied (Ctrl+Z undoes)"),
+        "the undo branch should still say how to undo when it can be undone"
+    );
+    assert_eq!(
+        catalog.text("sculpt-applied-locked").as_deref(),
+        Some("Sculpt applied (not undoable: snapshot too large)"),
         "the other branch should say plainly that it cannot be undone"
     );
     assert!(
-        appears_before(&sculpt, "last_edit_undoable()", promise),
+        appears_before(&sculpt, "last_edit_undoable()", "sculpt-applied-undo"),
         "the check has to come before the promise"
     );
 
