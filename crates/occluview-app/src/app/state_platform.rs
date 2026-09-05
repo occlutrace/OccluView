@@ -57,9 +57,7 @@ impl PlatformState {
     /// Keep the most recent forwarded activation token; it is the provenance
     /// the post-load raise uses.
     pub(super) fn remember_raise_token(&mut self, token: Option<String>) {
-        if token.is_some() {
-            self.pending_raise_token = token;
-        }
+        keep_latest_provenance(&mut self.pending_raise_token, token);
     }
 
     /// Consume the pending activation provenance for a raise attempt.
@@ -68,32 +66,32 @@ impl PlatformState {
     }
 }
 
+/// Pure activation-provenance rule behind
+/// [`PlatformState::remember_raise_token`]: a forwarded token replaces the
+/// slot, an absent token leaves it untouched. Kept as a free function so the
+/// rule is testable without a real single-instance guard or an egui context;
+/// [`PlatformState::take_raise_token`] is [`Option::take`] on the same slot.
+fn keep_latest_provenance(slot: &mut Option<String>, token: Option<String>) {
+    if token.is_some() {
+        *slot = token;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::keep_latest_provenance;
 
     #[test]
     fn raise_token_keeps_only_the_most_recent_provenance() {
-        // Needs a real single-instance guard; skip where the lock dir is
-        // unavailable instead of asserting on the environment.
-        let guard = single_instance::SingleInstance::acquire();
-        let Ok(single_instance) = guard else {
-            return;
-        };
-        let repaint = egui::Context::default();
-        let mut platform = PlatformState {
-            incoming_open_requests: single_instance::OpenRequestListener::spawn(repaint),
-            _single_instance: single_instance,
-            raise_target: single_instance::RaiseTarget::default(),
-            pending_raise_token: None,
-        };
-
-        assert!(platform.take_raise_token().is_none());
-        platform.remember_raise_token(None);
-        assert!(platform.take_raise_token().is_none());
-        platform.remember_raise_token(Some("first".to_string()));
-        platform.remember_raise_token(Some("second".to_string()));
-        assert_eq!(platform.take_raise_token().as_deref(), Some("second"));
-        assert!(platform.take_raise_token().is_none());
+        // Deterministic: exercises the exact remember/take sequence against a
+        // plain slot, with no single-instance guard and no early return.
+        let mut slot: Option<String> = None;
+        assert!(slot.take().is_none());
+        keep_latest_provenance(&mut slot, None);
+        assert!(slot.take().is_none());
+        keep_latest_provenance(&mut slot, Some("first".to_string()));
+        keep_latest_provenance(&mut slot, Some("second".to_string()));
+        assert_eq!(slot.take().as_deref(), Some("second"));
+        assert!(slot.take().is_none());
     }
 }
