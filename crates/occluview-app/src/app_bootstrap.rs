@@ -13,7 +13,9 @@ use tracing_subscriber::EnvFilter;
 /// enough to see what led to a crash without bloating the report.
 const CRASH_LOG_CAPACITY: usize = 50;
 
-pub(crate) fn main_entry() {
+/// Binary entry behind the library boundary: install the panic hook, then run
+/// fallible startup and report failures instead of unwinding through `main`.
+pub fn main_entry() {
     install_panic_hook();
     if let Err(error) = real_main() {
         let details = format!("Startup failure\n\n{error:#}");
@@ -38,7 +40,7 @@ fn real_main() -> Result<()> {
 
     set_process_app_user_model_id();
 
-    let args = occluview_app::parse_args();
+    let args = crate::parse_args();
     if args.version {
         print_version_line();
         return Ok(());
@@ -63,7 +65,7 @@ fn real_main() -> Result<()> {
     // should not be attaching patient identifiers with it.
     tracing::info!(
         file_count = args.files.len(),
-        formats = ?occluview_app::file_extensions(&args.files),
+        formats = ?crate::file_extensions(&args.files),
         "OccluView starting"
     );
     let single_instance = single_instance::SingleInstance::acquire()?;

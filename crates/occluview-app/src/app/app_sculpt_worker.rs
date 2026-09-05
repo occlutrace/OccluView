@@ -388,7 +388,7 @@ mod tests {
         );
         // The typed model proves the cause mapping: a topology change stales
         // both scene consumers while sparing the selection overlay.
-        let mut topology = occluview_app::invalidation::RenderInvalidation::new();
+        let mut topology = crate::invalidation::RenderInvalidation::new();
         topology.sculpt_topology_changed();
         assert!(topology.live_scene_stale() && topology.offscreen_scene_stale());
         assert!(!topology.live_overlay_stale() && !topology.offscreen_overlay_stale());
