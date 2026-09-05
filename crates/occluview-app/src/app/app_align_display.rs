@@ -82,7 +82,8 @@ impl OccluViewApp {
         touched: &[u32],
         patched: &[[u8; 4]],
     ) -> bool {
-        let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
+        let (Some(scene), Some(live_viewport)) =
+            (self.scene.clone(), self.render.live_viewport.clone())
         else {
             return false;
         };
@@ -141,7 +142,7 @@ impl OccluViewApp {
                 viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
             }
         }
-        self.invalidation.overlay_tools_changed();
+        self.render.invalidation.overlay_tools_changed();
         true
     }
 
@@ -166,7 +167,8 @@ impl OccluViewApp {
     /// there is no prepared scene to write into yet; the caller re-pushes after
     /// the viewport has built one.
     pub(super) fn push_deviation_colors(&mut self) -> bool {
-        let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
+        let (Some(scene), Some(live_viewport)) =
+            (self.scene.clone(), self.render.live_viewport.clone())
         else {
             return false;
         };
@@ -190,7 +192,7 @@ impl OccluViewApp {
             };
             wrote &= viewport.write_scene_vertices(&topology, painted);
         }
-        self.invalidation.overlay_tools_changed();
+        self.render.invalidation.overlay_tools_changed();
         wrote
     }
 
@@ -221,7 +223,7 @@ impl OccluViewApp {
         self.mark_scene_materials_changed();
         self.restore_layer_colors(&overlaid);
         self.align.stats = None;
-        self.invalidation.overlay_tools_changed();
+        self.render.invalidation.overlay_tools_changed();
     }
 
     /// Whether anything is currently overlaid.
@@ -236,7 +238,8 @@ impl OccluViewApp {
         if layers.is_empty() {
             return;
         }
-        let (Some(scene), Some(live_viewport)) = (self.scene.clone(), self.live_viewport.clone())
+        let (Some(scene), Some(live_viewport)) =
+            (self.scene.clone(), self.render.live_viewport.clone())
         else {
             return;
         };

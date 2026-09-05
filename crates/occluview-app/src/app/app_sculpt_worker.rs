@@ -105,7 +105,7 @@ impl OccluViewApp {
         if had_rebuilds || had_updates || had_completions {
             // Rebuilds and sparse writes already landed in GPU buffers above;
             // only the repaint is owed here.
-            self.invalidation.request_redraw();
+            self.render.invalidation.request_redraw();
         }
         self.complete_pending_mesh_edit_session(ctx);
         self.complete_pending_history_navigation(ctx);
@@ -157,7 +157,7 @@ impl OccluViewApp {
         }
         // The uploaded geometry is the wrong SIZE now, so the prepared scene
         // must be rebuilt rather than reconciled.
-        self.invalidation.sculpt_topology_changed();
+        self.render.invalidation.sculpt_topology_changed();
         if self.can_render_cut_view() {
             self.cut_view.mark_dirty();
         }
@@ -187,7 +187,7 @@ impl OccluViewApp {
             worker.restore_update(SculptUpdate { touched, full_sync });
             return SculptFlushOutcome::Deferred;
         };
-        if let Some(live_viewport) = self.live_viewport.as_ref() {
+        if let Some(live_viewport) = self.render.live_viewport.as_ref() {
             let Ok(viewport) = live_viewport.try_lock() else {
                 worker.restore_update(SculptUpdate { touched, full_sync });
                 return SculptFlushOutcome::Deferred;
@@ -201,15 +201,16 @@ impl OccluViewApp {
                 SculptFlushOutcome::Applied
             } else {
                 worker.request_full_sync();
-                self.invalidation.sculpt_topology_changed();
+                self.render.invalidation.sculpt_topology_changed();
                 if self.can_render_cut_view() {
                     self.cut_view.mark_dirty();
                 }
                 SculptFlushOutcome::GpuRejected
             }
-        } else if let (Some(offscreen), Some(prepared)) =
-            (self.offscreen.as_ref(), self.prepared_scene.as_ref())
-        {
+        } else if let (Some(offscreen), Some(prepared)) = (
+            self.render.offscreen.as_ref(),
+            self.render.prepared_scene.as_ref(),
+        ) {
             let applied = if full_sync {
                 prepared.write_entry_vertices(offscreen.renderer(), &worker.topology, &shadow)
             } else {
@@ -224,7 +225,7 @@ impl OccluViewApp {
                 SculptFlushOutcome::Applied
             } else {
                 worker.request_full_sync();
-                self.invalidation.sculpt_topology_changed();
+                self.render.invalidation.sculpt_topology_changed();
                 if self.can_render_cut_view() {
                     self.cut_view.mark_dirty();
                 }
@@ -333,7 +334,7 @@ impl OccluViewApp {
         self.scene = Some(scene_arc);
         // The commit swaps the layer's mesh Arc after the stroke's bytes were
         // already pushed to the GPU by sparse writes; only a repaint is owed.
-        self.invalidation.request_redraw();
+        self.render.invalidation.request_redraw();
         if self.can_render_cut_view() {
             self.cut_view.mark_dirty();
         }
@@ -383,7 +384,7 @@ mod tests {
             .find("fn install_sculpt_rebuild(")
             .expect("the rebuild installer must exist");
         assert!(
-            source[install_fn..].contains("self.invalidation.sculpt_topology_changed();"),
+            source[install_fn..].contains("self.render.invalidation.sculpt_topology_changed();"),
             "installing a rebuild must force a full prepared-scene rebuild"
         );
         // The typed model proves the cause mapping: a topology change stales

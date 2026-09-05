@@ -98,7 +98,7 @@ impl OccluViewApp {
         // below. `Arc::make_mut` copies the whole case while a second handle
         // is alive, and this is a per-frame path.
         let (layer_id, painting, changed) = {
-            let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+            let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
                 return false;
             };
             let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
@@ -198,7 +198,8 @@ impl OccluViewApp {
         if !self.align.brush.is_armed() {
             return;
         }
-        let (Some(camera), Some(pointer)) = (self.camera.as_ref(), ctx.pointer_hover_pos()) else {
+        let (Some(camera), Some(pointer)) = (self.render.camera.as_ref(), ctx.pointer_hover_pos())
+        else {
             return;
         };
         if !self.pointer_on_bare_viewport(ctx, viewport_rect, pointer) {

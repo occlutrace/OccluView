@@ -178,7 +178,7 @@ impl OccluViewApp {
             }
             None => "Sculpt off".to_string(),
         });
-        self.invalidation.overlay_tools_changed();
+        self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
     }
 
@@ -203,7 +203,7 @@ impl OccluViewApp {
             }
             EditorTab::Sculpt => {}
         }
-        self.invalidation.overlay_tools_changed();
+        self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
     }
 
@@ -333,6 +333,7 @@ impl OccluViewApp {
         let params = DabParams {
             hit_world: hit.point,
             view_world: self
+                .render
                 .camera
                 .as_ref()
                 .map_or(Vec3::NEG_Z, |camera| camera.view_direction()),
@@ -357,7 +358,7 @@ impl OccluViewApp {
         if queued > 0 {
             // Dab bytes reach the GPU through the worker poll's sparse writes;
             // only the repaint is owed here.
-            self.invalidation.request_redraw();
+            self.render.invalidation.request_redraw();
         }
         ctx.request_repaint();
     }
@@ -453,7 +454,7 @@ impl OccluViewApp {
                     if self.sculpt.armed.is_some() {
                         self.status_message = None;
                     }
-                    self.invalidation.overlay_tools_changed();
+                    self.render.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
                 }
             }
@@ -479,7 +480,7 @@ impl OccluViewApp {
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
         self.sculpt.invalidate_session();
-        self.invalidation.sculpt_topology_changed();
+        self.render.invalidation.sculpt_topology_changed();
     }
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
@@ -497,7 +498,7 @@ impl OccluViewApp {
         if !apply_sculpt_wheel_settings(ctx) {
             return false;
         }
-        self.invalidation.overlay_tools_changed();
+        self.render.invalidation.overlay_tools_changed();
         ctx.request_repaint();
         true
     }
@@ -507,7 +508,7 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         pointer: egui::Pos2,
     ) -> Option<ScenePickHit> {
-        let camera = self.camera?;
+        let camera = self.render.camera?;
         let scene = self.scene.as_ref()?;
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
@@ -536,7 +537,7 @@ impl OccluViewApp {
         if !self.edit_mode.has_active_session() {
             return;
         }
-        let Some(camera) = self.camera.as_ref() else {
+        let Some(camera) = self.render.camera.as_ref() else {
             return;
         };
         let Some(pointer) = ui.ctx().pointer_hover_pos() else {

@@ -76,7 +76,7 @@ impl OccluViewApp {
                 // Both render paths bake the ghost decision into the frame they
                 // draw; force the next one so a stationary cut view answers at
                 // once instead of waiting for the next camera move.
-                self.invalidation.overlay_tools_changed();
+                self.render.invalidation.overlay_tools_changed();
                 self.settings_persistence.mark_dirty();
             }
             SettingsAction::SetUnitDisplay(unit) => {

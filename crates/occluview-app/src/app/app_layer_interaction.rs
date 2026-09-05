@@ -215,7 +215,7 @@ impl OccluViewApp {
         &self,
         response: &egui::Response,
     ) -> Option<layers_overlay::LayerContextMenuTarget> {
-        let camera = self.camera?;
+        let camera = self.render.camera?;
         let scene = self.scene.as_ref()?;
         let pointer = response.interact_pointer_pos()?;
         let hit = pick_scene_hit(&camera, response.rect, pointer, scene)?;
@@ -335,7 +335,7 @@ impl OccluViewApp {
         if self.bridge_split_active() {
             return;
         }
-        let camera = self.camera;
+        let camera = self.render.camera;
         let scene = self.scene.clone();
         let pointer = response.interact_pointer_pos();
         let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
@@ -379,7 +379,7 @@ impl OccluViewApp {
         if self.bridge_split_active() {
             return;
         }
-        let camera = self.camera;
+        let camera = self.render.camera;
         let scene = self.scene.clone();
         let pointer = response.interact_pointer_pos();
         let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {

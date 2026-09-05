@@ -61,7 +61,7 @@ impl OccluViewApp {
             if !response.drag_started_by(egui::PointerButton::Primary) {
                 return false;
             }
-            let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+            let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
                 return false;
             };
             // The scan being placed gets first refusal on the grab.
@@ -122,7 +122,7 @@ impl OccluViewApp {
         if motion.length_sq() <= f32::EPSILON {
             return true;
         }
-        let Some(camera) = self.camera else {
+        let Some(camera) = self.render.camera else {
             return true;
         };
         let up = camera.view_up();

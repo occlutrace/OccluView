@@ -44,7 +44,7 @@ impl OccluViewApp {
         }
 
         let hover = ctx.input(|input| input.pointer.hover_pos());
-        if let Some((camera, scene)) = self.camera.zip(self.scene.clone()) {
+        if let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) {
             crate::align_overlay::paint_pairs(
                 ui.painter(),
                 &crate::align_overlay::PairPaint {
@@ -243,7 +243,7 @@ impl OccluViewApp {
         let Some(pointer) = response.interact_pointer_pos() else {
             return false;
         };
-        let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+        let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
             return false;
         };
         let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {

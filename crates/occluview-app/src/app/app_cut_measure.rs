@@ -176,7 +176,7 @@ impl OccluViewApp {
         // with its tool — never orphaned.
         if self.cut_view.is_probe_linked() && !self.measure.is_active() {
             self.cut_view.disable();
-            self.invalidation.overlay_tools_changed();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
             return false;
         }
@@ -186,14 +186,14 @@ impl OccluViewApp {
             .is_some_and(|scene| CutTool::can_render_bbox(scene.bbox()));
         if self.cut_view.is_active() && !can_cut {
             self.cut_view.disable();
-            self.invalidation.overlay_tools_changed();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
             return false;
         }
         if !self.cut_view.is_active() {
             return false;
         }
-        let Some(camera) = self.camera else {
+        let Some(camera) = self.render.camera else {
             return false;
         };
         let Some(scene) = self.scene.clone() else {
@@ -214,7 +214,7 @@ impl OccluViewApp {
             || update.exited
             || orientation_changed
         {
-            self.invalidation.overlay_tools_changed();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         // Plain wheel inside the Section panel: zoom the slice to the cursor.
@@ -223,7 +223,7 @@ impl OccluViewApp {
                 .cut_view
                 .zoom_slice_at_cursor(viewport_rect, hover_pos, panel_zoom_notches)
         {
-            self.invalidation.overlay_tools_changed();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
         match update.cursor {
@@ -287,7 +287,7 @@ impl OccluViewApp {
                 self.disarm_measure_and_probe_cut();
             } else {
                 self.cut_view.disable();
-                self.invalidation.overlay_tools_changed();
+                self.render.invalidation.overlay_tools_changed();
             }
             ctx.request_repaint();
             return;
@@ -314,7 +314,7 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
         if panel.viewport_needs_render {
-            self.invalidation.overlay_tools_changed();
+            self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
         }
     }
@@ -329,7 +329,7 @@ impl OccluViewApp {
         scene: &Scene,
         plane: Option<occluview_core::scene::SectionPlane>,
     ) -> Option<Arc<SceneSection>> {
-        plane.map(|plane| self.section_cache.get_or_compute(scene, plane))
+        plane.map(|plane| self.render.section_cache.get_or_compute(scene, plane))
     }
 
     /// Advance the armed measurement tool one frame: keep the tool-exclusivity
@@ -355,7 +355,7 @@ impl OccluViewApp {
         if self.edit_mode.has_active_session()
             || (self.cut_view.is_active() && !self.cut_view.is_probe_linked())
             || self.scene.is_none()
-            || self.camera.is_none()
+            || self.render.camera.is_none()
         {
             self.measure.disarm();
             ctx.request_repaint();
@@ -384,7 +384,7 @@ impl OccluViewApp {
             .filter(|pos| self.pointer_on_bare_viewport(ctx, viewport_rect, *pos));
         if let Some(pointer) = hover {
             let over_anchor = self.measure.mode() == Some(MeasureMode::Ruler)
-                && self.camera.is_some_and(|camera| {
+                && self.render.camera.is_some_and(|camera| {
                     measure_overlay::ruler_anchor_at(&camera, viewport_rect, &self.measure, pointer)
                         .is_some()
                 });
@@ -394,7 +394,7 @@ impl OccluViewApp {
                 egui::CursorIcon::Crosshair
             });
         }
-        if let Some(camera) = self.camera {
+        if let Some(camera) = self.render.camera {
             measure_overlay::paint_measurements(
                 ui.painter(),
                 &camera,
@@ -414,7 +414,7 @@ impl OccluViewApp {
         self.measure.disarm();
         if self.cut_view.is_probe_linked() {
             self.cut_view.disable();
-            self.invalidation.overlay_tools_changed();
+            self.render.invalidation.overlay_tools_changed();
         }
     }
 
@@ -468,7 +468,7 @@ impl OccluViewApp {
         if self.measure.dragged_ruler_anchor().is_some() {
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
             if primary_down && response.rect.contains(pointer) {
-                if let Some((camera, scene)) = self.camera.zip(self.scene.clone()) {
+                if let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) {
                     if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
                         if let Some(distance_mm) = self.measure.update_ruler_drag(hit.point) {
                             self.status_message = Some(format!(
@@ -494,7 +494,7 @@ impl OccluViewApp {
         if self.measure.mode() == Some(MeasureMode::Ruler)
             && ctx.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary))
         {
-            if let Some(camera) = self.camera {
+            if let Some(camera) = self.render.camera {
                 if let Some(anchor) =
                     measure_overlay::ruler_anchor_at(&camera, response.rect, &self.measure, pointer)
                 {
@@ -525,7 +525,7 @@ impl OccluViewApp {
             let probe_linked = self.cut_view.is_probe_linked();
             if probe_linked {
                 self.cut_view.disable();
-                self.invalidation.overlay_tools_changed();
+                self.render.invalidation.overlay_tools_changed();
             }
             ctx.request_repaint();
             // Nothing was cleared: the stationary RMB was not a tool gesture,
@@ -535,7 +535,7 @@ impl OccluViewApp {
         if suppress_click || !response.clicked_by(egui::PointerButton::Primary) {
             return false;
         }
-        let Some((camera, scene)) = self.camera.zip(self.scene.clone()) else {
+        let Some((camera, scene)) = self.render.camera.zip(self.scene.clone()) else {
             return false;
         };
         if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
@@ -615,6 +615,7 @@ impl OccluViewApp {
         match planned {
             Some((pose, exit, thickness_mm)) => {
                 let eye = self
+                    .render
                     .camera
                     .map_or(pose.center + pose.plane_normal, occluview_core::Camera::eye);
                 let keep_positive = crate::cut_geometry::camera_keep_side(&pose, eye);
@@ -624,12 +625,12 @@ impl OccluViewApp {
                     thickness_mm,
                 };
                 self.cut_view.plant_from_probe(pose, keep_positive, seed);
-                self.invalidation.overlay_tools_changed();
+                self.render.invalidation.overlay_tools_changed();
             }
             None => {
                 if self.cut_view.is_probe_linked() {
                     self.cut_view.disable();
-                    self.invalidation.overlay_tools_changed();
+                    self.render.invalidation.overlay_tools_changed();
                 }
             }
         }

@@ -24,8 +24,8 @@ fn app_starts_idle_until_scene_data_arrives() {
     let new_fn = function_source(app_module_source(), "pub(crate) fn new(");
 
     assert!(
-        new_fn.contains("invalidation: RenderInvalidation::new(),"),
-        "empty startup should not spend time rendering a nonexistent scene"
+        new_fn.contains("render: RenderState::new(live_viewport),"),
+        "empty startup should build render state through its owner, idle until scene data arrives"
     );
     assert!(
         !invalidation::RenderInvalidation::new().redraw_pending(),
@@ -419,12 +419,12 @@ fn queued_open_burst_frames_final_combined_scene_once() {
         "camera reset should be deferred while more files from the open burst are queued"
     );
     assert!(
-        app_source.contains("self.camera.is_none()"),
+        app_source.contains("self.render.camera.is_none()"),
         "the first loaded layer should still get a camera even when more queued files are pending"
     );
     assert!(
-        app_source.contains("self.invalidation.suppress_redraw();")
-            && app_source.contains("self.rendered = None;")
+        app_source.contains("self.render.invalidation.suppress_redraw();")
+            && app_source.contains("self.render.rendered = None;")
             && app_source.contains("self.clear_live_viewport();"),
         "intermediate burst loads should not render or publish a half-framed scene"
     );

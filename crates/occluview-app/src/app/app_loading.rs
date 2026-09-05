@@ -283,7 +283,7 @@ impl OccluViewApp {
                     reset
                 } else if queued_after_current {
                     self.load_queue_camera_reset = LoadQueueCameraReset::WhenQueueDrains;
-                    self.camera.is_none()
+                    self.render.camera.is_none()
                 } else {
                     self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
                     // The "Frame a scene when it opens" preference only owns the
@@ -295,8 +295,8 @@ impl OccluViewApp {
                 if self.load_queue_camera_reset == LoadQueueCameraReset::WhenQueueDrains
                     && queued_after_current
                 {
-                    self.invalidation.suppress_redraw();
-                    self.rendered = None;
+                    self.render.invalidation.suppress_redraw();
+                    self.render.rendered = None;
                     self.clear_live_viewport();
                 }
                 self.current_paths = current_paths;
