@@ -73,8 +73,7 @@ fn binary_entry_delegates_to_the_public_library_entry() {
     let meaningful = binary
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("//") && *line != "//!")
-        .filter(|line| !line.starts_with("//!"))
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
         .count();
     assert!(
         meaningful <= 20,
