@@ -1,5 +1,20 @@
 use std::path::Path;
 
+/// The deb build script installs app icons via a size loop; pin that the
+/// loop covers `icon_size` so no size silently drops out of the package.
+fn build_script_contains_icon_size(deb_script: &str, icon_size: u32) -> bool {
+    let Some(loop_line) = deb_script
+        .lines()
+        .find(|line| line.trim_start().starts_with("for icon_size in "))
+    else {
+        return false;
+    };
+    loop_line
+        .split_whitespace()
+        .any(|token| token.trim_end_matches(';') == icon_size.to_string())
+        && deb_script.contains("icons/hicolor/${icon_size}x${icon_size}/apps/occluview.png")
+}
+
 #[test]
 fn linux_host_has_windows_msvc_build_script() {
     let script_path =
@@ -85,7 +100,6 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
         "usr/share/metainfo/ai.occlutrace.OccluView.metainfo.xml",
         "usr/share/mime/packages/occluview-mime.xml",
         "usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer",
-        "usr/share/icons/hicolor/512x512/apps/occluview.png",
         "usr/share/icons/hicolor/scalable/mimetypes/model-stl.svg",
         "usr/share/icons/hicolor/scalable/mimetypes/application-x-occluview-hps.svg",
         "usr/share/doc/occluview/README.md",
@@ -98,6 +112,20 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
         assert!(
             check_script.contains(required_path),
             "Debian package check should assert {required_path}"
+        );
+    }
+
+    // Small-size app icons must ship too: a lone 512px file leaves docks,
+    // software centers, and alt-tab with no suitable icon. The check script
+    // asserts them via a size loop, so pin the loop and its full size list.
+    assert!(
+        check_script.contains("for icon_size in 16 22 24 32 48 64 128 256 512"),
+        "Debian package check should cover the full hicolor app-icon size set"
+    );
+    for icon_size in [16, 22, 24, 32, 48, 64, 128, 256, 512] {
+        assert!(
+            build_script_contains_icon_size(&deb_script, icon_size),
+            "Debian package should install the {icon_size}px app icon"
         );
     }
 
