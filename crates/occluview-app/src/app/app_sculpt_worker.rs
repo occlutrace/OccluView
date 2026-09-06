@@ -22,22 +22,19 @@ pub(super) enum SculptFlushOutcome {
 /// OS spawn errors) travel untranslated inside `{ $detail }`.
 fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &SculptFailure) -> String {
     match failure {
-        SculptFailure::WorkerPanicked { message } => {
-            locale.tr_with("sculpt-failure-worker-panicked", &[("detail", message.as_str())])
-        }
+        SculptFailure::WorkerPanicked { message } => locale.tr_with(
+            "sculpt-failure-worker-panicked",
+            &[("detail", message.as_str())],
+        ),
         SculptFailure::Spawn { detail } => {
             locale.tr_with("sculpt-failure-spawn", &[("detail", detail.as_str())])
         }
         SculptFailure::KernelPool { detail } => {
             locale.tr_with("sculpt-failure-kernel-pool", &[("detail", detail.as_str())])
         }
-        SculptFailure::MissingUndoBaseline => {
-            locale.text("sculpt-failure-missing-undo-baseline")
-        }
+        SculptFailure::MissingUndoBaseline => locale.text("sculpt-failure-missing-undo-baseline"),
         SculptFailure::ShadowPoisoned => locale.text("sculpt-failure-shadow-poisoned"),
-        SculptFailure::VertexCountChanged => {
-            locale.text("sculpt-failure-vertex-count-changed")
-        }
+        SculptFailure::VertexCountChanged => locale.text("sculpt-failure-vertex-count-changed"),
     }
 }
 
