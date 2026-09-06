@@ -1,106 +1,134 @@
-//! Wireframe screenshots of the language selector (closed + open
-//! dropdown) in every embedded locale for human visual review
-//! (`target/i18n-shots/`, never committed). Rendered standalone at popup
-//! width: no scrolling involved. Child test module of the settings panel;
-//! split out to respect the 800-line source budget.
+//! Parent-popup wireframes of the language selector in every embedded locale.
+//! Generated files live under `target/i18n-shots/` for human review only.
 
-/// Wireframe screenshots of the language selector (closed + open
-/// dropdown) in every embedded locale for human visual review
-/// (`target/i18n-shots/`, never committed). Rendered standalone at
-/// popup width: no scrolling involved.
+use super::*;
+
+fn shot_screen() -> egui::Rect {
+    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 900.0))
+}
+
+fn settings_frame(
+    ctx: &egui::Context,
+    locale: &LocaleManager,
+    events: Vec<egui::Event>,
+) -> anyhow::Result<(egui::FullOutput, egui::Rect)> {
+    let mut trigger_rect = None;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(shot_screen()),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            egui::Panel::top("settings-language-shot-toolbar")
+                .exact_size(30.0)
+                .show(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let trigger = show_settings_toolbar_toggle(ui, true, locale);
+                        trigger_rect = Some(trigger.rect);
+                        let _ = show_settings_popup(
+                            &trigger,
+                            &Settings::default(),
+                            locale,
+                            &UpdateCheckStatus::Idle,
+                            None,
+                            None,
+                        );
+                    });
+                });
+        },
+    );
+    output.textures_delta.clear();
+    Ok((
+        output,
+        trigger_rect.ok_or_else(|| anyhow::anyhow!("settings toolbar trigger should render"))?,
+    ))
+}
+
+fn click(
+    ctx: &egui::Context,
+    locale: &LocaleManager,
+    position: egui::Pos2,
+) -> anyhow::Result<egui::FullOutput> {
+    let _ = settings_frame(
+        ctx,
+        locale,
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    )?;
+    Ok(settings_frame(
+        ctx,
+        locale,
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    )?
+    .0)
+}
+
+fn text_center(output: &egui::FullOutput, text: &str) -> anyhow::Result<egui::Pos2> {
+    output
+        .shapes
+        .iter()
+        .find_map(|shaped| match &shaped.shape {
+            egui::epaint::Shape::Text(shape) if shape.galley.text() == text => {
+                Some(shape.visual_bounding_rect().center())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("language selector header should render {text:?}"))
+}
+
 #[test]
 fn language_selector_wireframes_for_visual_review() -> anyhow::Result<()> {
-    use super::language_section;
     use crate::i18n::catalog::EMBEDDED_TAGS;
     use crate::i18n::preference::UiLanguagePreference;
 
     for tag in EMBEDDED_TAGS {
         let ctx = egui::Context::default();
-        let mut manager = crate::i18n::LocaleManager::for_tests();
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let mut manager = LocaleManager::for_tests();
         if *tag != "en" {
             manager.set_preference(UiLanguagePreference::Explicit(tag));
         }
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0));
-        let frame_input = || egui::RawInput {
-            screen_rect: Some(screen),
-            ..Default::default()
-        };
-        // Closed state.
-        let mut output = ctx.run_ui(frame_input(), |ui| {
-            ui.set_width(286.0);
-            let mut action = None;
-            language_section(ui, &manager, &mut action);
-        });
-        output.textures_delta.clear();
+
+        let (_, trigger) = settings_frame(&ctx, &manager, Vec::new())?;
+        let closed = click(&ctx, &manager, trigger.center())?;
         crate::i18n::shots::save_shot_with_texts(
-            &format!("language-closed-{tag}"),
+            &format!("settings-language-closed-{tag}"),
             &ctx,
-            output,
-            400,
-            300,
+            closed,
+            480,
+            900,
         );
-        // Locate the closed ComboBox by its selected label, click it.
-        let mut output = ctx.run_ui(frame_input(), |ui| {
-            ui.set_width(286.0);
-            let mut action = None;
-            language_section(ui, &manager, &mut action);
-        });
-        output.textures_delta.clear();
-        let selected = match &manager.snapshot().preference {
-            UiLanguagePreference::Auto => manager.text("settings-language-auto"),
-            UiLanguagePreference::Explicit(option) => crate::i18n::endonym(option).to_owned(),
-        };
-        let combo = output
-            .shapes
-            .iter()
-            .find_map(|shaped| match &shaped.shape {
-                egui::epaint::Shape::Text(text) if text.galley.text() == selected => {
-                    Some(text.visual_bounding_rect().center())
-                }
-                _ => None,
-            })
-            .ok_or_else(|| anyhow::anyhow!("combo not found for {tag}"))?;
-        let click_at = |position, pressed| {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(screen),
-                    events: vec![
-                        egui::Event::PointerMoved(position),
-                        egui::Event::PointerButton {
-                            pos: position,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                    ..Default::default()
-                },
-                |ui| {
-                    ui.set_width(286.0);
-                    let mut action = None;
-                    language_section(ui, &manager, &mut action);
-                },
-            );
-            output.textures_delta.clear();
-            output
-        };
-        let _ = click_at(combo, true);
-        let mut output = click_at(combo, false);
-        output.textures_delta.clear();
-        // The release frame flips the popup state; the popup Area
-        // itself lays out on the following frames.
-        let mut output = ctx.run_ui(frame_input(), |ui| {
-            ui.set_width(286.0);
-            let mut action = None;
-            language_section(ui, &manager, &mut action);
-        });
-        output.textures_delta.clear();
+
+        let (visible, _) = settings_frame(&ctx, &manager, Vec::new())?;
+        let header = format!(
+            "{} · {}",
+            manager.text("settings-language-label"),
+            selected_language_summary(&manager)
+        );
+        let open = click(&ctx, &manager, text_center(&visible, &header)?)?;
+        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
         crate::i18n::shots::save_shot_with_texts(
-            &format!("language-open-{tag}"),
+            &format!("settings-language-open-{tag}"),
             &ctx,
-            output,
-            400,
-            300,
+            open,
+            480,
+            900,
         );
     }
     Ok(())
