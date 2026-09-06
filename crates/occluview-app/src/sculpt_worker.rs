@@ -440,12 +440,29 @@ impl SculptWorker {
     }
 
     pub(crate) fn is_quiescent(&self) -> bool {
+        // Every undrained slot counts: a dab the worker already processed but
+        // the UI has not flushed yet (pending touches, full-sync flag, layer
+        // rebuild, queued completion) is still live work. Reporting quiet
+        // here lets Done/undo invalidate the session and drop it. On lock
+        // contention report busy instead: deferring one frame is free, while
+        // a false quiet loses sculpted geometry.
         self.queue.is_empty()
             && self
                 .state
                 .completions
                 .try_lock()
                 .is_ok_and(|completions| completions.is_empty())
+            && self
+                .state
+                .pending_touched
+                .try_lock()
+                .is_ok_and(|touched| touched.is_empty())
+            && !self.state.full_sync.load(Ordering::Acquire)
+            && self
+                .state
+                .rebuild
+                .try_lock()
+                .is_ok_and(|rebuild| rebuild.is_none())
     }
 }
 

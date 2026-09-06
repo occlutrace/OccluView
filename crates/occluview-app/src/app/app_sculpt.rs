@@ -156,7 +156,13 @@ fn plan_dab_centers(
 impl OccluViewApp {
     /// Arm/disarm a sculpt tool (toggling the armed one disarms).
     pub(super) fn toggle_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
-        self.abort_sculpt_stroke();
+        // A brush-mode switch keeps the layer context, so a live stroke is
+        // finished — not aborted: its dabs still become one undoable edit on
+        // the shared worker queue (Finish runs before the new mode's first
+        // dab), instead of dying in a cleared queue with no undo entry.
+        // Context switches away from sculpt (tabs, lasso) still abort via
+        // their own paths: the worker they drop cannot outlive the context.
+        self.commit_sculpt_stroke(ctx);
         self.tools.sculpt.toggle(kind);
         if self.tools.sculpt.armed.is_some() {
             // Arming a brush means the Sculpt tab: show it and drop selection.
@@ -209,11 +215,20 @@ impl OccluViewApp {
         if !self.document.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
             return false;
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)) {
+        if ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)
+                // A held Shift must not swallow the switch: otherwise the
+                // operator believes Smooth is armed while AddRemove (+Shift
+                // = Remove) still is, and the next dab carves.
+                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Num1)
+        }) {
             self.arm_sculpt_tool(SculptToolKind::AddRemove, ctx);
             return true;
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Num2)) {
+        if ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Num2)
+                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Num2)
+        }) {
             self.arm_sculpt_tool(SculptToolKind::Smooth, ctx);
             return true;
         }
@@ -634,6 +649,7 @@ fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
+    #![allow(clippy::expect_used, reason = "source-contract pins must say what is missing")]
     use super::{plan_dab_centers, sculpt_target};
     use crate::sculpt_tool::{HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME};
     use glam::Vec3;
@@ -733,6 +749,42 @@ mod tests {
         assert!(
             centers.len() <= 5,
             "clamped dt should keep the backlog small"
+        );
+    }
+
+    /// A held Shift must not swallow a brush-mode switch: with only
+    /// `Modifiers::NONE` accepted, `Shift+2` is silently ignored, the operator
+    /// believes Smooth is armed while `AddRemove` (+Shift = Remove) still is,
+    /// and the next dab carves where it should smooth.
+    #[test]
+    fn brush_hotkeys_survive_a_held_shift() {
+        let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
+        for key in ["egui::Key::Num1", "egui::Key::Num2"] {
+            assert!(
+                source.contains(&format!("egui::Modifiers::SHIFT, {key}")),
+                "the {key} brush hotkey must also fire with Shift held"
+            );
+        }
+    }
+
+    /// A brush-mode switch keeps the layer context, so a live stroke must be
+    /// finished into one undoable edit — not aborted with its queue cleared
+    /// and no undo entry. (Switches away from sculpt — tabs, lasso — still
+    /// abort through their own paths.)
+    #[test]
+    fn mode_switch_finishes_a_live_stroke_instead_of_aborting_it() {
+        let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
+        let start = source
+            .find("pub(super) fn toggle_sculpt_tool")
+            .expect("the brush-mode switch must exist");
+        let body = &source[start..(start + 2000).min(source.len())];
+        assert!(
+            body.contains("self.commit_sculpt_stroke(ctx)"),
+            "switching brush modes must finish a live stroke first"
+        );
+        assert!(
+            !body.contains("abort_sculpt_stroke"),
+            "switching brush modes must not abort the live stroke"
         );
     }
 }
