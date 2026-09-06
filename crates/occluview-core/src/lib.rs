@@ -65,4 +65,4 @@ pub use occlu_mesh_edit::{
     RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
 };
 pub use scene::{Scene, SceneMesh, SceneMeshId, ScenePickHit, DEFAULT_UNTEXTURED_MESH_TINT};
-pub use units::Millimeters;
+pub use units::{Millimeters, SourceUnit, UnitConfidence, UnitInterpretation};
