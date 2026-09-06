@@ -769,7 +769,7 @@ scene-positions-reset = Layer positions reset (Ctrl+Z undoes)
 
 settings-header = Settings
 settings-section-files = Files & export
-settings-export-format = Export format
+settings-export-format = Fallback export format
 settings-export-format-hint = Used when the source format cannot be exported
 settings-remember-export = Remember export folder
 settings-remember-export-hint = Use the same folder after restarting OccluView

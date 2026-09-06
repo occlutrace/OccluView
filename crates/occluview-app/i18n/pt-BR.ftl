@@ -768,7 +768,7 @@ align-session-kept = Alinhamento mantido — exporte para gravar
 
 settings-header = Ajustes
 settings-section-files = Arquivos e exportação
-settings-export-format = Formato de exportação
+settings-export-format = Formato de exportação alternativo
 settings-export-format-hint = Quando o formato de origem não exporta
 settings-remember-export = Lembrar pasta de exportação
 settings-remember-export-hint = Mesma pasta após reiniciar

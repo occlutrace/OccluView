@@ -875,7 +875,7 @@ scene-positions-reset = Позиции слоёв сброшены (Ctrl+Z от�
 
 settings-header = Настройки
 settings-section-files = Файлы и экспорт
-settings-export-format = Формат экспорта
+settings-export-format = Запасной формат экспорта
 settings-export-format-hint = Используется, когда исходный формат нельзя экспортировать
 settings-remember-export = Запоминать папку экспорта
 settings-remember-export-hint = Использовать ту же папку после перезапуска OccluView

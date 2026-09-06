@@ -766,7 +766,7 @@ align-session-kept = Allineamento tenuto — esporta la scansione per scriverlo
 
 settings-header = Impostazioni
 settings-section-files = File ed esportazione
-settings-export-format = Formato di export
+settings-export-format = Formato di export di riserva
 settings-export-format-hint = Quando il formato origine non si esporta
 settings-remember-export = Ricorda la cartella di export
 settings-remember-export-hint = Stessa cartella dopo il riavvio

@@ -766,7 +766,7 @@ align-session-kept = Alineación guardada — exporta el escaneo para escribirla
 
 settings-header = Ajustes
 settings-section-files = Archivos y exportación
-settings-export-format = Formato de exportación
+settings-export-format = Formato de exportación alternativo
 settings-export-format-hint = Cuando el formato origen no se puede exportar
 settings-remember-export = Recordar carpeta de exportación
 settings-remember-export-hint = Misma carpeta tras reiniciar OccluView

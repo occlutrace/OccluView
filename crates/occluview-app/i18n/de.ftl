@@ -781,7 +781,7 @@ scene-positions-reset = Ebenenpositionen zurückgesetzt (Strg+Z macht rückgäng
 
 settings-header = Einstellungen
 settings-section-files = Dateien & Export
-settings-export-format = Exportformat
+settings-export-format = Fallback-Exportformat
 settings-export-format-hint = Wenn das Quellformat nicht exportiert werden kann
 settings-remember-export = Exportordner merken
 settings-remember-export-hint = Gleichen Ordner nach Neustart verwenden
