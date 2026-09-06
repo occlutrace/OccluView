@@ -7,7 +7,7 @@ edit about.toml or about.hbs and run scripts/gen-third-party.sh to update it.
 
 ## Licenses used
 
-- MIT License (306)
+- MIT License (314)
 - Unicode License v3 (19)
 - Apache License 2.0 (12)
 - ISC License (5)
@@ -4872,6 +4872,37 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Used by:
 
+- fluent-bundle 0.16.0 (https://github.com/projectfluent/fluent-rs)
+- fluent-syntax 0.12.0 (https://github.com/projectfluent/fluent-rs)
+- intl-memoizer 0.5.3 (https://github.com/projectfluent/fluent-rs)
+
+```
+Copyright 2017 Mozilla
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+### MIT License
+
+Used by:
+
 - resvg 0.48.1 (https://github.com/linebender/resvg)
 - usvg 0.48.1 (https://github.com/linebender/resvg)
 
@@ -5420,6 +5451,37 @@ SOFTWARE.
 
 Used by:
 
+- sys-locale 0.3.2 (https://github.com/1Password/sys-locale)
+
+```
+MIT License
+
+Copyright (c) 2021 1Password
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+### MIT License
+
+Used by:
+
 - rfd 0.14.1 (https://github.com/PolyMeilex/rfd)
 
 ```
@@ -5591,6 +5653,8 @@ Used by:
 - egui 0.36.1 (https://github.com/emilk/egui)
 - emath 0.36.1 (https://github.com/emilk/egui/tree/main/crates/emath)
 - epaint 0.36.1 (https://github.com/emilk/egui/tree/main/crates/epaint)
+- fluent-langneg 0.13.1 (https://github.com/projectfluent/fluent-langneg-rs)
+- intl_pluralrules 7.0.2 (https://github.com/zbraniecki/pluralrules)
 - libm 0.2.16 (https://github.com/rust-lang/compiler-builtins)
 - minisign-verify 0.2.5 (https://github.com/jedisct1/rust-minisign-verify)
 - profiling 1.0.18 (https://github.com/aclysma/profiling)
@@ -5895,6 +5959,8 @@ Used by:
 - thiserror-impl 2.0.18 (https://github.com/dtolnay/thiserror)
 - thiserror 1.0.69 (https://github.com/dtolnay/thiserror)
 - thiserror 2.0.18 (https://github.com/dtolnay/thiserror)
+- unic-langid-impl 0.9.6 (https://github.com/zbraniecki/unic-locale)
+- unic-langid 0.9.6 (https://github.com/zbraniecki/unic-locale)
 - unicode-ident 1.0.24 (https://github.com/dtolnay/unicode-ident)
 - x11-dl 2.21.0 (https://github.com/AltF02/x11-rs.git)
 - xdg-home 1.3.0 (https://github.com/zeenix/xdg-home)
