@@ -1,6 +1,7 @@
 use super::id::{next_scene_mesh_id, SceneMeshId};
 use super::material::default_mesh_tint;
 use crate::mesh::Mesh;
+use crate::units::UnitInterpretation;
 use glam::Affine3A;
 use std::sync::Arc;
 
@@ -62,6 +63,10 @@ pub struct SceneMesh {
     /// color and texture. Hiding the map is therefore free, and an export is
     /// unaffected by whether a map happens to be on screen.
     deviation: Option<Arc<Vec<[u8; 4]>>>,
+    /// Import-unit metadata: what the file declared and what scale was
+    /// applied to reach millimeters. Never affects rendering by itself —
+    /// coordinates are normalized once, at import.
+    import_units: UnitInterpretation,
 }
 
 impl SceneMesh {
@@ -85,7 +90,25 @@ impl SceneMesh {
             show_vertex_colors: true,
             show_texture,
             deviation: None,
+            import_units: UnitInterpretation::assumed_millimeters(),
         }
+    }
+
+    /// Record the import-unit interpretation for this layer. Layers built
+    /// programmatically (tests, synthetic scenes) keep the assumed-mm
+    /// default; file loaders overwrite it with the format policy.
+    #[inline]
+    #[must_use]
+    pub fn with_import_units(mut self, units: UnitInterpretation) -> Self {
+        self.import_units = units;
+        self
+    }
+
+    /// Import-unit metadata attached at load time.
+    #[inline]
+    #[must_use]
+    pub fn import_units(&self) -> UnitInterpretation {
+        self.import_units
     }
 
     /// Attach or clear the deviation color overlay.
@@ -192,6 +215,8 @@ impl SceneMesh {
             // vertices, so carrying it onto new geometry would paint whichever
             // vertices happened to inherit those indices.
             deviation: None,
+            // Kept deliberately: same layer, same file provenance.
+            import_units: self.import_units,
         }
     }
 }

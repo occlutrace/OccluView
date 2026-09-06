@@ -16,7 +16,9 @@
 mod export;
 
 use anyhow::{anyhow, Context, Result};
-use occluview_formats::dispatch::{read_file_with_key_provider, read_files_with_key_provider};
+use occluview_formats::dispatch::{
+    read_file_loaded_with_key_provider, read_files_with_key_provider,
+};
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use std::path::{Path, PathBuf};
 
@@ -268,7 +270,7 @@ fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
         let bbox = m.bbox_uncached();
         let [w, h, d] = bbox.dimensions_mm();
         println!(
-            "[{}/{}] {}  verts={} tris={} kind={} bbox={:.1}x{:.1}x{:.1}mm",
+            "[{}/{}] {}  verts={} tris={} kind={} units=[{}] bbox={:.1}x{:.1}x{:.1}mm",
             i + 1,
             scene.meshes().len(),
             files
@@ -278,6 +280,7 @@ fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
             m.vertices().len(),
             m.triangle_count(),
             if m.is_point_cloud() { "cloud" } else { "mesh" },
+            entry.import_units(),
             w.as_mm(),
             h.as_mm(),
             d.as_mm(),
@@ -298,10 +301,11 @@ fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
     Ok(())
 }
 
-/// Single-file info (the original output format).
+/// Single-file info (the original output format, plus a Units line).
 fn cmd_info_one(file: &Path) -> Result<()> {
-    let mesh = read_file_with_key_provider(file, &RuntimeHpsKeyProvider)
+    let loaded = read_file_loaded_with_key_provider(file, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", file.display()))?;
+    let mesh = &loaded.mesh;
 
     let bbox = mesh.bbox();
     let [w, h, d] = bbox.dimensions_mm();
@@ -311,6 +315,7 @@ fn cmd_info_one(file: &Path) -> Result<()> {
         "Format:     {}",
         file.extension().and_then(|e| e.to_str()).unwrap_or("?")
     );
+    println!("Units:      {}", loaded.units);
     println!(
         "Kind:       {}",
         if mesh.is_point_cloud() {

@@ -6,6 +6,7 @@
 use crate::error::FormatError;
 use crate::hps::HpsKeyProvider;
 use crate::probe::FormatKind;
+use crate::units::{policy_for, UnitInterpretation};
 use occluview_core::{Mesh, Scene, SceneMesh};
 use rayon::prelude::*;
 use std::io::Read;
@@ -90,6 +91,22 @@ pub fn dispatch_by_kind_with_key_provider(
 /// Only the three formats a scanner writes take the policy; the rest are read
 /// the one way they have always been read, because they are rare enough on the
 /// thumbnail path that the plumbing would cost more than the milliseconds.
+/// A parsed mesh together with how it was detected and what its
+/// coordinates mean. Readers return bare [`Mesh`] geometry; the import-unit
+/// interpretation rides alongside so callers never have to re-derive it
+/// from the file extension (which magic probing may have overruled).
+#[derive(Clone, Debug)]
+pub struct LoadedMesh {
+    /// Parsed geometry, in file-native coordinates.
+    pub mesh: Mesh,
+    /// Format selected by magic probing (falling back to the extension).
+    pub kind: FormatKind,
+    /// Import-unit policy for that kind (see [`policy_for`]).
+    pub units: UnitInterpretation,
+}
+
+/// Read `bytes` with an explicit format kind, choosing how vertex normals
+/// are produced.
 ///
 /// # Errors
 /// See [`FormatError`].
@@ -99,7 +116,21 @@ pub fn dispatch_by_kind_shaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
-    match kind {
+    dispatch_by_kind_loaded(kind, bytes, key_provider, shading).map(|loaded| loaded.mesh)
+}
+
+/// As [`dispatch_by_kind_shaded`], additionally reporting the detected kind
+/// and its import-unit interpretation.
+///
+/// # Errors
+/// See [`dispatch_by_kind_shaded`].
+pub fn dispatch_by_kind_loaded(
+    kind: FormatKind,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
+    let mesh = match kind {
         FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
         FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
         FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
@@ -112,7 +143,12 @@ pub fn dispatch_by_kind_shaded(
             reason: format!("reader for {kind:?} not yet implemented"),
         }),
         FormatKind::Hps => crate::hps::read_with_key_provider(bytes, key_provider),
-    }
+    }?;
+    Ok(LoadedMesh {
+        mesh,
+        kind,
+        units: policy_for(kind),
+    })
 }
 
 /// Convenience: read `bytes` using the reader selected by file extension.
@@ -161,6 +197,22 @@ pub fn dispatch_by_extension_shaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
+    dispatch_by_extension_loaded(extension, bytes, key_provider, shading).map(|loaded| loaded.mesh)
+}
+
+/// As [`dispatch_by_extension_shaded`], additionally reporting the probed
+/// kind and its import-unit interpretation. The units follow the probed
+/// kind — not the raw extension — so a mislabeled file that magic probing
+/// re-routes still gets the policy of the format actually parsed.
+///
+/// # Errors
+/// See [`dispatch_by_extension_shaded`].
+pub fn dispatch_by_extension_loaded(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
@@ -178,7 +230,7 @@ pub fn dispatch_by_extension_shaded(
             other => return Err(other),
         },
     };
-    dispatch_by_kind_shaded(kind, bytes, key_provider, shading)
+    dispatch_by_kind_loaded(kind, bytes, key_provider, shading)
 }
 
 fn normalized_extension(path: &Path) -> Result<String, FormatError> {
@@ -258,7 +310,25 @@ pub fn read_file_with_key_provider(
     path: &Path,
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Mesh, FormatError> {
-    read_file_shaded(path, key_provider, crate::MeshShading::Reconstructed)
+    read_file_loaded_with_key_provider(path, key_provider).map(|loaded| loaded.mesh)
+}
+
+/// As [`read_file_with_key_provider`], additionally reporting the probed
+/// kind and its import-unit interpretation.
+///
+/// # Errors
+/// See [`read_file`].
+pub fn read_file_loaded_with_key_provider(
+    path: &Path,
+    key_provider: &dyn HpsKeyProvider,
+) -> Result<LoadedMesh, FormatError> {
+    let bytes = read_file_bytes(path)?;
+    dispatch_by_extension_loaded(
+        bytes.extension(),
+        bytes.as_slice(),
+        key_provider,
+        crate::MeshShading::Reconstructed,
+    )
 }
 
 /// As [`read_file_with_key_provider`], choosing how vertex normals are
@@ -283,6 +353,11 @@ pub fn read_file_shaded(
 /// (app / thumbnail framer) repositions them as needed via `SceneMesh`'s
 /// transform field, or just relies on `Scene::bbox()` to frame the union.
 ///
+/// Every layer carries its import-unit interpretation
+/// ([`SceneMesh::import_units`]); coordinates themselves are untouched —
+/// normalization to millimeters happens exactly once, at the point a policy
+/// applies a non-unity scale, and no v1 policy does yet.
+///
 /// **Fail-fast:** returns the first `(path, error)` pair encountered. The
 /// caller decides whether to abort or offer "skip + continue" — for v1 we
 /// abort, which keeps the error path simple and predictable.
@@ -303,20 +378,22 @@ pub fn read_files_with_key_provider(
 ) -> Result<Scene, (PathBuf, FormatError)> {
     let mut scene = Scene::new();
     if let [path] = paths {
-        let mesh =
-            read_file_with_key_provider(path, key_provider).map_err(|e| (path.clone(), e))?;
-        scene.add(SceneMesh::new(mesh));
+        let loaded = read_file_loaded_with_key_provider(path, key_provider)
+            .map_err(|e| (path.clone(), e))?;
+        scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
         return Ok(scene);
     }
 
     let meshes = paths
         .par_iter()
-        .map(|path| read_file_with_key_provider(path, key_provider).map_err(|e| (path.clone(), e)))
+        .map(|path| {
+            read_file_loaded_with_key_provider(path, key_provider).map_err(|e| (path.clone(), e))
+        })
         .collect::<Vec<_>>();
 
     for result in meshes {
-        let mesh = result?;
-        scene.add(SceneMesh::new(mesh));
+        let loaded = result?;
+        scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
     }
     Ok(scene)
 }
@@ -373,6 +450,25 @@ mod tests {
         let bytes = one_triangle_binary_stl();
         let mesh = dispatch_by_extension("stl", &bytes).expect("STL should read");
         assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn loaded_dispatch_reports_probed_kind_and_units() {
+        use occluview_core::units::{SourceUnit, UnitConfidence};
+
+        let bytes = one_triangle_binary_stl();
+        let loaded = dispatch_by_extension_loaded(
+            "stl",
+            &bytes,
+            &crate::hps::NoHpsKeyProvider,
+            crate::MeshShading::Reconstructed,
+        )
+        .expect("STL should read");
+        assert_eq!(loaded.mesh.triangle_count(), 1);
+        assert_eq!(loaded.kind, FormatKind::Stl);
+        assert_eq!(loaded.units.declared, SourceUnit::Unitless);
+        assert_eq!(loaded.units.scale_to_mm, 1.0);
+        assert_eq!(loaded.units.confidence, UnitConfidence::AssumedMillimeters);
     }
 
     #[test]

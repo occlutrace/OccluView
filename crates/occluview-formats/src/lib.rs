@@ -10,8 +10,10 @@
 //! - Path traversal is forbidden before any external resource format is exposed
 //!   to the app or shell (`.gltf` JSON and 3MF are deferred from v1 surfaces).
 //! - Coordinate-frame conversion happens in readers, not in the renderer.
-//! - Units: STL/OBJ declare none (assume mm, surfaced in UI); GLB declares
-//!   meters but scanner exports vary, so v1 keeps coordinates unchanged.
+//! - Units: STL/OBJ/PLY/OFF/HPS declare none (read as mm, see
+//!   [`units::policy_for`]); GLB declares meters but scanner exports vary,
+//!   so coordinates are kept unchanged and the layer is flagged ambiguous
+//!   ([`units::UnitInterpretation`]) instead of being silently scaled.
 //!
 //! ## Status
 //!
@@ -53,6 +55,7 @@ pub mod ply;
 pub mod probe;
 pub mod stl;
 mod texture_decode;
+pub mod units;
 pub mod write;
 
 /// Legacy file extension accepted as an alias for HPS packages.
@@ -116,7 +119,10 @@ impl MeshShading {
     }
 }
 
-pub use dispatch::{dispatch_by_extension, read_file, read_files, read_files_with_key_provider};
+pub use dispatch::{
+    dispatch_by_extension, read_file, read_file_loaded_with_key_provider, read_files,
+    read_files_with_key_provider, LoadedMesh,
+};
 pub use error::FormatError;
 pub use glb_writer::write_textured_glb;
 pub use probe::{probe, FormatKind};
