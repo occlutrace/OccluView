@@ -64,8 +64,9 @@ impl OccluViewApp {
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return;
         };
-        // Topology first: a densifying dab replaced the layer, and any sparse
-        // vertex update queued behind it indexes the array that just went away.
+        // Drain order stays topology-first: a densifying dab replaced the
+        // layer, and any sparse vertex update queued behind it indexes the
+        // array that just went away.
         let mut rebuilds = Vec::new();
         while let Some(rebuild) = worker.take_rebuild() {
             rebuilds.push(rebuild);
@@ -83,15 +84,6 @@ impl OccluViewApp {
         let had_completions = !completions.is_empty();
         let error = worker.take_error();
         let needs_repaint = !worker.is_quiescent();
-        for rebuild in rebuilds {
-            if !self.install_sculpt_rebuild(rebuild) {
-                self.invalidate_sculpt_session_silent();
-                return;
-            }
-        }
-        for update in updates {
-            self.flush_sculpt_update(update);
-        }
         if let Some(failure) = error {
             let detail = describe_sculpt_failure(&self.ui.locale, &failure);
             self.ui.status_message = Some(
@@ -101,11 +93,27 @@ impl OccluViewApp {
             );
             self.invalidate_sculpt_session_silent();
         }
+        // Completions commit BEFORE a newer stroke's rebuild installs. The
+        // worker is sequential, so a completion queued behind a Finish always
+        // belongs to an older stroke than a rebuild queued after it; installing
+        // the rebuild first would bump the worker topology and let the older,
+        // smaller mesh pass the topology check and clobber the newer geometry.
+        // Committing in queue order keeps the undo chain linear: pre-stroke-1,
+        // then post-stroke-1, one entry per finished stroke.
         for SculptCompletion { before, mesh } in completions {
             if !self.commit_sculpt_result(before, mesh, ctx) {
                 self.invalidate_sculpt_session_silent();
                 break;
             }
+        }
+        for rebuild in rebuilds {
+            if !self.install_sculpt_rebuild(rebuild) {
+                self.invalidate_sculpt_session_silent();
+                return;
+            }
+        }
+        for update in updates {
+            self.flush_sculpt_update(update);
         }
         if had_rebuilds || had_updates || had_completions {
             // Rebuilds and sparse writes already landed in GPU buffers above;
@@ -398,5 +406,39 @@ mod tests {
         topology.sculpt_topology_changed();
         assert!(topology.live_scene_stale() && topology.offscreen_scene_stale());
         assert!(!topology.live_overlay_stale() && !topology.offscreen_overlay_stale());
+    }
+
+    /// Source contract for the two-stroke interleave hazard.
+    ///
+    /// The worker is sequential, so `Finish(old stroke)` then `Apply(new
+    /// stroke, densifies)` queues a completion behind a rebuild. Installing
+    /// the newer topology first would bump the worker topology id and let
+    /// the older, smaller completion mesh pass the topology check and
+    /// clobber the newer geometry — the just-sculpted spot visibly vanishes
+    /// a fraction of a second later. So completions commit BEFORE rebuilds
+    /// install (sparse updates still flush after the install — see above),
+    /// which keeps the undo chain linear: one entry per finished stroke.
+    #[test]
+    fn older_completions_commit_before_newer_rebuilds_install() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
+                .replace("\r\n", "\n");
+        let failure = source
+            .find("if let Some(failure) = error")
+            .expect("the poll must surface worker failures");
+        let commit = source
+            .find("for SculptCompletion")
+            .expect("the poll must commit finished strokes");
+        let install = source
+            .find("self.install_sculpt_rebuild(rebuild)")
+            .expect("the poll must install pending rebuilds");
+        assert!(
+            failure < commit,
+            "a worker failure must short-circuit before any completion commits"
+        );
+        assert!(
+            commit < install,
+            "completions must commit before a newer rebuild installs"
+        );
     }
 }

@@ -360,6 +360,63 @@ fn drained_update_is_not_lost_on_shadow_contention() {
     );
 }
 
+/// Quiescence must count undrained worker output, not just the command
+/// queue: Done/undo gate on it, and a false quiet lets the session
+/// invalidate out from under unflushed deltas.
+#[test]
+fn quiescence_counts_undrained_deltas_not_just_the_queue() {
+    let worker = test_worker();
+    // No commands queued; a restored (drained-but-unapplied) update is
+    // still live work the next poll owes a flush.
+    worker.restore_update(SculptUpdate {
+        touched: vec![0],
+        full_sync: false,
+    });
+    assert!(
+        !worker.is_quiescent(),
+        "a restored update must read as pending work"
+    );
+    let _ = worker.take_update();
+    assert!(worker.is_quiescent(), "a drained worker must read quiet");
+}
+
+/// Same for the full-sync flag: an authoritative resync owed to the GPU
+/// is pending work even with an empty queue and no touched ids.
+#[test]
+fn quiescence_counts_a_pending_full_sync() {
+    let worker = test_worker();
+    worker.request_full_sync();
+    assert!(
+        !worker.is_quiescent(),
+        "an owed full sync must read as pending work"
+    );
+    let update = worker.take_update().expect("the flag must drain");
+    assert!(update.full_sync);
+    assert!(worker.is_quiescent());
+}
+
+/// Same for a densify rebuild: no Finish, no drain, yet the new topology
+/// (and its touches) is still owed to the UI.
+#[test]
+fn quiescence_counts_a_pending_layer_rebuild() {
+    let worker = worker_for(&coarse_ridge_mesh());
+    let dab = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 3.5,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    assert!(worker.try_apply(dab, BrushMode::Smooth));
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        !worker.is_quiescent(),
+        "an undrained densify rebuild must read as pending work"
+    );
+    worker
+        .take_rebuild()
+        .expect("the densifying dab must have produced a layer rebuild");
+}
+
 /// Coalescing keeps only the newest state: overflow escalates to one
 /// authoritative full sync instead of an unbounded delta backlog.
 #[test]
