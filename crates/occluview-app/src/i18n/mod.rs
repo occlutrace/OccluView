@@ -1,14 +1,7 @@
-//! UI language foundation: preference, resolution, catalogs.
+//! UI locale resolution and Fluent catalogs.
 //!
-//! One [`LocaleManager`] per app frame generation: it owns exactly one
-//! complete catalog set. Resolution is atomic per message — a missing
-//! message falls back to English for that message alone, so a frame may
-//! mix languages on a partial catalog, but never blanks, never panics,
-//! never a raw key: the diagnostic marker names the id instead.
-//!
-//! Startup flow (exactly once, no double `Settings::load`):
-//! sidecar preference → OS preferred list → effective tag → embedded
-//! catalog or English (tag retained when unavailable).
+//! Startup reads the sidecar preference and OS locale once. Each missing
+//! message falls back to English; a missing English key renders `⟦id⟧`.
 
 pub(crate) mod catalog;
 #[cfg(test)]
@@ -27,21 +20,15 @@ use fluent_bundle::FluentArgs;
 use preference::{SidecarDiagnostic, UiLanguagePreference};
 use tags::FALLBACK_TAG;
 
-/// Marker for the impossible case in a shipped binary (English itself
-/// missing a key — an `en` gap fails the build per contract, see
-/// `build.rs`). Never blank; carries the id so screenshots and logs stay
-/// diagnosable instead of failing silently.
+/// Diagnostic marker for a missing English key.
 fn missing_marker(id: &str) -> String {
     format!("⟦{id}⟧")
 }
 
-/// Native window title. Today the product proper name in every catalog;
-/// per-locale descriptors land without code changes once terminology
-/// approves them. Resolved live on every switch via `ViewportCommand`.
+/// Catalog key for the native window title.
 pub(crate) const NATIVE_TITLE_KEY: &str = "app-window-title";
 
-/// Endonym display names for the language selector. Proper names are never
-/// translated; only the `Auto` row label comes from the catalog.
+/// Native language names for the selector.
 pub(crate) fn endonym(tag: &'static str) -> &'static str {
     match tag {
         "en" => "English",
@@ -58,25 +45,22 @@ pub(crate) fn endonym(tag: &'static str) -> &'static str {
     }
 }
 
-/// Point-in-time startup result: loaded exactly once and shared, never
-/// re-resolved mid-operation.
+/// Resolved locale state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartupSnapshot {
-    /// Stored preference (`Auto` when absent or corrupt).
+    /// Stored preference.
     pub preference: UiLanguagePreference,
-    /// Tag the OS list resolved to (informational under manual choice).
+    /// Tag resolved from the OS list.
     pub auto_resolved: &'static str,
-    /// Tag in effect: explicit choice wins, else `auto_resolved`.
-    /// Retained even when no catalog is embedded for it.
+    /// Effective tag, including unsupported tags.
     pub active_tag: &'static str,
-    /// Embedded tag actually rendering (`en` when `active_tag` is
-    /// unavailable).
+    /// Embedded catalog used to render the UI.
     pub render_tag: &'static str,
-    /// Sidecar diagnostic, if any (locale-invariant code for logs).
+    /// Sidecar diagnostic for logs.
     pub diagnostic: Option<SidecarDiagnostic>,
 }
 
-/// Single-generation locale state for one app frame.
+/// Locale state for the app.
 pub(crate) struct LocaleManager {
     catalogs: HashMap<&'static str, Catalog>,
     fallback: Catalog,
@@ -84,11 +68,7 @@ pub(crate) struct LocaleManager {
 }
 
 impl LocaleManager {
-    /// Build all embedded catalogs. A broken non-English catalog is skipped
-    /// (it renders English); a broken English baseline becomes an empty
-    /// catalog that renders markers. Both cases are build/CI failures via
-    /// `validate_embedded` — this graceful path only protects shipped
-    /// binaries from panicking, never from the test gate.
+    /// Builds embedded catalogs; invalid catalogs fall back safely at runtime.
     fn build_all() -> (HashMap<&'static str, Catalog>, Catalog) {
         let mut catalogs = HashMap::new();
         for tag in EMBEDDED_TAGS {
@@ -108,9 +88,7 @@ impl LocaleManager {
         (catalogs, fallback)
     }
 
-    /// Cold-launch entry: preference from `state_dir` (`None` when the
-    /// state directory is unavailable), OS list from `source`. Infallible
-    /// by design — see `build_all`.
+    /// Starts from the sidecar preference and an OS locale source.
     pub(crate) fn startup(
         state_dir: Option<&Path>,
         source: &dyn os::OsLocaleSource,
@@ -144,7 +122,7 @@ impl LocaleManager {
         )
     }
 
-    /// Test helper: English manager with no state directory.
+    /// English manager without a state directory.
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
         struct Empty;
@@ -156,18 +134,22 @@ impl LocaleManager {
         Self::startup(None, &Empty).0
     }
 
-    /// The snapshot this manager was built from.
+    /// Current locale state.
     pub(crate) fn snapshot(&self) -> &StartupSnapshot {
         &self.snapshot
     }
 
-    /// Native window title in the active catalog generation.
+    /// Catalog that System would render.
+    pub(crate) fn system_render_tag(&self) -> &'static str {
+        self.render_tag_for(self.snapshot.auto_resolved)
+    }
+
+    /// Native window title in the active catalog.
     pub(crate) fn window_title(&self) -> String {
         self.text(NATIVE_TITLE_KEY)
     }
 
-    /// Manual switch: re-renders all in-app UI immediately from the next
-    /// frame. The caller persists via [`preference::save`] on the same path.
+    /// Switches to a manual language.
     pub(crate) fn set_preference(&mut self, preference: UiLanguagePreference) {
         let active_tag = preference.effective_tag(self.snapshot.auto_resolved);
         self.snapshot.preference = preference;
@@ -175,14 +157,13 @@ impl LocaleManager {
         self.snapshot.render_tag = self.render_tag_for(active_tag);
     }
 
-    /// "Apply system language now": re-resolve the live OS list. Only takes
-    /// effect while the preference is `Auto`; a manual choice is untouched.
-    pub(crate) fn reapply_auto(&mut self, source: &dyn os::OsLocaleSource) {
-        self.snapshot.auto_resolved = os::resolve_with(source);
-        if self.snapshot.preference == UiLanguagePreference::Auto {
-            self.snapshot.active_tag = self.snapshot.auto_resolved;
-            self.snapshot.render_tag = self.render_tag_for(self.snapshot.auto_resolved);
-        }
+    /// Re-reads the OS and selects System.
+    pub(crate) fn use_system_language(&mut self, source: &dyn os::OsLocaleSource) {
+        let auto_resolved = os::resolve_with(source);
+        self.snapshot.preference = UiLanguagePreference::Auto;
+        self.snapshot.auto_resolved = auto_resolved;
+        self.snapshot.active_tag = auto_resolved;
+        self.snapshot.render_tag = self.render_tag_for(auto_resolved);
     }
 
     fn render_tag_for(&self, active_tag: &'static str) -> &'static str {
@@ -199,23 +180,22 @@ impl LocaleManager {
             .unwrap_or(&self.fallback)
     }
 
-    /// Localized text for a message id. Falls back to English per message;
-    /// never blank, never a raw key, never panics.
+    /// Resolves a message with per-message English fallback.
     pub(crate) fn text(&self, id: &str) -> String {
         self.text_with(id, None)
     }
 
-    /// Short alias for `text` at dense call sites (toolbar rows, panels).
+    /// Short alias for [`Self::text`].
     pub(crate) fn tr(&self, id: &str) -> String {
         self.text(id)
     }
 
-    /// `text_with` with inline pairs — no `args()` import at call sites.
+    /// Resolves text with inline string arguments.
     pub(crate) fn tr_with(&self, id: &str, pairs: &[(&str, &str)]) -> String {
         self.text_with(id, Some(&catalog::args(pairs)))
     }
 
-    /// Plural selects with data: string pairs plus `usize` counts.
+    /// Resolves a plural message with arguments.
     pub(crate) fn tr_plural(
         &self,
         id: &str,
@@ -286,18 +266,30 @@ mod tests {
     }
 
     #[test]
-    fn reapply_auto_refreshes_only_under_auto() {
-        let first = Fixed(vec!["de-DE"]);
-        let (mut manager, _) = LocaleManager::startup(None, &first);
-        manager.reapply_auto(&Fixed(vec!["ru-RU"]));
-        assert_eq!(manager.snapshot().active_tag, "ru");
-        assert_eq!(manager.text("settings-language-label"), "Язык");
-
+    fn using_system_language_refreshes_auto_and_active_catalog() {
+        let (mut manager, _) = LocaleManager::startup(None, &Fixed(vec!["ru-RU"]));
         manager.set_preference(UiLanguagePreference::Explicit("de"));
-        manager.reapply_auto(&Fixed(vec!["ru-RU"]));
+
+        assert_eq!(manager.system_render_tag(), "ru");
+
+        manager.use_system_language(&Fixed(vec!["ru-RU"]));
+
+        assert_eq!(manager.snapshot().preference, UiLanguagePreference::Auto);
         assert_eq!(manager.snapshot().auto_resolved, "ru");
-        assert_eq!(manager.snapshot().active_tag, "de");
-        assert_eq!(manager.text("settings-language-label"), "Sprache");
+        assert_eq!(manager.snapshot().active_tag, "ru");
+        assert_eq!(manager.snapshot().render_tag, "ru");
+    }
+
+    #[test]
+    fn using_system_language_keeps_unavailable_tag_but_renders_english() {
+        let (mut manager, _) = LocaleManager::startup(None, &Fixed(vec!["de-DE"]));
+
+        manager.use_system_language(&Fixed(vec!["ja-JP"]));
+
+        assert_eq!(manager.snapshot().preference, UiLanguagePreference::Auto);
+        assert_eq!(manager.snapshot().auto_resolved, "ja");
+        assert_eq!(manager.snapshot().active_tag, "ja");
+        assert_eq!(manager.snapshot().render_tag, "en");
     }
 
     #[test]

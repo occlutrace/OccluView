@@ -382,9 +382,11 @@ fn about_opens_the_embedded_third_party_notices() {
     let settings = repo_source_file("src/app/app_settings_window.rs");
     let notices = repo_source_file("src/app/app_third_party.rs");
     let state = repo_source_file("src/app/state.rs");
+    let english = repo_source_file("i18n/en.ftl");
 
     assert!(
-        settings.contains("Third-party licenses"),
+        settings.contains("about-licenses")
+            && english.contains("about-licenses = Third-party licenses"),
         "the About dialog should offer the third-party licenses view"
     );
     assert!(
@@ -466,14 +468,30 @@ fn axis_gizmo_uses_the_viewport_background_palette() {
 
 #[test]
 fn settings_popup_avoids_legacy_container_paths() {
-    let settings = repo_source_file("src/app/app_settings_window.rs");
+    let settings_panel = repo_source_file("src/app/app_settings_panel.rs");
 
     assert!(
-        !settings.contains("ComboBox")
-            && !settings.contains("egui::Area::new")
-            && !settings.contains("Popup::is_any_open"),
-        "Settings must not restore legacy container or global popup-state paths"
+        !settings_panel.contains("ComboBox")
+            && !settings_panel.contains("egui::Area::new")
+            && !settings_panel.contains("Popup::is_any_open"),
+        "Settings must not restore a nested popup or global popup-state path"
     );
+    assert!(
+        settings_panel.contains("egui::CollapsingHeader"),
+        "the language selector must stay inline with the Settings popup"
+    );
+}
+
+#[test]
+fn readme_lists_every_embedded_interface_language() {
+    let readme = repo_source_file("../../README.md");
+    for tag in i18n::catalog::EMBEDDED_TAGS {
+        let name = i18n::endonym(tag);
+        assert!(
+            readme.contains(name),
+            "README must list the embedded interface language {name} ({tag})"
+        );
+    }
 }
 
 #[test]

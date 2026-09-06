@@ -8,10 +8,9 @@ align-panel-title = Сопоставление сканов
 meshedit-window-title = Редактирование сетки
 
 settings-language-label = Язык
-settings-language-section = Язык
 settings-language-auto = Язык системы
-settings-language-apply-system = Применить язык системы
-settings-language-restart-note = Выбор вручную применяется сразу; система следует за ОС при запуске.
+settings-language-auto-current = Язык системы — { $language }
+settings-language-catalog-fallback = { $tag } недоступен; используется английский.
 settings-language-save-error = Не удалось сохранить язык. Повторная попытка…
 
 about-title = Об OccluView
@@ -869,12 +868,12 @@ scene-positions-reset = Позиции слоёв сброшены (Ctrl+Z от�
 ## Settings panel, bridge split, render error, tint — DRAFT.
 
 settings-header = Настройки
-settings-section-files = Файлы
+settings-section-files = Файлы и экспорт
 settings-export-format = Формат экспорта
 settings-export-format-hint = Используется, когда исходный формат нельзя экспортировать
 settings-remember-export = Запоминать папку экспорта
 settings-remember-export-hint = Использовать ту же папку после перезапуска OccluView
-settings-section-scene = Сцена и камера
+settings-section-scene = Вид и навигация
 settings-frame-on-open = Вписывать сцену при открытии
 settings-frame-on-open-hint = Возвращать камеру к домашнему виду, когда новый файл заменяет сцену
 settings-double-click = Двойной клик перецентрирует вид
@@ -885,14 +884,12 @@ settings-zoom = Скорость масштаба
 settings-zoom-hint = Насколько каждое деление колеса приближает
 settings-recent = Недавние сцены
 settings-recent-hint = Записей в меню «Открыть»
-settings-section-viewport = Вьюпорт
 settings-background = Фон
 settings-bg-gray = Серый
 settings-bg-white = Белый
 settings-bg-dark = Тёмный
 settings-ghost = Призрак отрезанной стороны
 settings-ghost-hint = В сечении показывать удалённую сторону полупрозрачным призраком
-settings-section-units = Единицы
 settings-measurements = Измерения
 settings-section-appearance = Внешний вид
 settings-theme = Тема

@@ -99,6 +99,15 @@ as STL, PLY, or OBJ.
 
 - `.hps` and `.dcm` are accepted as HPS dental containers; medical DICOM is not supported (a `DICM` signature is refused).
 
+## Interface languages
+
+OccluView follows the operating system language at startup. Settings can
+override it with an explicit choice, which always wins over the OS setting.
+
+Available: English, Русский, Deutsch, Español, Français, Italiano,
+Português (Brasil). When the system language has no translation yet, the
+interface renders English.
+
 ## Controls
 
 Use the **Help** button in the toolbar for the complete keyboard and mouse reference.

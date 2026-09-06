@@ -1,6 +1,4 @@
-//! Preferences dispatch and the product-information modals. The popover
-//! surface itself (sections, rows, action vocabulary) lives in
-//! `app_settings_panel`.
+//! Settings action dispatch and product-information modals.
 
 use super::app_settings_panel::{settings_popup_id, show_settings_popup, SettingsAction};
 use super::information_dialog::InformationDialog;
@@ -57,8 +55,7 @@ impl OccluViewApp {
             }
             SettingsAction::SetRecentFilesLimit(limit) => {
                 self.persistence.settings.recent_files_limit = limit;
-                // Re-trim the live list so an operator shrinking the limit sees
-                // the chevron shorten immediately, not after a restart.
+                // Apply a smaller limit to the live list immediately.
                 let stored = self.persistence.recent_files.serialize();
                 self.persistence.recent_files = crate::recent_files::RecentFiles::deserialize(
                     self.persistence.settings.recent_files_limit(),
@@ -69,16 +66,13 @@ impl OccluViewApp {
             }
             SettingsAction::SetViewportBackground(background) => {
                 self.persistence.settings.viewport_background = background;
-                // The clear color is baked into the prepared scene specs, so
-                // both render paths must rebuild before the change is visible.
+                // Prepared scenes cache the clear color on both paths.
                 self.mark_scene_materials_changed();
                 self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetShowCutGhost(enabled) => {
                 self.persistence.settings.show_cut_ghost = enabled;
-                // Both render paths bake the ghost decision into the frame they
-                // draw; force the next one so a stationary cut view answers at
-                // once instead of waiting for the next camera move.
+                // Both render paths cache the ghost decision.
                 self.render.invalidation.overlay_tools_changed();
                 self.persistence.settings_persistence.mark_dirty();
             }
@@ -103,25 +97,29 @@ impl OccluViewApp {
             SettingsAction::CheckForUpdates => {
                 self.persistence.update_notice.request_check(&trigger.ctx);
             }
-            SettingsAction::SetLanguage(preference) => {
-                self.ui.locale.set_preference(preference);
-                self.persistence.language_persistence.mark_dirty();
-                // Re-arm the once-per-generation native title: the next
-                // update pushes `ViewportCommand::Title` live, no restart.
-                self.ui.native_title_sent = false;
-            }
-            SettingsAction::ApplySystemLanguage => {
+            SettingsAction::SetExplicitLanguage(tag) => {
                 self.ui
                     .locale
-                    .reapply_auto(&crate::i18n::os::SystemLocaleSource);
-                self.persistence.language_persistence.mark_dirty();
-                self.ui.native_title_sent = false;
+                    .set_preference(crate::i18n::preference::UiLanguagePreference::Explicit(tag));
+                self.language_selection_changed();
+            }
+            SettingsAction::UseSystemLanguage => {
+                self.ui
+                    .locale
+                    .use_system_language(&crate::i18n::os::SystemLocaleSource);
+                self.language_selection_changed();
             }
             SettingsAction::OpenAbout => {
                 egui::Popup::close_id(&trigger.ctx, settings_popup_id());
                 self.ui.information_dialog = InformationDialog::About;
             }
         }
+    }
+
+    fn language_selection_changed(&mut self) {
+        self.persistence.language_persistence.mark_dirty();
+        // Send the localized native title on the next frame.
+        self.ui.native_title_sent = false;
     }
 
     pub(super) fn show_about_dialog(&mut self, ctx: &egui::Context) {
@@ -172,8 +170,7 @@ impl OccluViewApp {
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(4.0);
-                // Canonical link labels "Website", "Source",
-                // "Third-party licenses" pinned by source guards.
+                // These labels are pinned by the UI contract tests.
                 centered_about_row(ui, ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP, |ui| {
                     ui.spacing_mut().item_spacing.x = ABOUT_ACTION_GAP;
                     if about_link(
@@ -235,10 +232,7 @@ const ABOUT_ACTION_GAP: f32 = 6.0;
 const ABOUT_FOOTER_WIDTH: f32 = 146.0;
 const ABOUT_ACTION_ROW_HEIGHT: f32 = 27.0;
 
-/// Center a compact row without `horizontal_centered`: that layout fills the
-/// available height by design, which made a vertically stacked modal grow on
-/// every repaint. The row itself stays top-aligned and only receives the
-/// horizontal gutter it needs.
+/// Centers a fixed-width row without expanding the modal vertically.
 fn centered_about_row(
     ui: &mut egui::Ui,
     content_width: f32,
@@ -295,489 +289,5 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::app_dialogs::{recent_files_popup_id, show_recent_files_popup};
-    use crate::app::app_settings_panel::show_settings_toolbar_toggle;
-    use crate::app_settings::Settings;
-    use crate::recent_files::RecentFiles;
-    use crate::update_notice::UpdateCheckStatus;
-
-    fn test_screen() -> egui::Rect {
-        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 384.0))
-    }
-
-    struct ToolbarFrame {
-        action: Option<SettingsAction>,
-        settings_trigger: egui::Rect,
-        recent_trigger: egui::Rect,
-        output: egui::FullOutput,
-    }
-
-    fn run_toolbar_frame(
-        ctx: &egui::Context,
-        events: Vec<egui::Event>,
-    ) -> anyhow::Result<ToolbarFrame> {
-        let locale = crate::i18n::LocaleManager::for_tests();
-        run_toolbar_frame_in(ctx, events, &locale)
-    }
-
-    fn run_toolbar_frame_in(
-        ctx: &egui::Context,
-        events: Vec<egui::Event>,
-        locale: &crate::i18n::LocaleManager,
-    ) -> anyhow::Result<ToolbarFrame> {
-        let input = egui::RawInput {
-            screen_rect: Some(test_screen()),
-            safe_area_insets: Some(egui::SafeAreaInsets(egui::Margin::same(4).into())),
-            events,
-            ..Default::default()
-        };
-        let mut action = None;
-        let mut settings_trigger = None;
-        let mut recent_trigger = None;
-        let mut recent = RecentFiles::new(1);
-        recent.push("case.stl");
-        let mut output = ctx.run_ui(input, |ui| {
-            egui::Panel::top("settings-test-toolbar")
-                .exact_size(30.0)
-                .show(ui, |ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let settings = show_settings_toolbar_toggle(ui, true, locale);
-                        settings_trigger = Some(settings.rect);
-                        action = show_settings_popup(
-                            &settings,
-                            &Settings::default(),
-                            locale,
-                            &UpdateCheckStatus::Idle,
-                            None,
-                            None,
-                        );
-
-                        let recent_trigger_response =
-                            ui.add(egui::Button::new("Recent").min_size(egui::vec2(64.0, 22.0)));
-                        recent_trigger = Some(recent_trigger_response.rect);
-                        let _ = show_recent_files_popup(&recent_trigger_response, &recent, locale);
-                    });
-                });
-        });
-        output.textures_delta.clear();
-        Ok(ToolbarFrame {
-            action,
-            settings_trigger: settings_trigger.ok_or_else(|| {
-                anyhow::anyhow!("the toolbar-like Settings trigger should render")
-            })?,
-            recent_trigger: recent_trigger
-                .ok_or_else(|| anyhow::anyhow!("the toolbar-like Recent trigger should render"))?,
-            output,
-        })
-    }
-
-    fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
-        egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        }
-    }
-
-    fn click(ctx: &egui::Context, position: egui::Pos2) -> anyhow::Result<ToolbarFrame> {
-        let _ = run_toolbar_frame(
-            ctx,
-            vec![
-                egui::Event::PointerMoved(position),
-                pointer_button(position, true),
-            ],
-        )?;
-        run_toolbar_frame(
-            ctx,
-            vec![
-                egui::Event::PointerMoved(position),
-                pointer_button(position, false),
-            ],
-        )
-    }
-
-    fn direct_control_center(output: &egui::FullOutput, label: &str) -> anyhow::Result<egui::Pos2> {
-        output
-            .shapes
-            .iter()
-            .find_map(|clipped| match &clipped.shape {
-                egui::epaint::Shape::Text(text) if text.galley.text() == label => {
-                    Some(text.visual_bounding_rect().center())
-                }
-                _ => None,
-            })
-            .ok_or_else(|| anyhow::anyhow!("the production Settings popup should render {label}"))
-    }
-
-    fn popup_rect(ctx: &egui::Context, id: egui::Id) -> anyhow::Result<egui::Rect> {
-        ctx.memory(|memory| memory.area_rect(id))
-            .ok_or_else(|| anyhow::anyhow!("the production popup {id:?} should render"))
-    }
-
-    struct ModalFrame {
-        should_close: bool,
-        backdrop_clicked: bool,
-    }
-
-    fn run_modal_frame(ctx: &egui::Context, events: Vec<egui::Event>) -> ModalFrame {
-        let input = egui::RawInput {
-            screen_rect: Some(test_screen()),
-            events,
-            ..Default::default()
-        };
-        let mut should_close = false;
-        let mut backdrop_clicked = false;
-        ctx.run_ui(input, |ui| {
-            let response = egui::Modal::new(egui::Id::new("about-modal-close-contract")).show(
-                ui.ctx(),
-                |ui| {
-                    ui.set_min_size(egui::vec2(160.0, 96.0));
-                },
-            );
-            backdrop_clicked = response.backdrop_response.clicked();
-            should_close = response.should_close();
-        })
-        .drop_without_applying_deltas();
-        ModalFrame {
-            should_close,
-            backdrop_clicked,
-        }
-    }
-
-    fn responsive_information_modal_frame(
-        ctx: &egui::Context,
-        screen: egui::Rect,
-    ) -> anyhow::Result<egui::Rect> {
-        let id = egui::Id::new("information-modal-resize-contract");
-        ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(screen),
-                ..Default::default()
-            },
-            |ui| {
-                show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
-                    ui.set_width(304.0_f32.min(ui.available_width()));
-                    ui.set_min_height(180.0_f32.min(ui.available_height()));
-                });
-            },
-        )
-        .drop_without_applying_deltas();
-        popup_rect(ctx, id)
-    }
-
-    #[test]
-    fn settings_segment_selects_direct_stl_without_closing() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let initial = run_toolbar_frame(&ctx, Vec::new())?;
-        let _ = click(&ctx, initial.settings_trigger.center())?;
-        let visible = run_toolbar_frame(&ctx, Vec::new())?;
-        let stl = direct_control_center(&visible.output, "STL")?;
-
-        let response = click(&ctx, stl)?;
-
-        assert_eq!(
-            response.action,
-            Some(SettingsAction::SetExportFormat(
-                crate::app_settings::FallbackExportFormat::Stl
-            ))
-        );
-        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
-        Ok(())
-    }
-
-    #[test]
-    fn settings_toolbar_active_state_follows_popup_memory() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let initial = run_toolbar_frame(&ctx, Vec::new())?;
-        assert!(
-            (initial.settings_trigger.height() - 22.0).abs() <= 0.01,
-            "inactive Settings toolbar height changed"
-        );
-
-        let _ = click(&ctx, initial.settings_trigger.center())?;
-        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
-
-        let active = run_toolbar_frame(&ctx, Vec::new())?;
-        assert!(
-            (active.settings_trigger.height() - 26.0).abs() <= 0.01,
-            "active Settings toolbar height changed"
-        );
-
-        let _ = click(&ctx, active.settings_trigger.center())?;
-        assert!(!egui::Popup::is_id_open(&ctx, settings_popup_id()));
-
-        let inactive = run_toolbar_frame(&ctx, Vec::new())?;
-        assert!(
-            (inactive.settings_trigger.height() - 22.0).abs() <= 0.01,
-            "inactive Settings toolbar height changed"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn settings_switches_to_recent_popup() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let initial = run_toolbar_frame(&ctx, Vec::new())?;
-        let open_settings = click(&ctx, initial.settings_trigger.center())?;
-        assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
-
-        let _ = click(&ctx, open_settings.recent_trigger.center())?;
-
-        assert!(!egui::Popup::is_id_open(&ctx, settings_popup_id()));
-        assert!(egui::Popup::is_id_open(&ctx, recent_files_popup_id()));
-        Ok(())
-    }
-
-    #[test]
-    fn settings_dismisses_on_outside_click_and_escape() -> anyhow::Result<()> {
-        let click_ctx = egui::Context::default();
-        let initial = run_toolbar_frame(&click_ctx, Vec::new())?;
-        let _ = click(&click_ctx, initial.settings_trigger.center())?;
-        let settings = popup_rect(&click_ctx, settings_popup_id())?;
-        let outside = egui::pos2(4.0, test_screen().bottom() - 4.0);
-        assert!(!settings.contains(outside));
-        let _ = click(&click_ctx, outside)?;
-        assert!(!egui::Popup::is_id_open(&click_ctx, settings_popup_id()));
-
-        let escape_ctx = egui::Context::default();
-        let initial = run_toolbar_frame(&escape_ctx, Vec::new())?;
-        let _ = click(&escape_ctx, initial.settings_trigger.center())?;
-        let _ = run_toolbar_frame(
-            &escape_ctx,
-            vec![egui::Event::Key {
-                key: egui::Key::Escape,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        )?;
-        assert!(!egui::Popup::is_id_open(&escape_ctx, settings_popup_id()));
-        Ok(())
-    }
-
-    #[test]
-    fn settings_fits_safe_content_at_312_points() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let initial = run_toolbar_frame(&ctx, Vec::new())?;
-        let _ = click(&ctx, initial.settings_trigger.center())?;
-        let _ = run_toolbar_frame(&ctx, Vec::new())?;
-        let rect = popup_rect(&ctx, settings_popup_id())?;
-        let allowed = ctx.content_rect();
-        let expected_content = test_screen().shrink(4.0);
-
-        assert!(
-            (311.0..=313.0).contains(&rect.width()),
-            "width was {}",
-            rect.width()
-        );
-        assert_eq!(
-            allowed, expected_content,
-            "the test harness must expose the safe content rect used for popup placement"
-        );
-        assert!(
-            allowed.contains_rect(rect),
-            "popup {rect:?} escaped {allowed:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn modal_response_closes_on_a_backdrop_click() {
-        let ctx = egui::Context::default();
-        assert!(!run_modal_frame(&ctx, Vec::new()).should_close);
-        assert!(!run_modal_frame(&ctx, Vec::new()).should_close);
-
-        let backdrop = egui::pos2(4.0, 4.0);
-        assert!(
-            !run_modal_frame(
-                &ctx,
-                vec![
-                    egui::Event::PointerMoved(backdrop),
-                    pointer_button(backdrop, true),
-                ],
-            )
-            .should_close
-        );
-        let release = run_modal_frame(
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(backdrop),
-                pointer_button(backdrop, false),
-            ],
-        );
-        assert!(
-            release.backdrop_clicked,
-            "the raw click should reach the modal backdrop"
-        );
-        assert!(release.should_close);
-    }
-
-    #[test]
-    fn information_modal_shrinks_to_the_current_content_rect_after_resize() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let large_screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
-        let small_screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 180.0));
-
-        let _ = responsive_information_modal_frame(&ctx, large_screen)?;
-        let _ = responsive_information_modal_frame(&ctx, large_screen)?;
-        let _ = responsive_information_modal_frame(&ctx, small_screen)?;
-        let rect = responsive_information_modal_frame(&ctx, small_screen)?;
-        let bounds = small_screen.shrink(16.0);
-
-        assert!(
-            bounds.contains_rect(rect),
-            "information modal {rect:?} escaped the current content bounds {bounds:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn scrollable_information_modal_stays_near_its_declared_size() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
-        let id = egui::Id::new("information-modal-scroll-size-contract");
-
-        for _ in 0..2 {
-            ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(screen),
-                    ..Default::default()
-                },
-                |ui| {
-                    show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
-                        egui::ScrollArea::both()
-                            .auto_shrink([false, false])
-                            .show_rows(ui, 14.0, 2_000, |ui, rows| {
-                                for row in rows {
-                                    ui.label(format!("license line {row}"));
-                                }
-                            });
-                    });
-                },
-            )
-            .drop_without_applying_deltas();
-        }
-
-        let rect = popup_rect(&ctx, id)?;
-        assert!(
-            rect.width() <= 600.0 && rect.height() <= 460.0,
-            "scrollable information modal should not expand to the full screen: {rect:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn about_modal_does_not_cycle_through_repeated_sizing_passes() -> anyhow::Result<()> {
-        let ctx = egui::Context::default();
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
-        let id = egui::Id::new("information-modal-about-stability-contract");
-        let mut rects = Vec::new();
-
-        for _ in 0..12 {
-            ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(screen),
-                    ..Default::default()
-                },
-                |ui| {
-                    show_information_modal(ui.ctx(), id, egui::vec2(320.0, 240.0), |ui| {
-                        ui.set_width(304.0_f32.min(ui.available_width()));
-                        ui.vertical_centered(|ui| {
-                            ui.label("OccluView");
-                            ui.label("Mesh Repair · Mesh Editing for dental CAD");
-                            ui.label("Version 1.1.1");
-                        });
-                        ui.add_space(6.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-                        centered_about_row(ui, 270.0, |ui| {
-                            ui.label("Website");
-                            ui.label("Source");
-                        });
-                        ui.add_space(2.0);
-                        centered_about_row(ui, 270.0, |ui| {
-                            ui.label("Third-party licenses");
-                        });
-                        ui.add_space(2.0);
-                        centered_about_row(ui, 146.0, |ui| {
-                            ui.label("Apache License 2.0");
-                        });
-                    });
-                },
-            )
-            .drop_without_applying_deltas();
-            rects.push(popup_rect(&ctx, id)?);
-        }
-
-        let stable_tail = &rects[6..];
-        assert!(
-            stable_tail.windows(2).all(|pair| {
-                (pair[0].size() - pair[1].size()).length() < 0.1
-                    && (pair[0].center() - pair[1].center()).length() < 0.1
-            }),
-            "About modal kept changing size/position: {stable_tail:?}"
-        );
-        Ok(())
-    }
-
-    /// Wireframe screenshots of the settings popup in every embedded locale
-    /// for human visual review (`target/i18n-shots/`, never committed).
-    #[test]
-    fn settings_popup_wireframes_for_visual_review() -> anyhow::Result<()> {
-        use crate::i18n::catalog::EMBEDDED_TAGS;
-        use crate::i18n::preference::UiLanguagePreference;
-
-        for tag in EMBEDDED_TAGS {
-            let ctx = egui::Context::default();
-            let mut manager = crate::i18n::LocaleManager::for_tests();
-            if *tag != "en" {
-                manager.set_preference(UiLanguagePreference::Explicit(tag));
-            }
-            // Open the popup through the real toggle: press, release.
-            let initial = run_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
-            let center = initial.settings_trigger.center();
-            let press = |position| {
-                run_toolbar_frame_in(
-                    &ctx,
-                    vec![
-                        egui::Event::PointerMoved(position),
-                        pointer_button(position, true),
-                    ],
-                    &manager,
-                )
-            };
-            let release = |position| {
-                run_toolbar_frame_in(
-                    &ctx,
-                    vec![
-                        egui::Event::PointerMoved(position),
-                        pointer_button(position, false),
-                    ],
-                    &manager,
-                )
-            };
-            let _ = press(center)?;
-            let _ = release(center)?;
-            // Two more frames: popup open, then scroll content layout.
-            let _ = run_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
-            // Top slice only: below-fold shapes are culled headless and
-            // wheel scrolling proved flaky in the harness (real users
-            // scroll normally). The language selector — the new surface —
-            // gets a dedicated direct render with its dropdown open below.
-            let frame = run_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
-            let path = crate::i18n::shots::save_shot_with_texts(
-                &format!("settings-{tag}"),
-                &ctx,
-                frame.output,
-                500,
-                384,
-            );
-            assert!(path.is_file(), "shot missing: {}", path.display());
-        }
-        Ok(())
-    }
-}
+#[path = "app_settings_window_tests.rs"]
+mod tests;
