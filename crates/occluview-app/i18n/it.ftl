@@ -8,10 +8,9 @@ align-panel-title = Allinea le scansioni
 meshedit-window-title = Editing delle mesh
 
 settings-language-label = Lingua
-settings-language-section = Lingua
 settings-language-auto = Lingua di sistema
-settings-language-apply-system = Applica la lingua di sistema
-settings-language-restart-note = Manuale immediato; Sistema segue l’OS all’avvio.
+settings-language-auto-current = Lingua di sistema — { $language }
+settings-language-catalog-fallback = { $tag } non è disponibile; viene usato l’inglese.
 settings-language-save-error = Lingua non salvata. Riprovo…
 
 about-title = Su OccluView
@@ -760,12 +759,12 @@ align-session-kept = Allineamento tenuto — esporta la scansione per scriverlo
 ## Settings panel, bridge split, render error, tint — DRAFT.
 
 settings-header = Impostazioni
-settings-section-files = File
+settings-section-files = File ed esportazione
 settings-export-format = Formato di export
 settings-export-format-hint = Quando il formato origine non si esporta
 settings-remember-export = Ricorda la cartella di export
 settings-remember-export-hint = Stessa cartella dopo il riavvio
-settings-section-scene = Scena e camera
+settings-section-scene = Vista e navigazione
 settings-frame-on-open = Inquadra all’apertura
 settings-frame-on-open-hint = Torna alla vista home quando un file sostituisce la scena
 settings-double-click = Doppio clic ricentra
@@ -776,14 +775,12 @@ settings-zoom = Velocità di zoom
 settings-zoom-hint = Quanto avvicina ogni scatto di rotella
 settings-recent = Scene recenti
 settings-recent-hint = Voci nel menu Apri
-settings-section-viewport = Viewport
 settings-background = Sfondo
 settings-bg-gray = Grigio
 settings-bg-white = Bianco
 settings-bg-dark = Scuro
 settings-ghost = Fantasma del lato tagliato
 settings-ghost-hint = In sezione mostra il lato tolto come fantasma
-settings-section-units = Unità
 settings-measurements = Misure
 settings-section-appearance = Aspetto
 settings-theme = Tema

@@ -25,6 +25,8 @@ remain in the Git history.
   orbit and zoom speed, recent-scene count, viewport background (gray, white,
   dark), cut-away ghost toggle, millimeter or inch readouts, UI scale, a dark
   theme, and remembered sculpt brush settings.
+- Reworked Settings into a more compact layout. Language selection now expands
+  in place, puts System language first, and clearly reports catalog fallback.
 - Added an empty-viewport welcome screen with an Open call to action, drag-over
   feedback for dropped files, and a loading spinner in the status pill.
 - Removed the unwanted viewport edge strip and replaced the framed status pill

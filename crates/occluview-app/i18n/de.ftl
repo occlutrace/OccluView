@@ -8,10 +8,9 @@ align-panel-title = Scans ausrichten
 meshedit-window-title = Netzbearbeitung
 
 settings-language-label = Sprache
-settings-language-section = Sprache
 settings-language-auto = Systemsprache
-settings-language-apply-system = Systemsprache jetzt übernehmen
-settings-language-restart-note = Manuell gilt sofort; System folgt dem OS beim Start.
+settings-language-auto-current = Systemsprache — { $language }
+settings-language-catalog-fallback = { $tag } ist nicht verfügbar; Englisch wird verwendet.
 settings-language-save-error = Spracheinstellung konnte nicht gespeichert werden. Neuer Versuch…
 
 about-title = Über OccluView
@@ -775,12 +774,12 @@ scene-positions-reset = Ebenenpositionen zurückgesetzt (Strg+Z macht rückgäng
 ## Settings panel, bridge split, render error, tint — DRAFT.
 
 settings-header = Einstellungen
-settings-section-files = Dateien
+settings-section-files = Dateien & Export
 settings-export-format = Exportformat
 settings-export-format-hint = Wenn das Quellformat nicht exportiert werden kann
 settings-remember-export = Exportordner merken
 settings-remember-export-hint = Gleichen Ordner nach Neustart verwenden
-settings-section-scene = Szene & Kamera
+settings-section-scene = Ansicht & Navigation
 settings-frame-on-open = Szene beim Öffnen einpassen
 settings-frame-on-open-hint = Kamera auf Heimansicht zurücksetzen, wenn eine neue Datei die Szene ersetzt
 settings-double-click = Doppelklick zentriert Ansicht
@@ -791,14 +790,12 @@ settings-zoom = Zoomgeschwindigkeit
 settings-zoom-hint = Wie stark jede Raststufe zoomt
 settings-recent = Letzte Szenen
 settings-recent-hint = Einträge im Öffnen-Menü
-settings-section-viewport = Viewport
 settings-background = Hintergrund
 settings-bg-gray = Grau
 settings-bg-white = Weiß
 settings-bg-dark = Dunkel
 settings-ghost = Abgetrennte Seite als Geist
 settings-ghost-hint = In der Schnittansicht die entfernte Seite transparent zeigen
-settings-section-units = Einheiten
 settings-measurements = Messungen
 settings-section-appearance = Darstellung
 settings-theme = Design

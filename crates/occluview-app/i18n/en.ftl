@@ -10,10 +10,9 @@ align-panel-title = Align Scans
 meshedit-window-title = Mesh Editing
 
 settings-language-label = Language
-settings-language-section = Language
 settings-language-auto = System language
-settings-language-apply-system = Apply system language now
-settings-language-restart-note = Manual applies immediately; System follows the OS at startup.
+settings-language-auto-current = System language — { $language }
+settings-language-catalog-fallback = { $tag } is not available; using English.
 settings-language-save-error = Language preference could not be saved. Retrying…
 
 about-title = About OccluView
@@ -763,12 +762,12 @@ scene-positions-reset = Layer positions reset (Ctrl+Z undoes)
 ## Settings panel, bridge split, render error, tint.
 
 settings-header = Settings
-settings-section-files = Files
+settings-section-files = Files & export
 settings-export-format = Export format
 settings-export-format-hint = Used when the source format cannot be exported
 settings-remember-export = Remember export folder
 settings-remember-export-hint = Use the same folder after restarting OccluView
-settings-section-scene = Scene & camera
+settings-section-scene = View & navigation
 settings-frame-on-open = Frame a scene when it opens
 settings-frame-on-open-hint = Reset the camera to the home view when a new file replaces the scene, instead of keeping the current one
 settings-double-click = Double-click refocuses view
@@ -779,14 +778,12 @@ settings-zoom = Zoom speed
 settings-zoom-hint = How much each scroll notch zooms
 settings-recent = Recent scenes
 settings-recent-hint = Entries kept in the Open chevron
-settings-section-viewport = Viewport
 settings-background = Background
 settings-bg-gray = Gray
 settings-bg-white = White
 settings-bg-dark = Dark
 settings-ghost = Ghost the cut-away side
 settings-ghost-hint = During a cut view, show the removed side as a translucent ghost
-settings-section-units = Units
 settings-measurements = Measurements
 settings-section-appearance = Appearance
 settings-theme = Theme

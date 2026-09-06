@@ -9,10 +9,9 @@ align-panel-title = Alinhar escaneamentos
 meshedit-window-title = Edição de malhas
 
 settings-language-label = Idioma
-settings-language-section = Idioma
 settings-language-auto = Idioma do sistema
-settings-language-apply-system = Aplicar o idioma do sistema agora
-settings-language-restart-note = Manual vale na hora; Sistema segue o SO ao iniciar.
+settings-language-auto-current = Idioma do sistema — { $language }
+settings-language-catalog-fallback = { $tag } não está disponível; o inglês será usado.
 settings-language-save-error = Não deu para salvar o idioma. Tentando de novo…
 
 about-title = Sobre o OccluView
@@ -762,12 +761,12 @@ align-session-kept = Alinhamento mantido — exporte para gravar
 ## Settings panel, bridge split, render error, tint — DRAFT.
 
 settings-header = Ajustes
-settings-section-files = Arquivos
+settings-section-files = Arquivos e exportação
 settings-export-format = Formato de exportação
 settings-export-format-hint = Quando o formato de origem não exporta
 settings-remember-export = Lembrar pasta de exportação
 settings-remember-export-hint = Mesma pasta após reiniciar
-settings-section-scene = Cena e câmera
+settings-section-scene = Visualização e navegação
 settings-frame-on-open = Enquadrar ao abrir
 settings-frame-on-open-hint = Voltar à vista inicial quando um arquivo substitui a cena
 settings-double-click = Duplo-clique recentraliza
@@ -778,7 +777,6 @@ settings-zoom = Velocidade de zoom
 settings-zoom-hint = Quanto cada clique da roda aproxima
 settings-recent = Cenas recentes
 settings-recent-hint = Entradas no menu Abrir
-settings-section-viewport = Viewport
 settings-background = Fundo
 settings-bg-gray = Cinza
 settings-bg-white = Branco
@@ -790,7 +788,6 @@ settings-theme-light = Claro
 settings-theme-dark = Escuro
 settings-scale = Escala da interface
 settings-scale-hint = Escala tudo; 1.0 mantém o sistema
-settings-section-units = Unidades
 settings-measurements = Medições
 settings-section-appearance = Aparência
 settings-section-mesh = Edição de malhas

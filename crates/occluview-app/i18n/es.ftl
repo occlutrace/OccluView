@@ -8,10 +8,9 @@ align-panel-title = Alinear escaneos
 meshedit-window-title = Edición de mallas
 
 settings-language-label = Idioma
-settings-language-section = Idioma
 settings-language-auto = Idioma del sistema
-settings-language-apply-system = Aplicar el idioma del sistema ahora
-settings-language-restart-note = Manual se aplica al instante; Sistema sigue al SO al iniciar.
+settings-language-auto-current = Idioma del sistema — { $language }
+settings-language-catalog-fallback = { $tag } no está disponible; se usa inglés.
 settings-language-save-error = No se pudo guardar el idioma. Reintentando…
 
 about-title = Acerca de OccluView
@@ -760,12 +759,12 @@ align-session-kept = Alineación guardada — exporta el escaneo para escribirla
 ## Settings panel, bridge split, render error, tint — DRAFT.
 
 settings-header = Ajustes
-settings-section-files = Archivos
+settings-section-files = Archivos y exportación
 settings-export-format = Formato de exportación
 settings-export-format-hint = Cuando el formato origen no se puede exportar
 settings-remember-export = Recordar carpeta de exportación
 settings-remember-export-hint = Misma carpeta tras reiniciar OccluView
-settings-section-scene = Escena y cámara
+settings-section-scene = Vista y navegación
 settings-frame-on-open = Encuadrar al abrir
 settings-frame-on-open-hint = Volver a la vista inicial cuando un archivo reemplaza la escena
 settings-double-click = Doble clic reencuadra
@@ -776,14 +775,12 @@ settings-zoom = Velocidad de zoom
 settings-zoom-hint = Cuánto acerca cada muesca de rueda
 settings-recent = Escenas recientes
 settings-recent-hint = Entradas en el desplegable de Abrir
-settings-section-viewport = Visor
 settings-background = Fondo
 settings-bg-gray = Gris
 settings-bg-white = Blanco
 settings-bg-dark = Oscuro
 settings-ghost = Fantasma del lado cortado
 settings-ghost-hint = En corte, mostrar el lado quitado como fantasma
-settings-section-units = Unidades
 settings-measurements = Mediciones
 settings-section-appearance = Apariencia
 settings-theme = Tema
