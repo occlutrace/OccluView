@@ -1,6 +1,4 @@
-//! The settings popover surface: sections, rows, and the action vocabulary
-//! the app applies on top of its state. Pure UI — the app-side dispatch lives
-//! in `app_settings_window`, the modal About/third-party windows too.
+//! Settings controls and their UI actions.
 
 use crate::app_settings::{
     FallbackExportFormat, Settings, ThemePreference, UnitDisplay, ViewportBackground,
@@ -21,8 +19,6 @@ pub(super) fn settings_popup_id() -> egui::Id {
     egui::Id::new(SETTINGS_PANEL_ID)
 }
 
-/// Settings gear in the top toolbar. Lives here (not in the toolbar file)
-/// so the toolbar surface stays within the per-file line budget.
 pub(super) fn show_settings_toolbar_toggle(
     ui: &mut egui::Ui,
     enabled: bool,
@@ -56,19 +52,18 @@ pub(super) enum SettingsAction {
     SetTheme(ThemePreference),
     SetUiScale { value: f32, commit: bool },
     SetRememberSculptBrush(bool),
-    SetLanguage(UiLanguagePreference),
-    ApplySystemLanguage,
+    SetExplicitLanguage(&'static str),
+    UseSystemLanguage,
     CheckForUpdates,
     OpenAbout,
 }
 
-/// The Settings popover: one scrollable body of labeled sections under a fixed
-/// header. Width is fixed (the safe-content contract test pins it at 312
-/// points); height yields to the screen. One long body: every section is a
-/// flat run of label + rows, so splitting it would just relocate the lines.
+/// Scrollable Settings popup with fixed width and screen-bounded height.
 #[allow(clippy::too_many_lines)]
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the UI boundary needs settings, locale, and persistence status"
+)]
 pub(super) fn show_settings_popup(
     trigger: &egui::Response,
     settings: &Settings,
@@ -99,10 +94,7 @@ pub(super) fn show_settings_popup(
             panel_header(ui, locale);
             ui.add_space(7.0);
 
-            // The popover grew from three fields into full preferences; beyond
-            // a handful of sections it scrolls instead of escaping the screen.
-            // The budget is what sits between the trigger and the screen edge,
-            // minus the fixed header/footer chrome around the scroll body.
+            // Keep the popup inside the remaining screen height.
             let scroll_budget = ui
                 .ctx()
                 .input(|input| input.raw.screen_rect)
@@ -112,9 +104,38 @@ pub(super) fn show_settings_popup(
                 .show(ui, |ui| {
                     ui.set_width(286.0);
 
+                    section_label(ui, &locale.tr("settings-section-appearance"));
+                    segmented_row(
+                        ui,
+                        locale,
+                        &locale.tr("settings-theme"),
+                        settings.theme,
+                        &ThemePreference::OPTIONS,
+                        |option, locale| locale.tr(theme_key(option)),
+                        &mut action,
+                        SettingsAction::SetTheme,
+                    );
+                    slider_f32_row_until_release(
+                        ui,
+                        &locale.tr("settings-scale"),
+                        settings.ui_scale,
+                        0.85..=1.5,
+                        "×",
+                        &locale.tr("settings-scale-hint"),
+                        &mut action,
+                    );
+                    language_section(ui, locale, &mut action);
+                    if language_save_error.is_some() {
+                        ui.label(
+                            egui::RichText::new(locale.text("settings-language-save-error"))
+                                .size(10.5)
+                                .color(ui_theme::danger()),
+                        );
+                    }
+
+                    section_break(ui);
                     section_label(ui, &locale.tr("settings-section-files"));
                     export_format_row(ui, settings, locale, &mut action);
-
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -129,11 +150,52 @@ pub(super) fn show_settings_popup(
                             }
                         },
                     );
+                    slider_usize_row(
+                        ui,
+                        &locale.tr("settings-recent"),
+                        settings.recent_files_limit,
+                        4..=20,
+                        &locale.tr("settings-recent-hint"),
+                        &mut action,
+                        SettingsAction::SetRecentFilesLimit,
+                    );
 
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
+                    section_break(ui);
                     section_label(ui, &locale.tr("settings-section-scene"));
+                    segmented_row(
+                        ui,
+                        locale,
+                        &locale.tr("settings-background"),
+                        settings.viewport_background,
+                        &ViewportBackground::OPTIONS,
+                        |option, locale| locale.tr(background_key(option)),
+                        &mut action,
+                        SettingsAction::SetViewportBackground,
+                    );
+                    let mut ghost = settings.show_cut_ghost;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), ROW_HEIGHT),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .checkbox(&mut ghost, locale.tr("settings-ghost"))
+                                .on_hover_text(locale.tr("settings-ghost-hint"))
+                                .changed()
+                            {
+                                action = Some(SettingsAction::SetShowCutGhost(ghost));
+                            }
+                        },
+                    );
+                    segmented_row(
+                        ui,
+                        locale,
+                        &locale.tr("settings-measurements"),
+                        settings.unit_display,
+                        &UnitDisplay::OPTIONS,
+                        |option, _locale| option.label().to_owned(),
+                        &mut action,
+                        SettingsAction::SetUnitDisplay,
+                    );
                     let mut frame_on_open = settings.frame_scene_on_open;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -186,99 +248,8 @@ pub(super) fn show_settings_popup(
                         &mut action,
                         SettingsAction::SetZoomSensitivity,
                     );
-                    slider_usize_row(
-                        ui,
-                        &locale.tr("settings-recent"),
-                        settings.recent_files_limit,
-                        4..=20,
-                        &locale.tr("settings-recent-hint"),
-                        &mut action,
-                        SettingsAction::SetRecentFilesLimit,
-                    );
 
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    section_label(ui, &locale.tr("settings-section-viewport"));
-                    segmented_row(
-                        ui,
-                        locale,
-                        &locale.tr("settings-background"),
-                        settings.viewport_background,
-                        &ViewportBackground::OPTIONS,
-                        |option, locale| locale.tr(background_key(option)),
-                        &mut action,
-                        SettingsAction::SetViewportBackground,
-                    );
-                    let mut ghost = settings.show_cut_ghost;
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ROW_HEIGHT),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .checkbox(&mut ghost, locale.tr("settings-ghost"))
-                                .on_hover_text(locale.tr("settings-ghost-hint"))
-                                .changed()
-                            {
-                                action = Some(SettingsAction::SetShowCutGhost(ghost));
-                            }
-                        },
-                    );
-
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    section_label(ui, &locale.tr("settings-section-units"));
-                    segmented_row(
-                        ui,
-                        locale,
-                        &locale.tr("settings-measurements"),
-                        settings.unit_display,
-                        &UnitDisplay::OPTIONS,
-                        |option, _locale| option.label().to_owned(),
-                        &mut action,
-                        SettingsAction::SetUnitDisplay,
-                    );
-
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    section_label(ui, &locale.tr("settings-section-appearance"));
-                    segmented_row(
-                        ui,
-                        locale,
-                        &locale.tr("settings-theme"),
-                        settings.theme,
-                        &ThemePreference::OPTIONS,
-                        |option, locale| locale.tr(theme_key(option)),
-                        &mut action,
-                        SettingsAction::SetTheme,
-                    );
-                    slider_f32_row_until_release(
-                        ui,
-                        &locale.tr("settings-scale"),
-                        settings.ui_scale,
-                        0.85..=1.5,
-                        "×",
-                        &locale.tr("settings-scale-hint"),
-                        &mut action,
-                    );
-
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    language_section(ui, locale, &mut action);
-                    if language_save_error.is_some() {
-                        ui.label(
-                            egui::RichText::new(locale.text("settings-language-save-error"))
-                                .size(10.5)
-                                .color(ui_theme::danger()),
-                        );
-                    }
-
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
+                    section_break(ui);
                     section_label(ui, &locale.tr("settings-section-mesh"));
                     let mut remember_brush = settings.remember_sculpt_brush;
                     ui.allocate_ui_with_layout(
@@ -296,9 +267,7 @@ pub(super) fn show_settings_popup(
                         },
                     );
 
-                    ui.add_space(3.0);
-                    ui.separator();
-                    ui.add_space(5.0);
+                    section_break(ui);
                     section_label(ui, &locale.tr("settings-section-updates"));
                     let mut check_on_start = settings.update_check_on_start;
                     ui.allocate_ui_with_layout(
@@ -368,6 +337,12 @@ fn section_label(ui: &mut egui::Ui, label: &str) {
     );
 }
 
+fn section_break(ui: &mut egui::Ui) {
+    ui.add_space(3.0);
+    ui.separator();
+    ui.add_space(4.0);
+}
+
 fn export_format_row(
     ui: &mut egui::Ui,
     settings: &Settings,
@@ -398,15 +373,13 @@ const NUMERIC_LABEL_WIDTH: f32 = 96.0;
 const NUMERIC_VALUE_WIDTH: f32 = 48.0;
 const NUMERIC_SLIDER_MIN_WIDTH: f32 = 72.0;
 
-/// The slider gets the flexible middle column; labels and readouts stay on a
-/// stable grid so rows do not jump when a value changes.
+/// Labels and readouts stay aligned while the slider takes remaining width.
 fn numeric_slider_width(available_width: f32, item_spacing: f32) -> f32 {
     (available_width - NUMERIC_LABEL_WIDTH - NUMERIC_VALUE_WIDTH - item_spacing * 2.0)
         .max(NUMERIC_SLIDER_MIN_WIDTH)
 }
 
-/// One label + slider + readable numeric value. The action fires on every
-/// slider tick so the viewport answers immediately.
+/// Numeric slider row with immediate preview.
 #[allow(clippy::too_many_arguments)]
 fn slider_f32_row(
     ui: &mut egui::Ui,
@@ -431,9 +404,7 @@ fn slider_f32_row(
     );
 }
 
-/// UI Scale is special: changing egui's global zoom changes every widget's
-/// geometry. Preview the value while dragging, but only let the app persist it
-/// after the pointer is released so the slider cannot move under the pointer.
+/// Preview UI scale during drag; persist after release so widgets stay stable.
 #[allow(clippy::too_many_arguments)]
 fn slider_f32_row_until_release(
     ui: &mut egui::Ui,
@@ -512,7 +483,7 @@ fn slider_f32_row_inner(
     );
 }
 
-/// Whole-number variant of [`slider_f32_row`] (no suffix, unit steps).
+/// Whole-number slider row.
 #[allow(clippy::too_many_arguments)]
 fn slider_usize_row(
     ui: &mut egui::Ui,
@@ -561,8 +532,7 @@ fn slider_usize_row(
     );
 }
 
-/// Catalog keys for the segmented enum rows. Format codes (PLY/STL/OBJ) and
-/// unit symbols (mm/in) stay invariant; words resolve through the catalog.
+/// Catalog key for a viewport background option.
 fn background_key(option: ViewportBackground) -> &'static str {
     match option {
         ViewportBackground::Gray => "settings-bg-gray",
@@ -578,7 +548,7 @@ fn theme_key(option: ThemePreference) -> &'static str {
     }
 }
 
-/// One label + right-aligned segment switch over an enum's fixed options.
+/// Label plus right-aligned enum selector.
 #[allow(clippy::too_many_arguments)]
 fn segmented_row<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
@@ -609,70 +579,85 @@ fn segmented_row<T: Copy + PartialEq>(
     );
 }
 
-/// Language selector: `Auto` (system) plus every embedded catalog.
-/// Widget IDs are stable across language changes; only the `Auto` row label
-/// comes from the catalog, catalog names are endonyms (proper names).
+const LANGUAGE_SELECTOR_ID: &str = "settings-language-selector-v2";
+// Internal radio sentinel for the System row: never a catalog tag, so it can
+// never collide with an entry of `EMBEDDED_TAGS`.
+const SYSTEM_LANGUAGE_OPTION: &str = "__system_language__";
+
+/// Inline selector. It must not open another popup.
 fn language_section(
     ui: &mut egui::Ui,
     locale: &LocaleManager,
     action: &mut Option<SettingsAction>,
 ) {
-    section_label(ui, &locale.text("settings-language-section"));
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.label(locale.text("settings-language-label"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                let current = locale.snapshot().preference.clone();
-                let selected = match &current {
-                    UiLanguagePreference::Auto => locale.text("settings-language-auto"),
-                    UiLanguagePreference::Explicit(tag) => endonym(tag).to_owned(),
+    let header = format!(
+        "{} · {}",
+        locale.text("settings-language-label"),
+        selected_language_summary(locale)
+    );
+    ui.scope(|ui| {
+        ui.spacing_mut().interact_size.y = ROW_HEIGHT;
+        ui.visuals_mut().collapsing_header_frame = true;
+        egui::CollapsingHeader::new(header)
+            .id_salt(LANGUAGE_SELECTOR_ID)
+            .show(ui, |ui| {
+                let mut selected = match locale.snapshot().preference {
+                    UiLanguagePreference::Auto => SYSTEM_LANGUAGE_OPTION,
+                    UiLanguagePreference::Explicit(tag) => tag,
                 };
-                let mut picked = Some(current);
-                egui::ComboBox::from_id_salt("language-combobox-v1")
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_value(
-                                &mut picked,
-                                Some(UiLanguagePreference::Auto),
-                                locale.text("settings-language-auto"),
-                            )
-                            .clicked()
-                        {
-                            *action = Some(SettingsAction::SetLanguage(UiLanguagePreference::Auto));
-                        }
-                        for tag in EMBEDDED_TAGS {
-                            if ui
-                                .selectable_value(
-                                    &mut picked,
-                                    Some(UiLanguagePreference::Explicit(tag)),
-                                    endonym(tag),
-                                )
-                                .clicked()
-                            {
-                                *action = Some(SettingsAction::SetLanguage(
-                                    UiLanguagePreference::Explicit(tag),
-                                ));
-                            }
-                        }
-                    });
+                if ui
+                    .radio_value(
+                        &mut selected,
+                        SYSTEM_LANGUAGE_OPTION,
+                        system_language_choice_label(locale),
+                    )
+                    .clicked()
+                {
+                    *action = Some(SettingsAction::UseSystemLanguage);
+                    ui.close();
+                    ui.ctx().request_repaint();
+                }
+                for tag in EMBEDDED_TAGS {
+                    if ui.radio_value(&mut selected, tag, endonym(tag)).clicked() {
+                        *action = Some(SettingsAction::SetExplicitLanguage(tag));
+                        ui.close();
+                        ui.ctx().request_repaint();
+                    }
+                }
+                if let Some(tag) = active_language_fallback_tag(locale) {
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(
+                            locale.tr_with("settings-language-catalog-fallback", &[("tag", tag)]),
+                        )
+                        .size(10.5)
+                        .color(ui_theme::text_muted()),
+                    );
+                }
             });
-        },
-    );
-    if locale.snapshot().preference == UiLanguagePreference::Auto
-        && ui
-            .button(locale.text("settings-language-apply-system"))
-            .clicked()
-    {
-        *action = Some(SettingsAction::ApplySystemLanguage);
+    });
+}
+
+fn selected_language_summary(locale: &LocaleManager) -> String {
+    match &locale.snapshot().preference {
+        UiLanguagePreference::Auto => locale.text("settings-language-auto"),
+        UiLanguagePreference::Explicit(tag) if *tag == locale.snapshot().render_tag => {
+            endonym(tag).to_owned()
+        }
+        UiLanguagePreference::Explicit(_) => endonym(locale.snapshot().render_tag).to_owned(),
     }
-    ui.label(
-        egui::RichText::new(locale.text("settings-language-restart-note"))
-            .size(10.5)
-            .color(ui_theme::text_muted()),
-    );
+}
+
+fn system_language_choice_label(locale: &LocaleManager) -> String {
+    locale.tr_with(
+        "settings-language-auto-current",
+        &[("language", endonym(locale.system_render_tag()))],
+    )
+}
+
+fn active_language_fallback_tag(locale: &LocaleManager) -> Option<&'static str> {
+    let snapshot = locale.snapshot();
+    (snapshot.active_tag != snapshot.render_tag).then_some(snapshot.active_tag)
 }
 
 fn update_row(
