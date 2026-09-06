@@ -131,7 +131,7 @@ wgpu = "=30.0.1"             # pinned; bumps need tests and a changelog entry
 egui    = "=0.36.1"
 eframe  = { version = "=0.36.1", default-features = false, features = ["wgpu", "default_fonts", "links"] }
 
-# Localization (OccluView i18n foundation, ADR-001). Pure-Rust Fluent stack:
+# Localization (OccluView i18n foundation). Pure-Rust Fluent stack:
 # named variables, per-locale plural/select, build-time validatable catalogs.
 # Licenses MIT/Apache-2.0 are in deny.toml allow-list; MSRV 1.56-1.67 < 1.98.
 fluent-bundle = "0.16"

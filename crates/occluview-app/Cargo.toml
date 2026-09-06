@@ -44,7 +44,7 @@ image             = { workspace = true }
 resvg             = { version = "0.48", default-features = false }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
-# Localization runtime (ADR-001): Fluent catalogs + OS locale detection.
+# Localization runtime: Fluent catalogs + OS locale detection.
 fluent-bundle     = { workspace = true }
 unic-langid       = { workspace = true }
 sys-locale        = { workspace = true }
