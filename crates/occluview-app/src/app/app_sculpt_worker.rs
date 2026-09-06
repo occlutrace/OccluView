@@ -17,21 +17,27 @@ pub(super) enum SculptFlushOutcome {
 }
 
 /// Render a worker failure at the presentation boundary. The worker returns
-/// the typed reason; only this layer owns the English copy.
-fn describe_sculpt_failure(failure: &SculptFailure) -> String {
+/// the typed reason; each variant resolves through the catalog, so no
+/// language is hardcoded here. Only the raw technical payloads (panic text,
+/// OS spawn errors) travel untranslated inside `{ $detail }`.
+fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &SculptFailure) -> String {
     match failure {
         SculptFailure::WorkerPanicked { message } => {
-            format!("sculpt worker panicked: {message}")
+            locale.tr_with("sculpt-failure-worker-panicked", &[("detail", message.as_str())])
         }
         SculptFailure::Spawn { detail } => {
-            format!("could not start sculpt worker: {detail}")
+            locale.tr_with("sculpt-failure-spawn", &[("detail", detail.as_str())])
         }
         SculptFailure::KernelPool { detail } => {
-            format!("could not create sculpt kernel pool: {detail}")
+            locale.tr_with("sculpt-failure-kernel-pool", &[("detail", detail.as_str())])
         }
-        SculptFailure::MissingUndoBaseline => "sculpt stroke has no undo baseline".to_string(),
-        SculptFailure::ShadowPoisoned => "sculpt shadow lock was poisoned".to_string(),
-        SculptFailure::VertexCountChanged => "sculpt result changed the vertex count".to_string(),
+        SculptFailure::MissingUndoBaseline => {
+            locale.text("sculpt-failure-missing-undo-baseline")
+        }
+        SculptFailure::ShadowPoisoned => locale.text("sculpt-failure-shadow-poisoned"),
+        SculptFailure::VertexCountChanged => {
+            locale.text("sculpt-failure-vertex-count-changed")
+        }
     }
 }
 
@@ -90,7 +96,7 @@ impl OccluViewApp {
             self.flush_sculpt_update(update);
         }
         if let Some(failure) = error {
-            let detail = describe_sculpt_failure(&failure);
+            let detail = describe_sculpt_failure(&self.ui.locale, &failure);
             self.ui.status_message = Some(
                 self.ui
                     .locale
