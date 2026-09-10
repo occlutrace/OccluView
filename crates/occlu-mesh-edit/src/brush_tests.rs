@@ -126,6 +126,73 @@ fn smooth_leaves_open_boundary_vertices_pinned() {
 }
 
 #[test]
+fn smooth_reports_normals_recomputed_for_the_affected_ring() {
+    let mesh = bumpy_patch(0.6);
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    session.set_densify_enabled(false);
+
+    let outcome = session.apply_stroke(center_stroke(1.8, 1.0), BrushMode::Smooth);
+
+    assert!(!outcome.touched_vertices.is_empty());
+    assert!(
+        outcome
+            .normal_vertices
+            .iter()
+            .any(|vertex| !outcome.touched_vertices.contains(vertex)),
+        "a smooth dab must report one-ring normal updates separately from moved vertices"
+    );
+}
+
+#[test]
+fn cancelling_incident_faces_replace_a_stale_normal_with_the_deterministic_fallback() {
+    // Two opposite-wound copies of one triangle leave vertex 0 with no
+    // accumulated geometric direction. The input normal is deliberately
+    // stale so retaining it would be observable.
+    let mut mesh = MeshEditBuffers {
+        vertices: vec![
+            EditVertex::at([0.0, 0.0, 0.0]),
+            EditVertex::at([1.0, 0.0, 0.0]),
+            EditVertex::at([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2, 0, 2, 1],
+        topology: MeshTopology::TriangleMesh,
+    };
+    mesh.vertices[0].normal = [1.0, 0.0, 0.0];
+
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    session.set_densify_enabled(false);
+    let outcome = session.apply_stroke(
+        BrushStroke {
+            center: [0.0, 0.0, 0.0],
+            radius_mm: 2.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        },
+        BrushMode::Add,
+    );
+
+    assert!(outcome.normal_vertices.contains(&0));
+    assert_eq!(
+        session.vertices()[0].normal,
+        [0.0, 0.0, 1.0],
+        "a zero accumulated fan must not retain its stale pre-dab normal"
+    );
+}
+
+#[test]
+fn cancellable_stroke_honors_shutdown_before_mutating_the_session() {
+    let mesh = bumpy_patch(0.6);
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    let cancel = std::sync::atomic::AtomicBool::new(true);
+    assert!(
+        session
+            .apply_stroke_cancellable(center_stroke(1.8, 1.0), BrushMode::Smooth, &cancel)
+            .is_none(),
+        "a worker dropped during a queued dab must be able to stop before mutation"
+    );
+}
+
+#[test]
 fn falloff_leaves_vertices_outside_the_radius_untouched() {
     let mesh = bumpy_patch(0.6);
     let mut session = BrushSession::prepare(&mesh).expect("prepare");

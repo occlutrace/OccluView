@@ -14,6 +14,13 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 
 const APPLY_QUEUE_CAPACITY_PER_STROKE: usize = 4;
+/// A burst of pointer samples must not turn into unbounded memory or latency.
+/// Finish markers are retained when this limit is reached; the oldest queued
+/// Apply is the only command eligible for coalescing/eviction.
+const MAX_QUEUED_COMMANDS: usize = 64;
+/// The UI drains completions once per frame. Keep only a small producer-side
+/// backlog so a slow frame rate applies backpressure to the kernel thread.
+const MAX_PENDING_COMPLETIONS: usize = 2;
 const MAX_PENDING_TOUCHES: usize = 250_000;
 
 enum SculptCommand {
@@ -100,6 +107,9 @@ impl SculptCommandQueue {
             };
             let _ = state.commands.remove(position);
         }
+        if !make_room_for_apply(&mut state) {
+            return false;
+        }
         state.commands.push_back(SculptCommand::Apply {
             stroke_id,
             stroke,
@@ -116,13 +126,13 @@ impl SculptCommandQueue {
         if state.shutdown {
             return false;
         }
+        if !make_room_for_apply(&mut state) {
+            return false;
+        }
         let stroke_id = state.open_stroke.take().unwrap_or_else(|| {
             state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
             state.next_stroke_id
         });
-        // Never evict an Apply here. Finish is a stroke boundary; evicting an
-        // Apply without knowing which stroke owns it was the reason rapid
-        // second strokes vanished.
         state
             .commands
             .push_back(SculptCommand::Finish { stroke_id });
@@ -170,15 +180,53 @@ impl SculptCommandQueue {
     }
 }
 
+/// Make one slot available without ever removing a stroke boundary. Dropping
+/// the oldest sample is deliberate lossy backpressure: the worker still sees
+/// an ordered, finite stroke and the newest pointer position replaces stale
+/// input, while the queue can never grow with mouse frequency.
+fn make_room_for_apply(state: &mut QueueState) -> bool {
+    if state.commands.len() < MAX_QUEUED_COMMANDS {
+        return true;
+    }
+    let Some(position) = state
+        .commands
+        .iter()
+        .position(|command| matches!(command, SculptCommand::Apply { .. }))
+    else {
+        return false;
+    };
+    let _ = state.commands.remove(position);
+    true
+}
+
 struct WorkerState {
     shadow: Arc<RwLock<Vec<Vertex>>>,
     pending_touched: Mutex<Vec<usize>>,
     full_sync: AtomicBool,
-    /// Latest whole-layer rebuild from a densifying dab. Each one carries the
-    /// complete geometry, so a newer one simply replaces an unread older one.
-    rebuild: Mutex<Option<SculptRebuild>>,
+    /// Ordered whole-layer rebuilds from densifying dabs. A later unread
+    /// rebuild from the SAME stroke may replace its predecessor because no
+    /// completion can refer to an intermediate topology within one stroke;
+    /// rebuilds from different strokes remain queued in order.
+    rebuild: Mutex<VecDeque<PendingRebuild>>,
     completions: Mutex<VecDeque<SculptCompletion>>,
+    /// Serializes publication and batch-draining of rebuilds/completions. A
+    /// completion produced after a rebuild must never be observed without the
+    /// rebuild that establishes its topology contract.
+    publish_boundary: Mutex<()>,
+    completion_wake: Condvar,
+    stopping: AtomicBool,
     error: Mutex<Option<SculptFailure>>,
+}
+
+type SculptOutputSnapshot = (
+    VecDeque<SculptRebuild>,
+    VecDeque<SculptCompletion>,
+    Option<SculptUpdate>,
+);
+
+struct PendingRebuild {
+    stroke_id: u64,
+    rebuild: SculptRebuild,
 }
 
 /// Why the sculpt worker produced nothing trustworthy. Domain data only: the
@@ -197,23 +245,41 @@ pub(crate) enum SculptFailure {
     ShadowPoisoned,
     /// The sculpt result changed the vertex count.
     VertexCountChanged,
+    /// A densifying dab changed the kernel topology but the app could not
+    /// construct the matching authoritative mesh for the renderer.
+    TopologyRebuild { detail: String },
 }
 
 impl WorkerState {
     /// Park a topology change for the UI thread. Any vertex ids queued from
     /// earlier dabs are dropped: they index the pre-rebuild array, and the
-    /// rebuild replaces it wholesale.
-    fn record_rebuild(&self, rebuild: SculptRebuild) {
+    /// rebuild replaces it wholesale. Intermediate rebuilds in one unfinished
+    /// stroke coalesce, while stroke boundaries stay FIFO for completion
+    /// ordering.
+    fn record_rebuild(&self, stroke_id: u64, rebuild: SculptRebuild) {
+        let Ok(_publish) = self.publish_boundary.lock() else {
+            return;
+        };
         if let Ok(mut pending) = self.pending_touched.lock() {
             pending.clear();
         }
         self.full_sync.store(false, Ordering::Release);
-        if let Ok(mut slot) = self.rebuild.lock() {
-            *slot = Some(rebuild);
+        if let Ok(mut rebuilds) = self.rebuild.lock() {
+            if let Some(last) = rebuilds
+                .back_mut()
+                .filter(|last| last.stroke_id == stroke_id)
+            {
+                last.rebuild = rebuild;
+            } else {
+                rebuilds.push_back(PendingRebuild { stroke_id, rebuild });
+            }
         }
     }
 
     fn record_touched(&self, touched: Vec<usize>) {
+        let Ok(_publish) = self.publish_boundary.lock() else {
+            return;
+        };
         if touched.is_empty() || self.full_sync.load(Ordering::Acquire) {
             return;
         }
@@ -228,10 +294,35 @@ impl WorkerState {
         }
     }
 
-    fn push_completion(&self, completion: SculptCompletion) {
-        if let Ok(mut completions) = self.completions.lock() {
-            completions.push_back(completion);
+    fn push_completion(&self, completion: SculptCompletion) -> bool {
+        let Ok(mut completions) = self.completions.lock() else {
+            return false;
+        };
+        while completions.len() >= MAX_PENDING_COMPLETIONS && !self.stopping.load(Ordering::Acquire)
+        {
+            completions = match self.completion_wake.wait(completions) {
+                Ok(completions) => completions,
+                Err(_) => return false,
+            };
         }
+        if self.stopping.load(Ordering::Acquire) {
+            return false;
+        }
+        // The frame path takes the publication boundary before draining both
+        // output queues. Release this lock before taking that boundary, or a
+        // full completion backlog could deadlock producer and UI.
+        drop(completions);
+        let Ok(_publish) = self.publish_boundary.lock() else {
+            return false;
+        };
+        let Ok(mut completions) = self.completions.lock() else {
+            return false;
+        };
+        if self.stopping.load(Ordering::Acquire) || completions.len() >= MAX_PENDING_COMPLETIONS {
+            return false;
+        }
+        completions.push_back(completion);
+        true
     }
 
     fn set_error(&self, failure: SculptFailure) {
@@ -244,6 +335,10 @@ impl WorkerState {
     /// path). A full sync supersedes queued deltas; sparse ids merge back and
     /// overflow escalates to a full sync. Never blocks.
     fn restore_update(&self, update: SculptUpdate) {
+        let Ok(_publish) = self.publish_boundary.lock() else {
+            self.full_sync.store(true, Ordering::Release);
+            return;
+        };
         if update.full_sync {
             self.full_sync.store(true, Ordering::Release);
             return;
@@ -260,7 +355,7 @@ impl WorkerState {
             self.full_sync.store(true, Ordering::Release);
             return;
         };
-        if slot.is_some() {
+        if !slot.is_empty() {
             self.full_sync.store(true, Ordering::Release);
             return;
         }
@@ -279,6 +374,30 @@ impl WorkerState {
     /// Mark the next drain authoritative after a GPU-write rejection.
     fn request_full_sync(&self) {
         self.full_sync.store(true, Ordering::Release);
+    }
+
+    /// Atomically snapshot every worker output that has been published so far.
+    /// The worker holds `publish_boundary` while adding rebuilds, sparse
+    /// updates, and completions; the UI holds it while taking this snapshot.
+    /// Therefore a completion can never be observed without the topology
+    /// rebuild that makes its mesh valid, and a sparse update can never pass a
+    /// queued rebuild into the old GPU buffers.
+    fn take_ordered_outputs(&self) -> Result<SculptOutputSnapshot, ()> {
+        let _publish = self.publish_boundary.try_lock().map_err(|_| ())?;
+        let mut rebuilds = self.rebuild.try_lock().map_err(|_| ())?;
+        let mut completions = self.completions.try_lock().map_err(|_| ())?;
+        let mut pending = self.pending_touched.try_lock().map_err(|_| ())?;
+        let rebuilds = std::mem::take(&mut *rebuilds)
+            .into_iter()
+            .map(|pending| pending.rebuild)
+            .collect();
+        let completions = std::mem::take(&mut *completions);
+        let full_sync = self.full_sync.swap(false, Ordering::AcqRel);
+        let touched = std::mem::take(&mut *pending);
+        self.completion_wake.notify_all();
+        let update =
+            (full_sync || !touched.is_empty()).then_some(SculptUpdate { touched, full_sync });
+        Ok((rebuilds, completions, update))
     }
 }
 
@@ -321,8 +440,11 @@ impl SculptWorker {
             shadow: Arc::clone(&session.shadow),
             pending_touched: Mutex::new(Vec::new()),
             full_sync: AtomicBool::new(false),
-            rebuild: Mutex::new(None),
+            rebuild: Mutex::new(VecDeque::new()),
             completions: Mutex::new(VecDeque::new()),
+            publish_boundary: Mutex::new(()),
+            completion_wake: Condvar::new(),
+            stopping: AtomicBool::new(false),
             error: Mutex::new(None),
         });
         let queue = Arc::new(SculptCommandQueue::new());
@@ -390,9 +512,23 @@ impl SculptWorker {
         Arc::clone(&self.state.shadow)
     }
 
+    #[cfg(test)]
     pub(crate) fn take_update(&self) -> Option<SculptUpdate> {
         // Non-blocking: a contended backlog (and its full-sync flag) stays
         // queued for the next frame instead of stalling the egui frame.
+        let Ok(_publish) = self.state.publish_boundary.try_lock() else {
+            return None;
+        };
+        // A rebuild published between two frame-path operations owns the
+        // vertex array. Keep sparse ids behind it until the UI has installed
+        // that whole-layer replacement.
+        let Ok(rebuilds) = self.state.rebuild.try_lock() else {
+            return None;
+        };
+        if !rebuilds.is_empty() {
+            return None;
+        }
+        drop(rebuilds);
         let Ok(mut pending) = self.state.pending_touched.try_lock() else {
             return None;
         };
@@ -403,22 +539,31 @@ impl SculptWorker {
 
     /// Take the pending whole-layer rebuild, if a dab densified the mesh.
     /// Must be drained BEFORE `take_update`, so a sparse write never lands on
-    /// buffers the rebuild is about to replace. Defers on contention like
-    /// [`Self::take_update`].
-    pub(crate) fn take_rebuild(&self) -> Option<SculptRebuild> {
-        self.state
-            .rebuild
-            .try_lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
+    /// buffers the rebuild is about to replace. The `Err` result is a
+    /// contention signal: a completion can only be interpreted after the UI
+    /// has successfully observed every earlier rebuild.
+    #[cfg(test)]
+    pub(crate) fn try_take_rebuild(&self) -> Result<Option<SculptRebuild>, ()> {
+        let _publish = self.state.publish_boundary.try_lock().map_err(|_| ())?;
+        let mut rebuilds = self.state.rebuild.try_lock().map_err(|_| ())?;
+        Ok(rebuilds.pop_front().map(|pending| pending.rebuild))
     }
 
+    #[cfg(test)]
     pub(crate) fn take_completion(&self) -> Option<SculptCompletion> {
-        self.state
+        let Ok(_publish) = self.state.publish_boundary.try_lock() else {
+            return None;
+        };
+        let completion = self
+            .state
             .completions
             .try_lock()
             .ok()
-            .and_then(|mut completions| completions.pop_front())
+            .and_then(|mut completions| completions.pop_front());
+        if completion.is_some() {
+            self.state.completion_wake.notify_one();
+        }
+        completion
     }
 
     pub(crate) fn take_error(&self) -> Option<SculptFailure> {
@@ -439,6 +584,14 @@ impl SculptWorker {
         self.state.request_full_sync();
     }
 
+    /// Drain topology, completion, and sparse-update outputs as one
+    /// publication boundary. The production frame poller uses this method so
+    /// it cannot observe a completion or sparse write without the rebuild that
+    /// establishes its topology contract.
+    pub(crate) fn take_ordered_outputs(&self) -> Result<SculptOutputSnapshot, ()> {
+        self.state.take_ordered_outputs()
+    }
+
     pub(crate) fn is_quiescent(&self) -> bool {
         // Every undrained slot counts: a dab the worker already processed but
         // the UI has not flushed yet (pending touches, full-sync flag, layer
@@ -446,6 +599,9 @@ impl SculptWorker {
         // here lets Done/undo invalidate the session and drop it. On lock
         // contention report busy instead: deferring one frame is free, while
         // a false quiet loses sculpted geometry.
+        let Ok(_publish) = self.state.publish_boundary.try_lock() else {
+            return false;
+        };
         self.queue.is_empty()
             && self
                 .state
@@ -462,12 +618,14 @@ impl SculptWorker {
                 .state
                 .rebuild
                 .try_lock()
-                .is_ok_and(|rebuild| rebuild.is_none())
+                .is_ok_and(|rebuilds| rebuilds.is_empty())
     }
 }
 
 impl Drop for SculptWorker {
     fn drop(&mut self) {
+        self.state.stopping.store(true, Ordering::Release);
+        self.state.completion_wake.notify_all();
         self.queue.shutdown();
     }
 }
@@ -479,15 +637,33 @@ fn run_worker(
     pool: rayon::ThreadPool,
 ) {
     while let Some(command) = queue.pop() {
+        if state.stopping.load(Ordering::Acquire) {
+            queue.mark_idle();
+            break;
+        }
         match command {
             SculptCommand::Apply {
-                stroke_id: _stroke_id,
+                stroke_id,
                 stroke,
                 mode,
             } => {
-                let outcome = pool.install(|| session.apply_dab(stroke, mode));
+                let Some(outcome) =
+                    pool.install(|| session.apply_dab_cancellable(stroke, mode, &state.stopping))
+                else {
+                    queue.mark_idle();
+                    break;
+                };
+                if state.stopping.load(Ordering::Acquire) {
+                    queue.mark_idle();
+                    break;
+                }
+                if let Some(detail) = outcome.failure {
+                    state.set_error(SculptFailure::TopologyRebuild { detail });
+                    queue.mark_idle();
+                    break;
+                }
                 if let Some(rebuild) = outcome.rebuild {
-                    state.record_rebuild(rebuild);
+                    state.record_rebuild(stroke_id, rebuild);
                 } else {
                     state.record_touched(outcome.touched);
                 }
@@ -502,12 +678,16 @@ fn run_worker(
                     let Some(before) = start_mesh else {
                         state.set_error(SculptFailure::MissingUndoBaseline);
                         queue.mark_idle();
-                        continue;
+                        // This is a terminal worker invariant failure. Do
+                        // not consume later commands after publishing the
+                        // error: their output would be ordered after a
+                        // stroke whose undo boundary was lost.
+                        break;
                     };
                     let Ok(shadow) = session.shadow.read() else {
                         state.set_error(SculptFailure::ShadowPoisoned);
                         queue.mark_idle();
-                        continue;
+                        break;
                     };
                     let vertices = shadow.clone();
                     // `base_mesh` already tracks any mid-stroke rebuild, so the
@@ -516,9 +696,14 @@ fn run_worker(
                     // topology — coarse triangles and all.
                     let mesh = session.base_mesh.with_sculpted_vertices(vertices);
                     if let Some(mesh) = mesh {
-                        state.push_completion(SculptCompletion { before, mesh });
+                        if !state.push_completion(SculptCompletion { before, mesh }) {
+                            queue.mark_idle();
+                            break;
+                        }
                     } else {
                         state.set_error(SculptFailure::VertexCountChanged);
+                        queue.mark_idle();
+                        break;
                     }
                 }
             }

@@ -198,7 +198,7 @@ impl BrushSession {
     /// affected vertex reading its own incident faces in parallel (the
     /// parallel-safe strategy sculpting engines use — no single-threaded face
     /// dedup).
-    pub(super) fn recompute_normals_near(&mut self, touched: &[usize]) {
+    pub(super) fn recompute_normals_near(&mut self, touched: &[usize]) -> Vec<usize> {
         // Build the scope (touched + welded rings + soup siblings) deduped via a
         // stamp — index loops, no sort, no allocation churn on a big brush.
         let scope_generation = self.next_stamp();
@@ -234,9 +234,17 @@ impl BrushSession {
         );
         for (offset, &vertex_id) in scope.iter().enumerate() {
             let sum = new_normals[offset];
-            if sum.length_squared() > f32::EPSILON {
-                self.vertices[vertex_id].normal = sum.normalize().to_array();
-            }
+            // Match the full normal rebuild contract: a cancelled/degenerate
+            // incident fan has no meaningful accumulated direction, so it
+            // gets the deterministic fallback instead of retaining a normal
+            // that described the pre-dab geometry.
+            self.vertices[vertex_id].normal =
+                if sum.is_finite() && sum.length_squared() > f32::EPSILON {
+                    sum.normalize().to_array()
+                } else {
+                    Vec3::Z.to_array()
+                };
         }
+        scope
     }
 }

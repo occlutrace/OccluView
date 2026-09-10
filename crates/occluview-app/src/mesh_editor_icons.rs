@@ -72,6 +72,17 @@ pub(crate) fn icon_button(
     );
     painter.galley(caption_pos, galley, fg);
 
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, active, label)
+    });
     response.on_hover_text(tooltip)
 }
 
@@ -118,5 +129,14 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn custom_icon_cells_have_a_visible_focus_ring_and_accessible_name() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("mesh_editor_icons.rs"));
+        assert!(source.contains("response.has_focus()"));
+        assert!(source.contains("response.widget_info"));
+        assert!(source.contains("WidgetInfo::selected"));
     }
 }

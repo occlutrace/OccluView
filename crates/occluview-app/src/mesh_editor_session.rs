@@ -22,7 +22,7 @@ pub(super) fn status(
     locale: &crate::i18n::LocaleManager,
 ) {
     ui.add_space(3.0);
-    if state.busy {
+    if state.busy || state.sculpt_pending {
         ui.spinner();
     } else if state.dirty {
         ui.horizontal(|ui| {
@@ -72,7 +72,7 @@ pub(super) fn session(
             AppIcon::Undo,
             &locale.tr("meshedit-session-undo"),
             &locale.tr("meshedit-session-undo-hint"),
-            state.can_undo && enabled,
+            state.can_undo && enabled && !state.sculpt_pending,
             false,
         )
         .clicked()
@@ -85,7 +85,7 @@ pub(super) fn session(
             AppIcon::Redo,
             &locale.tr("meshedit-session-redo"),
             &locale.tr("meshedit-session-redo-hint"),
-            state.can_redo && enabled,
+            state.can_redo && enabled && !state.sculpt_pending,
             false,
         )
         .clicked()

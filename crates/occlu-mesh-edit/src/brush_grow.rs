@@ -8,8 +8,9 @@
 use glam::Vec3;
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 
-use super::BrushSession;
+use super::{cancellation_requested, BrushSession};
 use crate::brush_math::refresh_step_budget;
 use crate::EditVertex;
 
@@ -56,6 +57,16 @@ struct SplitCandidate {
     length_squared: f32,
 }
 
+/// Geometric limits shared by one candidate pass. Grouping them keeps the
+/// refinement routine's cancellation boundary separate from its spatial
+/// contract and makes accidental radius/threshold swaps harder.
+#[derive(Copy, Clone)]
+struct SplitBounds {
+    center: Vec3,
+    radius_squared: f32,
+    split_above_squared: f32,
+}
+
 impl BrushSession {
     /// Densify the mesh under one dab and return how many vertices were added.
     ///
@@ -63,10 +74,24 @@ impl BrushSession {
     /// surface stays exactly where it was (see the module docs). Callers that
     /// want the full Smooth behaviour go through
     /// [`BrushSession::apply_stroke`], which runs this first.
+    #[cfg(test)]
     pub(crate) fn refine_dab(&mut self, center: Vec3, radius: f32) -> usize {
+        self.refine_dab_cancellable(center, radius, None)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn refine_dab_cancellable(
+        &mut self,
+        center: Vec3,
+        radius: f32,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<usize> {
+        if cancellation_requested(cancel) {
+            return None;
+        }
         let target = radius * DETAIL_FRACTION_OF_RADIUS;
         if !(target.is_finite() && target > 0.0 && center.is_finite()) {
-            return 0;
+            return Some(0);
         }
         let split_above = target * SPLIT_HYSTERESIS;
         let split_above_squared = split_above * split_above;
@@ -74,23 +99,36 @@ impl BrushSession {
         self.sync_grid(radius);
 
         let Some(seed) = self.refinement_seed(center, radius, split_above) else {
-            return 0;
+            return Some(0);
         };
 
         let started_with = self.vertices.len();
         let mut fresh: Vec<usize> = Vec::new();
         for _ in 0..MAX_REFINE_SWEEPS {
+            if cancellation_requested(cancel) {
+                return None;
+            }
             if fresh.len() >= MAX_SPLITS_PER_DAB || self.growth_budget_spent() {
                 break;
             }
-            let triangles = self.dab_region_triangles(seed, center, radius);
-            let candidates =
-                self.split_candidates(&triangles, center, radius_squared, split_above_squared);
+            let triangles = self.dab_region_triangles(seed, center, radius, cancel)?;
+            let candidates = self.split_candidates(
+                &triangles,
+                SplitBounds {
+                    center,
+                    radius_squared,
+                    split_above_squared,
+                },
+                cancel,
+            )?;
             if candidates.is_empty() {
                 break;
             }
             let sweep_start = fresh.len();
             for candidate in &candidates {
+                if cancellation_requested(cancel) {
+                    return None;
+                }
                 if fresh.len() >= MAX_SPLITS_PER_DAB || self.growth_budget_spent() {
                     break;
                 }
@@ -103,10 +141,13 @@ impl BrushSession {
             }
         }
         if fresh.is_empty() {
-            return 0;
+            return Some(0);
+        }
+        if cancellation_requested(cancel) {
+            return None;
         }
         self.settle_new_vertices(&fresh);
-        self.vertices.len() - started_with
+        (!cancellation_requested(cancel)).then_some(self.vertices.len() - started_with)
     }
 
     /// Whether the session has used up its growth allowance.
@@ -184,7 +225,16 @@ impl BrushSession {
     /// Triangles intersecting the dab sphere, flooded outward from `seed`
     /// through accepted triangles. Rejected triangles are visited but not
     /// expanded, so the walk stays inside the brush footprint.
-    fn dab_region_triangles(&mut self, seed: usize, center: Vec3, radius: f32) -> Vec<usize> {
+    fn dab_region_triangles(
+        &mut self,
+        seed: usize,
+        center: Vec3,
+        radius: f32,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<Vec<usize>> {
+        if cancellation_requested(cancel) {
+            return None;
+        }
         let generation = self.next_triangle_stamp();
         // The flood reads adjacency/incidence while stamping visited triangles;
         // lifting the stamp buffer out keeps those borrows disjoint.
@@ -193,6 +243,10 @@ impl BrushSession {
         let mut accepted: Vec<usize> = Vec::new();
         self.push_cluster_triangles(seed, &mut stack);
         while let Some(triangle) = stack.pop() {
+            if cancellation_requested(cancel) {
+                self.triangle_stamp = stamp;
+                return None;
+            }
             let Some(slot) = stamp.get_mut(triangle) else {
                 continue;
             };
@@ -217,7 +271,7 @@ impl BrushSession {
         }
         self.triangle_stamp = stamp;
         accepted.sort_unstable();
-        accepted
+        Some(accepted)
     }
 
     /// Push every triangle incident to `vertex_id` OR to any of its soup
@@ -265,19 +319,24 @@ impl BrushSession {
     fn split_candidates(
         &self,
         triangles: &[usize],
-        center: Vec3,
-        radius_squared: f32,
-        split_above_squared: f32,
-    ) -> Vec<SplitCandidate> {
+        bounds: SplitBounds,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<Vec<SplitCandidate>> {
         let mut seen: HashSet<(u32, u32)> = HashSet::new();
         let mut edges: Vec<SplitCandidate> = Vec::new();
         for &triangle in triangles {
+            if cancellation_requested(cancel) {
+                return None;
+            }
             let base = triangle * 3;
             let Some(corners) = self.indices.get(base..base + 3) else {
                 continue;
             };
             let corners = [corners[0], corners[1], corners[2]];
             for slot in 0..3usize {
+                if cancellation_requested(cancel) {
+                    return None;
+                }
                 let first = self.representative(corners[slot]);
                 let second = self.representative(corners[(slot + 1) % 3]);
                 if first == second {
@@ -300,9 +359,9 @@ impl BrushSession {
                 let length_squared = a.distance_squared(b);
                 let midpoint = (a + b) * 0.5;
                 if length_squared.is_finite()
-                    && length_squared > split_above_squared
+                    && length_squared > bounds.split_above_squared
                     && midpoint.is_finite()
-                    && midpoint.distance_squared(center) <= radius_squared
+                    && midpoint.distance_squared(bounds.center) <= bounds.radius_squared
                 {
                     edges.push(SplitCandidate {
                         key,
@@ -316,7 +375,7 @@ impl BrushSession {
                 .total_cmp(&a.length_squared)
                 .then(a.key.cmp(&b.key))
         });
-        edges
+        Some(edges)
     }
 
     /// Every triangle incident to the welded edge `first`—`second`, ascending.
@@ -541,7 +600,7 @@ impl BrushSession {
             &self.position_siblings,
             &mut self.max_step,
         );
-        self.recompute_normals_near(&scope);
+        let _ = self.recompute_normals_near(&scope);
     }
 
     /// Hand out the next triangle-stamp generation, resetting on the rare wrap.
