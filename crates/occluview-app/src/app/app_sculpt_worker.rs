@@ -294,6 +294,13 @@ impl OccluViewApp {
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             self.ui.status_message = Some(self.ui.locale.tr("sculpt-worker-unavailable"));
+            // The shadow may already contain live dabs, but without the worker
+            // there is no trustworthy completion or undo baseline left. Drop
+            // both sides together and force the renderer back to the committed
+            // scene; keeping the taken StrokeState would leave a retry loop
+            // around a session that can never finish.
+            self.invalidate_sculpt_session_silent();
+            ctx.request_repaint();
             return false;
         };
         if !worker.finish_stroke() {
@@ -551,6 +558,28 @@ mod tests {
             mesh_editor.contains("if !self.commit_sculpt_stroke(ctx)")
                 || mesh_editor.contains("!self.commit_sculpt_stroke(ctx)"),
             "Done/history must stop while a finish is waiting for queue capacity"
+        );
+    }
+
+    #[test]
+    fn worker_loss_invalidates_an_active_sculpt_stroke() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"));
+        let finish = source
+            .find("pub(super) fn commit_sculpt_stroke")
+            .expect("the stroke finish bridge must exist");
+        let body = &source[finish..(finish + 1400).min(source.len())];
+        let worker_guard = body
+            .find("let Some(worker) = self.tools.sculpt.worker.as_ref() else")
+            .expect("finish must explicitly handle a missing worker");
+        let missing_worker_branch = &body[worker_guard..];
+        assert!(
+            missing_worker_branch.contains("self.invalidate_sculpt_session_silent();"),
+            "a missing worker must discard the live shadow and session instead of leaving a stale stroke"
+        );
+        assert!(
+            missing_worker_branch.contains("ctx.request_repaint();"),
+            "worker loss must repaint so the reverted scene is visible immediately"
         );
     }
 }
