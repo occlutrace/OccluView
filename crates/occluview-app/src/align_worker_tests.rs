@@ -464,6 +464,18 @@ fn a_worker_lock_failure_is_observable() {
     );
 }
 
+/// In an unwind/diagnostic build, a panic inside alignment must stop at the
+/// worker boundary and remain visible to the UI instead of becoming a dead
+/// button.
+#[test]
+fn worker_entry_converts_panics_to_a_visible_failure() {
+    let source = crate::primary_ui_tests::production_source(include_str!("align_worker.rs"));
+    assert!(
+        source.contains("catch_unwind") && source.contains("align worker panicked"),
+        "the worker entry must convert a panic into the observable failure latch"
+    );
+}
+
 /// A result the operator has overtaken never comes back.
 ///
 /// This is the mechanism behind the whole class of "it undid what I just did"
