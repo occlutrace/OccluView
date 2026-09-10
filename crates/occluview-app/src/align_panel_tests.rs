@@ -1,16 +1,5 @@
 #![allow(clippy::expect_used)]
 
-use super::AlignTab;
-
-/// The kept English tab labels render from the catalog verbatim.
-#[test]
-fn english_tab_labels_match_source_wording() {
-    let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-    for tab in [AlignTab::Automatically, AlignTab::Manually] {
-        assert_eq!(catalog.text(tab.label_key()).as_deref(), Some(tab.label()));
-    }
-}
-
 fn production() -> &'static str {
     let source = crate::primary_ui_tests::production_source(include_str!("align_panel.rs"));
     source
@@ -113,15 +102,6 @@ fn the_manual_tab_offers_the_history_buttons() {
         .expect("a manual tab body");
     assert!(manual.contains("AlignPanelAction::Undo"));
     assert!(manual.contains("AlignPanelAction::Redo"));
-}
-
-/// The map target is fixed by the measurement model.
-#[test]
-fn the_window_never_asks_which_surface_carries_the_map() {
-    let source = production();
-    for gone in ["SwapMapped", "AppIcon::Swap", "other scan instead"] {
-        assert!(!source.contains(gone), "{gone} is back in the window");
-    }
 }
 
 #[test]

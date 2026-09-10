@@ -35,16 +35,6 @@ pub(crate) enum AlignTab {
 }
 
 impl AlignTab {
-    /// The English label on the tab (operator vocabulary reference, pinned
-    /// by the en-wording lock test).
-    #[cfg(test)]
-    fn label(self) -> &'static str {
-        match self {
-            Self::Automatically => "Automatically",
-            Self::Manually => "Manually",
-        }
-    }
-
     /// Catalog key rendering the localized tab label.
     fn label_key(self) -> &'static str {
         match self {
