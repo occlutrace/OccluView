@@ -185,12 +185,7 @@ fn prepared_scene_rejects_invalid_sparse_vertex_ids() {
         "a sparse upload must fail closed when any touched id is outside the vertex array"
     );
     assert!(
-        !prepared.write_entry_vertices_sparse(
-            offscreen.renderer(),
-            &topology,
-            &vertices,
-            &[2, 0],
-        ),
+        !prepared.write_entry_vertices_sparse(offscreen.renderer(), &topology, &vertices, &[2, 0],),
         "a sparse upload must reject unsorted ids instead of relying on a debug-only assertion"
     );
 }

@@ -203,10 +203,10 @@ impl PaintedVertices {
         if mesh.vertices().len() != colors.len() {
             return None;
         }
-        if touched.iter().any(|index| {
-            usize::try_from(*index)
-                .map_or(true, |at| at >= mesh.vertices().len())
-        }) {
+        if touched
+            .iter()
+            .any(|index| usize::try_from(*index).map_or(true, |at| at >= mesh.vertices().len()))
+        {
             return None;
         }
         let slot = self.slot_for(mesh, colors.len());

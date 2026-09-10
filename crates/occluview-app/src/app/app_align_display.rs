@@ -114,9 +114,9 @@ impl OccluViewApp {
         // input before mutating the scratch buffer, so a partial preview can
         // never be mistaken for a successful brush stroke.
         if !touched.windows(2).all(|pair| pair[0] < pair[1])
-            || touched.iter().any(|index| {
-                usize::try_from(*index).map_or(true, |at| at >= count)
-            })
+            || touched
+                .iter()
+                .any(|index| usize::try_from(*index).map_or(true, |at| at >= count))
         {
             return false;
         }
