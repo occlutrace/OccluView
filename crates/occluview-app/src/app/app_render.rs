@@ -523,6 +523,15 @@ impl OccluViewApp {
     }
 
     pub(super) fn clear_scene(&mut self) {
+        // The last layer can disappear while Align Meshes is armed. Revoke its
+        // pose, overlay, mask, and worker generation before a new scene may
+        // reuse one of the old layer ids.
+        self.reset_align_state_for_scene_clear();
+        // A clear has no replacement scene to validate against. Revoke the
+        // persistent Sculpt worker before dropping the scene so a background
+        // completion cannot outlive this generation and be mistaken for the
+        // next file's layer.
+        self.tools.sculpt.invalidate_session();
         self.document.clear_unsaved_mesh_edits();
         self.document.hidden_layer_stack.clear();
         self.document.translucent_layer_restore.clear();
@@ -645,7 +654,7 @@ impl OccluViewApp {
         self.show_layers_overlay(ui, response.rect, ctx);
         self.show_mesh_editor_overlay(response.rect, ctx);
         self.paint_mesh_selection_drag_overlay_impl(ui);
-        self.paint_sculpt_cursor_impl(ui, response.rect);
+        self.paint_sculpt_cursor_impl(ui, response);
         self.show_status_overlay(ui, response.rect);
         let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
         let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);

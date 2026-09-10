@@ -35,6 +35,10 @@ fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &Sculpt
         SculptFailure::MissingUndoBaseline => locale.text("sculpt-failure-missing-undo-baseline"),
         SculptFailure::ShadowPoisoned => locale.text("sculpt-failure-shadow-poisoned"),
         SculptFailure::VertexCountChanged => locale.text("sculpt-failure-vertex-count-changed"),
+        SculptFailure::TopologyRebuild { detail } => locale.tr_with(
+            "sculpt-failure-topology-rebuild",
+            &[("detail", detail.as_str())],
+        ),
     }
 }
 
@@ -45,6 +49,12 @@ impl OccluViewApp {
         }
         self.tools.sculpt.finish_requested = false;
         self.finish_mesh_edit_session_now(ctx);
+    }
+
+    fn retry_pending_sculpt_finish(&mut self, ctx: &egui::Context) {
+        if self.tools.sculpt.finish_retry {
+            let _ = self.commit_sculpt_stroke(ctx);
+        }
     }
 
     pub(super) fn complete_pending_history_navigation(&mut self, ctx: &egui::Context) {
@@ -64,49 +74,58 @@ impl OccluViewApp {
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             return;
         };
-        // Drain order stays topology-first: a densifying dab replaced the
-        // layer, and any sparse vertex update queued behind it indexes the
-        // array that just went away.
-        let mut rebuilds = Vec::new();
-        while let Some(rebuild) = worker.take_rebuild() {
-            rebuilds.push(rebuild);
-        }
-        let mut updates = Vec::new();
-        while let Some(update) = worker.take_update() {
-            updates.push(update);
-        }
-        let mut completions = Vec::new();
-        while let Some(completion) = worker.take_completion() {
-            completions.push(completion);
-        }
+        // Rebuilds, sparse updates, and completions are one ordered snapshot:
+        // a worker publication cannot land between separate queue drains and
+        // leave a completion or sparse write ahead of its topology rebuild.
+        let Ok((mut rebuilds, completions, update)) = worker.take_ordered_outputs() else {
+            // A worker publication or frame-path drain is in progress. Retry
+            // the whole boundary on the next repaint.
+            ctx.request_repaint();
+            return;
+        };
+        let updates = update.into_iter().collect::<Vec<_>>();
         let had_rebuilds = !rebuilds.is_empty();
         let had_updates = !updates.is_empty();
         let had_completions = !completions.is_empty();
         let error = worker.take_error();
         let needs_repaint = !worker.is_quiescent();
-        if let Some(failure) = error {
-            let detail = describe_sculpt_failure(&self.ui.locale, &failure);
-            self.ui.status_message = Some(
-                self.ui
-                    .locale
-                    .tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
-            );
-            self.invalidate_sculpt_session_silent();
-        }
-        // Completions commit BEFORE a newer stroke's rebuild installs. The
-        // worker is sequential, so a completion queued behind a Finish always
-        // belongs to an older stroke than a rebuild queued after it; installing
-        // the rebuild first would bump the worker topology and let the older,
-        // smaller mesh pass the topology check and clobber the newer geometry.
-        // Committing in queue order keeps the undo chain linear: pre-stroke-1,
-        // then post-stroke-1, one entry per finished stroke.
-        for SculptCompletion { before, mesh } in completions {
+        // Preserve the worker's logical order even though the snapshot carries
+        // separate rebuild and completion queues. A completion from an older,
+        // positions-only stroke already matches the current topology and must
+        // commit before a later rebuild. A completion produced AFTER one or
+        // more densifying dabs carries the latest fresh topology token, so
+        // every intermediate rebuild in the FIFO chain must be installed first
+        // or the completion would be committed against the wrong GPU contract.
+        for completion in completions {
+            let completion_topology_id = completion.mesh.topology_id();
+            // The worker's UI-side topology is the current scene state. Walk
+            // the FIFO rebuild chain until that state reaches the completion's
+            // topology. This handles both cases: a completion with no
+            // densification (already-current topology), and several rebuilds
+            // in one stroke (all intermediate topologies must be installed).
+            while self
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .is_some_and(|worker| worker.topology_id != completion_topology_id)
+            {
+                let Some(rebuild) = rebuilds.pop_front() else {
+                    self.invalidate_sculpt_session_silent();
+                    return;
+                };
+                if !self.install_sculpt_rebuild(rebuild) {
+                    self.invalidate_sculpt_session_silent();
+                    return;
+                }
+            }
+            let SculptCompletion { before, mesh } = completion;
             if !self.commit_sculpt_result(before, mesh, ctx) {
                 self.invalidate_sculpt_session_silent();
                 break;
             }
         }
-        for rebuild in rebuilds {
+        while let Some(rebuild) = rebuilds.pop_front() {
             if !self.install_sculpt_rebuild(rebuild) {
                 self.invalidate_sculpt_session_silent();
                 return;
@@ -115,16 +134,31 @@ impl OccluViewApp {
         for update in updates {
             self.flush_sculpt_update(update);
         }
+        // A terminal worker failure does not invalidate already-produced
+        // completions. Surface it only after the ordered output above has had
+        // a chance to commit; then revoke the worker so no later stale result
+        // can reach the scene.
+        if let Some(failure) = error {
+            let detail = describe_sculpt_failure(&self.ui.locale, &failure);
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
+            );
+            self.invalidate_sculpt_session_silent();
+            ctx.request_repaint();
+        }
         if had_rebuilds || had_updates || had_completions {
             // Rebuilds and sparse writes already landed in GPU buffers above;
             // only the repaint is owed here.
             self.render.invalidation.request_redraw();
         }
-        self.complete_pending_mesh_edit_session(ctx);
-        self.complete_pending_history_navigation(ctx);
         if needs_repaint || had_rebuilds || had_updates || had_completions {
             ctx.request_repaint();
         }
+        self.retry_pending_sculpt_finish(ctx);
+        self.complete_pending_mesh_edit_session(ctx);
+        self.complete_pending_history_navigation(ctx);
     }
 
     /// Install a whole-layer rebuild produced mid-stroke by densification.
@@ -253,20 +287,28 @@ impl OccluViewApp {
 
     /// Finish the drag: the worker creates the mesh off the UI thread and the
     /// next worker poll installs it as one undoable layer edit.
-    pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) {
-        if self.tools.sculpt.stroke.take().is_none() {
-            return;
-        }
-        if self
-            .tools
-            .sculpt
-            .worker
-            .as_ref()
-            .is_none_or(|worker| !worker.finish_stroke())
-        {
+    pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) -> bool {
+        let Some(stroke) = self.tools.sculpt.stroke.take() else {
+            self.tools.sculpt.finish_retry = false;
+            return true;
+        };
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
             self.ui.status_message = Some(self.ui.locale.tr("sculpt-worker-unavailable"));
+            return false;
+        };
+        if !worker.finish_stroke() {
+            // Queue pressure is recoverable. Keep the drag state and let the
+            // next frame retry; dropping it here would lose the whole undoable
+            // stroke while the visible shadow is still dirty.
+            self.tools.sculpt.stroke = Some(stroke);
+            self.tools.sculpt.finish_retry = true;
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-worker-unavailable"));
+            ctx.request_repaint();
+            return false;
         }
+        self.tools.sculpt.finish_retry = false;
         ctx.request_repaint();
+        true
     }
 
     fn commit_sculpt_result(
@@ -373,15 +415,20 @@ mod tests {
         let source =
             crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
                 .replace("\r\n", "\n");
-        let take_rebuild = source
-            .find("worker.take_rebuild()")
-            .expect("the poll must drain pending layer rebuilds");
+        let take_outputs = source
+            .find("worker.take_ordered_outputs()")
+            .expect("the poll must drain the ordered output snapshot");
         let take_update = source
-            .find("worker.take_update()")
-            .expect("the poll must drain sparse updates");
+            .find("let updates = update.into_iter()")
+            .expect("the poll must expose sparse updates from that snapshot");
         assert!(
-            take_rebuild < take_update,
-            "rebuilds must be drained before sparse updates"
+            take_outputs < take_update,
+            "the ordered snapshot must be taken before sparse updates are flushed"
+        );
+        assert!(
+            !source.contains("worker.try_take_rebuild()")
+                && !source.contains("worker.take_completion()"),
+            "the production poller must not split the topology and completion drains"
         );
         let install = source
             .find("self.install_sculpt_rebuild(rebuild)")
@@ -413,32 +460,97 @@ mod tests {
     /// The worker is sequential, so `Finish(old stroke)` then `Apply(new
     /// stroke, densifies)` queues a completion behind a rebuild. Installing
     /// the newer topology first would bump the worker topology id and let
-    /// the older, smaller completion mesh pass the topology check and
-    /// clobber the newer geometry — the just-sculpted spot visibly vanishes
-    /// a fraction of a second later. So completions commit BEFORE rebuilds
-    /// install (sparse updates still flush after the install — see above),
-    /// which keeps the undo chain linear: one entry per finished stroke.
+    /// the older, smaller completion mesh fail the topology check or clobber
+    /// newer geometry. The output queues therefore walk one topology chain:
+    /// current completion first, then only the rebuilds needed to reach the
+    /// next completion's topology.
     #[test]
-    fn older_completions_commit_before_newer_rebuilds_install() {
+    fn completions_walk_the_topology_chain_before_leftover_rebuilds_install() {
         let source =
             crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
                 .replace("\r\n", "\n");
+        let commit = source
+            .find("for completion in completions")
+            .expect("the poll must commit finished strokes");
+        let chain = source
+            .find("while self\n                .tools\n                .sculpt\n                .worker")
+            .expect("the poll must walk the current topology toward each completion");
+        let installs: Vec<_> = source
+            .match_indices("self.install_sculpt_rebuild(rebuild)")
+            .map(|(offset, _)| offset)
+            .collect();
+        assert!(
+            installs.len() >= 2,
+            "the poll needs matching and leftover rebuild paths"
+        );
+        assert!(
+            commit < chain,
+            "completion processing must own the topology walk"
+        );
+        assert!(
+            commit < installs[1],
+            "leftover rebuilds must install after ordered completions"
+        );
         let failure = source
             .find("if let Some(failure) = error")
             .expect("the poll must surface worker failures");
-        let commit = source
-            .find("for SculptCompletion")
-            .expect("the poll must commit finished strokes");
+        assert!(
+            commit < failure,
+            "terminal worker errors must be surfaced after valid completions"
+        );
+    }
+
+    /// A completion produced after densification has the same fresh topology
+    /// token as the rebuild that was published mid-stroke. That rebuild must
+    /// be installed first; otherwise the completion is committed against the
+    /// old scene token and the next topology check drops the valid result.
+    #[test]
+    fn a_same_topology_completion_installs_its_rebuild_before_commit() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
+                .replace("\r\n", "\n");
+        let completion_topology = source
+            .find("let completion_topology_id = completion.mesh.topology_id()")
+            .expect("the completion topology must be compared with pending rebuilds");
+        let matching_rebuild = source
+            .find("while self\n                .tools\n                .sculpt\n                .worker")
+            .expect("a completion must walk the current topology toward its target");
         let install = source
             .find("self.install_sculpt_rebuild(rebuild)")
-            .expect("the poll must install pending rebuilds");
+            .expect("the matching rebuild must be installed");
+        let commit = source
+            .find("self.commit_sculpt_result(before, mesh, ctx)")
+            .expect("the completion must still be committed");
         assert!(
-            failure < commit,
-            "a worker failure must short-circuit before any completion commits"
+            completion_topology < matching_rebuild && matching_rebuild < install,
+            "a matching rebuild must be selected before it is installed"
         );
         assert!(
-            commit < install,
-            "completions must commit before a newer rebuild installs"
+            install < commit,
+            "the same-topology completion must commit after its rebuild"
+        );
+    }
+
+    #[test]
+    fn a_rejected_finish_keeps_the_stroke_for_a_later_retry() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"));
+        let finish = source
+            .find("pub(super) fn commit_sculpt_stroke")
+            .expect("the stroke finish bridge must exist");
+        let body = &source[finish..(finish + 1400).min(source.len())];
+        assert!(
+            body.contains("let Some(stroke) = self.tools.sculpt.stroke.take()")
+                && body.contains("self.tools.sculpt.stroke = Some(stroke)")
+                && body.contains("-> bool"),
+            "queue backpressure must not silently discard a released stroke"
+        );
+        let mesh_editor =
+            crate::primary_ui_tests::production_source(include_str!("app_mesh_editor.rs"));
+        assert!(
+            mesh_editor.contains("if !self.commit_sculpt_stroke(ctx)")
+                || mesh_editor.contains("!self.commit_sculpt_stroke(ctx)"),
+            "Done/history must stop while a finish is waiting for queue capacity"
         );
     }
 }

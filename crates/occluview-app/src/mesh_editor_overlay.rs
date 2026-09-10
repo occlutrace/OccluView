@@ -87,6 +87,9 @@ pub(crate) struct MeshEditorPanelState {
     pub(crate) dirty: bool,
     /// Whether a mesh operation is running (all mutating buttons disabled).
     pub(crate) busy: bool,
+    /// Whether Sculpt has an in-flight drag or worker output. Structural mesh
+    /// operations must wait for it, while Done/Cancel remain available.
+    pub(crate) sculpt_pending: bool,
     /// Which tab is showing.
     pub(crate) active_tab: EditorTab,
 }
@@ -221,9 +224,10 @@ fn window_action(
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
     // Snappier hover/press for this dense tool palette than the global chrome.
     ui.style_mut().animation_time = 0.05;
-    // While a mesh operation runs every mutating button is disabled; tab and
-    // selection-mode toggles stay live so the operator is never locked out.
-    let ops_enabled = !state.busy;
+    // While a mesh operation or Sculpt write runs, structural operations are
+    // disabled. The session bar receives the narrower edit-mode flag below so
+    // Done/Cancel can still resolve or abort the pending sculpt.
+    let ops_enabled = !state.busy && !state.sculpt_pending;
 
     groups::header(ui, &locale.tr("meshedit-header-edit"), AppIcon::EditMesh);
     let mut action = groups::tab_strip(ui, &state, locale);
@@ -239,7 +243,7 @@ fn window_action(
         }
     }
     session_bar::status(ui, &state, locale);
-    action = action.or(session_bar::session(ui, &state, ops_enabled, locale));
+    action = action.or(session_bar::session(ui, &state, !state.busy, locale));
     action
 }
 
@@ -273,6 +277,11 @@ mod tests {
         assert!(
             production.contains("egui::Window::new"),
             "the editor must be a movable egui window, not a pinned overlay"
+        );
+        assert!(
+            production.contains("!state.busy && !state.sculpt_pending")
+                && production.contains("session_bar::session(ui, &state, !state.busy"),
+            "Sculpt backpressure must disable structural tools while keeping Done/Cancel live"
         );
     }
 }

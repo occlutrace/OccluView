@@ -90,6 +90,16 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
         egui::FontId::proportional(12.0),
         text,
     );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            TAB_H * 0.5,
+            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label));
     response
 }
 
@@ -111,7 +121,18 @@ fn close_cross(
             ui_theme::text_weak()
         },
     );
-    response.on_hover_text(locale.tr("meshedit-cancel-session"))
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let label = locale.tr("meshedit-cancel-session");
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
+    response.on_hover_text(label)
 }
 
 /// Selection mode (lasso + surface/through radio pair) and the dental CAD
@@ -461,6 +482,17 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
             )
         })
         .inner;
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.25_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(enabled, f64::from(*control.value), control.label)
+    });
     response.on_hover_text(control.tooltip);
 }
 
@@ -481,21 +513,44 @@ fn close_holes_limit_control(
         .ctx()
         .data(|data| data.get_temp::<f32>(id))
         .unwrap_or(super::CLOSE_HOLES_LIMIT_DEFAULT_MM);
-    ui.add_enabled(enabled, egui::Checkbox::without_text(&mut armed))
-        .on_hover_text(locale.tr("meshedit-limit-checkbox-hint"));
+    let checkbox = ui.add_enabled(enabled, egui::Checkbox::without_text(&mut armed));
+    if checkbox.has_focus() {
+        ui.painter().rect_stroke(
+            checkbox.rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.25_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    checkbox.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            enabled,
+            armed,
+            locale.tr("meshedit-limit-label"),
+        )
+    });
+    checkbox.on_hover_text(locale.tr("meshedit-limit-checkbox-hint"));
     ui.label(
         egui::RichText::new(locale.tr("meshedit-limit-label"))
             .size(11.0)
             .weak(),
     );
-    ui.add_enabled(
+    let drag_value = ui.add_enabled(
         enabled && armed,
         egui::DragValue::new(&mut limit)
             .range(super::CLOSE_HOLES_LIMIT_MIN_MM..=super::CLOSE_HOLES_LIMIT_MAX_MM)
             .speed(0.5)
             .suffix(" mm"),
-    )
-    .on_hover_text(locale.tr("meshedit-limit-drag-hint"));
+    );
+    drag_value.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::DragValue,
+            enabled && armed,
+            locale.tr("meshedit-limit-label"),
+        )
+    });
+    drag_value.on_hover_text(locale.tr("meshedit-limit-drag-hint"));
     super::set_close_holes_limit_enabled(ui.ctx(), armed);
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
 }
@@ -679,6 +734,7 @@ mod tests {
                 sculpt_armed: None,
                 dirty: true,
                 busy: false,
+                sculpt_pending: false,
                 active_tab: EditorTab::Sculpt,
             },
             MeshEditorPanelState {
@@ -695,7 +751,7 @@ mod tests {
             },
         ];
         for state in states {
-            let enabled = !state.busy;
+            let enabled = !state.busy && !state.sculpt_pending;
             let locale = crate::i18n::LocaleManager::for_tests();
             egui::__run_test_ui(|ui| {
                 ui.set_width(212.0);
@@ -705,8 +761,17 @@ mod tests {
                 let _ = close_holes(ui, enabled, &locale);
                 let _ = sculpt(ui, &state, enabled, &locale);
                 super::super::session_bar::status(ui, &state, &locale);
-                let _ = super::super::session_bar::session(ui, &state, enabled, &locale);
+                let _ = super::super::session_bar::session(ui, &state, !state.busy, &locale);
             });
         }
+    }
+
+    #[test]
+    fn compact_controls_expose_labels_to_keyboard_and_accessibility_users() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"));
+        assert!(source.contains("WidgetInfo::slider"));
+        assert!(source.contains("WidgetInfo::selected"));
+        assert!(source.contains("response.has_focus()"));
     }
 }

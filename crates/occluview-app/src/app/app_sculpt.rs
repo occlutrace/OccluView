@@ -5,9 +5,9 @@
 
 use super::{egui, mesh_editor_overlay, OccluViewApp};
 use crate::sculpt_tool::{
-    SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME,
-    SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
-    SCULPT_WHEEL_STEP,
+    uniform_scene_scale, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
+    MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
+    SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
 };
 use crate::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
@@ -162,7 +162,9 @@ impl OccluViewApp {
         // dab), instead of dying in a cleared queue with no undo entry.
         // Context switches away from sculpt (tabs, lasso) still abort via
         // their own paths: the worker they drop cannot outlive the context.
-        self.commit_sculpt_stroke(ctx);
+        if !self.commit_sculpt_stroke(ctx) {
+            return;
+        }
         self.tools.sculpt.toggle(kind);
         if self.tools.sculpt.armed.is_some() {
             // Arming a brush means the Sculpt tab: show it and drop selection.
@@ -172,12 +174,20 @@ impl OccluViewApp {
             // intentionally preserved; sculpt owns LMB while armed and must
             // not silently turn Lasso into Marquee.
             self.prepare_armed_sculpt_session();
-        } else {
+        } else if !self.tools.sculpt.worker_has_pending_work() {
+            // `commit_sculpt_stroke` may have just queued Finish. Dropping the
+            // worker here would clear that command and lose the last stroke;
+            // poll_sculpt_worker owns the completion before a later teardown.
             self.tools.sculpt.disarm();
         }
         self.ui.status_message = Some(match self.tools.sculpt.armed {
-            Some(SculptToolKind::AddRemove) => self.ui.locale.tr("sculpt-armed-addremove"),
-            Some(SculptToolKind::Smooth) => self.ui.locale.tr("sculpt-armed-smooth"),
+            Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => {
+                self.ui.locale.tr("sculpt-armed-addremove")
+            }
+            Some(SculptToolKind::Smooth) if self.tools.sculpt.worker.is_some() => {
+                self.ui.locale.tr("sculpt-armed-smooth")
+            }
+            Some(_) => self.ui.locale.tr("sculpt-preparing"),
             None => self.ui.locale.tr("sculpt-off"),
         });
         self.render.invalidation.overlay_tools_changed();
@@ -209,10 +219,14 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// Edit-Mesh-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
-    /// Consumed only while a session is open and no text field has focus.
+    /// Mesh Editor-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
+    /// Consumed only while the Sculpt tab owns the editor and no text field has
+    /// focus. Edit Mesh keeps digit keys available for its own context.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
-        if !self.document.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
+        if self.tools.editor_tab != mesh_editor_overlay::EditorTab::Sculpt
+            || !self.document.edit_mode.has_active_session()
+            || ctx.egui_wants_keyboard_input()
+        {
             return false;
         }
         if ctx.input_mut(|input| {
@@ -264,7 +278,9 @@ impl OccluViewApp {
         };
         if pan_drag_active {
             // LMB+RMB pan takes the primary away; end the drag cleanly.
-            self.commit_sculpt_stroke(ctx);
+            if !self.commit_sculpt_stroke(ctx) {
+                return true;
+            }
             return false;
         }
 
@@ -282,13 +298,15 @@ impl OccluViewApp {
         // egui frame. The edge is authoritative: finalize any stale previous
         // stroke before creating the next one, otherwise its old anchor and
         // hold timer can make the second drag look dead.
-        if pressed && self.tools.sculpt.stroke.is_some() {
-            self.commit_sculpt_stroke(ctx);
+        if pressed && self.tools.sculpt.stroke.is_some() && !self.commit_sculpt_stroke(ctx) {
+            return true;
         }
 
         if !down {
             if self.tools.sculpt.stroke.is_some() {
-                self.commit_sculpt_stroke(ctx);
+                if !self.commit_sculpt_stroke(ctx) {
+                    return true;
+                }
                 return true;
             }
             return false;
@@ -299,11 +317,23 @@ impl OccluViewApp {
         let Some(pointer) = pointer else {
             return true;
         };
-        if self.tools.sculpt.stroke.is_none() && !response.contains_pointer() {
+        if !response.contains_pointer() {
+            // The viewport response becomes false both outside its rect and
+            // when the Mesh Editor window is above it. A live drag may pause
+            // and resume on re-entry, but it must never turn an out-of-window
+            // pointer into a ray and sculpt an extrapolated surface.
+            if self.tools.sculpt.stroke.is_some() {
+                ctx.request_repaint();
+                return true;
+            }
             return false;
         }
-        if self.tools.sculpt.stroke.is_none() {
-            let _ = self.ensure_sculpt_session_for_target();
+        if self.tools.sculpt.stroke.is_none()
+            && !self.ensure_sculpt_session_for_target()
+            && self.tools.sculpt.worker.is_none()
+        {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            ctx.request_repaint();
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
             // Keep owning this held gesture while the background BVH/brush
@@ -364,6 +394,7 @@ impl OccluViewApp {
             dt: input.dt,
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
             return;
         };
         let queued = {
@@ -418,6 +449,10 @@ impl OccluViewApp {
         if entry.id() != layer_id {
             return false;
         }
+        if uniform_scene_scale(&entry.transform).is_none() {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+            return false;
+        }
         if self
             .tools
             .sculpt
@@ -455,7 +490,21 @@ impl OccluViewApp {
                 first.filter(|_| sculptable.next().is_none())
             });
         if let Some(index) = target {
-            let _ = self.tools.sculpt.queue_preparation(scene, index);
+            if self
+                .tools
+                .sculpt
+                .queue_preparation(Arc::clone(&scene), index)
+            {
+                self.ui.status_message = None;
+            } else if scene
+                .meshes()
+                .get(index)
+                .is_some_and(|entry| uniform_scene_scale(&entry.transform).is_none())
+            {
+                self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+            } else {
+                self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            }
         }
     }
 
@@ -496,7 +545,8 @@ impl OccluViewApp {
     /// geometry reverts to the committed scene.
     pub(super) fn abort_sculpt_stroke(&mut self) {
         let had_stroke = self.tools.sculpt.stroke.take().is_some();
-        if had_stroke {
+        let had_pending = self.tools.sculpt.worker_has_pending_work();
+        if had_stroke || had_pending {
             self.invalidate_sculpt_session_silent();
         }
     }
@@ -560,13 +610,25 @@ impl OccluViewApp {
     /// required a second BVH pick plus 48 projected points and six filled glow
     /// polygons on every repaint. A quiet ring communicates brush size without
     /// competing with the model or introducing hover latency.
-    pub(super) fn paint_sculpt_cursor_impl(&self, ui: &egui::Ui, viewport_rect: egui::Rect) {
+    pub(super) fn paint_sculpt_cursor_impl(
+        &self,
+        ui: &egui::Ui,
+        viewport_response: &egui::Response,
+    ) {
         let Some(kind) = self.tools.sculpt.armed else {
             return;
         };
         if !self.document.edit_mode.has_active_session() {
             return;
         }
+        // The cursor must follow the same ownership boundary as the drag: a
+        // foreground editor window owns the pointer even when it sits inside
+        // the viewport rectangle, and a preparing worker is not ready to
+        // accept a dab yet.
+        if !viewport_response.contains_pointer() || self.tools.sculpt.worker.is_none() {
+            return;
+        }
+        let viewport_rect = viewport_response.rect;
         let Some(camera) = self.render.camera.as_ref() else {
             return;
         };
@@ -588,7 +650,9 @@ impl OccluViewApp {
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
         if radius_px.is_finite() && radius_px >= 2.0 {
             let canvas = ui.painter();
-            let intensity = intensity01.clamp(0.0, 1.0);
+            // The ring must preview the force the dab will actually use:
+            // Shift+Smooth is a full-strength pass, not a dim 50% cursor.
+            let intensity = kind.dab_strength(intensity01, shift);
             canvas.circle_filled(
                 pointer,
                 radius_px,
@@ -647,144 +711,5 @@ fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
-    #![allow(clippy::expect_used, reason = "source-contract pins must say what is missing")]
-    use super::{plan_dab_centers, sculpt_target};
-    use crate::sculpt_tool::{HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME};
-    use glam::Vec3;
-    use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
-
-    #[test]
-    fn a_cold_mesh_can_be_resolved_for_background_preparation() -> anyhow::Result<()> {
-        let mesh = Mesh::new(
-            None,
-            vec![
-                Vertex::at(Vec3::ZERO),
-                Vertex::at(Vec3::X),
-                Vertex::at(Vec3::Y),
-            ],
-            vec![0, 1, 2],
-        )?;
-        assert!(!mesh.bvh_is_ready());
-        let mut scene = Scene::new();
-        let index = scene.add(SceneMesh::new(mesh));
-        let layer_id = scene.meshes()[index].id();
-
-        assert_eq!(
-            sculpt_target(&scene, Some(layer_id)),
-            Some((index, layer_id))
-        );
-        assert!(!scene.meshes()[index].mesh.bvh_is_ready());
-        Ok(())
-    }
-
-    #[test]
-    fn first_dab_lands_at_the_cursor_and_arms_the_path() {
-        let (centers, last, hold) =
-            plan_dab_centers(None, Vec3::new(2.0, 0.0, 0.0), 1.0, 0.0, 0.016);
-        assert_eq!(centers, vec![Vec3::new(2.0, 0.0, 0.0)]);
-        assert_eq!(last, Some(Vec3::new(2.0, 0.0, 0.0)));
-        assert_eq!(hold, 0.0);
-    }
-
-    #[test]
-    fn a_straight_move_spaces_dabs_evenly_by_arc_length() {
-        // Move exactly 3 spacings along +X: three dabs at 1,2,3, last at 3.
-        let (centers, last, hold) =
-            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(3.0, 0.0, 0.0), 1.0, 0.0, 0.016);
-        assert_eq!(
-            centers,
-            vec![
-                Vec3::new(1.0, 0.0, 0.0),
-                Vec3::new(2.0, 0.0, 0.0),
-                Vec3::new(3.0, 0.0, 0.0),
-            ]
-        );
-        assert_eq!(last, Some(Vec3::new(3.0, 0.0, 0.0)));
-        assert_eq!(hold, 0.0);
-    }
-
-    #[test]
-    fn a_huge_single_frame_jump_is_capped_without_backlog() {
-        // A jump far beyond MAX_DABS_PER_FRAME spacings is sampled evenly, but
-        // the anchor advances to the current cursor. The next frame must not
-        // replay an invisible queue of old dabs.
-        let far = (MAX_DABS_PER_FRAME + 50) as f32;
-        let (centers, last, _) =
-            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(far, 0.0, 0.0), 1.0, 0.0, 0.016);
-        assert_eq!(centers.len(), MAX_DABS_PER_FRAME);
-        assert_eq!(last, Some(Vec3::new(far, 0.0, 0.0)));
-        assert_eq!(centers.last(), Some(&Vec3::new(far, 0.0, 0.0)));
-    }
-
-    #[test]
-    fn a_stationary_hold_fires_dabs_on_the_time_cadence() {
-        // Cursor barely moves (< spacing): the hold accumulator fires a dab
-        // every HOLD_DAB_INTERVAL_SEC, at the cursor, leaving `last` put.
-        let last_dab = Some(Vec3::ZERO);
-        let dt = HOLD_DAB_INTERVAL_SEC * 2.5;
-        let (centers, last, hold) =
-            plan_dab_centers(last_dab, Vec3::new(0.001, 0.0, 0.0), 1.0, 0.0, dt);
-        assert_eq!(centers.len(), 2, "2.5 intervals of hold => 2 dabs");
-        assert!(centers.iter().all(|c| *c == Vec3::new(0.001, 0.0, 0.0)));
-        assert_eq!(
-            last, last_dab,
-            "a hold does not advance the arc-length anchor"
-        );
-        assert!(hold > 0.0 && hold < HOLD_DAB_INTERVAL_SEC);
-    }
-
-    #[test]
-    fn a_stalled_frame_cannot_dump_a_huge_hold_backlog() {
-        // A multi-second stall (dt) must be clamped so it doesn't fire dozens of
-        // hold dabs at once when input resumes.
-        let (centers, _, _) =
-            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(0.001, 0.0, 0.0), 1.0, 0.0, 5.0);
-        assert!(
-            centers.len() <= MAX_DABS_PER_FRAME,
-            "hold backlog must stay bounded, got {}",
-            centers.len()
-        );
-        assert!(
-            centers.len() <= 5,
-            "clamped dt should keep the backlog small"
-        );
-    }
-
-    /// A held Shift must not swallow a brush-mode switch: with only
-    /// `Modifiers::NONE` accepted, `Shift+2` is silently ignored, the operator
-    /// believes Smooth is armed while `AddRemove` (+Shift = Remove) still is,
-    /// and the next dab carves where it should smooth.
-    #[test]
-    fn brush_hotkeys_survive_a_held_shift() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-        for key in ["egui::Key::Num1", "egui::Key::Num2"] {
-            assert!(
-                source.contains(&format!("egui::Modifiers::SHIFT, {key}")),
-                "the {key} brush hotkey must also fire with Shift held"
-            );
-        }
-    }
-
-    /// A brush-mode switch keeps the layer context, so a live stroke must be
-    /// finished into one undoable edit — not aborted with its queue cleared
-    /// and no undo entry. (Switches away from sculpt — tabs, lasso — still
-    /// abort through their own paths.)
-    #[test]
-    fn mode_switch_finishes_a_live_stroke_instead_of_aborting_it() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-        let start = source
-            .find("pub(super) fn toggle_sculpt_tool")
-            .expect("the brush-mode switch must exist");
-        let body = &source[start..(start + 2000).min(source.len())];
-        assert!(
-            body.contains("self.commit_sculpt_stroke(ctx)"),
-            "switching brush modes must finish a live stroke first"
-        );
-        assert!(
-            !body.contains("abort_sculpt_stroke"),
-            "switching brush modes must not abort the live stroke"
-        );
-    }
-}
+#[path = "app_sculpt_tests.rs"]
+mod tests;
