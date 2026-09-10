@@ -162,6 +162,40 @@ fn prepared_scene_rejects_same_length_different_mesh_topology() {
 }
 
 #[test]
+fn prepared_scene_rejects_invalid_sparse_vertex_ids() {
+    let _gpu = gpu_test_lock();
+    let mesh = triangle_mesh();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
+        mesh: &mesh,
+        uniform: identity_uniform(),
+        visible: true,
+        wireframe: false,
+    }]);
+    let topology = PreparedSceneTopology::from_mesh(&mesh);
+    let vertices = mesh.vertices().to_vec();
+
+    assert!(
+        !prepared.write_entry_vertices_sparse(
+            offscreen.renderer(),
+            &topology,
+            &vertices,
+            &[vertices.len()],
+        ),
+        "a sparse upload must fail closed when any touched id is outside the vertex array"
+    );
+    assert!(
+        !prepared.write_entry_vertices_sparse(
+            offscreen.renderer(),
+            &topology,
+            &vertices,
+            &[2, 0],
+        ),
+        "a sparse upload must reject unsorted ids instead of relying on a debug-only assertion"
+    );
+}
+
+#[test]
 fn prepared_scene_draws_into_existing_render_pass() {
     let _gpu = gpu_test_lock();
     let mesh = triangle_mesh();
