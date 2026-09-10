@@ -52,6 +52,35 @@ fn test_worker() -> SculptWorker {
 }
 
 #[test]
+fn poisoned_live_shadow_stops_worker_without_publishing_a_stale_update() {
+    let worker = test_worker();
+    let shadow = worker.shadow();
+    let poison = thread::spawn(move || {
+        let _guard = shadow.write().expect("shadow lock");
+        panic!("test poison");
+    });
+    assert!(poison.join().is_err());
+
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    assert!(worker.try_apply(stroke, BrushMode::Add));
+    for _ in 0..2_000 {
+        if let Some(failure) = worker.take_error() {
+            assert_eq!(failure, SculptFailure::ShadowPoisoned);
+            assert!(worker.take_update().is_none());
+            assert!(worker.take_completion().is_none());
+            return;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    panic!("poisoned shadow did not stop the sculpt worker");
+}
+
+#[test]
 fn command_queue_has_a_global_bound_across_rapid_strokes() {
     let queue = SculptCommandQueue::new();
     let stroke = BrushStroke {

@@ -4,7 +4,7 @@
 //! bounded command queue and the worker-side [`SculptSession`]; the UI only
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
-use crate::sculpt_tool::{SculptRebuild, SculptSession};
+use crate::sculpt_tool::{DabFailure, SculptRebuild, SculptSession};
 use glam::Affine3A;
 use occluview_core::{BrushMode, BrushStroke, Mesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
@@ -657,8 +657,14 @@ fn run_worker(
                     queue.mark_idle();
                     break;
                 }
-                if let Some(detail) = outcome.failure {
-                    state.set_error(SculptFailure::TopologyRebuild { detail });
+                if let Some(failure) = outcome.failure {
+                    let failure = match failure {
+                        DabFailure::ShadowPoisoned => SculptFailure::ShadowPoisoned,
+                        DabFailure::TopologyRebuild { detail } => {
+                            SculptFailure::TopologyRebuild { detail }
+                        }
+                    };
+                    state.set_error(failure);
                     queue.mark_idle();
                     break;
                 }
