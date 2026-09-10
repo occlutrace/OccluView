@@ -25,6 +25,22 @@ For behaviour changes, add or update tests. Prefer behavioural assertions over
 source-text checks. Keep performance thresholds tied to a reproducible
 measurement.
 
+The workspace test list is the audit baseline. Refresh it before deleting or
+adding a large group of tests:
+
+```bash
+cargo test --workspace --all-targets --locked -- --list
+```
+
+Keep tests that prove observable geometry, state transitions, worker ordering,
+render output, packaging, or a reproducible performance budget. A small
+source-contract test is acceptable only when the runtime path is unavailable
+to the test harness and the assertion protects a concrete operator or release
+contract; it must inspect a narrow seam and fail closed if that seam moves.
+Remove cosmetic wording pins, deleted-feature negative checks, and tests that
+only duplicate the implementation's current string layout. Report-only
+inventory counts are preferred to arbitrary repository-wide test caps.
+
 ## Commits
 
 Use conventional commits (`fix(scope): ...`) with an imperative subject. Keep

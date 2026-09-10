@@ -776,40 +776,6 @@ mod tests {
     }
 
     #[test]
-    fn crash_and_version_paths_stay_english() {
-        // Crash reports, the fatal message box and `--version` run
-        // before/after any locale exists, so they must never route
-        // through the catalogs. Pin the English literals by construction.
-        let source = include_str!("app_bootstrap.rs");
-        let production = source
-            .split_once("mod tests")
-            .map_or(source, |(part, _)| part);
-        for marker in [
-            "fn print_version_line()",
-            "fn write_crash_report(",
-            "fn format_panic_details(",
-            "fn show_startup_fatal_message_box(",
-        ] {
-            let body = production
-                .split_once(marker)
-                .map_or("", |(_, tail)| tail.split("\nfn ").next().unwrap_or(tail));
-            for forbidden in [
-                "LocaleManager",
-                ".tr(",
-                ".text(",
-                "tr_with",
-                "tr_plural",
-                "window_title",
-            ] {
-                assert!(
-                    !body.contains(forbidden),
-                    "{marker} must stay English, found {forbidden:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn crash_log_ring_keeps_only_the_most_recent_lines() {
         let mut ring = VecDeque::new();
         for i in 0..(CRASH_LOG_CAPACITY + 5) {
