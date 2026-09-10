@@ -151,10 +151,10 @@ for deb in "$@"; do
   check_ldd "$root/usr/bin/occluview-cli" "$tmp/occluview-cli.ldd"
 
   # ldd cannot see wgpu/winit libraries loaded with dlopen. Exercise the
-  # installed binary's no-window diagnostics path so missing EGL, Vulkan, or
-  # desktop-loader prerequisites become a package-check failure instead of a
-  # colleague's silent exit. No adapter is required: the command reports an
-  # empty adapter list and still exits successfully on a headless CI host.
+  # installed binary's no-window diagnostics path so loader/device failures
+  # are captured in a report instead of looking like an unexplained exit. This
+  # is an entry smoke, not a GUI surface test: no adapter is required and the
+  # command may report an empty adapter list on a headless CI host.
   runtime_state="$tmp/runtime-state"
   mkdir -p "$runtime_state"
   if ! env XDG_STATE_HOME="$runtime_state" "$root/usr/bin/occluview" --diagnostics \
