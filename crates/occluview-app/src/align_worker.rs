@@ -303,13 +303,22 @@ impl AlignWorker {
         let handle = thread::Builder::new()
             .name("occluview-align".into())
             .spawn(move || {
-                run_worker(
-                    &thread_queue,
-                    &thread_completions,
-                    &thread_running,
-                    &thread_busy,
-                    &thread_failed,
-                );
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_worker(
+                        &thread_queue,
+                        &thread_completions,
+                        &thread_running,
+                        &thread_busy,
+                        &thread_failed,
+                    );
+                }));
+                if let Err(payload) = result {
+                    mark_failed(
+                        &thread_failed,
+                        "align worker panicked",
+                        Some(panic_message(payload)),
+                    );
+                }
             })
             .map_err(|error| {
                 mark_failed(&failed, "thread spawn failed", Some(error.to_string()));
@@ -498,6 +507,16 @@ fn mark_failed(failed: &AtomicBool, reason: &'static str, detail: Option<String>
             tracing::error!(reason, "align worker stopped");
         }
     }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "non-string panic payload".to_string()
 }
 
 /// What the worker keeps between jobs.
