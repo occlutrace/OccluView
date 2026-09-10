@@ -438,7 +438,7 @@ mod tests {
             .map(|(body, _)| body)
             .expect("a sparse patch path");
         assert!(
-            patch.contains("touched.iter().any")
+            patch.contains(".any(|index|")
                 && patch.contains("write_scene_vertices_sparse")
                 && patch.contains("if !viewport.write_scene_vertices_sparse"),
             "the brush preview must validate IDs and propagate sparse GPU rejection"
