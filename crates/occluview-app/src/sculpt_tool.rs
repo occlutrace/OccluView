@@ -363,6 +363,17 @@ pub(crate) struct SculptRebuild {
 
 /// What one dab produced: either a sparse vertex update, or a whole-layer
 /// rebuild when densification changed the topology.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DabFailure {
+    /// The live display shadow could not be updated. The kernel result is no
+    /// longer safe to publish because the worker would otherwise stream stale
+    /// vertices and later commit an undo state that never matched the view.
+    ShadowPoisoned,
+    /// A densifying dab changed the kernel topology, but its authoritative
+    /// scene mesh could not be rebuilt.
+    TopologyRebuild { detail: String },
+}
+
 #[derive(Default)]
 pub(crate) struct DabOutcome {
     /// Vertex ids whose position or normal changed, for a sparse GPU write.
@@ -370,10 +381,10 @@ pub(crate) struct DabOutcome {
     pub(crate) touched: Vec<usize>,
     /// Set when this dab grew the mesh.
     pub(crate) rebuild: Option<SculptRebuild>,
-    /// Set when the kernel changed topology but the authoritative scene mesh
-    /// could not be rebuilt. This must abort the worker; treating it as an
-    /// empty dab would leave the GPU on the old topology contract.
-    pub(crate) failure: Option<String>,
+    /// Set when the kernel result cannot be published safely. This must abort
+    /// the worker; treating it as an empty dab would leave the GPU or undo
+    /// history on a stale state.
+    pub(crate) failure: Option<DabFailure>,
 }
 
 impl SculptSession {
@@ -435,7 +446,7 @@ impl SculptSession {
                 Err(detail) => Some(DabOutcome {
                     touched: Vec::new(),
                     rebuild: None,
-                    failure: Some(detail),
+                    failure: Some(DabFailure::TopologyRebuild { detail }),
                 }),
             };
         }
@@ -443,7 +454,16 @@ impl SculptSession {
             return Some(DabOutcome::default());
         }
         let normal_vertices = outcome.normal_vertices;
-        self.patch_shadow(&outcome.touched_vertices, &normal_vertices);
+        if self
+            .patch_shadow(&outcome.touched_vertices, &normal_vertices)
+            .is_err()
+        {
+            return Some(DabOutcome {
+                touched: Vec::new(),
+                rebuild: None,
+                failure: Some(DabFailure::ShadowPoisoned),
+            });
+        }
         self.dirty_stroke = true;
         let mut touched = outcome.touched_vertices;
         touched.extend(normal_vertices);
@@ -516,10 +536,15 @@ impl SculptSession {
     /// Copy the kernel's live position and normal for every touched vertex id
     /// into the display shadow. Color and UV are preserved untouched, so
     /// textured/colored scans keep their look while being sculpted.
-    pub(crate) fn patch_shadow(&mut self, moved: &[usize], normal_vertices: &[usize]) {
-        let Ok(mut shadow) = self.shadow.write() else {
-            return;
-        };
+    pub(crate) fn patch_shadow(
+        &mut self,
+        moved: &[usize],
+        normal_vertices: &[usize],
+    ) -> Result<(), DabFailure> {
+        let mut shadow = self
+            .shadow
+            .write()
+            .map_err(|_| DabFailure::ShadowPoisoned)?;
         let live = self.session.vertices();
         for &vertex_id in moved {
             if let (Some(target), Some(source)) = (shadow.get_mut(vertex_id), live.get(vertex_id)) {
@@ -536,6 +561,7 @@ impl SculptSession {
                 target.normal = source.normal;
             }
         }
+        Ok(())
     }
 }
 
@@ -600,6 +626,7 @@ mod tests {
     use super::*;
     use glam::Quat;
     use occluview_core::{Mesh, SceneMesh};
+    use std::thread;
 
     /// The undo baseline is speculative work: most strokes are never undone.
     /// `snapshot_mesh` records what building it with the caches costs the first
@@ -627,7 +654,7 @@ mod tests {
             .next()
             .unwrap_or(source);
         assert!(
-            production.contains("failure: Option<String>"),
+            production.contains("failure: Option<DabFailure>"),
             "a topology rebuild failure needs a typed dab outcome"
         );
         assert!(
@@ -744,5 +771,53 @@ mod tests {
         assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
         session.dirty_stroke = false;
         assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
+    }
+
+    #[test]
+    fn poisoned_shadow_is_a_terminal_dab_failure() {
+        let mesh = Mesh::new(
+            Some("poisoned-shadow".to_string()),
+            vec![
+                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+        .expect("test mesh");
+        let layer_id = SceneMesh::new(mesh.clone()).id();
+        let shadow = Arc::new(RwLock::new(mesh.vertices().to_vec()));
+        let poison_target = Arc::clone(&shadow);
+        let poison = thread::spawn(move || {
+            let _guard = poison_target.write().expect("shadow lock");
+            panic!("test poison");
+        });
+        assert!(poison.join().is_err());
+
+        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+        let mut session = SculptSession {
+            layer_id,
+            topology_id: mesh.topology_id(),
+            session: brush,
+            base_mesh: Arc::new(mesh.clone()),
+            shadow,
+            topology: PreparedSceneTopology::from_mesh(&mesh),
+            world_to_local: Affine3A::IDENTITY,
+            local_per_world: 1.0,
+            dirty_stroke: false,
+            stroke_start_mesh: None,
+        };
+        let stroke = BrushStroke {
+            center: [0.0, 0.0, 0.0],
+            radius_mm: 2.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        };
+
+        let outcome = session.apply_dab(stroke, BrushMode::Add);
+        assert_eq!(outcome.failure, Some(DabFailure::ShadowPoisoned));
+        assert!(outcome.touched.is_empty());
+        assert!(!session.dirty_stroke);
     }
 }
