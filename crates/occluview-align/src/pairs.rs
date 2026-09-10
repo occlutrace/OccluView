@@ -112,6 +112,9 @@ pub enum FitRejection {
         /// Largest displacement a refine is allowed, in millimetres.
         allowed: f64,
     },
+    /// The surface had enough correspondences, but no trustworthy improvement
+    /// over the current placement could be accepted.
+    NoImprovement,
     /// A supplied point or normal was not finite.
     NonFinite,
 }
@@ -460,6 +463,13 @@ fn two_pair_frame(
         .any(|normal| !normal.is_finite())
     {
         return Err(FitRejection::NonFinite);
+    }
+    if moving_normals
+        .iter()
+        .chain(fixed_normals)
+        .any(|normal| normal.length_squared() <= f64::MIN_POSITIVE)
+    {
+        return Err(ALL_AXES_WEAK);
     }
     let moving_frame = frame_from(moving[0], moving[1], moving_normals[0])?;
     let fixed_frame = frame_from(fixed[0], fixed[1], fixed_normals[0])?;

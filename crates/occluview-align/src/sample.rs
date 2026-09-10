@@ -60,6 +60,10 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
                 usable = false;
                 break;
             }
+            if soup.is_excluded(vertex) {
+                usable = false;
+                break;
+            }
             corners[slot] = point;
             vertices[slot] = vertex;
         }
@@ -71,7 +75,9 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
             continue;
         }
         for vertex in vertices {
-            normals[vertex] += face;
+            if !soup.is_excluded(vertex) {
+                normals[vertex] += face;
+            }
         }
     }
     for normal in &mut normals {
@@ -91,10 +97,12 @@ pub fn bounds_of(soup: Soup<'_>) -> Option<(DVec3, f64)> {
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut seen = false;
     for vertex in 0..soup.vertex_count() {
-        if let Some(point) = vertex_at(soup.positions, vertex) {
-            min = min.min(point);
-            max = max.max(point);
-            seen = true;
+        if !soup.is_excluded(vertex) {
+            if let Some(point) = vertex_at(soup.positions, vertex) {
+                min = min.min(point);
+                max = max.max(point);
+                seen = true;
+            }
         }
     }
     seen.then(|| ((min + max) * 0.5, (max - min).length()))
@@ -185,5 +193,34 @@ mod tests {
         };
         assert!(bounds_of(soup).is_none(), "an empty soup has no bounds");
         assert!(sample_vertices(soup, 8).is_empty());
+    }
+
+    #[test]
+    fn masked_geometry_does_not_influence_normals_or_bounds() {
+        let (positions, indices) = quad();
+        let mask = [1, 1, 0, 0];
+        let soup = Soup {
+            positions: &positions,
+            indices: &indices,
+            mask: Some(&mask),
+        };
+        let normals = vertex_normals(soup);
+        assert_eq!(normals[0], DVec3::ZERO);
+        assert_eq!(normals[1], DVec3::ZERO);
+        assert_eq!(
+            normals[2],
+            DVec3::ZERO,
+            "a face touching an excluded vertex is not usable geometry"
+        );
+        assert_eq!(
+            normals[3],
+            DVec3::ZERO,
+            "a face touching an excluded vertex is not usable geometry"
+        );
+        let Some((center, diagonal)) = bounds_of(soup) else {
+            panic!("the included vertices still have bounds");
+        };
+        assert_eq!(center, DVec3::new(0.5, 1.0, 0.0));
+        assert!((diagonal - 1.0).abs() < 1e-9);
     }
 }

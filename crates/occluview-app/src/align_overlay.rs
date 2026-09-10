@@ -161,12 +161,10 @@ const LEGEND_STEPS: usize = 64;
 
 /// The deviation, in millimetres, the legend bar carries at `step` of `steps`.
 ///
-/// The magnitude ramp has **no negative side**: `ramp_color` takes the absolute
-/// value, so sweeping its bar from `-scale` mirrors it — the hot end is drawn
-/// at *both* ends and the ramp's zero colour lands in the middle, where every
-/// metrology legend puts nominal. An operator reading that bar is told blue
-/// means nominal, when on the surface blue means zero. The signed ramp really
-/// does run `-scale` to `+scale`, and only it is swept that way.
+/// The magnitude ramp has **no negative side**: it runs from its exact zero
+/// colour at the left to the selected absolute maximum at the right. The
+/// signed ramp is the diagnostic variant and genuinely runs `-scale` to
+/// `+scale`, so only it is swept across both signs.
 pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_mm: f64) -> f64 {
     #[allow(clippy::cast_precision_loss)]
     let fraction = step as f64 / (steps.max(2) - 1) as f64;
@@ -204,7 +202,9 @@ pub(crate) fn paint_legend(
             &occluview_align::RampSettings {
                 scale_mm: settings.scale_mm,
                 tolerance_mm: settings.tolerance_mm,
-                bands: settings.bands,
+                // The production Align Meshes legend is continuous too; old
+                // persisted band counts must not disagree with the map.
+                bands: None,
                 mode: settings.ramp_mode,
             },
         );
@@ -283,11 +283,9 @@ mod tests {
             .collect()
     }
 
-    /// The bug this test exists for: the bar used to sweep `-scale` to
-    /// `+scale` in every mode, and `ramp_color` takes the absolute value in
-    /// magnitude mode. The bar came out red-blue-red — mirrored, with the
-    /// ramp's ZERO colour in the middle where a legend puts nominal, and half
-    /// of it labelled with a negative magnitude that cannot exist.
+    /// The magnitude bar must sweep its non-negative domain. A negative half
+    /// would mirror the absolute ramp, put zero in the middle, and label a
+    /// distance that cannot be negative.
     #[test]
     fn the_magnitude_legend_runs_cold_to_hot_and_never_mirrors() {
         let bar = bar(RampMode::Magnitude, 0.5);

@@ -7,7 +7,7 @@
 use eframe::egui;
 
 use super::OccluViewApp;
-use crate::align_worker::AlignWorker;
+use crate::align_worker::{matching_inputs_changed, AlignWorker};
 
 impl OccluViewApp {
     /// A stationary right-click takes the last point back.
@@ -54,7 +54,8 @@ impl OccluViewApp {
             .worker
             .as_ref()
             .is_some_and(AlignWorker::is_busy);
-        let mut settings = self.tools.align.settings;
+        let previous_settings = self.tools.align.settings;
+        let mut settings = previous_settings;
         let mut constraint = self.tools.align.constraint;
         let mut brush = self.tools.align.brush;
         let mut tab = self.tools.align.tab;
@@ -69,7 +70,7 @@ impl OccluViewApp {
                 tool: &self.tools.align.tool,
                 settings: &mut settings,
                 status: self.tools.align.status.as_deref(),
-                stats: self.tools.align.stats,
+                refined_match_ready: self.tools.align.refined_match_ready,
                 roles: self.align_roles(),
                 busy,
                 moved,
@@ -89,7 +90,6 @@ impl OccluViewApp {
                 ctx,
                 viewport_rect,
                 &mut brush,
-                self.align_marked_fraction(),
                 !busy,
                 &self.ui.locale,
             ) {
@@ -109,6 +109,11 @@ impl OccluViewApp {
         self.tools.align.settings = settings;
         self.tools.align.constraint = constraint;
         self.tools.align.brush = brush;
+        if matching_inputs_changed(previous_settings, settings)
+            && self.tools.align.refined_match_ready
+        {
+            self.forget_align_fit(&self.ui.locale.tr("align-status-settings-changed"));
+        }
         let tab_changed = self.tools.align.tab != tab;
         self.tools.align.tab = tab;
         // Opening and closing the brush changes what is on the surface: the
@@ -127,7 +132,11 @@ impl OccluViewApp {
             Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
             Some(crate::align_panel::AlignPanelAction::Refine) => self.run_align_refine(),
             Some(crate::align_panel::AlignPanelAction::Measure) => self.run_align_measure(),
-            Some(crate::align_panel::AlignPanelAction::HideMap) => self.clear_deviation_overlay(),
+            Some(crate::align_panel::AlignPanelAction::HideMap) => {
+                self.tools.align.settings.show_deviation = false;
+                self.abandon_align_jobs();
+                self.clear_deviation_overlay();
+            }
             Some(crate::align_panel::AlignPanelAction::Back) => {
                 self.take_align_arrow_back();
             }
@@ -207,5 +216,30 @@ impl OccluViewApp {
                 .tr_plural("align-arrow-removed", &[], &[("n", remaining)]),
         });
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The source before this module. Keeping this contract on the production
+    /// half prevents the test from satisfying itself with its own assertion.
+    fn production() -> &'static str {
+        let source = crate::primary_ui_tests::production_source(include_str!("app_align_panel.rs"));
+        source
+            .split_once("\n#[cfg(test)]")
+            .map_or(source, |(before, _)| before)
+    }
+
+    #[test]
+    fn optimizer_setting_changes_drop_the_refined_authority() {
+        let source = production();
+        assert!(
+            source.contains("matching_inputs_changed"),
+            "the panel must compare optimizer inputs after editing them"
+        );
+        assert!(
+            source.contains("self.forget_align_fit"),
+            "a changed optimizer input must remove the old refined match"
+        );
     }
 }

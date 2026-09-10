@@ -2,7 +2,7 @@
 //! file budget.
 
 use crate::icp::{refine, Orientation, RefineSettings};
-use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+use crate::{CancelFlag, FitRejection, Rigid, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
 
 /// A shallow dome with quasi-random surface texture on top.
@@ -54,6 +54,34 @@ fn grid_indices(n: usize) -> Vec<u32> {
         }
     }
     indices
+}
+
+/// Append a translated copy of a component without welding it to the first
+/// one. This models an arch made of separate teeth: a global fixed bounding box
+/// has a centre in the gap, while the matching component is still local.
+#[allow(clippy::cast_possible_truncation)]
+fn append_component(
+    positions: &mut Vec<f32>,
+    indices: &mut Vec<u32>,
+    component_positions: &[f32],
+    component_indices: &[u32],
+    offset: DVec3,
+) {
+    let base = u32::try_from(positions.len() / 3).unwrap();
+    positions.extend(
+        component_positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|point| {
+                [
+                    (f64::from(point[0]) + offset.x) as f32,
+                    (f64::from(point[1]) + offset.y) as f32,
+                    (f64::from(point[2]) + offset.z) as f32,
+                ]
+            }),
+    );
+    indices.extend(component_indices.iter().map(|index| base + *index));
 }
 
 fn settings() -> RefineSettings {
@@ -174,6 +202,24 @@ fn refine_stops_when_already_cancelled() {
 }
 
 #[test]
+fn refine_rejects_a_nonfinite_start_before_cancellation_can_hide_it() {
+    let (positions, indices) = dome(12, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let cancel = CancelFlag::new();
+    cancel.cancel();
+    let broken = Rigid {
+        rotation: DQuat::IDENTITY,
+        translation: DVec3::new(f64::NAN, 0.0, 0.0),
+    };
+
+    assert_eq!(
+        refine(mesh, &index, broken, &settings(), &cancel),
+        Err(FitRejection::NonFinite)
+    );
+}
+
+#[test]
 fn refine_is_bit_identical_across_repeats() {
     let (positions, indices) = dome(24, 0.5);
     let mesh = soup(&positions, &indices);
@@ -234,10 +280,12 @@ fn the_mask_removes_vertices_from_the_fit() {
     let (positions, indices) = dome(16, 0.5);
     let plain = soup(&positions, &indices);
     let mut mask = vec![0u8; plain.vertex_count()];
-    for (vertex, slot) in mask.iter_mut().enumerate() {
-        if vertex % 2 == 0 {
-            *slot = 1;
-        }
+    // Exclude one local patch while leaving most triangles usable. Masking
+    // every other grid vertex would remove every face from this alternating
+    // triangulation: a masked face has no valid normal by contract, so the
+    // test would accidentally ask ICP to fit an empty moving surface.
+    for vertex in [0usize, 1, 17, 18] {
+        mask[vertex] = 1;
     }
     let masked = Soup {
         positions: &positions,
@@ -383,5 +431,108 @@ fn where_the_file_puts_its_zero_does_not_change_the_refine() {
         bookkeeping > travelled * 5.0,
         "expected the translation column to swing wider than the scan moved, \
          got {bookkeeping} against {travelled}"
+    );
+}
+
+#[test]
+fn best_fit_recovers_from_a_one_mm_lateral_start() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(1.0, 0.0, 0.0));
+
+    let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "a rough lateral start settled sideways at {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_prefers_the_nearby_component_over_an_adjacent_distractor() {
+    let (component, component_indices) = dome(24, 0.5);
+    let mut fixed = component.clone();
+    let mut fixed_indices = component_indices.clone();
+    append_component(
+        &mut fixed,
+        &mut fixed_indices,
+        &component,
+        &component_indices,
+        DVec3::new(14.0, 0.0, 0.0),
+    );
+    let moving = soup(&component, &component_indices);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+    assert_eq!(fixed_index.component_bounds().len(), 2);
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(1.0, 0.0, 0.0));
+
+    let report = refine(moving, &fixed_index, start, &settings(), &CancelFlag::new()).unwrap();
+
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "the adjacent component stole the fit: {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_recovers_when_the_initial_gap_is_outside_the_search_radius() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(0.0, 0.0, 3.5));
+
+    let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "the bounded center hypothesis did not recover the nearby mesh: {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn a_refine_that_cannot_prove_an_improvement_is_refused() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let limited = RefineSettings {
+        max_iterations: 1,
+        ..settings()
+    };
+    let start = Rigid::new(
+        DQuat::from_axis_angle(DVec3::Z, 1.0),
+        DVec3::new(1.5, -0.18, 0.12),
+    );
+
+    let outcome = refine(mesh, &index, start, &limited, &CancelFlag::new());
+
+    assert!(
+        matches!(outcome, Err(FitRejection::NoImprovement)),
+        "a non-converged fit with no accepted improvement must not authorize a map: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_single_accepted_step_is_the_pose_that_refine_returns() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let start = Rigid::new(DQuat::from_axis_angle(DVec3::Z, 0.08), DVec3::ZERO);
+    let one_step = RefineSettings {
+        max_iterations: 1,
+        ..settings()
+    };
+
+    let report = refine(mesh, &index, start, &one_step, &CancelFlag::new()).unwrap();
+    let rotation_change = (report.rigid.rotation * start.rotation.inverse())
+        .to_scaled_axis()
+        .length();
+
+    assert!(
+        rotation_change > 1e-5,
+        "the accepted first step was discarded before returning the report: {:?}",
+        report.rigid
     );
 }

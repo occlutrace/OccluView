@@ -48,11 +48,7 @@ impl OccluViewApp {
     /// Apply one finished job.
     fn apply_align_outcome(&mut self, completion: AlignCompletion, ctx: &egui::Context) {
         match completion.outcome {
-            AlignOutcome::Aligned {
-                pose,
-                rms,
-                rejected,
-            } => {
+            AlignOutcome::Aligned { pose, rejected } => {
                 if !self.commit_align_pose(pose) {
                     self.tools.align.status = Some(self.ui.locale.tr("align-status-pose-refused"));
                     return;
@@ -61,58 +57,19 @@ impl OccluViewApp {
                 // map; refinement performs the next measurement.
                 self.forget_align_fit(&self.ui.locale.tr("align-status-aligned-points"));
                 self.tools.align.rejected = rejected;
-                let dropped = if self.tools.align.rejected.is_empty() {
-                    String::new()
-                } else {
-                    let names: Vec<String> = self
-                        .tools
-                        .align
-                        .rejected
-                        .iter()
-                        .map(|index| (index + 1).to_string())
-                        .collect();
-                    self.ui
-                        .locale
-                        .tr_with("align-status-outlier", &[("pairs", &names.join(", "))])
-                };
-                self.tools.align.status = Some(self.ui.locale.tr_with(
-                    "align-status-aligned",
-                    &[("rms", &format!("{rms:.3}")), ("dropped", &dropped)],
-                ));
+                self.tools.align.status = Some(self.ui.locale.tr("align-status-aligned"));
             }
-            AlignOutcome::Refined { pose, report } => {
+            AlignOutcome::Refined { pose } => {
                 if !self.commit_align_pose(pose) {
                     self.tools.align.status = Some(self.ui.locale.tr("align-status-pose-refused"));
                     return;
                 }
-                let weak = weak_axis_note(
-                    report.weak_trans_axes,
-                    report.weak_rot_axes,
-                    &self.ui.locale,
-                );
-                // Excluded regions are omitted from both the sample and coverage
-                // counts, so report the measured region explicitly.
-                let measured_over = if self.tools.align.markings.any() {
-                    self.ui.locale.tr("align-status-surface-unmarked")
-                } else {
-                    self.ui.locale.tr("align-status-surface")
-                };
-                // Distinguish convergence from reaching the iteration limit.
-                let settled = if report.converged {
-                    String::new()
-                } else {
-                    self.ui.locale.tr("align-status-settled-limit")
-                };
-                self.tools.align.status = Some(self.ui.locale.tr_with(
-                    "align-status-refined",
-                    &[
-                        ("rms", &format!("{:.3}", report.rms)),
-                        ("pct", &format!("{:.0}", report.coverage * 100.0)),
-                        ("surface", &measured_over),
-                        ("settled", &settled),
-                        ("weak", &weak),
-                    ],
-                ));
+                // `commit_align_pose` invalidates derived alignment state while
+                // rebuilding the scene. Mark readiness only after that commit,
+                // so the map can describe the pose that actually landed.
+                self.tools.align.refined_match_ready = true;
+                self.tools.align.settings.show_deviation = true;
+                self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
                 self.measure_if_shown();
             }
             AlignOutcome::Measured {
@@ -142,9 +99,16 @@ impl OccluViewApp {
         &mut self,
         colors: Vec<[u8; 4]>,
         stats: occluview_align::DeviationStats,
-        seen: Option<occluview_align::Observability>,
+        _seen: Option<occluview_align::Observability>,
         scale_mm: f64,
     ) {
+        // A measurement can finish after the operator hides the map or after
+        // the pose/mask that authorized it became stale. Generation normally
+        // drops that completion, but this boundary also owns the invariant so
+        // no late result can resurrect a hidden or unrefined overlay.
+        if !self.tools.align.refined_match_ready || !self.tools.align.settings.show_deviation {
+            return;
+        }
         // The brush owns the per-vertex colour channel while it is open.
         // (The caller repaints after every outcome, so no repaint here.)
         if self.tools.align.brush.is_armed() {
@@ -156,48 +120,16 @@ impl OccluViewApp {
             self.tools.align.settings.scale_mm = scale_mm;
         }
         // Do not paint a map when no valid summary exists.
-        let Some(summary) = stats.summary else {
+        let Some(_summary) = stats.summary else {
+            self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
             self.tools.align.stats = Some(stats);
-            self.tools.align.status = Some(self.ui.locale.tr_with(
-                "align-status-no-summary",
-                &[
-                    (
-                        "reach",
-                        &format!("{:.1}", self.tools.align.settings.influence_radius_mm),
-                    ),
-                    ("measured", &format!("{}", stats.measured)),
-                    (
-                        "total",
-                        &format!(
-                            "{}",
-                            stats.measured.saturating_add(stats.unmeasured.total())
-                        ),
-                    ),
-                ],
-            ));
+            self.tools.align.status = Some(self.ui.locale.tr("align-status-no-summary"));
             return;
         };
         self.tools.align.stats = Some(stats);
         self.apply_deviation_colors(colors);
-        self.tools.align.status = Some(self.ui.locale.tr_plural(
-            "align-status-measured",
-            &[
-                ("pct", &format!("{:.0}", summary.within_tolerance * 100.0)),
-                (
-                    "tol",
-                    &format!("{:.2}", self.tools.align.settings.tolerance_mm),
-                ),
-                (
-                    "blind",
-                    &blind_note(seen.as_ref(), summary.rms, &self.ui.locale),
-                ),
-            ],
-            &[(
-                "n",
-                usize::try_from(stats.unmeasured.total()).unwrap_or(usize::MAX),
-            )],
-        ));
+        self.tools.align.status = Some(self.ui.locale.tr("align-status-measured"));
     }
 
     /// Measure again after a pose change, but only if the map is on screen.
@@ -208,7 +140,10 @@ impl OccluViewApp {
         if self.tools.align.brush.is_armed() {
             return;
         }
-        if self.tools.align.settings.show_deviation && self.tools.align.tool.can_measure() {
+        if self.tools.align.refined_match_ready
+            && self.tools.align.settings.show_deviation
+            && self.tools.align.tool.can_measure()
+        {
             self.run_align_measure();
         }
     }
@@ -221,6 +156,10 @@ impl OccluViewApp {
     pub(super) fn invalidate_deviation_map(&mut self, reason: &str) {
         // Cancel work based on the previous pose before clearing its map.
         self.abandon_align_jobs();
+        // A map and a refined-match claim describe the same pose and surface.
+        // Invalidate the claim even when no map is currently visible.
+        self.tools.align.refined_match_ready = false;
+        self.tools.align.settings.show_deviation = false;
         // Preserve operator markings; only the derived map is stale.
         if self.tools.align.overlay != super::app_align_display::AlignOverlay::Map {
             return;
@@ -246,8 +185,8 @@ impl OccluViewApp {
 
     /// Settle everything a tab switch leaves behind.
     ///
-    /// The map and ghosted layer belong to the Automatically tab; re-measure
-    /// when returning to it.
+    /// The map and ghosted layer belong to the Automatically tab; returning to
+    /// it restores controls only and requires a new Best fit matching result.
     pub(super) fn settle_align_tab_change(&mut self) {
         // Either direction: a gesture belongs to the tab it started on. The drag
         // handler closes one when it finds itself on the wrong tab, but that is a
@@ -255,11 +194,22 @@ impl OccluViewApp {
         // that no longer expects it.
         self.finish_align_drag();
         self.tools.align.drag = None;
-        if self.tools.align.tab == crate::align_panel::AlignTab::Automatically {
-            self.measure_if_shown();
+        let entering_automatic =
+            self.tools.align.tab == crate::align_panel::AlignTab::Automatically;
+        self.abandon_align_jobs();
+        // Manual mode changes the pose without a Best fit result. Both tab
+        // directions therefore revoke the old authority: returning to
+        // Automatically must start with the map off and require a new refined
+        // match; role inference alone is not a measurement.
+        self.tools.align.refined_match_ready = false;
+        self.tools.align.settings.show_deviation = false;
+        if entering_automatic {
+            if self.tools.align.overlay == super::app_align_display::AlignOverlay::Map {
+                self.clear_deviation_overlay();
+                self.tools.align.status = Some(self.ui.locale.tr("align-status-map-elsewhere"));
+            }
             return;
         }
-        self.abandon_align_jobs();
         // The arrows go too. A hand nudge moves the scan out from under every
         // point that was placed on it, so they would come back describing a fit
         // that no longer holds — and the operator asked for a clean slate here by
@@ -351,111 +301,22 @@ fn align_failure_parts(failure: AlignFailure) -> (&'static str, String, String) 
 }
 
 fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String) {
-    match rejection {
-        FitRejection::TooFewPairs { have, need } => {
-            ("align-reject-toofew", have.to_string(), need.to_string())
-        }
-        FitRejection::Unpaired { moving, fixed } => (
-            "align-reject-unpaired",
-            moving.to_string(),
-            fixed.to_string(),
-        ),
-        FitRejection::Degenerate { weak_axes } => {
-            let named = axis_names(weak_axes);
-            if named.is_empty() {
-                (
-                    "align-reject-degenerate-plain",
-                    String::new(),
-                    String::new(),
-                )
-            } else {
-                ("align-reject-degenerate-line", named, String::new())
-            }
-        }
-        FitRejection::UnitMismatch { ratio } => {
-            ("align-reject-unit", format!("{ratio:.1}"), String::new())
-        }
-        FitRejection::Apart {
-            separation,
-            allowed,
-        } => (
-            "align-reject-apart",
-            format!("{separation:.0}"),
-            format!("{allowed:.0}"),
-        ),
-        FitRejection::Runaway { moved_by, allowed } => (
-            "align-reject-runaway",
-            format!("{moved_by:.0}"),
-            format!("{allowed:.0}"),
-        ),
-        FitRejection::NonFinite => ("align-reject-nonfinite", String::new(), String::new()),
-    }
-}
-
-/// World-axis names for a degeneracy report. Locale-neutral identifiers;
-/// the catalog sentence places them.
-fn axis_names(weak: [bool; 3]) -> String {
-    ["X", "Y", "Z"]
-        .into_iter()
-        .zip(weak)
-        .filter_map(|(name, flagged)| flagged.then_some(name))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// What the deviation map could not have seen, in a sentence.
-///
-/// Nearest-surface distance is a lower bound when motion is tangential. The
-/// observability estimate converts the reported RMS into a possible hidden
-/// displacement.
-fn blind_note(
-    seen: Option<&occluview_align::Observability>,
-    rms_mm: f64,
-    locale: &crate::i18n::LocaleManager,
-) -> String {
-    /// Below this the correction is not worth a sentence.
-    const WORTH_SAYING: f64 = 1.15;
-
-    let Some(seen) = seen else {
-        return String::new();
+    let key = match rejection {
+        FitRejection::TooFewPairs { .. } => "align-reject-toofew",
+        FitRejection::Unpaired { .. } => "align-reject-unpaired",
+        FitRejection::Degenerate { .. } => "align-reject-degenerate-plain",
+        FitRejection::UnitMismatch { .. } => "align-reject-unit",
+        FitRejection::Apart { .. } => "align-reject-apart",
+        FitRejection::Runaway { .. } => "align-reject-runaway",
+        FitRejection::NoImprovement => "align-reject-no-improvement",
+        FitRejection::NonFinite => "align-reject-nonfinite",
     };
-    if seen.has_blind_direction() {
-        return locale.tr("align-status-blind-free");
-    }
-    let hidden = seen.hidden_displacement_mm(rms_mm);
-    if !hidden.is_finite() || hidden < rms_mm * WORTH_SAYING {
-        return String::new();
-    }
-    locale.tr_with(
-        "align-status-blind-hidden",
-        &[("mm", &format!("{hidden:.2}"))],
-    )
-}
-
-/// Name the directions a refine could not determine, so the panel never shows
-/// a confident number for a fit that is free to slide.
-fn weak_axis_note(
-    translation: [bool; 3],
-    rotation: [bool; 3],
-    locale: &crate::i18n::LocaleManager,
-) -> String {
-    let sliding = axis_names(translation);
-    let spinning = axis_names(rotation);
-    match (sliding.is_empty(), spinning.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => locale.tr_with("align-status-weak-slide", &[("axes", &sliding)]),
-        (true, false) => locale.tr_with("align-status-weak-turn", &[("axes", &spinning)]),
-        (false, false) => locale.tr_with(
-            "align-status-weak-both",
-            &[("sliding", &sliding), ("spinning", &spinning)],
-        ),
-    }
+    (key, String::new(), String::new())
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::weak_axis_note;
 
     /// Source before the test module.
     fn production() -> &'static str {
@@ -464,10 +325,6 @@ mod tests {
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)
-    }
-
-    fn english() -> crate::i18n::LocaleManager {
-        crate::i18n::LocaleManager::for_tests()
     }
 
     /// The refused-pose wording renders from the catalog, pinned to source.
@@ -480,46 +337,10 @@ mod tests {
         );
     }
 
-    /// A determined fit needs no warning.
-    #[test]
-    fn a_fit_that_is_pinned_down_gets_no_warning() {
-        assert_eq!(
-            weak_axis_note([false; 3], [false; 3], &english()),
-            String::new()
-        );
-    }
-
-    /// Undetermined directions are named in the status text.
-    #[test]
-    fn an_undetermined_direction_is_named_by_its_axis() {
-        // Axis names interpolate with Fluent bidi isolation marks by design.
-        let sliding = weak_axis_note([false, true, false], [false; 3], &english());
-        assert!(sliding.contains("slide along"), "got {sliding}");
-        assert!(sliding.contains('Y'), "got {sliding}");
-        assert!(
-            !sliding.contains("turn"),
-            "nothing turns here, got {sliding}"
-        );
-
-        let spinning = weak_axis_note([false; 3], [true, false, false], &english());
-        assert!(spinning.contains("turn about"), "got {spinning}");
-        assert!(spinning.contains('X'), "got {spinning}");
-        assert!(
-            !spinning.contains("slide"),
-            "nothing slides here, got {spinning}"
-        );
-
-        let both = weak_axis_note([true, false, true], [false, true, false], &english());
-        assert!(both.contains("slide along"), "got {both}");
-        assert!(both.contains("X, Z"), "got {both}");
-        assert!(both.contains("turn about"), "got {both}");
-        assert!(both.contains('Y'), "got {both}");
-    }
-
     /// Typed failures map to their catalog keys at the presentation boundary.
     #[test]
     fn typed_failures_resolve_to_their_catalog_keys() {
-        use super::{align_failure_parts, axis_names};
+        use super::align_failure_parts;
         use crate::align_worker::AlignFailure;
         use occluview_align::FitRejection;
 
@@ -545,8 +366,8 @@ mod tests {
             (
                 AlignFailure::Fit(FitRejection::TooFewPairs { have: 2, need: 3 }),
                 "align-reject-toofew",
-                "2".to_string(),
-                "3".to_string(),
+                String::new(),
+                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Unpaired {
@@ -554,8 +375,8 @@ mod tests {
                     fixed: 5,
                 }),
                 "align-reject-unpaired",
-                "4".to_string(),
-                "5".to_string(),
+                String::new(),
+                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Degenerate {
@@ -569,14 +390,14 @@ mod tests {
                 AlignFailure::Fit(FitRejection::Degenerate {
                     weak_axes: [true, false, true],
                 }),
-                "align-reject-degenerate-line",
-                "X, Z".to_string(),
+                "align-reject-degenerate-plain",
+                String::new(),
                 String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::UnitMismatch { ratio: 2.5 }),
                 "align-reject-unit",
-                "2.5".to_string(),
+                String::new(),
                 String::new(),
             ),
             (
@@ -585,8 +406,8 @@ mod tests {
                     allowed: 3.0,
                 }),
                 "align-reject-apart",
-                "12".to_string(),
-                "3".to_string(),
+                String::new(),
+                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Runaway {
@@ -594,8 +415,14 @@ mod tests {
                     allowed: 5.0,
                 }),
                 "align-reject-runaway",
-                "20".to_string(),
-                "5".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::NoImprovement),
+                "align-reject-no-improvement",
+                String::new(),
+                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::NonFinite),
@@ -607,8 +434,6 @@ mod tests {
         for (failure, key, a, b) in cases {
             assert_eq!(align_failure_parts(failure), (key, a, b));
         }
-        assert_eq!(axis_names([false; 3]), "");
-        assert_eq!(axis_names([true, false, true]), "X, Z");
     }
 
     /// The worker stays presentation-free: no catalog key literals.
@@ -672,7 +497,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .unwrap_or_default();
         let guard = measured
-            .split_once("let Some(summary) = stats.summary else {")
+            .split_once("let Some(_summary) = stats.summary else {")
             .map(|(_, rest)| rest);
         let (refusal, remainder) = guard
             .and_then(|rest| rest.split_once("};"))
@@ -688,6 +513,10 @@ mod tests {
         assert!(
             !refusal.contains("apply_deviation_colors"),
             "nothing is painted for a measurement that did not happen"
+        );
+        assert!(
+            refusal.contains("self.tools.align.settings.show_deviation = false"),
+            "an empty measurement must not leave the heatmap toggle claiming a map is visible"
         );
         assert!(
             remainder.contains("self.apply_deviation_colors(colors)"),
@@ -715,6 +544,75 @@ mod tests {
             before_early_return.contains("self.abandon_align_jobs()"),
             "the jobs have to go whether or not a map was on screen: a refine \
              landing late commits a pose"
+        );
+    }
+
+    /// Naming two roles is enough for the low-level compare-files path, but it
+    /// is not proof that Align Meshes has completed Best fit matching.
+    #[test]
+    fn measurement_requires_a_landed_refined_match() {
+        let source = production();
+        let measure = source
+            .split_once("pub(super) fn measure_if_shown(")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            measure.contains("refined_match_ready"),
+            "measurement must be gated by a successful Best fit result"
+        );
+        let refine = source
+            .split_once("AlignOutcome::Refined")
+            .and_then(|(_, rest)| rest.split_once("AlignOutcome::Measured"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            refine.contains("self.tools.align.refined_match_ready = true")
+                && refine.contains("self.tools.align.settings.show_deviation = true"),
+            "only a committed refined result may arm the heatmap"
+        );
+    }
+
+    /// Switching back to the automatic tab restores controls only. It must not
+    /// submit a measurement merely because the arm-time role guess survived.
+    #[test]
+    fn returning_to_automatic_does_not_measure_implicitly() {
+        let source = production();
+        let settle = source
+            .split_once("pub(super) fn settle_align_tab_change(")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            !settle.contains("self.measure_if_shown()"),
+            "tab restoration must not launch a heatmap job"
+        );
+        assert!(
+            settle.contains("self.tools.align.refined_match_ready = false")
+                && settle.contains("self.tools.align.settings.show_deviation = false"),
+            "manual mode must revoke the measurement authorization"
+        );
+        assert!(
+            !settle
+                .contains("if self.tools.align.tab == crate::align_panel::AlignTab::Automatically")
+                && settle.contains("let entering_automatic"),
+            "returning to Automatically must revoke readiness instead of taking an early return"
+        );
+    }
+
+    /// A completion that was already in flight must not resurrect a map the
+    /// operator hid, or a fit that the session invalidated in the meantime.
+    #[test]
+    fn late_measurement_cannot_reopen_hidden_or_unrefined_map() {
+        let source = production();
+        let measured = source
+            .split_once("fn apply_measured_outcome(")
+            .and_then(|(_, rest)| rest.split_once("pub(super) fn measure_if_shown("))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            measured.contains("refined_match_ready") && measured.contains("show_deviation"),
+            "a late measurement must be rejected after the map is hidden or its fit is stale"
         );
     }
 }

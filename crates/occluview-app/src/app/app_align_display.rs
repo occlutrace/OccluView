@@ -178,7 +178,9 @@ impl OccluViewApp {
             return false;
         };
         if self.tools.align.overlay_colors.is_empty() {
-            return false;
+            // clear_deviation_overlay already restored the live viewport. A
+            // queued no-op lets its caller retire the pending flag cleanly.
+            return true;
         }
         let pending = self.tools.align.overlay_colors.clone();
         let mut wrote = true;
@@ -206,14 +208,14 @@ impl OccluViewApp {
         self.tools.align.overlay = AlignOverlay::Nothing;
         // Restore the other layer even when no colour array remains.
         self.unghost_layers();
-        if self.tools.align.overlay_colors.is_empty() {
-            return;
-        }
+        self.tools.align.stats = None;
+        let had_overlay = !self.tools.align.overlay_colors.is_empty();
         self.tools.align.overlay_colors.clear();
-        // A push still standing would chase colours that no longer exist.
-        self.tools.align.deviation_push_pending = false;
+        // The live path restores immediately; the offscreen path needs one
+        // queued write because its prepared scene is intentionally retained.
         self.tools.align.painted.clear();
         let Some(live) = self.document.live_scene_mut() else {
+            self.tools.align.deviation_push_pending = had_overlay;
             return;
         };
         let overlaid: Vec<SceneMeshId> = live
@@ -225,9 +227,12 @@ impl OccluViewApp {
                 entry.id()
             })
             .collect();
+        self.tools.align.deviation_push_pending = had_overlay || !overlaid.is_empty();
+        if overlaid.is_empty() {
+            return;
+        }
         self.mark_scene_materials_changed();
         self.restore_layer_colors(&overlaid);
-        self.tools.align.stats = None;
         self.render.invalidation.overlay_tools_changed();
     }
 
@@ -432,5 +437,16 @@ mod tests {
             clear.contains("self.tools.align.overlay = AlignOverlay::Nothing"),
             "dropping colours must clear what they meant"
         );
+    }
+
+    #[test]
+    fn clearing_an_overlay_also_repairs_stale_display_bookkeeping() {
+        let clear = production()
+            .split_once("fn clear_deviation_overlay(")
+            .map(|(_, rest)| rest)
+            .expect("one overlay teardown");
+        assert!(clear.contains("let had_overlay = !self.tools.align.overlay_colors.is_empty()"));
+        assert!(clear.contains("entry.deviation_colors().is_some()"));
+        assert!(clear.contains("had_overlay || !overlaid.is_empty()"));
     }
 }

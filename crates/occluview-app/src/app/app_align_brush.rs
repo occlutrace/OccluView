@@ -20,7 +20,7 @@
 use eframe::egui;
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid};
-use occluview_core::{Scene, SceneMesh, SceneMeshId};
+use occluview_core::{SceneMesh, SceneMeshId};
 
 use super::app_align::layer_of;
 use super::app_align_display::AlignOverlay;
@@ -339,34 +339,6 @@ impl OccluViewApp {
     /// indexed by one layer's vertices.
     pub(super) fn clear_align_mask(&mut self) {
         self.tools.align.markings.clear();
-    }
-
-    /// What share of the two scans is marked, if either carries a mask that
-    /// fits its mesh.
-    ///
-    /// The panel asks every frame the Brush window is open. Walking both masks
-    /// to answer would be a two-million-byte scan per frame, so the counts are
-    /// maintained where the masks are edited and this only reads them.
-    pub(super) fn align_marked_fraction(&self) -> Option<f32> {
-        let scene = self.document.scene.as_ref()?;
-        self.tools.align.markings.marked_fraction(
-            self.side_identity(AlignSide::Moving, scene),
-            self.side_identity(AlignSide::Fixed, scene),
-        )
-    }
-
-    /// What a mask on this side has to match, or an identity nothing matches when
-    /// the side names no layer.
-    fn side_identity(&self, side: AlignSide, scene: &Scene) -> MarkedOn {
-        self.side_layer(side)
-            .and_then(|id| layer_of(scene, id))
-            .map_or(
-                MarkedOn {
-                    geometry: 0,
-                    vertex_count: 0,
-                },
-                marked_on,
-            )
     }
 
     /// Put the markings on both meshes, take them off, or leave them alone.

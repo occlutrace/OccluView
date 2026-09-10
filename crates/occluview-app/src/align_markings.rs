@@ -255,6 +255,7 @@ impl AlignMarkings {
 
     /// What share of the two scans is marked, or nothing if neither carries a
     /// mask that fits its mesh. Free to call: the counts are maintained here.
+    #[allow(dead_code)]
     pub(crate) fn marked_fraction(&self, moving: MarkedOn, fixed: MarkedOn) -> Option<f32> {
         let mut marked = 0usize;
         let mut total = 0usize;
