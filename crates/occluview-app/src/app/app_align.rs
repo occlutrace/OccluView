@@ -453,7 +453,7 @@ impl OccluViewApp {
         let Some(worker) = self.tools.align.worker.as_ref() else {
             return;
         };
-        worker.submit(AlignJob {
+        let accepted = worker.submit(AlignJob {
             generation: worker.generation(),
             kind,
             moving_positions,
@@ -474,6 +474,10 @@ impl OccluViewApp {
             fixed_mask,
             settings,
         });
+        if !accepted {
+            self.tools.align.status = Some(self.ui.locale.tr("align-status-worker-unavailable"));
+            return;
+        }
         if stale {
             self.tools.align.status = Some(self.ui.locale.tr("align-markings-dropped"));
             return;

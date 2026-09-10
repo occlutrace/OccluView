@@ -13,6 +13,26 @@ use crate::edit_mode::EditModeCommand;
 impl OccluViewApp {
     /// Drain finished jobs and apply them.
     pub(super) fn drain_align_worker(&mut self, ctx: &egui::Context) {
+        let worker_failed = self
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed);
+        if worker_failed {
+            // A worker failure is terminal for this session. Do not leave a
+            // map claiming that the last pose was refined when no future
+            // measurement can validate it. Region markings remain intact:
+            // they are operator input, not worker output.
+            self.tools.align.refined_match_ready = false;
+            self.tools.align.settings.show_deviation = false;
+            if self.tools.align.overlay == super::app_align_display::AlignOverlay::Map {
+                self.clear_deviation_overlay();
+            }
+            self.tools.align.status = Some(self.ui.locale.tr("align-status-worker-unavailable"));
+            ctx.request_repaint();
+            return;
+        }
         let Some(worker) = self.tools.align.worker.as_ref() else {
             return;
         };

@@ -507,6 +507,7 @@ align-status-place-first = Prima un punto per scansione
 align-status-one-scan = Una delle scansioni
 align-status-scaled = Questa scansione ha un placement scalato, non allineabile
 align-status-pose-refused = Fit finito, ma la sua scansione non c’è più
+align-status-worker-unavailable = Il worker di allineamento si è fermato — riavvia lo strumento
 align-status-measure-dropped = Misura scartata — il pennello ha i colori
 align-status-map-elsewhere = La mappa è nel tab Automatico — torna lì
 align-status-aligned-points = Allineato sui punti

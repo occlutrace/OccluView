@@ -507,6 +507,7 @@ align-status-one-scan = Einer der Scans
 align-status-place-first = Erst je einen Punkt pro Scan setzen
 align-status-scaled = Dieser Scan trägt eine skalierte Platzierung, nicht ausrichtbar
 align-status-pose-refused = Fit fertig, aber der Scan dafür ist nicht mehr verfügbar
+align-status-worker-unavailable = Align-Worker angehalten — Alignment-Tool neu starten
 align-status-measure-dropped = Messung verworfen — Pinsel besitzt die Farben
 align-status-map-elsewhere = Distanzkarte liegt auf dem Automatik-Tab — dort kommt sie zurück
 align-status-aligned-points = Auf Punkten ausgerichtet

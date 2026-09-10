@@ -54,6 +54,12 @@ impl OccluViewApp {
             .worker
             .as_ref()
             .is_some_and(AlignWorker::is_busy);
+        let worker_failed = self
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed);
         let previous_settings = self.tools.align.settings;
         let mut settings = previous_settings;
         let mut constraint = self.tools.align.constraint;
@@ -73,6 +79,7 @@ impl OccluViewApp {
                 refined_match_ready: self.tools.align.refined_match_ready,
                 roles: self.align_roles(),
                 busy,
+                worker_failed,
                 moved,
                 can_undo: self.document.edit_mode.undo_layer_id().is_some(),
                 can_redo: self.document.edit_mode.redo_layer_id().is_some(),

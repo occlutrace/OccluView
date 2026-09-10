@@ -509,6 +509,7 @@ align-status-place-first = Posicione um ponto em cada escaneamento
 align-status-one-scan = Um dos escaneamentos
 align-status-scaled = Esse escaneamento tem escala aplicada, não alinhável
 align-status-pose-refused = Ajuste pronto, mas seu escaneamento sumiu
+align-status-worker-unavailable = O processo de alinhamento parou — reinicie a ferramenta
 align-status-measure-dropped = Medição descartada — o pincel tem as cores
 align-status-map-elsewhere = O mapa está na aba Automático — volta lá
 align-status-aligned-points = Alinhado por pontos

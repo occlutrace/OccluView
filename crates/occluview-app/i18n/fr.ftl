@@ -507,6 +507,7 @@ align-status-place-first = D’abord un point sur chaque scan
 align-status-one-scan = L’un des scans
 align-status-scaled = Ce scan porte un placement à l’échelle, non alignable
 align-status-pose-refused = Ajustement fini, mais son scan n’est plus là
+align-status-worker-unavailable = Le processus d’alignement s’est arrêté — relancez l’outil
 align-status-measure-dropped = Mesure jetée — le pinceau possède les couleurs
 align-status-map-elsewhere = La carte est sur l’onglet Auto — elle y revient
 align-status-aligned-points = Aligné sur points

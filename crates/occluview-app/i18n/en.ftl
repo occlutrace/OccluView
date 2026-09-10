@@ -511,6 +511,7 @@ align-status-one-scan = One of the scans
 align-status-place-first = Place a point on each scan first
 align-status-scaled = That scan carries a scaled placement, which cannot be aligned
 align-status-pose-refused = The fit finished, but the scan it was for is no longer available
+align-status-worker-unavailable = Alignment worker stopped — restart the alignment tool
 align-status-measure-dropped = Measurement dropped — the marking brush owns the colours
 align-status-map-elsewhere = Distance map is on the Automatically tab — it comes back there
 align-status-aligned-points = Aligned on points

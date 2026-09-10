@@ -581,6 +581,7 @@ align-status-one-scan = Один из сканов
 align-status-place-first = Сначала поставьте по точке на каждом скане
 align-status-scaled = Этот скан несёт масштабированное размещение, его нельзя сопоставить
 align-status-pose-refused = Подгонка завершена, но скан, для которого она была, уже недоступен
+align-status-worker-unavailable = Обработчик совмещения остановился — перезапустите инструмент совмещения
 align-status-measure-dropped = Измерение сброшено — цветами владеет кисть пометок
 align-status-map-elsewhere = Карта расстояний на вкладке «Автоматически» — она вернётся туда
 align-status-aligned-points = Совмещено по точкам
