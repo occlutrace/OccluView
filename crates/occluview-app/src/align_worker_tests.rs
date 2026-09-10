@@ -439,6 +439,31 @@ fn a_job_of_the_current_generation_comes_back() {
     ));
 }
 
+/// A poisoned queue must become an observable terminal failure instead of
+/// turning every later Align action into a silent no-op.
+#[test]
+fn a_worker_lock_failure_is_observable() {
+    let worker = super::AlignWorker::spawn();
+    let queue = std::sync::Arc::clone(&worker.queue);
+    let _ = std::thread::spawn(move || {
+        let _guard = queue.state.lock().expect("queue lock before poisoning");
+        panic!("poison the test queue");
+    })
+    .join();
+    worker.queue.wake.notify_one();
+
+    for _ in 0..60 {
+        if worker.has_failed() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        worker.has_failed(),
+        "a dead Align worker must be visible to the UI"
+    );
+}
+
 /// A result the operator has overtaken never comes back.
 ///
 /// This is the mechanism behind the whole class of "it undid what I just did"

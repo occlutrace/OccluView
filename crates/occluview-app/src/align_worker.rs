@@ -7,7 +7,7 @@
 //! of the same kind.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -275,6 +275,7 @@ pub(crate) struct AlignWorker {
     running: Arc<Mutex<Option<CancelFlag>>>,
     generation: Arc<AtomicU64>,
     busy: Arc<AtomicU64>,
+    failed: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -292,11 +293,13 @@ impl AlignWorker {
         let running: Arc<Mutex<Option<CancelFlag>>> = Arc::new(Mutex::new(None));
         let generation = Arc::new(AtomicU64::new(0));
         let busy = Arc::new(AtomicU64::new(0));
+        let failed = Arc::new(AtomicBool::new(false));
 
         let thread_queue = Arc::clone(&queue);
         let thread_completions = Arc::clone(&completions);
         let thread_running = Arc::clone(&running);
         let thread_busy = Arc::clone(&busy);
+        let thread_failed = Arc::clone(&failed);
         let handle = thread::Builder::new()
             .name("occluview-align".into())
             .spawn(move || {
@@ -305,7 +308,11 @@ impl AlignWorker {
                     &thread_completions,
                     &thread_running,
                     &thread_busy,
+                    &thread_failed,
                 );
+            })
+            .map_err(|error| {
+                mark_failed(&failed, "thread spawn failed", Some(error.to_string()));
             })
             .ok();
 
@@ -315,19 +322,27 @@ impl AlignWorker {
             running,
             generation,
             busy,
+            failed,
             handle,
         }
+    }
+
+    /// Whether this worker can still accept or publish work.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
     }
 
     /// Move to a new generation, so every result still in flight is discarded.
     pub(crate) fn bump_generation(&self) -> u64 {
         self.cancel_running();
         let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        if let Ok(mut state) = self.queue.state.lock() {
-            state.jobs.clear();
+        match self.queue.state.lock() {
+            Ok(mut state) => state.jobs.clear(),
+            Err(_) => mark_failed(&self.failed, "queue lock poisoned", None),
         }
-        if let Ok(mut completions) = self.completions.lock() {
-            completions.clear();
+        match self.completions.lock() {
+            Ok(mut completions) => completions.clear(),
+            Err(_) => mark_failed(&self.failed, "completion lock poisoned", None),
         }
         next
     }
@@ -349,21 +364,27 @@ impl AlignWorker {
 
     /// Queue a job, replacing queued work of the same kind and cancelling the
     /// running job.
-    pub(crate) fn submit(&self, job: AlignJob) {
+    pub(crate) fn submit(&self, job: AlignJob) -> bool {
+        if self.has_failed() {
+            return false;
+        }
         self.cancel_running();
         let Ok(mut state) = self.queue.state.lock() else {
-            return;
+            mark_failed(&self.failed, "queue lock poisoned", None);
+            return false;
         };
         state.jobs.retain(|queued| queued.kind != job.kind);
         state.jobs.push_back(job);
         drop(state);
         self.queue.wake.notify_one();
+        true
     }
 
     /// Take every completion that still belongs to the current generation.
     pub(crate) fn drain(&self) -> Vec<AlignCompletion> {
         let current = self.generation();
         let Ok(mut completions) = self.completions.lock() else {
+            mark_failed(&self.failed, "completion lock poisoned", None);
             return Vec::new();
         };
         let drained: Vec<AlignCompletion> = completions.drain(..).collect();
@@ -375,10 +396,13 @@ impl AlignWorker {
 
     /// Ask a running job to stop.
     pub(crate) fn cancel_running(&self) {
-        if let Ok(running) = self.running.lock() {
-            if let Some(flag) = running.as_ref() {
-                flag.cancel();
+        match self.running.lock() {
+            Ok(running) => {
+                if let Some(flag) = running.as_ref() {
+                    flag.cancel();
+                }
             }
+            Err(_) => mark_failed(&self.failed, "running-job lock poisoned", None),
         }
     }
 }
@@ -403,15 +427,18 @@ fn run_worker(
     completions: &Arc<Mutex<Vec<AlignCompletion>>>,
     running: &Arc<Mutex<Option<CancelFlag>>>,
     busy: &Arc<AtomicU64>,
+    failed: &Arc<AtomicBool>,
 ) {
     let mut cached = WorkerCache::default();
     loop {
         let job = {
             let Ok(mut state) = queue.state.lock() else {
+                mark_failed(failed, "queue lock poisoned", None);
                 return;
             };
             while state.jobs.is_empty() && !state.shutdown {
                 let Ok(next) = queue.wake.wait(state) else {
+                    mark_failed(failed, "queue wait poisoned", None);
                     return;
                 };
                 state = next;
@@ -426,9 +453,12 @@ fn run_worker(
         };
 
         let cancel = CancelFlag::new();
-        if let Ok(mut slot) = running.lock() {
-            *slot = Some(cancel.clone());
-        }
+        let Ok(mut slot) = running.lock() else {
+            mark_failed(failed, "running-job lock poisoned", None);
+            return;
+        };
+        *slot = Some(cancel.clone());
+        drop(slot);
         busy.fetch_add(1, Ordering::SeqCst);
 
         let outcome = execute(&job, &cancel, &mut cached);
@@ -437,17 +467,35 @@ fn run_worker(
         let abandoned = cancel.is_cancelled();
 
         busy.fetch_sub(1, Ordering::SeqCst);
-        if let Ok(mut slot) = running.lock() {
-            *slot = None;
-        }
+        let Ok(mut slot) = running.lock() else {
+            mark_failed(failed, "running-job lock poisoned", None);
+            return;
+        };
+        *slot = None;
+        drop(slot);
         if abandoned {
             continue;
         }
-        if let Ok(mut published) = completions.lock() {
-            published.push(AlignCompletion {
-                generation: job.generation,
-                outcome,
-            });
+        let Ok(mut published) = completions.lock() else {
+            mark_failed(failed, "completion lock poisoned", None);
+            return;
+        };
+        published.push(AlignCompletion {
+            generation: job.generation,
+            outcome,
+        });
+    }
+}
+
+/// Record a terminal worker failure once and keep the UI-side state machine
+/// fail-closed. Details go to the diagnostic log; the panel receives only a
+/// stable localized status instead of an OS/thread error sentence.
+fn mark_failed(failed: &AtomicBool, reason: &'static str, detail: Option<String>) {
+    if !failed.swap(true, Ordering::AcqRel) {
+        if let Some(detail) = detail {
+            tracing::error!(reason, detail = %detail, "align worker stopped");
+        } else {
+            tracing::error!(reason, "align worker stopped");
         }
     }
 }

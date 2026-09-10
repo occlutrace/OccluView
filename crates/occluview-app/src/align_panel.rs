@@ -95,6 +95,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) roles: Option<crate::align_panel_roles::AlignRoles>,
     /// Whether a job is in flight.
     pub(crate) busy: bool,
+    /// Whether the worker stopped and cannot accept another job.
+    pub(crate) worker_failed: bool,
     /// Whether anything has actually moved this session.
     pub(crate) moved: bool,
     /// Whether the scene history has anything to step back to.
@@ -137,7 +139,7 @@ fn body(
     mut view: AlignPanelView<'_>,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let enabled = !view.busy;
+    let enabled = !view.busy && !view.worker_failed;
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
         crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
