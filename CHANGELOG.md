@@ -3,22 +3,21 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
-## Unreleased
+## 1.1.1 - 2026-09-03
 
-### Reliability
+### Viewer
 
 - Align heatmaps now appear only after a current confirmed match, with a compact
   absolute millimetre legend and saturated display colours.
 - Sculpt worker topology changes, cancellation, and repeated strokes preserve
   ordered geometry and undo boundaries.
+
+### Reliability
+
 - Weak Linux graphics adapters receive adapter-aware wgpu limits and a
   single-sample compatibility profile; startup failures now produce a visible
   diagnostic signal and a non-zero exit status.
 - Added `occluview --diagnostics` and installed-package graphics smoke checks.
-
-## 1.1.1 - 2026-09-03
-
-### Viewer
 
 - Added a compact Help reference for the complete keyboard and mouse controls,
   with a contextual reminder in the viewport.
