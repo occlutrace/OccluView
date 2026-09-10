@@ -454,34 +454,12 @@ align-commit-done-hint = Tieni l’allineamento e chiudi — esporta per scriver
 
 ## Deviation map — DRAFT.
 
-align-map-more = Altre impostazioni
 align-map-heatmap = Mappa di calore
 align-map-heatmap-hint = Colora una scansione per distanza dall’altra
-align-map-range-label = intervallo
-align-map-preset-hint = Sotto { $min } mm è accordo, { $max } mm satura
-align-map-min = min
+align-map-requires-refine = Esegui prima Best fit matching
 align-map-max = max
-align-map-auto = auto
-align-map-auto-hint = Riadatta l’intervallo alla misura
-align-map-advice-far = Mesh a { $mm } mm — allinea prima di leggere la mappa
-align-map-advice-saturated = Quasi tutto oltre { $mm } mm, colori agli estremi — allarga l’intervallo
-align-map-not-enough = Poca superficie — { $measured } vertici su { $total } raggiungono l’altra scansione
-align-map-within = { $pct }% entro { $tol } mm
-align-map-rms = rms { $rms }
-align-map-grey-tooltip = Grigio non è misura. Senza controparte a portata non si misura — un bridge o un dente su una sola scansione è normale, non un errore.
-align-map-grey-out = { $n } senza superficie opposta
-align-map-grey-excluded = { $n } esclusi
-align-map-grey-unusable = { $n } inutilizzabili nel file
-align-map-grey-total = { $total } vertici grigi: { $parts }
 align-map-not-measured = non misurato
 align-map-not-measured-hint = Nessuna superficie dell’altra scansione a portata di questi vertici. Dente o bridge su una sola scansione: normale, non un errore — niente da misurare.
-align-map-stepped = Bande a gradini
-align-map-stepped-hint = Gradini invece di sfumatura
-align-map-colours = Colori
-align-map-ramp-distance = distanza
-align-map-ramp-distance-hint = Freddo dove concordano, caldo dove no
-align-map-ramp-signed = con segno
-align-map-ramp-signed-hint = Blu sotto la superficie, verde nominale, rosso sopra
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -493,20 +471,14 @@ align-pair-swap = Scambia
 align-pair-swap-hint = Adatta al contrario — le frecce seguono
 
 align-brush-title = Pennello
-align-brush-subtitle = Dipingi la superficie da ignorare, su entrambe le mesh
-align-brush-hint-inverse = Trascina cancella · Shift marca · Shift+rotella ridimensiona
-align-brush-hint-mark = Trascina marca · Shift cancella · Shift+rotella ridimensiona
 align-brush-close-hint = Chiudi il pennello — i segni restano
 align-brush-size = misura del pennello
 align-brush-inverse = Pennello inverso
 align-brush-inverse-hint = Un trascinamento cancella invece di marcare. Shift inverte di nuovo
 align-brush-auto-radius = raggio automatico
 align-brush-auto-radius-hint = Raggio tenuto a ogni capo freccia
-align-brush-all-marked = Tutto marcato — matching senza effetto
-align-brush-nothing-marked = Niente marcato
-align-brush-percent-marked = { $pct }% marcato fuori matching
 align-brush-size-status = Pennello { $size } mm
-align-status-no-summary = Niente da misurare con una portata di { $reach } mm — { $measured } vertici su { $total } hanno trovato l'altra scansione. Avvicina le scansioni o aumenta la portata in Altre impostazioni.
+align-status-no-summary = Nessuna superficie comparabile
 
 align-mask-fit-everywhere = Adatta ovunque
 align-mask-fit-everywhere-hint = Pulisci ogni marcatura
@@ -541,22 +513,11 @@ align-status-aligned-points = Allineato sui punti
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Allineato — { $rms } mm sui punti{ $dropped }. Rifinisci per appoggiare.
-align-status-outlier = , coppia { $pairs } ignorata come outlier
-align-status-refined = Rifinito — { $rms } mm sul { $pct }% di { $surface }{ $settled }{ $weak }
-align-status-surface = la superficie
-align-status-surface-unmarked = la superficie non marcata
-align-status-settled-limit = , fermo al limite di iterazioni
-align-status-weak-slide =  — il fit può ancora scorrere lungo { $axes }
-align-status-weak-turn =  — il fit può ancora ruotare attorno a { $axes }
-align-status-weak-both =  — il fit può ancora scorrere lungo { $sliding } e ruotare attorno a { $spinning }
-align-status-measured = { $pct }% entro { $tol } mm, { $n ->
-    [one] { $n } vertice senza controparte{ $blind }
-   *[other] { $n } vertici senza controparte{ $blind }
-}
-align-status-blind-free =  — queste superfici scorrono libere, dietro può nascondersi qualsiasi spostamento
-align-status-blind-hidden =  — un disallineamento rigido fino a { $mm } mm potrebbe leggersi uguale
+align-status-aligned = Allineato sui punti — esegui Best fit matching per posare le superfici.
+align-status-refined = Best fit pronto
+align-status-measured = Mappa di calore aggiornata
 align-status-remeasure = { $reason } — rilancia il matching per misurare
+align-status-settings-changed = Impostazioni di matching cambiate
 align-brush-not-in-alignment = Questa scansione non fa parte di questo allineamento
 align-drag-moving = Spostamento di { $name } a mano
 align-drag-unrecorded = Spostato a mano, ma questo passo non è entrato nella cronologia — Ctrl+Z non lo annullerà
@@ -679,12 +640,15 @@ sculpt-applied-undo = Scultura applicata (Ctrl+Z annulla)
 sculpt-applied-locked = Scultura applicata (non annullabile: snapshot enorme)
 sculpt-failed = Questo livello non si scolpisce: { $detail }
 sculpt-worker-stopped = Worker di scultura fermo: { $detail }
+sculpt-preparing = Preparazione della scultura…
+sculpt-nonuniform-scale = La scultura richiede una mesh con scala uniforme
 sculpt-failure-worker-panicked = Worker di scultura in crash: { $detail }
 sculpt-failure-spawn = Impossibile avviare il worker di scultura: { $detail }
 sculpt-failure-kernel-pool = Impossibile creare il pool di kernel di scultura: { $detail }
 sculpt-failure-missing-undo-baseline = Il tratto di scultura non ha una base di annullamento
 sculpt-failure-shadow-poisoned = Il lock dell'ombra di scultura è avvelenato
 sculpt-failure-vertex-count-changed = Il risultato di scultura ha modificato il numero di vertici
+sculpt-failure-topology-rebuild = Ricostruzione della topologia di scultura non riuscita: { $detail }
 sculpt-worker-unavailable = Scultura non disponibile
 sculpt-finishing = Finitura del tratto…
 sculpt-finishing-history = Finitura scultura prima della storia…
@@ -853,13 +817,13 @@ align-markings-dropped = Marcature mollate — la superficie è cambiata dopo
 align-fail-no-surface-fixed = La scansione fissa non ha superficie utile
 align-fail-no-surface-moving = La scansione mobile non ha superficie utile
 align-fail-recolor = Misura scartata prima di colorare
-align-reject-toofew = Solo { $a } su { $b } corrispondenze — un’altra freccia, o alza influenza
-align-reject-unpaired = { $a } punti su una scansione e { $b } sull’altra — senza partner
-align-reject-degenerate-plain = I punti non fissano una rotazione — allargali
-align-reject-degenerate-line = Punti in linea: rotazione attorno a { $a } indeterminata
-align-reject-unit = Le scansioni differiscono di { $a }x in misura — unità diverse
-align-reject-apart = Il fit lascia { $a } mm invece di sovrapporre ({ $b } mm) — ricontrolla le coppie
-align-reject-runaway = Il fit ha vagato di { $a } mm, più della scansione ({ $b } mm) — frecce o meno influenza
-align-reject-nonfinite = Un punto o una normale non è un numero finito
+align-reject-toofew = Aggiungi frecce o avvicina le scansioni
+align-reject-unpaired = Completa entrambi i lati di ogni freccia
+align-reject-degenerate-plain = Distribuisci i punti sulla superficie
+align-reject-unit = Le scansioni usano unità diverse
+align-reject-apart = Controlla le frecce e avvicina le scansioni
+align-reject-runaway = Avvicina le scansioni e riprova Best fit matching
+align-reject-no-improvement = Nessun miglioramento confermato — avvicina le scansioni e riprova
+align-reject-nonfinite = Il punto o la superficie selezionati non sono validi
 align-status-stepped = Passi nella storia
 align-status-moving-hand = Muovo a mano

@@ -5,7 +5,8 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::items_after_statements)]
 
 use super::{
-    color_map, AlignSettings, MeasureKey, SurfaceKey, CLINICAL_CEILING_MM, CLINICAL_RANGES,
+    color_map, matching_inputs_changed, AlignSettings, MeasureKey, SurfaceKey, WORKING_MAX_MM,
+    WORKING_MIN_MM, WORKING_SCALE_MIN_MM,
 };
 use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
@@ -116,21 +117,19 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
 /// the moment two meshes are roughly placed — which is how an operator ended up
 /// reading an arch in red and blue mosaic and calling it a thermal camera.
 ///
-/// The magnitude ramp is right here because of the nominal band: everything
-/// inside tolerance lands on one flat cold colour, which is the correct reading
-/// of "these agree", and what is left burning is what genuinely differs. That
-/// was not true before the band existed, and this test used to pin the opposite.
+/// The magnitude ramp is intentionally continuous across the whole working
+/// range. Tolerance is a measurement/statistics setting, not a hidden colour
+/// plateau, so small but real differences remain visible to the operator.
 #[test]
 fn the_window_opens_on_the_working_range() {
     let settings = AlignSettings::default();
-    let (max_mm, min_mm) = CLINICAL_RANGES[0];
     assert!(
-        (settings.scale_mm - max_mm).abs() < f64::EPSILON,
+        (settings.scale_mm - WORKING_MAX_MM).abs() < f64::EPSILON,
         "the display maximum must open at the tightest standard range, got {}",
         settings.scale_mm
     );
     assert!(
-        (settings.tolerance_mm - min_mm).abs() < f64::EPSILON,
+        (settings.tolerance_mm - WORKING_MIN_MM).abs() < f64::EPSILON,
         "the nominal band must open at the one that goes with it, got {}",
         settings.tolerance_mm
     );
@@ -140,35 +139,69 @@ fn the_window_opens_on_the_working_range() {
     );
     assert_eq!(settings.ramp_mode, RampMode::Magnitude);
     assert!(
-        settings.scale_mm <= CLINICAL_CEILING_MM,
-        "the range must stay inside what a clinical instrument can mean"
+        settings.scale_mm <= WORKING_MAX_MM,
+        "the range must stay inside the working display maximum"
     );
 }
 
-/// The standard ranges are ordered tightest first and stay inside the ceiling.
-///
-/// The chip row and the range the tool opens on read the same table, so the
-/// order is what decides the default. It used to be two separate literals and
-/// they disagreed: the row highlighted one range while the map was painted at
-/// another.
 #[test]
-fn the_standard_ranges_run_tightest_first_and_carry_a_band_each() {
-    let mut previous = 0.0;
-    for (max_mm, min_mm) in CLINICAL_RANGES {
-        assert!(
-            max_mm > previous,
-            "the ranges must widen, got {max_mm} after {previous}"
-        );
-        assert!(
-            min_mm > 0.0 && min_mm < max_mm,
-            "the nominal band must sit inside its own range, got {min_mm} in {max_mm}"
-        );
-        assert!(
-            max_mm <= CLINICAL_CEILING_MM,
-            "a range past the ceiling is not a clinical instrument, got {max_mm}"
-        );
-        previous = max_mm;
-    }
+fn a_persisted_wide_range_is_clamped_before_colouring() {
+    let settings = AlignSettings {
+        scale_mm: 1.0,
+        ..AlignSettings::default()
+    };
+    assert_eq!(settings.ramp().scale_mm, WORKING_MAX_MM);
+}
+
+#[test]
+fn the_display_range_is_absolute_zero_to_one_tenth() {
+    let zero = AlignSettings {
+        scale_mm: -1.0,
+        ..AlignSettings::default()
+    };
+    assert_eq!(zero.ramp().scale_mm, WORKING_SCALE_MIN_MM);
+
+    let above = AlignSettings {
+        scale_mm: 1.0,
+        ..AlignSettings::default()
+    };
+    assert_eq!(above.ramp().scale_mm, WORKING_MAX_MM);
+}
+
+#[test]
+fn production_heatmap_ignores_legacy_banding_and_stays_continuous() {
+    let settings = AlignSettings {
+        bands: Some(5),
+        ..AlignSettings::default()
+    };
+
+    assert_eq!(
+        settings.ramp().bands,
+        None,
+        "the compact heatmap has no banded mode; old persisted bands must not quantize it"
+    );
+}
+
+#[test]
+fn optimizer_inputs_invalidate_a_refined_match_but_display_inputs_do_not() {
+    let base = AlignSettings::default();
+
+    let mut ratio = base;
+    ratio.matching_ratio = 0.7;
+    assert!(matching_inputs_changed(base, ratio));
+
+    let mut radius = base;
+    radius.influence_radius_mm = 4.0;
+    assert!(matching_inputs_changed(base, radius));
+
+    let mut orientation = base;
+    orientation.orientation = Orientation::Inverted;
+    assert!(matching_inputs_changed(base, orientation));
+
+    let mut display = base;
+    display.scale_mm = WORKING_MIN_MM;
+    display.show_deviation = false;
+    assert!(!matching_inputs_changed(base, display));
 }
 
 /// A 10 x 10 sheet on z = 0 with its outward normal along +Z: the surface a

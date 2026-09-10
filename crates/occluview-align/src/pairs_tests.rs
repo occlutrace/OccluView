@@ -322,6 +322,24 @@ fn two_pairs_whose_normal_lies_along_the_segment_are_refused() {
 }
 
 #[test]
+fn two_pairs_with_a_zero_second_normal_are_refused() {
+    let moving = vec![DVec3::ZERO, DVec3::new(6.0, 0.0, 0.0)];
+    let fixed = posed(&moving);
+    let moving_normals = vec![DVec3::Z, DVec3::ZERO];
+    let fixed_normals = vec![pose().apply_normal(DVec3::Z), DVec3::ZERO];
+    let outcome = fit(
+        &moving,
+        &fixed,
+        Some((&moving_normals, &fixed_normals)),
+        40.0,
+    );
+    assert!(
+        matches!(outcome, Err(FitRejection::Degenerate { .. })),
+        "a zero second normal cannot validate the two-pair frame: {outcome:?}"
+    );
+}
+
+#[test]
 fn non_finite_input_is_refused() {
     let moving = vec![
         DVec3::new(f64::NAN, 0.0, 0.0),

@@ -454,34 +454,12 @@ align-commit-done-hint = Ausrichtung behalten und schließen — Scan exportiere
 
 ## Deviation map — DRAFT.
 
-align-map-more = Weitere Einstellungen
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Einen Scan nach Abstand zum anderen einfärben
-align-map-range-label = Bereich
-align-map-preset-hint = Alles unter { $min } mm gilt als Übereinstimmung, { $max } mm sättigt
-align-map-min = min
+align-map-requires-refine = Zuerst „Best fit matching“ ausführen
 align-map-max = max
-align-map-auto = auto
-align-map-auto-hint = Bereich erneut an die Messung anpassen
-align-map-advice-far = Netze liegen etwa { $mm } mm auseinander — erst ausrichten, dann Karte lesen
-align-map-advice-saturated = Das meiste liegt jenseits { $mm } mm, Farben kleben an den Enden — Bereich weiten
-align-map-not-enough = Zu wenig Fläche zum Messen — { $measured } von { $total } Vertices erreichen den anderen Scan
-align-map-within = { $pct }% innerhalb { $tol } mm
-align-map-rms = RMS { $rms }
-align-map-grey-tooltip = Grau ist keine Messung. Oberfläche ohne Gegenstück in Reichweite ist nicht messbar — Brücke oder Zahn nur auf einem Scan ist der übliche Grund, kein Fehler.
-align-map-grey-out = { $n } ohne gegenüberliegende Fläche
-align-map-grey-excluded = { $n } ausgeschlossen
-align-map-grey-unusable = { $n } in der Datei unbrauchbar
-align-map-grey-total = { $total } graue Vertices: { $parts }
 align-map-not-measured = nicht gemessen
 align-map-not-measured-hint = Keine Oberfläche des anderen Scans in Reichweite dieser Vertices. Zahn oder Brücke nur auf einem Scan ist der übliche Grund, kein Fehler — dort gibt es nichts zu messen.
-align-map-stepped = Gestufte Bänder
-align-map-stepped-hint = Rampe stufen statt blenden
-align-map-colours = Farben
-align-map-ramp-distance = Abstand
-align-map-ramp-distance-hint = Kalt wo Scans übereinstimmen, heiß wo nicht
-align-map-ramp-signed = vorzeichenbehaftet
-align-map-ramp-signed-hint = Blau unter der Fläche, grün nominal, rot darüber
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -493,20 +471,14 @@ align-pair-swap = Tauschen
 align-pair-swap-hint = Andersherum fitten — Pfeile wandern mit
 
 align-brush-title = Pinsel
-align-brush-subtitle = Fläche malen, die das Matching ignorieren muss, auf beiden Netzen
-align-brush-hint-inverse = Ziehen löscht · Shift markiert · Shift+Rad skaliert
-align-brush-hint-mark = Ziehen markiert · Shift löscht · Shift+Rad skaliert
 align-brush-close-hint = Pinsel schließen — Markierungen bleiben
 align-brush-size = Pinselgröße
 align-brush-inverse = Pinsel invertieren
 align-brush-inverse-hint = Einfaches Ziehen löscht statt zu markieren. Shift kehrt wieder um
 align-brush-auto-radius = Automatischer Radius
 align-brush-auto-radius-hint = Radius des Netzbereichs an jedem Pfeilende
-align-brush-all-marked = Alles markiert — Matching ohne Wirkung
-align-brush-nothing-marked = Nichts markiert
-align-brush-percent-marked = { $pct }% aus dem Match markiert
 align-brush-size-status = Pinsel { $size } mm
-align-status-no-summary = Bei { $reach } mm Reichweite gibt es nichts zu messen — { $measured } von { $total } Vertices fanden den anderen Scan. Bewegen Sie die Scans näher zusammen oder erhöhen Sie die Reichweite unter „Weitere Einstellungen“.
+align-status-no-summary = Keine vergleichbare Oberfläche
 
 align-mask-fit-everywhere = Überall fitten
 align-mask-fit-everywhere-hint = Alle Markierungen löschen
@@ -541,22 +513,11 @@ align-status-aligned-points = Auf Punkten ausgerichtet
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Ausgerichtet — { $rms } mm auf den Punkten{ $dropped }. Per Feinabgleich festziehen.
-align-status-outlier = , Paar { $pairs } als Ausreißer ignoriert
-align-status-refined = Verfeinert — { $rms } mm über { $pct }% { $surface }{ $settled }{ $weak }
-align-status-surface = der Oberfläche
-align-status-surface-unmarked = der unmarkierten Oberfläche
-align-status-settled-limit = , am Iterationslimit gestoppt
-align-status-weak-slide =  — der Fit kann noch entlang { $axes } gleiten
-align-status-weak-turn =  — der Fit kann noch um { $axes } drehen
-align-status-weak-both =  — der Fit kann noch entlang { $sliding } gleiten und um { $spinning } drehen
-align-status-measured = { $pct }% innerhalb { $tol } mm, { $n ->
-    [one] { $n } Vertex ohne Messgegenüber{ $blind }
-   *[other] { $n } Vertices ohne Messgegenüber{ $blind }
-}
-align-status-blind-free =  — diese Flächen gleiten frei, dahinter kann sich eine beliebig große Verschiebung verbergen
-align-status-blind-hidden =  — eine starre Abweichung bis { $mm } mm kann sich so lesen
+align-status-aligned = Nach Punkten ausgerichtet — zuerst „Best fit matching“ ausführen.
+align-status-refined = Best fit bereit
+align-status-measured = Heatmap aktualisiert
 align-status-remeasure = { $reason } — Best-Fit-Matching erneut laufen lassen
+align-status-settings-changed = Matching-Einstellungen geändert
 align-brush-not-in-alignment = Dieser Scan gehört nicht zu dieser Ausrichtung
 align-drag-moving = { $name } wird von Hand bewegt
 align-drag-unrecorded = Von Hand bewegt, aber dieser Schritt landete nicht in der Historie — Strg+Z macht ihn nicht rückgängig
@@ -679,12 +640,15 @@ sculpt-applied-undo = Sculpting angewendet (Strg+Z macht rückgängig)
 sculpt-applied-locked = Sculpting angewendet (nicht rückgängig: Snapshot zu groß)
 sculpt-failed = Diese Ebene lässt sich nicht sculpten: { $detail }
 sculpt-worker-stopped = Sculpt-Worker angehalten: { $detail }
+sculpt-preparing = Sculpting wird vorbereitet…
+sculpt-nonuniform-scale = Sculpting benötigt eine gleichmäßig skalierte Mesh
 sculpt-failure-worker-panicked = Sculpt-Worker abgestürzt: { $detail }
 sculpt-failure-spawn = Sculpt-Worker konnte nicht gestartet werden: { $detail }
 sculpt-failure-kernel-pool = Sculpt-Kernel-Pool konnte nicht erstellt werden: { $detail }
 sculpt-failure-missing-undo-baseline = Für den Sculpt-Strich gibt es keine Undo-Basis
 sculpt-failure-shadow-poisoned = Sculpt-Shadow-Sperre ist vergiftet
 sculpt-failure-vertex-count-changed = Das Sculpt-Ergebnis hat die Vertex-Anzahl verändert
+sculpt-failure-topology-rebuild = Wiederherstellung der Sculpt-Topologie fehlgeschlagen: { $detail }
 sculpt-worker-unavailable = Sculpt-Worker nicht verfügbar
 sculpt-finishing = Stroke wird fertiggestellt…
 sculpt-finishing-history = Sculpting vor Historienwechsel fertigstellen…
@@ -733,14 +697,14 @@ cut-footer-thickness = Ziehen = Schwenken · Klick Kontur = Wandstärke · Recht
 align-fail-no-surface-fixed = Fixer Scan ohne brauchbare Oberfläche
 align-fail-no-surface-moving = Bewegter Scan ohne brauchbare Oberfläche
 align-fail-recolor = Messung vor dem Einfärben verworfen
-align-reject-toofew = Nur { $a } von { $b } Korrespondenzen — weiteren Pfeil setzen oder max. Einfluss erhöhen
-align-reject-unpaired = { $a } Punkte auf einem Scan, { $b } auf dem anderen — Punkt ohne Partner
-align-reject-degenerate-plain = Geklickte Punkte bestimmen keine Rotation — weiter streuen
-align-reject-degenerate-line = Geklickte Punkte liegen auf einer Geraden: Rotation um { $a } unbestimmt
-align-reject-unit = Scans unterscheiden sich um Faktor { $a } — wohl verschiedene Einheiten
-align-reject-apart = Fit lässt Scans { $a } mm auseinander statt aufeinander ({ $b } mm) — Pfeilpaare prüfen
-align-reject-runaway = Best-Fit wanderte { $a } mm, weiter als Scangröße ({ $b } mm) — erst Pfeilpaare setzen oder Einfluss senken
-align-reject-nonfinite = Geklickter Punkt oder Normale keine endliche Zahl
+align-reject-toofew = Weitere Pfeilpaare setzen oder Scans näher platzieren
+align-reject-unpaired = Beide Seiten jedes Pfeilpaares vervollständigen
+align-reject-degenerate-plain = Matching-Punkte über die Fläche verteilen
+align-reject-unit = Scans verwenden unterschiedliche Einheiten
+align-reject-apart = Pfeilpaare prüfen und Scans näher platzieren
+align-reject-runaway = Scans näher platzieren und Best-Fit-Matching erneut ausführen
+align-reject-no-improvement = Best-Fit konnte keine Verbesserung bestätigen — Scans näher platzieren und erneut versuchen
+align-reject-nonfinite = Ausgewählter Punkt oder Oberfläche ist ungültig
 align-status-stepped = Durch Historie gegangen
 align-status-moving-hand = Von Hand bewegt
 

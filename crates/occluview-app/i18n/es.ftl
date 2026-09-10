@@ -454,34 +454,12 @@ align-commit-done-hint = Conservar la alineación y cerrar — exporta para guar
 
 ## Deviation map — DRAFT.
 
-align-map-more = Más ajustes
 align-map-heatmap = Mapa de calor
 align-map-heatmap-hint = Colorear un escaneo por su distancia al otro
-align-map-range-label = rango
-align-map-preset-hint = Todo bajo { $min } mm cuenta como acuerdo, { $max } mm satura
-align-map-min = mín
+align-map-requires-refine = Ejecuta primero Best fit matching
 align-map-max = máx
-align-map-auto = auto
-align-map-auto-hint = Reajustar el rango a la medición
-align-map-advice-far = Las mallas distan { $mm } mm — alinéalas antes de leer el mapa
-align-map-advice-saturated = Casi todo pasa de { $mm } mm, colores pegados a los extremos — amplía el rango
-align-map-not-enough = Poca superficie para medir — { $measured } de { $total } vértices alcanzan el otro escaneo
-align-map-within = { $pct }% dentro de { $tol } mm
-align-map-rms = rms { $rms }
-align-map-grey-tooltip = Gris no es medición. Sin contraparte al alcance no se puede medir — un puente o diente en un solo escaneo es lo normal, no un error.
-align-map-grey-out = { $n } sin superficie opuesta
-align-map-grey-excluded = { $n } excluidos
-align-map-grey-unusable = { $n } inservibles en el archivo
-align-map-grey-total = { $total } vértices grises: { $parts }
 align-map-not-measured = no medido
 align-map-not-measured-hint = Ninguna superficie del otro escaneo al alcance de estos vértices. Un diente o puente en un solo escaneo es lo normal, no un error — no hay nada que medir.
-align-map-stepped = Bandas escalonadas
-align-map-stepped-hint = Escalonar la rampa en vez de fundirla
-align-map-colours = Colores
-align-map-ramp-distance = distancia
-align-map-ramp-distance-hint = Frío donde acuerdan, caliente donde no
-align-map-ramp-signed = con signo
-align-map-ramp-signed-hint = Azul bajo la superficie, verde nominal, rojo encima
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -493,20 +471,14 @@ align-pair-swap = Intercambiar
 align-pair-swap-hint = Ajustar al revés — las flechas van con él
 
 align-brush-title = Pincel
-align-brush-subtitle = Pinta la superficie que el ajuste debe ignorar, en ambas mallas
-align-brush-hint-inverse = Arrastrar borra · Shift marca · Shift+rueda redimensiona
-align-brush-hint-mark = Arrastrar marca · Shift borra · Shift+rueda redimensiona
 align-brush-close-hint = Cerrar el pincel — se conservan las marcas
 align-brush-size = tamaño del pincel
 align-brush-inverse = Pincel inverso
 align-brush-inverse-hint = Arrastrar pela en vez de marcar. Shift lo invierte
 align-brush-auto-radius = radio automático
 align-brush-auto-radius-hint = Radio del área conservada en cada extremo de flecha
-align-brush-all-marked = Todo marcado — el ajuste no tendrá efecto
-align-brush-nothing-marked = Nada marcado
-align-brush-percent-marked = { $pct }% marcado fuera del ajuste
 align-brush-size-status = Pincel { $size } mm
-align-status-no-summary = No hay nada que medir con un alcance de { $reach } mm — { $measured } de { $total } vértices encontraron el otro escaneo. Acerque los escaneos o amplíe el alcance en Más ajustes.
+align-status-no-summary = No hay superficie comparable
 
 align-mask-fit-everywhere = Ajustar en todas partes
 align-mask-fit-everywhere-hint = Limpiar todas las marcas
@@ -541,22 +513,11 @@ align-status-aligned-points = Alineado por puntos
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Alineado — { $rms } mm en los puntos{ $dropped }. Refina para asentar.
-align-status-outlier = , par { $pairs } ignorado como atípico
-align-status-refined = Refinado — { $rms } mm sobre el { $pct }% de { $surface }{ $settled }{ $weak }
-align-status-surface = la superficie
-align-status-surface-unmarked = la superficie sin marcar
-align-status-settled-limit = , parado en el límite de iteraciones
-align-status-weak-slide =  — el ajuste aún puede deslizar a lo largo de { $axes }
-align-status-weak-turn =  — el ajuste aún puede girar sobre { $axes }
-align-status-weak-both =  — el ajuste aún puede deslizar a lo largo de { $sliding } y girar sobre { $spinning }
-align-status-measured = { $pct }% dentro de { $tol } mm, { $n ->
-    [one] { $n } vértice sin nada que medir{ $blind }
-   *[other] { $n } vértices sin nada que medir{ $blind }
-}
-align-status-blind-free =  — estas superficies deslizan libres, tras esto puede ocultarse cualquier desplazamiento
-align-status-blind-hidden =  — un desajuste rígido de hasta { $mm } mm podría leerse igual
+align-status-aligned = Alineado por puntos — ejecuta Best fit matching para asentar las superficies.
+align-status-refined = Best fit listo
+align-status-measured = Mapa de calor actualizado
 align-status-remeasure = { $reason } — ejecuta el ajuste fino para medir de nuevo
+align-status-settings-changed = Ajustes de matching cambiados
 align-brush-not-in-alignment = Ese escaneo no es de esta alineación
 align-drag-moving = Moviendo { $name } a mano
 align-drag-unrecorded = Movido a mano, pero este paso no quedó en el historial — Ctrl+Z no lo deshará
@@ -679,12 +640,15 @@ sculpt-applied-undo = Esculpido aplicado (Ctrl+Z deshace)
 sculpt-applied-locked = Esculpido aplicado (sin deshacer: instantánea enorme)
 sculpt-failed = No se puede esculpir esta capa: { $detail }
 sculpt-worker-stopped = Proceso de esculpido detenido: { $detail }
+sculpt-preparing = Preparando el esculpido…
+sculpt-nonuniform-scale = El esculpido requiere una malla con escala uniforme
 sculpt-failure-worker-panicked = El proceso de esculpido falló: { $detail }
 sculpt-failure-spawn = No se pudo iniciar el proceso de esculpido: { $detail }
 sculpt-failure-kernel-pool = No se pudo crear el grupo de núcleos de esculpido: { $detail }
 sculpt-failure-missing-undo-baseline = El trazo de esculpido no tiene base para deshacer
 sculpt-failure-shadow-poisoned = El bloqueo de sombra de esculpido se corrompió
 sculpt-failure-vertex-count-changed = El resultado de esculpido cambió el número de vértices
+sculpt-failure-topology-rebuild = No se pudo reconstruir la topología del esculpido: { $detail }
 sculpt-worker-unavailable = Esculpido no disponible
 sculpt-finishing = Terminando trazo…
 sculpt-finishing-history = Terminando esculpido antes del historial…
@@ -853,13 +817,13 @@ align-markings-dropped = Marcas soltadas — la superficie cambió tras pintar
 align-fail-no-surface-fixed = El escaneo fijo no tiene superficie útil
 align-fail-no-surface-moving = El escaneo móvil no tiene superficie útil
 align-fail-recolor = Medición descartada antes de colorear
-align-reject-toofew = Solo { $a } de { $b } correspondencias — otra flecha, o sube influencia
-align-reject-unpaired = { $a } puntos en un escaneo y { $b } en el otro — sin pareja
-align-reject-degenerate-plain = Los puntos no fijan rotación — sepáralos
-align-reject-degenerate-line = Puntos en línea: giro sobre { $a } indeterminado
-align-reject-unit = Los escaneos difieren { $a }x en tamaño — distintas unidades
-align-reject-apart = El ajuste deja { $a } mm en vez de superponer ({ $b } mm) — revisa las parejas
-align-reject-runaway = El ajuste vagó { $a } mm, más que el escaneo ({ $b } mm) — pon flechas o baja influencia
-align-reject-nonfinite = Un punto o normal no es un número finito
+align-reject-toofew = Coloca más flechas o acerca los escaneos
+align-reject-unpaired = Completa ambos lados de cada flecha
+align-reject-degenerate-plain = Distribuye los puntos por la superficie
+align-reject-unit = Los escaneos usan unidades distintas
+align-reject-apart = Revisa las flechas y acerca los escaneos
+align-reject-runaway = Acerca los escaneos y repite Best fit matching
+align-reject-no-improvement = El ajuste no confirmó una mejora — acerca los escaneos e inténtalo de nuevo
+align-reject-nonfinite = El punto o la superficie seleccionados no son válidos
 align-status-stepped = Pasos por el historial
 align-status-moving-hand = Moviendo a mano

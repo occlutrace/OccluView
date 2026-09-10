@@ -4,16 +4,14 @@
 //! module is about getting two scans onto each other; this one is about reading
 //! how far apart they ended up, and it is the part an operator stares at.
 //!
-//! Everything above the fold is what a metrology tool puts in front of someone:
-//! the colour bar, one slider that scales it, and the numbers the colours stand
-//! for. Everything else only matters when something looks wrong, and lives
-//! behind "More settings".
+//! The working surface is deliberately small: one toggle, one legend, and one
+//! absolute deviation range. Fit diagnostics belong in logs, not in the window
+//! the operator is using to place two scans.
 
 use eframe::egui;
-use occluview_align::{DeviationStats, RampMode};
 
 use crate::align_panel::AlignPanelAction;
-use crate::align_worker::{AlignSettings, CLINICAL_CEILING_MM};
+use crate::align_worker::{AlignSettings, WORKING_MAX_MM, WORKING_SCALE_MIN_MM};
 use crate::icons::AppIcon;
 use crate::{align_overlay, ui_theme};
 
@@ -21,29 +19,26 @@ use crate::{align_overlay, ui_theme};
 pub(crate) fn show(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
-    stats: Option<DeviationStats>,
+    refined_match_ready: bool,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let mut action = toggle(ui, settings, locale);
-    if !settings.show_deviation {
+    // A persisted checkbox must not resurrect a map for a pose that was never
+    // refined in this session. The application state owns this invariant, but
+    // this presentation boundary also guards stale settings loaded from disk.
+    if !refined_match_ready {
+        settings.show_deviation = false;
+    }
+    let mut action = toggle(ui, settings, enabled && refined_match_ready, locale);
+    if !refined_match_ready || !settings.show_deviation {
         return action;
     }
 
+    settings.scale_mm = settings
+        .scale_mm
+        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
     align_overlay::paint_legend(ui, *settings, locale);
-    action = action.or(presets(ui, settings, enabled, locale));
     action = action.or(range(ui, settings, enabled, locale));
-    if let Some(stats) = stats {
-        numbers(ui, stats, settings.tolerance_mm, locale);
-        saturation(ui, stats, *settings, locale);
-    }
-    // "More settings" wording lives in `align-map-more`; the fold position
-    // (not its title) is what the structure tests pin.
-    ui.collapsing(locale.tr("align-map-more"), |ui| {
-        if details(ui, settings, locale) {
-            action = Some(AlignPanelAction::Measure);
-        }
-    });
     action
 }
 
@@ -51,6 +46,7 @@ pub(crate) fn show(
 fn toggle(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
+    enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
@@ -71,8 +67,15 @@ fn toggle(
         let mut shown = settings.show_deviation;
         // Toggle label "Heatmap" (spelling pinned by the test below).
         if ui
-            .checkbox(&mut shown, locale.tr("align-map-heatmap").as_str())
-            .on_hover_text(locale.tr("align-map-heatmap-hint"))
+            .add_enabled(
+                enabled,
+                egui::Checkbox::new(&mut shown, locale.tr("align-map-heatmap").as_str()),
+            )
+            .on_hover_text(if enabled {
+                locale.tr("align-map-heatmap-hint")
+            } else {
+                locale.tr("align-map-requires-refine")
+            })
             .changed()
         {
             settings.show_deviation = shown;
@@ -86,334 +89,38 @@ fn toggle(
     action
 }
 
-/// The standard ranges, one click each.
+/// Set the maximum absolute deviation shown by the heatmap.
 ///
-/// Dentistry works to a tenth of a millimetre, and a tool that makes an
-/// operator dial that in by hand every session is a tool that will be read at
-/// whatever range it happened to be left at. **0.10 mm** is the working range
-/// and the one the window opens on; the other two are the looser bands the same
-/// work uses. The table lives in `align_worker` so the chip that shows as active
-/// and the range the tool actually opens on cannot drift apart.
-fn presets(
-    ui: &mut egui::Ui,
-    settings: &mut AlignSettings,
-    enabled: bool,
-    locale: &crate::i18n::LocaleManager,
-) -> Option<AlignPanelAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(locale.tr("align-map-range-label"))
-                .size(11.0)
-                .color(ui_theme::text_muted()),
-        );
-        let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 3.0;
-        for (max_mm, min_mm) in crate::align_worker::CLINICAL_RANGES {
-            let active = (settings.scale_mm - max_mm).abs() < f64::EPSILON
-                && (settings.tolerance_mm - min_mm).abs() < f64::EPSILON;
-            if crate::align_panel::chip(ui, width, None, &format!("{max_mm:.2}"), enabled, active)
-                .on_hover_text(locale.tr_with(
-                    "align-map-preset-hint",
-                    &[
-                        ("min", &format!("{min_mm:.3}")),
-                        ("max", &format!("{max_mm:.2}")),
-                    ],
-                ))
-                .clicked()
-            {
-                settings.scale_mm = max_mm;
-                settings.tolerance_mm = min_mm;
-                settings.auto_scale = false;
-                action = Some(AlignPanelAction::Measure);
-            }
-        }
-    });
-    action
-}
-
-/// The two numbers the operator's dental CAD software exposes: the minimum
-/// and the maximum distance.
-///
-/// Directly under the bar they define — the arrangement every metrology tool
-/// uses, because the bar is the legend for the sliders. They are not decoration
-/// either: **min** is the nominal band, so everything closer than it is painted
-/// one colour, and **max** is where the ramp saturates.
+/// Zero is always the blue origin. The upper stop is intentionally bounded at
+/// 0.10 mm, so values beyond the selected range are hot red instead of opening
+/// an unbounded clinical-scale control that hides small discrepancies.
 fn range(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let mut action = None;
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Slider::new(&mut settings.tolerance_mm, 0.005..=0.10)
-                .suffix(" mm")
-                .fixed_decimals(3)
-                .text(locale.tr("align-map-min").as_str()),
+    settings.scale_mm = settings
+        .scale_mm
+        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
+    settings.auto_scale = false;
+    ui.add_enabled(
+        enabled,
+        egui::Slider::new(
+            &mut settings.scale_mm,
+            WORKING_SCALE_MIN_MM..=WORKING_MAX_MM,
         )
-        .drag_stopped()
-    {
-        action = Some(AlignPanelAction::Measure);
-    }
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                enabled,
-                egui::Slider::new(&mut settings.scale_mm, 0.05..=CLINICAL_CEILING_MM)
-                    .suffix(" mm")
-                    .fixed_decimals(2)
-                    .text(locale.tr("align-map-max").as_str()),
-            )
-            .drag_stopped()
-        {
-            // Their range now, not the tool's.
-            settings.auto_scale = false;
-            action = Some(AlignPanelAction::Measure);
-        }
-        if !settings.auto_scale
-            && ui
-                .small_button(locale.tr("align-map-auto").as_str())
-                .on_hover_text(locale.tr("align-map-auto-hint"))
-                .clicked()
-        {
-            settings.auto_scale = true;
-            action = Some(AlignPanelAction::Measure);
-        }
-    });
-    action
-}
-
-/// Say so when the range is far too small for what was measured.
-///
-/// This is the state behind the map an operator called a thermal camera: a
-/// 0.20 mm range over a pair sitting 1.4 mm apart pins every vertex to an end
-/// stop, and the arch comes out as a red and blue mosaic with no structure in
-/// it. The colours are not wrong — the range is — and nothing on screen said so.
-fn saturation(
-    ui: &mut egui::Ui,
-    stats: DeviationStats,
-    settings: AlignSettings,
-    locale: &crate::i18n::LocaleManager,
-) {
-    if let Some(text) = saturation_advice(stats, settings, locale) {
-        ui.label(egui::RichText::new(text).size(10.5).color(ui_theme::text()));
-    }
-}
-
-/// Which sentence the saturation warning is, or none if the range is fine.
-///
-/// Split from the drawing above so the decision can be run in a test. Left
-/// inside the `egui` call it was only reachable by a test that read this file's
-/// own source text as a string — which passes on a logic change and fails on a
-/// rename, the exact opposite of what a test is for.
-fn saturation_advice(
-    stats: DeviationStats,
-    settings: AlignSettings,
-    locale: &crate::i18n::LocaleManager,
-) -> Option<String> {
-    let summary = stats.summary.filter(|summary| summary.p95.is_finite())?;
-    if summary.p95 <= settings.scale_mm {
-        return None;
-    }
-    // The advice has to be the advice that helps, and past the clinical ceiling
-    // a wider range is not it: a map of two meshes millimetres apart is a
-    // picture of an alignment that has not happened, and widening the range
-    // only makes a prettier picture of the same thing.
-    Some(if summary.p95 > CLINICAL_CEILING_MM {
-        locale.tr_with(
-            "align-map-advice-far",
-            &[("mm", &format!("{:.1}", summary.p95))],
-        )
-    } else {
-        locale.tr_with(
-            "align-map-advice-saturated",
-            &[("mm", &format!("{:.2}", settings.scale_mm))],
-        )
-    })
-}
-
-/// The numbers behind the colours, including what could not be measured.
-///
-/// When there was not enough measured surface to characterise, this says so
-/// instead of printing a figure. A "0.000" in the one field a clinician reads
-/// is indistinguishable from two surfaces that coincide perfectly.
-fn numbers(
-    ui: &mut egui::Ui,
-    stats: DeviationStats,
-    tolerance_mm: f64,
-    locale: &crate::i18n::LocaleManager,
-) {
-    let Some(summary) = stats.summary else {
-        ui.label(
-            egui::RichText::new(
-                locale.tr_with(
-                    "align-map-not-enough",
-                    &[
-                        ("measured", &stats.measured.to_string()),
-                        (
-                            "total",
-                            &stats
-                                .measured
-                                .saturating_add(stats.unmeasured.total())
-                                .to_string(),
-                        ),
-                    ],
-                ),
-            )
-            .size(11.0)
-            .color(ui_theme::text()),
-        );
-        grey_note(ui, stats, locale);
-        return;
-    };
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(locale.tr_with(
-                "align-map-within",
-                &[
-                    ("pct", &format!("{:.0}", summary.within_tolerance * 100.0)),
-                    ("tol", &format!("{tolerance_mm:.2}")),
-                ],
-            ))
-            .size(11.0)
-            .color(ui_theme::text()),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(
-                    locale.tr_with("align-map-rms", &[("rms", &format!("{:.3}", summary.rms))]),
-                )
-                .size(11.0)
-                .color(ui_theme::text_muted()),
-            );
-        });
-    });
-    grey_note(ui, stats, locale);
-}
-
-/// What the grey on the surface means, cause by cause.
-///
-/// An operator looked at a bridge that exists on one arch and not the other,
-/// found it grey, and read that as a bug. It is not: there is nothing opposite
-/// it to measure to. But the same grey also covers a region they painted out and
-/// a region whose vertices are broken data, and one lump total — "N vertices had
-/// nothing to measure" — said all three at once.
-fn grey_note(ui: &mut egui::Ui, stats: DeviationStats, locale: &crate::i18n::LocaleManager) {
-    if let Some(text) = grey_sentence(stats, locale) {
-        ui.label(
-            egui::RichText::new(text)
-                .size(10.0)
-                .color(ui_theme::text_muted()),
-        )
-        .on_hover_text(locale.tr("align-map-grey-tooltip"));
-    }
-}
-
-/// The sentence naming what is grey, or none if nothing is.
-///
-/// Split from the drawing above so the wording can be run in a test.
-fn grey_sentence(stats: DeviationStats, locale: &crate::i18n::LocaleManager) -> Option<String> {
-    let grey = stats.unmeasured;
-    if grey.total() == 0 {
-        return None;
-    }
-    let mut parts: Vec<String> = Vec::new();
-    if grey.out_of_reach > 0 {
-        parts.push(locale.tr_with(
-            "align-map-grey-out",
-            &[("n", &grey.out_of_reach.to_string())],
-        ));
-    }
-    if grey.excluded > 0 {
-        parts.push(locale.tr_with(
-            "align-map-grey-excluded",
-            &[("n", &grey.excluded.to_string())],
-        ));
-    }
-    if grey.unusable > 0 {
-        parts.push(locale.tr_with(
-            "align-map-grey-unusable",
-            &[("n", &grey.unusable.to_string())],
-        ));
-    }
-    Some(locale.tr_with(
-        "align-map-grey-total",
-        &[
-            ("total", &grey.total().to_string()),
-            ("parts", &parts.join(", ")),
-        ],
-    ))
-}
-
-/// The knobs that only matter when something looks wrong.
-fn details(
-    ui: &mut egui::Ui,
-    settings: &mut AlignSettings,
-    locale: &crate::i18n::LocaleManager,
-) -> bool {
-    let mut changed = false;
-    let mut banded = settings.bands.is_some();
-    if ui
-        .checkbox(&mut banded, locale.tr("align-map-stepped").as_str())
-        .on_hover_text(locale.tr("align-map-stepped-hint"))
-        .changed()
-    {
-        settings.bands = banded.then_some(10);
-        changed = true;
-    }
-    changed |= colours(ui, &mut settings.ramp_mode, locale);
-    changed
-}
-
-/// Which colour scheme the map paints with.
-fn colours(ui: &mut egui::Ui, mode: &mut RampMode, locale: &crate::i18n::LocaleManager) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(locale.tr("align-map-colours"))
-                .size(11.0)
-                .color(ui_theme::text_muted()),
-        );
-        for (value, label_key, hint_key) in [
-            (
-                RampMode::Magnitude,
-                "align-map-ramp-distance",
-                "align-map-ramp-distance-hint",
-            ),
-            (
-                RampMode::Signed,
-                "align-map-ramp-signed",
-                "align-map-ramp-signed-hint",
-            ),
-        ] {
-            if ui
-                .selectable_label(*mode == value, locale.tr(label_key).as_str())
-                .on_hover_text(locale.tr(hint_key))
-                .clicked()
-                && *mode != value
-            {
-                *mode = value;
-                changed = true;
-            }
-        }
-    });
-    changed
+        .suffix(" mm")
+        .fixed_decimals(2)
+        .text(locale.tr("align-map-max").as_str()),
+    )
+    .drag_stopped()
+    .then_some(AlignPanelAction::Measure)
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic)]
-    #![allow(clippy::expect_used)]
-
-    use super::grey_sentence;
-    use crate::align_worker::AlignSettings;
-    use occluview_align::{DeviationStats, DeviationSummary, Unmeasured};
-
-    fn english() -> crate::i18n::LocaleManager {
-        crate::i18n::LocaleManager::for_tests()
-    }
 
     /// The production half of this file: a source-contract test that scanned
     /// its own assertions would pass or fail on its own text.
@@ -424,198 +131,55 @@ mod tests {
             .map_or(source, |(before, _)| before)
     }
 
-    /// The control is named for the thing, not for what it does: "Show distance"
-    /// described a checkbox. **Heatmap**, one word — the earlier spelling was
-    /// "Hitmap", which in English is a map of where something struck rather than a
-    /// map of how hot it is, and the icon next to it was spelt correctly all along.
     #[test]
     fn the_map_is_called_what_the_operator_calls_it() {
         let source = production();
-        assert!(source.contains("\"Heatmap\""));
+        assert!(source.contains("align-map-heatmap"));
         assert!(
-            !source.contains("Hitmap"),
+            !source.contains("Hitmap") && !source.contains("hitmap"),
             "the misspelling is back in the interface"
         );
     }
 
-    /// The two numbers that define the bar are the operator's dental CAD
-    /// software's minimum and maximum distance, and both belong in front of
-    /// the operator: min is the nominal band and max is where the ramp
-    /// saturates, so a map cannot be read without them.
     #[test]
-    fn the_minimum_and_maximum_distance_are_in_front_of_the_operator() {
-        let show = production()
-            .split_once("pub(crate) fn show(")
-            .and_then(|(_, rest)| rest.split_once("\n/// The one control"))
-            .map(|(body, _)| body)
-            .expect("the block's own body");
-        let fold = show
-            .find("ui.collapsing(")
-            .expect("a fold to put the diagnostics behind");
-        let drawn = show
-            .find("range(ui, settings, enabled, locale)")
-            .expect("the range controls");
-        assert!(drawn < fold, "the range controls are behind the fold");
-    }
-
-    /// The map an operator called a thermal camera was a correct map over a
-    /// range seven times too small. Nothing on screen said so.
-    ///
-    /// And the advice has to be the advice that helps: past the clinical
-    /// ceiling a wider range is not it, because the picture is of an alignment
-    /// that has not happened yet.
-    #[test]
-    fn a_range_too_small_for_the_measurement_says_so() {
-        let locale = english();
-        let at = |p95: f64, scale_mm: f64| {
-            super::saturation_advice(
-                DeviationStats {
-                    measured: 1_000,
-                    unmeasured: Unmeasured::default(),
-                    summary: Some(DeviationSummary {
-                        within_tolerance: 0.0,
-                        mean_abs: p95 / 2.0,
-                        rms: p95 / 2.0,
-                        median: p95 / 2.0,
-                        p95,
-                        max_abs: p95,
-                    }),
-                },
-                AlignSettings {
-                    scale_mm,
-                    ..AlignSettings::default()
-                },
-                &locale,
-            )
-        };
-
-        assert!(
-            at(0.05, 0.20).is_none(),
-            "a range that already covers the measurement needs no warning"
-        );
-
-        let pinned = at(0.40, 0.20).expect("a measurement past the range must say so");
-        assert!(
-            pinned.contains("the colours are pinned to the ends"),
-            "got: {pinned}"
-        );
-
-        // Past the clinical ceiling the honest advice changes: widening the
-        // range only makes a prettier picture of an alignment that has not
-        // happened. This is the state the operator called a thermal camera.
-        let apart = at(1.40, 0.20).expect("meshes millimetres apart must say so");
-        assert!(
-            apart.contains("align them before reading the map"),
-            "got: {apart}"
-        );
-        assert!(
-            at(f64::NAN, 0.20).is_none(),
-            "a non-finite measurement must not produce advice"
-        );
-    }
-
-    /// A measurement that never happened has no range to advise about.
-    #[test]
-    fn nothing_measured_produces_no_advice_at_all() {
-        let advice = super::saturation_advice(
-            DeviationStats {
-                measured: 0,
-                unmeasured: Unmeasured {
-                    out_of_reach: 900_000,
-                    ..Unmeasured::default()
-                },
-                summary: None,
-            },
-            AlignSettings::default(),
-            &english(),
-        );
-        assert!(advice.is_none());
-    }
-
-    /// A reading needs the bar, the scale, and the numbers. Everything else is
-    /// a diagnostic, and diagnostics in front of the operator are what turned
-    /// this block into the wall of knobs it replaced.
-    #[test]
-    fn the_rarely_used_knobs_are_only_reachable_through_the_fold() {
+    fn the_working_panel_has_no_persistent_diagnostic_wall() {
         let source = production();
-        let fold = source
-            .find("ui.collapsing(")
-            .expect("a fold to put the diagnostics behind");
-        let call = source
-            .find("details(ui, settings, locale)")
-            .expect("the diagnostics are drawn by details");
-        assert!(fold < call, "the diagnostics must be drawn inside the fold");
-        // Knob labels resolve through the catalog; the keys are what the
-        // panel must reference behind the fold.
-        for knob in ["align-map-stepped", "align-map-colours"] {
-            // A knob that has been renamed or deleted used to satisfy this:
-            // `unwrap_or(usize::MAX)` made a missing needle the largest
-            // possible position, which is always after the fold.
-            let quoted = format!("\"{knob}\"");
-            let Some(at) = source.find(&quoted) else {
-                panic!("{knob} is not in the panel at all");
-            };
-            assert!(at > fold, "{knob} sits in front of the operator");
+        for diagnostic in [
+            "numbers(ui",
+            "saturation(ui",
+            "grey_note(ui",
+            "align-map-within",
+            "align-map-rms",
+            "align-map-grey-",
+            "align-map-advice-",
+        ] {
+            assert!(
+                !source.contains(diagnostic),
+                "working heatmap panel still renders removed diagnostic {diagnostic}"
+            );
         }
     }
-    /// Grey is named, cause by cause, and the wording says which is which.
-    ///
-    /// One grey on screen with three meanings behind it. An operator found a
-    /// bridge that exists on one arch only painted grey, read it as a bug, and
-    /// there was nothing on screen to tell them otherwise: the panel reported one
-    /// lump total, "N vertices had nothing to measure", for all three causes.
+
     #[test]
-    fn the_grey_on_the_surface_is_named_by_its_reason() {
-        let stats = |unmeasured| DeviationStats {
-            measured: 100,
-            unmeasured,
-            summary: None,
-        };
-
-        assert_eq!(
-            grey_sentence(stats(Unmeasured::default()), &english()),
-            None,
-            "nothing grey, nothing to say"
-        );
-
-        let anatomy = grey_sentence(
-            stats(Unmeasured {
-                out_of_reach: 7,
-                ..Unmeasured::default()
-            }),
-            &english(),
-        )
-        .expect("seven grey vertices are worth a sentence");
-        assert!(anatomy.contains('7'), "got {anatomy}");
+    fn the_working_panel_has_one_bounded_absolute_range() {
+        let source = production();
+        assert!(source.contains("range(ui, settings, enabled, locale)"));
+        assert!(source.contains("WORKING_SCALE_MIN_MM..=WORKING_MAX_MM"));
+        assert!(source.contains(".clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM)"));
         assert!(
-            anatomy.contains("no surface opposite"),
-            "a missing counterpart is anatomy, not an error: {anatomy}"
+            !source.contains("CLINICAL_CEILING_MM")
+                && !source.contains("CLINICAL_RANGES")
+                && !source.contains("align-map-min")
+                && !source.contains("align-map-auto")
         );
-        assert!(
-            !anatomy.contains("marked out") && !anatomy.contains("unusable"),
-            "causes that did not occur must not be listed: {anatomy}"
-        );
+    }
 
-        let mixed = grey_sentence(
-            stats(Unmeasured {
-                excluded: 2,
-                out_of_reach: 3,
-                unusable: 4,
-            }),
-            &english(),
-        )
-        .expect("nine grey vertices");
-        // Interpolated counts carry Fluent bidi isolation marks by design.
-        assert!(
-            mixed.starts_with("\u{2068}9\u{2069} vertices grey"),
-            "got {mixed}"
-        );
-        for named in [
-            "\u{2068}3\u{2069} with no surface opposite",
-            "\u{2068}2\u{2069} marked out",
-            "\u{2068}4\u{2069} unusable",
-        ] {
-            assert!(mixed.contains(named), "{named} missing from {mixed}");
-        }
+    #[test]
+    fn the_map_is_locked_until_a_refined_match_lands() {
+        let source = production();
+        assert!(source.contains("if !refined_match_ready"));
+        assert!(source.contains("settings.show_deviation = false"));
+        assert!(source.contains("enabled && refined_match_ready"));
+        assert!(source.contains("align-map-requires-refine"));
     }
 }

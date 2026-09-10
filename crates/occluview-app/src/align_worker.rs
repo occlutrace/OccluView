@@ -15,29 +15,18 @@ use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
     deviation, deviation_stats, fit_pairs, observability, ramp_color, refine, CancelFlag,
-    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, IcpReport,
-    Observability, Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex,
-    Validity, NO_DATA_COLOR,
+    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability,
+    Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex, Validity,
+    NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 /// Initial display maximum, in millimetres.
 pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+/// Absolute zero of the operator-controlled deviation display range.
+pub(crate) const WORKING_SCALE_MIN_MM: f64 = 0.0;
 /// Initial nominal tolerance band, in millimetres.
-pub(crate) const WORKING_MIN_MM: f64 = 0.005;
-/// The nominal band of the standard range, in millimetres.
-pub(crate) const CLINICAL_MIN_MM: f64 = 0.01;
-/// Standard display maximum, in millimetres.
-pub(crate) const CLINICAL_MAX_MM: f64 = 0.20;
-/// Maximum display scale exposed by the panel, in millimetres.
-pub(crate) const CLINICAL_CEILING_MM: f64 = 1.0;
-
-/// Standard display ranges as `(maximum, tolerance)`, tightest first.
-pub(crate) const CLINICAL_RANGES: [(f64, f64); 3] = [
-    (WORKING_MAX_MM, WORKING_MIN_MM),
-    (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
-    (0.50, 0.02),
-];
+pub(crate) const WORKING_MIN_MM: f64 = 0.01;
 
 /// Operator-facing knobs, in the operator's units.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,8 +60,8 @@ impl Default for AlignSettings {
             orientation: Orientation::Match,
             // Start at the tightest standard range; manual changes remain
             // stable until the operator selects another range.
-            scale_mm: CLINICAL_RANGES[0].0,
-            tolerance_mm: CLINICAL_RANGES[0].1,
+            scale_mm: WORKING_MAX_MM,
+            tolerance_mm: WORKING_MIN_MM,
             bands: None,
             // Magnitude is the default display mode; signed values are an
             // optional diagnostic.
@@ -103,12 +92,25 @@ impl AlignSettings {
 
     fn ramp(self) -> RampSettings {
         RampSettings {
-            scale_mm: self.scale_mm,
+            scale_mm: self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
             tolerance_mm: self.tolerance_mm,
-            bands: self.bands,
+            // The operator-facing Align Meshes map is one continuous absolute
+            // scale. Keep the field only for loading old state; never let that
+            // legacy value quantize a production measurement.
+            bands: None,
             mode: self.ramp_mode,
         }
     }
+}
+
+/// Whether a settings edit changes the optimizer's interpretation of a fit.
+/// Display range and visibility are deliberately excluded: they can recolour
+/// an already landed measurement, while these three inputs require a new Best
+/// fit result before the heatmap may describe the session again.
+pub(crate) fn matching_inputs_changed(before: AlignSettings, after: AlignSettings) -> bool {
+    before.matching_ratio.to_bits() != after.matching_ratio.to_bits()
+        || before.influence_radius_mm.to_bits() != after.influence_radius_mm.to_bits()
+        || before.orientation != after.orientation
 }
 
 /// One correspondence, already in the frame each stage wants: the moving point
@@ -218,8 +220,6 @@ pub(crate) enum AlignOutcome {
     Aligned {
         /// The new layer pose.
         pose: Rigid,
-        /// Root-mean-square pair residual, in millimetres.
-        rms: f64,
         /// Pairs dropped as outliers.
         rejected: Vec<u32>,
     },
@@ -227,8 +227,6 @@ pub(crate) enum AlignOutcome {
     Refined {
         /// The new layer pose.
         pose: Rigid,
-        /// Diagnostics the panel reports.
-        report: Box<IcpReport>,
     },
     /// A measurement landed.
     Measured {
@@ -512,10 +510,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
     match surface_job {
         SurfaceJob::Refine => {
             match refine(moving, index, job.pose, &job.settings.refine(), cancel) {
-                Ok(report) => AlignOutcome::Refined {
-                    pose: report.rigid,
-                    report: Box::new(report),
-                },
+                Ok(report) => AlignOutcome::Refined { pose: report.rigid },
                 Err(rejection) => AlignOutcome::Failed {
                     rejection: AlignFailure::Fit(rejection),
                 },
@@ -571,14 +566,14 @@ fn paint(
     stats: DeviationStats,
     seen: Option<Observability>,
 ) -> AlignOutcome {
-    // Automatic scaling exposes measured structure while preserving the
-    // configured tolerance band.
+    // Automatic scaling exposes measured structure while keeping the selected
+    // working range bounded; tolerance remains a statistics threshold only.
     let mut ramp = job.settings.ramp();
     if job.settings.auto_scale {
         // Leave room above the nominal band for a readable gradient.
         ramp.scale_mm = suggested_scale_mm(&stats)
             .max(job.settings.tolerance_mm * BAND_HEADROOM)
-            .min(CLINICAL_CEILING_MM);
+            .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
     }
     AlignOutcome::Measured {
         colors: color_map(map, &ramp),
@@ -663,7 +658,6 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     ) {
         Ok(fit) => AlignOutcome::Aligned {
             pose: fit.rigid,
-            rms: fit.pair_rms,
             rejected: fit.rejected,
         },
         Err(rejection) => AlignOutcome::Failed {

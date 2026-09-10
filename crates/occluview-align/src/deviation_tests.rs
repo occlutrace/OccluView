@@ -233,6 +233,51 @@ fn the_magnitude_ramp_is_cool_at_nothing_and_hot_at_the_scale() {
     );
 }
 
+#[test]
+fn the_working_ramp_is_continuous_from_zero_to_tenth_and_clamps_above_it() {
+    let ramp = RampSettings {
+        scale_mm: 0.10,
+        tolerance_mm: 0.01,
+        mode: RampMode::Magnitude,
+        ..RampSettings::default()
+    };
+    let zero = ramp_color(0.0, &ramp);
+    assert_eq!(zero, [20, 50, 235, 255]);
+    assert_ne!(
+        ramp_color(0.005, &ramp),
+        zero,
+        "tolerance must not flatten nonzero measured deviations"
+    );
+    assert_eq!(
+        ramp_color(0.10, &ramp),
+        [252, 30, 18, 255],
+        "0.10 mm is the hot endpoint"
+    );
+    assert_eq!(
+        ramp_color(0.101, &ramp),
+        ramp_color(10.0, &ramp),
+        "everything past the selected maximum must stay red"
+    );
+}
+
+#[test]
+fn an_absolute_zero_range_keeps_zero_blue_and_marks_any_error_red() {
+    let ramp = RampSettings {
+        scale_mm: 0.0,
+        tolerance_mm: 0.01,
+        mode: RampMode::Magnitude,
+        ..RampSettings::default()
+    };
+    assert_eq!(ramp_color(0.0, &ramp), [20, 50, 235, 255]);
+    assert_eq!(ramp_color(0.000_001, &ramp), [252, 30, 18, 255]);
+    assert_eq!(ramp_color(-0.000_001, &ramp), [252, 30, 18, 255]);
+}
+
+#[test]
+fn the_shared_ramp_defaults_to_absolute_deviation() {
+    assert_eq!(RampSettings::default().mode, RampMode::Magnitude);
+}
+
 /// The two assertions the "always blue" report needed. A ramp that never
 /// leaves its first stop looks exactly like a correct one at the origin,
 /// so checking the ends is not enough: this walks the whole scale and
@@ -290,7 +335,13 @@ fn the_signed_ramp_is_blue_below_and_red_above() {
         signed_mm: vec![-0.5, 0.0, 0.5],
         validity: vec![Validity::Measured; 3],
     };
-    let colors = deviation_colors(&map, &RampSettings::default());
+    let colors = deviation_colors(
+        &map,
+        &RampSettings {
+            mode: RampMode::Signed,
+            ..RampSettings::default()
+        },
+    );
     assert!(colors[0][2] > colors[0][0], "the negative end must be blue");
     assert!(colors[2][0] > colors[2][2], "the positive end must be red");
     assert!(
@@ -309,46 +360,44 @@ fn banded_mode_quantizes_neighbouring_values_to_one_color() {
         validity: vec![Validity::Measured; 2],
     };
     let ramp = RampSettings {
+        scale_mm: 0.5,
         bands: Some(10),
         ..RampSettings::default()
     };
     let colors = deviation_colors(&map, &ramp);
     assert_eq!(colors[0], colors[1], "one band must be one colour");
 
-    let continuous = deviation_colors(&map, &RampSettings::default());
+    let continuous = deviation_colors(
+        &map,
+        &RampSettings {
+            scale_mm: 0.5,
+            ..RampSettings::default()
+        },
+    );
     assert_ne!(
         continuous[0], continuous[1],
         "the continuous ramp must still separate them"
     );
 }
 
-/// The fix for the map an operator called a thermal camera.
-///
-/// Two arch scans that agree to within scan noise used to come out as
-/// speckle, because every twenty-micron wobble got its own hue. Everything
-/// inside the tolerance now lands on ONE nominal colour, so what is left
-/// burning is what genuinely differs.
 #[test]
-fn everything_inside_the_tolerance_is_one_nominal_colour() {
-    let ramp = RampSettings {
-        scale_mm: 2.0,
-        tolerance_mm: 0.2,
-        bands: None,
-        mode: RampMode::Signed,
+fn tolerance_changes_statistics_not_map_colour() {
+    let narrow = RampSettings {
+        scale_mm: 0.10,
+        tolerance_mm: 0.005,
+        ..RampSettings::default()
     };
-    let nominal = ramp_color(0.0, &ramp);
-    for value in [-0.19, -0.1, -0.02, 0.0, 0.02, 0.1, 0.19] {
+    let wide = RampSettings {
+        tolerance_mm: 0.20,
+        ..narrow
+    };
+    for value in [0.0, 0.002, 0.01, 0.05, 0.10, 0.25] {
         assert_eq!(
-            ramp_color(value, &ramp),
-            nominal,
-            "{value} mm is inside the tolerance and must read nominal"
+            ramp_color(value, &narrow),
+            ramp_color(value, &wide),
+            "tolerance must not change the colour at {value} mm"
         );
     }
-    // And the ramp still has to move the moment it leaves the band, or the
-    // band would just be a wider dead zone.
-    assert_ne!(ramp_color(0.6, &ramp), nominal);
-    assert_ne!(ramp_color(-0.6, &ramp), nominal);
-    assert_ne!(ramp_color(0.6, &ramp), ramp_color(-0.6, &ramp));
 }
 
 /// The band is the operator's tolerance, and they can set one wider than

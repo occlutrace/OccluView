@@ -5,7 +5,7 @@
 //! in [`super::app_align_results`].
 
 use eframe::egui;
-use glam::{DVec3, Vec3};
+use glam::{Affine3A, DVec3, Vec3, Vec3A};
 use occluview_align::Rigid;
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
@@ -99,6 +99,8 @@ impl OccluViewApp {
         for layer in named {
             if !live.contains(&layer) {
                 self.tools.align.tool.forget_layer(layer);
+                self.tools.align.refined_match_ready = false;
+                self.tools.align.settings.show_deviation = false;
                 // The mask indexes that layer's vertices. Left behind, it would
                 // be handed to the next pair and exclude an arbitrary region of
                 // a different scan, with nothing on screen to say so.
@@ -126,6 +128,7 @@ impl OccluViewApp {
     /// Two tools sharing the primary click would fight over every gesture, so
     /// arming one disarms the rest.
     pub(super) fn arm_align_tool(&mut self, ctx: &egui::Context) {
+        self.abort_sculpt_stroke();
         self.tools.sculpt.disarm();
         self.tools.measure.disarm();
         self.tools.cut_view.disable();
@@ -160,9 +163,21 @@ impl OccluViewApp {
         // about — and the stale gesture was still live the next time the tool
         // opened.
         self.finish_align_drag();
+        self.reset_align_state_for_scene_clear();
+        ctx.request_repaint();
+    }
+
+    /// Revoke every alignment claim before the scene it describes disappears.
+    ///
+    /// This is shared by normal tool teardown and the last-layer scene clear.
+    /// The latter has no UI context to pass to `disarm_align_tool`, but it still
+    /// must cancel jobs and remove overlays before a new scene can reuse a layer
+    /// id.
+    pub(super) fn reset_align_state_for_scene_clear(&mut self) {
         self.tools.align.drag = None;
         self.clear_deviation_overlay();
         self.clear_align_mask();
+        self.tools.align.refined_match_ready = false;
         // Tens of megabytes of cached arrays belong to a session the operator
         // has just left.
         self.tools.align.geometry.clear();
@@ -183,7 +198,6 @@ impl OccluViewApp {
         // still on.
         self.tools.align.tab = crate::align_panel::AlignTab::default();
         self.tools.align.constraint = crate::align_drag::DragConstraint::default();
-        ctx.request_repaint();
     }
 
     /// A layer's name, the way the operator named the file.
@@ -265,9 +279,11 @@ impl OccluViewApp {
         let point = AlignPoint {
             layer: hit.layer_id,
             local: inverse.transform_point3(hit.point),
-            normal: inverse
-                .transform_vector3(triangle_normal(entry, hit.triangle_index))
-                .normalize_or_zero(),
+            // `triangle_normal` is calculated from the mesh's local vertices.
+            // Do not apply the layer inverse a second time: on a rotated layer
+            // that would put the normal in the wrong frame while the point
+            // remains local, poisoning the two-pair frame fit.
+            normal: triangle_normal(entry, hit.triangle_index),
         };
 
         self.tools.align.status = Some(match self.tools.align.tool.click(point) {
@@ -300,7 +316,16 @@ impl OccluViewApp {
 
     /// Submit a deviation measurement.
     pub(super) fn run_align_measure(&mut self) {
+        if !self.tools.align.refined_match_ready || !self.tools.align.settings.show_deviation {
+            return;
+        }
         self.submit_align_job(AlignJobKind::Measure, Vec::new());
+    }
+
+    /// Keep a queued measurement tied to the visible, currently authorized map.
+    fn align_measure_allowed(&self, kind: AlignJobKind) -> bool {
+        kind != AlignJobKind::Measure
+            || (self.tools.align.refined_match_ready && self.tools.align.settings.show_deviation)
     }
 
     /// The clicked pairs, with the moving half in its layer's local frame and
@@ -328,11 +353,7 @@ impl OccluViewApp {
                 moving: double(pair.moving.local),
                 moving_normal: double(pair.moving.normal),
                 fixed: double(fixed_pose.transform_point3(pair.fixed.local)),
-                fixed_normal: double(
-                    fixed_pose
-                        .transform_vector3(pair.fixed.normal)
-                        .normalize_or_zero(),
-                ),
+                fixed_normal: double(transform_world_normal(fixed_pose, pair.fixed.normal)),
             })
             .collect()
     }
@@ -342,6 +363,9 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
+        if !self.align_measure_allowed(kind) {
+            return;
+        }
         if self.tools.align.worker.is_none() {
             return;
         }
@@ -496,9 +520,22 @@ fn double(value: Vec3) -> DVec3 {
     DVec3::new(f64::from(value.x), f64::from(value.y), f64::from(value.z))
 }
 
+/// Transform a surface normal through a possibly scaled scene instance. A
+/// normal is a covector: direct vector transformation is only correct for a
+/// rigid transform, while inverse-transpose preserves perpendicularity under
+/// non-uniform scale or shear. A singular transform yields zero and is then
+/// refused by the two-point fit instead of inventing a direction.
+fn transform_world_normal(transform: Affine3A, local: Vec3) -> Vec3 {
+    let world = Vec3::from(transform.matrix3.inverse().transpose() * Vec3A::from(local));
+    world.normalize_or_zero()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
+
+    use super::transform_world_normal;
+    use glam::{Affine3A, Vec3};
 
     /// The whole reason the worker exists. A full arch is hundreds of
     /// thousands of triangles; calling a stage inline would freeze the window
@@ -532,6 +569,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
+        let source = production();
+        assert!(
+            source.contains("normal: triangle_normal(entry, hit.triangle_index)"),
+            "a triangle normal is already local and must not be inverse-transformed twice"
+        );
+        assert!(
+            !source.contains("transform_vector3(triangle_normal(entry, hit.triangle_index))"),
+            "pair refinement must not receive a normal in a second inverse-transformed frame"
+        );
+    }
+
+    #[test]
+    fn fixed_pair_normals_use_the_inverse_transpose_for_scaled_instances() {
+        let source = production();
+        assert!(
+            source.contains("transform.matrix3.inverse().transpose()"),
+            "fixed surface normals need the inverse-transpose normal matrix"
+        );
+        assert!(
+            !source.contains("fixed_pose.transform_vector3(pair.fixed.normal)"),
+            "a non-rigid fixed instance must not transform normals as vectors"
+        );
+
+        let transform = Affine3A::from_scale(Vec3::new(2.0, 1.0, 1.0));
+        let actual = transform_world_normal(transform, Vec3::new(1.0, 1.0, 0.0));
+        let expected = Vec3::new(0.5, 1.0, 0.0).normalize();
+        assert!(
+            (actual - expected).length() < 1.0e-6,
+            "{actual:?} != {expected:?}"
+        );
+    }
+
     /// Two tools sharing the primary click would fight over every gesture.
     #[test]
     fn arming_align_stands_the_other_tools_down() {
@@ -549,6 +620,21 @@ mod tests {
         ] {
             assert!(arm.contains(other), "arming align must stand down {other}");
         }
+    }
+
+    #[test]
+    fn removing_a_named_layer_revokes_refined_authority() {
+        let source = production();
+        let cleanup = source
+            .split_once("fn forget_removed_align_layers(")
+            .and_then(|(_, rest)| rest.split_once("    /// Arm the tool"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            cleanup.contains("self.tools.align.refined_match_ready = false")
+                && cleanup.contains("self.tools.align.settings.show_deviation = false"),
+            "a removed scan must not leave a heatmap authority behind"
+        );
     }
 
     /// Measure is re-submitted on every settings change, so building the

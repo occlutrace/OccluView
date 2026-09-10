@@ -10,15 +10,37 @@ use rayon::prelude::*;
 
 use crate::pairs::FitRejection;
 use crate::sample::{bounds_of, sample_vertices, vertex_at, vertex_normals};
+use crate::surface::SurfaceSample;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+
+#[path = "icp_overlap.rs"]
+mod icp_overlap;
+use icp_overlap::{reciprocal_coverage_ok, reciprocal_evidence, reciprocal_evidence_is_usable};
+#[path = "icp_step.rs"]
+mod icp_step;
+use icp_step::{correspondences_at_radius, try_backtracked_step, TrialState};
+
+#[cfg(test)]
+#[path = "icp_internal_tests.rs"]
+mod icp_internal_tests;
 
 /// Samples used by the coarse level.
 const COARSE_BUDGET: usize = 8_000;
 /// Samples used by the dense level.
 const DENSE_BUDGET: usize = 40_000;
 
+/// Bounded representatives used for the fixed-to-moving half of the overlap
+/// check. This is deliberately much smaller than the dense ICP level: it is a
+/// guard against a wrong patch, not a second dense registration pass.
+const RECIPROCAL_BUDGET: usize = 2_048;
+
 /// Correspondences below this leave the fit undetermined.
 const MIN_CORRESPONDENCES: usize = 6;
+
+/// A large scan must not be declared registered because six vertices happened
+/// to land on a neighbouring patch. Partial scans remain allowed; this is a
+/// deliberately small one-percent floor on the moving surface.
+const MIN_FORWARD_COVERAGE_FRACTION: f64 = 0.01;
 
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
@@ -29,6 +51,11 @@ const CONVERGED_ROTATION: f64 = 1e-7;
 /// Translation step below this (millimetres) counts as converged.
 const CONVERGED_TRANSLATION: f64 = 1e-7;
 
+/// A rank-deficient zero-step fit is acceptable only when its measured surface
+/// residual is already at numerical zero. A non-zero residual needs an
+/// accepted rigid step before the UI may authorize a deviation map.
+const CONVERGED_RESIDUAL_MM: f64 = 1e-6;
+
 /// Starting Levenberg damping, as a fraction of each diagonal entry.
 const INITIAL_DAMPING: f64 = 1e-6;
 /// Damping growth per rejected step.
@@ -36,14 +63,19 @@ const DAMPING_GROWTH: f64 = 10.0;
 /// Damping retries before a level gives up on the current iteration.
 const MAX_DAMPING_RETRIES: usize = 3;
 
+/// Trial sizes for a solved step. The normal equations are a local
+/// linearisation; a full step can cross a nearest-surface boundary and turn a
+/// good registration sideways. A bounded line search keeps the rigid solver
+/// local while refusing that untested jump.
+const BACKTRACK_SCALES: [f64; 4] = [1.0, 0.5, 0.25, 0.125];
+
+/// Do not accept a trial that loses most of the surface it was fitted on.
+const MIN_TRIAL_COVERAGE_FRACTION: f64 = 0.85;
+
 /// An iteration counts as an improvement only if it cuts the residual by more
 /// than this factor. A tenth of a percent is far below anything a scan can
 /// resolve, so anything slower than that is wandering, not converging.
 const STALL_IMPROVEMENT: f64 = 0.999;
-
-/// Consecutive non-improving iterations before a level gives up. Three, so a
-/// single flat step between two real ones cannot end the fit early.
-const STALL_ROUNDS: u32 = 3;
 
 /// A normal-equation diagonal below this fraction of the largest means that
 /// degree of freedom is not determined by the geometry.
@@ -118,6 +150,7 @@ pub struct IcpReport {
 #[derive(Clone, Copy)]
 struct Correspondence {
     point: DVec3,
+    target: DVec3,
     normal: DVec3,
     residual: f64,
 }
@@ -129,7 +162,8 @@ struct Correspondence {
 /// Returns [`FitRejection::TooFewPairs`] when the moving mesh is empty or too
 /// little of it reaches the fixed surface to determine a pose, and
 /// [`FitRejection::Runaway`] when the result would move the mesh farther than
-/// its own size.
+/// its own size. A surface with enough pairs but no accepted improvement returns
+/// [`FitRejection::NoImprovement`] instead of silently claiming a refined pose.
 pub fn refine(
     moving: Soup<'_>,
     fixed: &SurfaceIndex,
@@ -143,13 +177,33 @@ pub fn refine(
             need: MIN_CORRESPONDENCES,
         });
     }
+    if !start.is_finite() {
+        return Err(FitRejection::NonFinite);
+    }
     if cancel.is_cancelled() {
         return Ok(idle_report(start));
     }
 
     let normals = vertex_normals(moving);
+    // The moving index is built from the same masked soup as the forward
+    // correspondence path. It is optional because a soup can have vertices
+    // and triangles but no usable non-degenerate triangle after masking.
+    let moving_surface = SurfaceIndex::build(moving);
+    let fixed_samples = fixed.representative_samples(RECIPROCAL_BUDGET);
     let (center, extent) = bounds_of(moving).unwrap_or((DVec3::ZERO, 0.0));
-    let mut pose = start;
+    let initial_samples = sample_vertices(moving, COARSE_BUDGET);
+    let initial_level = Level {
+        moving,
+        normals: &normals,
+        fixed,
+        moving_surface: moving_surface.as_ref(),
+        fixed_samples: &fixed_samples,
+        samples: &initial_samples,
+        settings,
+        cancel,
+        start,
+    };
+    let mut pose = choose_start_pose(&initial_level);
     let mut iterations = 0u32;
     let mut converged = false;
     let mut summary: Option<Summary> = None;
@@ -163,6 +217,8 @@ pub fn refine(
             moving,
             normals: &normals,
             fixed,
+            moving_surface: moving_surface.as_ref(),
+            fixed_samples: &fixed_samples,
             samples: &samples,
             settings,
             cancel,
@@ -174,7 +230,10 @@ pub fn refine(
             // few correspondences or cancellation arrives between levels.
             Err(rejection) if summary.is_some() => {
                 debug_assert!(
-                    matches!(rejection, FitRejection::TooFewPairs { .. }),
+                    matches!(
+                        rejection,
+                        FitRejection::TooFewPairs { .. } | FitRejection::NoImprovement
+                    ),
                     "an unexpected rejection is being swallowed: {rejection:?}"
                 );
                 break;
@@ -239,10 +298,47 @@ struct Level<'a> {
     moving: Soup<'a>,
     normals: &'a [DVec3],
     fixed: &'a SurfaceIndex,
+    moving_surface: Option<&'a SurfaceIndex>,
+    fixed_samples: &'a [SurfaceSample],
     samples: &'a [u32],
     settings: &'a RefineSettings,
     cancel: &'a CancelFlag,
     start: Rigid,
+}
+
+/// Search radii from conservative to the operator's configured maximum.
+///
+/// A broad influence distance can connect two neighbouring teeth, so it is a
+/// search budget rather than the first answer. The ladder never exceeds the
+/// visible setting and is deterministic for every input.
+fn influence_radius_ladder(maximum: f64) -> Vec<f64> {
+    if !maximum.is_finite() || maximum <= 0.0 {
+        return Vec::new();
+    }
+    [0.25, 0.5, 1.0]
+        .into_iter()
+        .map(|fraction| (maximum * fraction).max(f64::EPSILON))
+        .collect()
+}
+
+/// Whether the forward correspondence set covers enough of the moving sample
+/// population to say anything about the whole registration.
+#[allow(clippy::cast_precision_loss)]
+fn forward_coverage_is_sufficient(matched: usize, sampled: usize) -> bool {
+    matched >= MIN_CORRESPONDENCES
+        && sampled > 0
+        && matched as f64 / sampled as f64 >= MIN_FORWARD_COVERAGE_FRACTION
+}
+
+/// The count shown in a `TooFewPairs` rejection when coverage, rather than the
+/// mathematical minimum, is what made the fit untrustworthy.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn minimum_forward_matches(sampled: usize) -> usize {
+    MIN_CORRESPONDENCES.max((sampled as f64 * MIN_FORWARD_COVERAGE_FRACTION).ceil() as usize)
 }
 
 /// Statistics carried out of a level.
@@ -252,6 +348,8 @@ struct Summary {
     inlier_ratio: f64,
     coverage: f64,
     rms: f64,
+    /// RMS Euclidean point-to-surface distance used to accept a trial pose.
+    geometric_rms: f64,
     median_abs: f64,
     p95_abs: f64,
     weak_rot_axes: [bool; 3],
@@ -266,6 +364,86 @@ struct LevelOutcome {
     summary: Summary,
 }
 
+/// Prefer a centered coarse hypothesis when it clearly explains more of the
+/// same surface than the caller's rough pose.
+///
+/// A point-to-plane step cannot see translation tangent to a locally flat patch.
+/// When two scans are merely close and shifted sideways, it can therefore settle
+/// on the edge it first touched. The bounding-box hypothesis is only a candidate:
+/// it wins when the same correspondence objective improves without losing
+/// coverage, so partial scans and adjacent anatomy keep the explicit start.
+fn choose_start_pose(level: &Level<'_>) -> Rigid {
+    if level.samples.is_empty() || level.cancel.is_cancelled() {
+        return level.start;
+    }
+    let Some((moving_center, _moving_extent)) = bounds_of(level.moving) else {
+        return level.start;
+    };
+    let score = |pose: Rigid| {
+        let found = correspondences(level, pose, level.settings.influence_radius_mm);
+        let matched = found.iter().flatten().count();
+        if !forward_coverage_is_sufficient(matched, level.samples.len()) {
+            return None;
+        }
+        let kept = trim(&found, level.settings.matching_ratio);
+        (kept.len() >= MIN_CORRESPONDENCES).then(|| {
+            let (matrix, _, _) = accumulate(&kept);
+            (
+                summarize(&kept, matched, level.samples.len(), &matrix),
+                reciprocal_evidence(level, pose, level.settings.influence_radius_mm),
+            )
+        })
+    };
+    let base = score(level.start);
+    let mut best = base.map(|score| (level.start, score, f64::INFINITY));
+    // A component centre is a bounded translation hypothesis, not permission
+    // to undo a coarse rotation or perform a hidden global registration. Keep
+    // it inside the same visible search budget that the correspondence ladder
+    // can justify. The mesh extent is deliberately not a fallback here: a
+    // large arch must not make an arbitrary far-away component eligible.
+    let max_shift = level.settings.influence_radius_mm.abs() * 2.0;
+    for &(fixed_min, fixed_max) in level.fixed.component_bounds() {
+        let fixed_center = (fixed_min + fixed_max) * 0.5;
+        let candidate = Rigid::new(
+            level.start.rotation,
+            fixed_center - level.start.rotation * moving_center,
+        );
+        let shift = (candidate.translation - level.start.translation).length();
+        if !shift.is_finite() || shift > max_shift {
+            continue;
+        }
+        let Some(centered) = score(candidate) else {
+            continue;
+        };
+        let baseline_coverage_ok = reciprocal_evidence_is_usable(level, centered.1)
+            && base.is_none_or(|(_, base_reciprocal)| {
+                reciprocal_coverage_ok(base_reciprocal, centered.1)
+            });
+        let Some((_, current, current_shift)) = best else {
+            best = Some((candidate, centered, shift));
+            continue;
+        };
+        let better = centered.0.geometric_rms < current.0.geometric_rms * STALL_IMPROVEMENT;
+        let reciprocal_tie_break = match (current.1, centered.1) {
+            (Some(current_reciprocal), Some(candidate_reciprocal)) => {
+                candidate_reciprocal.coverage > current_reciprocal.coverage + 0.05
+                    && candidate_reciprocal.geometric_rms
+                        <= current_reciprocal.geometric_rms * 1.25 + 1e-9
+                    && centered.0.geometric_rms
+                        <= current.0.geometric_rms * (1.0 / STALL_IMPROVEMENT)
+            }
+            _ => false,
+        };
+        let tied_and_closer = (centered.0.geometric_rms - current.0.geometric_rms).abs()
+            <= f64::EPSILON
+            && shift < current_shift;
+        if baseline_coverage_ok && (better || reciprocal_tie_break || tied_and_closer) {
+            best = Some((candidate, centered, shift));
+        }
+    }
+    best.map_or(level.start, |(pose, _, _)| pose)
+}
+
 /// Run one resolution level to convergence or to its iteration ceiling.
 fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut pose = level.start;
@@ -273,22 +451,22 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut converged = false;
     let mut summary: Option<Summary> = None;
     let mut best_rms = f64::INFINITY;
-    let mut stalled = 0u32;
+    let mut has_accepted_step = false;
     // Keep the pose associated with the best residual.
     let mut best: Option<(Rigid, Summary)> = None;
+    let radii = influence_radius_ladder(level.settings.influence_radius_mm);
+    let Some(mut radius_slot) = (!radii.is_empty()).then_some(0usize) else {
+        return Err(FitRejection::TooFewPairs {
+            have: 0,
+            need: MIN_CORRESPONDENCES,
+        });
+    };
 
     for _ in 0..level.settings.max_iterations {
         if level.cancel.is_cancelled() {
             break;
         }
-        let found = correspondences(level, pose);
-        let matched = found.iter().flatten().count();
-        if matched < MIN_CORRESPONDENCES {
-            return Err(FitRejection::TooFewPairs {
-                have: matched,
-                need: MIN_CORRESPONDENCES,
-            });
-        }
+        let (found, matched) = correspondences_at_radius(level, pose, &radii, &mut radius_slot)?;
         let kept = trim(&found, level.settings.matching_ratio);
         if kept.len() < MIN_CORRESPONDENCES {
             return Err(FitRejection::TooFewPairs {
@@ -298,31 +476,65 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         }
         let (normal_matrix, gradient, centre) = accumulate(&kept);
         let measured = summarize(&kept, matched, level.samples.len(), &normal_matrix);
+        let measured_reciprocal = reciprocal_evidence(level, pose, radii[radius_slot]);
+        if !reciprocal_evidence_is_usable(level, measured_reciprocal) {
+            return Err(FitRejection::NoImprovement);
+        }
         summary = Some(measured);
         // `measured` describes the pose the correspondences were found AT, not
         // the one the step below produces. Remember the pair together.
-        if measured.rms.is_finite() && measured.rms < best_rms * STALL_IMPROVEMENT {
-            best_rms = measured.rms;
+        if measured.geometric_rms.is_finite()
+            && measured.geometric_rms < best_rms * STALL_IMPROVEMENT
+        {
+            best_rms = measured.geometric_rms;
             best = Some((pose, measured));
-            stalled = 0;
-        } else {
-            stalled += 1;
         }
 
         let Some(step) = solve_damped(&normal_matrix, &gradient) else {
+            if !has_accepted_step && measured.geometric_rms > CONVERGED_RESIDUAL_MM {
+                return Err(FitRejection::NoImprovement);
+            }
+            converged = measured.geometric_rms <= CONVERGED_RESIDUAL_MM;
             break;
         };
         let rotation = DVec3::new(step[0], step[1], step[2]);
         let translation = DVec3::new(step[3], step[4], step[5]);
-        pose = apply_step(pose, centre, rotation, translation);
+        let Some((next_pose, next_summary)) = try_backtracked_step(
+            level,
+            TrialState {
+                pose,
+                centre,
+                rotation,
+                translation,
+                measured,
+                measured_reciprocal,
+                radius: radii[radius_slot],
+            },
+        ) else {
+            // Never apply a step that was not evaluated as an improvement. The
+            // previous implementation did, so a nearest-surface change could
+            // rotate a rough pair sideways while its report still looked valid.
+            if !has_accepted_step && measured.geometric_rms > CONVERGED_RESIDUAL_MM {
+                return Err(FitRejection::NoImprovement);
+            }
+            converged = rotation.length() < CONVERGED_ROTATION
+                && translation.length() < CONVERGED_TRANSLATION
+                && measured.geometric_rms <= CONVERGED_RESIDUAL_MM;
+            break;
+        };
+        pose = next_pose;
+        // The trial was fully re-evaluated before it was accepted. Keep its
+        // summary with the pose so a convergence break cannot report metrics
+        // for the pre-step correspondences.
+        summary = Some(next_summary);
+        if next_summary.geometric_rms.is_finite() && next_summary.geometric_rms < best_rms {
+            best_rms = next_summary.geometric_rms;
+            best = Some((next_pose, next_summary));
+        }
+        has_accepted_step = true;
         iterations += 1;
         if rotation.length() < CONVERGED_ROTATION && translation.length() < CONVERGED_TRANSLATION {
             converged = true;
-            break;
-        }
-
-        // Stop when the residual has stalled even if the pose delta has not.
-        if stalled >= STALL_ROUNDS {
             break;
         }
     }
@@ -352,7 +564,11 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
 ///
 /// Parallel because it is pure: every entry reads only its own vertex, and the
 /// output keeps sample order, so the fold that follows stays deterministic.
-fn correspondences(level: &Level<'_>, pose: Rigid) -> Vec<Option<Correspondence>> {
+fn correspondences(
+    level: &Level<'_>,
+    pose: Rigid,
+    influence_radius_mm: f64,
+) -> Vec<Option<Correspondence>> {
     level
         .samples
         .par_iter()
@@ -360,9 +576,7 @@ fn correspondences(level: &Level<'_>, pose: Rigid) -> Vec<Option<Correspondence>
             let vertex = raw as usize;
             let local = vertex_at(level.moving.positions, vertex)?;
             let point = pose.apply(local);
-            let hit = level
-                .fixed
-                .nearest(point, level.settings.influence_radius_mm)?;
+            let hit = level.fixed.nearest(point, influence_radius_mm)?;
             let moving_normal = pose.apply_normal(level.normals.get(vertex).copied()?);
             let agreement = moving_normal.dot(hit.normal);
             let accepted = match level.settings.orientation {
@@ -375,6 +589,7 @@ fn correspondences(level: &Level<'_>, pose: Rigid) -> Vec<Option<Correspondence>
             }
             Some(Correspondence {
                 point,
+                target: hit.point,
                 normal: hit.normal,
                 residual: (point - hit.point).dot(hit.normal),
             })
@@ -386,12 +601,14 @@ fn correspondences(level: &Level<'_>, pose: Rigid) -> Vec<Option<Correspondence>
 ///
 /// The cutoff value is chosen from a sorted copy, then applied by a pass in
 /// sample order, so the kept set is a deterministic subsequence rather than a
-/// sort-order artefact.
+/// sort-order artefact. Full point-to-surface distance is used here rather than
+/// only the normal residual: a tangent slide can have a tiny plane error while
+/// still being a geometrically poor match.
 fn trim(found: &[Option<Correspondence>], ratio: f64) -> Vec<Correspondence> {
     let mut magnitudes: Vec<f64> = found
         .iter()
         .flatten()
-        .map(|entry| entry.residual.abs())
+        .map(|entry| (entry.point - entry.target).length())
         .collect();
     if magnitudes.is_empty() {
         return Vec::new();
@@ -410,7 +627,7 @@ fn trim(found: &[Option<Correspondence>], ratio: f64) -> Vec<Correspondence> {
     found
         .iter()
         .flatten()
-        .filter(|entry| entry.residual.abs() <= cutoff)
+        .filter(|entry| (entry.point - entry.target).length() <= cutoff)
         .copied()
         .collect()
 }
@@ -469,6 +686,10 @@ fn summarize(
     #[allow(clippy::cast_precision_loss)]
     let count = kept.len().max(1) as f64;
     let sum_squares: f64 = kept.iter().map(|e| e.residual * e.residual).sum();
+    let geometric_sum_squares: f64 = kept
+        .iter()
+        .map(|entry| (entry.point - entry.target).length_squared())
+        .sum();
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -494,6 +715,7 @@ fn summarize(
         #[allow(clippy::cast_precision_loss)]
         coverage: matched as f64 / sampled_count,
         rms: (sum_squares / count).sqrt(),
+        geometric_rms: (geometric_sum_squares / count).sqrt(),
         median_abs: magnitudes.get(magnitudes.len() / 2).copied().unwrap_or(0.0),
         p95_abs: magnitudes
             .get(p95_slot.clamp(1, magnitudes.len()) - 1)

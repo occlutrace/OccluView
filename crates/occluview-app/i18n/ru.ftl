@@ -528,34 +528,12 @@ align-commit-done-hint = Сохранить сопоставление и зак
 
 ## Deviation map — DRAFT.
 
-align-map-more = Дополнительные настройки
 align-map-heatmap = Теплокарта
 align-map-heatmap-hint = Окрасить один скан по расстоянию до другого
-align-map-range-label = диапазон
-align-map-preset-hint = Всё ближе { $min } мм считается совпадением, { $max } мм насыщает
-align-map-min = мин
+align-map-requires-refine = Сначала выполните точное совмещение
 align-map-max = макс
-align-map-auto = авто
-align-map-auto-hint = Подогнать диапазон под измерение заново
-align-map-advice-far = Сетки примерно в { $mm } мм друг от друга — сопоставьте их прежде чем читать карту
-align-map-advice-saturated = Большая часть дальше { $mm } мм, цвета прижаты к краям — расширьте диапазон
-align-map-not-enough = Мало поверхности для измерения — { $measured } из { $total } вершин достигли другого скана
-align-map-within = { $pct }% в пределах { $tol } мм
-align-map-rms = ско { $rms }
-align-map-grey-tooltip = Серый — не измерение. Поверхность без пары в досягаемости измерить нельзя — мост или зуб только на одном скане обычная причина, и это не ошибка.
-align-map-grey-out = { $n } без поверхности напротив
-align-map-grey-excluded = { $n } исключено
-align-map-grey-unusable = { $n } непригодно в файле
-align-map-grey-total = Серых вершин { $total }: { $parts }
 align-map-not-measured = не измерено
 align-map-not-measured-hint = На другом скане нет поверхности в досягаемости этих вершин. Зуб или мост только на одном скане — обычная причина, и это не ошибка: измерять там нечего.
-align-map-stepped = Ступенчатые полосы
-align-map-stepped-hint = Ступенчатая шкала вместо плавной
-align-map-colours = Цвета
-align-map-ramp-distance = расстояние
-align-map-ramp-distance-hint = Холодное где сканы совпадают, горячее где нет
-align-map-ramp-signed = со знаком
-align-map-ramp-signed-hint = Синее ниже поверхности, зелёное норма, красное выше
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -567,20 +545,14 @@ align-pair-swap = Поменять
 align-pair-swap-hint = Совместить наоборот — стрелки двигаются вместе
 
 align-brush-title = Кисть
-align-brush-subtitle = Закрасьте поверхность, которую совмещение должно игнорировать, на любой сетке
-align-brush-hint-inverse = Перетаскивание стирает · Shift помечает · Shift+колесо меняет размер
-align-brush-hint-mark = Перетаскивание помечает · Shift стирает · Shift+колесо меняет размер
 align-brush-close-hint = Закрыть кисть — пометки сохранятся
 align-brush-size = размер кисти
 align-brush-inverse = Инверсия кисти
 align-brush-inverse-hint = Простое перетаскивание стирает вместо пометки. Shift инвертирует снова
 align-brush-auto-radius = авторадиус
 align-brush-auto-radius-hint = Радиус области сетки у каждого конца стрелки
-align-brush-all-marked = Всё помечено — совмещение не даст эффекта
-align-brush-nothing-marked = Ничего не помечено
-align-brush-percent-marked = Помечено { $pct }% совпадения
 align-brush-size-status = Кисть { $size } мм
-align-status-no-summary = Нечего измерять при радиусе { $reach } мм — { $measured } из { $total } вершин нашли второе сканирование. Сблизьте сканирования или увеличьте радиус в дополнительных настройках.
+align-status-no-summary = Нет сопоставимой поверхности
 
 align-mask-fit-everywhere = Совмещать везде
 align-mask-fit-everywhere-hint = Снять все пометки
@@ -615,24 +587,11 @@ align-status-aligned-points = Совмещено по точкам
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Совмещено — { $rms } мм по точкам{ $dropped }. Дожмите точным совмещением.
-align-status-outlier = , пара { $pairs } отброшена как выброс
-align-status-refined = Уточнено — { $rms } мм на { $pct }% { $surface }{ $settled }{ $weak }
-align-status-surface = поверхности
-align-status-surface-unmarked = непомеченной поверхности
-align-status-settled-limit = , остановлено на пределе итераций
-align-status-weak-slide =  — подгонка ещё может скользить вдоль { $axes }
-align-status-weak-turn =  — подгонка ещё может вращаться вокруг { $axes }
-align-status-weak-both =  — подгонка ещё может скользить вдоль { $sliding } и вращаться вокруг { $spinning }
-align-status-measured = { $pct }% в пределах { $tol } мм, { $n ->
-    [one] { $n } вершина ни с чем не сопоставлена{ $blind }
-    [few] { $n } вершины ни с чем не сопоставлены{ $blind }
-    [many] { $n } вершин ни с чем не сопоставлено{ $blind }
-   *[other] { $n } вершин ни с чем не сопоставлено{ $blind }
-}
-align-status-blind-free =  — эти поверхности свободно скользят, за этим может скрываться смещение любого размера
-align-status-blind-hidden =  — жёсткое несоответствие до { $mm } мм может читаться так же
+align-status-aligned = Совмещено по точкам — выполните точное совмещение для посадки поверхностей.
+align-status-refined = Точное совмещение готово
+align-status-measured = Теплокарта обновлена
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
+align-status-settings-changed = Настройки сопоставления изменены
 align-brush-not-in-alignment = Этот скан не входит в текущее совмещение
 align-drag-moving = Перемещение { $name } вручную
 align-drag-unrecorded = Перемещено вручную, но шаг не попал в историю — Ctrl+Z не отменит его
@@ -773,12 +732,15 @@ sculpt-applied-undo = Скульптинг применён (Ctrl+Z отменя
 sculpt-applied-locked = Скульптинг применён (без отмены: снимок слишком велик)
 sculpt-failed = Скульптинг недоступен для этого слоя: { $detail }
 sculpt-worker-stopped = Воркер скульптинга остановлен: { $detail }
+sculpt-preparing = Подготовка скульптинга…
+sculpt-nonuniform-scale = Скульптинг требует равномерного масштаба сетки
 sculpt-failure-worker-panicked = Воркер скульптинга аварийно завершён: { $detail }
 sculpt-failure-spawn = Не удалось запустить воркер скульптинга: { $detail }
 sculpt-failure-kernel-pool = Не удалось создать пул ядер скульптинга: { $detail }
 sculpt-failure-missing-undo-baseline = У штриха скульптинга нет базы для отмены
 sculpt-failure-shadow-poisoned = Блокировка тени скульптинга отравлена
 sculpt-failure-vertex-count-changed = Результат скульптинга изменил число вершин
+sculpt-failure-topology-rebuild = Не удалось восстановить топологию скульптинга: { $detail }
 sculpt-worker-unavailable = Воркер скульптинга недоступен
 sculpt-finishing = Завершение штриха скульптинга…
 sculpt-finishing-history = Завершение скульптинга перед изменением истории…
@@ -827,14 +789,14 @@ cut-footer-thickness = Перетаскивание = панорама · кли
 align-fail-no-surface-fixed = У неподвижного скана нет пригодной поверхности
 align-fail-no-surface-moving = У подвижного скана нет пригодной поверхности
 align-fail-recolor = Измерение сброшено до окраски
-align-reject-toofew = Всего { $a } из { $b } соответствий — поставьте ещё стрелку или поднимите макс. влияние, если сетки ещё далеко
-align-reject-unpaired = Точек { $a } на одном скане и { $b } на другом — у точки нет пары
-align-reject-degenerate-plain = Кликнутые точки не задают вращение — разнесите их
-align-reject-degenerate-line = Кликнутые точки лежат на прямой: вращение вокруг { $a } не определено
-align-reject-unit = Сканы различаются по размеру в { $a } раз — вероятно, разные единицы
-align-reject-apart = Подгонка оставила сканы в { $a } мм друг от друга вместо совмещения ({ $b } мм) — проверьте, что пары стрелок смотрят в одну точку на обоих сканах
-align-reject-runaway = Точное совмещение ушло на { $a } мм, дальше размера скана ({ $b } мм) — сначала поставьте пары стрелок или понизьте макс. влияние
-align-reject-nonfinite = Кликнутая точка или нормаль не конечное число
+align-reject-toofew = Поставьте больше пар стрелок или приблизьте сканы
+align-reject-unpaired = Завершите обе стороны каждой пары стрелок
+align-reject-degenerate-plain = Разнесите точки сопоставления по поверхности
+align-reject-unit = Сканы используют разные единицы измерения
+align-reject-apart = Проверьте пары стрелок и приблизьте сканы
+align-reject-runaway = Приблизьте сканы и повторите точное совмещение
+align-reject-no-improvement = Улучшение не подтверждено — приблизьте сканы и повторите
+align-reject-nonfinite = Выбранная точка или поверхность недействительны
 align-status-stepped = Прошлись по истории
 align-status-moving-hand = Двигаем вручную
 
