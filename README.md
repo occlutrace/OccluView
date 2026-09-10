@@ -51,13 +51,12 @@ Open both scans as layers, choose **A** (Align), and use the automatic workflow:
 
 1. Confirm the moving and fixed scan in the panel.
 2. Click `Best fit matching` to seat corresponding surfaces.
-3. Read the colour map with the explicit millimetre legend, range presets, and
-   measured statistics.
+3. Read the colour map with the explicit millimetre legend and bounded range.
 
-The Heatmap is not a decorative overlay: the panel reports how much surface was
-measured, what fell outside the opposing scan, the selected tolerance/range,
-and when the current range is saturating. Manual alignment remains available
-when the automatic pair is not appropriate.
+The heatmap is display-only evidence from the latest confirmed matching result.
+Changing the pair, optimizer settings, exclusion markings, or returning to
+Automatic clears it until a new matching result lands. Manual alignment remains
+available when the automatic pair is not appropriate.
 
 ## Mesh Editing
 
@@ -152,6 +151,32 @@ occluview-cli info <file> [file...]
 ```
 
 `thumbnail` uses the same rendering path as the Windows Preview Pane.
+
+## Startup diagnostics and graphics requirements
+
+OccluView needs a working desktop session and a graphics driver exposing one of
+the wgpu backends supported by the platform. On Linux, the package declares the
+X11/Wayland, Vulkan, and EGL loader packages; the actual Mesa or vendor GPU
+driver is supplied by the operating system. Windows likewise needs a current
+GPU driver for the platform's supported graphics backend.
+The Windows MSI is x64; an unsupported OS architecture, a disabled graphics
+adapter, or a driver that cannot create a surface can still prevent a window
+from appearing.
+
+If the installed viewer closes without a window, run:
+
+```text
+occluview --diagnostics
+```
+
+This performs a no-window adapter/device check and writes a report under the
+OccluView state directory. It is a loader/device check, not proof that a GUI
+surface can be created on the current desktop. Startup failures also write a
+unique report and return a non-zero process status; reports are stored in the
+`crashes/` subdirectory and include the last startup stages and recent log
+lines without including opened scan paths. The metadata-only
+`startup-journal.log` records the last reached startup boundary when a native
+driver failure happens before Rust can write a crash report.
 
 Licensed under [Apache-2.0](LICENSE); distribution notices are in [NOTICE](NOTICE)
 and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

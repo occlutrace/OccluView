@@ -3,7 +3,7 @@
 occluview \- advanced Mesh Repair and Mesh Editing for dental CAD
 .SH SYNOPSIS
 .B occluview
-.RI [ FILE ...]
+.RI [ OPTION ] [ FILE ...]
 .SH DESCRIPTION
 OccluView is an advanced dental CAD workspace for Mesh Repair and Mesh Editing.
 It opens STL, PLY, OBJ, GLB, and supported HPS mesh files in an interactive
@@ -16,9 +16,31 @@ Show command-line help.
 .TP
 .BR \-V , " " \-\-version
 Show the installed version.
+.TP
+.B \-\-diagnostics
+Run a no-window graphics adapter and device check, write a diagnostic report,
+and exit. This does not prove that the current desktop can create a GUI
+surface. The report is stored below the OccluView state directory.
 .SH FILES
 .I /usr/share/doc/occluview/
 contains usage, license, and third-party attribution documents.
+.PP
+On Linux, reports are stored below
+.I $XDG_STATE_HOME/OccluView/
+when that variable is set, otherwise below
+.I $HOME/.local/state/OccluView/.
+Windows stores them below the user's application state directory.
+Crash reports are in the
+.I crashes/
+subdirectory; the metadata-only
+.I startup-journal.log
+file records the last reached startup boundary when a native driver failure
+happens before a crash report can be written.
+.SH TROUBLESHOOTING
+If the viewer exits before opening a window, run
+.B occluview --diagnostics
+from a terminal and attach the resulting report. The package cannot supply a
+missing vendor GPU driver or a broken desktop session.
 .SH SEE ALSO
 .BR occluview-cli (1)
 .SH BUGS
