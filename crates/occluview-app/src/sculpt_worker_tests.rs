@@ -104,6 +104,30 @@ fn command_queue_has_a_global_bound_across_rapid_strokes() {
 }
 
 #[test]
+fn a_rejected_new_stroke_does_not_leave_a_phantom_open_stroke() {
+    let queue = SculptCommandQueue::new();
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    for _ in 0..MAX_QUEUED_COMMANDS {
+        assert!(queue.push_finish());
+    }
+
+    assert!(
+        !queue.push_apply(stroke, BrushMode::Add),
+        "a full queue of finish markers must reject a new apply"
+    );
+    let state = queue.state.lock().expect("queue state");
+    assert!(
+        state.open_stroke.is_none(),
+        "a rejected apply must not claim the next stroke id"
+    );
+}
+
+#[test]
 fn worker_passes_its_cancellation_token_into_the_kernel() {
     let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker.rs"));
     assert!(source.contains("apply_dab_cancellable"));
