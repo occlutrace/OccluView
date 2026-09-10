@@ -15,6 +15,8 @@ pub struct StartupArgs {
     pub shell_refresh: bool,
     /// `--version` or `-V` was passed; the process prints and exits early.
     pub version: bool,
+    /// `--diagnostics` was passed; inspect the local graphics stack and exit.
+    pub diagnostics: bool,
     /// Remaining arguments, treated as files to open in order.
     pub files: Vec<PathBuf>,
 }
@@ -36,6 +38,7 @@ where
         match os.to_string_lossy().as_ref() {
             "--shell-refresh" => parsed.shell_refresh = true,
             "--version" | "-V" => parsed.version = true,
+            "--diagnostics" => parsed.diagnostics = true,
             _ => parsed.files.push(PathBuf::from(os)),
         }
     }
@@ -82,9 +85,10 @@ mod tests {
 
     #[test]
     fn version_and_shell_refresh_flags_do_not_become_files() {
-        let parsed = parse_args_from(["--shell-refresh", "--version", "scan.stl"]);
+        let parsed = parse_args_from(["--shell-refresh", "--version", "--diagnostics", "scan.stl"]);
         assert!(parsed.shell_refresh);
         assert!(parsed.version);
+        assert!(parsed.diagnostics);
         assert_eq!(parsed.files, vec![PathBuf::from("scan.stl")]);
     }
 

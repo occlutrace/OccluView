@@ -1,9 +1,12 @@
 use crate::{app, app_paths, live_viewport, single_instance, LIVE_VIEWPORT_SAMPLE_COUNT};
 use anyhow::Result;
 use eframe::egui;
+use eframe::egui_wgpu::wgpu;
 use std::collections::VecDeque;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -12,20 +15,32 @@ use tracing_subscriber::EnvFilter;
 /// How many recent log lines to keep for the crash report. A short window is
 /// enough to see what led to a crash without bloating the report.
 const CRASH_LOG_CAPACITY: usize = 50;
+/// Keep the native startup breadcrumb file useful without allowing it to grow
+/// forever across many launches. Entries contain no case paths or payloads.
+const STARTUP_JOURNAL_CAPACITY: usize = 64;
+const STARTUP_JOURNAL_MAX_BYTES: u64 = 64 * 1024;
+const STARTUP_JOURNAL_FILE: &str = "startup-journal.log";
+const MAX_RENDER_TEXTURE_DIMENSION: u32 = 8192;
 
 /// Binary entry behind the library boundary: install the panic hook, then run
 /// fallible startup and report failures instead of unwinding through `main`.
 ///
-/// Never returns a `Result`: startup failures are written under `crashes/`
-/// and shown (dialog on Windows, log elsewhere), then swallowed. Blocks
-/// running the event loop; `--version` and `--shell-refresh` exit first.
+/// Never returns a `Result`: startup failures are written under `crashes/`,
+/// shown to the operator, and terminate with a failure status. Blocks running
+/// the event loop; `--version`, `--diagnostics`, and `--shell-refresh` exit
+/// first.
 pub fn main_entry() {
+    append_startup_stage("entry");
     install_panic_hook();
+    append_startup_stage("panic-hook-installed");
     if let Err(error) = real_main() {
+        append_startup_stage("startup-failure");
         let details = format!("Startup failure\n\n{error:#}");
         let report_path = write_crash_report("startup-failure", &details);
         show_startup_fatal_message(report_path.as_deref(), &details);
+        std::process::exit(1);
     }
+    append_startup_stage("clean-exit");
 }
 
 fn real_main() -> Result<()> {
@@ -41,6 +56,7 @@ fn real_main() -> Result<()> {
         )
         .with(CrashLogLayer)
         .init();
+    append_startup_stage("logging-ready");
 
     set_process_app_user_model_id();
 
@@ -61,6 +77,13 @@ fn real_main() -> Result<()> {
                 "--shell-refresh is only available on Windows"
             ));
         }
+    }
+    if args.diagnostics {
+        append_startup_stage("diagnostics");
+        let details = graphics_diagnostics_report();
+        let report_path = write_report("graphics-diagnostics", &details);
+        show_diagnostics_message(report_path.as_deref());
+        return Ok(());
     }
 
     // Shape, not identity. This line goes into the ring buffer that
@@ -93,12 +116,14 @@ fn real_main() -> Result<()> {
     // Capture it before eframe/winit runs so nothing consumes the env first.
     let startup_activation_token = single_instance::capture_activation_token();
 
+    append_startup_stage("graphics-init");
     let native_options = native_options();
 
     eframe::run_native(
         "OccluView 3D Viewer",
         native_options,
         Box::new(move |cc| {
+            append_startup_stage("window-ready");
             // Capture both raw handles now so the open-file handoff can use
             // the compositor's native activation protocol on Linux.
             let raise_target = single_instance::RaiseTarget::from_handles(cc, cc);
@@ -142,10 +167,21 @@ fn real_main() -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e:?}"))?;
 
+    append_startup_stage("event-loop-exited");
+
     Ok(())
 }
 
 fn native_options() -> eframe::NativeOptions {
+    let mut wgpu_setup = eframe::egui_wgpu::WgpuSetup::without_display_handle();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create_new) = &mut wgpu_setup {
+        // eframe creates the adapter/device before it calls our app creator.
+        // Give it a descriptor derived from the selected adapter so a legacy
+        // GL implementation is not rejected for a texture limit it cannot
+        // support.
+        create_new.device_descriptor = Arc::new(device_descriptor_for_adapter);
+    }
+
     eframe::NativeOptions {
         viewport: root_viewport_builder(),
         renderer: eframe::Renderer::Wgpu,
@@ -156,8 +192,45 @@ fn native_options() -> eframe::NativeOptions {
             // Keep vsync, but do not queue stale camera frames ahead of what
             // the operator is currently doing with the mouse.
             surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY,
+            wgpu_setup,
             ..Default::default()
         },
+        ..Default::default()
+    }
+}
+
+/// Build the smallest valid device request for the selected adapter while
+/// keeping the normal egui/wgpu defaults on modern hardware. The old eframe
+/// default hard-coded an 8192 2D texture limit even for a GL adapter whose
+/// advertised limit could be lower; wgpu rejects such a request before the
+/// application creator runs.
+fn device_limits_for_backend(backend: wgpu::Backend, supported: &wgpu::Limits) -> wgpu::Limits {
+    let base_limits = if backend == wgpu::Backend::Gl {
+        wgpu::Limits::downlevel_webgl2_defaults()
+    } else {
+        wgpu::Limits::default()
+    };
+    wgpu::Limits {
+        max_texture_dimension_2d: MAX_RENDER_TEXTURE_DIMENSION,
+        ..base_limits
+    }
+    .or_worse_values_from(supported)
+}
+
+fn device_descriptor_for_adapter(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    let info = adapter.get_info();
+    let supported = adapter.limits();
+    let required_limits = device_limits_for_backend(info.backend, &supported);
+    tracing::info!(
+        backend = ?info.backend,
+        device_type = ?info.device_type,
+        max_texture_dimension_2d = supported.max_texture_dimension_2d,
+        requested_max_texture_dimension_2d = required_limits.max_texture_dimension_2d,
+        "wgpu adapter selected"
+    );
+    wgpu::DeviceDescriptor {
+        label: Some("occluview wgpu device"),
+        required_limits,
         ..Default::default()
     }
 }
@@ -193,6 +266,7 @@ fn print_version_line() {
 
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
+        append_startup_stage("panic");
         let details = format_panic_details(panic_info);
         let report_path = write_crash_report("panic", &details);
         show_startup_fatal_message(report_path.as_deref(), &details);
@@ -229,26 +303,211 @@ fn format_panic_details(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
 }
 
 fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
+    write_report(kind, details)
+}
+
+/// Write a diagnostic or crash report without overwriting a report created by
+/// another failure in the same clock tick. `create_new` also protects a report
+/// when two processes fail during the same nanosecond on a fast filesystem.
+fn write_report(kind: &str, details: &str) -> Option<PathBuf> {
     let dir = crash_report_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
-    let stamp = std::time::SystemTime::now()
+    let stamp_nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs());
-    let path = dir.join(format!("occluview-{kind}-{stamp}.txt"));
-    // The file's own name, not its path: the directory sits under the
-    // operator's profile and carries their account name. Whoever opens the
-    // report already knows where it came from.
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("occluview-crash.txt");
+        .map_or(0, |duration| duration.as_nanos());
+    let pid = std::process::id();
     let report = format!(
-        "{details}\n{}\nBuild: {}\nReport: {file_name}\n",
+        "{details}\n{}\n{}\nBuild: {}\n",
+        recent_startup_stages(),
         recent_log_lines(),
         env!("CARGO_PKG_VERSION"),
     );
-    std::fs::write(&path, report).ok()?;
-    Some(path)
+    for attempt in 0..16 {
+        let path = dir.join(report_file_name(kind, stamp_nanos, pid, attempt));
+        let mut file = match OpenOptions::new().create_new(true).write(true).open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        };
+        if file.write_all(report.as_bytes()).is_ok() {
+            return Some(path);
+        }
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    None
+}
+
+fn report_file_name(kind: &str, stamp_nanos: u128, pid: u32, attempt: u32) -> String {
+    let safe_kind: String = kind
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
+        .collect();
+    let safe_kind = if safe_kind.is_empty() {
+        "report"
+    } else {
+        safe_kind.as_str()
+    };
+    format!("occluview-{safe_kind}-{stamp_nanos}-{pid}-{attempt}.txt")
+}
+
+fn startup_journal_path() -> Option<PathBuf> {
+    app_paths::app_state_dir().map(|base| base.join(STARTUP_JOURNAL_FILE))
+}
+
+fn startup_stage_line(stage: &str, stamp_nanos: u128, pid: u32) -> String {
+    let safe_stage: String = stage
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
+        .collect();
+    let safe_stage = if safe_stage.is_empty() {
+        "unknown"
+    } else {
+        safe_stage.as_str()
+    };
+    format!("{stamp_nanos} pid={pid} stage={safe_stage}")
+}
+
+/// Leave a tiny persistent breadcrumb at the last startup boundary. It is
+/// deliberately metadata-only: native driver crashes can happen before Rust
+/// reaches the panic hook, but the next report can still say whether the
+/// process reached logging, graphics initialization, or the window callback.
+fn append_startup_stage(stage: &str) {
+    let Some(path) = startup_journal_path() else {
+        return;
+    };
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let line = startup_stage_line(stage, unix_timestamp_nanos(), std::process::id());
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{line}");
+    }
+    trim_startup_journal(&path);
+}
+
+fn trim_startup_journal(path: &Path) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= STARTUP_JOURNAL_MAX_BYTES {
+        return;
+    }
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let lines: Vec<&str> = contents.lines().collect();
+    let first = lines.len().saturating_sub(STARTUP_JOURNAL_CAPACITY);
+    let kept = lines[first..].join("\n");
+    let kept = if kept.is_empty() {
+        kept
+    } else {
+        format!("{kept}\n")
+    };
+    let _ = std::fs::write(path, kept);
+}
+
+fn recent_startup_stages() -> String {
+    let Some(path) = startup_journal_path() else {
+        return String::new();
+    };
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let mut lines: Vec<&str> = contents
+        .lines()
+        .rev()
+        .take(STARTUP_JOURNAL_CAPACITY)
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    lines.reverse();
+    format!(
+        "\nRecent startup stages (oldest first):\n{}\n",
+        lines.join("\n")
+    )
+}
+
+fn unix_timestamp_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos())
+}
+
+fn graphics_diagnostics_report() -> String {
+    use std::fmt::Write as _;
+
+    let descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    let backends = descriptor.backends;
+    let instance = wgpu::Instance::new(descriptor);
+    let adapters = pollster::block_on(instance.enumerate_adapters(backends));
+    let mut report = String::new();
+    let _ = writeln!(report, "OccluView graphics diagnostics");
+    let _ = writeln!(report, "version: {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(report, "backends: {backends:?}");
+    let _ = writeln!(
+        report,
+        "WGPU_BACKEND: {}",
+        std::env::var("WGPU_BACKEND").unwrap_or_else(|_| "<unset>".to_string())
+    );
+    let _ = writeln!(
+        report,
+        "WGPU_POWER_PREF: {}",
+        std::env::var("WGPU_POWER_PREF").unwrap_or_else(|_| "<unset>".to_string())
+    );
+    let _ = writeln!(report, "DISPLAY: {}", environment_state("DISPLAY"));
+    let _ = writeln!(
+        report,
+        "WAYLAND_DISPLAY: {}",
+        environment_state("WAYLAND_DISPLAY")
+    );
+    let _ = writeln!(report, "adapters: {}", adapters.len());
+
+    if adapters.is_empty() {
+        let _ = writeln!(report, "adapter_result: none");
+        return report;
+    }
+
+    for (index, adapter) in adapters.iter().enumerate() {
+        let info = adapter.get_info();
+        let supported = adapter.limits();
+        let requested = device_limits_for_backend(info.backend, &supported);
+        let _ = writeln!(report, "adapter[{index}]:");
+        let _ = writeln!(report, "  name: {}", info.name);
+        let _ = writeln!(report, "  backend: {}", info.backend);
+        let _ = writeln!(report, "  device_type: {:?}", info.device_type);
+        let _ = writeln!(report, "  driver: {}", info.driver);
+        let _ = writeln!(report, "  driver_info: {}", info.driver_info);
+        let _ = writeln!(
+            report,
+            "  max_texture_dimension_2d: supported={} requested={}",
+            supported.max_texture_dimension_2d, requested.max_texture_dimension_2d
+        );
+        let device_status = match pollster::block_on(
+            adapter.request_device(&device_descriptor_for_adapter(adapter)),
+        ) {
+            Ok((_device, _queue)) => "ok".to_string(),
+            Err(error) => format!("error: {error}"),
+        };
+        let _ = writeln!(report, "  device_request: {device_status}");
+    }
+    report
+}
+
+fn environment_state(name: &str) -> &'static str {
+    if std::env::var_os(name).is_some() {
+        "set"
+    } else {
+        "unset"
+    }
 }
 
 /// Shared ring buffer of the most recent formatted log lines.
@@ -354,7 +613,51 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
             .and_then(|name| name.to_str())
             .unwrap_or("none");
         tracing::error!(report, details, "OccluView could not continue");
+        notify_desktop("OccluView could not start", report, "critical");
     }
+}
+
+fn show_diagnostics_message(report_path: Option<&Path>) {
+    let report = report_path
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("none");
+
+    #[cfg(windows)]
+    {
+        use windows::core::HSTRING;
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
+
+        let message = if report == "none" {
+            "No diagnostic report could be written.".to_string()
+        } else {
+            format!("Graphics diagnostics were saved as:\n{report}")
+        };
+        let title = HSTRING::from("OccluView graphics diagnostics");
+        let message = HSTRING::from(message);
+        unsafe {
+            MessageBoxW(None, &message, &title, MB_OK | MB_ICONINFORMATION);
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        tracing::info!(report, "graphics diagnostics written");
+        notify_desktop("OccluView graphics diagnostics", report, "normal");
+    }
+}
+
+#[cfg(not(windows))]
+fn notify_desktop(title: &str, report: &str, urgency: &str) {
+    // Best effort only: the report and non-zero exit status remain the
+    // authoritative support signals when no desktop notification service is
+    // installed or the process is launched outside a graphical session.
+    let body = format!("Diagnostic report: {report}");
+    let _ = std::process::Command::new("notify-send")
+        .arg(format!("--urgency={urgency}"))
+        .arg(title)
+        .arg(body)
+        .spawn();
 }
 
 #[cfg(windows)]
@@ -378,13 +681,13 @@ fn show_startup_fatal_message_box(report_path: Option<&Path>, details: &str) {
     }
 }
 
-fn load_window_icon() -> std::sync::Arc<egui::IconData> {
+fn load_window_icon() -> Arc<egui::IconData> {
     let bytes = include_bytes!("../assets/windows/occluview.png");
     let image = match image::load_from_memory(bytes) {
         Ok(image) => image.to_rgba8(),
         Err(error) => {
             tracing::warn!(?error, "embedded OccluView PNG icon failed to decode");
-            return std::sync::Arc::new(egui::IconData {
+            return Arc::new(egui::IconData {
                 rgba: vec![0, 0, 0, 0],
                 width: 1,
                 height: 1,
@@ -392,7 +695,7 @@ fn load_window_icon() -> std::sync::Arc<egui::IconData> {
         }
     };
     let (width, height) = image.dimensions();
-    std::sync::Arc::new(egui::IconData {
+    Arc::new(egui::IconData {
         rgba: image.into_raw(),
         width,
         height,
@@ -425,6 +728,51 @@ mod tests {
             options.wgpu_options.surface,
             eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY
         );
+    }
+
+    #[test]
+    fn graphics_limits_never_exceed_a_weak_adapter() {
+        let supported = wgpu::Limits {
+            max_texture_dimension_2d: 4096,
+            ..wgpu::Limits::default()
+        };
+
+        let requested = device_limits_for_backend(wgpu::Backend::Gl, &supported);
+
+        assert_eq!(requested.max_texture_dimension_2d, 4096);
+    }
+
+    #[test]
+    fn graphics_limits_keep_the_requested_budget_when_hardware_supports_it() {
+        let supported = wgpu::Limits {
+            max_texture_dimension_2d: 16_384,
+            ..wgpu::Limits::default()
+        };
+
+        let requested = device_limits_for_backend(wgpu::Backend::Vulkan, &supported);
+
+        assert_eq!(requested.max_texture_dimension_2d, 8192);
+    }
+
+    #[test]
+    fn compatible_startup_profile_uses_single_sample_rendering() {
+        assert_eq!(LIVE_VIEWPORT_SAMPLE_COUNT, 1);
+    }
+
+    #[test]
+    fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
+        let first = report_file_name("startup-failure", 42, 7, 0);
+        let second = report_file_name("startup-failure", 42, 7, 1);
+        assert_ne!(first, second);
+        assert!(first.ends_with("-0.txt"));
+        assert!(second.ends_with("-1.txt"));
+    }
+
+    #[test]
+    fn startup_stage_lines_contain_only_diagnostic_metadata() {
+        let line = startup_stage_line("graphics-init", 42, 7);
+        assert_eq!(line, "42 pid=7 stage=graphics-init");
+        assert!(!line.contains('/'));
     }
 
     #[test]
