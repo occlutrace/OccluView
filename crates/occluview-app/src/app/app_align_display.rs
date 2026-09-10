@@ -110,6 +110,16 @@ impl OccluViewApp {
         if touched.len() != patched.len() {
             return false;
         }
+        // The renderer coalesces sorted contiguous runs. Reject malformed
+        // input before mutating the scratch buffer, so a partial preview can
+        // never be mistaken for a successful brush stroke.
+        if !touched.windows(2).all(|pair| pair[0] < pair[1])
+            || touched.iter().any(|index| {
+                usize::try_from(*index).map_or(true, |at| at >= count)
+            })
+        {
+            return false;
+        }
         let colors = Arc::make_mut(&mut slot.1);
         for (index, colour) in touched.iter().zip(patched) {
             if let Some(entry) = colors.get_mut(*index as usize) {
@@ -139,11 +149,15 @@ impl OccluViewApp {
             }
         }
 
-        if let Some(painted) = painted {
-            let indices: Vec<usize> = touched.iter().map(|index| *index as usize).collect();
-            if let Ok(viewport) = live_viewport.lock() {
-                viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
-            }
+        let Some(painted) = painted else {
+            return false;
+        };
+        let indices: Vec<usize> = touched.iter().map(|index| *index as usize).collect();
+        let Ok(viewport) = live_viewport.lock() else {
+            return false;
+        };
+        if !viewport.write_scene_vertices_sparse(&topology, &painted, &indices) {
+            return false;
         }
         self.render.invalidation.overlay_tools_changed();
         true
@@ -412,6 +426,22 @@ mod tests {
         assert!(
             !patch.contains("self.tools.align.painted.repaint("),
             "the sparse path must not fall back to a full repaint silently"
+        );
+    }
+
+    #[test]
+    fn a_rejected_sparse_overlay_upload_is_not_reported_as_success() {
+        let patch = production()
+            .split_once("fn patch_overlay_colors(")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("\n    /// Remember one layer"))
+            .map(|(body, _)| body)
+            .expect("a sparse patch path");
+        assert!(
+            patch.contains("touched.iter().any")
+                && patch.contains("write_scene_vertices_sparse")
+                && patch.contains("if !viewport.write_scene_vertices_sparse"),
+            "the brush preview must validate IDs and propagate sparse GPU rejection"
         );
     }
 
