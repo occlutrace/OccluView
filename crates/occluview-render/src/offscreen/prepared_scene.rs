@@ -125,7 +125,8 @@ impl PreparedScene {
     /// frame (see [`Self::write_entry_vertices`]) would move megabytes per dab
     /// and stutter; this writes only the affected vertices, coalesced into
     /// contiguous runs so scattered soup duplicates still cost few GPU writes.
-    /// Returns `false` when no entry matches or the vertex count differs.
+    /// Returns `false` when no entry matches, the vertex count differs, or the
+    /// touched ids do not describe a sorted in-range slice.
     pub fn write_entry_vertices_sparse(
         &self,
         renderer: &Renderer,
@@ -133,9 +134,15 @@ impl PreparedScene {
         vertices: &[Vertex],
         touched: &[usize],
     ) -> bool {
-        // The run-coalescing below needs `touched` strictly ascending — a
-        // reversed slice `vertices[start..=prev]` would panic. The sole caller
-        // sorts+dedups, so this only guards a future misuse.
+        // The run-coalescing below needs `touched` strictly ascending and
+        // in-range. Validate in release builds as well: silently skipping a
+        // bad id would report a successful upload while leaving part of the
+        // GPU shadow stale, and an unsorted id could make a range slice panic.
+        if !touched.windows(2).all(|pair| pair[0] < pair[1])
+            || touched.iter().any(|&id| id >= vertices.len())
+        {
+            return false;
+        }
         debug_assert!(
             touched.windows(2).all(|pair| pair[0] < pair[1]),
             "write_entry_vertices_sparse requires strictly ascending touched ids"
@@ -165,9 +172,6 @@ impl PreparedScene {
         // `touched` is ascending; flush a run whenever the ids stop being
         // consecutive so each `write_buffer` covers one contiguous span.
         for &id in touched {
-            if id >= vertices.len() {
-                continue;
-            }
             match run_start {
                 Some(_) if id == prev + 1 => {}
                 Some(start) => {
