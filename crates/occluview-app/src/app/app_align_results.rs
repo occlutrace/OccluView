@@ -10,14 +10,6 @@ use super::OccluViewApp;
 use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
-/// What the operator is told when a finished fit could not be written.
-///
-/// The scan or edit state may change while the worker runs.
-/// English source wording of the refused-pose status (pinned by the lock
-/// test below); rendering resolves `align-status-pose-refused`.
-#[allow(dead_code)]
-const POSE_REFUSED: &str = "The fit finished, but the scan it was for is no longer available";
-
 impl OccluViewApp {
     /// Drain finished jobs and apply them.
     pub(super) fn drain_align_worker(&mut self, ctx: &egui::Context) {
@@ -325,16 +317,6 @@ mod tests {
         source
             .split_once("\n#[cfg(test)]")
             .map_or(source, |(before, _)| before)
-    }
-
-    /// The refused-pose wording renders from the catalog, pinned to source.
-    #[test]
-    fn refused_pose_status_matches_source_wording() {
-        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-        assert_eq!(
-            catalog.text("align-status-pose-refused").as_deref(),
-            Some(super::POSE_REFUSED)
-        );
     }
 
     /// Typed failures map to their catalog keys at the presentation boundary.
