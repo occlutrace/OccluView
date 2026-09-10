@@ -72,28 +72,26 @@ impl SculptCommandQueue {
         if state.shutdown {
             return false;
         }
-        let stroke_id = if let Some(stroke_id) = state.open_stroke {
-            stroke_id
-        } else {
-            state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
-            let stroke_id = state.next_stroke_id;
-            state.open_stroke = Some(stroke_id);
-            stroke_id
-        };
-        let queued_applies = state
-            .commands
-            .iter()
-            .filter(|command| {
-                matches!(
-                    command,
-                    SculptCommand::Apply {
-                        stroke_id: queued_id,
-                        ..
-                    } if *queued_id == stroke_id
-                )
-            })
-            .count();
+        let open_stroke = state.open_stroke;
+        let queued_applies = open_stroke.map_or(0, |stroke_id| {
+            state
+                .commands
+                .iter()
+                .filter(|command| {
+                    matches!(
+                        command,
+                        SculptCommand::Apply {
+                            stroke_id: queued_id,
+                            ..
+                        } if *queued_id == stroke_id
+                    )
+                })
+                .count()
+        });
         if queued_applies >= APPLY_QUEUE_CAPACITY_PER_STROKE {
+            let Some(stroke_id) = open_stroke else {
+                return false;
+            };
             let Some(position) = state.commands.iter().position(|command| {
                 matches!(
                     command,
@@ -110,6 +108,14 @@ impl SculptCommandQueue {
         if !make_room_for_apply(&mut state) {
             return false;
         }
+        let stroke_id = if let Some(stroke_id) = open_stroke {
+            stroke_id
+        } else {
+            state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
+            let stroke_id = state.next_stroke_id;
+            state.open_stroke = Some(stroke_id);
+            stroke_id
+        };
         state.commands.push_back(SculptCommand::Apply {
             stroke_id,
             stroke,
