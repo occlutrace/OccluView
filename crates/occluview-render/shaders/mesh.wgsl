@@ -21,9 +21,9 @@ const BACKFACE_INSPECTION_TINT: vec3<f32> = vec3<f32>(0.52, 0.60, 0.66);
 // `neutral_material_matches_the_core_untextured_tint` in mesh_uniform.rs).
 const NEUTRAL_MATERIAL_RGB: vec3<f32> = vec3<f32>(0.82, 0.68, 0.42);
 
-// How much of the studio lighting a measured colour map keeps. Enough that the
-// surface still has form; little enough that the ramp stays saturated.
-const MEASURED_MAP_SHADE: f32 = 0.58;
+// How much of the studio lighting a measured colour map keeps. Keep most of the
+// uploaded hue at the screen: the heatmap is metrology, not a clay material.
+const MEASURED_MAP_SHADE: f32 = 0.42;
 // Extra form for a measured map, folded INTO the shared shading factor rather
 // than added as a white highlight. A specular term would move the hue at every
 // bright pixel, and a false-colour map is read by matching its hue against the
@@ -31,7 +31,10 @@ const MEASURED_MAP_SHADE: f32 = 0.58;
 // channels together (pinned by `measured_map.rs`). Brightening the grazing
 // edge inside that one factor is legal, and it is what makes a cusp, a groove,
 // and a margin read as geometry instead of a coloured blob.
-const MEASURED_MAP_FORM: f32 = 0.22;
+const MEASURED_MAP_FORM: f32 = 0.42;
+// A scalar gloss term gives cusps a controlled highlight without adding white
+// to the measured RGB channels and corrupting the deviation hue.
+const MEASURED_MAP_GLOSS: f32 = 0.30;
 
 struct Camera {
     view: mat4x4<f32>,
@@ -251,8 +254,13 @@ fn fs_main(
     // but no light at all leaves a flat silhouette with no readable form — and
     // a heat map you cannot read the shape of tells you nothing about a scan.
     if (mesh_uniform.measured_map != 0u) {
-        let map_form = lit + MEASURED_MAP_FORM * fresnel;
-        let shade = clamp(mix(1.0, map_form, MEASURED_MAP_SHADE), 0.0, 1.05);
+        let gloss = 0.75 * tight_specular + 0.25 * broad_specular;
+        let map_form = clamp(
+            lit + MEASURED_MAP_FORM * fresnel + MEASURED_MAP_GLOSS * gloss,
+            0.78,
+            1.10,
+        );
+        let shade = clamp(mix(1.0, map_form, MEASURED_MAP_SHADE), 0.96, 1.05);
         return vec4<f32>(base_rgb * shade, base_a * mesh_uniform.opacity * splat_coverage);
     }
 

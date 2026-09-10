@@ -140,11 +140,13 @@ impl OccluViewApp {
         basis: crate::cut_ruler::SliceBasis,
     ) -> Option<(egui::ColorImage, crate::cut_ruler::SliceCam)> {
         let bbox = scene.bbox();
+        let restore_deviation = self.align_overlay_is_up();
         if let Err(e) = self.ensure_offscreen() {
             tracing::error!(error = ?e, "section-view offscreen init failed");
             return None;
         }
         let offscreen = self.render.offscreen.as_ref()?;
+        let mut scene_rebuilt = false;
         if self.render.invalidation.offscreen_scene_stale() {
             let updates = prepared_scene_updates(scene);
             let rebuild = self
@@ -155,8 +157,12 @@ impl OccluViewApp {
             if rebuild {
                 let sources = prepared_scene_sources(scene);
                 self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
+                scene_rebuilt = true;
             }
             self.render.invalidation.consume_offscreen_scene();
+        }
+        if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
+            self.tools.align.deviation_push_pending = !self.push_deviation_colors_offscreen();
         }
         let pixels = {
             let offscreen = self.render.offscreen.as_ref()?;
@@ -270,6 +276,8 @@ impl OccluViewApp {
             .offscreen
             .as_ref()
             .context("offscreen unavailable")?;
+        let restore_deviation = self.align_overlay_is_up();
+        let mut scene_rebuilt = false;
         if self.render.invalidation.offscreen_scene_stale() {
             let updates = prepared_scene_updates(&scene);
             let rebuild = self
@@ -285,6 +293,7 @@ impl OccluViewApp {
                     .map(|source| source.mesh.vertices().len())
                     .sum();
                 self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
+                scene_rebuilt = true;
                 tracing::info!(
                     mesh_count = sources.len(),
                     vertex_count,
@@ -293,6 +302,9 @@ impl OccluViewApp {
                 );
             }
             self.render.invalidation.consume_offscreen_scene();
+        }
+        if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
+            self.tools.align.deviation_push_pending = !self.push_deviation_colors_offscreen();
         }
         if self.render.invalidation.offscreen_overlay_stale() {
             let overlay = selection_overlay_for_scene(&scene, &self.document.edit_mode);
@@ -338,6 +350,55 @@ impl OccluViewApp {
         }
         .context("rendering viewport")?;
         Ok((spec, pixels))
+    }
+
+    /// Replay the display-only deviation colours into the prepared offscreen
+    /// vertex buffer. The live viewport has an equivalent sparse/full upload
+    /// path, but the fallback renderer keeps its own prepared scene and would
+    /// otherwise upload the scan's original colours whenever it rebuilt.
+    ///
+    /// The CPU mesh remains untouched: only the cached GPU vertices are
+    /// rewritten, and clearing a map writes the original vertices back once.
+    fn push_deviation_colors_offscreen(&self) -> bool {
+        let (Some(scene), Some(offscreen), Some(prepared)) = (
+            self.document.scene.clone(),
+            self.render.offscreen.as_ref(),
+            self.render.prepared_scene.as_ref(),
+        ) else {
+            return false;
+        };
+        let pending = self.tools.align.overlay_colors.clone();
+        if pending.is_empty() {
+            let mut wrote = true;
+            for entry in scene.meshes() {
+                let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
+                wrote &= prepared.write_entry_vertices(
+                    offscreen.renderer(),
+                    &topology,
+                    entry.mesh.vertices(),
+                );
+            }
+            return wrote;
+        }
+
+        let mut wrote = true;
+        for (layer, colors) in pending {
+            let Some(entry) = super::app_align::layer_of(&scene, layer) else {
+                wrote = false;
+                continue;
+            };
+            if colors.len() != entry.mesh.vertices().len() {
+                wrote = false;
+                continue;
+            }
+            let mut vertices = entry.mesh.vertices().to_vec();
+            for (vertex, color) in vertices.iter_mut().zip(colors.iter()) {
+                vertex.color = *color;
+            }
+            let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
+            wrote &= prepared.write_entry_vertices(offscreen.renderer(), &topology, &vertices);
+        }
+        wrote
     }
 
     pub(super) fn sync_live_viewport(&mut self) {
@@ -732,73 +793,5 @@ pub(super) fn prepared_scene_updates(scene: &Scene) -> Vec<PreparedSceneUpdate> 
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
-
-    /// Source contract for the destroyed-texture submit crash. The per-frame
-    /// render paths must update ONE persistent egui texture id in place
-    /// (`TextureHandle::set` / `CutTool::store_slice`), never allocate a fresh id
-    /// per render — a dropped predecessor emits a texture-`free` that egui-wgpu
-    /// 0.29 turns into `wgpu::Texture::destroy` *before* `queue.submit`, killing a
-    /// texture the same frame painted. The viewport render's `load_texture` is
-    /// the first-time-only fallback in the `None` arm.
-    #[test]
-    fn per_frame_render_paths_reuse_persistent_texture_ids() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"))
-            .replace("\r\n", "\n");
-        assert!(
-            source.contains("frame.texture.set(color_image, egui::TextureOptions::LINEAR)"),
-            "render_now must update the viewport texture in place, not reallocate it"
-        );
-        assert!(
-            source.contains("self.tools.cut_view.store_slice(ctx, color_image, slice_cam)"),
-            "render_cut_now must route the slice through CutTool::store_slice"
-        );
-        assert!(
-            !source.contains("load_texture(\"occluview-cut\""),
-            "the cut slice must not allocate a fresh egui texture id per render"
-        );
-    }
-
-    /// A deviation map is a measurement. It must reach the screen unlit and in
-    /// its own colors whatever the layer's display toggles happen to say,
-    /// because a lit or texture-sampled heat map is not the map that was
-    /// measured.
-    #[test]
-    fn a_deviation_overlay_forces_unlit_vertex_colors() {
-        use glam::Vec3;
-        use occluview_core::scene::SceneMesh;
-        use occluview_core::{Mesh, Vertex};
-
-        let mesh = Mesh::new(
-            None,
-            vec![
-                Vertex::at(Vec3::ZERO),
-                Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
-                Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2],
-        )
-        .expect("valid mesh");
-
-        let mut entry = SceneMesh::new(mesh);
-        entry.show_vertex_colors = false;
-        entry.show_texture = true;
-
-        let plain = super::scene_mesh_uniform(&entry);
-        assert_eq!(plain.measured_map, 0);
-        assert_eq!(plain.show_vertex_colors, 0);
-
-        let colors = std::sync::Arc::new(vec![[0u8, 0, 0, 255]; 3]);
-        let mapped = super::scene_mesh_uniform(&entry.with_deviation(Some(colors)));
-        assert_eq!(mapped.measured_map, 1, "a deviation map must draw unlit");
-        assert_eq!(
-            mapped.show_vertex_colors, 1,
-            "a deviation map must show its own colors"
-        );
-        assert_eq!(
-            mapped.show_texture, 0,
-            "a texture must not be sampled over a measurement"
-        );
-    }
-}
+#[path = "app_render_tests.rs"]
+mod tests;

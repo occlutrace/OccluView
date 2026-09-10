@@ -172,7 +172,7 @@ fn a_measured_map_reaches_the_screen_in_the_colour_it_was_uploaded_in() {
                 .expect("a brightest channel");
             let shade = f64::from(px[slot]) / f64::from(brightest);
             assert!(
-                (0.68..=1.06).contains(&shade),
+                (0.96..=1.06).contains(&shade),
                 "pixel {px:?} is not {uploaded:?} under any legal shading (factor {shade:.3})"
             );
             for channel in 0..3 {
@@ -221,4 +221,26 @@ fn a_swept_deviation_arrives_on_screen_as_a_transition() {
              ({cold} cold, {nominal} nominal, {hot} hot)"
         );
     }
+}
+
+#[test]
+fn a_measured_map_has_visible_scalar_form_and_gloss_contrast() {
+    let _gpu = gpu_test_lock();
+    let uploaded = [120, 180, 40, 255];
+    let pixels = render_measured_dome(&colored_dome_mesh(uploaded));
+    let brightest = f64::from(uploaded[1]);
+    let mut minimum: f64 = 1.1;
+    let mut maximum: f64 = 0.0;
+    for px in pixels.as_chunks::<4>().0 {
+        if px[0].abs_diff(10) <= 1 && px[1].abs_diff(10) <= 1 && px[2].abs_diff(10) <= 1 {
+            continue;
+        }
+        let shade = f64::from(px[1]) / brightest;
+        minimum = minimum.min(shade);
+        maximum = maximum.max(shade);
+    }
+    assert!(
+        maximum - minimum >= 0.065,
+        "the measured surface is too flat to show form/gloss: {minimum:.3}..{maximum:.3}"
+    );
 }
