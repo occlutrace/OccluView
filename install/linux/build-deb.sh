@@ -129,8 +129,8 @@ Priority: optional
 Architecture: $arch
 Maintainer: Dental Cloud Technologies <support@occlutrace.ai>
 Installed-Size: $installed_size
-Depends: libc6, libgcc-s1, libx11-6, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libvulkan1, desktop-file-utils, shared-mime-info, hicolor-icon-theme
-Recommends: xdg-desktop-portal
+Depends: libc6, libgcc-s1, libx11-6, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libvulkan1, libegl1, desktop-file-utils, shared-mime-info, hicolor-icon-theme
+Recommends: xdg-desktop-portal, libnotify-bin
 Homepage: https://occlutrace.ai
 Description: advanced Mesh Repair and Mesh Editing for dental CAD
  OccluView is a native desktop dental CAD workspace for inspection, editing,
