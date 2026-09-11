@@ -181,7 +181,11 @@ fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
         // right label says so instead of repeating "0.00 mm", which would
         // claim the bar has no range at all.
         RampMode::Magnitude if scale_mm <= 0.0 => ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
-        RampMode::Magnitude => ("0.00 mm".to_owned(), format!("{scale_mm:.2} mm")),
+        // The ramp clamps every value at the upper stop, so the hot end also
+        // represents all deviations above that stop. Showing the inequality
+        // prevents an operator from reading a saturated red patch as exactly
+        // the endpoint.
+        RampMode::Magnitude => ("0.00 mm".to_owned(), format!("≥ {scale_mm:.2} mm")),
         RampMode::Signed => (format!("−{scale_mm:.2} mm"), format!("+{scale_mm:.2} mm")),
     }
 }
@@ -465,7 +469,7 @@ mod tests {
     fn the_bounds_name_the_scale_the_bar_was_drawn_over() {
         assert_eq!(
             legend_bounds(RampMode::Magnitude, 0.5),
-            ("0.00 mm".to_owned(), "0.50 mm".to_owned()),
+            ("0.00 mm".to_owned(), "≥ 0.50 mm".to_owned()),
             "a magnitude bar starts at nothing, never at a negative distance"
         );
         assert_eq!(
