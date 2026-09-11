@@ -31,6 +31,19 @@ pub(crate) fn record_gpu_error(latch: &GpuErrorLatch, message: String) {
     }
 }
 
+/// Record a GPU fault and make the renderer fail closed for subsequent work.
+/// The error message is still drained by the UI once; the boolean remains set
+/// so later buffer writes and paint callbacks cannot submit more invalid work
+/// after the original fault has been surfaced.
+pub(crate) fn record_gpu_fault(
+    latch: &GpuErrorLatch,
+    faulted: &std::sync::atomic::AtomicBool,
+    message: String,
+) {
+    faulted.store(true, Ordering::Release);
+    record_gpu_error(latch, message);
+}
+
 /// Take and clear the latched error. Returns `None` when empty or poisoned;
 /// a poisoned latch must never block the UI poll.
 pub(crate) fn drain_gpu_error(latch: &GpuErrorLatch) -> Option<String> {
@@ -165,6 +178,9 @@ pub struct Renderer {
     sample_count: u32,
     /// Most recent wgpu uncaptured error, recorded by the device error handler.
     pub(crate) gpu_error: GpuErrorLatch,
+    /// Whether the device has reported a non-recoverable fault. Once set, the
+    /// live callback must stop touching the device until the app is restarted.
+    pub(crate) gpu_faulted: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Renderer {
@@ -486,6 +502,12 @@ impl Renderer {
     /// a poisoned latch never blocks the UI.
     pub fn take_gpu_error(&self) -> Option<String> {
         drain_gpu_error(&self.gpu_error)
+    }
+
+    /// Whether this renderer must stop issuing GPU work after a device fault.
+    #[must_use]
+    pub fn is_gpu_faulted(&self) -> bool {
+        self.gpu_faulted.load(Ordering::Acquire)
     }
 
     /// Depth texture format used by this pipeline.

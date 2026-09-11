@@ -342,7 +342,7 @@ fn ui_keeps_render_input_and_surface_order_in_one_visible_pass() {
     };
     let after_second_render = &ui_pass[second_render..];
     let ordered_surfaces = [
-        "self.poll_gpu_errors();",
+        "self.poll_gpu_errors()",
         "self.show_error_dialog(&ctx);",
         "self.show_information_dialog(&ctx);",
         "self.ui.repair_report.ui(&ctx, &self.ui.locale);",

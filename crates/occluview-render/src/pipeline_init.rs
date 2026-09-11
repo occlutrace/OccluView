@@ -13,7 +13,10 @@ use crate::sculpt_cursor::{
 };
 use std::{
     borrow::Cow,
-    sync::{atomic::AtomicU32, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicU32},
+        Arc,
+    },
 };
 
 /// The depth/stencil format every live-pass pipeline declares.
@@ -160,10 +163,12 @@ impl Renderer {
         // renderer-creation path funnels through here, so both the live viewport
         // and the offscreen/thumbnail renderers get the safety net.
         let gpu_error: super::GpuErrorLatch = Arc::new(std::sync::Mutex::new(None));
+        let gpu_faulted = Arc::new(AtomicBool::new(false));
         {
             let sink = Arc::clone(&gpu_error);
+            let faulted = Arc::clone(&gpu_faulted);
             device.on_uncaptured_error(Arc::new(move |error| {
-                super::record_gpu_error(&sink, error.to_string());
+                super::record_gpu_fault(&sink, &faulted, error.to_string());
             }));
         }
         {
@@ -172,12 +177,14 @@ impl Renderer {
             // `Destroyed` fires on our own normal teardown (device dropped) and
             // is NOT a fault; anything else is a real loss to surface.
             let sink = Arc::clone(&gpu_error);
+            let faulted = Arc::clone(&gpu_faulted);
             device.set_device_lost_callback(move |reason, message| {
                 if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
                     return;
                 }
-                super::record_gpu_error(
+                super::record_gpu_fault(
                     &sink,
+                    &faulted,
                     format!("graphics device lost ({reason:?}): {message}"),
                 );
             });
@@ -821,6 +828,7 @@ impl Renderer {
             cap_uniform_layout,
             sample_count,
             gpu_error,
+            gpu_faulted,
         })
     }
 }
