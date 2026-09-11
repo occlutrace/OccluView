@@ -739,21 +739,22 @@ fn live_window_uses_matching_msaa_for_custom_wgpu_viewport() {
     let live_viewport = include_str!("../live_viewport.rs");
     let native_options = function_source(
         source,
-        "fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptions {",
+        "fn native_options(preflight: &GraphicsPreflight) -> eframe::NativeOptions {",
     );
 
     assert!(
-        native_options.contains("multisampling: LIVE_VIEWPORT_SAMPLE_COUNT"),
-        "eframe MSAA must use the same sample-count constant as the live custom renderer"
+        native_options.contains("multisampling: preflight.live_sample_count"),
+        "eframe MSAA must use the startup-selected sample count"
     );
     assert!(
-        live_viewport.contains("Renderer::with_shared_device_sample_count("),
-        "custom live viewport pipelines must be built with the eframe render-pass sample count"
+        live_viewport.contains("Renderer::with_shared_device_sample_count(")
+            && live_viewport.contains("sample_count: u16"),
+        "custom live viewport pipelines must receive the eframe render-pass sample count"
     );
     assert!(
-        source.contains("LIVE_VIEWPORT_SAMPLE_COUNT")
-            && live_viewport.contains("LIVE_VIEWPORT_SAMPLE_COUNT"),
-        "the live viewport sample count should be a single shared constant"
+        source.contains("let live_sample_count = graphics_preflight.live_sample_count")
+            && source.contains("from_render_state(state, live_sample_count)"),
+        "the selected count must cross startup into the custom viewport"
     );
 }
 
@@ -762,7 +763,7 @@ fn live_window_requests_one_frame_of_swapchain_latency() {
     let source = app_bootstrap_source();
     let native_options = function_source(
         source,
-        "fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptions {",
+        "fn native_options(preflight: &GraphicsPreflight) -> eframe::NativeOptions {",
     );
 
     assert!(

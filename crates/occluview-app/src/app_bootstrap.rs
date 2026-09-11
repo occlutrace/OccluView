@@ -1,4 +1,4 @@
-use crate::{app, app_paths, live_viewport, single_instance, LIVE_VIEWPORT_SAMPLE_COUNT};
+use crate::{app, app_paths, live_viewport, single_instance};
 use anyhow::Result;
 use eframe::egui;
 use eframe::egui_wgpu::wgpu;
@@ -21,6 +21,35 @@ const STARTUP_JOURNAL_CAPACITY: usize = 64;
 const STARTUP_JOURNAL_MAX_BYTES: u64 = 64 * 1024;
 const STARTUP_JOURNAL_FILE: &str = "startup-journal.log";
 const MAX_RENDER_TEXTURE_DIMENSION: u32 = 8192;
+const LIVE_MSAA_SAMPLE_COUNT: u16 = 4;
+const LIVE_SAFE_SAMPLE_COUNT: u16 = 1;
+const LIVE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+const LIVE_SURFACE_FORMATS: [wgpu::TextureFormat; 4] = [
+    wgpu::TextureFormat::Rgba8Unorm,
+    wgpu::TextureFormat::Bgra8Unorm,
+    wgpu::TextureFormat::Rgba8UnormSrgb,
+    wgpu::TextureFormat::Bgra8UnormSrgb,
+];
+
+/// Graphics facts established before eframe creates the window.
+///
+/// `live_sample_count` is part of this value instead of a process-wide
+/// constant: eframe and the custom viewport must agree with the adapter that
+/// will actually render this startup.
+#[derive(Clone, Debug)]
+struct GraphicsPreflight {
+    adapters: Vec<AdapterIdentity>,
+    live_sample_count: u16,
+}
+
+impl Default for GraphicsPreflight {
+    fn default() -> Self {
+        Self {
+            adapters: Vec::new(),
+            live_sample_count: LIVE_SAFE_SAMPLE_COUNT,
+        }
+    }
+}
 
 /// Binary entry behind the library boundary: install the panic hook, then run
 /// fallible startup and report failures instead of unwinding through `main`.
@@ -122,10 +151,11 @@ fn real_main() -> Result<()> {
     let startup_activation_token = single_instance::capture_activation_token();
 
     append_startup_stage("graphics-preflight");
-    let preflight_adapters = preflight_graphics_devices()?;
+    let graphics_preflight = preflight_graphics_devices()?;
     append_startup_stage("graphics-preflight-ok");
     append_startup_stage("graphics-init");
-    let native_options = native_options(&preflight_adapters);
+    let live_sample_count = graphics_preflight.live_sample_count;
+    let native_options = native_options(&graphics_preflight);
 
     eframe::run_native(
         "OccluView 3D Viewer",
@@ -150,7 +180,7 @@ fn real_main() -> Result<()> {
             // the live path runs it (see `show_viewport_overlays`), which is
             // what stops it rotting for the operators it does serve.
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
-                match live_viewport::LiveViewport::from_render_state(state) {
+                match live_viewport::LiveViewport::from_render_state(state, live_sample_count) {
                     Ok(viewport) => Some(viewport),
                     Err(e) => {
                         tracing::warn!(
@@ -180,7 +210,7 @@ fn real_main() -> Result<()> {
     Ok(())
 }
 
-fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptions {
+fn native_options(preflight: &GraphicsPreflight) -> eframe::NativeOptions {
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetup::without_display_handle();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(create_new) = &mut wgpu_setup {
         // eframe creates the adapter/device before it calls our app creator.
@@ -189,9 +219,9 @@ fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptio
         // support.
         create_new.device_descriptor = Arc::new(device_descriptor_for_adapter);
         let power_preference = create_new.power_preference;
-        let preflight_adapters = preflight_adapters.to_vec();
+        let preflight = preflight.clone();
         create_new.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
-            select_native_adapter(adapters, surface, power_preference, &preflight_adapters)
+            select_native_adapter(adapters, surface, power_preference, &preflight)
         }));
     }
 
@@ -200,7 +230,7 @@ fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptio
         renderer: eframe::Renderer::Wgpu,
         depth_buffer: 24,
         stencil_buffer: 8,
-        multisampling: LIVE_VIEWPORT_SAMPLE_COUNT,
+        multisampling: preflight.live_sample_count,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             // Keep vsync, but do not queue stale camera frames ahead of what
             // the operator is currently doing with the mouse.
@@ -231,7 +261,7 @@ fn select_native_adapter(
     adapters: &[wgpu::Adapter],
     surface: Option<&wgpu::Surface<'_>>,
     power_preference: wgpu::PowerPreference,
-    preflight_adapters: &[AdapterIdentity],
+    preflight: &GraphicsPreflight,
 ) -> Result<wgpu::Adapter, String> {
     let mut best: Option<(i32, usize)> = None;
     for (index, adapter) in adapters.iter().enumerate() {
@@ -240,12 +270,24 @@ fn select_native_adapter(
             tracing::debug!(adapter = %info.name, backend = ?info.backend, "skipping adapter without a surface format");
             continue;
         }
-        if !preflight_adapters.is_empty()
-            && !preflight_adapters
+        if !preflight.adapters.is_empty()
+            && !preflight
+                .adapters
                 .iter()
                 .any(|candidate| candidate.matches(&info))
         {
             tracing::debug!(adapter = %info.name, backend = ?info.backend, "skipping adapter that failed graphics preflight");
+            continue;
+        }
+        if preflight.live_sample_count > LIVE_SAFE_SAMPLE_COUNT
+            && !adapter_supports_live_sample_count(adapter, surface, preflight.live_sample_count)
+        {
+            tracing::debug!(
+                adapter = %info.name,
+                backend = ?info.backend,
+                sample_count = preflight.live_sample_count,
+                "skipping adapter that cannot create the configured multisampled live targets"
+            );
             continue;
         }
 
@@ -269,6 +311,37 @@ fn select_native_adapter(
         "surface-compatible wgpu adapter selected"
     );
     Ok(adapter)
+}
+
+/// Check the exact formats eframe will use for this surface before allowing a
+/// multisampled startup. The preflight runs before a window exists, while this
+/// selector is the first point where the adapter's real surface format is
+/// available; keeping both checks closes that timing gap.
+fn adapter_supports_live_sample_count(
+    adapter: &wgpu::Adapter,
+    surface: Option<&wgpu::Surface<'_>>,
+    sample_count: u16,
+) -> bool {
+    let count = u32::from(sample_count);
+    if count <= u32::from(LIVE_SAFE_SAMPLE_COUNT) {
+        return true;
+    }
+    let color_format = surface
+        .map(|surface| surface.get_capabilities(adapter).formats)
+        .map_or_else(
+            || Some(wgpu::TextureFormat::Rgba8Unorm),
+            |formats| eframe::egui_wgpu::preferred_framebuffer_format(&formats).ok(),
+        );
+    color_format.is_some_and(|format| {
+        adapter
+            .get_texture_format_features(format)
+            .flags
+            .sample_count_supported(count)
+            && adapter
+                .get_texture_format_features(LIVE_DEPTH_FORMAT)
+                .flags
+                .sample_count_supported(count)
+    })
 }
 
 fn adapter_device_score(
@@ -301,10 +374,12 @@ struct AdapterIdentity {
     device_type: wgpu::DeviceType,
     device_pci_bus_id: String,
     backend: wgpu::Backend,
+    supports_live_msaa_4: bool,
 }
 
 impl AdapterIdentity {
-    fn from_info(info: &wgpu::AdapterInfo) -> Self {
+    fn from_adapter(adapter: &wgpu::Adapter) -> Self {
+        let info = adapter.get_info();
         Self {
             name: info.name.clone(),
             vendor: info.vendor,
@@ -312,11 +387,46 @@ impl AdapterIdentity {
             device_type: info.device_type,
             device_pci_bus_id: info.device_pci_bus_id.clone(),
             backend: info.backend,
+            supports_live_msaa_4: adapter_supports_preflight_msaa_4(adapter),
         }
     }
 
     fn matches(&self, info: &wgpu::AdapterInfo) -> bool {
-        self == &Self::from_info(info)
+        self.name == info.name
+            && self.vendor == info.vendor
+            && self.device == info.device
+            && self.device_type == info.device_type
+            && self.device_pci_bus_id == info.device_pci_bus_id
+            && self.backend == info.backend
+    }
+}
+
+/// Conservative, window-free capability check used to choose the startup
+/// profile. The selector repeats the check against the exact surface format
+/// once the window exists.
+fn adapter_supports_preflight_msaa_4(adapter: &wgpu::Adapter) -> bool {
+    adapter_supports_format_sample_count(adapter, LIVE_DEPTH_FORMAT, LIVE_MSAA_SAMPLE_COUNT)
+        && LIVE_SURFACE_FORMATS.iter().all(|&format| {
+            adapter_supports_format_sample_count(adapter, format, LIVE_MSAA_SAMPLE_COUNT)
+        })
+}
+
+fn adapter_supports_format_sample_count(
+    adapter: &wgpu::Adapter,
+    format: wgpu::TextureFormat,
+    sample_count: u16,
+) -> bool {
+    adapter
+        .get_texture_format_features(format)
+        .flags
+        .sample_count_supported(u32::from(sample_count))
+}
+
+fn select_live_sample_count(selected_adapter_supports_msaa_4: bool) -> u16 {
+    if selected_adapter_supports_msaa_4 {
+        LIVE_MSAA_SAMPLE_COUNT
+    } else {
+        LIVE_SAFE_SAMPLE_COUNT
     }
 }
 
@@ -357,7 +467,7 @@ fn validate_graphics_environment_values(
 /// never reaches the application creator. Try every adapter in preference
 /// order: a broken discrete driver must not hide a usable integrated or CPU
 /// adapter on a machine with both integrated and discrete graphics.
-fn preflight_graphics_devices() -> Result<Vec<AdapterIdentity>> {
+fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
     let (descriptor, power_preference) = native_graphics_profile();
     let backends = descriptor.backends;
     let instance = wgpu::Instance::new(descriptor);
@@ -382,7 +492,7 @@ fn preflight_graphics_devices() -> Result<Vec<AdapterIdentity>> {
         let info = adapter.get_info();
         match pollster::block_on(adapter.request_device(&device_descriptor_for_adapter(&adapter))) {
             Ok((_device, _queue)) => {
-                working_adapters.push(AdapterIdentity::from_info(&info));
+                working_adapters.push(AdapterIdentity::from_adapter(&adapter));
                 tracing::info!(
                     adapter = %info.name,
                     backend = ?info.backend,
@@ -401,7 +511,20 @@ fn preflight_graphics_devices() -> Result<Vec<AdapterIdentity>> {
                 "some graphics adapters failed preflight; restricting surface selection to working adapters"
             );
         }
-        return Ok(working_adapters);
+        let selected_supports_msaa_4 = working_adapters
+            .iter()
+            .max_by_key(|adapter| adapter_device_score(adapter.device_type, power_preference))
+            .is_some_and(|adapter| adapter.supports_live_msaa_4);
+        let live_sample_count = select_live_sample_count(selected_supports_msaa_4);
+        tracing::info!(
+            sample_count = live_sample_count,
+            msaa4_capable_selected_adapter = selected_supports_msaa_4,
+            "live viewport sample count selected"
+        );
+        return Ok(GraphicsPreflight {
+            adapters: working_adapters,
+            live_sample_count,
+        });
     }
     Err(anyhow::anyhow!(
         "no graphics adapter could create a device; run `occluview --diagnostics`; attempts: {}",
