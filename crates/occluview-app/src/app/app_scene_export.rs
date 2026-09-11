@@ -152,7 +152,8 @@ impl OccluViewApp {
             .count();
 
         let mut written = 0usize;
-        let mut failed = 0usize;
+        let mut successful_layers = Vec::with_capacity(visible.len());
+        let mut failures = Vec::new();
         for ((_, entry), (path, (_, format))) in visible.iter().zip(destinations.iter().zip(&specs))
         {
             match write_mesh_overwrite(
@@ -161,26 +162,24 @@ impl OccluViewApp {
                 *format,
                 MeshWriteOptions::default(),
             ) {
-                Ok(_) => written += 1,
-                Err(_) => failed += 1,
+                Ok(_) => {
+                    written += 1;
+                    successful_layers.push(entry.id());
+                }
+                Err(error) => failures.push(format!("{}: {error:#}", path.display())),
             }
         }
+        let failed = failures.len();
 
         if written > 0 {
             // Even a partial batch is a real destination choice worth
             // remembering for the next save dialog.
             self.persistence.last_export_dir = Some(directory.clone());
         }
-        if failed == 0 {
-            // Same rule as the whole-scene save: a hidden layer was not written,
-            // so its edits are still only in memory.
-            let written: Vec<SceneMeshId> = scene
-                .meshes()
-                .iter()
-                .filter(|entry| entry.visible)
-                .map(SceneMesh::id)
-                .collect();
-            self.document.forget_unsaved_edits(&written);
+        if !successful_layers.is_empty() {
+            // A partial batch is still precise: keep failed layers dirty, but
+            // do not make the operator export already-successful layers again.
+            self.document.forget_unsaved_edits(&successful_layers);
         }
         let dir_text = directory.display().to_string();
         let status = match (failed == 0, renamed == 0) {
@@ -210,6 +209,16 @@ impl OccluViewApp {
             ),
         };
         self.ui.status_message = Some(status);
+        if !failures.is_empty() {
+            self.ui.app_error = Some(AppErrorDialog {
+                title: self.ui.locale.tr("mesh-export-failed-title"),
+                summary: self.ui.locale.tr_with(
+                    "mesh-export-failed-summary",
+                    &[("detail", &format!("{failed} layer export(s) failed"))],
+                ),
+                details: format!("Batch layer export failed\n\n{}", failures.join("\n")),
+            });
+        }
     }
 }
 
