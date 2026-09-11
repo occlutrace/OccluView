@@ -1105,26 +1105,22 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
         // A .desktop launch has no console. Give the operator the full path,
         // not just a filename they cannot locate, and put the same actionable
         // value in the next startup breadcrumb if every dialog channel fails.
-        let report = report_path
-            .map(|path| path.display().to_string())
-            // Keep the no-file state machine-readable. This sentinel is also
-            // handled by the Windows diagnostics dialog below; a prose
-            // fallback here would bypass the presentation-sink contract
-            // before the locale manager exists.
-            .unwrap_or_else(|| "none".to_owned());
+        // Keep the no-file state machine-readable. This sentinel is also
+        // handled by the Windows diagnostics dialog below; a prose fallback
+        // here would bypass the presentation-sink contract before the locale
+        // manager exists.
+        let report =
+            report_path.map_or_else(|| "none".to_owned(), |path| path.display().to_string());
         tracing::error!(report, details, "OccluView could not continue");
         notify_desktop("OccluView could not start", &report, "critical");
     }
 }
 
 fn show_diagnostics_message(report_path: Option<&Path>) {
-    let report = report_path
-        .map(|path| path.display().to_string())
-        // Keep the no-file state machine-readable. This sentinel is also
-        // handled by the Windows diagnostics dialog below; a prose fallback
-        // here would bypass the presentation-sink contract before the locale
-        // manager exists.
-        .unwrap_or_else(|| "none".to_owned());
+    // Keep the no-file state machine-readable. This sentinel is also handled
+    // by the Windows diagnostics dialog below; a prose fallback here would
+    // bypass the presentation-sink contract before the locale manager exists.
+    let report = report_path.map_or_else(|| "none".to_owned(), |path| path.display().to_string());
 
     #[cfg(windows)]
     {
