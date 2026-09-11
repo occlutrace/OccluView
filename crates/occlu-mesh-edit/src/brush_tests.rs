@@ -744,6 +744,30 @@ fn apply_stroke_still_finds_a_vertex_after_sustained_building_far_from_its_start
     );
 }
 
+#[test]
+fn a_dab_reports_the_triangles_needed_for_live_surface_picking() {
+    let mesh = bumpy_patch(0.0);
+    let mut session = BrushSession::prepare(&mesh).expect("prepare");
+    let outcome = session.apply_stroke(center_stroke(2.0, 1.0), BrushMode::Add);
+
+    assert!(!outcome.touched_vertices.is_empty());
+    assert!(!outcome.dirty_triangles.is_empty());
+    assert!(outcome
+        .dirty_triangles
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    assert!(outcome.dirty_triangles.iter().all(|&triangle| {
+        mesh.indices
+            .chunks_exact(3)
+            .nth(triangle)
+            .is_some_and(|corners| {
+                corners
+                    .iter()
+                    .any(|corner| outcome.touched_vertices.contains(&(*corner as usize)))
+            })
+    }));
+}
+
 fn bbox_diagonal(mesh: &MeshEditBuffers) -> f32 {
     let mut lo = Vec3::splat(f32::MAX);
     let mut hi = Vec3::splat(f32::MIN);

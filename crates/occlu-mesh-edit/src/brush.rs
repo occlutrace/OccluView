@@ -127,6 +127,10 @@ pub struct BrushStrokeOutcome {
     /// neighbours did not move. Interactive callers must upload this list as
     /// well or the live GPU shadow and the committed mesh retain stale shading.
     pub normal_vertices: Vec<usize>,
+    /// Triangle ids whose positions or normals may have changed. An
+    /// interactive picker can test this small dirty set against the live
+    /// shadow while retaining the original mesh BVH for all other triangles.
+    pub dirty_triangles: Vec<usize>,
     /// Vertices APPENDED by densification during this dab. New ids are always
     /// contiguous and end the array, so they occupy
     /// `vertex_count() - added_vertices .. vertex_count()`. Existing ids never
@@ -394,6 +398,7 @@ impl BrushSession {
             return Some(BrushStrokeOutcome {
                 touched_vertices: Vec::new(),
                 normal_vertices: Vec::new(),
+                dirty_triangles: Vec::new(),
                 added_vertices,
             });
         };
@@ -434,6 +439,7 @@ impl BrushSession {
             return Some(BrushStrokeOutcome {
                 touched_vertices: Vec::new(),
                 normal_vertices: Vec::new(),
+                dirty_triangles: Vec::new(),
                 added_vertices,
             });
         }
@@ -463,14 +469,35 @@ impl BrushSession {
             &mut self.max_step,
         );
         let normal_vertices = self.recompute_normals_near(&unique);
+        let dirty_triangles = self.triangles_touching_vertices(&unique);
         if cancellation_requested(cancel) {
             return None;
         }
         Some(BrushStrokeOutcome {
             touched_vertices: unique,
             normal_vertices,
+            dirty_triangles,
             added_vertices,
         })
+    }
+
+    /// Return the unique incident triangles for a changed vertex set. The
+    /// order is normalized so callers can retain one bounded deterministic
+    /// dirty list across several dabs.
+    pub fn triangles_touching_vertices(&mut self, vertices: &[usize]) -> Vec<usize> {
+        let generation = self.next_triangle_stamp();
+        let mut triangles = Vec::new();
+        for &vertex in vertices {
+            for &triangle in self.incident_triangles.row(vertex) {
+                let triangle = triangle as usize;
+                if self.triangle_stamp[triangle] != generation {
+                    self.triangle_stamp[triangle] = generation;
+                    triangles.push(triangle);
+                }
+            }
+        }
+        triangles.sort_unstable();
+        triangles
     }
 
     /// Falloff-weighted vertices within the dab's disc (the grid query is a

@@ -48,6 +48,32 @@ fn sculpted_mesh_refits_a_warm_bvh_for_the_next_pick() {
 }
 
 #[test]
+fn a_live_vertex_pick_checks_triangles_that_left_the_original_bvh_bounds() {
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    mesh.warm_bvh();
+    let live: Vec<Vertex> = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| Vertex::at(Vec3::from_array(vertex.position) + Vec3::new(0.0, 0.0, 5.0)))
+        .collect();
+
+    let hit = mesh
+        .pick_ray_local_with_vertices(&live, &[0], Vec3::new(0.25, 0.25, 10.0), -Vec3::Z, |_| true)
+        .expect("dirty triangle should be picked at its live position");
+    assert_eq!(hit.0, 0);
+    assert!((hit.1.z - 5.0).abs() < 1e-5);
+    assert_eq!(
+        mesh.triangle_normal_local_with_vertices(&live, 0),
+        Some(Vec3::Z)
+    );
+}
+
+#[test]
 fn an_uncached_sculpt_snapshot_holds_the_same_geometry_without_the_caches() {
     // Same content, none of the derived work: this is the form used for an undo
     // baseline, which is stored and usually dropped. On a million-vertex layer

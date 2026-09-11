@@ -604,7 +604,7 @@ impl BrushSession {
     }
 
     /// Hand out the next triangle-stamp generation, resetting on the rare wrap.
-    fn next_triangle_stamp(&mut self) -> u32 {
+    pub(super) fn next_triangle_stamp(&mut self) -> u32 {
         self.triangle_stamp_generation = self.triangle_stamp_generation.wrapping_add(1);
         if self.triangle_stamp_generation == 0 {
             self.triangle_stamp.iter_mut().for_each(|slot| *slot = 0);
