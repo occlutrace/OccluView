@@ -265,18 +265,12 @@ pub fn refine(
         });
         let level = match outcome {
             Ok(level) => level,
-            // Preserve a successful earlier level when a later level has too
-            // few correspondences or cancellation arrives between levels.
-            Err(rejection) if summary.is_some() => {
-                debug_assert!(
-                    matches!(
-                        rejection,
-                        FitRejection::TooFewPairs { .. } | FitRejection::NoImprovement
-                    ),
-                    "an unexpected rejection is being swallowed: {rejection:?}"
-                );
-                break;
-            }
+            // A dense level is not optional evidence. Keeping the coarse
+            // summary after a dense refusal would let a sparse/accidental
+            // coarse sample authorize a refined pose and the heatmap that
+            // follows it. Cancellation is returned as an untrusted report by
+            // `run_level` when it has evidence; a structural/refinement refusal
+            // must remain a refusal all the way to the worker.
             Err(rejection) => return Err(rejection),
         };
         iterations += level.iterations;

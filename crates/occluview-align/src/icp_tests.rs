@@ -715,6 +715,40 @@ fn best_fit_recovers_a_small_patch_when_a_center_seed_has_false_coverage() {
 }
 
 #[test]
+fn a_dense_level_refusal_cannot_fall_back_to_a_coarse_report() {
+    // Deliberately create a sampling alias: the coarse budget's stride is 201,
+    // while the dense budget's stride is 41. The only usable moving vertices
+    // sit at multiples of 201, so the coarse level sees the whole surface but
+    // the dense level sees less than the one-percent coverage floor. A prior
+    // implementation swallowed that dense refusal and returned the apparently
+    // perfect coarse report as a refined match.
+    let total_vertices = 1_600_001usize;
+    let (fixed, fixed_indices) = dome(88, 0.5);
+    let mut moving = vec![1_000.0_f32; total_vertices * 3];
+    for (index, point) in fixed.as_chunks::<3>().0.iter().enumerate() {
+        let vertex = index * 201;
+        let offset = vertex * 3;
+        moving[offset..offset + 3].copy_from_slice(point);
+    }
+    let moving_indices: Vec<u32> = fixed_indices.iter().map(|&index| index * 201).collect();
+    let moving_soup = soup(&moving, &moving_indices);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+
+    let outcome = refine(
+        moving_soup,
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings(),
+        &CancelFlag::new(),
+    );
+
+    assert!(
+        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
+        "a dense coverage refusal must remain a refusal: {outcome:?}"
+    );
+}
+
+#[test]
 fn a_fit_that_runs_out_of_iterations_never_authorizes_a_map() {
     let (positions, indices) = dome(24, 0.5);
     let mesh = soup(&positions, &indices);
