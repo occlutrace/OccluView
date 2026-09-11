@@ -104,7 +104,7 @@ fn range(
         .scale_mm
         .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
     settings.auto_scale = false;
-    ui.add_enabled(
+    let response = ui.add_enabled(
         enabled,
         egui::Slider::new(
             &mut settings.scale_mm,
@@ -113,9 +113,13 @@ fn range(
         .suffix(" mm")
         .fixed_decimals(2)
         .text(locale.tr("align-map-max").as_str()),
-    )
-    .drag_stopped()
-    .then_some(AlignPanelAction::Measure)
+    );
+    // Keep a drag cheap until the operator releases it, but do not leave a
+    // keyboard edit visually stale: egui reports arrow-key changes without a
+    // drag lifecycle. The cached deviation map makes the resulting action a
+    // recolour, not another distance search.
+    (response.drag_stopped() || (response.changed() && !response.dragged()))
+        .then_some(AlignPanelAction::Measure)
 }
 
 #[cfg(test)]
@@ -171,6 +175,20 @@ mod tests {
                 && !source.contains("CLINICAL_RANGES")
                 && !source.contains("align-map-min")
                 && !source.contains("align-map-auto")
+        );
+    }
+
+    #[test]
+    fn keyboard_range_edits_recolour_without_remeasuring_during_a_drag() {
+        let source = production();
+        assert!(
+            source
+                .contains("response.drag_stopped() || (response.changed() && !response.dragged())"),
+            "keyboard edits must repaint the existing map"
+        );
+        assert!(
+            source.contains("let response = ui.add_enabled("),
+            "the slider response must be inspected instead of dropping keyboard changes"
         );
     }
 
