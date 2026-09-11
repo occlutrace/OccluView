@@ -10,7 +10,33 @@ use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
 use std::collections::HashSet;
+use std::fmt;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SceneMergeError {
+    MixedGeometryKinds,
+    VertexCountOverflow,
+    InvalidGeometry,
+}
+
+impl fmt::Display for SceneMergeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MixedGeometryKinds => formatter.write_str(
+                "a scene export cannot combine triangle meshes and point clouds; export those layers separately",
+            ),
+            Self::VertexCountOverflow => {
+                formatter.write_str("the merged scene has too many vertices for one mesh")
+            }
+            Self::InvalidGeometry => {
+                formatter.write_str("the merged scene failed mesh validation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SceneMergeError {}
 
 impl OccluViewApp {
     /// Write every visible layer, in its current pose, as one file.
@@ -22,9 +48,26 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let Some(mesh) = merged_scene_mesh(scene.as_ref()) else {
-            self.ui.status_message = Some(self.ui.locale.tr("export-nothing-visible"));
-            return;
+        let mesh = match merged_scene_mesh(scene.as_ref()) {
+            Ok(Some(mesh)) => mesh,
+            Ok(None) => {
+                self.ui.status_message = Some(self.ui.locale.tr("export-nothing-visible"));
+                return;
+            }
+            Err(error) => {
+                let detail = error.to_string();
+                let summary = self.ui.locale.tr_with(
+                    "export-scene-failed-summary",
+                    &[("detail", detail.as_str())],
+                );
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
+                    title: self.ui.locale.tr("export-scene-failed-title"),
+                    summary,
+                    details: format!("Scene export failed\n\nError:\n{detail}"),
+                });
+                return;
+            }
         };
         let dropped_texture = scene
             .meshes()
@@ -344,23 +387,50 @@ pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
 ///
 /// Returns `None` when nothing visible remains. Textures cannot be merged —
 /// one mesh carries one texture — so the caller says so before writing.
-fn merged_scene_mesh(scene: &Scene) -> Option<Mesh> {
+fn merged_scene_mesh(scene: &Scene) -> Result<Option<Mesh>, SceneMergeError> {
+    let visible: Vec<&SceneMesh> = scene
+        .meshes()
+        .iter()
+        .filter(|entry| entry.visible)
+        .collect();
+    if visible.is_empty() {
+        return Ok(None);
+    }
+    let has_triangle_mesh = visible
+        .iter()
+        .any(|entry| entry.mesh.kind() == occluview_core::MeshKind::TriangleMesh);
+    let has_point_cloud = visible
+        .iter()
+        .any(|entry| entry.mesh.kind() == occluview_core::MeshKind::PointCloud);
+    if has_triangle_mesh && has_point_cloud {
+        return Err(SceneMergeError::MixedGeometryKinds);
+    }
+
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    for entry in scene.meshes().iter().filter(|entry| entry.visible) {
+    for entry in visible {
         let posed = posed_mesh(entry);
-        let offset = u32::try_from(vertices.len()).ok()?;
-        indices.extend(posed.indices().iter().map(|index| index + offset));
+        let offset =
+            u32::try_from(vertices.len()).map_err(|_| SceneMergeError::VertexCountOverflow)?;
+        for index in posed.indices() {
+            indices.push(
+                index
+                    .checked_add(offset)
+                    .ok_or(SceneMergeError::VertexCountOverflow)?,
+            );
+        }
         vertices.extend_from_slice(posed.vertices());
     }
     if vertices.is_empty() {
-        return None;
+        return Ok(None);
     }
     let name = Some("scene".to_owned());
-    if indices.is_empty() {
-        return Some(Mesh::point_cloud(name, vertices));
+    if has_point_cloud {
+        return Ok(Some(Mesh::point_cloud(name, vertices)));
     }
-    Mesh::new(name, vertices, indices).ok()
+    Mesh::new(name, vertices, indices)
+        .map(Some)
+        .map_err(|_| SceneMergeError::InvalidGeometry)
 }
 
 /// Promote a single-precision affine to double precision.
@@ -389,7 +459,7 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::{merged_scene_mesh, posed_mesh, unique_layer_export_paths};
+    use super::{merged_scene_mesh, posed_mesh, unique_layer_export_paths, SceneMergeError};
     use anyhow::Result;
     use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
@@ -467,7 +537,9 @@ mod tests {
                 .with_transform(glam::Affine3A::from_translation(Vec3::new(100.0, 0.0, 0.0))),
         );
 
-        let merged = merged_scene_mesh(&scene).expect("two visible layers merge");
+        let merged = merged_scene_mesh(&scene)
+            .expect("scene merge")
+            .expect("two visible layers merge");
 
         assert_eq!(merged.vertices().len(), single * 2);
         assert_eq!(
@@ -484,13 +556,30 @@ mod tests {
     }
 
     #[test]
+    fn a_scene_export_rejects_mixed_triangle_and_point_cloud_layers() -> Result<()> {
+        let mut scene = exportable_scene()?;
+        scene.add(SceneMesh::new(Mesh::point_cloud(
+            Some("cloud".into()),
+            vec![v(4.0, 5.0, 6.0)],
+        )));
+
+        assert!(matches!(
+            merged_scene_mesh(&scene),
+            Err(SceneMergeError::MixedGeometryKinds)
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn merged_indices_are_offset_so_the_second_layer_keeps_its_own_triangles() -> Result<()> {
         let mut scene = exportable_scene()?;
         let copy = scene.meshes()[0].mesh.clone();
         let single = u32::try_from(scene.meshes()[0].mesh.vertices().len())?;
         scene.add(SceneMesh::new(copy));
 
-        let merged = merged_scene_mesh(&scene).expect("two visible layers merge");
+        let merged = merged_scene_mesh(&scene)
+            .expect("scene merge")
+            .expect("two visible layers merge");
 
         let tail = &merged.indices()[3..];
         assert!(
@@ -508,7 +597,9 @@ mod tests {
         scene.add(SceneMesh::new(copy));
         scene.meshes_mut()[1].visible = false;
 
-        let merged = merged_scene_mesh(&scene).expect("one visible layer still merges");
+        let merged = merged_scene_mesh(&scene)
+            .expect("scene merge")
+            .expect("one visible layer still merges");
 
         assert_eq!(merged.vertices().len(), single);
         Ok(())
@@ -518,8 +609,10 @@ mod tests {
     fn an_empty_or_all_hidden_scene_merges_to_nothing() -> Result<()> {
         let mut scene = exportable_scene()?;
         scene.meshes_mut()[0].visible = false;
-        assert!(merged_scene_mesh(&scene).is_none());
-        assert!(merged_scene_mesh(&Scene::new()).is_none());
+        assert!(merged_scene_mesh(&scene).expect("scene merge").is_none());
+        assert!(merged_scene_mesh(&Scene::new())
+            .expect("scene merge")
+            .is_none());
         Ok(())
     }
 
