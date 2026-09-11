@@ -369,6 +369,17 @@ pub(crate) enum DabFailure {
     /// longer safe to publish because the worker would otherwise stream stale
     /// vertices and later commit an undo state that never matched the view.
     ShadowPoisoned,
+    /// The display shadow no longer has the same shape as the kernel mesh.
+    /// Publishing any subset would make the GPU and the undo baseline disagree.
+    ShadowShapeMismatch {
+        shadow_count: usize,
+        live_count: usize,
+    },
+    /// The kernel returned an id outside its prepared vertex array.
+    InvalidVertexIndex {
+        vertex_id: usize,
+        vertex_count: usize,
+    },
     /// A densifying dab changed the kernel topology, but its authoritative
     /// scene mesh could not be rebuilt.
     TopologyRebuild { detail: String },
@@ -420,7 +431,15 @@ impl SculptSession {
             return None;
         }
         if self.stroke_start_mesh.is_none() {
-            self.stroke_start_mesh = self.snapshot_mesh();
+            match self.snapshot_mesh() {
+                Ok(snapshot) => self.stroke_start_mesh = Some(snapshot),
+                Err(failure) => {
+                    return Some(DabOutcome {
+                        failure: Some(failure),
+                        ..DabOutcome::default()
+                    });
+                }
+            }
         }
         let outcome = match cancel {
             Some(cancel) => self
@@ -443,10 +462,10 @@ impl SculptSession {
                     failure: None,
                 }),
                 Ok(None) => None,
-                Err(detail) => Some(DabOutcome {
+                Err(failure) => Some(DabOutcome {
                     touched: Vec::new(),
                     rebuild: None,
-                    failure: Some(DabFailure::TopologyRebuild { detail }),
+                    failure: Some(failure),
                 }),
             };
         }
@@ -477,11 +496,23 @@ impl SculptSession {
     /// The layer mesh as the session currently holds it (template + shadow).
     ///
     /// This cold undo baseline defers derived-cache work until restoration.
-    fn snapshot_mesh(&self) -> Option<Arc<Mesh>> {
-        let shadow = self.shadow.read().ok()?;
+    fn snapshot_mesh(&self) -> Result<Arc<Mesh>, DabFailure> {
+        let shadow = self.shadow.read().map_err(|_| DabFailure::ShadowPoisoned)?;
+        let shadow_count = shadow.len();
+        let live_count = self.session.vertices().len();
+        if shadow_count != live_count || self.base_mesh.vertices().len() != live_count {
+            return Err(DabFailure::ShadowShapeMismatch {
+                shadow_count,
+                live_count,
+            });
+        }
         self.base_mesh
             .with_sculpted_vertices_uncached(shadow.clone())
             .map(Arc::new)
+            .ok_or(DabFailure::ShadowShapeMismatch {
+                shadow_count,
+                live_count: self.base_mesh.vertices().len(),
+            })
     }
 
     /// Adopt the densified geometry: rebuild the template mesh, resize the
@@ -490,12 +521,16 @@ impl SculptSession {
     fn rebuild_after_densify(
         &mut self,
         cancel: Option<&AtomicBool>,
-    ) -> Result<Option<SculptRebuild>, String> {
+    ) -> Result<Option<SculptRebuild>, DabFailure> {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Ok(None);
         }
-        let mesh = mesh_from_sculpt_session_like(&self.base_mesh, &self.session)
-            .map_err(|error| format!("sculpt topology rebuild failed: {error}"))?;
+        let mesh =
+            mesh_from_sculpt_session_like(&self.base_mesh, &self.session).map_err(|error| {
+                DabFailure::TopologyRebuild {
+                    detail: format!("sculpt topology rebuild failed: {error}"),
+                }
+            })?;
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Ok(None);
         }
@@ -517,7 +552,7 @@ impl SculptSession {
             let mut shadow = self
                 .shadow
                 .write()
-                .map_err(|_| "sculpt shadow lock poisoned during topology rebuild".to_string())?;
+                .map_err(|_| DabFailure::ShadowPoisoned)?;
             *shadow = mesh.vertices().to_vec();
         }
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
@@ -546,20 +581,36 @@ impl SculptSession {
             .write()
             .map_err(|_| DabFailure::ShadowPoisoned)?;
         let live = self.session.vertices();
+        let shadow_count = shadow.len();
+        let live_count = live.len();
+        if shadow_count != live_count {
+            return Err(DabFailure::ShadowShapeMismatch {
+                shadow_count,
+                live_count,
+            });
+        }
+        if let Some(vertex_id) = moved
+            .iter()
+            .chain(normal_vertices.iter())
+            .copied()
+            .find(|&vertex_id| vertex_id >= live_count)
+        {
+            return Err(DabFailure::InvalidVertexIndex {
+                vertex_id,
+                vertex_count: live_count,
+            });
+        }
         for &vertex_id in moved {
-            if let (Some(target), Some(source)) = (shadow.get_mut(vertex_id), live.get(vertex_id)) {
-                target.position = source.position;
-                // The kernel normally includes moved vertices in its normal
-                // scope. Copying this here as well keeps the position update
-                // self-contained if a future kernel mode reports a narrower
-                // normal scope.
-                target.normal = source.normal;
-            }
+            let source = live[vertex_id];
+            let target = &mut shadow[vertex_id];
+            target.position = source.position;
+            // The kernel normally includes moved vertices in its normal scope.
+            // Copying this here as well keeps the position update self-contained
+            // if a future kernel mode reports a narrower normal scope.
+            target.normal = source.normal;
         }
         for &vertex_id in normal_vertices {
-            if let (Some(target), Some(source)) = (shadow.get_mut(vertex_id), live.get(vertex_id)) {
-                target.normal = source.normal;
-            }
+            shadow[vertex_id].normal = live[vertex_id].normal;
         }
         Ok(())
     }
@@ -819,5 +870,88 @@ mod tests {
         assert_eq!(outcome.failure, Some(DabFailure::ShadowPoisoned));
         assert!(outcome.touched.is_empty());
         assert!(!session.dirty_stroke);
+    }
+
+    #[test]
+    fn invalid_shadow_mapping_fails_before_partial_publish() {
+        let mesh = Mesh::new(
+            Some("invalid-shadow-mapping".to_string()),
+            vec![
+                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+        .expect("test mesh");
+        let layer_id = SceneMesh::new(mesh.clone()).id();
+        let original = mesh.vertices().to_vec();
+        let shadow = Arc::new(RwLock::new(original.clone()));
+        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+        let mut session = SculptSession {
+            layer_id,
+            topology_id: mesh.topology_id(),
+            session: brush,
+            base_mesh: Arc::new(mesh.clone()),
+            shadow: Arc::clone(&shadow),
+            topology: PreparedSceneTopology::from_mesh(&mesh),
+            world_to_local: Affine3A::IDENTITY,
+            local_per_world: 1.0,
+            dirty_stroke: false,
+            stroke_start_mesh: None,
+        };
+
+        let failure = session
+            .patch_shadow(&[0, original.len()], &[])
+            .expect_err("an out-of-range kernel id must be terminal");
+        assert_eq!(
+            failure,
+            DabFailure::InvalidVertexIndex {
+                vertex_id: original.len(),
+                vertex_count: original.len(),
+            }
+        );
+        assert_eq!(*shadow.read().expect("shadow read"), original);
+    }
+
+    #[test]
+    fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
+        let mesh = Mesh::new(
+            Some("shadow-shape-mismatch".to_string()),
+            vec![
+                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+        .expect("test mesh");
+        let layer_id = SceneMesh::new(mesh.clone()).id();
+        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+        let mut session = SculptSession {
+            layer_id,
+            topology_id: mesh.topology_id(),
+            session: brush,
+            base_mesh: Arc::new(mesh.clone()),
+            shadow: Arc::new(RwLock::new(Vec::new())),
+            topology: PreparedSceneTopology::from_mesh(&mesh),
+            world_to_local: Affine3A::IDENTITY,
+            local_per_world: 1.0,
+            dirty_stroke: false,
+            stroke_start_mesh: None,
+        };
+
+        let failure = session
+            .patch_shadow(&[0], &[])
+            .expect_err("a shadow with the wrong shape must be terminal");
+        assert_eq!(
+            failure,
+            DabFailure::ShadowShapeMismatch {
+                shadow_count: 0,
+                live_count: mesh.vertices().len(),
+            }
+        );
     }
 }

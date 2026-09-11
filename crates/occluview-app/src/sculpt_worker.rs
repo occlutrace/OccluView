@@ -268,6 +268,10 @@ pub(crate) enum SculptFailure {
     MissingUndoBaseline,
     /// The shadow vertex lock was poisoned.
     ShadowPoisoned,
+    /// The display shadow no longer has the shape of the kernel mesh.
+    ShadowShapeMismatch,
+    /// The kernel returned an id outside its prepared vertex array.
+    InvalidVertexIndex,
     /// A worker-owned coordination lock was poisoned.
     WorkerStatePoisoned,
     /// The sculpt result changed the vertex count.
@@ -765,6 +769,28 @@ fn run_worker(
                 if let Some(failure) = outcome.failure {
                     let failure = match failure {
                         DabFailure::ShadowPoisoned => SculptFailure::ShadowPoisoned,
+                        DabFailure::ShadowShapeMismatch {
+                            shadow_count,
+                            live_count,
+                        } => {
+                            tracing::error!(
+                                shadow_count,
+                                live_count,
+                                "sculpt display shadow shape differs from kernel mesh"
+                            );
+                            SculptFailure::ShadowShapeMismatch
+                        }
+                        DabFailure::InvalidVertexIndex {
+                            vertex_id,
+                            vertex_count,
+                        } => {
+                            tracing::error!(
+                                vertex_id,
+                                vertex_count,
+                                "sculpt kernel returned an invalid vertex id"
+                            );
+                            SculptFailure::InvalidVertexIndex
+                        }
                         DabFailure::TopologyRebuild { detail } => {
                             SculptFailure::TopologyRebuild { detail }
                         }

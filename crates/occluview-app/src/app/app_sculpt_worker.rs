@@ -34,6 +34,8 @@ fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &Sculpt
         }
         SculptFailure::MissingUndoBaseline => locale.text("sculpt-failure-missing-undo-baseline"),
         SculptFailure::ShadowPoisoned => locale.text("sculpt-failure-shadow-poisoned"),
+        SculptFailure::ShadowShapeMismatch => locale.text("sculpt-failure-shadow-shape"),
+        SculptFailure::InvalidVertexIndex => locale.text("sculpt-failure-invalid-vertex-index"),
         SculptFailure::WorkerStatePoisoned => locale.text("sculpt-failure-worker-state-poisoned"),
         SculptFailure::VertexCountChanged => locale.text("sculpt-failure-vertex-count-changed"),
         SculptFailure::TopologyRebuild { detail } => locale.tr_with(
