@@ -19,15 +19,31 @@ use super::{
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec,
 };
+use anyhow::Error;
 use occluview_core::Aabb;
 use occluview_render::{
     AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
-    RenderDeadline,
+    RenderDeadline, RenderError,
 };
 use std::time::Duration;
 
 const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
 const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn terminal_offscreen_render_error(error: &RenderError) -> bool {
+    matches!(
+        error,
+        RenderError::Surface(_) | RenderError::ReadbackTimeout { .. } | RenderError::NoAdapter
+    )
+}
+
+fn terminal_offscreen_error(error: &Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<RenderError>()
+            .is_some_and(terminal_offscreen_render_error)
+    })
+}
 
 impl OccluViewApp {
     /// Whether a selection overlay may be drawn over the current scene.
@@ -87,6 +103,7 @@ impl OccluViewApp {
             Ok(frame) => frame,
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
+                self.note_offscreen_failure(terminal_offscreen_error(&e));
                 self.ui.app_error = Some(AppErrorDialog {
                     title: self.ui.locale.tr("render-failed-title"),
                     summary: self.ui.locale.tr("render-failed-summary"),
@@ -195,6 +212,7 @@ impl OccluViewApp {
         let restore_deviation = self.align_overlay_is_up();
         if let Err(e) = self.ensure_offscreen() {
             tracing::error!(error = ?e, "section-view offscreen init failed");
+            self.note_offscreen_failure(terminal_offscreen_error(&e));
             return None;
         }
         let offscreen = self.render.offscreen.as_ref()?;
@@ -247,6 +265,7 @@ impl OccluViewApp {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(error = ?e, "section-view render failed");
+                    self.note_offscreen_failure(terminal_offscreen_render_error(&e));
                     return None;
                 }
             }
@@ -294,6 +313,11 @@ impl OccluViewApp {
     }
 
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
+        if self.render.offscreen_failed {
+            return Err(anyhow::anyhow!(
+                "offscreen rendering is disabled after a previous GPU failure"
+            ));
+        }
         if self.render.offscreen.is_none() {
             self.render.offscreen = Some(
                 pollster::block_on(Offscreen::new_with_adapter_policy(
@@ -417,6 +441,17 @@ impl OccluViewApp {
         }
         .context("rendering viewport")?;
         Ok((spec, pixels))
+    }
+
+    /// Consume the redraw that triggered a failed fallback render. Terminal
+    /// GPU errors also latch the path off: keeping the request pending would
+    /// make egui call the same failed submit forever, hiding the original
+    /// cause behind a repaint storm and burning a CPU core.
+    fn note_offscreen_failure(&mut self, terminal: bool) {
+        self.render.invalidation.consume_redraw();
+        if terminal {
+            self.render.offscreen_failed = true;
+        }
     }
 
     /// Replay the display-only deviation colours into the prepared offscreen
@@ -829,10 +864,14 @@ impl OccluViewApp {
         if self.render.invalidation.redraw_pending() {
             if self.render.live_viewport.is_some() {
                 self.sync_live_viewport();
+            } else if self.render.offscreen_failed {
+                self.render.invalidation.consume_redraw();
             } else {
                 self.render_now(ctx);
             }
-            ctx.request_repaint();
+            if self.render.live_viewport.is_some() || !self.render.offscreen_failed {
+                ctx.request_repaint();
+            }
         }
     }
 }

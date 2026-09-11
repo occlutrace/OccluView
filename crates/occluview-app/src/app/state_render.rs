@@ -33,6 +33,10 @@ pub(super) struct RenderState {
     pub(super) camera: Option<Camera>,
     pub(super) live_viewport: Option<SharedLiveViewport>,
     pub(super) offscreen: Option<Offscreen>,
+    /// A terminal offscreen GPU failure must not be retried on every egui
+    /// repaint. The live path has its own fault latch; this one covers the
+    /// fallback path and cut-view readbacks.
+    pub(super) offscreen_failed: bool,
     pub(super) prepared_scene: Option<PreparedScene>,
     pub(super) prepared_selection_overlay: Option<PreparedScene>,
     pub(super) render_extent_px: [u16; 2],
@@ -50,6 +54,7 @@ impl RenderState {
             camera: None,
             live_viewport,
             offscreen: None,
+            offscreen_failed: false,
             prepared_scene: None,
             prepared_selection_overlay: None,
             render_extent_px: DEFAULT_RENDER_EXTENT_PX,
@@ -72,6 +77,7 @@ mod tests {
         assert!(state.prepared_scene.is_none());
         assert!(state.prepared_selection_overlay.is_none());
         assert!(state.rendered.is_none());
+        assert!(!state.offscreen_failed);
         assert!(!state.invalidation.redraw_pending());
         assert!(!state.invalidation.live_scene_stale());
         assert!(!state.invalidation.offscreen_scene_stale());
