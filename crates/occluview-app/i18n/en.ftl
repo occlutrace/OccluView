@@ -525,6 +525,7 @@ align-status-refined = Best fit ready
 align-status-measured = Heatmap updated
 align-status-remeasure = { $reason } — run Best fit matching to measure again
 align-status-settings-changed = Matching settings changed
+align-status-visibility-changed = Selected scan visibility changed
 align-brush-not-in-alignment = That mesh is not in this alignment
 align-drag-moving = Moving { $name } by hand
 align-drag-unrecorded = Moved by hand, but this step could not be added to the history — Ctrl+Z will not undo it

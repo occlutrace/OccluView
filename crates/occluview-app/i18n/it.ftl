@@ -521,6 +521,7 @@ align-status-refined = Best fit pronto
 align-status-measured = Mappa di calore aggiornata
 align-status-remeasure = { $reason } — rilancia il matching per misurare
 align-status-settings-changed = Impostazioni di matching cambiate
+align-status-visibility-changed = Visibilità di una scansione selezionata modificata
 align-brush-not-in-alignment = Questa scansione non fa parte di questo allineamento
 align-drag-moving = Spostamento di { $name } a mano
 align-drag-unrecorded = Spostato a mano, ma questo passo non è entrato nella cronologia — Ctrl+Z non lo annullerà

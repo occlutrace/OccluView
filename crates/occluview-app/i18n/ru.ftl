@@ -595,6 +595,7 @@ align-status-refined = Точное совмещение готово
 align-status-measured = Теплокарта обновлена
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
 align-status-settings-changed = Настройки сопоставления изменены
+align-status-visibility-changed = Видимость выбранного скана изменена
 align-brush-not-in-alignment = Этот скан не входит в текущее совмещение
 align-drag-moving = Перемещение { $name } вручную
 align-drag-unrecorded = Перемещено вручную, но шаг не попал в историю — Ctrl+Z не отменит его

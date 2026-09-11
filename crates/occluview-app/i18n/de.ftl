@@ -521,6 +521,7 @@ align-status-refined = Best fit bereit
 align-status-measured = Heatmap aktualisiert
 align-status-remeasure = { $reason } — Best-Fit-Matching erneut laufen lassen
 align-status-settings-changed = Matching-Einstellungen geändert
+align-status-visibility-changed = Sichtbarkeit eines ausgewählten Scans geändert
 align-brush-not-in-alignment = Dieser Scan gehört nicht zu dieser Ausrichtung
 align-drag-moving = { $name } wird von Hand bewegt
 align-drag-unrecorded = Von Hand bewegt, aber dieser Schritt landete nicht in der Historie — Strg+Z macht ihn nicht rückgängig
