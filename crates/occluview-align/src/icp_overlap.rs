@@ -15,9 +15,16 @@ use super::{Level, Orientation, MIN_TRIAL_COVERAGE_FRACTION};
 /// evidence to make the bidirectional guard meaningful.
 const MIN_RECIPROCAL_MATCHES: usize = 12;
 
+/// A fixed surface with thousands of representatives must contribute more
+/// than twelve lucky hits before it can authorize a trial. This is deliberately
+/// a small fraction: partial scans remain valid, while a one-percent sliver
+/// cannot win a global search merely because its absolute hit count cleared the
+/// floor above.
+const MIN_RECIPROCAL_COVERAGE_FRACTION: f64 = 0.01;
+
 #[cfg(test)]
 mod tests {
-    use super::{reciprocal_coverage_ok, ReciprocalSummary};
+    use super::{reciprocal_coverage_ok, reciprocal_summary_is_usable, ReciprocalSummary};
 
     #[test]
     fn reciprocal_guard_does_not_validate_a_six_point_patch() {
@@ -32,6 +39,44 @@ mod tests {
             "a local six-point patch is not enough bidirectional evidence"
         );
     }
+
+    #[test]
+    fn reciprocal_guard_needs_a_fixed_surface_fraction() {
+        let sparse_patch = ReciprocalSummary {
+            matched: 12,
+            coverage: 0.009,
+            geometric_rms: 0.001,
+        };
+        let useful_patch = ReciprocalSummary {
+            coverage: 0.01,
+            ..sparse_patch
+        };
+
+        assert!(!reciprocal_summary_is_usable(sparse_patch));
+        assert!(reciprocal_summary_is_usable(useful_patch));
+        assert!(
+            !reciprocal_coverage_ok(Some(sparse_patch), Some(sparse_patch)),
+            "an absolute hit floor must not bypass the coverage floor"
+        );
+        assert!(reciprocal_coverage_ok(
+            Some(useful_patch),
+            Some(useful_patch)
+        ));
+    }
+
+    #[test]
+    fn reciprocal_guard_rejects_non_finite_summary_values() {
+        assert!(!reciprocal_summary_is_usable(ReciprocalSummary {
+            matched: 20,
+            coverage: f64::NAN,
+            geometric_rms: 0.001,
+        }));
+        assert!(!reciprocal_summary_is_usable(ReciprocalSummary {
+            matched: 20,
+            coverage: 0.2,
+            geometric_rms: f64::INFINITY,
+        }));
+    }
 }
 
 /// Fixed-to-moving evidence evaluated at one pose.
@@ -40,6 +85,14 @@ pub(super) struct ReciprocalSummary {
     pub(super) matched: usize,
     pub(super) coverage: f64,
     pub(super) geometric_rms: f64,
+}
+
+fn reciprocal_summary_is_usable(summary: ReciprocalSummary) -> bool {
+    summary.matched >= MIN_RECIPROCAL_MATCHES
+        && summary.coverage.is_finite()
+        && (MIN_RECIPROCAL_COVERAGE_FRACTION..=1.0).contains(&summary.coverage)
+        && summary.geometric_rms.is_finite()
+        && summary.geometric_rms >= 0.0
 }
 
 /// Whether reciprocal evidence is available and large enough to authorize a
@@ -52,7 +105,7 @@ pub(super) fn reciprocal_evidence_is_usable(
     if level.moving_surface.is_none() || level.fixed_samples.is_empty() {
         return true;
     }
-    evidence.is_some_and(|summary| summary.matched >= MIN_RECIPROCAL_MATCHES)
+    evidence.is_some_and(reciprocal_summary_is_usable)
 }
 
 /// Do not let a trial discard the fixed surface that supported the current
@@ -65,8 +118,8 @@ pub(super) fn reciprocal_coverage_ok(
 ) -> bool {
     match (current, trial) {
         (Some(current), Some(trial)) => {
-            current.matched >= MIN_RECIPROCAL_MATCHES
-                && trial.matched >= MIN_RECIPROCAL_MATCHES
+            reciprocal_summary_is_usable(current)
+                && reciprocal_summary_is_usable(trial)
                 && trial.coverage + f64::EPSILON >= current.coverage * MIN_TRIAL_COVERAGE_FRACTION
                 && trial.geometric_rms <= current.geometric_rms * 1.25 + 1e-9
         }
