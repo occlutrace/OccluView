@@ -17,7 +17,13 @@ pub(super) fn reconcile_scene_paths(
     new_scene
         .meshes()
         .iter()
-        .map(|entry| paths_by_id.get(&entry.id()).cloned().unwrap_or_default())
+        .map(|entry| {
+            paths_by_id
+                .get(&entry.id())
+                .or_else(|| paths_by_id.get(&entry.export_source_layer_id()))
+                .cloned()
+                .unwrap_or_default()
+        })
         .collect()
 }
 
@@ -171,6 +177,27 @@ mod tests {
         );
         assert_eq!(undo_paths, vec![PathBuf::from("/cases/lower.stl")]);
         assert_eq!(redo_again_paths, redo_paths);
+    }
+
+    #[test]
+    fn derived_layer_keeps_the_source_export_path() {
+        let Some(source) = named_layer("Source") else {
+            return;
+        };
+        let derived = named_layer("Source part")
+            .expect("test mesh")
+            .with_source_layer_id(source.id());
+        let old_scene = scene_with_layers([source.clone()]);
+        let new_scene = scene_with_layers([source, derived]);
+        let old_paths = vec![PathBuf::from("/cases/source.stl")];
+
+        assert_eq!(
+            reconcile_scene_paths(&old_scene, &old_paths, &new_scene),
+            vec![
+                PathBuf::from("/cases/source.stl"),
+                PathBuf::from("/cases/source.stl"),
+            ]
+        );
     }
 
     #[test]
