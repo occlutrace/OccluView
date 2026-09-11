@@ -7,7 +7,7 @@ use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Generous edge ceiling for whole-mesh Close Holes, mirroring the app button
@@ -265,6 +265,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn repeated_terminal_extension_is_collapsed_for_non_utf8_names() {
+        use std::ffi::OsString;
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
         let path = PathBuf::from(OsString::from_vec(b"scan\xff.stl.stl".to_vec()));
