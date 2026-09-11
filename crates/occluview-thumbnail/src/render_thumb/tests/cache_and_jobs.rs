@@ -160,15 +160,23 @@ fn a_job_that_outruns_its_budget_after_preparing_is_a_render_timeout() {
     let permit = gate
         .acquire_timeout(Duration::from_millis(200))
         .expect("an idle private gate hands out its permit");
+    let (release_worker, wait_for_release) = std::sync::mpsc::channel::<()>();
     let outcome = run_thumbnail_job_by(
         permit,
-        Instant::now() + Duration::from_millis(30),
+        // A short deadline made this test depend on the test runner getting
+        // the worker scheduled before the first 30 ms elapsed. Under a full
+        // workspace run that occasionally classified the job as a setup
+        // timeout before it could publish `Prepared`. The worker now waits
+        // for an explicit release after publishing that marker, so the test
+        // exercises the render-timeout contract without a scheduler race.
+        Instant::now() + Duration::from_secs(2),
         move |progress| {
             let _ = progress.send(ThumbnailJobProgress::Prepared);
-            thread::sleep(Duration::from_millis(300));
+            let _ = wait_for_release.recv();
             let _ = progress.send(ThumbnailJobProgress::Finished(7_u8));
         },
     );
+    let _ = release_worker.send(());
     assert!(matches!(outcome, ThumbnailJobOutcome::RenderTimedOut));
 }
 
