@@ -203,20 +203,13 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
     );
 }
 
-/// The live egui viewport always has a depth/stencil attachment. Sculpt's
-/// display-only volume is drawn into that same pass, so its pipeline must
-/// declare the same depth format even though it does not write depth and is
-/// intentionally depth-independent (`Always`).
-#[test]
+/// Draw Sculpt's display-only volume into a pass shaped exactly like the live
+/// one: this renderer's depth format and sample count.
 #[allow(clippy::expect_used)]
-fn sculpt_tool_pipeline_is_compatible_with_the_live_depth_pass() {
+fn draw_sculpt_into_a_live_shaped_pass(renderer: &crate::Renderer) {
     use crate::{GpuCamera, SculptToolShape, SculptToolUniform};
     use glam::Mat4;
 
-    let renderer = pollster::block_on(crate::Renderer::new_headless(
-        wgpu::TextureFormat::Rgba8Unorm,
-    ))
-    .expect("a headless renderer");
     let device = renderer.device();
     let size = wgpu::Extent3d {
         width: 32,
@@ -301,4 +294,72 @@ fn sculpt_tool_pipeline_is_compatible_with_the_live_depth_pass() {
         None,
         "Sculpt's live volume draw must not submit an incompatible depth pipeline"
     );
+}
+
+/// The live egui viewport always has a depth/stencil attachment, and eframe
+/// derives it from the app's `depth_buffer: 24` / `stencil_buffer: 8`.
+/// Declaring the format here, instead of reading it back from the renderer
+/// under test, is what makes this a contract: a pass format and a pipeline
+/// format that drifted together used to keep this suite green.
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_tool_pipeline_is_compatible_with_the_live_depth_pass() {
+    let renderer = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+
+    assert_eq!(
+        renderer.depth_format(),
+        wgpu::TextureFormat::Depth24PlusStencil8,
+        "the live pass is Depth24PlusStencil8, so every pipeline in it must declare the same"
+    );
+    draw_sculpt_into_a_live_shaped_pass(&renderer);
+}
+
+/// And at the multisampled profile the app selects whenever the adapter can
+/// create the multisampled live targets, which is the configuration the window
+/// actually runs there.
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_tool_pipeline_is_compatible_with_a_multisampled_live_pass() {
+    let single = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+    let device = std::sync::Arc::clone(&single.device);
+    let queue = std::sync::Arc::clone(&single.queue);
+
+    // Probe before building the pipeline: an adapter that cannot create a 4x
+    // target cannot run the multisampled profile either, and the application
+    // selects the single-sample profile there. A probe keeps that adapter from
+    // being reported as a pipeline defect.
+    let _probe = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("live multisample probe"),
+        size: wgpu::Extent3d {
+            width: 32,
+            height: 24,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 4,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    if single.take_gpu_error().is_some() {
+        return;
+    }
+
+    let multisampled = crate::Renderer::with_shared_device_sample_count(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        4,
+    )
+    .expect("a multisampled renderer");
+    assert_eq!(multisampled.sample_count(), 4);
+    draw_sculpt_into_a_live_shaped_pass(&multisampled);
 }

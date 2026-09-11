@@ -194,6 +194,30 @@ fn the_msaa_environment_override_wins_over_adapter_capability() {
     );
 }
 
+/// eframe derives the live pass depth format from these two window numbers,
+/// and the custom viewport builds its pipelines for the same sample count
+/// eframe is handed. Pinning the pair here is what connects the render crate's
+/// `Depth24PlusStencil8` declaration to the pass that actually exists: the
+/// render-side test draws into a pass it configures itself.
+#[test]
+fn the_live_window_options_match_the_render_contract() {
+    let preflight = GraphicsPreflight {
+        adapters: Vec::new(),
+        live_sample_count: 4,
+    };
+    let options = native_options(&preflight);
+
+    assert_eq!(
+        options.multisampling, preflight.live_sample_count,
+        "eframe's pass and the custom viewport must use one sample count"
+    );
+    assert_eq!(
+        eframe::egui_wgpu::depth_format_from_bits(options.depth_buffer, options.stencil_buffer),
+        Some(LIVE_DEPTH_FORMAT),
+        "the pipelines declare LIVE_DEPTH_FORMAT, so the window must ask eframe for that pass"
+    );
+}
+
 #[test]
 fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
     let first = report_file_name("startup-failure", 42, 7, 0);
