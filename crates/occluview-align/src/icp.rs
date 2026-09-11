@@ -263,16 +263,13 @@ pub fn refine(
             cancel,
             start: pose,
         });
-        let level = match outcome {
-            Ok(level) => level,
-            // A dense level is not optional evidence. Keeping the coarse
-            // summary after a dense refusal would let a sparse/accidental
-            // coarse sample authorize a refined pose and the heatmap that
-            // follows it. Cancellation is returned as an untrusted report by
-            // `run_level` when it has evidence; a structural/refinement refusal
-            // must remain a refusal all the way to the worker.
-            Err(rejection) => return Err(rejection),
-        };
+        // A dense level is not optional evidence. Keeping the coarse summary
+        // after a dense refusal would let a sparse/accidental coarse sample
+        // authorize a refined pose and the heatmap that follows it.
+        // Cancellation is returned as an untrusted report by `run_level` when
+        // it has evidence; a structural/refinement refusal must remain a
+        // refusal all the way to the worker.
+        let level = outcome?;
         iterations += level.iterations;
         converged = level.converged;
         pose = level.pose;
