@@ -30,23 +30,26 @@ pub(crate) enum BrushPanelAction {
     Close,
 }
 
+/// Inputs for the compact Brush window. Grouping these values keeps the
+/// caller's UI transaction readable without hiding which state is mutable.
+pub(crate) struct BrushPanelView<'a> {
+    pub(crate) viewport_rect: egui::Rect,
+    pub(crate) brush: &'a mut AlignBrush,
+    pub(crate) roles: Option<&'a AlignRoles>,
+    pub(crate) enabled: bool,
+    pub(crate) locale: &'a crate::i18n::LocaleManager,
+}
+
 /// Show the Brush tool window; returns what the operator asked for.
-pub(crate) fn show(
-    ctx: &egui::Context,
-    viewport_rect: egui::Rect,
-    brush: &mut AlignBrush,
-    roles: Option<&AlignRoles>,
-    enabled: bool,
-    locale: &crate::i18n::LocaleManager,
-) -> Option<BrushPanelAction> {
+pub(crate) fn show(ctx: &egui::Context, view: BrushPanelView<'_>) -> Option<BrushPanelAction> {
     // Opens to the LEFT of the main window's default corner, so the two do not
     // land on top of each other the first time the checkbox is ticked.
-    let default_pos = viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
+    let default_pos = view.viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
     let mut action = None;
-    egui::Window::new(locale.tr("align-brush-title"))
+    egui::Window::new(view.locale.tr("align-brush-title"))
         .id(egui::Id::new("occluview_align_brush_window"))
         .default_pos(default_pos)
-        .constrain_to(viewport_rect)
+        .constrain_to(view.viewport_rect)
         .resizable(false)
         .collapsible(false)
         .title_bar(false)
@@ -55,7 +58,7 @@ pub(crate) fn show(
             ui.set_width(WINDOW_WIDTH - 24.0);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.style_mut().animation_time = 0.05;
-            action = body(ui, brush, roles, enabled, locale);
+            action = body(ui, view.brush, view.roles, view.enabled, view.locale);
         });
     action
 }
