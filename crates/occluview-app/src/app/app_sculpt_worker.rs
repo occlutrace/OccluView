@@ -82,13 +82,7 @@ impl OccluViewApp {
         // leave a completion or sparse write ahead of its topology rebuild.
         let Ok((mut rebuilds, completions, update)) = worker.take_ordered_outputs() else {
             if let Some(failure) = worker.take_error() {
-                let detail = describe_sculpt_failure(&self.ui.locale, &failure);
-                self.ui.status_message = Some(
-                    self.ui
-                        .locale
-                        .tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
-                );
-                self.invalidate_sculpt_session_silent();
+                self.fail_sculpt_session(&failure, ctx);
             }
             // A worker publication or frame-path drain is in progress;
             // retry the whole boundary on the next repaint. A poisoned
@@ -153,15 +147,7 @@ impl OccluViewApp {
         // a chance to commit; then revoke the worker so no later stale result
         // can reach the scene.
         if let Some(failure) = error {
-            let dialog = sculpt_failure_dialog(&self.ui.locale, &failure);
-            self.ui.status_message = Some(dialog.summary.clone());
-            self.ui.app_error = Some(dialog);
-            // Terminal for this session. Stand the brush down as well: leaving
-            // it armed would keep the primary gesture consumed by a tool whose
-            // worker was just revoked.
-            self.tools.sculpt.disarm();
-            self.invalidate_sculpt_session_silent();
-            ctx.request_repaint();
+            self.fail_sculpt_session(&failure, ctx);
         }
         if had_rebuilds || had_updates || had_completions {
             // Rebuilds and sparse writes already landed in GPU buffers above;
@@ -228,6 +214,23 @@ impl OccluViewApp {
             self.tools.cut_view.mark_dirty();
         }
         true
+    }
+
+    /// The end of a failed sculpt session: one operator-visible report, one
+    /// revocation, and no brush left consuming the primary gesture.
+    ///
+    /// Both ways a failure surfaces go through here. The ordered-output drain
+    /// can fail before a worker error is even latched (a poisoned coordination
+    /// lock reports through `take_error`), and that exit used to raise nothing
+    /// but the expiring status line while the brush stayed armed over a worker
+    /// that no longer existed.
+    fn fail_sculpt_session(&mut self, failure: &SculptFailure, ctx: &egui::Context) {
+        let dialog = sculpt_failure_dialog(&self.ui.locale, failure);
+        self.ui.status_message = Some(dialog.summary.clone());
+        self.ui.app_error = Some(dialog);
+        self.tools.sculpt.disarm();
+        self.invalidate_sculpt_session_silent();
+        ctx.request_repaint();
     }
 
     fn flush_sculpt_update(&mut self, update: SculptUpdate) -> SculptFlushOutcome {
@@ -567,29 +570,50 @@ mod tests {
         );
     }
 
-    /// The failure branch owns the whole terminal outcome: dialog, session
+    /// The failure paths own the whole terminal outcome: dialog, session
     /// revocation, and the brush no longer consuming the primary gesture.
+    ///
+    /// There are two of them - the ordered-output drain can fail before it
+    /// reads a latched error - and only one was wired up, so a poisoned
+    /// coordination lock discarded the stroke under a status line that expires
+    /// while the brush stayed armed.
     #[test]
-    fn a_terminal_failure_stops_the_brush_from_consuming_the_gesture() {
+    fn every_terminal_failure_exit_raises_the_dialog_and_disarms() {
         let source =
             crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
                 .replace("\r\n", "\n");
-        let branch = source
-            .split_once("if let Some(failure) = error {")
-            .and_then(|(_, rest)| rest.split_once("if had_rebuilds"))
+        let helper = source
+            .split_once("fn fail_sculpt_session(")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
             .map(|(body, _)| body)
             .unwrap_or_default();
-        assert!(!branch.is_empty(), "the terminal failure branch must exist");
+        assert!(
+            !helper.is_empty(),
+            "the terminal-failure boundary must exist"
+        );
         for required in [
             "self.ui.app_error = Some(dialog)",
             "self.tools.sculpt.disarm()",
             "self.invalidate_sculpt_session_silent()",
         ] {
             assert!(
-                branch.contains(required),
+                helper.contains(required),
                 "a terminal failure must run {required}"
             );
         }
+        // Every failure exit routes through that one boundary. Counting the
+        // call sites is what catches an exit added without it: the previous
+        // test split the source on one branch's literal and never saw the
+        // other.
+        assert_eq!(
+            source.matches("self.fail_sculpt_session(").count(),
+            2,
+            "both poll exits must route through the one terminal-failure boundary"
+        );
+        assert!(
+            !source.contains("let detail = describe_sculpt_failure(&self.ui.locale, &failure);"),
+            "no exit may report the failure without the dialog"
+        );
     }
 
     /// A sculpt commit swaps a paired layer's mesh in place, so it never
