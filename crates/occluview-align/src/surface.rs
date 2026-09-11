@@ -296,16 +296,63 @@ impl SurfaceIndex {
         if budget == 0 || self.corners.is_empty() {
             return Vec::new();
         }
-        let stride = self.corners.len().div_ceil(budget).max(1);
-        self.corners
-            .iter()
-            .zip(&self.normals)
-            .zip(&self.triangle_components)
-            .step_by(stride)
-            .map(|((corners, &normal), &component)| SurfaceSample {
-                point: (corners[0] + corners[1] + corners[2]) / 3.0,
-                normal,
-                component,
+        let target = budget.min(self.corners.len());
+        let mut selected = vec![false; self.corners.len()];
+        let mut slots = Vec::with_capacity(target);
+
+        // The index is laid out by occupied spatial cell, not by source file
+        // order. A plain `step_by` can therefore spend the whole reciprocal
+        // budget in one dense component and miss a small adjacent tooth. Give
+        // each component a deterministic representative first, then fill the
+        // rest with an even walk through the spatially ordered triangles.
+        let component_slots = target.min(self.components.len());
+        let mut first_component_slots = vec![None; self.components.len()];
+        for (slot, &component) in self.triangle_components.iter().enumerate() {
+            if let Some(first) = first_component_slots.get_mut(component) {
+                *first = (*first).or(Some(slot));
+            }
+        }
+        for rank in 0..component_slots {
+            let component = rank * self.components.len() / component_slots;
+            if let Some(Some(slot)) = first_component_slots.get(component).copied() {
+                selected[slot] = true;
+                slots.push(slot);
+            }
+        }
+
+        let stride = self.corners.len().div_ceil(target).max(1);
+        for slot in (0..self.corners.len()).step_by(stride) {
+            if slots.len() == target {
+                break;
+            }
+            if !selected[slot] {
+                selected[slot] = true;
+                slots.push(slot);
+            }
+        }
+        if slots.len() < target {
+            for (slot, is_selected) in selected.iter_mut().enumerate() {
+                if slots.len() == target {
+                    break;
+                }
+                if !*is_selected {
+                    *is_selected = true;
+                    slots.push(slot);
+                }
+            }
+        }
+        slots.sort_unstable();
+        slots
+            .into_iter()
+            .filter_map(|slot| {
+                let corners = self.corners.get(slot)?;
+                let normal = *self.normals.get(slot)?;
+                let component = *self.triangle_components.get(slot)?;
+                Some(SurfaceSample {
+                    point: (corners[0] + corners[1] + corners[2]) / 3.0,
+                    normal,
+                    component,
+                })
             })
             .collect()
     }
@@ -549,6 +596,7 @@ impl SurfaceIndex {
         self.corners = gather(&self.corners, &order);
         self.normals = gather(&self.normals, &order);
         self.sources = gather(&self.sources, &order);
+        self.triangle_components = gather(&self.triangle_components, &order);
         self
     }
 
