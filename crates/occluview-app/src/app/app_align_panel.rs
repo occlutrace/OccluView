@@ -7,7 +7,19 @@
 use eframe::egui;
 
 use super::OccluViewApp;
+use crate::align_panel::{AlignPanelAction, AlignTab};
 use crate::align_worker::{matching_inputs_changed, AlignWorker};
+
+fn heatmap_is_authorized(tab: AlignTab, refined_match_ready: bool) -> bool {
+    tab == AlignTab::Automatically && refined_match_ready
+}
+
+fn action_after_tab_change(
+    action: Option<AlignPanelAction>,
+    tab_changed: bool,
+) -> Option<AlignPanelAction> {
+    (!tab_changed).then_some(action).flatten()
+}
 
 impl OccluViewApp {
     /// A stationary right-click takes the last point back.
@@ -81,7 +93,10 @@ impl OccluViewApp {
                 tool: &self.tools.align.tool,
                 settings: &mut settings,
                 status: self.tools.align.status.as_deref(),
-                refined_match_ready: self.tools.align.refined_match_ready,
+                refined_match_ready: heatmap_is_authorized(
+                    self.tools.align.tab,
+                    self.tools.align.refined_match_ready,
+                ),
                 roles: panel_roles,
                 busy,
                 worker_failed,
@@ -143,30 +158,30 @@ impl OccluViewApp {
             self.apply_align_mask_command(command);
         }
 
-        match action {
-            Some(crate::align_panel::AlignPanelAction::Align) => self.run_align_fit(),
-            Some(crate::align_panel::AlignPanelAction::Refine) => self.run_align_refine(),
-            Some(crate::align_panel::AlignPanelAction::Measure) => self.run_align_measure(),
-            Some(crate::align_panel::AlignPanelAction::HideMap) => {
+        match action_after_tab_change(action, tab_changed) {
+            Some(AlignPanelAction::Align) => self.run_align_fit(),
+            Some(AlignPanelAction::Refine) => self.run_align_refine(),
+            Some(AlignPanelAction::Measure) => self.run_align_measure(),
+            Some(AlignPanelAction::HideMap) => {
                 self.tools.align.settings.show_deviation = false;
                 self.abandon_align_jobs();
                 self.clear_deviation_overlay();
             }
-            Some(crate::align_panel::AlignPanelAction::Back) => {
+            Some(AlignPanelAction::Back) => {
                 self.take_align_arrow_back();
             }
-            Some(crate::align_panel::AlignPanelAction::SwapRoles) => self.swap_align_roles(),
-            Some(crate::align_panel::AlignPanelAction::Clear) => self.clear_align_pair(),
+            Some(AlignPanelAction::SwapRoles) => self.swap_align_roles(),
+            Some(AlignPanelAction::Clear) => self.clear_align_pair(),
             // The invalidation lives inside the navigation itself, so the
             // Ctrl+Z shortcut gets it too.
-            Some(crate::align_panel::AlignPanelAction::Undo) => {
+            Some(AlignPanelAction::Undo) => {
                 self.apply_history_navigation_now(false, ctx);
             }
-            Some(crate::align_panel::AlignPanelAction::Redo) => {
+            Some(AlignPanelAction::Redo) => {
                 self.apply_history_navigation_now(true, ctx);
             }
-            Some(crate::align_panel::AlignPanelAction::Cancel) => self.cancel_align_session(ctx),
-            Some(crate::align_panel::AlignPanelAction::Done) => self.finish_align_session(ctx),
+            Some(AlignPanelAction::Cancel) => self.cancel_align_session(ctx),
+            Some(AlignPanelAction::Done) => self.finish_align_session(ctx),
             None => {}
         }
     }
@@ -240,6 +255,32 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
+    use super::{action_after_tab_change, heatmap_is_authorized};
+    use crate::align_panel::{AlignPanelAction, AlignTab};
+
+    #[test]
+    fn manual_tab_never_authorizes_a_heatmap_from_stale_readiness() {
+        assert!(!heatmap_is_authorized(AlignTab::Manually, true));
+        assert!(heatmap_is_authorized(AlignTab::Automatically, true));
+        assert!(!heatmap_is_authorized(AlignTab::Automatically, false));
+    }
+
+    #[test]
+    fn a_tab_switch_discards_the_action_collected_for_the_previous_tab() {
+        assert_eq!(
+            action_after_tab_change(Some(AlignPanelAction::Refine), true),
+            None
+        );
+        assert_eq!(
+            action_after_tab_change(Some(AlignPanelAction::Measure), true),
+            None
+        );
+        assert_eq!(
+            action_after_tab_change(Some(AlignPanelAction::Refine), false),
+            Some(AlignPanelAction::Refine)
+        );
+    }
+
     /// The source before this module. Keeping this contract on the production
     /// half prevents the test from satisfying itself with its own assertion.
     fn production() -> &'static str {

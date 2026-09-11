@@ -7,6 +7,7 @@ use eframe::egui;
 use occluview_align::{FitRejection, Rigid};
 use occluview_core::SceneMeshId;
 
+use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
 use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
@@ -56,7 +57,7 @@ impl OccluViewApp {
             // they are operator input, not worker output.
             self.tools.align.refined_match_ready = false;
             self.tools.align.settings.show_deviation = false;
-            if self.tools.align.overlay == super::app_align_display::AlignOverlay::Map {
+            if self.tools.align.overlay == AlignOverlay::Map {
                 self.clear_deviation_overlay();
             }
             self.tools.align.status = Some(self.ui.locale.tr("align-status-worker-unavailable"));
@@ -213,7 +214,7 @@ impl OccluViewApp {
         self.tools.align.refined_match_ready = false;
         self.tools.align.settings.show_deviation = false;
         // Preserve operator markings; only the derived map is stale.
-        if self.tools.align.overlay != super::app_align_display::AlignOverlay::Map {
+        if self.tools.align.overlay != AlignOverlay::Map {
             return;
         }
         self.clear_deviation_overlay();
@@ -255,9 +256,17 @@ impl OccluViewApp {
         // match; role inference alone is not a measurement.
         self.tools.align.refined_match_ready = false;
         self.tools.align.settings.show_deviation = false;
+        // Do not key cleanup only off the enum: a partial update can leave the
+        // colour cache or the faded companion alive after the enum has already
+        // been reset. Every derived visual belongs to the old tab/session.
+        let had_derived_overlay = self.tools.align.overlay != AlignOverlay::Nothing
+            || self.align_overlay_is_up()
+            || !self.tools.align.ghosted.is_empty();
+        if had_derived_overlay {
+            self.clear_deviation_overlay();
+        }
         if entering_automatic {
-            if self.tools.align.overlay == super::app_align_display::AlignOverlay::Map {
-                self.clear_deviation_overlay();
+            if had_derived_overlay {
                 self.tools.align.status = Some(self.ui.locale.tr("align-status-map-elsewhere"));
             }
             return;
@@ -271,8 +280,7 @@ impl OccluViewApp {
         if dropped_arrows {
             self.tools.align.rejected.clear();
         }
-        if self.tools.align.overlay == super::app_align_display::AlignOverlay::Map {
-            self.clear_deviation_overlay();
+        if had_derived_overlay {
             self.tools.align.status = Some(self.ui.locale.tr("align-status-map-elsewhere"));
         } else if dropped_arrows {
             self.tools.align.status = Some(self.ui.locale.tr("align-status-arrows-cleared"));
