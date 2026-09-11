@@ -66,11 +66,27 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
         source.contains("prepared.write_entry_vertices(offscreen.renderer()"),
         "offscreen scene uploads must receive the measured colours"
     );
-    let render_start = source
-        .find("pub(super) fn render_scene_pixels")
-        .expect("render_scene_pixels exists");
+    // The body, not the rest of the file: the upload helper is *defined* below
+    // this method, so "everything after the signature" was satisfied by the
+    // definition even after the call was gone.
+    let body = method_body(source, "pub(super) fn render_scene_pixels");
     assert!(
-        source[render_start..].contains("push_deviation_colors_offscreen"),
+        !body.is_empty(),
+        "render_scene_pixels must exist and end at the impl indentation"
+    );
+    assert!(
+        body.contains("push_deviation_colors_offscreen()"),
         "render_scene_pixels must restore a map after rebuilding its prepared scene"
     );
+}
+
+/// One method's body: from its signature to the first line closing at the impl
+/// indentation, so a call has to be inside the method and not merely later in
+/// the file.
+fn method_body<'a>(source: &'a str, signature: &str) -> &'a str {
+    source
+        .split_once(signature)
+        .and_then(|(_, rest)| rest.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .unwrap_or_default()
 }
