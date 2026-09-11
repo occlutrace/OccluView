@@ -12,7 +12,7 @@ const MENU_WIDTH: f32 = 244.0;
 /// Everything the layer context menu needs about one layer. Shared verbatim by
 /// the layers-overlay rows and the viewport right-click menu so both surface the
 /// identical action set through the same plumbing.
-// Four independent display/state flags, not a state machine — see SceneMesh.
+// Five independent display/state flags, not a state machine — see SceneMesh.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 pub(crate) struct LayerContextMenuTarget {
@@ -24,6 +24,9 @@ pub(crate) struct LayerContextMenuTarget {
     pub(crate) visible: bool,
     pub(crate) wireframe: bool,
     pub(crate) face_editable: bool,
+    /// Whether the layer has payload that can be written. Point clouds are
+    /// exportable as PLY/OBJ even though they are not face-editable.
+    pub(crate) can_export: bool,
     /// Whether this layer's scan colors/texture are currently shown (vs the
     /// flat neutral material).
     pub(crate) show_vertex_colors: bool,
@@ -213,7 +216,7 @@ fn show_mesh_edit_actions(
             AppIcon::Export,
             "Export layer...",
             "layer-menu-export",
-            target.face_editable,
+            target.can_export,
             LayerContextAction::ExportLayer,
         ),
         context_request,
@@ -589,6 +592,27 @@ mod tests {
                 "redundant visibility action should stay out of the compact context menu: {removed}"
             );
         }
+    }
+
+    #[test]
+    fn point_clouds_keep_export_without_getting_face_edit_actions() {
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
+        let production_source = source
+            .split_once("\nmod tests {")
+            .map_or(source.as_str(), |(source, _)| source);
+
+        assert!(
+            production_source.contains("target.can_export"),
+            "export availability must be independent from face-editability"
+        );
+        let layer_facade = crate::primary_ui_tests::production_source(include_str!("mod.rs"))
+            .replace("\r\n", "\n");
+        assert!(
+            layer_facade.contains("face_editable: !entry.mesh.is_point_cloud()")
+                && layer_facade.contains("can_export: !entry.mesh.vertices().is_empty()"),
+            "point-cloud and empty-layer capabilities must be derived separately"
+        );
     }
 
     #[test]
