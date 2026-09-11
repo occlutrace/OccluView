@@ -464,9 +464,22 @@ fn live_sample_count_for(
     if let Some(count) = override_count {
         return count;
     }
+    // Keep the selector's strict `>` tie rule: when two adapters have the same
+    // score, the native selector keeps the first one it was given. `max_by_key`
+    // keeps the last equal item, which could configure eframe for 4x while the
+    // surface selector picked an equal-score adapter that only supports 1x.
     let selected_supports_msaa_4 = adapters
         .iter()
-        .max_by_key(|adapter| adapter_device_score(adapter.device_type, power_preference))
+        .enumerate()
+        .fold(None, |best: Option<(i32, usize)>, (index, adapter)| {
+            let score = adapter_device_score(adapter.device_type, power_preference);
+            match best {
+                None => Some((score, index)),
+                Some((best_score, _best_index)) if score > best_score => Some((score, index)),
+                Some(best) => Some(best),
+            }
+        })
+        .and_then(|(_, index)| adapters.get(index))
         .is_some_and(|adapter| adapter.supports_live_msaa_4);
     select_live_sample_count(selected_supports_msaa_4)
 }
