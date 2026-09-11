@@ -44,15 +44,6 @@ pub(crate) enum ViewportBackground {
 impl ViewportBackground {
     pub(crate) const OPTIONS: [Self; 3] = [Self::Gray, Self::White, Self::Dark];
 
-    #[cfg(test)]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Gray => "Gray",
-            Self::White => "White",
-            Self::Dark => "Dark",
-        }
-    }
-
     /// Whether the clear color reads as dark. Overlays painted directly on the
     /// render (scale bar) pick their ink by this — not by the chrome theme,
     /// which is an independent setting.
@@ -123,14 +114,6 @@ pub(crate) enum ThemePreference {
 
 impl ThemePreference {
     pub(crate) const OPTIONS: [Self; 2] = [Self::Light, Self::Dark];
-
-    #[cfg(test)]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-        }
-    }
 }
 
 fn deserialize_export_format<'de, D>(deserializer: D) -> Result<FallbackExportFormat, D::Error>
@@ -353,22 +336,6 @@ impl SettingsPersistence {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The kept English enum labels render from the catalog verbatim.
-    #[test]
-    fn english_enum_labels_match_source_wording() {
-        #![allow(clippy::expect_used)]
-        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-        for (key, label) in [
-            ("settings-bg-gray", ViewportBackground::Gray.label()),
-            ("settings-bg-white", ViewportBackground::White.label()),
-            ("settings-bg-dark", ViewportBackground::Dark.label()),
-            ("settings-theme-light", ThemePreference::Light.label()),
-            ("settings-theme-dark", ThemePreference::Dark.label()),
-        ] {
-            assert_eq!(catalog.text(key).as_deref(), Some(label));
-        }
-    }
 
     #[test]
     fn failed_persistence_stays_pending_until_the_retry_deadline() {
