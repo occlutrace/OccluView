@@ -292,7 +292,7 @@ fn select_native_adapter(
                 adapter = %info.name,
                 backend = ?info.backend,
                 sample_count = preflight.live_sample_count,
-                "skipping adapter that cannot create the configured multisampled live targets; \
+                "skipping adapter that cannot create the configured live targets; \
                  set {LIVE_MSAA_ENV}=1 to start without multisampling"
             );
             continue;
