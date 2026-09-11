@@ -570,19 +570,19 @@ impl OccluViewApp {
     /// we installed instead of panicking; surface any message honestly (status
     /// line always, copyable dialog only when no other error is showing, so a
     /// GPU that faults every frame cannot spam modal dialogs).
-    pub(super) fn poll_gpu_errors(&mut self) {
+    pub(super) fn poll_gpu_errors(&mut self) -> bool {
         let Some(live_viewport) = self.render.live_viewport.as_ref() else {
-            return;
+            return false;
         };
         let error = match live_viewport.lock() {
             Ok(viewport) => viewport.take_gpu_error(),
             Err(e) => {
                 tracing::warn!(error = ?e, "live viewport lock failed while polling GPU errors");
-                return;
+                return false;
             }
         };
         let Some(error) = error else {
-            return;
+            return false;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
         self.ui.status_message = Some(self.ui.locale.tr("gpu-failed-status"));
@@ -593,6 +593,7 @@ impl OccluViewApp {
                 details: format!("wgpu uncaptured error\n\n{error}"),
             });
         }
+        true
     }
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {

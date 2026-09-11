@@ -82,6 +82,9 @@ impl LiveViewport {
         render_extent_px: [u16; 2],
         clip_plane: ClipPlane,
     ) {
+        if self.renderer.is_gpu_faulted() {
+            return;
+        }
         self.renderer.set_point_splat_viewport(
             u32::from(render_extent_px[0]),
             u32::from(render_extent_px[1]),
@@ -104,6 +107,9 @@ impl LiveViewport {
         sources: &[PreparedSceneSource<'_>],
         updates: &[PreparedSceneUpdate],
     ) -> bool {
+        if self.renderer.is_gpu_faulted() {
+            return false;
+        }
         let rebuild = self
             .prepared_scene
             .as_mut()
@@ -134,9 +140,10 @@ impl LiveViewport {
         vertices: &[occluview_core::Vertex],
         touched: &[usize],
     ) -> bool {
-        self.prepared_scene.as_ref().is_some_and(|scene| {
-            scene.write_entry_vertices_sparse(&self.renderer, topology, vertices, touched)
-        })
+        !self.renderer.is_gpu_faulted()
+            && self.prepared_scene.as_ref().is_some_and(|scene| {
+                scene.write_entry_vertices_sparse(&self.renderer, topology, vertices, touched)
+            })
     }
 
     pub(super) fn write_scene_vertices(
@@ -144,9 +151,11 @@ impl LiveViewport {
         topology: &PreparedSceneTopology,
         vertices: &[occluview_core::Vertex],
     ) -> bool {
-        self.prepared_scene
-            .as_ref()
-            .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
+        !self.renderer.is_gpu_faulted()
+            && self
+                .prepared_scene
+                .as_ref()
+                .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
     }
 
     pub(super) fn has_prepared_scene(&self) -> bool {
@@ -154,6 +163,10 @@ impl LiveViewport {
     }
 
     pub(super) fn sync_selection_overlay(&mut self, sources: &[PreparedSceneSource<'_>]) {
+        if self.renderer.is_gpu_faulted() {
+            self.selection_overlay = None;
+            return;
+        }
         self.selection_overlay =
             (!sources.is_empty()).then(|| PreparedScene::prepare(&self.renderer, sources));
     }
@@ -162,6 +175,10 @@ impl LiveViewport {
     /// the egui paint callback runs. Clearing it writes hidden no-op values so
     /// a cursor cannot persist after a miss, window occlusion, or scene swap.
     pub(super) fn set_sculpt_cursor(&mut self, cursor: Option<SculptCursor>) {
+        if self.renderer.is_gpu_faulted() {
+            self.sculpt_cursor = None;
+            return;
+        }
         let brush = cursor.map_or(SculptBrushUniform::hidden(), |cursor| cursor.brush);
         let tool = cursor.map_or(SculptToolUniform::hidden(), |cursor| cursor.tool);
         self.renderer.set_sculpt_brush(&brush);
@@ -173,6 +190,9 @@ impl LiveViewport {
         self.prepared_scene = None;
         self.selection_overlay = None;
         self.sculpt_cursor = None;
+        if self.renderer.is_gpu_faulted() {
+            return;
+        }
         self.renderer
             .set_sculpt_brush(&SculptBrushUniform::hidden());
         self.renderer.set_sculpt_tool(&SculptToolUniform::hidden());
@@ -186,6 +206,9 @@ impl LiveViewport {
     }
 
     fn paint(&self, render_pass: &mut wgpu::RenderPass<'static>) {
+        if self.renderer.is_gpu_faulted() {
+            return;
+        }
         let Some(scene) = self.prepared_scene.as_ref() else {
             return;
         };

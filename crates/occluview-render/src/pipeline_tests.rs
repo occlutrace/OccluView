@@ -102,6 +102,26 @@ fn gpu_error_latch_records_and_drains_once() {
 }
 
 #[test]
+fn gpu_fault_stays_fail_closed_after_its_message_is_drained() {
+    let latch: super::GpuErrorLatch = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let faulted = std::sync::atomic::AtomicBool::new(false);
+
+    super::record_gpu_fault(&latch, &faulted, "device lost".to_string());
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::Acquire),
+        "draining the message must not make a failed device look healthy"
+    );
+    assert_eq!(
+        super::drain_gpu_error(&latch).as_deref(),
+        Some("device lost")
+    );
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::Acquire),
+        "the paint callback needs a persistent stop signal after UI polling"
+    );
+}
+
+#[test]
 // Poisoning a mutex requires a deliberate panic while a guard is held. (This
 // can only happen in an unwinding build; the shipping binary is `panic = abort`
 // where poison never occurs — the guard still keeps the poll crash-proof.)
