@@ -38,6 +38,7 @@ fn dome(n: usize, step: f32) -> (Vec<f32>, Vec<u32>) {
 /// local, but its shape is sampled at `origin`, so the correct rigid answer is
 /// the translation that puts the patch back over that window. This is the
 /// case a component-centre seed cannot solve on its own.
+#[allow(clippy::cast_possible_truncation)] // Fixture coordinates are small integers.
 fn dome_patch(n: usize, step: f32, origin: DVec3) -> (Vec<f32>, Vec<u32>) {
     let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);
     #[allow(clippy::cast_precision_loss)]
@@ -384,9 +385,12 @@ fn a_start_with_no_surface_in_reach_is_refused() {
 
     let outcome = refine(mesh, &index, start, &settings(), &CancelFlag::new());
 
+    // The variant matters: an unreachable start is not an ambiguous one, and
+    // the operator's next step differs. `is_err()` accepted every rejection
+    // this crate can produce, which is how a swapped variant would pass.
     assert!(
-        outcome.is_err(),
-        "a hopeless start must be refused, not guessed at"
+        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
+        "a hopeless start must be refused as unreachable, got {outcome:?}"
     );
 }
 
@@ -403,8 +407,8 @@ fn an_inverted_orientation_setting_rejects_matching_normals() {
     let outcome = refine(mesh, &index, Rigid::IDENTITY, &inverted, &CancelFlag::new());
 
     assert!(
-        outcome.is_err(),
-        "every normal agrees, so an inverted-only match has nothing to work with"
+        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
+        "every normal agrees, so an inverted-only match has nothing to work with, got {outcome:?}"
     );
 }
 
@@ -426,7 +430,10 @@ fn an_empty_moving_mesh_is_refused() {
         &CancelFlag::new(),
     );
 
-    assert!(outcome.is_err());
+    assert!(
+        matches!(outcome, Err(FitRejection::TooFewPairs { have: 0, .. })),
+        "an empty moving mesh has no correspondences at all, got {outcome:?}"
+    );
 }
 
 #[test]
@@ -623,7 +630,9 @@ fn best_fit_finds_a_partial_patch_inside_a_large_connected_scan() {
         &settings(),
         &CancelFlag::new(),
     );
-    let report = outcome.expect("Best fit should find the matching internal patch");
+    let report = outcome.unwrap_or_else(|rejection| {
+        unreachable!("Best fit should find the matching internal patch: {rejection:?}")
+    });
 
     assert!(
         (report.rigid.translation - patch_origin).length() < 0.1,
@@ -633,7 +642,7 @@ fn best_fit_finds_a_partial_patch_inside_a_large_connected_scan() {
 }
 
 #[test]
-fn a_refine_that_cannot_prove_an_improvement_is_refused() {
+fn a_fit_that_runs_out_of_iterations_never_authorizes_a_map() {
     let (positions, indices) = dome(24, 0.5);
     let mesh = soup(&positions, &indices);
     let index = SurfaceIndex::build(mesh).unwrap();
@@ -646,15 +655,22 @@ fn a_refine_that_cannot_prove_an_improvement_is_refused() {
         DVec3::new(1.5, -0.18, 0.12),
     );
 
-    let outcome = refine(mesh, &index, start, &limited, &CancelFlag::new());
+    // One accepted step is a result, not a refusal: the trust gate is what
+    // stops it becoming a heatmap. (`refine` reports `NoImprovement` when the
+    // solve cannot establish overlap at all; that path is pinned by
+    // `rank_deficient_nonzero_residual_is_not_reported_as_refined`.)
+    let report =
+        refine(mesh, &index, start, &limited, &CancelFlag::new()).unwrap_or_else(|rejection| {
+            unreachable!("a step was accepted, so the solve returns a report: {rejection:?}")
+        });
 
-    let trustworthy = match &outcome {
-        Ok(report) => report.is_trustworthy_refinement(),
-        Err(_) => false,
-    };
     assert!(
-        !trustworthy,
-        "a non-converged fit must not authorize a map: {outcome:?}"
+        !report.converged,
+        "the fixture has to stop short of convergence for this to mean anything"
+    );
+    assert!(
+        !report.is_trustworthy_refinement(),
+        "a fit that ran out of its iteration budget must not authorize a map: {report:?}"
     );
 }
 
