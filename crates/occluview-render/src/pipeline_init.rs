@@ -283,7 +283,11 @@ impl Renderer {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    // The point shader emits a smooth coverage alpha for the
+                    // outer part of each screen-space splat. Replacing the
+                    // target ignores that alpha and leaves a hard disc edge
+                    // even when live MSAA is available.
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
