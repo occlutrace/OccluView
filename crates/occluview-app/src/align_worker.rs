@@ -3,8 +3,9 @@
 //! Heavy alignment and deviation work runs off the UI thread.
 //!
 //! Each job carries a generation; completions from older generations are
-//! discarded. A job kind allows a queued job to be replaced by a newer request
-//! of the same kind.
+//! discarded. A monotonically increasing request id additionally makes the
+//! latest submission win when cancellation races with a fast completion in the
+//! same scene generation.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -171,6 +172,10 @@ pub(crate) enum AlignJobKind {
 pub(crate) struct AlignJob {
     /// The generation this job belongs to.
     pub(crate) generation: u64,
+    /// The submission sequence assigned by [`AlignWorker::submit`]. The value
+    /// in a caller-built job is ignored and exists only to keep the snapshot
+    /// self-contained for the worker boundary.
+    pub(crate) request_id: u64,
     /// What to compute.
     pub(crate) kind: AlignJobKind,
     /// Moving layer geometry, in its own local frame.
@@ -254,6 +259,8 @@ pub(crate) enum AlignOutcome {
 pub(crate) struct AlignCompletion {
     /// The generation the job belonged to.
     pub(crate) generation: u64,
+    /// The request that produced this completion.
+    pub(crate) request_id: u64,
     /// The result. Which job produced it is already implied by the variant.
     pub(crate) outcome: AlignOutcome,
 }
@@ -274,6 +281,7 @@ pub(crate) struct AlignWorker {
     completions: Arc<Mutex<Vec<AlignCompletion>>>,
     running: Arc<Mutex<Option<CancelFlag>>>,
     generation: Arc<AtomicU64>,
+    request_sequence: Arc<AtomicU64>,
     busy: Arc<AtomicU64>,
     failed: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
@@ -292,6 +300,7 @@ impl AlignWorker {
         let completions = Arc::new(Mutex::new(Vec::new()));
         let running: Arc<Mutex<Option<CancelFlag>>> = Arc::new(Mutex::new(None));
         let generation = Arc::new(AtomicU64::new(0));
+        let request_sequence = Arc::new(AtomicU64::new(0));
         let busy = Arc::new(AtomicU64::new(0));
         let failed = Arc::new(AtomicBool::new(false));
 
@@ -330,6 +339,7 @@ impl AlignWorker {
             completions,
             running,
             generation,
+            request_sequence,
             busy,
             failed,
             handle,
@@ -371,18 +381,23 @@ impl AlignWorker {
                 .is_ok_and(|state| !state.jobs.is_empty())
     }
 
-    /// Queue a job, replacing queued work of the same kind and cancelling the
-    /// running job.
-    pub(crate) fn submit(&self, job: AlignJob) -> bool {
+    /// Queue the newest job and cancel every older queued/running request.
+    ///
+    /// Align jobs are mutually exclusive snapshots: a queued refine followed
+    /// by a measure, or an old measure followed by a new refine, cannot both be
+    /// correct for the operator's current intent. Clearing the whole queue
+    /// avoids applying a stale kind after a newer kind has landed.
+    pub(crate) fn submit(&self, mut job: AlignJob) -> bool {
         if self.has_failed() {
             return false;
         }
         self.cancel_running();
+        job.request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         let Ok(mut state) = self.queue.state.lock() else {
             mark_failed(&self.failed, "queue lock poisoned", None);
             return false;
         };
-        state.jobs.retain(|queued| queued.kind != job.kind);
+        state.jobs.clear();
         state.jobs.push_back(job);
         drop(state);
         self.queue.wake.notify_one();
@@ -392,6 +407,7 @@ impl AlignWorker {
     /// Take every completion that still belongs to the current generation.
     pub(crate) fn drain(&self) -> Vec<AlignCompletion> {
         let current = self.generation();
+        let newest_request = self.request_sequence.load(Ordering::SeqCst);
         let Ok(mut completions) = self.completions.lock() else {
             mark_failed(&self.failed, "completion lock poisoned", None);
             return Vec::new();
@@ -399,7 +415,9 @@ impl AlignWorker {
         let drained: Vec<AlignCompletion> = completions.drain(..).collect();
         drained
             .into_iter()
-            .filter(|completion| completion.generation == current)
+            .filter(|completion| {
+                completion.generation == current && completion.request_id == newest_request
+            })
             .collect()
     }
 
@@ -491,6 +509,7 @@ fn run_worker(
         };
         published.push(AlignCompletion {
             generation: job.generation,
+            request_id: job.request_id,
             outcome,
         });
     }

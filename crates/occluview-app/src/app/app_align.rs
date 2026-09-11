@@ -455,6 +455,7 @@ impl OccluViewApp {
         };
         let accepted = worker.submit(AlignJob {
             generation: worker.generation(),
+            request_id: 0,
             kind,
             moving_positions,
             moving_indices,
