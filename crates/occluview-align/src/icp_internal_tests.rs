@@ -1,6 +1,15 @@
 //! Focused tests for ICP state transitions that are not part of the public API.
 
-#![allow(clippy::expect_used, clippy::panic)]
+// Synthetic fixtures index a grid with `usize` and place it in `f32` millimetres.
+// The casts are bounded by the fixture sizes, which is what the lints cannot see.
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 
 use super::icp_overlap::ReciprocalSummary;
 use super::{
