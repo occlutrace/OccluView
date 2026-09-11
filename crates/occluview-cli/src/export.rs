@@ -7,6 +7,7 @@ use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// Generous edge ceiling for whole-mesh Close Holes, mirroring the app button
@@ -107,29 +108,47 @@ pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<(ExportFormat,
 /// output-path contract without changing intentional names such as
 /// `scan.stl.obj`.
 pub(crate) fn normalize_output_path(path: PathBuf) -> PathBuf {
-    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+    let Some(extension) = path.extension().map(OsStr::to_os_string) else {
         return path;
     };
     if extension.is_empty() {
         return path;
     }
-    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+    let Some(mut base) = path.file_stem().map(OsStr::to_os_string) else {
         return path;
     };
 
-    let mut base = stem;
     let mut repeated = false;
-    while let Some((prefix, suffix)) = base.rsplit_once('.') {
-        if !suffix.eq_ignore_ascii_case(extension) {
+    while let Some(nested_extension) = Path::new(base.as_os_str()).extension() {
+        if !os_str_ascii_case_equal(nested_extension, extension.as_os_str()) {
             break;
         }
-        base = prefix;
+        let Some(nested_stem) = Path::new(base.as_os_str()).file_stem() else {
+            break;
+        };
+        base = nested_stem.to_os_string();
         repeated = true;
     }
     if repeated {
-        path.with_file_name(format!("{base}.{extension}"))
+        let mut file_name = base;
+        file_name.push(".");
+        file_name.push(extension);
+        path.with_file_name(file_name)
     } else {
         path
+    }
+}
+
+fn os_str_ascii_case_equal(left: &OsStr, right: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        left.as_bytes().eq_ignore_ascii_case(right.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
     }
 }
 
@@ -241,6 +260,17 @@ mod tests {
             normalize_output_path(PathBuf::from("case/scan.stl.obj")),
             PathBuf::from("case/scan.stl.obj")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repeated_terminal_extension_is_collapsed_for_non_utf8_names() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(b"scan\xff.stl.stl".to_vec()));
+        let normalized = normalize_output_path(path);
+
+        assert_eq!(normalized.as_os_str().as_bytes(), b"scan\xff.stl");
     }
 
     fn temp_file(extension: &str) -> PathBuf {

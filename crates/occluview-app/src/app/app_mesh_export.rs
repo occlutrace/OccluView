@@ -6,6 +6,7 @@ use anyhow::{bail, Context, Result};
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
 /// How an interactive save-edited-layers pass ended.
@@ -416,32 +417,48 @@ pub(super) fn normalize_layer_export_path(
 /// only adjacent copies of the actual final extension. A name such as
 /// `scan.stl.obj` remains intentional and continues to select OBJ.
 fn collapse_repeated_terminal_extension(path: PathBuf) -> PathBuf {
-    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+    let Some(extension) = path.extension().map(OsStr::to_os_string) else {
         return path;
     };
     if extension.is_empty() {
         return path;
     }
-    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-        // A non-UTF-8 filename is valid on Unix. Leave it byte-for-byte intact
-        // rather than replacing a user-chosen name just to fix a cosmetic case.
+    let Some(mut base) = path.file_stem().map(OsStr::to_os_string) else {
         return path;
     };
 
-    let mut base = stem;
     let mut repeated = false;
-    while let Some((prefix, suffix)) = base.rsplit_once('.') {
-        if !suffix.eq_ignore_ascii_case(extension) {
+    while let Some(nested_extension) = Path::new(base.as_os_str()).extension() {
+        if !os_str_ascii_case_equal(nested_extension, extension.as_os_str()) {
             break;
         }
-        base = prefix;
+        let Some(nested_stem) = Path::new(base.as_os_str()).file_stem() else {
+            break;
+        };
+        base = nested_stem.to_os_string();
         repeated = true;
     }
     if !repeated {
         return path;
     }
 
-    path.with_file_name(format!("{base}.{extension}"))
+    let mut file_name = base;
+    file_name.push(".");
+    file_name.push(extension);
+    path.with_file_name(file_name)
+}
+
+fn os_str_ascii_case_equal(left: &OsStr, right: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        left.as_bytes().eq_ignore_ascii_case(right.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
 }
 
 fn default_layer_export_name(
@@ -789,6 +806,17 @@ mod tests {
             PathBuf::from("edited.stl.obj"),
             "a different final format is an intentional filename, not a duplicate"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_dialog_collapses_repeated_extension_for_non_utf8_names() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(b"edited\xff.stl.stl".to_vec()));
+        let normalized = normalize_layer_export_path(path, MeshWriteFormat::StlBinary);
+
+        assert_eq!(normalized.as_os_str().as_bytes(), b"edited\xff.stl");
     }
 
     #[test]
