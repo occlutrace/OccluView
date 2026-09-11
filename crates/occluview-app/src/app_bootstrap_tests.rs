@@ -203,6 +203,33 @@ fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
     assert!(second.ends_with("-1.txt"));
 }
 
+/// A `.desktop` launch has no console, so a fatal startup has to reach the
+/// desktop through whatever the image actually ships. The command lines are
+/// pinned here because a wrong flag makes the dialog never appear, which looks
+/// exactly like the silent failure this exists to prevent.
+#[cfg(not(windows))]
+#[test]
+fn every_desktop_notification_channel_builds_a_usable_command() {
+    for channel in NOTIFICATION_CHANNELS {
+        let (program, args) = notification_command(channel, "Title", "Body", "critical")
+            .unwrap_or_else(|| panic!("{channel} must be a known channel"));
+        assert_eq!(program, channel, "the channel name is the program name");
+        assert!(
+            args.iter().any(|arg| arg == "Title") && args.iter().any(|arg| arg == "Body"),
+            "{channel} must carry both the title and the body: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg.contains("error") || arg.contains("critical")),
+            "{channel} must present this as an error: {args:?}"
+        );
+    }
+    assert_eq!(
+        notification_command("unknown", "Title", "Body", "critical"),
+        None,
+        "an unknown channel must not be spawned"
+    );
+}
 #[test]
 fn startup_stage_lines_contain_only_diagnostic_metadata() {
     let line = startup_stage_line("graphics-init", 42, 7);

@@ -55,9 +55,9 @@ impl Default for GraphicsPreflight {
 /// fallible startup and report failures instead of unwinding through `main`.
 ///
 /// Never returns a `Result`: startup failures are written under `crashes/`,
-/// shown to the operator, and terminate with a failure status. Blocks running
-/// the event loop; `--version`, `--diagnostics`, and `--shell-refresh` exit
-/// first.
+/// offered to the operator through the platform's own dialog or notification
+/// channel, and terminate with a failure status. Blocks running the event loop;
+/// `--version`, `--diagnostics`, and `--shell-refresh` exit first.
 pub fn main_entry() {
     append_startup_stage("entry");
     install_panic_hook();
@@ -1094,16 +1094,81 @@ fn show_diagnostics_message(report_path: Option<&Path>) {
 }
 
 #[cfg(not(windows))]
-fn notify_desktop(title: &str, report: &str, urgency: &str) {
-    // Best effort only: the report and non-zero exit status remain the
-    // authoritative support signals when no desktop notification service is
-    // installed or the process is launched outside a graphical session.
+fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
     let body = format!("Diagnostic report: {report}");
-    let _ = std::process::Command::new("notify-send")
-        .arg(format!("--urgency={urgency}"))
-        .arg(title)
-        .arg(body)
-        .spawn();
+    for channel in NOTIFICATION_CHANNELS {
+        let Some((program, args)) = notification_command(channel, title, &body, urgency) else {
+            continue;
+        };
+        if std::process::Command::new(&program)
+            .args(&args)
+            .spawn()
+            .is_ok()
+        {
+            tracing::info!(channel, "startup notice handed to the desktop");
+            return channel;
+        }
+    }
+    // Best effort only: the report and the non-zero exit status remain the
+    // authoritative support signals when no desktop notification service is
+    // installed or the process is launched outside a graphical session. Saying
+    // so in the journal is what stops a silent exit from reading as a crash.
+    tracing::error!(
+        "no desktop notification channel is available; the report path is the only operator-visible signal"
+    );
+    "none"
+}
+
+/// The notification channels tried, in the order they are attempted.
+///
+/// `notify-send` is the freedesktop one; `zenity` and `kdialog` are what a
+/// minimal desktop image tends to carry when no notification daemon answers.
+#[cfg(not(windows))]
+const NOTIFICATION_CHANNELS: [&str; 3] = ["notify-send", "zenity", "kdialog"];
+
+/// The command line for one notification channel.
+///
+/// The body carries the report file name and the title names the product, so a
+/// desktop dialog is readable without the console a `.desktop` launch never
+/// has. `zenity` and `kdialog` block until dismissed, which is intended on this
+/// fatal path: the message has to outlive the process that raised it.
+#[cfg(not(windows))]
+fn notification_command(
+    channel: &str,
+    title: &str,
+    body: &str,
+    urgency: &str,
+) -> Option<(String, Vec<String>)> {
+    match channel {
+        "notify-send" => Some((
+            "notify-send".to_string(),
+            vec![
+                format!("--urgency={urgency}"),
+                title.to_string(),
+                body.to_string(),
+            ],
+        )),
+        "zenity" => Some((
+            "zenity".to_string(),
+            vec![
+                "--error".to_string(),
+                "--title".to_string(),
+                title.to_string(),
+                "--text".to_string(),
+                body.to_string(),
+            ],
+        )),
+        "kdialog" => Some((
+            "kdialog".to_string(),
+            vec![
+                "--error".to_string(),
+                body.to_string(),
+                "--title".to_string(),
+                title.to_string(),
+            ],
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(windows)]
