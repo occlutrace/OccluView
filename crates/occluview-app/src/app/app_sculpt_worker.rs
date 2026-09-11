@@ -297,6 +297,13 @@ impl OccluViewApp {
             }
             SculptFlushOutcome::GpuRejected
         } else if has_target {
+            // Cut View renders the prepared offscreen scene, which has just
+            // received this sparse shadow write. Marking it here keeps the
+            // cached slice in lockstep with the main viewport instead of
+            // leaving the previous dab on screen until commit.
+            if self.can_render_cut_view() {
+                self.tools.cut_view.mark_dirty();
+            }
             SculptFlushOutcome::Applied
         } else {
             // No prepared GPU target: the CPU shadow stays authoritative and
@@ -443,8 +450,11 @@ impl OccluViewApp {
         self.document.edit_mode.sync_to_scene(&scene_arc);
         self.document.scene = Some(scene_arc);
         // The commit swaps the layer's mesh Arc after the stroke's bytes were
-        // already pushed to the GPU by sparse writes; only a repaint is owed.
-        self.render.invalidation.request_redraw();
+        // already pushed to the GPU by sparse writes. Mark every consumer
+        // stale: the selection overlay must be rebuilt from the committed
+        // geometry, while prepared-scene reconciliation remains cheap when
+        // topology is unchanged.
+        self.render.invalidation.scene_geometry_changed();
         if self.can_render_cut_view() {
             self.tools.cut_view.mark_dirty();
         }

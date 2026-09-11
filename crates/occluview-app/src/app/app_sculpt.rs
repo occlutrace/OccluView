@@ -194,7 +194,10 @@ impl OccluViewApp {
             Some(_) => self.ui.locale.tr("sculpt-preparing"),
             None => self.ui.locale.tr("sculpt-off"),
         });
-        self.render.invalidation.overlay_tools_changed();
+        // Sculpt hides the selection overlay while its display-only shadow is
+        // ahead of the committed document mesh. Rebuild it when the mode
+        // changes so it cannot remain stale after the stroke is committed.
+        self.render.invalidation.selection_changed();
         ctx.request_repaint();
     }
 
@@ -219,7 +222,7 @@ impl OccluViewApp {
             }
             EditorTab::Sculpt => {}
         }
-        self.render.invalidation.overlay_tools_changed();
+        self.render.invalidation.selection_changed();
         ctx.request_repaint();
     }
 
