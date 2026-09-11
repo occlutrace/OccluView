@@ -1,6 +1,6 @@
 //! UI-side bridge to the persistent sculpt worker.
 
-use super::{egui, EditModeCommand, OccluViewApp};
+use super::{egui, AppErrorDialog, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::SculptRebuild;
 use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
@@ -153,12 +153,13 @@ impl OccluViewApp {
         // a chance to commit; then revoke the worker so no later stale result
         // can reach the scene.
         if let Some(failure) = error {
-            let detail = describe_sculpt_failure(&self.ui.locale, &failure);
-            self.ui.status_message = Some(
-                self.ui
-                    .locale
-                    .tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
-            );
+            let dialog = sculpt_failure_dialog(&self.ui.locale, &failure);
+            self.ui.status_message = Some(dialog.summary.clone());
+            self.ui.app_error = Some(dialog);
+            // Terminal for this session. Stand the brush down as well: leaving
+            // it armed would keep the primary gesture consumed by a tool whose
+            // worker was just revoked.
+            self.tools.sculpt.disarm();
             self.invalidate_sculpt_session_silent();
             ctx.request_repaint();
         }
@@ -467,6 +468,24 @@ impl OccluViewApp {
     }
 }
 
+/// The dialog a terminal sculpt failure raises.
+///
+/// A stroke that cannot finish has already discarded its geometry, and the
+/// session is revoked so no later result can arrive. That has to survive the
+/// transient status line: the operator may still be holding the brush button
+/// when it lands, and nothing else on screen explains why the stroke stopped.
+fn sculpt_failure_dialog(
+    locale: &crate::i18n::LocaleManager,
+    failure: &SculptFailure,
+) -> AppErrorDialog {
+    let detail = describe_sculpt_failure(locale, failure);
+    AppErrorDialog {
+        title: locale.tr("sculpt-failed-title"),
+        summary: locale.tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
+        details: format!("Sculpt worker stopped\n\n{detail}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
@@ -522,6 +541,55 @@ mod tests {
         topology.sculpt_topology_changed();
         assert!(topology.live_scene_stale() && topology.offscreen_scene_stale());
         assert!(!topology.live_overlay_stale() && !topology.offscreen_overlay_stale());
+    }
+
+    /// A terminal worker failure has to outlive the status line, because the
+    /// stroke's geometry is gone and no later result can arrive to explain it.
+    #[test]
+    fn a_terminal_failure_raises_the_error_dialog() {
+        use crate::i18n::LocaleManager;
+        use crate::sculpt_worker::SculptFailure;
+
+        let locale = LocaleManager::for_tests();
+        let failure = SculptFailure::WorkerStatePoisoned;
+        let dialog = super::sculpt_failure_dialog(&locale, &failure);
+
+        assert_eq!(dialog.title, locale.tr("sculpt-failed-title"));
+        let detail = super::describe_sculpt_failure(&locale, &failure);
+        assert!(
+            dialog.summary.contains(&detail),
+            "the summary must carry the typed reason: {}",
+            dialog.summary
+        );
+        assert!(
+            dialog.details.contains(&detail),
+            "the copyable details must carry the failure for a case record"
+        );
+    }
+
+    /// The failure branch owns the whole terminal outcome: dialog, session
+    /// revocation, and the brush no longer consuming the primary gesture.
+    #[test]
+    fn a_terminal_failure_stops_the_brush_from_consuming_the_gesture() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
+                .replace("\r\n", "\n");
+        let branch = source
+            .split_once("if let Some(failure) = error {")
+            .and_then(|(_, rest)| rest.split_once("if had_rebuilds"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(!branch.is_empty(), "the terminal failure branch must exist");
+        for required in [
+            "self.ui.app_error = Some(dialog)",
+            "self.tools.sculpt.disarm()",
+            "self.invalidate_sculpt_session_silent()",
+        ] {
+            assert!(
+                branch.contains(required),
+                "a terminal failure must run {required}"
+            );
+        }
     }
 
     /// A sculpt commit swaps a paired layer's mesh in place, so it never
