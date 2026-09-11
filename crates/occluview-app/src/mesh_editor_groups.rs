@@ -456,7 +456,11 @@ struct SculptSliderControl<'a> {
     tooltip: &'a str,
 }
 
-fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
+fn sculpt_slider_row(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    control: SculptSliderControl<'_>,
+) -> egui::Response {
     let row_height = ui.spacing().interact_size.y;
     // The caption rides its own line. The rail owns the full content width so
     // the operator gets a stable, wide target in the compact panel.
@@ -473,6 +477,12 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
     });
     let response = ui
         .add_enabled_ui(enabled, |ui| {
+            // `Slider` uses `ui.spacing().slider_width` for its requested
+            // horizontal size. `add_sized` constrains the child but does not
+            // rewrite that spacing value, so leaving the default here makes
+            // the visible rail stay at egui's 100 px even though the child
+            // owns the whole panel width.
+            ui.spacing_mut().slider_width = slider_width;
             ui.add_sized(
                 [slider_width, row_height],
                 egui::Slider::new(control.value, control.range)
@@ -492,7 +502,7 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
     response.widget_info(|| {
         egui::WidgetInfo::slider(enabled, f64::from(*control.value), control.label)
     });
-    response.on_hover_text(control.tooltip);
+    response.on_hover_text(control.tooltip)
 }
 
 /// Reserve the full available content width for the slider rail. Kept pure so
@@ -657,6 +667,7 @@ pub(super) fn tall_text_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sculpt_tool::SCULPT_SIZE_DEFAULT;
 
     #[test]
     fn cell_width_splits_a_row_into_equal_columns() {
@@ -691,6 +702,31 @@ mod tests {
     fn sculpt_slider_uses_the_full_panel_width() {
         assert!((sculpt_slider_width(212.0) - 212.0).abs() < f32::EPSILON);
         assert!(sculpt_slider_width(0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sculpt_slider_widget_really_uses_the_full_panel_width() {
+        let mut value = SCULPT_SIZE_DEFAULT;
+        let mut slider_rect = egui::Rect::NOTHING;
+        egui::__run_test_ui(|ui| {
+            ui.set_width(212.0);
+            slider_rect = sculpt_slider_row(
+                ui,
+                true,
+                SculptSliderControl {
+                    label: "Size",
+                    value: &mut value,
+                    range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
+                    tooltip: "Size",
+                },
+            )
+            .rect;
+        });
+        assert!(
+            (slider_rect.width() - 212.0).abs() < 0.01,
+            "visible sculpt rail is {} px, expected the full 212 px panel",
+            slider_rect.width()
+        );
     }
 
     #[test]
