@@ -54,14 +54,30 @@ else
   source_revision=unavailable
 fi
 
+# Digest of one shipped binary, so a --no-build package can prove the files it
+# packages are the ones this build produced. Without it the provenance bound
+# only the source text: a binary from a different profile (no unwinding, so the
+# sculpt worker's panic boundary is unreachable) satisfied every check.
+binary_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 write_build_provenance() {
-  local temporary
+  local temporary viewer_digest cli_digest
+  viewer_digest="$(binary_digest "$release_viewer")"
+  cli_digest="$(binary_digest "$release_cli")"
   temporary="$(mktemp "${provenance_file}.tmp.XXXXXX")"
   {
     printf 'version=%s\n' "$version"
     printf 'revision=%s\n' "$source_revision"
     printf 'tracked_diff_sha256=%s\n' "$source_diff_hash"
     printf 'feature_profile=%s\n' "$feature_profile"
+    printf 'viewer_sha256=%s\n' "$viewer_digest"
+    printf 'cli_sha256=%s\n' "$cli_digest"
   } > "$temporary"
   mv -f "$temporary" "$provenance_file"
 }
@@ -83,7 +99,9 @@ validate_release_provenance() {
     "version=$version" \
     "revision=$source_revision" \
     "tracked_diff_sha256=$source_diff_hash" \
-    "feature_profile=$feature_profile"
+    "feature_profile=$feature_profile" \
+    "viewer_sha256=$(binary_digest "$release_viewer")" \
+    "cli_sha256=$(binary_digest "$release_cli")"
   do
     if ! grep -Fqx "$expected" "$provenance_file"; then
       echo "release binaries are stale or were built with different features; run without --no-build" >&2
@@ -179,12 +197,31 @@ gzip -9 -n -c install/linux/occluview.1 \
   > "$pkg_root/usr/share/man/man1/occluview.1.gz"
 gzip -9 -n -c install/linux/occluview-cli.1 \
   > "$pkg_root/usr/share/man/man1/occluview-cli.1.gz"
+# The date in the Debian changelog is what `apt changelog` and the package
+# browser show. It has to come from the release notes for this version, not from
+# a fixed string: the shipped package used to claim the previous release's date.
+release_date="$(awk -v v="$version" '
+  $0 == "## " v " - " {
+    if ($4 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) { print $4; exit }
+  }
+' CHANGELOG.md)"
+if [[ -z "$release_date" ]]; then
+  echo "CHANGELOG.md has no '## $version - YYYY-MM-DD' heading; cannot date the package" >&2
+  exit 1
+fi
+# Debian expects RFC 2822 in the trailer.
+release_date_rfc="$(date -u -d "$release_date" '+%a, %d %b %Y 00:00:00 +0000' 2>/dev/null || true)"
+if [[ -z "$release_date_rfc" ]]; then
+  echo "could not format the release date $release_date" >&2
+  exit 1
+fi
+
 cat <<CHANGELOG | gzip -9 -n > "$pkg_root/usr/share/doc/occluview/changelog.gz"
 occluview ($version) stable; urgency=medium
 
   * Release OccluView $version.
 
- -- Dental Cloud Technologies <support@occlutrace.ai>  Mon, 24 Aug 2026 00:00:00 -0400
+ -- Dental Cloud Technologies <support@occlutrace.ai>  $release_date_rfc
 CHANGELOG
 
 installed_size="$(du -sk "$pkg_root/usr" | awk '{ print $1 }')"
