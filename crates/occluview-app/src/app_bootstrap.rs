@@ -65,6 +65,10 @@ fn real_main() -> Result<()> {
         print_version_line();
         return Ok(());
     }
+    if args.help {
+        print_help();
+        return Ok(());
+    }
     if args.shell_refresh {
         #[cfg(windows)]
         {
@@ -85,6 +89,8 @@ fn real_main() -> Result<()> {
         show_diagnostics_message(report_path.as_deref());
         return Ok(());
     }
+
+    validate_graphics_environment()?;
 
     // Shape, not identity. This line goes into the ring buffer that
     // `write_crash_report` dumps to disk, and a dental scan's path is the case
@@ -180,6 +186,10 @@ fn native_options() -> eframe::NativeOptions {
         // GL implementation is not rejected for a texture limit it cannot
         // support.
         create_new.device_descriptor = Arc::new(device_descriptor_for_adapter);
+        let power_preference = create_new.power_preference;
+        create_new.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
+            select_native_adapter(adapters, surface, power_preference)
+        }));
     }
 
     eframe::NativeOptions {
@@ -197,6 +207,82 @@ fn native_options() -> eframe::NativeOptions {
         },
         ..Default::default()
     }
+}
+
+/// Select the best adapter that can actually present to the desktop surface.
+/// The stock eframe selector stops at its first request-adapter result; a
+/// hybrid laptop can enumerate a software or headless adapter before the
+/// usable integrated GPU. Filtering surface capabilities and ranking the
+/// remaining adapters keeps that choice deterministic while preserving the
+/// configured power preference.
+fn select_native_adapter(
+    adapters: &[wgpu::Adapter],
+    surface: Option<&wgpu::Surface<'_>>,
+    power_preference: wgpu::PowerPreference,
+) -> Result<wgpu::Adapter, String> {
+    let mut best: Option<(i32, usize)> = None;
+    for (index, adapter) in adapters.iter().enumerate() {
+        let info = adapter.get_info();
+        if surface.is_some_and(|surface| surface.get_capabilities(adapter).formats.is_empty()) {
+            tracing::debug!(adapter = %info.name, backend = ?info.backend, "skipping adapter without a surface format");
+            continue;
+        }
+
+        let score = adapter_device_score(info.device_type, power_preference);
+        if best.is_none_or(|(best_score, _)| score > best_score) {
+            best = Some((score, index));
+        }
+    }
+
+    let Some((_, index)) = best else {
+        return Err(
+            "no graphics adapter can present to the desktop surface; run `occluview --diagnostics` and check the GPU driver".to_string(),
+        );
+    };
+    let adapter = adapters[index].clone();
+    let info = adapter.get_info();
+    tracing::info!(
+        adapter = %info.name,
+        backend = ?info.backend,
+        device_type = ?info.device_type,
+        "surface-compatible wgpu adapter selected"
+    );
+    Ok(adapter)
+}
+
+fn adapter_device_score(
+    device_type: wgpu::DeviceType,
+    power_preference: wgpu::PowerPreference,
+) -> i32 {
+    let base = match device_type {
+        wgpu::DeviceType::DiscreteGpu => 40,
+        wgpu::DeviceType::IntegratedGpu => 30,
+        wgpu::DeviceType::VirtualGpu => 20,
+        wgpu::DeviceType::Cpu => 10,
+        wgpu::DeviceType::Other => 0,
+    };
+    match power_preference {
+        wgpu::PowerPreference::LowPower if device_type == wgpu::DeviceType::IntegratedGpu => {
+            base + 5
+        }
+        wgpu::PowerPreference::HighPerformance if device_type == wgpu::DeviceType::DiscreteGpu => {
+            base + 5
+        }
+        _ => base,
+    }
+}
+
+fn validate_graphics_environment() -> Result<()> {
+    let Some(raw_backends) = std::env::var_os("WGPU_BACKEND") else {
+        return Ok(());
+    };
+    let raw_backends = raw_backends.to_string_lossy();
+    if wgpu::Backends::from_comma_list(&raw_backends).is_empty() {
+        return Err(anyhow::anyhow!(
+            "WGPU_BACKEND={raw_backends:?} selects no known graphics backend; unset it or use vulkan, dx12, metal, or gl"
+        ));
+    }
+    Ok(())
 }
 
 /// Build the smallest valid device request for the selected adapter while
@@ -264,6 +350,14 @@ fn print_version_line() {
     println!("occluview {}", env!("CARGO_PKG_VERSION"));
 }
 
+#[allow(clippy::print_stdout)]
+fn print_help() {
+    println!(
+        "OccluView {}\n\nUsage: occluview [OPTIONS] [FILE ...]\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show the installed version\n      --diagnostics  Check graphics adapters without opening a window",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
         append_startup_stage("panic");
@@ -310,8 +404,6 @@ fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
 /// another failure in the same clock tick. `create_new` also protects a report
 /// when two processes fail during the same nanosecond on a fast filesystem.
 fn write_report(kind: &str, details: &str) -> Option<PathBuf> {
-    let dir = crash_report_dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
     let stamp_nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
@@ -322,18 +414,24 @@ fn write_report(kind: &str, details: &str) -> Option<PathBuf> {
         recent_log_lines(),
         env!("CARGO_PKG_VERSION"),
     );
-    for attempt in 0..16 {
-        let path = dir.join(report_file_name(kind, stamp_nanos, pid, attempt));
-        let mut file = match OpenOptions::new().create_new(true).write(true).open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(_) => return None,
-        };
-        if file.write_all(report.as_bytes()).is_ok() {
-            return Some(path);
+    for dir in crash_report_dirs() {
+        if std::fs::create_dir_all(&dir).is_err() {
+            continue;
         }
-        let _ = std::fs::remove_file(path);
-        return None;
+        for attempt in 0..16 {
+            let path = dir.join(report_file_name(kind, stamp_nanos, pid, attempt));
+            let mut file = match OpenOptions::new().create_new(true).write(true).open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => break,
+            };
+            if file.write_all(report.as_bytes()).is_ok() {
+                let _ = file.sync_all();
+                return Some(path);
+            }
+            let _ = std::fs::remove_file(path);
+            break;
+        }
     }
     None
 }
@@ -593,9 +691,19 @@ impl tracing::field::Visit for CrashLogVisitor {
 }
 
 fn crash_report_dir() -> Option<PathBuf> {
-    app_paths::app_state_dir()
-        .map(|base| base.join("crashes"))
-        .or_else(|| std::env::temp_dir().canonicalize().ok())
+    app_paths::app_state_dir().map(|base| base.join("crashes"))
+}
+
+fn crash_report_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::with_capacity(2);
+    if let Some(primary) = crash_report_dir() {
+        dirs.push(primary);
+    }
+    let fallback = std::env::temp_dir().join("OccluView").join("crashes");
+    if !dirs.contains(&fallback) {
+        dirs.push(fallback);
+    }
+    dirs
 }
 
 fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {

@@ -11,6 +11,8 @@ use std::path::PathBuf;
 /// Parsed process arguments: launcher flags plus candidate file paths.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StartupArgs {
+    /// `--help` or `-h` was passed; print usage and exit before windowing.
+    pub help: bool,
     /// `--shell-refresh` was passed (Windows installer refresh path).
     pub shell_refresh: bool,
     /// `--version` or `-V` was passed; the process prints and exits early.
@@ -36,6 +38,7 @@ where
         // paths: a non-UTF8 scan name must survive verbatim on Unix.
         let os = arg.as_ref();
         match os.to_string_lossy().as_ref() {
+            "--help" | "-h" => parsed.help = true,
             "--shell-refresh" => parsed.shell_refresh = true,
             "--version" | "-V" => parsed.version = true,
             "--diagnostics" => parsed.diagnostics = true,
@@ -85,7 +88,14 @@ mod tests {
 
     #[test]
     fn version_and_shell_refresh_flags_do_not_become_files() {
-        let parsed = parse_args_from(["--shell-refresh", "--version", "--diagnostics", "scan.stl"]);
+        let parsed = parse_args_from([
+            "--help",
+            "--shell-refresh",
+            "--version",
+            "--diagnostics",
+            "scan.stl",
+        ]);
+        assert!(parsed.help);
         assert!(parsed.shell_refresh);
         assert!(parsed.version);
         assert!(parsed.diagnostics);
@@ -101,6 +111,13 @@ mod tests {
             parsed.files,
             vec![PathBuf::from("a.obj"), PathBuf::from("b.stl")]
         );
+    }
+
+    #[test]
+    fn help_flags_do_not_become_files() {
+        let parsed = parse_args_from(["-h", "--help", "scan.stl"]);
+        assert!(parsed.help);
+        assert_eq!(parsed.files, vec![PathBuf::from("scan.stl")]);
     }
 
     #[test]
