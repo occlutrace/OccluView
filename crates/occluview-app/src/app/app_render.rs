@@ -14,10 +14,10 @@
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
-    paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, AxisGizmoInput, Context, CutTool,
-    GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
-    ThumbnailSpec, ViewportSpec,
+    paint_axis_gizmo, paint_scale_bar, AppErrorAction, AppErrorDialog, Arc, AxisGizmoInput,
+    Context, CutTool, GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen,
+    PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene,
+    SceneMesh, ThumbnailSpec, ViewportSpec,
 };
 use anyhow::Error;
 use occluview_core::Aabb;
@@ -108,6 +108,7 @@ impl OccluViewApp {
                     title: self.ui.locale.tr("render-failed-title"),
                     summary: self.ui.locale.tr("render-failed-summary"),
                     details: format!("Render failed\n\n{e:#}"),
+                    action: AppErrorAction::None,
                 });
                 self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
                 return;
@@ -600,6 +601,33 @@ impl OccluViewApp {
         }
     }
 
+    /// Clear a latched graphics fault and try to draw again.
+    ///
+    /// Offered from the fault dialog. The flag exists so an unacknowledged
+    /// fault stops the frame loop from feeding a broken device; it is not a
+    /// verdict that the device is gone. A driver reset, a recovered eGPU, or a
+    /// rebuilt offscreen device can all leave this latch set on a working
+    /// renderer, and until now the only documented recovery was to close the
+    /// viewer and lose the scene.
+    ///
+    /// Nothing is repaired here: the next frame either paints or raises the
+    /// fault again, and a new message re-arms the dialog.
+    pub(super) fn retry_gpu_after_fault(&mut self, ctx: &egui::Context) {
+        let Some(live_viewport) = self.render.live_viewport.as_ref() else {
+            return;
+        };
+        match live_viewport.lock() {
+            Ok(mut viewport) => viewport.clear_gpu_fault(),
+            Err(error) => {
+                tracing::warn!(?error, "live viewport lock failed while retrying graphics");
+                return;
+            }
+        }
+        tracing::info!("operator asked to resume drawing after a graphics fault");
+        self.ui.status_message = Some(self.ui.locale.tr("gpu-retry-status"));
+        ctx.request_repaint();
+    }
+
     /// Poll the live viewport's GPU error latch once per frame. wgpu reports
     /// draw/submit validation faults and device-lost events through the handler
     /// we installed instead of panicking; surface any message honestly (status
@@ -626,6 +654,7 @@ impl OccluViewApp {
                 title: self.ui.locale.tr("gpu-failed-title"),
                 summary: self.ui.locale.tr("gpu-failed-summary"),
                 details: format!("wgpu uncaptured error\n\n{error}"),
+                action: AppErrorAction::RetryGraphics,
             });
         }
         true

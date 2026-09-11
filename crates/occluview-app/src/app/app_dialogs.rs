@@ -3,8 +3,8 @@ use super::app_help::{render_contextual_hint, show_help_toolbar_toggle};
 use super::app_recent_popup::RecentFilesAction;
 use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::information_dialog::InformationDialog;
-use super::OccluViewApp;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
+use super::{AppErrorAction, OccluViewApp};
 use crate::icons::AppIcon;
 use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
 use crate::measure_tool::{self, MeasureMode};
@@ -606,6 +606,7 @@ impl OccluViewApp {
         };
         let mut open = true;
         let mut close_clicked = false;
+        let mut retry = false;
         egui::Window::new(error.title.as_str())
             .open(&mut open)
             .resizable(true)
@@ -636,6 +637,7 @@ impl OccluViewApp {
                         .interactive(false),
                 );
                 ui.add_space(4.0);
+                let mut retry_clicked = false;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(self.ui.locale.tr("error-close")).clicked() {
                         close_clicked = true;
@@ -643,10 +645,23 @@ impl OccluViewApp {
                     if ui.button(self.ui.locale.tr("error-copy-details")).clicked() {
                         ui.ctx().copy_text(error.details.clone());
                     }
+                    if error.action == AppErrorAction::RetryGraphics
+                        && ui
+                            .button(self.ui.locale.tr("error-retry-graphics"))
+                            .clicked()
+                    {
+                        retry_clicked = true;
+                    }
                 });
+                if retry_clicked {
+                    retry = true;
+                }
             });
-        if !open || close_clicked {
+        if !open || close_clicked || retry {
             self.ui.app_error = None;
+        }
+        if retry {
+            self.retry_gpu_after_fault(ctx);
         }
     }
 }

@@ -96,7 +96,7 @@ pub(crate) use state::OccluViewApp;
 use state_document::MeshSelectionDrag;
 pub(crate) use state_platform::StartupHandles;
 use state_render::RenderedFrame;
-use state_ui::{AppErrorDialog, PendingReplaceOpen};
+use state_ui::{AppErrorAction, AppErrorDialog, PendingReplaceOpen};
 
 #[cfg(test)]
 mod tests {

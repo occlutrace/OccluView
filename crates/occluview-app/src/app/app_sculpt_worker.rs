@@ -1,6 +1,6 @@
 //! UI-side bridge to the persistent sculpt worker.
 
-use super::{egui, AppErrorDialog, EditModeCommand, OccluViewApp};
+use super::{egui, AppErrorAction, AppErrorDialog, EditModeCommand, OccluViewApp};
 use crate::sculpt_tool::SculptRebuild;
 use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
@@ -486,6 +486,7 @@ fn sculpt_failure_dialog(
         title: locale.tr("sculpt-failed-title"),
         summary: locale.tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
         details: format!("Sculpt worker stopped\n\n{detail}"),
+        action: AppErrorAction::None,
     }
 }
 

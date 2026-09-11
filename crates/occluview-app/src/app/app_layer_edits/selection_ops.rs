@@ -2,8 +2,8 @@
 //! for empty and whole-mesh selections, then routing to the executors.
 
 use super::super::{
-    AppErrorDialog, EditModeController, LayerContextAction, LayerContextApply, LayerContextRequest,
-    OccluViewApp, PathBuf, Scene,
+    AppErrorAction, AppErrorDialog, EditModeController, LayerContextAction, LayerContextApply,
+    LayerContextRequest, OccluViewApp, PathBuf, Scene,
 };
 use super::structural::{
     apply_cut_selection_to_new_layer, apply_separate_selected_components, structural_scene_apply,
@@ -123,6 +123,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                 details: format!(
                     "Selection edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"
                 ),
+                action: AppErrorAction::None,
             });
             LayerContextApply::default()
         }

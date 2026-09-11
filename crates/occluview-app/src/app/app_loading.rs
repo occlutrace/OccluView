@@ -14,9 +14,10 @@
 
 use super::{
     combine_loaded_scene, egui, load_error_dialog, load_status_message, mpsc,
-    read_files_with_key_provider, single_instance, AppErrorDialog, Instant, LoadQueueCameraReset,
-    OccluViewApp, PathBuf, PendingReplaceOpen, PendingSceneLoad, Result, RuntimeHpsKeyProvider,
-    Scene, SceneLoadMode, SceneLoadRequest, TryRecvError, FOREGROUND_PULSE_DURATION,
+    read_files_with_key_provider, single_instance, AppErrorAction, AppErrorDialog, Instant,
+    LoadQueueCameraReset, OccluViewApp, PathBuf, PendingReplaceOpen, PendingSceneLoad, Result,
+    RuntimeHpsKeyProvider, Scene, SceneLoadMode, SceneLoadRequest, TryRecvError,
+    FOREGROUND_PULSE_DURATION,
 };
 
 /// Load one or more mesh files into a scene.
@@ -193,6 +194,7 @@ impl OccluViewApp {
                 }),
                 summary: self.ui.locale.tr("load-loader-failed-summary"),
                 details: format!("Loader thread start failed\n\n{error:#}"),
+                action: AppErrorAction::None,
             });
             tracing::error!(?error, source, "scene loader thread spawn failed");
             return;

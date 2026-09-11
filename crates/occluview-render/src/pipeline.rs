@@ -510,6 +510,34 @@ impl Renderer {
         self.gpu_faulted.load(Ordering::Acquire)
     }
 
+    /// Re-enter service after the operator acknowledged a graphics fault.
+    ///
+    /// The flag makes the live path stop submitting work, which is right while
+    /// a fault is unacknowledged: a driver that lost its device would otherwise
+    /// receive every frame's command stream. It is not a permanent latch, and
+    /// it is not evidence that the device is unusable. A `DeviceLostReason::
+    /// Destroyed` teardown is already filtered out before the flag is set, so
+    /// the remaining reasons include recoverable ones — a driver reset, a
+    /// laptop GPU switch, an external eGPU unplugged and re-attached, or a
+    /// transient allocation failure. wgpu's own recovery path recreates the
+    /// device while this process keeps the same render state, and a rebuild of
+    /// the offscreen path creates a brand-new device and queue while the live
+    /// viewport still holds the faulted one.
+    ///
+    /// Clearing the flag does not repair anything by itself: the next paint
+    /// either succeeds or raises the fault again, and the dialog is not
+    /// re-armed until the latch reports a new message. The alternative — the
+    /// only documented recovery — was to close the viewer and lose the scene.
+    pub fn clear_gpu_fault(&self) {
+        self.gpu_faulted.store(false, Ordering::Release);
+    }
+
+    /// Whether a fault is latched for the operator to see.
+    #[must_use]
+    pub fn is_gpu_error_pending(&self) -> bool {
+        self.gpu_error.lock().is_ok_and(|slot| slot.is_some())
+    }
+
     /// Depth texture format used by this pipeline.
     pub fn depth_format(&self) -> wgpu::TextureFormat {
         self.depth_format

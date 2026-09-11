@@ -1,6 +1,7 @@
 use super::app_scene_export::posed_mesh;
 use super::{
-    AppErrorDialog, LayerContextAction, LayerContextRequest, OccluViewApp, PathBuf, Scene,
+    AppErrorAction, AppErrorDialog, LayerContextAction, LayerContextRequest, OccluViewApp, PathBuf,
+    Scene,
 };
 use anyhow::{bail, Context, Result};
 use occluview_formats::write::{
@@ -105,6 +106,7 @@ impl OccluViewApp {
                         "Layer export failed\n\nPath:\n{}\n\nError:\n{error:#}",
                         path.display()
                     ),
+                    action: AppErrorAction::None,
                 });
                 false
             }

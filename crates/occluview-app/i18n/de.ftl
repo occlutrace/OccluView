@@ -558,6 +558,7 @@ guard-replace-destructive = Verwerfen und öffnen
 guard-save = Speichern…
 guard-cancel = Abbrechen
 
+error-retry-graphics = Erneut versuchen
 error-close = Schließen
 error-copy-details = Details kopieren
 
@@ -831,6 +832,7 @@ lasso-dropped = Lassokontur verworfen
 lasso-needs-points = Lasso braucht mindestens 3 Punkte
 loading-scene = Szene lädt…
 gpu-failed-status = Grafiktreiber meldet ein Problem
+gpu-retry-status = Grafik wird erneut versucht — bleibt das Problem, Arbeit speichern und OccluView neu starten
 gpu-failed-title = Grafikproblem
 gpu-failed-summary = Der Grafiktreiber meldet ein Problem beim Zeichnen. Die Ansicht kann unvollständig sein. Arbeit speichern und OccluView neu starten, falls es wiederkehrt.
 align-job-align = Richte aus…

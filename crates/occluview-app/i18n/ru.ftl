@@ -634,6 +634,7 @@ guard-replace-destructive = Отбросить и открыть
 guard-save = Сохранить…
 guard-cancel = Отмена
 
+error-retry-graphics = Попробовать снова
 error-close = Закрыть
 error-copy-details = Копировать детали
 
@@ -923,6 +924,7 @@ lasso-dropped = Контур лассо сброшен
 lasso-needs-points = Лассо нужно минимум 3 точки
 loading-scene = Загрузка сцены…
 gpu-failed-status = Драйвер видеокарты сообщил о проблеме
+gpu-retry-status = Повтор графики — если проблема остаётся, сохраните работу и перезапустите OccluView
 gpu-failed-title = Проблема графики
 gpu-failed-summary = Драйвер видеокарты сообщил о проблеме при отрисовке. Вид может быть неполным. Сохраните работу и перезапустите OccluView, если повторится.
 align-job-align = Сопоставление…

@@ -1,8 +1,8 @@
 use super::mesh_editor_overlay as editor;
 use super::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
-    apply_visible_selected_face_mesh_edit_action_with_limit, egui, pick_scene_hit, AppErrorDialog,
-    LayerContextAction, MeshEditorAction, MeshSelectionDrag, OccluViewApp, Scene,
+    apply_visible_selected_face_mesh_edit_action_with_limit, egui, pick_scene_hit, AppErrorAction,
+    AppErrorDialog, LayerContextAction, MeshEditorAction, MeshSelectionDrag, OccluViewApp, Scene,
     ScreenPolygonSelectionRequest,
 };
 use crate::viewer::lasso_capture::{self, LassoEvent};
@@ -208,6 +208,7 @@ impl OccluViewApp {
                     title: self.ui.locale.tr("edit-apply-failed-title"),
                     summary,
                     details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
+                    action: AppErrorAction::None,
                 });
                 ctx.request_repaint();
             }

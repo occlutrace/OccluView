@@ -20,7 +20,7 @@ use super::{
     layer_actions, layers_overlay, LayerContextAction, LayerContextApply, LayerContextRequest,
     OccluViewApp, PathBuf, Scene,
 };
-use super::{state_document::DocumentState, state_ui::UiState, AppErrorDialog};
+use super::{state_document::DocumentState, state_ui::UiState, AppErrorAction, AppErrorDialog};
 use crate::edit_mode::{EditModeController, EditSessionToken};
 use occluview_core::{CoreError, SceneMesh, SceneMeshId};
 use repair::apply_layer_repair_action_with_status;
@@ -248,6 +248,7 @@ pub(super) fn commit_layer_edit(
                 title,
                 summary,
                 details: format!("Layer edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"),
+                action: AppErrorAction::None,
             });
         }
     }

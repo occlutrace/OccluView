@@ -558,6 +558,7 @@ guard-replace-destructive = Jeter et ouvrir
 guard-save = Enregistrer…
 guard-cancel = Annuler
 
+error-retry-graphics = Réessayer
 error-close = Fermer
 error-copy-details = Copier les détails
 
@@ -815,6 +816,7 @@ lasso-dropped = Lasso lâché
 lasso-needs-points = Le lasso veut 3 points minimum
 loading-scene = Chargement de la scène…
 gpu-failed-status = Le pilote signale un problème
+gpu-retry-status = Nouvel essai graphique — si le problème persiste, enregistrez votre travail et redémarrez OccluView
 gpu-failed-title = Problème graphique
 gpu-failed-summary = Le pilote a raté le dessin. La vue est peut-être incomplète. Enregistrez et relancez si ça revient.
 align-job-align = Alignement…
