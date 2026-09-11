@@ -4,8 +4,9 @@
 
 use super::icp_overlap::ReciprocalSummary;
 use super::{
-    coarse_candidate_is_better, forward_coverage_is_sufficient, run_level, sample_vertices,
-    vertex_normals, CoarseCandidate, Level, Summary,
+    coarse_candidate_is_better, correspondences_at_radius, forward_coverage_is_sufficient,
+    influence_radius_ladder, run_level, sample_vertices, vertex_normals, CoarseCandidate, Level,
+    Summary,
 };
 use crate::{CancelFlag, FitRejection, RefineSettings, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
@@ -121,4 +122,61 @@ fn a_large_scan_cannot_be_registered_from_a_tiny_accidental_patch() {
     assert!(!forward_coverage_is_sufficient(6, 40_000));
     assert!(forward_coverage_is_sufficient(400, 40_000));
     assert!(forward_coverage_is_sufficient(6, 400));
+}
+
+#[test]
+fn radius_ladder_widens_past_a_six_point_edge_patch() {
+    // A 256 x 256 grid sampled at the coarse 8,000-point budget has only a
+    // thin edge band in reach at 1 mm: that band clears the six-correspondence
+    // minimum but remains below the one-percent coverage floor. At 2 mm the
+    // reachable band is large enough to be meaningful. The ladder must judge
+    // both conditions together, or it exits one rung too early.
+    let n = 256usize;
+    let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);
+    for j in 0..=n {
+        for i in 0..=n {
+            positions.extend_from_slice(&[i as f32 * 0.5, j as f32 * 0.5, 0.0]);
+        }
+    }
+    let mut indices = Vec::with_capacity(n * n * 6);
+    let stride = u32::try_from(n + 1).expect("fixture stride fits");
+    for j in 0..u32::try_from(n).expect("fixture span fits") {
+        for i in 0..u32::try_from(n).expect("fixture span fits") {
+            let a = j * stride + i;
+            indices.extend_from_slice(&[a, a + 1, a + stride]);
+            indices.extend_from_slice(&[a + 1, a + stride + 1, a + stride]);
+        }
+    }
+    let moving = Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    };
+    let fixed = SurfaceIndex::build(moving).expect("fixture surface is usable");
+    let normals = vertex_normals(moving);
+    let samples = sample_vertices(moving, 8_000);
+    let fixed_samples = Vec::new();
+    let settings = RefineSettings::default();
+    let cancel = CancelFlag::new();
+    let level = Level {
+        moving,
+        normals: &normals,
+        fixed: &fixed,
+        moving_surface: None,
+        fixed_samples: &fixed_samples,
+        samples: &samples,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::new(DQuat::IDENTITY, DVec3::new(128.75, 0.0, 0.0)),
+    };
+    let radii = influence_radius_ladder(settings.influence_radius_mm);
+    let mut radius_slot = 0;
+
+    let result = correspondences_at_radius(&level, level.start, &radii, &mut radius_slot);
+
+    assert!(result.is_ok(), "the useful 2 mm band was not reached");
+    assert_eq!(
+        radius_slot, 2,
+        "the ladder stopped before the meaningful rung"
+    );
 }

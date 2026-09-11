@@ -36,7 +36,9 @@ pub(super) fn correspondences_at_radius(
 ) -> Result<(Vec<Option<Correspondence>>, usize), FitRejection> {
     let mut found = correspondences(level, pose, radii[*radius_slot]);
     let mut matched = found.iter().flatten().count();
-    while matched < MIN_CORRESPONDENCES && *radius_slot + 1 < radii.len() {
+    while !forward_coverage_is_sufficient(matched, level.samples.len())
+        && *radius_slot + 1 < radii.len()
+    {
         *radius_slot += 1;
         found = correspondences(level, pose, radii[*radius_slot]);
         matched = found.iter().flatten().count();
