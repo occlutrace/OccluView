@@ -34,7 +34,7 @@ mod bridge_split_robust_tests;
 
 use crate::bbox::Aabb;
 use crate::error::CoreError;
-use bvh::TriangleBvh;
+use bvh::{DirtyVertexRay, TriangleBvh};
 use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -72,6 +72,39 @@ pub enum MeshKind {
     TriangleMesh,
     /// Point cloud: `indices` is empty; each vertex is drawn as a point.
     PointCloud,
+}
+
+/// A mesh-local ray query against a live sculpt snapshot. The cached BVH is
+/// still owned by [`Mesh`]; this value groups the mutable vertex view and the
+/// triangles whose bounds may have moved since that tree was built.
+#[derive(Clone, Copy, Debug)]
+pub struct LiveRayPick<'a> {
+    /// Current vertex positions, with the same length and indexing as the mesh.
+    pub vertices: &'a [Vertex],
+    /// Triangle indices whose live bounds must be checked directly.
+    pub dirty_triangles: &'a [usize],
+    /// Ray origin in mesh-local coordinates.
+    pub origin: Vec3,
+    /// Ray direction in mesh-local coordinates.
+    pub direction: Vec3,
+}
+
+impl<'a> LiveRayPick<'a> {
+    /// Construct a live ray query without copying the sculpt snapshot.
+    #[must_use]
+    pub const fn new(
+        vertices: &'a [Vertex],
+        dirty_triangles: &'a [usize],
+        origin: Vec3,
+        direction: Vec3,
+    ) -> Self {
+        Self {
+            vertices,
+            dirty_triangles,
+            origin,
+            direction,
+        }
+    }
 }
 
 /// A triangle mesh, the central geometry type.
@@ -379,10 +412,7 @@ impl Mesh {
     /// hot paths.
     pub fn pick_ray_local_with_vertices<K>(
         &self,
-        vertices: &[Vertex],
-        dirty_triangles: &[usize],
-        origin: Vec3,
-        direction: Vec3,
+        query: LiveRayPick<'_>,
         keep: K,
     ) -> Option<(usize, Vec3)>
     where
@@ -390,17 +420,17 @@ impl Mesh {
     {
         if self.kind != MeshKind::TriangleMesh
             || self.indices.is_empty()
-            || vertices.len() != self.vertices.len()
+            || query.vertices.len() != self.vertices.len()
         {
             return None;
         }
         let bvh = self.bvh.get()?;
         bvh.pick_with_dirty_vertices(
-            vertices,
-            &self.indices,
-            origin,
-            direction,
-            dirty_triangles,
+            DirtyVertexRay {
+                vertices: query.vertices,
+                indices: &self.indices,
+                query,
+            },
             keep,
         )
         .map(|hit| (hit.triangle_index, hit.point))
