@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::Path;
 
 /// How an interactive save-edited-layers pass ended.
@@ -811,6 +811,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn export_dialog_collapses_repeated_extension_for_non_utf8_names() {
+        use std::ffi::OsString;
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
         let path = PathBuf::from(OsString::from_vec(b"edited\xff.stl.stl".to_vec()));
