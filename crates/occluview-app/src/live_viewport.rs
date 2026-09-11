@@ -71,6 +71,11 @@ impl LiveViewport {
         })))
     }
 
+    /// Allow drawing to resume after the operator acknowledged a fault.
+    pub(super) fn clear_gpu_fault(&mut self) {
+        self.renderer.clear_gpu_fault();
+    }
+
     /// Preference gate for the cut-away ghost pass (see `paint`).
     pub(super) fn set_show_ghost(&mut self, show_ghost: bool) {
         self.show_ghost = show_ghost;

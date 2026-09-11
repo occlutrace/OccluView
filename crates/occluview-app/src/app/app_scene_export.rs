@@ -6,7 +6,7 @@ use super::app_mesh_export::{
     mesh_export_format_from_path, mesh_export_warning_summary, mesh_write_extension,
     normalize_layer_export_path,
 };
-use super::{AppErrorDialog, OccluViewApp, Scene};
+use super::{AppErrorAction, AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 use occluview_formats::write::{
@@ -69,6 +69,7 @@ impl OccluViewApp {
                     title: self.ui.locale.tr("export-scene-failed-title"),
                     summary,
                     details: format!("Scene export failed\n\nError:\n{detail}"),
+                    action: AppErrorAction::None,
                 });
                 return;
             }
@@ -143,6 +144,7 @@ impl OccluViewApp {
                         "Scene export failed\n\nPath:\n{}\n\nError:\n{error:#}",
                         path.display()
                     ),
+                    action: AppErrorAction::None,
                 });
             }
         }
@@ -282,6 +284,7 @@ impl OccluViewApp {
                     &[("detail", &format!("{failed} layer export(s) failed"))],
                 ),
                 details: format!("Batch layer export failed\n\n{}", failures.join("\n")),
+                action: AppErrorAction::None,
             });
         }
     }

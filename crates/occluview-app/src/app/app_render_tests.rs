@@ -97,3 +97,34 @@ fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
         "the pending-frame path must stop retrying a terminal offscreen failure"
     );
 }
+
+/// The fault dialog has to offer a way back. Clearing the flag is the only
+/// recovery this app documents short of closing the viewer and losing the
+/// scene, so the dialog must carry the action and the frame loop must route it
+/// to the renderer that latched the fault.
+#[test]
+fn the_graphics_fault_dialog_offers_the_retry_action() {
+    let render = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
+    let poll = crate::primary_ui_tests::method_body(render, "pub(super) fn poll_gpu_errors");
+    assert!(!poll.is_empty(), "the GPU error poll must exist");
+    assert!(
+        poll.contains("action: AppErrorAction::RetryGraphics"),
+        "a graphics fault must be reported with an offered recovery"
+    );
+
+    let dialogs = crate::primary_ui_tests::production_source(include_str!("app_dialogs.rs"));
+    assert!(
+        dialogs.contains("error.action == AppErrorAction::RetryGraphics"),
+        "the dialog must render the retry button only for an actionable error"
+    );
+    assert!(
+        dialogs.contains("self.retry_gpu_after_fault(ctx)"),
+        "the retry button must reach the renderer"
+    );
+
+    let retry = crate::primary_ui_tests::method_body(render, "pub(super) fn retry_gpu_after_fault");
+    assert!(
+        retry.contains("viewport.clear_gpu_fault()"),
+        "retrying graphics must clear the latch the paint path obeys"
+    );
+}

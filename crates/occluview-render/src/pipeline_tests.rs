@@ -121,6 +121,40 @@ fn gpu_fault_stays_fail_closed_after_its_message_is_drained() {
     );
 }
 
+/// The fault flag stops the frame loop from feeding a broken device, but it is
+/// not a verdict that the device is gone: a driver reset, a recovered eGPU, or
+/// a rebuilt offscreen device can leave it set on a working renderer. The
+/// operator's retry has to be able to clear it, and a *new* fault has to be
+/// able to set it again afterwards.
+#[test]
+fn an_acknowledged_fault_can_be_cleared_and_re_raised() {
+    let latch: super::GpuErrorLatch = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let faulted = std::sync::atomic::AtomicBool::new(false);
+
+    super::record_gpu_fault(&latch, &faulted, "device reset".to_string());
+    assert!(super::drain_gpu_error(&latch).is_some());
+    assert!(faulted.load(std::sync::atomic::Ordering::Acquire));
+
+    // What the retry button does.
+    faulted.store(false, std::sync::atomic::Ordering::Release);
+    assert!(
+        !faulted.load(std::sync::atomic::Ordering::Acquire),
+        "acknowledging must let the next frame try to draw again"
+    );
+
+    // A renderer whose device is genuinely gone raises it again immediately.
+    super::record_gpu_fault(&latch, &faulted, "device lost again".to_string());
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::Acquire),
+        "a later fault must re-arm the stop signal"
+    );
+    assert_eq!(
+        super::drain_gpu_error(&latch).as_deref(),
+        Some("device lost again"),
+        "the retried fault reaches the operator as a new message"
+    );
+}
+
 #[test]
 // Poisoning a mutex requires a deliberate panic while a guard is held. (This
 // can only happen in an unwinding build; the default release profile is
