@@ -182,5 +182,13 @@ The metadata-only `startup-journal.log` follows the same state-directory then
 temporary-directory fallback and records the last reached startup boundary
 when a native driver failure happens before Rust can write a crash report.
 
+The viewer renders with 4x multisampling when the adapters report that they can
+create the multisampled targets, and with a single sample otherwise. If a
+driver rejects the multisampled window, start once with
+`OCCLUVIEW_LIVE_MSAA=1` in the environment to force the single-sample path;
+`OCCLUVIEW_LIVE_MSAA=4` forces it back on. The chosen count is named in the
+`--diagnostics` report together with each adapter's multisample support, and a
+startup refusal names the override.
+
 Licensed under [Apache-2.0](LICENSE); distribution notices are in [NOTICE](NOTICE)
 and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
