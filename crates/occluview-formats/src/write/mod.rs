@@ -13,7 +13,7 @@ use occluview_core::{Mesh, MeshKind};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Mesh export format supported by the shared writer contract.
@@ -155,6 +155,10 @@ pub fn write_mesh_to_new_file(
 
 /// Write a mesh to a file, truncating any existing content.
 ///
+/// A `path` that is a symbolic link is followed: the file it points at receives
+/// the new mesh and the link itself survives, which is what truncating writes
+/// did before publishing became a rename.
+///
 /// # Errors
 ///
 /// Returns a [`FormatError`] if the file cannot be opened or the write fails.
@@ -265,7 +269,14 @@ fn write_mesh_file(
     // until the complete new mesh has been flushed and the same-directory
     // rename commits it. Writing the target directly used to turn a disk-full
     // or interrupted export into an empty/partial scan.
-    let (temporary, file) = create_export_temp(path)?;
+    //
+    // Resolve a symlink destination first. `rename` replaces the link itself
+    // rather than the file it points at, so publishing straight onto the
+    // operator's `CASE/upper.ply` shortcut would leave the archive copy
+    // untouched while the app reported a successful export. Resolving also
+    // keeps the temporary beside the file the rename lands on.
+    let destination = resolve_overwrite_destination(path);
+    let (temporary, file) = create_export_temp(&destination)?;
     let result = write_mesh_to_file(file, mesh, format, options);
     let report = match result {
         Ok(report) => report,
@@ -274,11 +285,43 @@ fn write_mesh_file(
             return Err(error);
         }
     };
-    if let Err(error) = replace_export_file(&temporary, path) {
+    if let Err(error) = replace_export_file(&temporary, &destination) {
         let _ = std::fs::remove_file(&temporary);
         return Err(error.into());
     }
     Ok(report)
+}
+
+/// Follow a destination symlink chain to the file an overwrite targets.
+///
+/// The walk is bounded: a chain longer than the limit, a broken link, or a
+/// loop leaves the caller on the last path it resolved. A regular file costs
+/// one `symlink_metadata` probe and is returned unchanged.
+fn resolve_overwrite_destination(path: &Path) -> PathBuf {
+    /// Enough for the "case folder is a link into the archive" layouts this
+    /// exists for, without letting a long chain walk somewhere unexpected.
+    const MAX_DESTINATION_LINKS: usize = 8;
+    let mut current = path.to_path_buf();
+    for _ in 0..MAX_DESTINATION_LINKS {
+        let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+            break;
+        };
+        if !metadata.file_type().is_symlink() {
+            break;
+        }
+        let Ok(target) = std::fs::read_link(&current) else {
+            break;
+        };
+        current = if target.is_absolute() {
+            target
+        } else {
+            match current.parent() {
+                Some(parent) => parent.join(target),
+                None => break,
+            }
+        };
+    }
+    current
 }
 
 fn write_mesh_to_file(
@@ -651,6 +694,52 @@ mod tests {
     /// and a collision is still reported as such so the batch exporter can
     /// advance to the next numbered name.
     #[cfg(not(windows))]
+    /// Case folders are often symlinks into a lab archive. The publish step is
+    /// a rename, and rename replaces the link itself, so an operator overwriting
+    /// `CASE/upper.ply` would get a success message while the archive copy kept
+    /// the previous geometry.
+    #[cfg(unix)]
+    #[test]
+    fn overwriting_a_symlink_updates_its_target_and_keeps_the_link() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let target = directory.path().join("archive.obj");
+        let link = directory.path().join("case.obj");
+        std::fs::write(&target, b"previous scan").expect("seed target");
+        symlink(&target, &link).expect("create symlink");
+
+        let mesh = triangle_mesh();
+        write_mesh_overwrite(
+            &link,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        )
+        .expect("overwrite through the link");
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink(),
+            "the operator's link must survive the export"
+        );
+        assert!(
+            std::fs::read(&target)
+                .expect("read target")
+                .starts_with(b"o sample\n"),
+            "the file the link points at must receive the new export"
+        );
+        assert!(
+            std::fs::read_dir(directory.path())
+                .expect("read directory")
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".occluview-")),
+            "a published overwrite leaves no temporary behind"
+        );
+    }
+
     #[test]
     fn a_publish_without_link_support_still_never_replaces_a_destination() {
         let directory = tempfile::tempdir().expect("temp directory");
