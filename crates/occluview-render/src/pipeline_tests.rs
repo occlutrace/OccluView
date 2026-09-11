@@ -225,6 +225,20 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
     );
 }
 
+#[test]
+fn opaque_point_splats_blend_their_shader_coverage() {
+    let source = include_str!("pipeline_init.rs");
+    let point_pipeline = source
+        .split_once("let point_pipeline =")
+        .and_then(|(_, rest)| rest.split_once("let transparent_pipeline ="))
+        .map_or("", |(point, _)| point);
+
+    assert!(
+        point_pipeline.contains("blend: Some(wgpu::BlendState::ALPHA_BLENDING)"),
+        "opaque point splats must blend the shader's soft edge coverage"
+    );
+}
+
 /// Draw Sculpt's display-only volume into a pass shaped exactly like the live
 /// one: this renderer's depth format and sample count.
 #[allow(clippy::expect_used)]
