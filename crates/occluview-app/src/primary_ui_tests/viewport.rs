@@ -459,7 +459,7 @@ fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
         ("pub(super) fn grab_viewport_orbit_cursor(", "true"),
         ("pub(super) fn release_viewport_orbit_cursor(", "false"),
     ] {
-        let body = crate::primary_ui_tests::method_body(&viewport_source, method);
+        let body = method_body(viewport_source, method);
         assert!(
             !body.is_empty(),
             "{method} must exist for the orbit cursor contract"
