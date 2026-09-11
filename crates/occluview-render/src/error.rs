@@ -11,6 +11,11 @@ pub enum RenderError {
     Surface(String),
 
     /// A GPU readback did not complete before the liveness deadline.
+    ///
+    /// Doc note: this is the only variant that does not imply the graphics
+    /// stack is unusable. A deadline can pass on a loaded machine with a
+    /// perfectly healthy device, which is why the application retries it
+    /// instead of latching its offscreen path off for the rest of the session.
     #[error("offscreen GPU readback timed out after {timeout:?}")]
     ReadbackTimeout {
         /// The finite wait that expired before the map callback arrived.
