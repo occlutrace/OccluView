@@ -171,12 +171,16 @@ occluview --diagnostics
 
 This performs a no-window adapter/device check and writes a report under the
 OccluView state directory. It is a loader/device check, not proof that a GUI
-surface can be created on the current desktop. Startup failures also write a
-unique report and return a non-zero process status; reports are stored in the
-`crashes/` subdirectory and include the last startup stages and recent log
-lines without including opened scan paths. The metadata-only
-`startup-journal.log` records the last reached startup boundary when a native
-driver failure happens before Rust can write a crash report.
+surface can be created on the current desktop. Normal startup also performs
+the device check before opening a window and tries available adapters in
+preference order, so a bad discrete driver cannot hide a usable integrated
+adapter. Startup failures write a unique report and return a non-zero process
+status; reports are stored in the `crashes/` subdirectory, or in the system
+temporary directory if the state directory is unavailable. Reports include the
+last startup stages and recent log lines without including opened scan paths.
+The metadata-only `startup-journal.log` follows the same state-directory then
+temporary-directory fallback and records the last reached startup boundary
+when a native driver failure happens before Rust can write a crash report.
 
 Licensed under [Apache-2.0](LICENSE); distribution notices are in [NOTICE](NOTICE)
 and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

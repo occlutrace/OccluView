@@ -20,7 +20,9 @@ Show the installed version.
 .B \-\-diagnostics
 Run a no-window graphics adapter and device check, write a diagnostic report,
 and exit. This does not prove that the current desktop can create a GUI
-surface. The report is stored below the OccluView state directory.
+surface. Normal startup performs the same device preflight before opening a
+window. The report is stored below the OccluView state directory, or in the
+system temporary directory if that location is unavailable.
 .SH FILES
 .I /usr/share/doc/occluview/
 contains usage, license, and third-party attribution documents.
@@ -32,10 +34,11 @@ when that variable is set, otherwise below
 Windows stores them below the user's application state directory.
 Crash reports are in the
 .I crashes/
-subdirectory; the metadata-only
+subdirectory, with a temporary-directory fallback when the state directory
+cannot be created; the metadata-only
 .I startup-journal.log
-file records the last reached startup boundary when a native driver failure
-happens before a crash report can be written.
+file uses the same fallback and records the last reached startup boundary when
+a native driver failure happens before a crash report can be written.
 .SH TROUBLESHOOTING
 If the viewer exits before opening a window, run
 .B occluview --diagnostics

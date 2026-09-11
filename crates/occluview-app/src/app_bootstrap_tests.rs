@@ -50,6 +50,48 @@ fn an_unknown_backend_override_is_detectably_empty() {
 }
 
 #[test]
+fn graphics_environment_validation_rejects_empty_or_unknown_values() {
+    assert!(validate_graphics_environment_values(Some(std::ffi::OsStr::new("")), None,).is_err());
+    assert!(validate_graphics_environment_values(
+        Some(std::ffi::OsStr::new("vulkan")),
+        Some(std::ffi::OsStr::new("turbo")),
+    )
+    .is_err());
+}
+
+#[test]
+fn graphics_environment_validation_accepts_wgpu_spellings() {
+    assert!(validate_graphics_environment_values(
+        Some(std::ffi::OsStr::new("vk, gl")),
+        Some(std::ffi::OsStr::new("HIGH")),
+    )
+    .is_ok());
+    assert!(
+        validate_graphics_environment_values(None, Some(std::ffi::OsStr::new("none")),).is_ok()
+    );
+}
+
+#[test]
+fn startup_journal_paths_fall_back_without_duplicate_entries() {
+    let fallback = PathBuf::from("/tmp/occluview-startup-journal.log");
+    assert_eq!(
+        startup_journal_paths_from(None, fallback.clone()),
+        vec![fallback.clone()]
+    );
+    assert_eq!(
+        startup_journal_paths_from(Some(fallback.clone()), fallback.clone()),
+        vec![fallback.clone()]
+    );
+    assert_eq!(
+        startup_journal_paths_from(
+            Some(PathBuf::from("/state/startup-journal.log")),
+            fallback.clone(),
+        ),
+        vec![PathBuf::from("/state/startup-journal.log"), fallback,]
+    );
+}
+
+#[test]
 fn adapter_ranking_respects_the_requested_power_profile() {
     assert!(
         adapter_device_score(
