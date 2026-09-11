@@ -8,9 +8,9 @@ profile="${OCCLUVIEW_PROFILE:-release}"
 # unwinding profile to keep a panic from terminating the host process.
 case "$profile" in
   release)
-    app_profile_args=(--release)
+    app_profile_args=(--profile release-unwind)
     shell_profile_args=(--profile release-unwind)
-    profile_dir="release"
+    profile_dir="release-unwind"
     shell_profile_dir="release-unwind"
     ;;
   debug)
@@ -20,9 +20,9 @@ case "$profile" in
     shell_profile_dir="debug"
     ;;
   diagnostic)
-    app_profile_args=(--profile release-diagnostic)
+    app_profile_args=(--profile release-diagnostic-unwind)
     shell_profile_args=(--profile release-diagnostic-unwind)
-    profile_dir="release-diagnostic"
+    profile_dir="release-diagnostic-unwind"
     shell_profile_dir="release-diagnostic-unwind"
     ;;
   *)

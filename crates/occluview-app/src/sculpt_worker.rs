@@ -625,12 +625,11 @@ impl SculptWorker {
                 let spawn_result = thread::Builder::new()
                     .name("occluview-sculpt-worker".to_string())
                     .spawn(move || {
-                        // Dead in the shipped binary: the release profile is
-                        // `panic = "abort"`, so a panic here takes the process
-                        // regardless. It still catches under `cargo test` and
-                        // under the `release-unwind` profile the shell DLL
-                        // uses, which is where a panicking worker is worth
-                        // reporting rather than losing.
+                        // The shipped desktop profiles use `panic = "unwind"`,
+                        // so a worker panic is converted into a typed failure
+                        // instead of taking the whole viewer down. The default
+                        // abort profile still keeps this guard for tests and
+                        // local callers that opt into it.
                         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             run_worker(session, worker_queue.clone(), worker_state.clone(), pool);
                         }));

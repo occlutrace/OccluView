@@ -123,8 +123,9 @@ fn gpu_fault_stays_fail_closed_after_its_message_is_drained() {
 
 #[test]
 // Poisoning a mutex requires a deliberate panic while a guard is held. (This
-// can only happen in an unwinding build; the shipping binary is `panic = abort`
-// where poison never occurs — the guard still keeps the poll crash-proof.)
+// can only happen in an unwinding build; the default release profile is
+// `panic = abort` where poison never occurs — the guard still keeps the poll
+// crash-proof.)
 #[allow(clippy::expect_used, clippy::panic)]
 fn gpu_error_latch_poison_is_ignored_not_fatal() {
     // A worker that panics mid-record poisons the mutex. Draining a poisoned

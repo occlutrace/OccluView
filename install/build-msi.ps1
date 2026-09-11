@@ -359,9 +359,9 @@ if ([string]::IsNullOrWhiteSpace($TimestampUrl)) {
 }
 
 $profileDir = switch ($Configuration) {
-    "release" { "release" }
+    "release" { "release-unwind" }
     "debug" { "debug" }
-    "diagnostic" { "release-diagnostic" }
+    "diagnostic" { "release-diagnostic-unwind" }
 }
 $shellProfileDir = switch ($Configuration) {
     "release" { "release-unwind" }
@@ -400,7 +400,8 @@ if (-not $SkipBuild) {
     )
     # The shell DLL builds in its own unwind profile (see Cargo.toml): a
     # panicking cdylib under panic=abort would kill Explorer's dllhost and
-    # blank every thumbnail in the folder.
+    # blank every thumbnail in the folder. The desktop app uses the same
+    # unwind profile so its sculpt worker can report a panic and fail closed.
     $shellCargoArgs = @(
         "build",
         "--locked",
@@ -408,11 +409,11 @@ if (-not $SkipBuild) {
         "--target", $Target
     )
     if ($Configuration -eq "release") {
-        $cargoArgs += "--release"
+        $cargoArgs += @("--profile", "release-unwind")
         $shellCargoArgs += @("--profile", "release-unwind")
     }
     if ($isDiagnosticPackage) {
-        $cargoArgs += @("--profile", "release-diagnostic")
+        $cargoArgs += @("--profile", "release-diagnostic-unwind")
         $shellCargoArgs += @("--profile", "release-diagnostic-unwind")
     }
     if (Test-HasText $env:OCCLUVIEW_HPS_EMBEDDED_KEY) {

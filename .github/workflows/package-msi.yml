@@ -162,7 +162,7 @@ jobs:
           if (-not $match.Success) { throw "Could not find workspace package version." }
           $version = $match.Groups[1].Value
           $target = "x86_64-pc-windows-msvc"
-          $buildDir = Join-Path $pwd "target\$target\release"
+          $buildDir = Join-Path $pwd "target\$target\release-unwind"
           $portableRoot = Join-Path $env:RUNNER_TEMP "OccluView"
           $portableDir = Join-Path $portableRoot "OccluView"
           Remove-Item $portableRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -186,7 +186,7 @@ jobs:
             Write-Host "No Authenticode certificate configured; skipping optional signature verification."
             exit 0
           }
-          $buildDir = Join-Path $pwd "target/x86_64-pc-windows-msvc/release"
+          $buildDir = Join-Path $pwd "target/x86_64-pc-windows-msvc/release-unwind"
           $artifacts = @(
             (Join-Path $buildDir "occluview.exe"),
             (Join-Path $buildDir "occluview_shell.dll"),

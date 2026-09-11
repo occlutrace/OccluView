@@ -17,8 +17,8 @@ use std::sync::{
 
 /// Shared latch for the most recent wgpu uncaptured error. wgpu's default
 /// uncaptured-error handler PANICS, which is a hard process abort in a release
-/// build (`panic = "abort"`) — a single driver hiccup or validation slip would
-/// kill the app. We install a handler that records the message here instead;
+/// default build (`panic = "abort"`) — a single driver hiccup or validation
+/// slip would kill the app. We install a handler that records the message here instead;
 /// the app polls [`Renderer::take_gpu_error`] and surfaces it honestly.
 pub(crate) type GpuErrorLatch = Arc<Mutex<Option<String>>>;
 

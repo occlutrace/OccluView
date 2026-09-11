@@ -32,9 +32,13 @@ if [[ -z "$version" ]]; then
   exit 1
 fi
 
-release_viewer="target/release/occluview"
-release_cli="target/release/occluview-cli"
-provenance_file="target/release/.occluview-build-provenance"
+# The shipped desktop binary must retain the unwind boundary used by the
+# sculpt worker. Keep the CLI in the same profile because one Cargo invocation
+# produces both artifacts and the provenance file guards their exact location.
+release_profile_dir="release-unwind"
+release_viewer="target/$release_profile_dir/occluview"
+release_cli="target/$release_profile_dir/occluview-cli"
+provenance_file="target/$release_profile_dir/.occluview-build-provenance"
 feature_profile=default
 if [[ -n "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
   feature_profile=private-hps-key
@@ -94,7 +98,7 @@ if [[ "$build_release" -eq 1 ]]; then
     echo "Private HPS key embedding enabled for this build."
     feature_args=(--features occluview-formats/private-hps-key)
   fi
-  cargo build --locked --release -p occluview-app -p occluview-cli "${feature_args[@]}"
+  cargo build --locked --profile release-unwind -p occluview-app -p occluview-cli "${feature_args[@]}"
   if [[ ! -x "$release_viewer" || ! -x "$release_cli" ]]; then
     echo "Cargo release build did not produce both OccluView binaries" >&2
     exit 1
