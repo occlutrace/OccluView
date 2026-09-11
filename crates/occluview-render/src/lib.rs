@@ -38,6 +38,7 @@ pub mod gpu;
 pub mod mesh_uniform;
 pub mod offscreen;
 pub mod pipeline;
+pub mod sculpt_cursor;
 pub mod texture;
 
 pub use camera::{camera_ortho_proj_matrix, camera_view_matrix, GpuCamera};
@@ -56,4 +57,12 @@ pub use offscreen::{
     ThumbnailSpec, ViewportSpec,
 };
 pub use pipeline::Renderer;
+pub use sculpt_cursor::{
+    sculpt_surface_light_intensity, sculpt_tool_length, SculptBrushUniform, SculptToolShape,
+    SculptToolUniform,
+};
 pub use texture::GpuTexture;
+
+#[cfg(test)]
+#[path = "sculpt_cursor_tests.rs"]
+mod sculpt_cursor_tests;

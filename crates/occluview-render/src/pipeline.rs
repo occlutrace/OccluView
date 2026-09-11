@@ -8,6 +8,7 @@ use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
 use crate::gpu::{camera_bind_layout, GpuMesh};
 use crate::mesh_uniform::GpuMeshUniform;
+use crate::sculpt_cursor::{SculptBrushUniform, SculptToolShape, SculptToolUniform};
 use occluview_core::Vertex;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
@@ -38,6 +39,8 @@ pub(crate) fn drain_gpu_error(latch: &GpuErrorLatch) -> Option<String> {
 
 const SHADER_SRC: &str = include_str!("../shaders/mesh.wgsl");
 const CAP_SHADER_SRC: &str = include_str!("../shaders/cap.wgsl");
+const SCULPT_FEEDBACK_SHADER_SRC: &str = include_str!("../shaders/sculpt_feedback.wgsl");
+const SCULPT_TOOL_SHADER_SRC: &str = include_str!("../shaders/sculpt_tool.wgsl");
 const POINT_SPLAT_VERTEX_COUNT: u32 = 6;
 const DEFAULT_POINT_SPLAT_VIEWPORT: [f32; 2] = [1024.0, 768.0];
 
@@ -106,6 +109,11 @@ pub struct Renderer {
     /// Cut-view ghost pipeline: re-draws the cut-away side translucent so a
     /// cross-section never fully removes geometry from the main viewport.
     pub(crate) ghost_pipeline: wgpu::RenderPipeline,
+    /// Additive display-only pass that leaves the Sculpt brush light on the
+    /// selected surface without re-drawing the mesh material.
+    pub(crate) sculpt_feedback_pipeline: wgpu::RenderPipeline,
+    /// Translucent cone/cylinder volume shown above the Sculpt contact patch.
+    pub(crate) sculpt_tool_pipeline: wgpu::RenderPipeline,
     pub(crate) camera_layout: wgpu::BindGroupLayout,
     pub(crate) camera_buffer: wgpu::Buffer,
     /// Layout for the per-mesh uniform (group 1): model matrix + tint +
@@ -115,6 +123,17 @@ pub struct Renderer {
     pub(crate) texture_layout: wgpu::BindGroupLayout,
     /// Layout for the clip plane (group 3): `ClipPlane` uniform.
     pub(crate) clip_layout: wgpu::BindGroupLayout,
+    sculpt_brush_buffer: wgpu::Buffer,
+    sculpt_brush_bind_group: wgpu::BindGroup,
+    sculpt_tool_buffer: wgpu::Buffer,
+    sculpt_tool_bind_group: wgpu::BindGroup,
+    sculpt_tool_shape: AtomicU32,
+    sculpt_tool_cone_buffer: wgpu::Buffer,
+    sculpt_tool_cone_vertex_bytes: u64,
+    sculpt_tool_cone_index_count: u32,
+    sculpt_tool_cylinder_buffer: wgpu::Buffer,
+    sculpt_tool_cylinder_vertex_bytes: u64,
+    sculpt_tool_cylinder_index_count: u32,
     point_splat_viewport_width_bits: AtomicU32,
     point_splat_viewport_height_bits: AtomicU32,
     /// Cached disabled clip-plane buffer + bind group. Bound at group 3 for
@@ -235,6 +254,23 @@ impl Renderer {
         })
     }
 
+    /// Upload the current display-only Sculpt surface-light input.
+    pub fn set_sculpt_brush(&self, brush: &SculptBrushUniform) {
+        self.queue
+            .write_buffer(&self.sculpt_brush_buffer, 0, bytemuck::bytes_of(brush));
+    }
+
+    /// Upload the current display-only Sculpt cone/cylinder input.
+    pub fn set_sculpt_tool(&self, tool: &SculptToolUniform) {
+        self.sculpt_tool_shape.store(tool.shape, Ordering::Relaxed);
+        self.queue
+            .write_buffer(&self.sculpt_tool_buffer, 0, bytemuck::bytes_of(tool));
+    }
+
+    pub(crate) fn sculpt_brush_bind_group(&self) -> &wgpu::BindGroup {
+        &self.sculpt_brush_bind_group
+    }
+
     /// The cached disabled-clip bind group — bound at group 3 for draws that
     /// don't clip (thumbnails, plain renders). Use this instead of building a
     /// fresh group when `clip.enabled == 0`.
@@ -328,6 +364,70 @@ impl Renderer {
         mesh.draw(rpass, occluview_core::MeshKind::TriangleMesh);
     }
 
+    /// Draw only the additive Sculpt surface field over one already-rendered
+    /// triangle mesh. The caller chooses the target entry, so neighbouring
+    /// layers never receive the cursor by accident.
+    pub(crate) fn draw_sculpt_surface_feedback(
+        &self,
+        rpass: &mut wgpu::RenderPass<'_>,
+        camera_bg: &wgpu::BindGroup,
+        mesh_bg: &wgpu::BindGroup,
+        clip_bg: &wgpu::BindGroup,
+        mesh: &GpuMesh,
+    ) {
+        rpass.set_pipeline(&self.sculpt_feedback_pipeline);
+        rpass.set_bind_group(0, camera_bg, &[]);
+        rpass.set_bind_group(1, mesh_bg, &[]);
+        rpass.set_bind_group(2, clip_bg, &[]);
+        rpass.set_bind_group(3, self.sculpt_brush_bind_group(), &[]);
+        mesh.draw(rpass, occluview_core::MeshKind::TriangleMesh);
+    }
+
+    /// Draw the translucent Sculpt tool volume. It is intentionally
+    /// depth-independent, matching the reference cursor: the volume remains
+    /// visible while it hovers over a dense scan and cannot affect the depth
+    /// buffer or any authoritative picking result.
+    pub fn draw_sculpt_tool(
+        &self,
+        rpass: &mut wgpu::RenderPass<'_>,
+        camera_bg: &wgpu::BindGroup,
+        clip_bg: &wgpu::BindGroup,
+    ) {
+        rpass.set_pipeline(&self.sculpt_tool_pipeline);
+        rpass.set_bind_group(0, camera_bg, &[]);
+        rpass.set_bind_group(1, &self.sculpt_tool_bind_group, &[]);
+        rpass.set_bind_group(2, clip_bg, &[]);
+        // The shader treats an invalid shape as Cone. The CPU writes only the
+        // two enum tags, so this selection is fail-safe rather than a panic.
+        let (buffer, vertex_bytes, index_count) =
+            if self.sculpt_tool_shape() == SculptToolShape::Cylinder as u32 {
+                (
+                    &self.sculpt_tool_cylinder_buffer,
+                    self.sculpt_tool_cylinder_vertex_bytes,
+                    self.sculpt_tool_cylinder_index_count,
+                )
+            } else {
+                (
+                    &self.sculpt_tool_cone_buffer,
+                    self.sculpt_tool_cone_vertex_bytes,
+                    self.sculpt_tool_cone_index_count,
+                )
+            };
+        if index_count == 0 {
+            return;
+        }
+        rpass.set_vertex_buffer(0, buffer.slice(..vertex_bytes));
+        rpass.set_index_buffer(buffer.slice(vertex_bytes..), wgpu::IndexFormat::Uint32);
+        rpass.draw_indexed(0..index_count, 0, 0..1);
+    }
+
+    /// Read the shape tag from the just-uploaded uniform without exposing the
+    /// mutable GPU buffer. This is only used to choose a static geometry
+    /// buffer; the shader remains the authority on visibility/material.
+    fn sculpt_tool_shape(&self) -> u32 {
+        self.sculpt_tool_shape.load(Ordering::Relaxed)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_inner(
         &self,
@@ -412,6 +512,40 @@ fn mesh_uniform_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
                 min_binding_size: wgpu::BufferSize::new(size_of::<GpuMeshUniform>() as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
+/// Bind layout for the display-only surface brush field.
+pub(super) fn sculpt_brush_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("occluview sculpt brush layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size_of::<SculptBrushUniform>() as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
+/// Bind layout for the display-only cone/cylinder volume.
+pub(super) fn sculpt_tool_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("occluview sculpt tool layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size_of::<SculptToolUniform>() as u64),
             },
             count: None,
         }],

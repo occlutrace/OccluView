@@ -715,7 +715,6 @@ impl OccluViewApp {
         self.show_layers_overlay(ui, response.rect, ctx);
         self.show_mesh_editor_overlay(response.rect, ctx);
         self.paint_mesh_selection_drag_overlay_impl(ui);
-        self.paint_sculpt_cursor_impl(ui, response);
         self.show_status_overlay(ui, response.rect);
         let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
         let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
@@ -734,6 +733,10 @@ impl OccluViewApp {
         if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed && !align_ui_consumed {
             self.handle_viewport_input(ctx, response, response.rect, axis_snap.is_some());
         }
+        // Input resolves and caches the authoritative sculpt hit first. The
+        // visual cursor then reuses it for held drags and publishes its GPU
+        // uniforms before the callback's render pass executes.
+        self.paint_sculpt_cursor_impl(ui, response);
     }
 
     pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
