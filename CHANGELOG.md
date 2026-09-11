@@ -12,8 +12,10 @@ remain in the Git history.
   a hand drag, a role swap made by the first matching click, or a change to the
   matching inputs withdraws the map and the match it measured; the legend stays
   readable at the 0.00 mm end of the range control, including its saturated end.
-  A match the sampled surface cannot actually confirm — a patch that slides or
-  turns without changing the measured distances — is refused instead of shown.
+  A measurement the sampled surface cannot support at all — too little overlap,
+  or samples that do not span every direction — is refused instead of drawn;
+  a surface that is merely weak in one direction is still measured, because that
+  is what the deviation map is for.
 - Sculpt worker topology changes, cancellation, and repeated strokes preserve
   ordered geometry and undo boundaries. A stroke that cannot finish now reports
   the reason in a dialog and stands the brush down instead of leaving it armed
