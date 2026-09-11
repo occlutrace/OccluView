@@ -26,6 +26,7 @@ impl Offscreen {
         spec: ThumbnailSpec,
         deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();
@@ -100,6 +101,7 @@ impl Offscreen {
         &self,
         request: ClippedMeshRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let ClippedMeshRequest {
             mesh,
             camera,
@@ -239,6 +241,7 @@ impl Offscreen {
         &self,
         request: CutMeshRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let CutMeshRequest {
             mesh,
             camera,
