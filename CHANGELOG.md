@@ -11,11 +11,17 @@ remain in the Git history.
   absolute millimetre legend and saturated display colours. A sculpt stroke,
   a hand drag, a role swap made by the first matching click, or a change to the
   matching inputs withdraws the map and the match it measured; the legend stays
-  readable at the 0.00 mm end of the range control.
+  readable at the 0.00 mm end of the range control, including its saturated end.
+  A match the sampled surface cannot actually confirm — a patch that slides or
+  turns without changing the measured distances — is refused instead of shown.
 - Sculpt worker topology changes, cancellation, and repeated strokes preserve
   ordered geometry and undo boundaries. A stroke that cannot finish now reports
   the reason in a dialog and stands the brush down instead of leaving it armed
   over a revoked worker.
+- Sculpt brush sliders fill the panel again: the rail itself uses the full
+  width, not just the row that contains it.
+- Cut View keeps a solid cap across the cut, including after the stencil pass
+  that builds the cap mask.
 
 ### Reliability
 
@@ -24,9 +30,12 @@ remain in the Git history.
   diagnostic signal and a non-zero exit status. `OCCLUVIEW_LIVE_MSAA=1` starts
   without multisampling when a driver rejects it, and a fatal startup is
   offered to the desktop through the notification service the system provides.
+  Adapter selection and the fallback path are deterministic across launches.
 - Added `occluview --diagnostics` and installed-package graphics smoke checks;
   the report now names the chosen live sample count and each adapter's
   multisample support.
+- After a graphics fault the viewer stops submitting frames and reports the
+  fault once instead of retrying a broken device in a loop.
 - Exporting over a file that is a symbolic link updates the file it points at
   instead of replacing the link, and "Export each layer" keeps working in
   folders on removable media or network shares that cannot hard-link, which
