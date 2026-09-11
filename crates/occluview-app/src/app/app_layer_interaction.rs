@@ -118,6 +118,7 @@ impl OccluViewApp {
         let mut draft = scene.as_ref().clone();
         let mut scene_changed = false;
         let mut structural_scene_change = false;
+        let mut visibility_changed = Vec::new();
         if let Some(request) = changes.context_request {
             let apply =
                 super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
@@ -127,6 +128,9 @@ impl OccluViewApp {
         if !structural_scene_change {
             for edit in changes.layer_edits {
                 if let Some(entry) = draft.meshes_mut().get_mut(edit.index) {
+                    if entry.visible != edit.visible {
+                        visibility_changed.push(entry.id());
+                    }
                     entry.visible = edit.visible;
                     entry.opacity = edit.opacity;
                     crate::layer_actions::apply_picked_tint(entry, edit.tint, edit.tint_clicked);
@@ -144,6 +148,7 @@ impl OccluViewApp {
                     self.clear_scene();
                 } else {
                     self.update_scene_materials(draft);
+                    self.invalidate_alignment_for_visibility_changes(&visibility_changed);
                 }
                 ctx.request_repaint();
             }
@@ -161,11 +166,15 @@ impl OccluViewApp {
             return;
         };
         let mut hidden: Vec<occluview_core::SceneMeshId> = Vec::new();
+        let mut visibility_changed = Vec::new();
         let mut changed = false;
         for edit in edits {
             let Some(entry) = live.meshes_mut().get_mut(edit.index) else {
                 continue;
             };
+            if entry.visible != edit.visible {
+                visibility_changed.push(entry.id());
+            }
             if entry.visible && !edit.visible {
                 hidden.push(entry.id());
             }
@@ -182,6 +191,7 @@ impl OccluViewApp {
             self.document.hidden_layer_stack.push(layer);
         }
         self.mark_scene_materials_changed();
+        self.invalidate_alignment_for_visibility_changes(&visibility_changed);
         ctx.request_repaint();
     }
 
@@ -386,6 +396,7 @@ impl OccluViewApp {
         self.ui.status_message = Some(self.ui.locale.tr_with("layer-hidden", &[("label", &label)]));
         self.remember_visibility_changes(&scene, &draft);
         self.update_scene_materials(draft);
+        self.invalidate_alignment_for_visibility_changes(&[hit.layer_id]);
         ctx.request_repaint();
     }
 
@@ -492,6 +503,7 @@ impl OccluViewApp {
                     .tr_with("layer-restored", &[("label", &label)]),
             );
             self.update_scene_materials(draft);
+            self.invalidate_alignment_for_visibility_changes(&[layer_id]);
             ctx.request_repaint();
             return;
         }

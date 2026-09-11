@@ -5,12 +5,42 @@
 
 use eframe::egui;
 use occluview_align::{FitRejection, Rigid};
+use occluview_core::SceneMeshId;
 
 use super::OccluViewApp;
 use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
+fn visibility_change_affects_pair(
+    moving: Option<SceneMeshId>,
+    fixed: Option<SceneMeshId>,
+    changed_layers: &[SceneMeshId],
+) -> bool {
+    [moving, fixed]
+        .into_iter()
+        .flatten()
+        .any(|layer| changed_layers.contains(&layer))
+}
+
 impl OccluViewApp {
+    /// Invalidate a fit when one of the two selected surfaces changes
+    /// visibility. A material update is cheap, but it changes the set of
+    /// surfaces the operator can see and therefore the meaning of a later
+    /// measurement. Every visibility owner calls this same boundary.
+    pub(super) fn invalidate_alignment_for_visibility_changes(
+        &mut self,
+        changed_layers: &[SceneMeshId],
+    ) {
+        if visibility_change_affects_pair(
+            self.tools.align.tool.moving_layer(),
+            self.tools.align.tool.fixed_layer(),
+            changed_layers,
+        ) {
+            let reason = self.ui.locale.tr("align-status-visibility-changed");
+            self.invalidate_deviation_map(&reason);
+        }
+    }
+
     /// Drain finished jobs and apply them.
     pub(super) fn drain_align_worker(&mut self, ctx: &egui::Context) {
         let worker_failed = self
@@ -614,6 +644,33 @@ mod tests {
                 && settle.contains("let entering_automatic"),
             "returning to Automatically must revoke readiness instead of taking an early return"
         );
+    }
+
+    #[test]
+    fn visibility_invalidation_is_scoped_to_the_selected_pair() {
+        use super::visibility_change_affects_pair;
+        use occluview_core::{Mesh, SceneMesh};
+
+        let moving = SceneMesh::new(Mesh::empty()).id();
+        let fixed = SceneMesh::new(Mesh::empty()).id();
+        let unrelated = SceneMesh::new(Mesh::empty()).id();
+
+        assert!(visibility_change_affects_pair(
+            Some(moving),
+            Some(fixed),
+            &[moving]
+        ));
+        assert!(visibility_change_affects_pair(
+            Some(moving),
+            Some(fixed),
+            &[fixed]
+        ));
+        assert!(!visibility_change_affects_pair(
+            Some(moving),
+            Some(fixed),
+            &[unrelated]
+        ));
+        assert!(!visibility_change_affects_pair(None, None, &[]));
     }
 
     /// A completion that was already in flight must not resurrect a map the
