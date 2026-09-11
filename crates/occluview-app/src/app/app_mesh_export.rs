@@ -362,6 +362,43 @@ pub(super) fn mesh_write_extension(format: MeshWriteFormat) -> &'static str {
     }
 }
 
+pub(super) fn default_layer_export_stem(
+    paths: &[PathBuf],
+    scene: &Scene,
+    index: usize,
+    format: MeshWriteFormat,
+) -> String {
+    // Deliberately prefer an ASCII-safe source/file stem, then the mesh name,
+    // then a numbered fallback. This name is used by both single-layer and
+    // batch exports, so they cannot drift into different naming rules.
+    let source_stem = exact_layer_source_path(paths, index)
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str());
+    let raw = source_stem.or_else(|| {
+        scene
+            .meshes()
+            .get(index)
+            .and_then(|entry| entry.mesh.name())
+    });
+    let stem = raw
+        .map(sanitize_filename_stem)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| crate::layers_overlay::ascii_layer_stem(index));
+    strip_repeated_export_suffix(stem, format)
+}
+
+/// Remove a source extension that would otherwise be emitted twice when the
+/// selected export format is the same (`upper.stl` -> `upper`, then `upper.stl`).
+fn strip_repeated_export_suffix(mut stem: String, format: MeshWriteFormat) -> String {
+    let extension = mesh_write_extension(format);
+    while let Some((prefix, suffix)) = stem.rsplit_once('.') {
+        if !suffix.eq_ignore_ascii_case(extension) {
+            break;
+        }
+        stem = prefix.to_owned();
+    }
+    stem
+}
 pub(super) fn normalize_layer_export_path(
     path: PathBuf,
     fallback_format: MeshWriteFormat,
@@ -413,21 +450,7 @@ fn default_layer_export_name(
     index: usize,
     format: MeshWriteFormat,
 ) -> String {
-    let stem = exact_layer_source_path(paths, index)
-        .and_then(|path| path.file_stem())
-        .and_then(|stem| stem.to_str())
-        .or_else(|| {
-            scene
-                .meshes()
-                .get(index)
-                .and_then(|entry| entry.mesh.name())
-        })
-        .map(sanitize_filename_stem)
-        .filter(|stem| !stem.is_empty())
-        // Deliberately ASCII: a default filename stem must survive any
-        // filesystem locale (the localized name shows in the status line
-        // via the mesh-exported-* keys).
-        .unwrap_or_else(|| crate::layers_overlay::ascii_layer_stem(index));
+    let stem = default_layer_export_stem(paths, scene, index, format);
 
     format!("{stem}-edited.{}", mesh_write_extension(format))
 }
@@ -528,6 +551,22 @@ mod tests {
         );
 
         assert_eq!(name, "very-long-scan-name-edited.stl");
+        Ok(())
+    }
+
+    #[test]
+    fn batch_export_stem_prefers_the_source_name_and_removes_its_format_suffix() -> Result<()> {
+        let scene = exportable_scene()?;
+        let paths = vec![PathBuf::from("upper.stl")];
+        assert_eq!(
+            default_layer_export_stem(&paths, &scene, 0, MeshWriteFormat::StlBinary),
+            "upper"
+        );
+        let repeated = vec![PathBuf::from("upper.stl.stl")];
+        assert_eq!(
+            default_layer_export_stem(&repeated, &scene, 0, MeshWriteFormat::StlBinary),
+            "upper"
+        );
         Ok(())
     }
 
