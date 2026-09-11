@@ -116,14 +116,18 @@ fn real_main() -> Result<()> {
             ));
         }
     }
-    validate_graphics_environment()?;
     if args.diagnostics {
         append_startup_stage("diagnostics");
-        let details = graphics_diagnostics_report();
-        let report_path = write_report("graphics-diagnostics", &details);
-        show_diagnostics_message(report_path.as_deref());
+        // Diagnostics must remain useful even when the operator is debugging
+        // the very environment override that normal startup rejects. Keep the
+        // validation error in the report instead of failing before a report
+        // can be written.
+        let details = graphics_diagnostics_details(validate_graphics_environment());
+        let report_path = require_report_path(write_report("graphics-diagnostics", &details))?;
+        show_diagnostics_message(Some(&report_path));
         return Ok(());
     }
+    validate_graphics_environment()?;
 
     // Shape, not identity. This line goes into the ring buffer that
     // `write_crash_report` dumps to disk, and a dental scan's path is the case
@@ -736,6 +740,10 @@ fn write_crash_report(kind: &str, details: &str) -> Option<PathBuf> {
     write_report(kind, details)
 }
 
+fn require_report_path(report_path: Option<PathBuf>) -> Result<PathBuf> {
+    report_path.ok_or_else(|| anyhow::anyhow!("could not write the graphics diagnostics report"))
+}
+
 /// Write a diagnostic or crash report without overwriting a report created by
 /// another failure in the same clock tick. `create_new` also protects a report
 /// when two processes fail during the same nanosecond on a fast filesystem.
@@ -988,6 +996,16 @@ fn graphics_diagnostics_report() -> String {
         working_identities.len()
     );
     report
+}
+
+fn graphics_diagnostics_details(validation: Result<()>) -> String {
+    match validation {
+        Ok(()) => graphics_diagnostics_report(),
+        Err(error) => format!(
+            "OccluView graphics diagnostics\nversion: {}\nstatus: invalid_environment\nerror: {error:#}\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    }
 }
 
 fn environment_state(name: &str) -> &'static str {

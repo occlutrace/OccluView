@@ -113,6 +113,21 @@ fn graphics_environment_validation_accepts_wgpu_spellings() {
 }
 
 #[test]
+fn diagnostics_keeps_an_invalid_environment_error_in_the_report() {
+    let details = graphics_diagnostics_details(Err(anyhow::anyhow!("invalid backend")));
+
+    assert!(details.contains("status: invalid_environment"));
+    assert!(details.contains("error: invalid backend"));
+}
+
+#[test]
+fn diagnostics_fails_when_no_report_path_was_created() {
+    assert!(require_report_path(None).is_err());
+    let path = PathBuf::from("/tmp/occluview-diagnostics.txt");
+    assert_eq!(require_report_path(Some(path.clone())).unwrap(), path);
+}
+
+#[test]
 fn startup_journal_paths_fall_back_without_duplicate_entries() {
     let fallback = PathBuf::from("/tmp/occluview-startup-journal.log");
     assert_eq!(
