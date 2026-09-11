@@ -204,10 +204,7 @@ impl OccluViewApp {
         // Keep this presentation-side guard even though the worker rejects the
         // same state. It protects the invariant if a future worker path forgets
         // to use `paint`, and it removes any previous map before returning.
-        // The predicate matches the worker's: a weakly observable surface is as
-        // unusable as an unmeasurable one.
-        let observable = seen.is_some_and(|seen| !seen.has_blind_direction());
-        if !observable {
+        if seen.is_none() {
             self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
             self.tools.align.status = Some(self.ui.locale.tr("align-fail-unobservable"));

@@ -696,11 +696,10 @@ fn an_older_same_generation_completion_is_not_applied() {
     assert_eq!(completions[0].request_id, 2);
 }
 
-/// A cylinder, the fixture the observability tests use to prove a *non-`None`*
-/// blind mode: an axial screw that slides along the axis without changing any
-/// distance the map can see. It is full rank and every vertex has a nearest
-/// hit, so `observability()` returns `Some` — which is exactly why "refuse the
-/// unobservable measurement" cannot be written as "refuse when it is `None`".
+/// A cylinder, the fixture the observability tests use to demonstrate a
+/// *non-`None`* blind mode: an axial screw that slides along the axis without
+/// changing any distance the map can see. It is full rank and every vertex has
+/// a nearest hit, so `observability()` returns `Some`.
 fn cylinder_positions(radius: f32, length: f32, around: usize, along: usize) -> Vec<f32> {
     let mut positions = Vec::new();
     for ring in 0..along {
@@ -731,12 +730,17 @@ fn cylinder_indices(around: usize, along: usize) -> Vec<u32> {
     indices
 }
 
-/// A surface the map cannot confirm must be refused even when it is measurable
-/// enough to produce a full summary. A cylinder slides along its own axis with
-/// every distance unchanged, so the heatmap looks clean next to a pose nothing
-/// in the measurement supports.
+/// A weakly observable surface must still produce a map.
+///
+/// A cylinder slides along its own axis with every measured distance unchanged,
+/// so its worst sensitivity is far below the threshold that marks an estimate
+/// doing real work. That is a *warning about the measurement*, not a reason to
+/// withhold it: the deviation map is still the operator's evidence, the
+/// observability estimate is what bounds its blind mode, and refusing here
+/// blocked legitimate full-arch alignments — the sensitivity a real arch scan is
+/// allowed in `real_scans.rs` reaches below the same threshold.
 #[test]
-fn a_weakly_observable_measurement_is_refused_like_an_unmeasurable_one() {
+fn a_weakly_observable_surface_still_produces_its_map() {
     let cancel = occluview_align::CancelFlag::new();
     let mut cache = super::WorkerCache::default();
 
@@ -776,12 +780,7 @@ fn a_weakly_observable_measurement_is_refused_like_an_unmeasurable_one() {
     let outcome = super::execute(&job, &cancel, &mut cache);
 
     assert!(
-        matches!(
-            outcome,
-            super::AlignOutcome::Failed {
-                rejection: super::AlignFailure::MeasurementUnobservable
-            }
-        ),
-        "a blind axial slide must be refused before it is published"
+        matches!(outcome, super::AlignOutcome::Measured { .. }),
+        "a measurable surface must still be measured, however blind one of its modes is"
     );
 }

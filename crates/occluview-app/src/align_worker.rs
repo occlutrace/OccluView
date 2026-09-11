@@ -664,16 +664,15 @@ fn paint(
     // turn. Do not publish colours that look authoritative when the sampled
     // surface cannot determine the motion that produced them.
     //
-    // `observability()` returning `None` is the degenerate end of that: too
-    // little surface, or samples that do not span six degrees of freedom. A
-    // surface can also be *weakly* observable — full rank, every vertex with a
-    // nearest hit, and still a direction whose hidden displacement is more than
-    // ten times what the map shows. That is the case the observability doc calls
-    // untrustworthy, and it reaches here as `Some` with a low worst sensitivity.
-    // Publishing it would put a clean-looking map next to a pose the surfaces
-    // cannot confirm, which is the outcome this refusal exists to prevent.
-    let observable = seen.is_some_and(|seen| !seen.has_blind_direction());
-    if stats.summary.is_some() && !observable {
+    // `None` is the degenerate end of that: too little surface, or samples that
+    // do not span six degrees of freedom. It is deliberately not extended to a
+    // *weak* blind direction. `observability()` exists to report those (see
+    // `hidden_displacement_mm`, measured at 0.94-1.007 of the truth on real arch
+    // scans), and `has_blind_direction` is the threshold that says "the estimate
+    // is doing real work here", not "this measurement is worthless". Refusing on
+    // it blocked legitimate full-arch alignments: the sensitivity allowed for a
+    // real arch in `real_scans.rs` extends below it.
+    if stats.summary.is_some() && seen.is_none() {
         return AlignOutcome::Failed {
             rejection: AlignFailure::MeasurementUnobservable,
         };
