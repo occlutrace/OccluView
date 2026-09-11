@@ -527,6 +527,23 @@ fn best_fit_recovers_from_a_one_mm_lateral_start() {
 }
 
 #[test]
+fn best_fit_recovers_from_a_side_by_side_partial_overlap() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    for shift in [4.0, 6.0, 8.0, 10.0, 12.0] {
+        let start = Rigid::new(DQuat::IDENTITY, DVec3::new(shift, 0.0, 0.0));
+        let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+
+        assert!(
+            report.rigid.translation.length() < 0.05,
+            "a side-by-side partial overlap at {shift} mm settled sideways at {:?}",
+            report.rigid.translation
+        );
+    }
+}
+
+#[test]
 fn best_fit_recovers_from_a_quarter_turn_start() {
     let (positions, indices) = dome(24, 0.5);
     let mesh = soup(&positions, &indices);

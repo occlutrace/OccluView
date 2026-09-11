@@ -139,6 +139,32 @@ fn representative_surface_samples_are_bounded_and_keep_normals() {
 }
 
 #[test]
+fn representative_samples_keep_component_ids_after_spatial_reordering() {
+    // Put the first source component far to the right and the second one at
+    // the origin. The spatial index reorders them by cell; the component tag
+    // has to follow the same permutation or global Best Fit seeds inherit the
+    // wrong ambiguity identity.
+    let positions = vec![
+        100.0, 0.0, 0.0, 101.0, 0.0, 0.0, 100.0, 1.0, 0.0, // far
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, // near
+    ];
+    let indices = vec![0, 1, 2, 3, 4, 5];
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let samples = index.representative_samples(2);
+
+    assert_eq!(index.component_bounds().len(), 2);
+    for sample in samples {
+        let (low, high) = index.component_bounds()[sample.component];
+        assert!(
+            sample.point.x >= low.x - 1e-9 && sample.point.x <= high.x + 1e-9,
+            "sample at x={} was tagged as component {} with bounds {low:?}..{high:?}",
+            sample.point.x,
+            sample.component,
+        );
+    }
+}
+
+#[test]
 fn the_cell_size_follows_triangle_size() {
     let (coarse_positions, coarse_indices) = plane(4, 4.0);
     let (fine_positions, fine_indices) = plane(32, 0.25);
