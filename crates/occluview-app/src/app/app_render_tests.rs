@@ -85,16 +85,64 @@ fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
     let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
     let render_now = crate::primary_ui_tests::method_body(source, "pub(super) fn render_now");
     assert!(
-        render_now.contains("self.note_offscreen_failure(terminal_offscreen_error(&e))"),
+        render_now.contains("self.note_offscreen_failure_anyhow(&e)"),
         "render_now must consume and classify a failed offscreen frame"
     );
     let pending =
         crate::primary_ui_tests::method_body(source, "pub(super) fn render_pending_frame");
     assert!(
-        pending.contains("self.render.offscreen_failed")
-            && pending.contains("consume_redraw()")
-            && pending.contains("!self.render.offscreen_failed"),
-        "the pending-frame path must stop retrying a terminal offscreen failure"
+        pending.contains("self.offscreen_available()") && pending.contains("consume_redraw()"),
+        "the pending-frame path must stop retrying an unavailable offscreen path"
+    );
+    let note = crate::primary_ui_tests::method_body(source, "fn note_offscreen_failure(&mut self");
+    assert!(
+        note.contains("terminal_offscreen_render_error(error)"),
+        "a failure must be classified before the path is latched or deferred"
+    );
+}
+
+/// A missed readback deadline is a liveness bound, not a device verdict. It
+/// used to latch the whole offscreen path off for the session: the section
+/// panel kept showing the previous plane and, with no live viewport, the
+/// viewport stopped repainting at all, on hardware that was never shown to be
+/// broken and with no control that could clear it.
+#[test]
+fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
+    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
+
+    // The body, not the doc comment: the prose above these functions explains
+    // the deadline case and would satisfy a whole-text search on its own.
+    let terminal_body = source
+        .split_once("fn terminal_offscreen_render_error")
+        .and_then(|(_, rest)| rest.split_once("\n}"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    assert!(
+        !terminal_body.contains("ReadbackTimeout"),
+        "a deadline must not be classified as a broken graphics stack"
+    );
+    assert!(
+        terminal_body.contains("RenderError::Surface"),
+        "a real surface failure still latches the path off"
+    );
+    let retryable_body = source
+        .split_once("fn retryable_offscreen_render_error")
+        .and_then(|(_, rest)| rest.split_once("\n}"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    assert!(
+        retryable_body.contains("ReadbackTimeout"),
+        "a deadline is the failure the offscreen path must retry"
+    );
+    assert!(
+        !retryable_body.contains("RenderError::Surface"),
+        "a broken stack is not retried on a timer"
+    );
+    assert!(
+        source.contains(
+            "self.render.offscreen_retry_after = Some(Instant::now() + OFFSCREEN_RETRY_DELAY)"
+        ),
+        "the retry must be deferred so a loaded machine is not asked to fail on a loop"
     );
 }
 

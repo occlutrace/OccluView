@@ -28,21 +28,29 @@ use occluview_render::{
 use std::time::Duration;
 
 const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long to wait before asking a healthy-looking stack for another frame
+/// after it missed a readback deadline.
+const OFFSCREEN_RETRY_DELAY: Duration = Duration::from_millis(750);
 const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Whether an offscreen failure means the graphics stack itself is unusable.
+///
+/// A readback deadline is not that: it measures how long this process was
+/// willing to wait, and the deadline is a liveness bound rather than a device
+/// verdict. The application's own timeout doc says as much. Treating it as
+/// terminal latched the whole offscreen path off for the rest of the session —
+/// the section panel kept showing the previous plane and, with no live
+/// viewport, the viewport stopped repainting entirely — on a machine whose GPU
+/// was fine, with no dialog or control that could clear it.
 fn terminal_offscreen_render_error(error: &RenderError) -> bool {
-    matches!(
-        error,
-        RenderError::Surface(_) | RenderError::ReadbackTimeout { .. } | RenderError::NoAdapter
-    )
+    matches!(error, RenderError::Surface(_) | RenderError::NoAdapter)
 }
 
-fn terminal_offscreen_error(error: &Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<RenderError>()
-            .is_some_and(terminal_offscreen_render_error)
-    })
+/// Whether this failure can be retried at all. Only a healthy stack retried
+/// after a deadline is worth another attempt; the caller backs off so a retry
+/// cannot become a repaint storm.
+fn retryable_offscreen_render_error(error: &RenderError) -> bool {
+    matches!(error, RenderError::ReadbackTimeout { .. })
 }
 
 impl OccluViewApp {
@@ -103,7 +111,7 @@ impl OccluViewApp {
             Ok(frame) => frame,
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
-                self.note_offscreen_failure(terminal_offscreen_error(&e));
+                self.note_offscreen_failure_anyhow(&e);
                 self.ui.app_error = Some(AppErrorDialog {
                     title: self.ui.locale.tr("render-failed-title"),
                     summary: self.ui.locale.tr("render-failed-summary"),
@@ -213,7 +221,7 @@ impl OccluViewApp {
         let restore_deviation = self.align_overlay_is_up();
         if let Err(e) = self.ensure_offscreen() {
             tracing::error!(error = ?e, "section-view offscreen init failed");
-            self.note_offscreen_failure(terminal_offscreen_error(&e));
+            self.note_offscreen_failure_anyhow(&e);
             return None;
         }
         let offscreen = self.render.offscreen.as_ref()?;
@@ -266,7 +274,7 @@ impl OccluViewApp {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(error = ?e, "section-view render failed");
-                    self.note_offscreen_failure(terminal_offscreen_render_error(&e));
+                    self.note_offscreen_failure(&e);
                     return None;
                 }
             }
@@ -314,6 +322,11 @@ impl OccluViewApp {
     }
 
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
+        if !self.offscreen_available() {
+            return Err(anyhow::anyhow!(
+                "offscreen rendering is deferred after a previous GPU failure"
+            ));
+        }
         if self.render.offscreen_failed {
             return Err(anyhow::anyhow!(
                 "offscreen rendering is disabled after a previous GPU failure"
@@ -444,14 +457,55 @@ impl OccluViewApp {
         Ok((spec, pixels))
     }
 
-    /// Consume the redraw that triggered a failed fallback render. Terminal
-    /// GPU errors also latch the path off: keeping the request pending would
-    /// make egui call the same failed submit forever, hiding the original
-    /// cause behind a repaint storm and burning a CPU core.
-    fn note_offscreen_failure(&mut self, terminal: bool) {
+    /// Consume the redraw that triggered a failed fallback render and decide
+    /// what the path owes next.
+    ///
+    /// Keeping the request pending would make egui call the same failed submit
+    /// forever, hiding the original cause behind a repaint storm and burning a
+    /// CPU core, so a failure always consumes the redraw. What differs is what
+    /// happens after: a broken graphics stack latches the path off until the
+    /// operator restarts, while a missed readback deadline only defers the next
+    /// attempt. Latching a deadline off for the session left the section panel
+    /// showing a previous plane and, with no live viewport, stopped the viewport
+    /// repainting at all — on hardware that was never shown to be broken.
+    fn note_offscreen_failure_anyhow(&mut self, error: &Error) {
+        if let Some(render_error) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<RenderError>())
+        {
+            self.note_offscreen_failure(render_error);
+            return;
+        }
+        // An error with no typed render cause is not something this path can
+        // classify; keep the conservative behaviour.
         self.render.invalidation.consume_redraw();
-        if terminal {
+        self.render.offscreen_failed = true;
+        self.render.offscreen_retry_after = None;
+    }
+
+    /// Whether the offscreen path is allowed to run right now.
+    ///
+    /// A terminal failure keeps it off; a deferred retry waits out its delay so
+    /// a loaded machine cannot be asked to fail on every repaint.
+    fn offscreen_available(&self) -> bool {
+        if self.render.offscreen_failed {
+            return false;
+        }
+        match self.render.offscreen_retry_after {
+            Some(deadline) => Instant::now() >= deadline,
+            None => true,
+        }
+    }
+
+    fn note_offscreen_failure(&mut self, error: &RenderError) {
+        self.render.invalidation.consume_redraw();
+        if terminal_offscreen_render_error(error) {
             self.render.offscreen_failed = true;
+            self.render.offscreen_retry_after = None;
+            return;
+        }
+        if retryable_offscreen_render_error(error) {
+            self.render.offscreen_retry_after = Some(Instant::now() + OFFSCREEN_RETRY_DELAY);
         }
     }
 
@@ -893,12 +947,12 @@ impl OccluViewApp {
         if self.render.invalidation.redraw_pending() {
             if self.render.live_viewport.is_some() {
                 self.sync_live_viewport();
-            } else if self.render.offscreen_failed {
+            } else if !self.offscreen_available() {
                 self.render.invalidation.consume_redraw();
             } else {
                 self.render_now(ctx);
             }
-            if self.render.live_viewport.is_some() || !self.render.offscreen_failed {
+            if self.render.live_viewport.is_some() || self.offscreen_available() {
                 ctx.request_repaint();
             }
         }
