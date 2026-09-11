@@ -44,11 +44,14 @@ impl OccluViewApp {
 
     /// Invalidate a fit when one of the two selected surfaces is replaced.
     ///
-    /// A sculpt or mesh-edit commit swaps the layer's mesh in place, so it
-    /// never passes through `set_scene` and its invalidation. The map and the
-    /// refined claim both describe the surface that was measured; once that
-    /// surface is a different mesh, neither is true any more. Both roles
-    /// count, because the deviation is a property of the pair.
+    /// The structural mesh edits (repair, close holes, crop, cut, separate, a
+    /// bridge-split commit, a cancelled mesh-edit session) all rebuild a scene
+    /// draft and pass through `set_scene`, which already forgets the fit. The
+    /// live sculpt commit is the one path that swaps the layer's mesh in place
+    /// instead, so it has to ask here. The map and the refined claim both
+    /// describe the surface that was measured; once that surface is a different
+    /// mesh, neither is true any more. Both roles count, because the deviation
+    /// is a property of the pair.
     pub(super) fn invalidate_alignment_for_geometry_changes(
         &mut self,
         changed_layers: &[SceneMeshId],
