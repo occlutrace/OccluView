@@ -644,6 +644,7 @@ sculpt-armed-smooth = Glätten: ziehen zum Entspannen, Shift forciert
 sculpt-off = Sculpting aus
 sculpt-applied-undo = Sculpting angewendet (Strg+Z macht rückgängig)
 sculpt-applied-locked = Sculpting angewendet (nicht rückgängig: Snapshot zu groß)
+sculpt-failed-title = Sculpt fehlgeschlagen
 sculpt-failed = Diese Ebene lässt sich nicht sculpten: { $detail }
 sculpt-worker-stopped = Sculpt-Worker angehalten: { $detail }
 sculpt-preparing = Sculpting wird vorbereitet…

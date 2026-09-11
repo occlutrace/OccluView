@@ -644,6 +644,7 @@ sculpt-armed-smooth = Leviga: trascina per rilassare, Shift forza
 sculpt-off = Scultura off
 sculpt-applied-undo = Scultura applicata (Ctrl+Z annulla)
 sculpt-applied-locked = Scultura applicata (non annullabile: snapshot enorme)
+sculpt-failed-title = Scultura non riuscita
 sculpt-failed = Questo livello non si scolpisce: { $detail }
 sculpt-worker-stopped = Worker di scultura fermo: { $detail }
 sculpt-preparing = Preparazione della scultura…

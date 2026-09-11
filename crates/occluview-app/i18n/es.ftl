@@ -644,6 +644,7 @@ sculpt-armed-smooth = Suavizar: arrastra para relajar, Shift fuerza
 sculpt-off = Esculpido off
 sculpt-applied-undo = Esculpido aplicado (Ctrl+Z deshace)
 sculpt-applied-locked = Esculpido aplicado (sin deshacer: instantánea enorme)
+sculpt-failed-title = Esculpido fallido
 sculpt-failed = No se puede esculpir esta capa: { $detail }
 sculpt-worker-stopped = Proceso de esculpido detenido: { $detail }
 sculpt-preparing = Preparando el esculpido…

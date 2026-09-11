@@ -644,6 +644,7 @@ sculpt-armed-smooth = Lisser : glisser pour détendre, Shift force
 sculpt-off = Sculpture off
 sculpt-applied-undo = Sculpture appliquée (Ctrl+Z annule)
 sculpt-applied-locked = Sculpture appliquée (non annulable : instantané énorme)
+sculpt-failed-title = Sculpture échouée
 sculpt-failed = Impossible de sculpter ce calque : { $detail }
 sculpt-worker-stopped = Processus de sculpture arrêté : { $detail }
 sculpt-preparing = Préparation de la sculpture…

@@ -736,6 +736,7 @@ sculpt-armed-smooth = Сгладить: перетаскивайте для ра
 sculpt-off = Скульптинг выкл
 sculpt-applied-undo = Скульптинг применён (Ctrl+Z отменяет)
 sculpt-applied-locked = Скульптинг применён (без отмены: снимок слишком велик)
+sculpt-failed-title = Скульптинг не выполнен
 sculpt-failed = Скульптинг недоступен для этого слоя: { $detail }
 sculpt-worker-stopped = Воркер скульптинга остановлен: { $detail }
 sculpt-preparing = Подготовка скульптинга…

@@ -648,6 +648,7 @@ sculpt-armed-smooth = Smooth: drag to relax, hold Shift to force it
 sculpt-off = Sculpt off
 sculpt-applied-undo = Sculpt applied (Ctrl+Z undoes)
 sculpt-applied-locked = Sculpt applied (not undoable: snapshot too large)
+sculpt-failed-title = Sculpt failed
 sculpt-failed = Cannot sculpt this layer: { $detail }
 sculpt-worker-stopped = Sculpt worker stopped: { $detail }
 sculpt-preparing = Preparing sculpt brush…
