@@ -6,6 +6,7 @@
 use glam::Vec3;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::brush_csr::Csr;
 
@@ -22,13 +23,23 @@ pub(crate) fn scope_area_normals(
     incident_triangles: &Csr,
     indices: &[u32],
     positions: &[Vec3],
-) -> Vec<Vec3> {
+    cancel: Option<&AtomicBool>,
+) -> Option<Vec<Vec3>> {
+    if is_cancelled(cancel) {
+        return None;
+    }
     let vertex_count = positions.len();
-    scope
+    let normals: Vec<Vec3> = scope
         .par_iter()
         .map(|&vertex_id| {
+            if is_cancelled(cancel) {
+                return Vec3::ZERO;
+            }
             let mut sum = Vec3::ZERO;
             for &triangle_index in incident_triangles.row(vertex_id) {
+                if is_cancelled(cancel) {
+                    return Vec3::ZERO;
+                }
                 let base = triangle_index as usize * 3;
                 let Some(slice) = indices.get(base..base + 3) else {
                     continue;
@@ -44,7 +55,12 @@ pub(crate) fn scope_area_normals(
             }
             sum
         })
-        .collect()
+        .collect();
+    (!is_cancelled(cancel)).then_some(normals)
+}
+
+fn is_cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
 }
 
 /// Most Laplacian passes a single forced (Shift) dab runs. High so Shift
@@ -249,24 +265,39 @@ pub(crate) fn on_flipped_triangle(
 /// Recompute `max_step` for `touched` from current positions (shortest incident
 /// edge, then the soup-cluster minimum), keeping the anti-inversion budget in
 /// step with the moved geometry instead of stale prepare-time edges.
-pub(crate) fn refresh_step_budget(
-    touched: &[usize],
-    positions: &[Vec3],
-    adjacency: &Csr,
-    siblings: &Csr,
-    max_step: &mut [f32],
-) {
+pub(crate) fn refresh_step_budget(touched: &[usize], inputs: &mut StepBudgetInputs<'_>) -> bool {
     for &vertex_id in touched {
-        max_step[vertex_id] =
-            shortest_incident_edge(positions, adjacency.row(vertex_id), positions[vertex_id]);
-    }
-    for &vertex_id in touched {
-        let mut budget = max_step[vertex_id];
-        for &sibling in siblings.row(vertex_id) {
-            budget = budget.min(max_step[sibling as usize]);
+        if is_cancelled(inputs.cancel) {
+            return false;
         }
-        max_step[vertex_id] = budget;
+        inputs.max_step[vertex_id] = shortest_incident_edge(
+            inputs.positions,
+            inputs.adjacency.row(vertex_id),
+            inputs.positions[vertex_id],
+        );
     }
+    for &vertex_id in touched {
+        if is_cancelled(inputs.cancel) {
+            return false;
+        }
+        let mut budget = inputs.max_step[vertex_id];
+        for &sibling in inputs.siblings.row(vertex_id) {
+            if is_cancelled(inputs.cancel) {
+                return false;
+            }
+            budget = budget.min(inputs.max_step[sibling as usize]);
+        }
+        inputs.max_step[vertex_id] = budget;
+    }
+    true
+}
+
+pub(crate) struct StepBudgetInputs<'a> {
+    pub(crate) positions: &'a [Vec3],
+    pub(crate) adjacency: &'a Csr,
+    pub(crate) siblings: &'a Csr,
+    pub(crate) max_step: &'a mut [f32],
+    pub(crate) cancel: Option<&'a AtomicBool>,
 }
 
 /// Hermite smoothstep ramping 0→1 as `t` goes 0→`edge`, then held at 1.

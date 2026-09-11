@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 
 use super::{cancellation_requested, BrushSession};
-use crate::brush_math::refresh_step_budget;
+use crate::brush_math::{refresh_step_budget, StepBudgetInputs};
 use crate::EditVertex;
 
 /// Target edge length under the brush, as a fraction of the dab radius — the
@@ -96,7 +96,9 @@ impl BrushSession {
         let split_above = target * SPLIT_HYSTERESIS;
         let split_above_squared = split_above * split_above;
         let radius_squared = radius * radius;
-        self.sync_grid(radius);
+        if !self.sync_grid(radius, cancel) {
+            return None;
+        }
 
         let Some(seed) = self.refinement_seed(center, radius, split_above) else {
             return Some(0);
@@ -146,7 +148,7 @@ impl BrushSession {
         if cancellation_requested(cancel) {
             return None;
         }
-        self.settle_new_vertices(&fresh);
+        self.settle_new_vertices(&fresh, cancel)?;
         (!cancellation_requested(cancel)).then_some(self.vertices.len() - started_with)
     }
 
@@ -577,10 +579,16 @@ impl BrushSession {
     /// Bring the derived per-vertex state back in step after a dab's splits:
     /// the anti-inversion step budget over the new vertices and their rings,
     /// and the normals of everything whose incident faces changed.
-    fn settle_new_vertices(&mut self, fresh: &[usize]) {
+    fn settle_new_vertices(&mut self, fresh: &[usize], cancel: Option<&AtomicBool>) -> Option<()> {
+        if cancellation_requested(cancel) {
+            return None;
+        }
         let generation = self.next_stamp();
         let mut scope: Vec<usize> = Vec::with_capacity(fresh.len() * 5);
         for &vertex_id in fresh {
+            if cancellation_requested(cancel) {
+                return None;
+            }
             if self.component_stamp[vertex_id] != generation {
                 self.component_stamp[vertex_id] = generation;
                 scope.push(vertex_id);
@@ -593,14 +601,18 @@ impl BrushSession {
                 }
             }
         }
-        refresh_step_budget(
-            &scope,
-            &self.positions,
-            &self.adjacency,
-            &self.position_siblings,
-            &mut self.max_step,
-        );
-        let _ = self.recompute_normals_near(&scope);
+        let mut step_budget = StepBudgetInputs {
+            positions: &self.positions,
+            adjacency: &self.adjacency,
+            siblings: &self.position_siblings,
+            max_step: &mut self.max_step,
+            cancel,
+        };
+        if !refresh_step_budget(&scope, &mut step_budget) {
+            return None;
+        }
+        self.recompute_normals_near(&scope, cancel)?;
+        Some(())
     }
 
     /// Hand out the next triangle-stamp generation, resetting on the rare wrap.
