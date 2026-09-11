@@ -81,6 +81,48 @@ fn poisoned_live_shadow_stops_worker_without_publishing_a_stale_update() {
 }
 
 #[test]
+fn poisoned_worker_publication_is_reported_instead_of_retried_forever() {
+    let worker = test_worker();
+    thread::scope(|scope| {
+        let poison = scope.spawn(|| {
+            let _guard = worker
+                .state
+                .publish_boundary
+                .lock()
+                .expect("publication lock");
+            panic!("test poison");
+        });
+        assert!(poison.join().is_err());
+    });
+
+    assert!(worker.take_ordered_outputs().is_err());
+    assert_eq!(
+        worker.take_error(),
+        Some(SculptFailure::WorkerStatePoisoned)
+    );
+}
+
+#[test]
+fn poisoned_command_queue_is_reported_to_the_worker_owner() {
+    let error = Arc::new(Mutex::new(None));
+    let queue = SculptCommandQueue::with_error(Arc::clone(&error));
+    thread::scope(|scope| {
+        let poison = scope.spawn(|| {
+            let _guard = queue.state.lock().expect("queue lock");
+            panic!("test poison");
+        });
+        assert!(poison.join().is_err());
+    });
+    queue.wake.notify_one();
+
+    assert!(queue.pop().is_none());
+    assert_eq!(
+        error.lock().expect("worker error").as_ref(),
+        Some(&SculptFailure::WorkerStatePoisoned)
+    );
+}
+
+#[test]
 fn command_queue_has_a_global_bound_across_rapid_strokes() {
     let queue = SculptCommandQueue::new();
     let stroke = BrushStroke {

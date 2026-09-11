@@ -34,6 +34,7 @@ fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &Sculpt
         }
         SculptFailure::MissingUndoBaseline => locale.text("sculpt-failure-missing-undo-baseline"),
         SculptFailure::ShadowPoisoned => locale.text("sculpt-failure-shadow-poisoned"),
+        SculptFailure::WorkerStatePoisoned => locale.text("sculpt-failure-worker-state-poisoned"),
         SculptFailure::VertexCountChanged => locale.text("sculpt-failure-vertex-count-changed"),
         SculptFailure::TopologyRebuild { detail } => locale.tr_with(
             "sculpt-failure-topology-rebuild",
@@ -77,11 +78,25 @@ impl OccluViewApp {
         // Rebuilds, sparse updates, and completions are one ordered snapshot:
         // a worker publication cannot land between separate queue drains and
         // leave a completion or sparse write ahead of its topology rebuild.
-        let Ok((mut rebuilds, completions, update)) = worker.take_ordered_outputs() else {
-            // A worker publication or frame-path drain is in progress. Retry
-            // the whole boundary on the next repaint.
-            ctx.request_repaint();
-            return;
+        let (mut rebuilds, completions, update) = match worker.take_ordered_outputs() {
+            Ok(outputs) => outputs,
+            Err(()) => {
+                if let Some(failure) = worker.take_error() {
+                    let detail = describe_sculpt_failure(&self.ui.locale, &failure);
+                    self.ui.status_message = Some(
+                        self.ui
+                            .locale
+                            .tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
+                    );
+                    self.invalidate_sculpt_session_silent();
+                }
+                // A worker publication or frame-path drain is in progress;
+                // retry the whole boundary on the next repaint. A poisoned
+                // lock has already left a typed error above, so this branch
+                // does not spin forever without an operator-visible outcome.
+                ctx.request_repaint();
+                return;
+            }
         };
         let updates = update.into_iter().collect::<Vec<_>>();
         let had_rebuilds = !rebuilds.is_empty();
