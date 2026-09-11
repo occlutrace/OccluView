@@ -2,8 +2,8 @@ use super::*;
 use std::path::PathBuf;
 
 #[test]
-fn source_budget_guard_ignores_generated_target_directories() {
-    let root = std::env::temp_dir().join(format!("occluview-line-budget-{}", std::process::id()));
+fn source_collector_ignores_generated_target_directories() {
+    let root = std::env::temp_dir().join(format!("occluview-source-scan-{}", std::process::id()));
     let collected = (|| -> Result<Vec<PathBuf>, String> {
         std::fs::create_dir_all(root.join("target"))
             .map_err(|error| format!("cannot create fixture: {error}"))?;
@@ -73,10 +73,8 @@ fn edit_mesh_entry_opens_one_scene_wide_session() {
 
 #[test]
 fn multi_layer_session_state_lives_in_its_own_module() {
-    // Line budgets are enforced for every crate by
-    // `rust_source_files_stay_within_the_physical_line_budget` above, which
-    // walks the tree instead of naming sixteen files that can be renamed out
-    // from under it. What the walk cannot see is the split itself.
+    // Keep the multi-layer selection state separate from the action executor;
+    // this guard protects the module boundary rather than implementation text.
     let edit_mode = repo_source_file("src/edit_mode/mod.rs");
     assert!(
         edit_mode.contains("mod selection_set;"),
