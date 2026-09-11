@@ -149,6 +149,7 @@ fn trustworthy_report() -> IcpReport {
         inlier_ratio: 0.8,
         coverage: 0.8,
         rms: 0.02,
+        geometric_rms: 0.02,
         median_abs: 0.01,
         p95_abs: 0.05,
         weak_rot_axes: [false; 3],
@@ -159,6 +160,7 @@ fn trustworthy_report() -> IcpReport {
 #[test]
 fn only_converged_full_rank_coverage_can_authorize_refinement() {
     assert!(trustworthy_report().is_trustworthy_refinement());
+    assert!(trustworthy_report().is_trustworthy_refinement_for(&settings()));
 
     let mut stalled = trustworthy_report();
     stalled.converged = false;
@@ -171,6 +173,32 @@ fn only_converged_full_rank_coverage_can_authorize_refinement() {
     let mut rank_deficient = trustworthy_report();
     rank_deficient.weak_trans_axes[0] = true;
     assert!(!rank_deficient.is_trustworthy_refinement());
+}
+
+#[test]
+fn a_stationary_apart_patch_cannot_authorize_refinement() {
+    let mut apart = trustworthy_report();
+    apart.geometric_rms = 1.01;
+
+    assert!(
+        !apart.is_trustworthy_refinement_for(&settings()),
+        "a 1.01 mm geometric residual must fail the 1.0 mm radius-derived quality gate"
+    );
+    apart.geometric_rms = 0.99;
+    assert!(
+        apart.is_trustworthy_refinement_for(&settings()),
+        "a residual below the configured quality limit remains eligible"
+    );
+
+    let narrow = RefineSettings {
+        influence_radius_mm: 0.2,
+        ..settings()
+    };
+    apart.geometric_rms = 0.11;
+    assert!(
+        !apart.is_trustworthy_refinement_for(&narrow),
+        "the quality limit must follow the operator's search radius"
+    );
 }
 
 fn soup<'a>(positions: &'a [f32], indices: &'a [u32]) -> Soup<'a> {
@@ -242,29 +270,21 @@ fn refine_leaves_an_already_seated_pose_alone() {
 }
 
 #[test]
-fn refine_reports_a_weak_axis_on_a_flat_sheet() {
+fn refine_rejects_a_flat_sheet_as_ambiguous() {
     let (positions, indices) = flat(16, 1.0);
     let mesh = soup(&positions, &indices);
     let index = SurfaceIndex::build(mesh).unwrap();
 
-    let report = refine(
+    let result = refine(
         mesh,
         &index,
         Rigid::IDENTITY,
         &settings(),
         &CancelFlag::new(),
     )
-    .unwrap();
+    .expect_err("a flat sheet has equally supported lateral poses");
 
-    assert!(
-        report.weak_trans_axes[0] || report.weak_trans_axes[1],
-        "a flat sheet slides in plane and must say so: {:?}",
-        report.weak_trans_axes
-    );
-    assert!(
-        !report.weak_trans_axes[2],
-        "the sheet normal direction is well determined"
-    );
+    assert_eq!(result, FitRejection::Ambiguous);
 }
 
 #[test]

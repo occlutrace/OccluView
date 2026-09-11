@@ -24,16 +24,30 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
     if count == 0 || budget == 0 {
         return Vec::new();
     }
-    let stride = count.div_ceil(budget).max(1);
-    let mut out = Vec::with_capacity(count.div_ceil(stride));
-    let mut vertex = 0usize;
-    while vertex < count {
-        if !soup.is_excluded(vertex) && vertex_at(soup.positions, vertex).is_some() {
+    // Count usable vertices first. Computing the stride from the raw vertex
+    // count let a periodic exclusion mask alias every sampled index away,
+    // returning no evidence even while valid triangles remained between the
+    // stride positions. A second linear pass keeps the output bounded without
+    // allocating a temporary vector containing the whole mesh.
+    let usable = (0..count)
+        .filter(|&vertex| !soup.is_excluded(vertex) && vertex_at(soup.positions, vertex).is_some())
+        .count();
+    if usable == 0 {
+        return Vec::new();
+    }
+    let stride = usable.div_ceil(budget).max(1);
+    let mut out = Vec::with_capacity(usable.div_ceil(stride));
+    let mut usable_seen = 0usize;
+    for vertex in 0..count {
+        if soup.is_excluded(vertex) || vertex_at(soup.positions, vertex).is_none() {
+            continue;
+        }
+        if usable_seen.is_multiple_of(stride) {
             if let Ok(index) = u32::try_from(vertex) {
                 out.push(index);
             }
         }
-        vertex += stride;
+        usable_seen += 1;
     }
     out
 }
@@ -155,6 +169,22 @@ mod tests {
         assert!(!sampled.contains(&0), "a NaN vertex was sampled");
         assert!(!sampled.contains(&1), "a masked vertex was sampled");
         assert_eq!(sampled, vec![2, 3]);
+    }
+
+    #[test]
+    fn sampling_refills_after_a_stride_would_alias_the_mask() {
+        let positions = vec![0.0; 100 * 3];
+        let mut mask = vec![crate::EXCLUDED; 100];
+        mask[1] = crate::INCLUDED;
+        let soup = Soup {
+            positions: &positions,
+            indices: &[],
+            mask: Some(&mask),
+        };
+
+        let sampled = sample_vertices(soup, 8);
+
+        assert_eq!(sampled, vec![1]);
     }
 
     #[test]

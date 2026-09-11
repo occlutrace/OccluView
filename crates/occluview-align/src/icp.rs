@@ -47,6 +47,12 @@ const MIN_FORWARD_COVERAGE_FRACTION: f64 = 0.01;
 /// for a local correspondence set, but it is not enough to authorize a pose.
 const MIN_REFINEMENT_COVERAGE_FRACTION: f64 = 0.05;
 
+/// A stationary local patch must still sit close to the fixed surface before a
+/// pose can authorize a heatmap. The limit is derived from the operator's
+/// correspondence radius in [`IcpReport::is_trustworthy_refinement_for`], so
+/// it follows the physical search setting rather than a mesh-size guess.
+const MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION: f64 = 0.5;
+
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
 const HUBER_FACTOR: f64 = 1.345;
@@ -141,6 +147,10 @@ pub struct IcpReport {
     pub coverage: f64,
     /// Root-mean-square point-to-plane residual, in millimetres.
     pub rms: f64,
+    /// Root-mean-square Euclidean distance to the matched fixed surface, in
+    /// millimetres. Unlike point-to-plane RMS this catches a tangent-slide
+    /// local match that has a tiny normal error but is geometrically apart.
+    pub geometric_rms: f64,
     /// Median absolute residual, in millimetres.
     pub median_abs: f64,
     /// 95th-percentile absolute residual, in millimetres.
@@ -163,6 +173,22 @@ impl IcpReport {
     /// `Ok(report)` as refined.
     #[must_use]
     pub fn is_trustworthy_refinement(&self) -> bool {
+        self.is_trustworthy_refinement_with_limit(0.5)
+    }
+
+    /// Apply the same trust gate with the operator's correspondence radius.
+    ///
+    /// A small accepted step is only convergence of the optimizer, not proof
+    /// that it found the intended surface. The geometric RMS floor rejects a
+    /// stationary but still-apart local patch before the application can mark
+    /// it as refined and paint a misleading map.
+    #[must_use]
+    pub fn is_trustworthy_refinement_for(&self, settings: &RefineSettings) -> bool {
+        let limit = settings.influence_radius_mm.abs() * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
+        self.is_trustworthy_refinement_with_limit(limit)
+    }
+
+    fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {
         self.converged
             && self.inliers >= u32::try_from(MIN_CORRESPONDENCES).unwrap_or(u32::MAX)
             && self.coverage.is_finite()
@@ -171,6 +197,11 @@ impl IcpReport {
             && self.inlier_ratio > 0.0
             && self.rms.is_finite()
             && self.rms >= 0.0
+            && self.geometric_rms.is_finite()
+            && self.geometric_rms >= 0.0
+            && geometric_rms_limit.is_finite()
+            && geometric_rms_limit >= 0.0
+            && self.geometric_rms <= geometric_rms_limit
             && self.median_abs.is_finite()
             && self.p95_abs.is_finite()
             && !self.weak_rot_axes.into_iter().any(|weak| weak)
@@ -304,6 +335,7 @@ pub fn refine(
         inlier_ratio: summary.inlier_ratio,
         coverage: summary.coverage,
         rms: summary.rms,
+        geometric_rms: summary.geometric_rms,
         median_abs: summary.median_abs,
         p95_abs: summary.p95_abs,
         weak_rot_axes: summary.weak_rot_axes,
@@ -341,6 +373,7 @@ fn idle_report(start: Rigid) -> IcpReport {
         inlier_ratio: 0.0,
         coverage: 0.0,
         rms: 0.0,
+        geometric_rms: 0.0,
         median_abs: 0.0,
         p95_abs: 0.0,
         weak_rot_axes: [true; 3],
