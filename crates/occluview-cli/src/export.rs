@@ -4,7 +4,9 @@ use anyhow::{bail, Context, Result};
 use occluview_core::{fill_holes_in_mesh, MeshEditOptions, MeshEditReport};
 use occluview_formats::dispatch::read_file_with_key_provider;
 use occluview_formats::hps::RuntimeHpsKeyProvider;
-use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
+use occluview_formats::write::{
+    write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
+};
 use std::path::Path;
 
 /// Generous edge ceiling for whole-mesh Close Holes, mirroring the app button
@@ -23,7 +25,7 @@ pub(crate) fn close_holes_file(
     input: &Path,
     output: &Path,
     limit_mm: Option<f32>,
-) -> Result<MeshEditReport> {
+) -> Result<(MeshEditReport, MeshWriteReport)> {
     let mesh = read_file_with_key_provider(input, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", input.display()))?;
     let format = ExportFormat::from_output_path(output)?;
@@ -41,14 +43,14 @@ pub(crate) fn close_holes_file(
     let result =
         fill_holes_in_mesh(&mesh, None, options).with_context(|| "closing holes".to_string())?;
 
-    write_mesh_overwrite(
+    let write_report = write_mesh_overwrite(
         output,
         &result.mesh,
         format.mesh_write_format(),
         MeshWriteOptions::default(),
     )
     .with_context(|| format!("writing {}", output.display()))?;
-    Ok(result.report)
+    Ok((result.report, write_report))
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -84,18 +86,33 @@ impl ExportFormat {
     }
 }
 
-pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<ExportFormat> {
+pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<(ExportFormat, MeshWriteReport)> {
     let mesh = read_file_with_key_provider(input, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", input.display()))?;
     let format = ExportFormat::from_output_path(output)?;
-    let _report = write_mesh_overwrite(
+    let report = write_mesh_overwrite(
         output,
         &mesh,
         format.mesh_write_format(),
         MeshWriteOptions::default(),
     )
     .with_context(|| format!("writing {}", output.display()))?;
-    Ok(format)
+    Ok((format, report))
+}
+
+/// Keep lossy writer conversions visible to CLI operators without polluting
+/// stdout, whose machine-readable output is already part of the command
+/// contract.
+pub(crate) fn print_write_warnings(report: &MeshWriteReport) {
+    for warning in &report.warnings {
+        let message = match warning {
+            MeshWriteWarning::PointCloudRejectedForStl => "point cloud omitted from STL",
+            MeshWriteWarning::VertexColorsNotWritten => "vertex colors not included",
+            MeshWriteWarning::UvsNotWritten => "UVs not included",
+            MeshWriteWarning::TextureImageNotWritten => "texture image not included",
+        };
+        eprintln!("Warning: {message}");
+    }
 }
 
 #[cfg(test)]
@@ -146,8 +163,9 @@ mod tests {
         )
         .expect("seed input obj");
 
-        let format = convert_file(&input, &output).expect("convert");
+        let (format, report) = convert_file(&input, &output).expect("convert");
         assert_eq!(format, ExportFormat::Ply);
+        assert!(report.warnings.contains(&MeshWriteWarning::UvsNotWritten));
         assert!(output.exists());
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);

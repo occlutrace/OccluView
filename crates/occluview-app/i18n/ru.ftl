@@ -221,6 +221,7 @@ mesh-warning-point-cloud = облако точек пропущено для STL
 mesh-warning-vertex-colors = цвета вершин не записаны
 mesh-warning-uvs = UV не записаны
 mesh-warning-texture-image = изображение текстуры не записано
+mesh-export-warnings = Предупреждения экспорта: { $warnings }
 mesh-export-failed-title = Не удалось экспортировать слой
 mesh-export-failed-summary = Не удалось экспортировать слой: { $detail }
 

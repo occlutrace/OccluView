@@ -202,6 +202,7 @@ mesh-warning-point-cloud = point cloud omitted from STL
 mesh-warning-vertex-colors = vertex colors not included
 mesh-warning-uvs = UVs not included
 mesh-warning-texture-image = texture image not included
+mesh-export-warnings = Export warnings: { $warnings }
 mesh-export-failed-title = Could not export layer
 mesh-export-failed-summary = Could not export layer: { $detail }
 

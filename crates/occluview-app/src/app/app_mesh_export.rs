@@ -455,7 +455,21 @@ fn default_layer_export_name(
     format!("{stem}-edited.{}", mesh_write_extension(format))
 }
 
-fn mesh_export_warning_summary(
+pub(super) fn append_mesh_export_warnings(
+    mut status: String,
+    warnings: Option<&str>,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let Some(warnings) = warnings else {
+        return status;
+    };
+    let suffix = locale.tr_with("mesh-export-warnings", &[("warnings", warnings)]);
+    status.push_str(" · ");
+    status.push_str(&suffix);
+    status
+}
+
+pub(super) fn mesh_export_warning_summary(
     warnings: &[MeshWriteWarning],
     locale: &crate::i18n::LocaleManager,
 ) -> Option<String> {
@@ -621,6 +635,19 @@ mod tests {
         assert_eq!(sanitize_filename_stem("CON"), "_CON");
         assert_eq!(sanitize_filename_stem("lpt1.final"), "_lpt1.final");
         assert_eq!(sanitize_filename_stem("COM10"), "COM10");
+    }
+
+    #[test]
+    fn export_status_can_carry_writer_warnings_without_dropping_the_success() {
+        let locale = crate::i18n::LocaleManager::for_tests();
+        let rendered = append_mesh_export_warnings(
+            "Scene saved".to_owned(),
+            Some("UVs not included"),
+            &locale,
+        );
+
+        assert!(rendered.starts_with("Scene saved"));
+        assert!(rendered.contains("UVs not included"));
     }
 
     #[test]

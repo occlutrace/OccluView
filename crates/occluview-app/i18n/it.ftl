@@ -199,6 +199,7 @@ mesh-warning-point-cloud = nuvola di punti omessa per STL
 mesh-warning-vertex-colors = colori dei vertici non inclusi
 mesh-warning-uvs = UV non inclusi
 mesh-warning-texture-image = immagine texture non inclusa
+mesh-export-warnings = Avvisi di esportazione: { $warnings }
 mesh-export-failed-title = Export livello fallito
 mesh-export-failed-summary = Export livello fallito: { $detail }
 

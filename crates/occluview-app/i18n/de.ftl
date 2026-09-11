@@ -199,6 +199,7 @@ mesh-warning-point-cloud = Punktwolke für STL ausgelassen
 mesh-warning-vertex-colors = Vertexfarben nicht geschrieben
 mesh-warning-uvs = UVs nicht geschrieben
 mesh-warning-texture-image = Texturbild nicht geschrieben
+mesh-export-warnings = Exportwarnungen: { $warnings }
 mesh-export-failed-title = Ebene konnte nicht exportiert werden
 mesh-export-failed-summary = Ebene konnte nicht exportiert werden: { $detail }
 

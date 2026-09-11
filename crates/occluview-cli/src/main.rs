@@ -178,7 +178,8 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
     }
 
     let output = output.ok_or_else(|| anyhow!("convert: missing -o <output-path>"))?;
-    let format = export::convert_file(&input, &output)?;
+    let (format, report) = export::convert_file(&input, &output)?;
+    export::print_write_warnings(&report);
     eprintln!(
         "Converted {} -> {} ({format:?})",
         input.display(),
@@ -219,7 +220,8 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
     }
     let output = output.ok_or_else(|| anyhow!("close-holes: missing -o <output-path>"))?;
 
-    let report = export::close_holes_file(&input, &output, limit_mm)?;
+    let (report, write_report) = export::close_holes_file(&input, &output, limit_mm)?;
+    export::print_write_warnings(&write_report);
     println!("File:              {}", input.display());
     println!(
         "Input:             verts={} tris={}",
