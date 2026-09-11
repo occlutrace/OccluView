@@ -659,6 +659,52 @@ fn best_fit_finds_a_partial_patch_inside_a_large_connected_scan() {
 }
 
 #[test]
+fn best_fit_recovers_a_small_patch_when_a_center_seed_has_false_coverage() {
+    // Keep the fixed surface small enough that the center hypothesis can see a
+    // neighbouring window through the 2 mm influence radius. The moving mesh
+    // is an exact 8 x 8 crop from the fixed surface, re-quoted at its own
+    // origin, so the only correct answer is the crop translation.
+    let fixed_side = 24usize;
+    let step = 0.5_f32;
+    let (fixed, fixed_indices) = dome(fixed_side, step);
+    let patch_side = 8usize;
+    let patch_origin = DVec3::new(5.0, 5.0, 0.0);
+    let mut moving = Vec::with_capacity((patch_side + 1) * (patch_side + 1) * 3);
+    let fixed_stride = fixed_side + 1;
+    for j in 0..=patch_side {
+        for i in 0..=patch_side {
+            let fixed_i = i + (patch_origin.x / f64::from(step)) as usize;
+            let fixed_j = j + (patch_origin.y / f64::from(step)) as usize;
+            let fixed_vertex = (fixed_j * fixed_stride + fixed_i) * 3;
+            moving.extend_from_slice(&[i as f32 * step, j as f32 * step, fixed[fixed_vertex + 2]]);
+        }
+    }
+    let moving_indices = grid_indices(patch_side);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+
+    let report = refine(
+        soup(&moving, &moving_indices),
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings(),
+        &CancelFlag::new(),
+    )
+    .unwrap_or_else(|rejection| {
+        unreachable!("Best fit should recover the exact moving crop: {rejection:?}")
+    });
+
+    assert!(
+        (report.rigid.translation - patch_origin).length() < 0.1,
+        "the false center coverage kept the crop sideways: {:?}",
+        report.rigid.translation
+    );
+    assert!(
+        report.is_trustworthy_refinement(),
+        "the recovered crop must be eligible for the refined result: {report:?}"
+    );
+}
+
+#[test]
 fn a_fit_that_runs_out_of_iterations_never_authorizes_a_map() {
     let (positions, indices) = dome(24, 0.5);
     let mesh = soup(&positions, &indices);
