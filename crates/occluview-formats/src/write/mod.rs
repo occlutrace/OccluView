@@ -334,11 +334,54 @@ fn create_export_temp(path: &Path) -> Result<(std::path::PathBuf, File), FormatE
 fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
     // `hard_link` fails with AlreadyExists instead of replacing a file, which
     // is the filesystem-level equivalent of the public create-new contract.
-    std::fs::hard_link(temporary, destination)?;
-    // The destination now owns the complete inode. A cleanup failure must not
-    // turn a successfully published export into a false failure.
-    let _ = std::fs::remove_file(temporary);
-    Ok(())
+    match std::fs::hard_link(temporary, destination) {
+        Ok(()) => {
+            // The destination now owns the complete inode. A cleanup failure
+            // must not turn a successfully published export into a false
+            // failure.
+            let _ = std::fs::remove_file(temporary);
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(error),
+        // exFAT, vfat, and link-disabled network mounts have no `link(2)` at
+        // all, so the publish step failed for a reason that has nothing to do
+        // with the destination name. The create-new contract is about the
+        // name, not about how it is claimed: fall back to reserving the
+        // destination exclusively and copying the finished bytes in.
+        Err(_) => publish_by_exclusive_copy(temporary, destination),
+    }
+}
+
+/// Publish a finished temporary into a reserved destination name, without
+/// links.
+///
+/// This is the fallback for filesystems that cannot hard-link. It keeps the
+/// contract that matters — an existing destination is never replaced, and a
+/// collision still reports [`std::io::ErrorKind::AlreadyExists`] — at the cost
+/// of atomicity: the destination becomes visible while it is being filled, so
+/// a crash mid-copy can leave a partial export where the link path would have
+/// left none. Refusing to export into a writable folder the operator picked is
+/// the worse failure.
+#[cfg(not(windows))]
+fn publish_by_exclusive_copy(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    let mut source = File::open(temporary)?;
+    let mut target = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    let copied = std::io::copy(&mut source, &mut target).and_then(|_| target.sync_all());
+    drop(target);
+    match copied {
+        Ok(()) => {
+            let _ = std::fs::remove_file(temporary);
+            Ok(())
+        }
+        Err(error) => {
+            // A half-written file must not be mistaken for the export.
+            let _ = std::fs::remove_file(destination);
+            Err(error)
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -601,6 +644,43 @@ mod tests {
             .expect("read directory")
             .filter_map(Result::ok)
             .all(|entry| { !entry.file_name().to_string_lossy().contains(".occluview-") }));
+    }
+
+    /// Some filesystems cannot hard-link at all. The fallback has to keep the
+    /// contract that matters there: an existing destination is never replaced,
+    /// and a collision is still reported as such so the batch exporter can
+    /// advance to the next numbered name.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_publish_without_link_support_still_never_replaces_a_destination() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let temporary = directory.path().join("staged.tmp");
+        let destination = directory.path().join("scan.obj");
+        std::fs::write(&temporary, b"complete export").expect("stage temporary");
+
+        super::publish_by_exclusive_copy(&temporary, &destination).expect("first publish");
+        assert_eq!(
+            std::fs::read(&destination).expect("read export"),
+            b"complete export"
+        );
+        assert!(
+            !temporary.exists(),
+            "a published export consumes its staged temporary"
+        );
+
+        std::fs::write(&temporary, b"second export").expect("stage second temporary");
+        let error = super::publish_by_exclusive_copy(&temporary, &destination)
+            .expect_err("an existing destination is never replaced");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "a collision must stay classifiable for the batch retry"
+        );
+        assert_eq!(
+            std::fs::read(&destination).expect("read export"),
+            b"complete export",
+            "the first export survives the second publish"
+        );
     }
 
     #[test]
