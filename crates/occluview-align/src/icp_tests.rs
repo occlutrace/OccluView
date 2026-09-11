@@ -589,7 +589,6 @@ fn a_refine_that_cannot_prove_an_improvement_is_refused() {
     let outcome = refine(mesh, &index, start, &limited, &CancelFlag::new());
 
     let trustworthy = match &outcome {
-        Err(FitRejection::NoImprovement) => false,
         Ok(report) => report.is_trustworthy_refinement(),
         Err(_) => false,
     };

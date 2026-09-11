@@ -164,7 +164,7 @@ impl IcpReport {
     #[must_use]
     pub fn is_trustworthy_refinement(&self) -> bool {
         self.converged
-            && self.inliers >= MIN_CORRESPONDENCES as u32
+            && self.inliers >= u32::try_from(MIN_CORRESPONDENCES).unwrap_or(u32::MAX)
             && self.coverage.is_finite()
             && self.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
             && self.inlier_ratio.is_finite()
