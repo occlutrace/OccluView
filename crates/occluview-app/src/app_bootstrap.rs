@@ -82,6 +82,7 @@ fn real_main() -> Result<()> {
             ));
         }
     }
+    validate_graphics_environment()?;
     if args.diagnostics {
         append_startup_stage("diagnostics");
         let details = graphics_diagnostics_report();
@@ -89,8 +90,6 @@ fn real_main() -> Result<()> {
         show_diagnostics_message(report_path.as_deref());
         return Ok(());
     }
-
-    validate_graphics_environment()?;
 
     // Shape, not identity. This line goes into the ring buffer that
     // `write_crash_report` dumps to disk, and a dental scan's path is the case
@@ -122,6 +121,9 @@ fn real_main() -> Result<()> {
     // Capture it before eframe/winit runs so nothing consumes the env first.
     let startup_activation_token = single_instance::capture_activation_token();
 
+    append_startup_stage("graphics-preflight");
+    preflight_graphics_device()?;
+    append_startup_stage("graphics-preflight-ok");
     append_startup_stage("graphics-init");
     let native_options = native_options();
 
@@ -209,6 +211,15 @@ fn native_options() -> eframe::NativeOptions {
     }
 }
 
+fn native_graphics_profile() -> (wgpu::InstanceDescriptor, wgpu::PowerPreference) {
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(create_new) =
+        eframe::egui_wgpu::WgpuSetup::without_display_handle()
+    else {
+        unreachable!("native graphics setup must create its own wgpu instance");
+    };
+    (create_new.instance_descriptor, create_new.power_preference)
+}
+
 /// Select the best adapter that can actually present to the desktop surface.
 /// The stock eframe selector stops at its first request-adapter result; a
 /// hybrid laptop can enumerate a software or headless adapter before the
@@ -273,16 +284,82 @@ fn adapter_device_score(
 }
 
 fn validate_graphics_environment() -> Result<()> {
-    let Some(raw_backends) = std::env::var_os("WGPU_BACKEND") else {
-        return Ok(());
-    };
-    let raw_backends = raw_backends.to_string_lossy();
-    if wgpu::Backends::from_comma_list(&raw_backends).is_empty() {
-        return Err(anyhow::anyhow!(
-            "WGPU_BACKEND={raw_backends:?} selects no known graphics backend; unset it or use vulkan, dx12, metal, or gl"
-        ));
+    let raw_backends = std::env::var_os("WGPU_BACKEND");
+    let raw_power_preference = std::env::var_os("WGPU_POWER_PREF");
+    validate_graphics_environment_values(raw_backends.as_deref(), raw_power_preference.as_deref())
+}
+
+fn validate_graphics_environment_values(
+    raw_backends: Option<&std::ffi::OsStr>,
+    raw_power_preference: Option<&std::ffi::OsStr>,
+) -> Result<()> {
+    if let Some(raw_backends) = raw_backends {
+        let raw_backends = raw_backends.to_string_lossy();
+        if wgpu::Backends::from_comma_list(&raw_backends).is_empty() {
+            return Err(anyhow::anyhow!(
+                "WGPU_BACKEND={raw_backends:?} selects no known graphics backend; unset it or use vulkan, dx12, metal, or gl"
+            ));
+        }
+    }
+    if let Some(raw_power_preference) = raw_power_preference {
+        let raw_power_preference = raw_power_preference.to_string_lossy();
+        if !matches!(
+            raw_power_preference.to_ascii_lowercase().as_str(),
+            "low" | "high" | "none"
+        ) {
+            return Err(anyhow::anyhow!(
+                "WGPU_POWER_PREF={raw_power_preference:?} is invalid; unset it or use low, high, or none"
+            ));
+        }
     }
     Ok(())
+}
+
+/// Request a device before creating the desktop window so an unsupported
+/// driver becomes a visible startup error instead of an eframe callback that
+/// never reaches the application creator. Try every adapter in preference
+/// order: a broken discrete driver must not hide a usable integrated or CPU
+/// adapter on a colleague's laptop.
+fn preflight_graphics_device() -> Result<()> {
+    let (descriptor, power_preference) = native_graphics_profile();
+    let backends = descriptor.backends;
+    let instance = wgpu::Instance::new(descriptor);
+    let mut adapters = pollster::block_on(instance.enumerate_adapters(backends));
+    adapters.sort_by(|left, right| {
+        let left_info = left.get_info();
+        let right_info = right.get_info();
+        adapter_device_score(right_info.device_type, power_preference).cmp(&adapter_device_score(
+            left_info.device_type,
+            power_preference,
+        ))
+    });
+    if adapters.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no graphics adapter was found for the selected backend; run `occluview --diagnostics` and install or update the GPU driver"
+        ));
+    }
+
+    let mut failures = Vec::new();
+    for adapter in adapters {
+        let info = adapter.get_info();
+        match pollster::block_on(adapter.request_device(&device_descriptor_for_adapter(&adapter))) {
+            Ok((_device, _queue)) => {
+                tracing::info!(
+                    adapter = %info.name,
+                    backend = ?info.backend,
+                    device_type = ?info.device_type,
+                    power_preference = ?power_preference,
+                    "graphics device preflight passed"
+                );
+                return Ok(());
+            }
+            Err(error) => failures.push(format!("{} ({:?}): {error}", info.name, info.backend)),
+        }
+    }
+    Err(anyhow::anyhow!(
+        "no graphics adapter could create a device; run `occluview --diagnostics`; attempts: {}",
+        failures.join("; ")
+    ))
 }
 
 /// Build the smallest valid device request for the selected adapter while
@@ -455,6 +532,26 @@ fn startup_journal_path() -> Option<PathBuf> {
     app_paths::app_state_dir().map(|base| base.join(STARTUP_JOURNAL_FILE))
 }
 
+fn startup_journal_paths() -> Vec<PathBuf> {
+    startup_journal_paths_from(
+        startup_journal_path(),
+        std::env::temp_dir()
+            .join("OccluView")
+            .join(STARTUP_JOURNAL_FILE),
+    )
+}
+
+fn startup_journal_paths_from(primary: Option<PathBuf>, fallback: PathBuf) -> Vec<PathBuf> {
+    let mut paths = Vec::with_capacity(2);
+    if let Some(primary) = primary {
+        paths.push(primary);
+    }
+    if !paths.contains(&fallback) {
+        paths.push(fallback);
+    }
+    paths
+}
+
 fn startup_stage_line(stage: &str, stamp_nanos: u128, pid: u32) -> String {
     let safe_stage: String = stage
         .chars()
@@ -475,20 +572,21 @@ fn startup_stage_line(stage: &str, stamp_nanos: u128, pid: u32) -> String {
 /// reaches the panic hook, but the next report can still say whether the
 /// process reached logging, graphics initialization, or the window callback.
 fn append_startup_stage(stage: &str) {
-    let Some(path) = startup_journal_path() else {
-        return;
-    };
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
-    }
     let line = startup_stage_line(stage, unix_timestamp_nanos(), std::process::id());
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(file, "{line}");
+    for path in startup_journal_paths() {
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            continue;
+        }
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+            if writeln!(file, "{line}").is_ok() {
+                trim_startup_journal(&path);
+                return;
+            }
+        }
     }
-    trim_startup_journal(&path);
 }
 
 fn trim_startup_journal(path: &Path) {
@@ -513,25 +611,25 @@ fn trim_startup_journal(path: &Path) {
 }
 
 fn recent_startup_stages() -> String {
-    let Some(path) = startup_journal_path() else {
-        return String::new();
-    };
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return String::new();
-    };
-    let mut lines: Vec<&str> = contents
-        .lines()
-        .rev()
-        .take(STARTUP_JOURNAL_CAPACITY)
-        .collect();
-    if lines.is_empty() {
-        return String::new();
+    for path in startup_journal_paths() {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let mut lines: Vec<&str> = contents
+            .lines()
+            .rev()
+            .take(STARTUP_JOURNAL_CAPACITY)
+            .collect();
+        if lines.is_empty() {
+            continue;
+        }
+        lines.reverse();
+        return format!(
+            "\nRecent startup stages (oldest first):\n{}\n",
+            lines.join("\n")
+        );
     }
-    lines.reverse();
-    format!(
-        "\nRecent startup stages (oldest first):\n{}\n",
-        lines.join("\n")
-    )
+    String::new()
 }
 
 fn unix_timestamp_nanos() -> u128 {
