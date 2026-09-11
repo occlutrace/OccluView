@@ -138,6 +138,14 @@ fn validate_thumbnail_size(raw: &str) -> Result<u16> {
     Ok(size as u16)
 }
 
+fn parse_limit_mm(raw: &str) -> Result<f32> {
+    let limit: f32 = raw.parse().context("--limit-mm must be a number")?;
+    if !limit.is_finite() || limit < 0.0 {
+        return Err(anyhow!("--limit-mm must be a finite non-negative number"));
+    }
+    Ok(limit)
+}
+
 fn normalize_thumbnail_output_path(path: PathBuf) -> Result<PathBuf> {
     let path = export::normalize_output_path(path);
     let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
@@ -251,11 +259,7 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
                 output = Some(take_path_argument(args, "-o")?);
             }
             Some("--limit-mm") => {
-                limit_mm = Some(
-                    take_utf8_argument(args, "--limit-mm")?
-                        .parse()
-                        .context("--limit-mm must be a number")?,
-                );
+                limit_mm = Some(parse_limit_mm(&take_utf8_argument(args, "--limit-mm")?)?);
             }
             Some(other) => return Err(anyhow!("unknown flag: {other}")),
             None => return Err(anyhow!("unknown non-UTF-8 flag")),
@@ -454,7 +458,10 @@ mod tests {
             .map_or(source, |(production, _)| production)
     }
 
-    use super::{take_file_argument, validate_thumbnail_size, FileArgument};
+    use super::{
+        normalize_thumbnail_output_path, parse_limit_mm, take_file_argument,
+        validate_thumbnail_size, FileArgument,
+    };
     use std::ffi::OsString;
     use std::path::PathBuf;
 
@@ -564,5 +571,27 @@ mod tests {
         assert!(validate_thumbnail_size("0").is_err());
         assert!(validate_thumbnail_size("4097").is_err());
         assert!(validate_thumbnail_size("65535").is_err());
+    }
+
+    #[test]
+    fn close_holes_limit_rejects_non_finite_and_negative_values() {
+        assert_eq!(
+            parse_limit_mm("0").expect("zero is a valid hard limit"),
+            0.0
+        );
+        assert_eq!(parse_limit_mm("15.5").expect("finite limit"), 15.5);
+        assert!(parse_limit_mm("-1").is_err());
+        assert!(parse_limit_mm("NaN").is_err());
+        assert!(parse_limit_mm("inf").is_err());
+    }
+
+    #[test]
+    fn thumbnail_output_is_png_and_does_not_duplicate_its_extension() {
+        assert_eq!(
+            normalize_thumbnail_output_path(PathBuf::from("scan.png.png")).expect("png"),
+            PathBuf::from("scan.png")
+        );
+        assert!(normalize_thumbnail_output_path(PathBuf::from("scan.jpg")).is_err());
+        assert!(normalize_thumbnail_output_path(PathBuf::from("scan")).is_err());
     }
 }
