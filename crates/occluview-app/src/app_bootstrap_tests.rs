@@ -43,6 +43,47 @@ fn graphics_limits_keep_the_requested_budget_when_hardware_supports_it() {
     assert_eq!(requested.max_texture_dimension_2d, 8192);
 }
 
+fn format_features(
+    allowed_usages: wgpu::TextureUsages,
+    flags: wgpu::TextureFormatFeatureFlags,
+) -> wgpu::TextureFormatFeatures {
+    wgpu::TextureFormatFeatures {
+        allowed_usages,
+        flags,
+    }
+}
+
+#[test]
+fn live_render_contract_rejects_a_sampleable_only_depth_format() {
+    let sampleable_only = format_features(
+        wgpu::TextureUsages::TEXTURE_BINDING,
+        wgpu::TextureFormatFeatureFlags::empty(),
+    );
+
+    assert!(
+        !format_supports_live_render(sampleable_only, LIVE_SAFE_SAMPLE_COUNT, false,),
+        "sample count one is not enough when the format cannot be a render attachment"
+    );
+}
+
+#[test]
+fn live_render_contract_requires_blending_for_translucent_pipelines() {
+    let renderable_but_not_blendable = format_features(
+        wgpu::TextureUsages::RENDER_ATTACHMENT,
+        wgpu::TextureFormatFeatureFlags::empty(),
+    );
+
+    assert!(
+        !format_supports_live_render(renderable_but_not_blendable, LIVE_SAFE_SAMPLE_COUNT, true,),
+        "the live target is used by transparent and sculpt pipelines"
+    );
+    assert!(format_supports_live_render(
+        renderable_but_not_blendable,
+        LIVE_SAFE_SAMPLE_COUNT,
+        false,
+    ));
+}
+
 #[test]
 fn an_unknown_backend_override_is_detectably_empty() {
     assert!(wgpu::Backends::from_comma_list("not-a-backend").is_empty());
