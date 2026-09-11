@@ -707,6 +707,7 @@ cut-footer-thickness = Ziehen = Schwenken · Klick Kontur = Wandstärke · Recht
 align-fail-no-surface-fixed = Fixer Scan ohne brauchbare Oberfläche
 align-fail-no-surface-moving = Bewegter Scan ohne brauchbare Oberfläche
 align-fail-recolor = Messung vor dem Einfärben verworfen
+align-fail-unobservable = Die Oberfläche reicht für eine verlässliche Abweichungskarte nicht aus
 align-reject-toofew = Weitere Pfeilpaare setzen oder Scans näher platzieren
 align-reject-unpaired = Beide Seiten jedes Pfeilpaares vervollständigen
 align-reject-degenerate-plain = Matching-Punkte über die Fläche verteilen

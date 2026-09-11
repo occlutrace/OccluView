@@ -830,6 +830,7 @@ align-markings-dropped = Markings dropped — the scan's surface changed since t
 align-fail-no-surface-fixed = The fixed scan has no usable surface
 align-fail-no-surface-moving = The moving scan has no usable surface
 align-fail-recolor = The measurement was dropped before it could be coloured
+align-fail-unobservable = The surface is not observable enough for a reliable heatmap
 align-reject-toofew = Place more matching arrows or move the scans closer
 align-reject-unpaired = Complete both sides of each matching arrow
 align-reject-degenerate-plain = Spread the matching points across the surface

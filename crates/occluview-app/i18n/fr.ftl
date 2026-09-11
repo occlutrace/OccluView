@@ -827,6 +827,7 @@ align-markings-dropped = Marques jetées — la surface a changé depuis
 align-fail-no-surface-fixed = Le scan fixe n’a pas de surface utile
 align-fail-no-surface-moving = Le scan mobile n’a pas de surface utile
 align-fail-recolor = Mesure jetée avant coloriage
+align-fail-unobservable = La surface ne permet pas une carte d’écart fiable
 align-reject-toofew = Ajoutez des flèches ou rapprochez les scans
 align-reject-unpaired = Complétez les deux côtés de chaque flèche
 align-reject-degenerate-plain = Répartissez les points sur la surface

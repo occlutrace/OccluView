@@ -827,6 +827,7 @@ align-markings-dropped = Marcature mollate — la superficie è cambiata dopo
 align-fail-no-surface-fixed = La scansione fissa non ha superficie utile
 align-fail-no-surface-moving = La scansione mobile non ha superficie utile
 align-fail-recolor = Misura scartata prima di colorare
+align-fail-unobservable = La superficie non consente una mappa degli scostamenti affidabile
 align-reject-toofew = Aggiungi frecce o avvicina le scansioni
 align-reject-unpaired = Completa entrambi i lati di ogni freccia
 align-reject-degenerate-plain = Distribuisci i punti sulla superficie
