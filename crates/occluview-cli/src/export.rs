@@ -7,7 +7,7 @@ use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Generous edge ceiling for whole-mesh Close Holes, mirroring the app button
 /// (`app_layer_edits::whole_mesh`): the mm perimeter slider does the real
@@ -98,6 +98,39 @@ pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<(ExportFormat,
     )
     .with_context(|| format!("writing {}", output.display()))?;
     Ok((format, report))
+}
+
+/// Collapse only adjacent copies of the final extension. Native save dialogs
+/// and shell integrations can append their selected filter to an already
+/// suffixed name (`scan.stl` -> `scan.stl.stl`). Keeping this normalization
+/// next to the CLI's format mapping makes every headless writer use the same
+/// output-path contract without changing intentional names such as
+/// `scan.stl.obj`.
+pub(crate) fn normalize_output_path(path: PathBuf) -> PathBuf {
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return path;
+    };
+    if extension.is_empty() {
+        return path;
+    }
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return path;
+    };
+
+    let mut base = stem;
+    let mut repeated = false;
+    while let Some((prefix, suffix)) = base.rsplit_once('.') {
+        if !suffix.eq_ignore_ascii_case(extension) {
+            break;
+        }
+        base = prefix;
+        repeated = true;
+    }
+    if repeated {
+        path.with_file_name(format!("{base}.{extension}"))
+    } else {
+        path
+    }
 }
 
 /// Keep lossy writer conversions visible to CLI operators without polluting
@@ -192,6 +225,22 @@ mod tests {
         .expect_err("point cloud to stl");
         assert!(error.to_string().contains("triangle mesh"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn repeated_terminal_output_extension_is_collapsed_before_writing() {
+        assert_eq!(
+            normalize_output_path(PathBuf::from("case/scan.stl.stl")),
+            PathBuf::from("case/scan.stl")
+        );
+        assert_eq!(
+            normalize_output_path(PathBuf::from("case/scan.STL.StL")),
+            PathBuf::from("case/scan.StL")
+        );
+        assert_eq!(
+            normalize_output_path(PathBuf::from("case/scan.stl.obj")),
+            PathBuf::from("case/scan.stl.obj")
+        );
     }
 
     fn temp_file(extension: &str) -> PathBuf {

@@ -20,7 +20,10 @@ use occluview_formats::dispatch::{
     read_file_loaded_with_key_provider, read_files_with_key_provider,
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+
+const MAX_CLI_THUMBNAIL_SIZE: u16 = 4096;
 
 fn main() {
     install_tracing();
@@ -50,28 +53,32 @@ fn install_tracing() {
 }
 
 fn run() -> Result<()> {
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args_os().skip(1);
     let subcommand = args.next().unwrap_or_else(|| {
         print_usage_with_error();
-        "help".to_string()
+        OsString::from("help")
     });
 
-    match subcommand.as_str() {
-        "thumbnail" => cmd_thumbnail(&mut args),
-        "convert" => cmd_convert(&mut args),
-        "close-holes" => cmd_close_holes(&mut args),
-        "info" => cmd_info(&mut args),
-        "help" | "--help" | "-h" => {
+    match subcommand.to_str() {
+        Some("thumbnail") => cmd_thumbnail(&mut args),
+        Some("convert") => cmd_convert(&mut args),
+        Some("close-holes") => cmd_close_holes(&mut args),
+        Some("info") => cmd_info(&mut args),
+        Some("help" | "--help" | "-h") => {
             print_usage();
             Ok(())
         }
-        "--version" | "-V" => {
+        Some("--version" | "-V") => {
             println!("occluview-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        other => {
+        Some(other) => {
             print_usage_with_error();
             Err(anyhow!("unknown subcommand: {other}"))
+        }
+        None => {
+            print_usage_with_error();
+            Err(anyhow!("subcommand is not valid UTF-8"))
         }
     }
 }
@@ -87,23 +94,65 @@ enum FileArgument {
 /// Parse the leading file argument without accepting a flag as a path.
 /// Files whose names begin with `-` remain addressable through `./name`.
 fn take_file_argument(
-    args: &mut impl Iterator<Item = String>,
+    args: &mut impl Iterator<Item = OsString>,
     subcommand: &str,
 ) -> Result<FileArgument> {
     let first = args
         .next()
         .ok_or_else(|| anyhow!("{subcommand}: missing <file> argument"))?;
-    match first.as_str() {
-        "-h" | "--help" => Ok(FileArgument::Help),
-        flag if flag.starts_with('-') => Err(anyhow!(
+    match first.to_str() {
+        Some("-h" | "--help") => Ok(FileArgument::Help),
+        Some(flag) if flag.starts_with('-') => Err(anyhow!(
             "{subcommand}: expected a file path, got the flag {flag}; the file comes first"
         )),
-        _ => Ok(FileArgument::Path(PathBuf::from(first))),
+        Some(_) | None => Ok(FileArgument::Path(PathBuf::from(first))),
     }
 }
 
+fn take_path_argument(args: &mut impl Iterator<Item = OsString>, option: &str) -> Result<PathBuf> {
+    args.next()
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("{option} requires a path"))
+}
+
+fn take_utf8_argument(args: &mut impl Iterator<Item = OsString>, option: &str) -> Result<String> {
+    let value = args
+        .next()
+        .ok_or_else(|| anyhow!("{option} requires a value"))?;
+    value
+        .into_string()
+        .map_err(|_| anyhow!("{option} value is not valid UTF-8"))
+}
+
+fn format_cli_flag(arg: &OsStr) -> String {
+    arg.to_string_lossy().into_owned()
+}
+
+fn validate_thumbnail_size(raw: &str) -> Result<u16> {
+    let size: u32 = raw.parse().context("--size must be a number")?;
+    if !(1..=u32::from(MAX_CLI_THUMBNAIL_SIZE)).contains(&size) {
+        return Err(anyhow!(
+            "--size must be between 1 and {MAX_CLI_THUMBNAIL_SIZE} pixels"
+        ));
+    }
+    Ok(size as u16)
+}
+
+fn normalize_thumbnail_output_path(path: PathBuf) -> Result<PathBuf> {
+    let path = export::normalize_output_path(path);
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return Err(anyhow!("thumbnail output must end in .png"));
+    };
+    if !extension.eq_ignore_ascii_case("png") {
+        return Err(anyhow!(
+            "thumbnail output must end in .png; got .{extension}"
+        ));
+    }
+    Ok(path)
+}
+
 /// `thumbnail <file> [-o out.png] [--size N]`
-fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
+fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     let file: PathBuf = match take_file_argument(args, "thumbnail")? {
         FileArgument::Help => {
             print_usage();
@@ -114,28 +163,23 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
     let mut output: Option<PathBuf> = None;
     let mut size: u16 = 256;
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or_else(|| anyhow!("-o requires a path"))?,
-                ));
+        match arg.to_str() {
+            Some("-o" | "--output") => {
+                output = Some(take_path_argument(args, "-o")?);
             }
-            "--size" => {
-                size = args
-                    .next()
-                    .ok_or_else(|| anyhow!("--size requires a number"))?
-                    .parse()
-                    .context("--size must be a number")?;
+            Some("--size") => {
+                size = validate_thumbnail_size(&take_utf8_argument(args, "--size")?)?;
             }
-            other => return Err(anyhow!("unknown flag: {other}")),
+            Some(other) => return Err(anyhow!("unknown flag: {other}")),
+            None => return Err(anyhow!("unknown non-UTF-8 flag")),
         }
     }
 
-    let out_path = output.unwrap_or_else(|| {
+    let out_path = normalize_thumbnail_output_path(output.unwrap_or_else(|| {
         let mut p = file.clone();
         p.set_extension("png");
         p
-    });
+    }))?;
 
     eprintln!("Rendering {size}x{size} thumbnail...");
     let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
@@ -157,7 +201,7 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
 }
 
 /// `convert <file> -o output.{stl|ply|obj}`
-fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
+fn cmd_convert(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     let input: PathBuf = match take_file_argument(args, "convert")? {
         FileArgument::Help => {
             print_usage();
@@ -167,17 +211,18 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
     };
     let mut output: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or_else(|| anyhow!("-o requires a path"))?,
-                ));
+        match arg.to_str() {
+            Some("-o" | "--output") => {
+                output = Some(take_path_argument(args, "-o")?);
             }
-            other => return Err(anyhow!("unknown flag: {other}")),
+            Some(other) => return Err(anyhow!("unknown flag: {other}")),
+            None => return Err(anyhow!("unknown non-UTF-8 flag")),
         }
     }
 
-    let output = output.ok_or_else(|| anyhow!("convert: missing -o <output-path>"))?;
+    let output = export::normalize_output_path(
+        output.ok_or_else(|| anyhow!("convert: missing -o <output-path>"))?,
+    );
     let (format, report) = export::convert_file(&input, &output)?;
     export::print_write_warnings(&report);
     eprintln!(
@@ -190,7 +235,7 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// `close-holes <file> -o out.stl [--limit-mm N]` - run Close Holes headlessly
 /// and print the resulting edit report.
-fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
+fn cmd_close_holes(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     let input: PathBuf = match take_file_argument(args, "close-holes")? {
         FileArgument::Help => {
             print_usage();
@@ -201,24 +246,24 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
     let mut output: Option<PathBuf> = None;
     let mut limit_mm: Option<f32> = None;
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or_else(|| anyhow!("-o requires a path"))?,
-                ));
+        match arg.to_str() {
+            Some("-o" | "--output") => {
+                output = Some(take_path_argument(args, "-o")?);
             }
-            "--limit-mm" => {
+            Some("--limit-mm") => {
                 limit_mm = Some(
-                    args.next()
-                        .ok_or_else(|| anyhow!("--limit-mm requires a number"))?
+                    take_utf8_argument(args, "--limit-mm")?
                         .parse()
                         .context("--limit-mm must be a number")?,
                 );
             }
-            other => return Err(anyhow!("unknown flag: {other}")),
+            Some(other) => return Err(anyhow!("unknown flag: {other}")),
+            None => return Err(anyhow!("unknown non-UTF-8 flag")),
         }
     }
-    let output = output.ok_or_else(|| anyhow!("close-holes: missing -o <output-path>"))?;
+    let output = export::normalize_output_path(
+        output.ok_or_else(|| anyhow!("close-holes: missing -o <output-path>"))?,
+    );
 
     let (report, write_report) = export::close_holes_file(&input, &output, limit_mm)?;
     export::print_write_warnings(&write_report);
@@ -242,15 +287,22 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// `info <file> [file...]` - print mesh statistics. When multiple files are
 /// given, prints per-file stats plus an aggregate scene bbox.
-fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let raw: Vec<String> = args.collect();
-    if raw.iter().any(|arg| arg == "-h" || arg == "--help") {
+fn cmd_info(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
+    let raw: Vec<OsString> = args.collect();
+    if raw
+        .iter()
+        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
+    {
         print_usage();
         return Ok(());
     }
-    if let Some(flag) = raw.iter().find(|arg| arg.starts_with('-')) {
+    if let Some(flag) = raw
+        .iter()
+        .find(|arg| arg.to_str().is_some_and(|value| value.starts_with('-')))
+    {
         return Err(anyhow!(
-            "info: expected file paths, got the flag {flag}; the files come first"
+            "info: expected file paths, got the flag {}; the files come first",
+            format_cli_flag(flag)
         ));
     }
     let files: Vec<PathBuf> = raw.into_iter().map(PathBuf::from).collect();
@@ -402,12 +454,13 @@ mod tests {
             .map_or(source, |(production, _)| production)
     }
 
-    use super::{take_file_argument, FileArgument};
+    use super::{take_file_argument, validate_thumbnail_size, FileArgument};
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
     #[test]
     fn a_flag_where_the_file_belongs_is_refused_instead_of_opened() {
-        let mut args = ["-o", "out.png"].into_iter().map(String::from);
+        let mut args = ["-o", "out.png"].into_iter().map(OsString::from);
         let error = take_file_argument(&mut args, "thumbnail")
             .expect_err("a flag must not be accepted as the file to render");
         let message = error.to_string();
@@ -418,7 +471,7 @@ mod tests {
     #[test]
     fn asking_a_subcommand_for_help_prints_help_and_renders_nothing() {
         for flag in ["-h", "--help"] {
-            let mut args = std::iter::once(flag.to_string());
+            let mut args = std::iter::once(OsString::from(flag));
             let taken =
                 take_file_argument(&mut args, "thumbnail").expect("--help must not be an error");
             assert!(
@@ -430,7 +483,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_path_is_still_taken_verbatim() {
-        let mut args = std::iter::once("scan.stl".to_string());
+        let mut args = std::iter::once(OsString::from("scan.stl"));
         match take_file_argument(&mut args, "info").expect("a plain path is valid") {
             FileArgument::Path(path) => assert_eq!(path, PathBuf::from("scan.stl")),
             FileArgument::Help => panic!("a plain path is not a help request"),
@@ -499,8 +552,17 @@ mod tests {
     #[test]
     fn convert_cli_routes_through_export_module() {
         let source = production_source();
-        assert!(source.contains("\"convert\" => cmd_convert(&mut args)"));
+        assert!(source.contains("Some(\"convert\") => cmd_convert(&mut args)"));
         assert!(source.contains("export::convert_file(&input, &output)?;"));
         assert!(source.contains("output.{stl|ply|obj}"));
+    }
+
+    #[test]
+    fn thumbnail_size_has_a_bounded_allocation_contract() {
+        assert_eq!(validate_thumbnail_size("1").expect("minimum"), 1);
+        assert_eq!(validate_thumbnail_size("4096").expect("maximum"), 4096);
+        assert!(validate_thumbnail_size("0").is_err());
+        assert!(validate_thumbnail_size("4097").is_err());
+        assert!(validate_thumbnail_size("65535").is_err());
     }
 }
