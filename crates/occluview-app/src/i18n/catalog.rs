@@ -737,7 +737,7 @@ mod tests {
     fn pseudo_locale_covers_every_embedded_key() {
         // Pinned: adding a key without pseudo coverage must update this
         // number AND the loop below in the same change.
-        const EXPECTED_EN_KEYS: usize = 614;
+        const EXPECTED_EN_KEYS: usize = 618;
         let (_, source) = SOURCES
             .iter()
             .find(|(tag, _)| *tag == FALLBACK_TAG)
