@@ -361,6 +361,7 @@ fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String
         FitRejection::Apart { .. } => "align-reject-apart",
         FitRejection::Runaway { .. } => "align-reject-runaway",
         FitRejection::NoImprovement => "align-reject-no-improvement",
+        FitRejection::Ambiguous => "align-reject-ambiguous",
         FitRejection::NonFinite => "align-reject-nonfinite",
     };
     (key, String::new(), String::new())
@@ -463,6 +464,12 @@ mod tests {
             (
                 AlignFailure::Fit(FitRejection::NoImprovement),
                 "align-reject-no-improvement",
+                String::new(),
+                String::new(),
+            ),
+            (
+                AlignFailure::Fit(FitRejection::Ambiguous),
+                "align-reject-ambiguous",
                 String::new(),
                 String::new(),
             ),

@@ -15,7 +15,7 @@ use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
 #[path = "icp_overlap.rs"]
 mod icp_overlap;
-use icp_overlap::{reciprocal_coverage_ok, reciprocal_evidence, reciprocal_evidence_is_usable};
+use icp_overlap::{reciprocal_evidence, reciprocal_evidence_is_usable, ReciprocalSummary};
 #[path = "icp_step.rs"]
 mod icp_step;
 use icp_step::{correspondences_at_radius, try_backtracked_step, TrialState};
@@ -235,7 +235,8 @@ pub fn refine(
         cancel,
         start,
     };
-    let mut pose = choose_start_pose(&initial_level);
+    let initial_pose = choose_start_pose(&initial_level)?;
+    let mut pose = initial_pose.rigid;
     let mut iterations = 0u32;
     let mut converged = false;
     let mut summary: Option<Summary> = None;
@@ -287,7 +288,7 @@ pub fn refine(
     // Measure displacement at the mesh centre; the pose translation column can
     // change during rotation even when the geometry moves little.
     let moved_by = (pose.apply(center) - start.apply(center)).length();
-    let allowed = extent.max(1.0);
+    let allowed = extent.max(1.0) + initial_pose.coarse_shift + settings.influence_radius_mm.abs();
     if moved_by > allowed {
         return Err(FitRejection::Runaway { moved_by, allowed });
     }
@@ -396,6 +397,28 @@ struct LevelOutcome {
     summary: Summary,
 }
 
+#[derive(Clone, Copy)]
+struct CoarseCandidate {
+    rigid: Rigid,
+    summary: Summary,
+    reciprocal: Option<ReciprocalSummary>,
+    shift: f64,
+    component: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct StartPose {
+    rigid: Rigid,
+    coarse_shift: f64,
+}
+
+const COARSE_TIE_RELATIVE_RMS: f64 = 0.02;
+const COARSE_TIE_COVERAGE: f64 = 0.02;
+const COARSE_POSE_TRANSLATION_EPS_MM: f64 = 0.01;
+const COARSE_POSE_ROTATION_EPS_RAD: f64 = 0.01;
+const COARSE_TIE_SHIFT_MM: f64 = 0.5;
+const COARSE_MAX_SHIFT_FACTOR: f64 = 4.0;
+
 /// Prefer a centered coarse hypothesis when it clearly explains more of the
 /// same surface than the caller's rough pose.
 ///
@@ -404,12 +427,18 @@ struct LevelOutcome {
 /// on the edge it first touched. The bounding-box hypothesis is only a candidate:
 /// it wins when the same correspondence objective improves without losing
 /// coverage, so partial scans and adjacent anatomy keep the explicit start.
-fn choose_start_pose(level: &Level<'_>) -> Rigid {
+fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
     if level.samples.is_empty() || level.cancel.is_cancelled() {
-        return level.start;
+        return Ok(StartPose {
+            rigid: level.start,
+            coarse_shift: 0.0,
+        });
     }
-    let Some((moving_center, _moving_extent)) = bounds_of(level.moving) else {
-        return level.start;
+    let Some((moving_center, moving_extent)) = bounds_of(level.moving) else {
+        return Ok(StartPose {
+            rigid: level.start,
+            coarse_shift: 0.0,
+        });
     };
     let score = |pose: Rigid| {
         let found = correspondences(level, pose, level.settings.influence_radius_mm);
@@ -418,24 +447,36 @@ fn choose_start_pose(level: &Level<'_>) -> Rigid {
             return None;
         }
         let kept = trim(&found, level.settings.matching_ratio);
-        (kept.len() >= MIN_CORRESPONDENCES).then(|| {
-            let (matrix, _, _) = accumulate(&kept);
-            (
-                summarize(&kept, matched, level.samples.len(), &matrix),
-                reciprocal_evidence(level, pose, level.settings.influence_radius_mm),
-            )
-        })
+        if kept.len() < MIN_CORRESPONDENCES {
+            return None;
+        }
+        let (matrix, _, _) = accumulate(&kept);
+        let summary = summarize(&kept, matched, level.samples.len(), &matrix);
+        let reciprocal = reciprocal_evidence(level, pose, level.settings.influence_radius_mm);
+        reciprocal_evidence_is_usable(level, reciprocal).then_some((summary, reciprocal))
     };
-    let base = score(level.start);
-    let mut best = base.map(|score| (level.start, score, f64::INFINITY));
-    // A component centre is a bounded translation hypothesis, not permission
-    // to undo a coarse rotation or perform a hidden global registration. Keep
-    // it inside the same visible search budget that the correspondence ladder
-    // can justify. The mesh extent is deliberately not a fallback here: a
-    // large arch must not make an arbitrary far-away component eligible.
-    let max_shift = level.settings.influence_radius_mm.abs() * 2.0;
+    let mut candidates = Vec::new();
+    if let Some((summary, reciprocal)) = score(level.start) {
+        candidates.push(CoarseCandidate {
+            rigid: level.start,
+            summary,
+            reciprocal,
+            shift: 0.0,
+            component: nearest_component_index(level, level.start, moving_center),
+        });
+    }
+
+    // A component centre is a global coarse hypothesis, not a local radius
+    // clamp. The visible influence radius controls correspondence distance;
+    // the component bounds provide the bounded set of plausible poses. This
+    // is what lets a rough side-by-side placement recover without making the
+    // ICP kernel walk an unbounded translation grid.
     let orientation_deltas = coarse_orientation_deltas();
-    for &(fixed_min, fixed_max) in level.fixed.component_bounds() {
+    let max_coarse_shift = moving_extent.max(1.0) * COARSE_MAX_SHIFT_FACTOR
+        + level.settings.influence_radius_mm.abs() * COARSE_MAX_SHIFT_FACTOR;
+    for (component_index, &(fixed_min, fixed_max)) in
+        level.fixed.component_bounds().iter().enumerate()
+    {
         let fixed_center = (fixed_min + fixed_max) * 0.5;
         for (delta_index, &delta) in orientation_deltas.iter().enumerate() {
             // `Inverted` is an explicit winding-repair escape hatch. Do not
@@ -447,48 +488,125 @@ fn choose_start_pose(level: &Level<'_>) -> Rigid {
             if level.settings.orientation == Orientation::Inverted && delta_index != 0 {
                 continue;
             }
-            // Corrections are expressed in world space. The candidate is
-            // centered around the fixed component, so a quarter-turn around a
-            // distant file origin does not count as a twelve-millimetre move
-            // when the actual scan centre stayed put.
+            // Corrections are expressed in world space. Centering around the
+            // fixed component makes the translation candidate explicit; the
+            // final displacement guard below expands to cover that proven
+            // coarse move instead of rejecting it as a runaway.
             let rotation = delta * level.start.rotation;
             let candidate = Rigid::new(rotation, fixed_center - rotation * moving_center);
             let shift =
                 (candidate.apply(moving_center) - level.start.apply(moving_center)).length();
-            if !shift.is_finite() || shift > max_shift {
+            if !shift.is_finite() || shift > max_coarse_shift {
                 continue;
             }
-            let Some(centered) = score(candidate) else {
+            let Some((summary, reciprocal)) = score(candidate) else {
                 continue;
             };
-            let baseline_coverage_ok = reciprocal_evidence_is_usable(level, centered.1)
-                && base.is_none_or(|(_, base_reciprocal)| {
-                    reciprocal_coverage_ok(base_reciprocal, centered.1)
-                });
-            let Some((_, current, current_shift)) = best else {
-                best = Some((candidate, centered, shift));
-                continue;
-            };
-            let better = centered.0.geometric_rms < current.0.geometric_rms * STALL_IMPROVEMENT;
-            let reciprocal_tie_break = match (current.1, centered.1) {
-                (Some(current_reciprocal), Some(candidate_reciprocal)) => {
-                    candidate_reciprocal.coverage > current_reciprocal.coverage + 0.05
-                        && candidate_reciprocal.geometric_rms
-                            <= current_reciprocal.geometric_rms * 1.25 + 1e-9
-                        && centered.0.geometric_rms
-                            <= current.0.geometric_rms * (1.0 / STALL_IMPROVEMENT)
-                }
-                _ => false,
-            };
-            let tied_and_closer = (centered.0.geometric_rms - current.0.geometric_rms).abs()
-                <= f64::EPSILON
-                && shift < current_shift;
-            if baseline_coverage_ok && (better || reciprocal_tie_break || tied_and_closer) {
-                best = Some((candidate, centered, shift));
-            }
+            candidates.push(CoarseCandidate {
+                rigid: candidate,
+                summary,
+                reciprocal,
+                shift,
+                component: Some(component_index),
+            });
         }
     }
-    best.map_or(level.start, |(pose, _, _)| pose)
+
+    let Some(best) = candidates.iter().copied().reduce(|current, candidate| {
+        if coarse_candidate_is_better(&candidate, &current) {
+            candidate
+        } else {
+            current
+        }
+    }) else {
+        return Ok(StartPose {
+            rigid: level.start,
+            coarse_shift: 0.0,
+        });
+    };
+
+    if candidates.iter().copied().any(|candidate| {
+        candidate.component != best.component
+            && candidate.shift <= best.shift + COARSE_TIE_SHIFT_MM
+            && poses_are_distinct(candidate.rigid, best.rigid)
+            && coarse_candidates_are_equivalent(&candidate, &best)
+    }) {
+        return Err(FitRejection::Ambiguous);
+    }
+
+    Ok(StartPose {
+        rigid: best.rigid,
+        coarse_shift: best.shift,
+    })
+}
+
+fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3) -> Option<usize> {
+    let point = pose.apply(moving_center);
+    level
+        .fixed
+        .component_bounds()
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| {
+            let left_center = (left.0 + left.1) * 0.5;
+            let right_center = (right.0 + right.1) * 0.5;
+            point
+                .distance_squared(left_center)
+                .total_cmp(&point.distance_squared(right_center))
+        })
+        .map(|(index, _)| index)
+}
+
+fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandidate) -> bool {
+    if candidate.summary.geometric_rms < current.summary.geometric_rms * STALL_IMPROVEMENT {
+        return true;
+    }
+    if candidate.summary.geometric_rms > current.summary.geometric_rms * (1.0 / STALL_IMPROVEMENT) {
+        return false;
+    }
+    if candidate.summary.coverage > current.summary.coverage + COARSE_TIE_COVERAGE {
+        return true;
+    }
+    if candidate.summary.coverage + COARSE_TIE_COVERAGE < current.summary.coverage {
+        return false;
+    }
+    let reciprocal_better = match (candidate.reciprocal, current.reciprocal) {
+        (Some(candidate), Some(current)) => {
+            candidate.coverage > current.coverage + COARSE_TIE_COVERAGE
+        }
+        (Some(_), None) => true,
+        _ => false,
+    };
+    reciprocal_better || candidate.shift + COARSE_TIE_SHIFT_MM < current.shift
+}
+
+fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
+    let rms_scale = candidate
+        .summary
+        .geometric_rms
+        .max(best.summary.geometric_rms)
+        .max(f64::MIN_POSITIVE);
+    if (candidate.summary.geometric_rms - best.summary.geometric_rms).abs()
+        > rms_scale * COARSE_TIE_RELATIVE_RMS + 1e-6
+        || (candidate.summary.coverage - best.summary.coverage).abs() > COARSE_TIE_COVERAGE
+    {
+        return false;
+    }
+    match (candidate.reciprocal, best.reciprocal) {
+        (Some(candidate), Some(best)) => {
+            (candidate.coverage - best.coverage).abs() <= COARSE_TIE_COVERAGE
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn poses_are_distinct(left: Rigid, right: Rigid) -> bool {
+    (left.translation - right.translation).length() > COARSE_POSE_TRANSLATION_EPS_MM
+        || (left.rotation * right.rotation.inverse())
+            .to_scaled_axis()
+            .length()
+            > COARSE_POSE_ROTATION_EPS_RAD
 }
 
 /// Bounded global orientation probes used before local point-to-plane ICP.

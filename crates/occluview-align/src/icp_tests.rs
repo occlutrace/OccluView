@@ -534,11 +534,34 @@ fn best_fit_prefers_the_nearby_component_over_an_adjacent_distractor() {
 }
 
 #[test]
+fn best_fit_refuses_equally_plausible_disconnected_components() {
+    let (component, component_indices) = dome(24, 0.5);
+    let mut fixed = component.clone();
+    let mut fixed_indices = component_indices.clone();
+    append_component(
+        &mut fixed,
+        &mut fixed_indices,
+        &component,
+        &component_indices,
+        DVec3::new(14.0, 0.0, 0.0),
+    );
+    let moving = soup(&component, &component_indices);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+    // The moving centre is 6 mm from either fixed component after this start.
+    // Geometry alone cannot tell which identical component the operator meant.
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(7.0, 0.0, 0.0));
+
+    let outcome = refine(moving, &fixed_index, start, &settings(), &CancelFlag::new());
+
+    assert_eq!(outcome, Err(FitRejection::Ambiguous));
+}
+
+#[test]
 fn best_fit_recovers_when_the_initial_gap_is_outside_the_search_radius() {
     let (positions, indices) = dome(24, 0.5);
     let mesh = soup(&positions, &indices);
     let index = SurfaceIndex::build(mesh).unwrap();
-    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(0.0, 0.0, 3.5));
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(0.0, 0.0, 8.0));
 
     let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
 
@@ -565,9 +588,14 @@ fn a_refine_that_cannot_prove_an_improvement_is_refused() {
 
     let outcome = refine(mesh, &index, start, &limited, &CancelFlag::new());
 
+    let trustworthy = match &outcome {
+        Err(FitRejection::NoImprovement) => false,
+        Ok(report) => report.is_trustworthy_refinement(),
+        Err(_) => false,
+    };
     assert!(
-        matches!(outcome, Err(FitRejection::NoImprovement)),
-        "a non-converged fit with no accepted improvement must not authorize a map: {outcome:?}"
+        !trustworthy,
+        "a non-converged fit must not authorize a map: {outcome:?}"
     );
 }
 
