@@ -32,6 +32,10 @@ fn entries(directory: &Path) -> Vec<String> {
     names
 }
 
+fn triangle_obj() -> &'static str {
+    "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+}
+
 #[test]
 fn help_is_answered_on_stdout_and_writes_nothing() {
     let directory = scratch("help");
@@ -115,5 +119,28 @@ fn the_version_is_the_crate_version_on_stdout() {
         String::from_utf8_lossy(&output.stdout).trim(),
         format!("occluview-cli {}", env!("CARGO_PKG_VERSION"))
     );
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn convert_collapses_a_repeated_terminal_extension_before_writing() {
+    let directory = scratch("convert-extension");
+    std::fs::write(directory.join("scan.obj"), triangle_obj()).expect("write OBJ fixture");
+    std::fs::create_dir(directory.join("exports")).expect("create export directory");
+
+    let output = run(
+        &directory,
+        &["convert", "scan.obj", "-o", "exports/upper.stl.stl"],
+    );
+
+    assert!(
+        output.status.success(),
+        "convert should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(directory.join("exports/upper.stl").is_file());
+    assert!(!directory.join("exports/upper.stl.stl").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("exports/upper.stl"));
+
     std::fs::remove_dir_all(&directory).ok();
 }
