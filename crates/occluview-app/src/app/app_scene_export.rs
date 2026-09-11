@@ -8,7 +8,10 @@ use super::app_mesh_export::{
 use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
-use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
+use occluview_formats::write::{
+    write_mesh_overwrite, write_mesh_to_new_file, MeshWriteFormat, MeshWriteOptions,
+    MeshWriteReport,
+};
 use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -184,7 +187,7 @@ impl OccluViewApp {
         // something already in the folder. Saying so is the difference between
         // "your last export is still there" and an operator handing a mill the
         // file they exported an hour ago.
-        let renamed = destinations
+        let mut renamed = destinations
             .iter()
             .zip(&specs)
             .filter(|(path, (stem, _))| {
@@ -197,16 +200,15 @@ impl OccluViewApp {
         let mut written = 0usize;
         let mut successful_layers = Vec::with_capacity(visible.len());
         let mut failures = Vec::new();
-        for ((_, entry), (path, (_, format))) in visible.iter().zip(destinations.iter().zip(&specs))
+        for ((_, entry), (path, (stem, format))) in
+            visible.iter().zip(destinations.iter().zip(&specs))
         {
-            match write_mesh_overwrite(
-                path,
-                &posed_mesh(entry),
-                *format,
-                MeshWriteOptions::default(),
-            ) {
-                Ok(_) => {
+            match write_layer_export_new_with_retry(path, &directory, stem, *format, entry) {
+                Ok((actual_path, _report)) => {
                     written += 1;
+                    if actual_path != *path {
+                        renamed += 1;
+                    }
                     successful_layers.push(entry.id());
                 }
                 Err(error) => failures.push(format!("{}: {error:#}", path.display())),
@@ -265,7 +267,48 @@ impl OccluViewApp {
     }
 }
 
-/// One destination per visible layer, guaranteed distinct.
+/// Write one batch layer without ever replacing an existing file.
+///
+/// The directory scan that creates the initial destination is only a friendly
+/// naming pass. Another process can create that name before this layer reaches
+/// the writer, so `create_new` remains the authority and a collision advances
+/// to the next numbered name.
+fn write_layer_export_new_with_retry(
+    initial_path: &Path,
+    directory: &Path,
+    stem: &str,
+    format: MeshWriteFormat,
+    entry: &SceneMesh,
+) -> Result<(PathBuf, MeshWriteReport), occluview_formats::FormatError> {
+    let posed = posed_mesh(entry);
+    let extension = mesh_write_extension(format);
+    let mut candidate = initial_path.to_path_buf();
+    let mut ordinal = 2_usize;
+    for _ in 0..1024 {
+        match write_mesh_to_new_file(&candidate, &posed, format, MeshWriteOptions::default()) {
+            Ok(report) => return Ok((candidate, report)),
+            Err(error) if export_path_already_exists(&error) => {
+                candidate = directory.join(format!("{stem} ({ordinal}).{extension}"));
+                ordinal = ordinal.saturating_add(1);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(occluview_formats::FormatError::Io(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "too many concurrent export name collisions",
+    )))
+}
+
+fn export_path_already_exists(error: &occluview_formats::FormatError) -> bool {
+    matches!(
+        error,
+        occluview_formats::FormatError::Io(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+    )
+}
+
+/// One destination per visible layer, initially guaranteed distinct.
 ///
 /// The stem comes from the layer label, which is the source file's name. Two
 /// layers opened from different folders under the same file name — the norm
@@ -459,12 +502,16 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::{merged_scene_mesh, posed_mesh, unique_layer_export_paths, SceneMergeError};
+    use super::{
+        merged_scene_mesh, posed_mesh, unique_layer_export_paths,
+        write_layer_export_new_with_retry, SceneMergeError,
+    };
     use anyhow::Result;
     use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
     use occluview_formats::write::MeshWriteFormat;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn v(x: f32, y: f32, z: f32) -> Vertex {
         Vertex::at(Vec3::new(x, y, z))
@@ -695,6 +742,34 @@ mod tests {
         assert_eq!(destinations[0], directory.join("lower (2).stl"));
 
         std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn a_batch_collision_retries_with_a_new_file_without_overwriting() -> Result<()> {
+        let directory = std::env::temp_dir().join(format!(
+            "occluview-batch-collision-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos())
+        ));
+        std::fs::create_dir(&directory)?;
+        let initial = directory.join("scan.stl");
+        std::fs::write(&initial, b"previous export")?;
+        let scene = exportable_scene()?;
+
+        let (written, _) = write_layer_export_new_with_retry(
+            &initial,
+            &directory,
+            "scan",
+            MeshWriteFormat::StlBinary,
+            &scene.meshes()[0],
+        )?;
+
+        assert_eq!(written, directory.join("scan (2).stl"));
+        assert_eq!(std::fs::read(&initial)?, b"previous export");
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
     }
 
     #[test]
