@@ -342,20 +342,15 @@ mod tests {
             let ramp = ramp(RampMode::Magnitude, scale_mm);
             for value_mm in [0.0, 0.005, 0.02, 0.08] {
                 let painted = ramp_color(value_mm, &ramp);
-                let (distance, nearest) = (0..LEGEND_STEPS)
-                    .map(|step| {
-                        let at = legend_value_mm(step, LEGEND_STEPS, ramp.mode, ramp.scale_mm);
-                        (
-                            (at - value_mm).abs(),
-                            legend_color_at(step, LEGEND_STEPS, &ramp),
-                        )
-                    })
-                    .min_by(|left, right| {
-                        left.0
-                            .partial_cmp(&right.0)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .expect("a legend step");
+                let mut nearest = (f64::INFINITY, painted);
+                for step in 0..LEGEND_STEPS {
+                    let at = legend_value_mm(step, LEGEND_STEPS, ramp.mode, ramp.scale_mm);
+                    let distance = (at - value_mm).abs();
+                    if distance < nearest.0 {
+                        nearest = (distance, legend_color_at(step, LEGEND_STEPS, &ramp));
+                    }
+                }
+                let (distance, nearest) = nearest;
                 assert!(
                     distance.is_finite(),
                     "a distance is needed to report a mismatch"
