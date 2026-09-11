@@ -652,6 +652,7 @@ sculpt-failure-spawn = Could not start sculpt worker: { $detail }
 sculpt-failure-kernel-pool = Could not create sculpt kernel pool: { $detail }
 sculpt-failure-missing-undo-baseline = Sculpt stroke has no undo baseline
 sculpt-failure-shadow-poisoned = Sculpt shadow lock was poisoned
+sculpt-failure-worker-state-poisoned = Sculpt worker state was corrupted — restart Sculpt
 sculpt-failure-vertex-count-changed = Sculpt result changed the vertex count
 sculpt-failure-topology-rebuild = Sculpt topology rebuild failed: { $detail }
 sculpt-worker-unavailable = Sculpt worker is unavailable

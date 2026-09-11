@@ -740,6 +740,7 @@ sculpt-failure-spawn = Не удалось запустить воркер ск�
 sculpt-failure-kernel-pool = Не удалось создать пул ядер скульптинга: { $detail }
 sculpt-failure-missing-undo-baseline = У штриха скульптинга нет базы для отмены
 sculpt-failure-shadow-poisoned = Блокировка тени скульптинга отравлена
+sculpt-failure-worker-state-poisoned = Состояние воркера скульптинга повреждено — перезапустите Sculpt
 sculpt-failure-vertex-count-changed = Результат скульптинга изменил число вершин
 sculpt-failure-topology-rebuild = Не удалось восстановить топологию скульптинга: { $detail }
 sculpt-worker-unavailable = Воркер скульптинга недоступен

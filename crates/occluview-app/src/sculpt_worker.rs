@@ -10,7 +10,7 @@ use occluview_core::{BrushMode, BrushStroke, Mesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock, TryLockError};
 use std::thread;
 
 const APPLY_QUEUE_CAPACITY_PER_STROKE: usize = 4;
@@ -45,10 +45,15 @@ struct SculptCommandQueue {
     state: Mutex<QueueState>,
     wake: Condvar,
     active: AtomicBool,
+    error: Arc<Mutex<Option<SculptFailure>>>,
 }
 
 impl SculptCommandQueue {
     fn new() -> Self {
+        Self::with_error(Arc::new(Mutex::new(None)))
+    }
+
+    fn with_error(error: Arc<Mutex<Option<SculptFailure>>>) -> Self {
         Self {
             state: Mutex::new(QueueState {
                 commands: VecDeque::new(),
@@ -58,7 +63,12 @@ impl SculptCommandQueue {
             }),
             wake: Condvar::new(),
             active: AtomicBool::new(false),
+            error,
         }
+    }
+
+    fn report_failure(&self) {
+        set_worker_error(&self.error, SculptFailure::WorkerStatePoisoned);
     }
 
     /// Keep each stroke's APPLY backlog bounded by replacing its oldest queued
@@ -67,6 +77,7 @@ impl SculptCommandQueue {
     /// two quick strokes, leaving the second stroke with no geometry to apply.
     fn push_apply(&self, stroke: BrushStroke, mode: BrushMode) -> bool {
         let Ok(mut state) = self.state.lock() else {
+            self.report_failure();
             return false;
         };
         if state.shutdown {
@@ -127,6 +138,7 @@ impl SculptCommandQueue {
 
     fn push_finish(&self) -> bool {
         let Ok(mut state) = self.state.lock() else {
+            self.report_failure();
             return false;
         };
         if state.shutdown {
@@ -148,6 +160,7 @@ impl SculptCommandQueue {
 
     fn pop(&self) -> Option<SculptCommand> {
         let Ok(mut state) = self.state.lock() else {
+            self.report_failure();
             return None;
         };
         loop {
@@ -160,16 +173,22 @@ impl SculptCommandQueue {
             }
             state = match self.wake.wait(state) {
                 Ok(state) => state,
-                Err(_) => return None,
+                Err(_) => {
+                    self.report_failure();
+                    return None;
+                }
             };
         }
     }
 
     fn shutdown(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.shutdown = true;
-            state.commands.clear();
-            self.wake.notify_one();
+        match self.state.lock() {
+            Ok(mut state) => {
+                state.shutdown = true;
+                state.commands.clear();
+                self.wake.notify_one();
+            }
+            Err(_) => self.report_failure(),
         }
     }
 
@@ -221,7 +240,7 @@ struct WorkerState {
     publish_boundary: Mutex<()>,
     completion_wake: Condvar,
     stopping: AtomicBool,
-    error: Mutex<Option<SculptFailure>>,
+    error: Arc<Mutex<Option<SculptFailure>>>,
 }
 
 type SculptOutputSnapshot = (
@@ -249,11 +268,23 @@ pub(crate) enum SculptFailure {
     MissingUndoBaseline,
     /// The shadow vertex lock was poisoned.
     ShadowPoisoned,
+    /// A worker-owned coordination lock was poisoned.
+    WorkerStatePoisoned,
     /// The sculpt result changed the vertex count.
     VertexCountChanged,
     /// A densifying dab changed the kernel topology but the app could not
     /// construct the matching authoritative mesh for the renderer.
     TopologyRebuild { detail: String },
+}
+
+fn set_worker_error(error: &Mutex<Option<SculptFailure>>, failure: SculptFailure) {
+    let mut slot = match error.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if slot.is_none() {
+        *slot = Some(failure);
+    }
 }
 
 impl WorkerState {
@@ -264,33 +295,40 @@ impl WorkerState {
     /// ordering.
     fn record_rebuild(&self, stroke_id: u64, rebuild: SculptRebuild) {
         let Ok(_publish) = self.publish_boundary.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        if let Ok(mut pending) = self.pending_touched.lock() {
-            pending.clear();
-        }
+        let Ok(mut pending) = self.pending_touched.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
+            return;
+        };
+        pending.clear();
+        drop(pending);
         self.full_sync.store(false, Ordering::Release);
-        if let Ok(mut rebuilds) = self.rebuild.lock() {
-            if let Some(last) = rebuilds
-                .back_mut()
-                .filter(|last| last.stroke_id == stroke_id)
-            {
-                last.rebuild = rebuild;
-            } else {
-                rebuilds.push_back(PendingRebuild { stroke_id, rebuild });
-            }
+        let Ok(mut rebuilds) = self.rebuild.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
+            return;
+        };
+        if let Some(last) = rebuilds
+            .back_mut()
+            .filter(|last| last.stroke_id == stroke_id)
+        {
+            last.rebuild = rebuild;
+        } else {
+            rebuilds.push_back(PendingRebuild { stroke_id, rebuild });
         }
     }
 
     fn record_touched(&self, touched: Vec<usize>) {
         let Ok(_publish) = self.publish_boundary.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
         if touched.is_empty() || self.full_sync.load(Ordering::Acquire) {
             return;
         }
         let Ok(mut pending) = self.pending_touched.lock() else {
-            self.full_sync.store(true, Ordering::Release);
+            self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
         pending.extend(touched);
@@ -302,13 +340,17 @@ impl WorkerState {
 
     fn push_completion(&self, completion: SculptCompletion) -> bool {
         let Ok(mut completions) = self.completions.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
             return false;
         };
         while completions.len() >= MAX_PENDING_COMPLETIONS && !self.stopping.load(Ordering::Acquire)
         {
             completions = match self.completion_wake.wait(completions) {
                 Ok(completions) => completions,
-                Err(_) => return false,
+                Err(_) => {
+                    self.set_error(SculptFailure::WorkerStatePoisoned);
+                    return false;
+                }
             };
         }
         if self.stopping.load(Ordering::Acquire) {
@@ -319,9 +361,11 @@ impl WorkerState {
         // full completion backlog could deadlock producer and UI.
         drop(completions);
         let Ok(_publish) = self.publish_boundary.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
             return false;
         };
         let Ok(mut completions) = self.completions.lock() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
             return false;
         };
         if self.stopping.load(Ordering::Acquire) || completions.len() >= MAX_PENDING_COMPLETIONS {
@@ -332,8 +376,13 @@ impl WorkerState {
     }
 
     fn set_error(&self, failure: SculptFailure) {
-        if let Ok(mut error) = self.error.lock() {
-            *error = Some(failure);
+        set_worker_error(&self.error, failure);
+    }
+
+    fn has_error(&self) -> bool {
+        match self.error.lock() {
+            Ok(error) => error.is_some(),
+            Err(poisoned) => poisoned.into_inner().is_some(),
         }
     }
 
@@ -341,9 +390,16 @@ impl WorkerState {
     /// path). A full sync supersedes queued deltas; sparse ids merge back and
     /// overflow escalates to a full sync. Never blocks.
     fn restore_update(&self, update: SculptUpdate) {
-        let Ok(_publish) = self.publish_boundary.lock() else {
-            self.full_sync.store(true, Ordering::Release);
-            return;
+        let _publish = match self.publish_boundary.try_lock() {
+            Ok(publish) => publish,
+            Err(TryLockError::WouldBlock) => {
+                self.full_sync.store(true, Ordering::Release);
+                return;
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return;
+            }
         };
         if update.full_sync {
             self.full_sync.store(true, Ordering::Release);
@@ -357,18 +413,32 @@ impl WorkerState {
         // resurrecting stale ids behind the rebuild. A contended rebuild
         // lock means the worker is mid-publish; a full sync covers either
         // outcome.
-        let Ok(slot) = self.rebuild.try_lock() else {
-            self.full_sync.store(true, Ordering::Release);
-            return;
+        let slot = match self.rebuild.try_lock() {
+            Ok(slot) => slot,
+            Err(TryLockError::WouldBlock) => {
+                self.full_sync.store(true, Ordering::Release);
+                return;
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return;
+            }
         };
         if !slot.is_empty() {
             self.full_sync.store(true, Ordering::Release);
             return;
         }
         drop(slot);
-        let Ok(mut pending) = self.pending_touched.try_lock() else {
-            self.full_sync.store(true, Ordering::Release);
-            return;
+        let mut pending = match self.pending_touched.try_lock() {
+            Ok(pending) => pending,
+            Err(TryLockError::WouldBlock) => {
+                self.full_sync.store(true, Ordering::Release);
+                return;
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return;
+            }
         };
         pending.extend(update.touched);
         if pending.len() > MAX_PENDING_TOUCHES {
@@ -389,10 +459,38 @@ impl WorkerState {
     /// rebuild that makes its mesh valid, and a sparse update can never pass a
     /// queued rebuild into the old GPU buffers.
     fn take_ordered_outputs(&self) -> Result<SculptOutputSnapshot, ()> {
-        let _publish = self.publish_boundary.try_lock().map_err(|_| ())?;
-        let mut rebuilds = self.rebuild.try_lock().map_err(|_| ())?;
-        let mut completions = self.completions.try_lock().map_err(|_| ())?;
-        let mut pending = self.pending_touched.try_lock().map_err(|_| ())?;
+        let _publish = match self.publish_boundary.try_lock() {
+            Ok(publish) => publish,
+            Err(TryLockError::WouldBlock) => return Err(()),
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return Err(());
+            }
+        };
+        let mut rebuilds = match self.rebuild.try_lock() {
+            Ok(rebuilds) => rebuilds,
+            Err(TryLockError::WouldBlock) => return Err(()),
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return Err(());
+            }
+        };
+        let mut completions = match self.completions.try_lock() {
+            Ok(completions) => completions,
+            Err(TryLockError::WouldBlock) => return Err(()),
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return Err(());
+            }
+        };
+        let mut pending = match self.pending_touched.try_lock() {
+            Ok(pending) => pending,
+            Err(TryLockError::WouldBlock) => return Err(()),
+            Err(TryLockError::Poisoned(_)) => {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return Err(());
+            }
+        };
         let rebuilds = std::mem::take(&mut *rebuilds)
             .into_iter()
             .map(|pending| pending.rebuild)
@@ -442,6 +540,7 @@ impl SculptWorker {
         let topology = session.topology;
         let world_to_local = session.world_to_local;
         let local_per_world = session.local_per_world;
+        let error = Arc::new(Mutex::new(None));
         let state = Arc::new(WorkerState {
             shadow: Arc::clone(&session.shadow),
             pending_touched: Mutex::new(Vec::new()),
@@ -451,9 +550,9 @@ impl SculptWorker {
             publish_boundary: Mutex::new(()),
             completion_wake: Condvar::new(),
             stopping: AtomicBool::new(false),
-            error: Mutex::new(None),
+            error: Arc::clone(&error),
         });
-        let queue = Arc::new(SculptCommandQueue::new());
+        let queue = Arc::new(SculptCommandQueue::with_error(error));
         let worker_queue = Arc::clone(&queue);
         let worker_state = Arc::clone(&state);
         let pool_threads = thread::available_parallelism()
@@ -573,11 +672,11 @@ impl SculptWorker {
     }
 
     pub(crate) fn take_error(&self) -> Option<SculptFailure> {
-        self.state
-            .error
-            .try_lock()
-            .ok()
-            .and_then(|mut error| error.take())
+        match self.state.error.try_lock() {
+            Ok(mut error) => error.take(),
+            Err(TryLockError::WouldBlock) => None,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().take(),
+        }
     }
 
     /// Re-queue a drained-but-unapplied update after frame-path contention.
@@ -678,6 +777,10 @@ fn run_worker(
                     state.record_rebuild(stroke_id, rebuild);
                 } else {
                     state.record_touched(outcome.touched);
+                }
+                if state.has_error() {
+                    queue.mark_idle();
+                    break;
                 }
             }
             SculptCommand::Finish {

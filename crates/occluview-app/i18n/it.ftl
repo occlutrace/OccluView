@@ -648,6 +648,7 @@ sculpt-failure-spawn = Impossibile avviare il worker di scultura: { $detail }
 sculpt-failure-kernel-pool = Impossibile creare il pool di kernel di scultura: { $detail }
 sculpt-failure-missing-undo-baseline = Il tratto di scultura non ha una base di annullamento
 sculpt-failure-shadow-poisoned = Il lock dell'ombra di scultura è avvelenato
+sculpt-failure-worker-state-poisoned = Lo stato del worker di scultura è corrotto — riavvia Sculpt
 sculpt-failure-vertex-count-changed = Il risultato di scultura ha modificato il numero di vertici
 sculpt-failure-topology-rebuild = Ricostruzione della topologia di scultura non riuscita: { $detail }
 sculpt-worker-unavailable = Scultura non disponibile

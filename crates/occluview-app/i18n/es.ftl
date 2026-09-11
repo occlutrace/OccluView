@@ -648,6 +648,7 @@ sculpt-failure-spawn = No se pudo iniciar el proceso de esculpido: { $detail }
 sculpt-failure-kernel-pool = No se pudo crear el grupo de núcleos de esculpido: { $detail }
 sculpt-failure-missing-undo-baseline = El trazo de esculpido no tiene base para deshacer
 sculpt-failure-shadow-poisoned = El bloqueo de sombra de esculpido se corrompió
+sculpt-failure-worker-state-poisoned = El estado del proceso de esculpido se corrompió — reinicia Sculpt
 sculpt-failure-vertex-count-changed = El resultado de esculpido cambió el número de vértices
 sculpt-failure-topology-rebuild = No se pudo reconstruir la topología del esculpido: { $detail }
 sculpt-worker-unavailable = Esculpido no disponible

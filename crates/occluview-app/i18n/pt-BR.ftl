@@ -650,6 +650,7 @@ sculpt-failure-spawn = Não foi possível iniciar o processo de escultura: { $de
 sculpt-failure-kernel-pool = Não foi possível criar o pool de núcleos de escultura: { $detail }
 sculpt-failure-missing-undo-baseline = O traço de escultura não tem base para desfazer
 sculpt-failure-shadow-poisoned = O bloqueio de sombra de escultura foi corrompido
+sculpt-failure-worker-state-poisoned = O estado do processo de escultura foi corrompido — reinicie o Sculpt
 sculpt-failure-vertex-count-changed = O resultado da escultura mudou o número de vértices
 sculpt-failure-topology-rebuild = Falha ao reconstruir a topologia da escultura: { $detail }
 sculpt-worker-unavailable = Escultura indisponível

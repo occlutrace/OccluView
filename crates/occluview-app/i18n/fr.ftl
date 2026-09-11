@@ -648,6 +648,7 @@ sculpt-failure-spawn = Impossible de démarrer le processus de sculpture : { $de
 sculpt-failure-kernel-pool = Impossible de créer le pool de noyaux de sculpture : { $detail }
 sculpt-failure-missing-undo-baseline = Le trait de sculpture n'a pas de référence d'annulation
 sculpt-failure-shadow-poisoned = Le verrou d'ombre de sculpture est empoisonné
+sculpt-failure-worker-state-poisoned = L’état du processus de sculpture est corrompu — relancez Sculpt
 sculpt-failure-vertex-count-changed = Le résultat de sculpture a modifié le nombre de sommets
 sculpt-failure-topology-rebuild = Échec de reconstruction de la topologie de sculpture : { $detail }
 sculpt-worker-unavailable = Sculpture indisponible
