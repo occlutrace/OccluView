@@ -230,15 +230,25 @@ fn write_mesh_file(
 ) -> Result<MeshWriteReport, FormatError> {
     ensure_format_can_represent(mesh, format, options)?;
     if create_new {
-        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        // Write beside the destination and publish with a no-replace hard
+        // link. Opening the destination with `create_new` first still exposed
+        // a partially written file to Explorer and crash recovery; a hard
+        // link makes the completed inode visible in one operation while
+        // retaining create-new collision semantics.
+        let (temporary, file) = create_export_temp(path)?;
         let result = write_mesh_to_file(file, mesh, format, options);
-        if result.is_err() {
-            // `create_new` is used for artifacts that must never be mistaken
-            // for a complete export. Do not leave a truncated file behind
-            // when the writer or final flush fails.
-            let _ = std::fs::remove_file(path);
+        let report = match result {
+            Ok(report) => report,
+            Err(error) => {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(error);
+            }
+        };
+        if let Err(error) = publish_new_export_file(&temporary, path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.into());
         }
-        return result;
+        return Ok(report);
     }
 
     // An overwrite is a transaction: the old destination remains readable
@@ -270,6 +280,10 @@ fn write_mesh_to_file(
     let mut writer = BufWriter::new(file);
     let report = write_mesh(&mut writer, mesh, format, options)?;
     writer.flush()?;
+    writer
+        .into_inner()
+        .map_err(|error| error.into_error())?
+        .sync_all()?;
     Ok(report)
 }
 
@@ -304,6 +318,16 @@ fn create_export_temp(path: &Path) -> Result<(std::path::PathBuf, File), FormatE
         "could not reserve a temporary export path",
     )
     .into())
+}
+
+fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    // `hard_link` fails with AlreadyExists instead of replacing a file, which
+    // is the filesystem-level equivalent of the public create-new contract.
+    std::fs::hard_link(temporary, destination)?;
+    // The destination now owns the complete inode. A cleanup failure must not
+    // turn a successfully published export into a false failure.
+    let _ = std::fs::remove_file(temporary);
+    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -473,6 +497,53 @@ mod tests {
         assert_eq!(second_path.parent(), destination.parent());
         std::fs::remove_file(first_path).expect("remove first temp");
         std::fs::remove_file(second_path).expect("remove second temp");
+    }
+
+    #[test]
+    fn new_file_publishes_only_the_complete_export() {
+        let mesh = triangle_mesh();
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.obj");
+
+        let report = write_mesh_to_new_file(
+            &destination,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        )
+        .expect("new export");
+
+        assert_eq!(report.format, MeshWriteFormat::Obj);
+        assert!(std::fs::read(&destination)
+            .expect("read complete export")
+            .starts_with(b"o sample\n"));
+        assert!(std::fs::read_dir(directory.path())
+            .expect("read directory")
+            .filter_map(Result::ok)
+            .all(|entry| { !entry.file_name().to_string_lossy().contains(".occluview-") }));
+    }
+
+    #[test]
+    fn new_file_collision_leaves_the_existing_export_and_no_temp_behind() {
+        let mesh = triangle_mesh();
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.obj");
+        let seed = b"operator export already exists";
+        std::fs::write(&destination, seed).expect("seed destination");
+
+        let result = write_mesh_to_new_file(
+            &destination,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        );
+
+        assert!(result.is_err(), "create-new export must reject collisions");
+        assert_eq!(std::fs::read(&destination).expect("read seed"), seed);
+        assert!(std::fs::read_dir(directory.path())
+            .expect("read directory")
+            .filter_map(Result::ok)
+            .all(|entry| { !entry.file_name().to_string_lossy().contains(".occluview-") }));
     }
 
     #[test]
