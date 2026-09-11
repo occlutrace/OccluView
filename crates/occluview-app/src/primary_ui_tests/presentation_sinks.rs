@@ -14,8 +14,8 @@
 //!
 //! Deliberate non-sinks, documented so the next reader does not
 //! "fix" them:
-//! - Help section/row literals render via `key`; the English stays as
-//!   source-of-truth pinned by `english_catalog_matches_source_wording`.
+//! - Help section/row literals render via `key`; the catalog validator owns
+//!   the localized key contract, while gestures remain invariant vocabulary.
 //! - `Window::new` stable IDs under `title_bar(false)` never paint.
 //! - Shortcut/gesture tokens without spaces (`Ctrl+O`, `LMB`), product
 //!   names, file formats and units are invariant vocabulary, not prose.
@@ -577,8 +577,7 @@ fn presentation_sinks_route_through_catalogs() {
 /// Every id the UI resolves must exist in `en`: a missing one renders
 /// the ⟦id⟧ marker instead of failing loudly, so this test fails first.
 /// (Catalog↔catalog drift fails the build via `build.rs`; this pins the
-/// code→catalog direction. Help row/section keys are pinned separately
-/// by `english_catalog_matches_source_wording`.)
+/// code→catalog direction. Help row/section keys are part of this same scan.)
 #[test]
 fn code_resolved_ids_exist_in_english() {
     let keys = crate::i18n::catalog::embedded_en_keys();

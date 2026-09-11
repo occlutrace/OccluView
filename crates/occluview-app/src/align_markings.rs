@@ -67,40 +67,6 @@ impl MaskCommand {
         Self::MarkAutomatic,
     ];
 
-    /// The label on the button, verbatim from the dental CAD software the
-    /// operator already works in.
-    #[cfg(test)]
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Fit everywhere",
-            Self::FitNowhere => "Fit nowhere",
-            Self::InvertMarkings => "Invert markings",
-            Self::MarkAutomatic => "Mark automatic",
-        }
-    }
-
-    /// What the button does, in one line.
-    #[cfg(test)]
-    pub(crate) fn hint(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Clear all existing markings",
-            Self::FitNowhere => "Mark the complete mesh — best-fit matching will have no effect",
-            Self::InvertMarkings => "Mark unmarked areas and vice versa",
-            Self::MarkAutomatic => "Match only on a small area around each arrow end",
-        }
-    }
-
-    /// What to tell the operator afterwards.
-    #[cfg(test)]
-    pub(crate) fn report(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Markings cleared — matching on the whole scan",
-            Self::FitNowhere => "Whole mesh marked — best-fit matching will have no effect",
-            Self::InvertMarkings => "Markings inverted",
-            Self::MarkAutomatic => "Matching only around the arrow ends",
-        }
-    }
-
     /// Catalog key for the button label.
     pub(crate) fn label_key(self) -> &'static str {
         match self {

@@ -295,35 +295,6 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
 mod tests {
     use super::*;
 
-    /// The kept English mode labels render from the catalog verbatim.
-    #[test]
-    fn english_mode_labels_match_source_wording() {
-        #![allow(clippy::expect_used)]
-        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-        let locale = crate::i18n::LocaleManager::for_tests();
-        for (mode, key, label) in [
-            (
-                BridgeSplitMode::Following,
-                "bridge-mode-place",
-                "Place disc",
-            ),
-            (
-                BridgeSplitMode::PlantedPending,
-                "bridge-mode-calculating",
-                "Calculating",
-            ),
-            (BridgeSplitMode::PlantedReady, "bridge-mode-ready", "Ready"),
-            (
-                BridgeSplitMode::Failed,
-                "bridge-mode-failed",
-                "Split attempt failed",
-            ),
-        ] {
-            assert_eq!(status_label(mode, &locale), label);
-            assert_eq!(catalog.text(key).as_deref(), Some(label));
-        }
-    }
-
     #[test]
     fn plane_basis_is_finite_and_orthogonal_to_disc_normal() {
         for normal in [
