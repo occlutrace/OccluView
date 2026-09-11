@@ -52,8 +52,11 @@ jobs:
           toolchain: "1.98.0"
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: clippy --workspace --all-targets
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy --workspace --all-targets --all-features
+        # The release graph includes optional robust-CSG and diagnostic
+        # surfaces; linting the default feature set alone leaves those Rust
+        # paths outside the strict warning gate.
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   cross-compile:
     name: cross-compile (windows-gnu)
