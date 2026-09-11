@@ -37,6 +37,13 @@ pub(crate) fn drain_gpu_error(latch: &GpuErrorLatch) -> Option<String> {
     latch.lock().ok().and_then(|mut slot| slot.take())
 }
 
+pub(crate) struct SculptSurfaceFeedbackBindings<'a> {
+    pub(crate) camera_bg: &'a wgpu::BindGroup,
+    pub(crate) mesh_bg: &'a wgpu::BindGroup,
+    pub(crate) clip_bg: &'a wgpu::BindGroup,
+    pub(crate) mesh: &'a GpuMesh,
+}
+
 const SHADER_SRC: &str = include_str!("../shaders/mesh.wgsl");
 const CAP_SHADER_SRC: &str = include_str!("../shaders/cap.wgsl");
 const SCULPT_FEEDBACK_SHADER_SRC: &str = include_str!("../shaders/sculpt_feedback.wgsl");
@@ -370,17 +377,16 @@ impl Renderer {
     pub(crate) fn draw_sculpt_surface_feedback(
         &self,
         rpass: &mut wgpu::RenderPass<'_>,
-        camera_bg: &wgpu::BindGroup,
-        mesh_bg: &wgpu::BindGroup,
-        clip_bg: &wgpu::BindGroup,
-        mesh: &GpuMesh,
+        bindings: SculptSurfaceFeedbackBindings<'_>,
     ) {
         rpass.set_pipeline(&self.sculpt_feedback_pipeline);
-        rpass.set_bind_group(0, camera_bg, &[]);
-        rpass.set_bind_group(1, mesh_bg, &[]);
-        rpass.set_bind_group(2, clip_bg, &[]);
+        rpass.set_bind_group(0, bindings.camera_bg, &[]);
+        rpass.set_bind_group(1, bindings.mesh_bg, &[]);
+        rpass.set_bind_group(2, bindings.clip_bg, &[]);
         rpass.set_bind_group(3, self.sculpt_brush_bind_group(), &[]);
-        mesh.draw(rpass, occluview_core::MeshKind::TriangleMesh);
+        bindings
+            .mesh
+            .draw(rpass, occluview_core::MeshKind::TriangleMesh);
     }
 
     /// Draw the translucent Sculpt tool volume. It is intentionally

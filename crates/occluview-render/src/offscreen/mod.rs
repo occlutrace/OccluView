@@ -14,6 +14,8 @@ mod prepared_scene;
 mod scene_render;
 mod single_mesh;
 
+pub use prepared_scene::SculptSurfaceFeedbackRequest;
+
 /// Adapter-selection policy for one headless offscreen renderer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdapterPolicy {

@@ -1,10 +1,42 @@
 use super::{
     helpers::is_transparent, PreparedScene, PreparedSceneEntry, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, Renderer,
+    PreparedSceneTopology, PreparedSceneUpdate,
 };
 use crate::gpu::GpuMesh;
+use crate::pipeline::{Renderer, SculptSurfaceFeedbackBindings};
 use crate::texture::GpuTexture;
 use occluview_core::{MeshKind, Vertex};
+
+/// Inputs for the display-only Sculpt surface feedback pass. The request
+/// keeps the target layer identity beside the GPU bindings so a stale cursor
+/// cannot accidentally light a neighbouring mesh.
+pub struct SculptSurfaceFeedbackRequest<'a> {
+    renderer: &'a Renderer,
+    camera_bg: &'a wgpu::BindGroup,
+    clip_bg: &'a wgpu::BindGroup,
+    target_index: usize,
+    topology: &'a PreparedSceneTopology,
+}
+
+impl<'a> SculptSurfaceFeedbackRequest<'a> {
+    /// Build a feedback request without copying any GPU state.
+    #[must_use]
+    pub fn new(
+        renderer: &'a Renderer,
+        camera_bg: &'a wgpu::BindGroup,
+        clip_bg: &'a wgpu::BindGroup,
+        target_index: usize,
+        topology: &'a PreparedSceneTopology,
+    ) -> Self {
+        Self {
+            renderer,
+            camera_bg,
+            clip_bg,
+            target_index,
+            topology,
+        }
+    }
+}
 
 /// Above this many touched vertices, a sparse (per-run) vertex update switches
 /// to a single whole-buffer write — the scattered soup runs would otherwise
@@ -291,25 +323,26 @@ impl PreparedScene {
     /// from a replaced layer cannot light a neighbouring mesh for one frame.
     pub fn draw_sculpt_surface_feedback(
         &self,
-        renderer: &Renderer,
         rpass: &mut wgpu::RenderPass<'_>,
-        camera_bg: &wgpu::BindGroup,
-        clip_bg: &wgpu::BindGroup,
-        target_index: usize,
-        topology: &PreparedSceneTopology,
+        request: SculptSurfaceFeedbackRequest<'_>,
     ) -> bool {
-        let Some(entry) = self.entries.get(target_index) else {
+        let Some(entry) = self.entries.get(request.target_index) else {
             return false;
         };
-        if !entry.visible || entry.kind != MeshKind::TriangleMesh || entry.topology != *topology {
+        if !entry.visible
+            || entry.kind != MeshKind::TriangleMesh
+            || entry.topology != *request.topology
+        {
             return false;
         }
-        renderer.draw_sculpt_surface_feedback(
+        request.renderer.draw_sculpt_surface_feedback(
             rpass,
-            camera_bg,
-            &entry.mesh_bind_group,
-            clip_bg,
-            &entry.mesh,
+            SculptSurfaceFeedbackBindings {
+                camera_bg: request.camera_bg,
+                mesh_bg: &entry.mesh_bind_group,
+                clip_bg: request.clip_bg,
+                mesh: &entry.mesh,
+            },
         );
         true
     }
