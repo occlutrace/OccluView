@@ -354,6 +354,31 @@ fn every_desktop_notification_channel_builds_a_usable_command() {
         "an unknown channel must not be spawned"
     );
 }
+
+/// The fatal-startup notice may not hold the process open. `zenity`, `kdialog`
+/// and `xmessage` are modal dialogs that only return when dismissed, and this
+/// runs on the path that still owes the operator a non-zero exit status: an
+/// unattended launch (CI, kiosk, a `.desktop` start nobody watches) would leave
+/// a dead startup alive forever with no window.
+#[cfg(not(windows))]
+#[test]
+fn a_fatal_notice_cannot_block_the_failure_exit() {
+    let source = crate::primary_ui_tests::production_source(include_str!("app_bootstrap.rs"));
+    let run = crate::primary_ui_tests::method_body(source, "fn run_notification(");
+    assert!(!run.is_empty(), "the notification runner must exist");
+    assert!(
+        run.contains("try_wait()") && run.contains("NOTIFICATION_DISMISS_WAIT"),
+        "the notice must be given a bounded chance to show, then left on screen"
+    );
+    assert!(
+        !run.contains("status()"),
+        "waiting for the dialog to be dismissed would block the failure exit"
+    );
+    assert!(
+        source.contains("const NOTIFICATION_DISMISS_WAIT: std::time::Duration"),
+        "the wait must be a named, reviewable constant"
+    );
+}
 #[test]
 fn startup_stage_lines_contain_only_diagnostic_metadata() {
     let line = startup_stage_line("graphics-init", 42, 7);
