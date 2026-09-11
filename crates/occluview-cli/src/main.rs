@@ -21,7 +21,10 @@ use occluview_formats::dispatch::{
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use std::ffi::{OsStr, OsString};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_CLI_THUMBNAIL_SIZE: u16 = 4096;
 
@@ -201,11 +204,97 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     eprintln!("Writing {}...", out_path.display());
     let img = image::RgbaImage::from_raw(u32::from(size), u32::from(size), pixels)
         .ok_or_else(|| anyhow!("failed to create image buffer"))?;
-    img.save(&out_path)
+    write_thumbnail_atomically(&out_path, &img)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
     eprintln!("Done: {}", out_path.display());
     std::process::exit(0);
+}
+
+static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("thumbnail.png"));
+    let (temporary, file) = reserve_thumbnail_temp(parent, file_name)?;
+    let result = (|| -> Result<()> {
+        let mut writer = BufWriter::new(file);
+        image.write_to(&mut writer, image::ImageFormat::Png)?;
+        writer.flush()?;
+        writer
+            .into_inner()
+            .map_err(|error| error.into_error())?
+            .sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = replace_thumbnail_file(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn reserve_thumbnail_temp(parent: &Path, file_name: &OsStr) -> Result<(PathBuf, File)> {
+    for _ in 0..16 {
+        let id = NEXT_THUMBNAIL_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let mut temporary_name = OsString::from(".");
+        temporary_name.push(file_name);
+        temporary_name.push(format!(".occluview-{id}.tmp.png"));
+        let temporary = parent.join(temporary_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(anyhow!("could not reserve a temporary thumbnail path"))
+}
+
+#[cfg(not(windows))]
+fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(temporary, destination)
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary: Vec<u16> = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(temporary.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 /// `convert <file> -o output.{stl|ply|obj}`
@@ -460,7 +549,7 @@ mod tests {
 
     use super::{
         normalize_thumbnail_output_path, parse_limit_mm, take_file_argument,
-        validate_thumbnail_size, FileArgument,
+        validate_thumbnail_size, write_thumbnail_atomically, FileArgument,
     };
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -554,6 +643,10 @@ mod tests {
             !thumbnail.contains("use_software_renderer_only"),
             "CLI rendering uses the same per-request verified adapter policy as Explorer"
         );
+        assert!(
+            thumbnail.contains("write_thumbnail_atomically"),
+            "thumbnail output must be published only after the complete PNG is encoded"
+        );
     }
 
     #[test]
@@ -593,5 +686,23 @@ mod tests {
         );
         assert!(normalize_thumbnail_output_path(PathBuf::from("scan.jpg")).is_err());
         assert!(normalize_thumbnail_output_path(PathBuf::from("scan")).is_err());
+    }
+
+    #[test]
+    fn thumbnail_overwrite_publishes_a_complete_png_without_a_temp_sibling() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.png");
+        std::fs::write(&destination, b"previous thumbnail").expect("seed thumbnail");
+        let image = image::RgbaImage::from_pixel(3, 2, image::Rgba([12, 34, 56, 255]));
+
+        write_thumbnail_atomically(&destination, &image).expect("publish thumbnail");
+
+        let decoded = image::open(&destination).expect("decode published thumbnail");
+        assert_eq!(decoded.width(), 3);
+        assert_eq!(decoded.height(), 2);
+        assert!(std::fs::read_dir(directory.path())
+            .expect("read directory")
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".occluview-")));
     }
 }
