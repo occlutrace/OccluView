@@ -116,6 +116,16 @@ pub fn write_mesh<W: Write>(
     format: MeshWriteFormat,
     options: MeshWriteOptions,
 ) -> Result<MeshWriteReport, FormatError> {
+    ensure_format_can_represent(mesh, format, options)?;
+    write_mesh_unchecked(writer, mesh, format, options)
+}
+
+fn write_mesh_unchecked<W: Write>(
+    writer: &mut W,
+    mesh: &Mesh,
+    format: MeshWriteFormat,
+    options: MeshWriteOptions,
+) -> Result<MeshWriteReport, FormatError> {
     let mut report = MeshWriteReport::new(format, mesh);
     match format {
         MeshWriteFormat::StlBinary => stl::write_mesh(writer, mesh, options, &mut report)?,
@@ -278,7 +288,7 @@ fn write_mesh_to_file(
     options: MeshWriteOptions,
 ) -> Result<MeshWriteReport, FormatError> {
     let mut writer = BufWriter::new(file);
-    let report = write_mesh(&mut writer, mesh, format, options)?;
+    let report = write_mesh_unchecked(&mut writer, mesh, format, options)?;
     writer.flush()?;
     writer
         .into_inner()
@@ -636,5 +646,20 @@ mod tests {
 
         assert_eq!(report.format, MeshWriteFormat::PlyBinaryLittleEndian);
         assert!(!std::fs::read(file.path()).expect("read back").is_empty());
+    }
+
+    #[test]
+    fn public_sink_entry_point_rejects_an_empty_mesh_before_writing() {
+        let mut bytes = Vec::from(b"prefix".as_slice());
+
+        let result = write_mesh(
+            &mut bytes,
+            &Mesh::empty(),
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        );
+
+        assert!(result.is_err(), "an empty mesh is not an export");
+        assert_eq!(bytes, b"prefix");
     }
 }
