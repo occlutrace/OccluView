@@ -1185,18 +1185,48 @@ fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
     "none"
 }
 
-/// Run one notification program and report whether it accepted the message.
+/// Run one notification program and report whether it delivered the message.
 ///
 /// Waiting for the exit status is what separates "the message was shown" from
 /// "a binary with that name exists": `notify-send` succeeds only when a
-/// notification daemon answered it. `zenity` and `kdialog` are modal dialogs
-/// that return when dismissed, which is intended here - on this path the
-/// message has to outlive the process that raised it.
+/// notification daemon answered it.
+///
+/// The wait is bounded. `zenity`, `kdialog`, and `xmessage` are modal dialogs
+/// that only return when dismissed, which is right for the message but wrong for
+/// the process: this runs on the fatal-startup path, where `main_entry` still
+/// owes the operator a non-zero exit status, and an unattended `xmessage` (a CI
+/// host, a kiosk, a `.desktop` launch nobody is looking at) would otherwise keep
+/// a dead startup alive forever with no window.
 #[cfg(not(windows))]
 fn run_notification(program: &str, args: &[String]) -> std::io::Result<bool> {
-    let status = std::process::Command::new(program).args(args).status()?;
-    Ok(status.success())
+    use std::time::Instant;
+
+    let mut child = std::process::Command::new(program).args(args).spawn()?;
+    let deadline = Instant::now() + NOTIFICATION_DISMISS_WAIT;
+    loop {
+        match child.try_wait()? {
+            Some(status) => return Ok(status.success()),
+            None if Instant::now() >= deadline => {
+                // The dialog is on screen and the operator can still read it;
+                // the process has said everything it can and must not block the
+                // exit status on a click that may never come.
+                tracing::warn!(
+                    program,
+                    "the notice is still open; leaving it on screen and continuing to exit"
+                );
+                return Ok(true);
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
 }
+
+/// How long a fatal-startup notice may hold the process open.
+///
+/// Long enough for a `notify-send` round trip or a dialog that appears at once;
+/// short enough that nobody mistakes a hung startup for a slow one.
+#[cfg(not(windows))]
+const NOTIFICATION_DISMISS_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The notification channels tried, in the order they are attempted.
 ///
