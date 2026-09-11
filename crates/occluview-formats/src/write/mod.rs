@@ -330,6 +330,7 @@ fn create_export_temp(path: &Path) -> Result<(std::path::PathBuf, File), FormatE
     .into())
 }
 
+#[cfg(not(windows))]
 fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
     // `hard_link` fails with AlreadyExists instead of replacing a file, which
     // is the filesystem-level equivalent of the public create-new contract.
@@ -340,6 +341,15 @@ fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Res
     Ok(())
 }
 
+#[cfg(windows)]
+fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    // MoveFileEx without REPLACE_EXISTING preserves create-new semantics while
+    // avoiding the hard-link requirement on FAT, network, and restricted
+    // Windows volumes. The temporary file is already complete and is moved
+    // within the destination directory.
+    move_export_file(temporary, destination, false)
+}
+
 #[cfg(not(windows))]
 fn replace_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
     // Both paths are created in the destination directory, so rename is an
@@ -348,8 +358,17 @@ fn replace_export_file(temporary: &Path, destination: &Path) -> std::io::Result<
 }
 
 #[cfg(windows)]
-#[allow(unsafe_code)]
 fn replace_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    move_export_file(temporary, destination, true)
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn move_export_file(
+    temporary: &Path,
+    destination: &Path,
+    replace_existing: bool,
+) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
@@ -366,11 +385,15 @@ fn replace_export_file(temporary: &Path, destination: &Path) -> std::io::Result<
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
+    let mut flags = MOVEFILE_WRITE_THROUGH;
+    if replace_existing {
+        flags |= MOVEFILE_REPLACE_EXISTING;
+    }
     unsafe {
         MoveFileExW(
             PCWSTR(temporary.as_ptr()),
             PCWSTR(destination.as_ptr()),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            flags,
         )
     }
     .map_err(|error| std::io::Error::other(error.to_string()))
