@@ -451,16 +451,13 @@ fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
         repo_source_file("src/app/state_ui.rs").contains("viewport_orbit_cursor_grabbed: bool"),
         "app state should remember whether viewport orbit currently owns the cursor"
     );
+    // The lock-and-hide mapping itself is pinned by the unit test at its
+    // definition (`app_viewport::tests`); what this test owns is that both ends
+    // of the drag route through it, so no branch can lock without a release.
     assert!(
-        viewport_source.contains("egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked)")
-            && viewport_source
-                .contains("egui::ViewportCommand::CursorGrab(egui::CursorGrab::None)"),
-        "RMB orbit should lock the cursor during drag and always release it afterwards"
-    );
-    assert!(
-        viewport_source.contains("egui::ViewportCommand::CursorVisible(false)")
-            && viewport_source.contains("egui::ViewportCommand::CursorVisible(true)"),
-        "cursor should hide only while locked for uninterrupted orbit"
+        viewport_source.contains("self.set_viewport_orbit_cursor(ctx, true);")
+            && viewport_source.contains("self.set_viewport_orbit_cursor(ctx, false);"),
+        "grab and release must apply the one lock-state decision"
     );
     assert!(
         viewport_source.contains("self.release_viewport_orbit_cursor(ctx);"),
