@@ -9,6 +9,9 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 /// Parsed process arguments: launcher flags plus candidate file paths.
+// These booleans mirror the small, public launcher protocol and are clearer
+// as named flags than as a bitfield or an enum with precedence rules.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StartupArgs {
     /// `--help` or `-h` was passed; print usage and exit before windowing.

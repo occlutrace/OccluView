@@ -360,6 +360,9 @@ impl OccluViewApp {
     }
 
     /// Build and queue one job.
+    // The validation and snapshot assembly form one transaction: splitting it
+    // between helpers would make it easier to submit mixed-generation inputs.
+    #[expect(clippy::too_many_lines)]
     fn submit_align_job(&mut self, kind: AlignJobKind, pairs: Vec<WorldPair>) {
         let Some(scene) = self.document.scene.clone() else {
             return;

@@ -213,11 +213,9 @@ impl OccluViewApp {
             }
             self.render.invalidation.consume_offscreen_scene();
         }
-        if scene_rebuilt {
-            if self.push_sculpt_shadow_offscreen() != Some(true) {
-                if let Some(worker) = self.tools.sculpt.worker.as_ref() {
-                    worker.request_full_sync();
-                }
+        if scene_rebuilt && self.push_sculpt_shadow_offscreen() != Some(true) {
+            if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                worker.request_full_sync();
             }
         }
         if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
@@ -308,6 +306,9 @@ impl OccluViewApp {
         Ok(())
     }
 
+    // Scene preparation, overlay restoration, and readback share one frame
+    // boundary; extracting them independently risks returning a mixed frame.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
         if self.render.camera.is_none() {
             self.reset_camera_to_home();
@@ -360,11 +361,9 @@ impl OccluViewApp {
             }
             self.render.invalidation.consume_offscreen_scene();
         }
-        if scene_rebuilt {
-            if self.push_sculpt_shadow_offscreen() != Some(true) {
-                if let Some(worker) = self.tools.sculpt.worker.as_ref() {
-                    worker.request_full_sync();
-                }
+        if scene_rebuilt && self.push_sculpt_shadow_offscreen() != Some(true) {
+            if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                worker.request_full_sync();
             }
         }
         if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {

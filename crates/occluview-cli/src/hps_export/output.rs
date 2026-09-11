@@ -39,10 +39,9 @@ pub(crate) fn write_artifacts(
 
 fn output_directory_exists(path: &Path) -> Result<bool, CliError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => Ok(true),
-        Ok(_) => Err(CliError::OutputDirectoryFailed),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(_) => Err(CliError::OutputDirectoryFailed),
+        Ok(metadata) if metadata.is_dir() => Ok(true),
+        Ok(_) | Err(_) => Err(CliError::OutputDirectoryFailed),
     }
 }
 
@@ -64,7 +63,7 @@ fn reserve_staging_directory(output_dir: &Path) -> Result<std::path::PathBuf, Cl
         let staging = parent.join(name);
         match fs::create_dir(&staging) {
             Ok(()) => return Ok(staging),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(_) => return Err(CliError::OutputDirectoryFailed),
         }
     }
@@ -81,9 +80,7 @@ fn write_staged_artifacts(
     write_new(&geometry_path, geometry)?;
     let preview_path = staging.join("surface.glb");
     if let Some(preview) = preview {
-        if let Err(error) = write_new(&preview_path, preview) {
-            return Err(error);
-        }
+        write_new(&preview_path, preview)?;
     }
     write_new(&staging.join("manifest.json"), manifest)?;
     Ok(())
@@ -115,6 +112,8 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
     use super::{write_artifacts, CliError};
 
     #[test]

@@ -138,7 +138,7 @@ fn validate_thumbnail_size(raw: &str) -> Result<u16> {
             "--size must be between 1 and {MAX_CLI_THUMBNAIL_SIZE} pixels"
         ));
     }
-    Ok(size as u16)
+    u16::try_from(size).map_err(|_| anyhow!("--size exceeds the supported range"))
 }
 
 fn parse_limit_mm(raw: &str) -> Result<f32> {
@@ -228,7 +228,7 @@ fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<(
         writer.flush()?;
         writer
             .into_inner()
-            .map_err(|error| error.into_error())?
+            .map_err(std::io::IntoInnerError::into_error)?
             .sync_all()?;
         Ok(())
     })();
@@ -256,7 +256,7 @@ fn reserve_thumbnail_temp(parent: &Path, file_name: &OsStr) -> Result<(PathBuf, 
             .open(&temporary)
         {
             Ok(file) => return Ok((temporary, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }
     }
@@ -668,11 +668,10 @@ mod tests {
 
     #[test]
     fn close_holes_limit_rejects_non_finite_and_negative_values() {
-        assert_eq!(
-            parse_limit_mm("0").expect("zero is a valid hard limit"),
-            0.0
+        assert!(
+            (parse_limit_mm("0").expect("zero is a valid hard limit") - 0.0).abs() <= f32::EPSILON
         );
-        assert_eq!(parse_limit_mm("15.5").expect("finite limit"), 15.5);
+        assert!((parse_limit_mm("15.5").expect("finite limit") - 15.5).abs() <= f32::EPSILON);
         assert!(parse_limit_mm("-1").is_err());
         assert!(parse_limit_mm("NaN").is_err());
         assert!(parse_limit_mm("inf").is_err());

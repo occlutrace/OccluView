@@ -64,6 +64,8 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
     use glam::Vec3;
     use occluview_core::{Mesh, SceneMesh, Vertex};

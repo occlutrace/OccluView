@@ -250,7 +250,7 @@ impl OccluViewApp {
             let Some(scene) = self.document.scene.clone() else {
                 return;
             };
-            layer_of(&scene, layer).map(|entry| entry.clone())
+            layer_of(&scene, layer).cloned()
         };
         let Some(entry) = taken else {
             self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
