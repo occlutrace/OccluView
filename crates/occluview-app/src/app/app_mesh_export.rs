@@ -371,7 +371,7 @@ pub(super) fn default_layer_export_stem(
     // Deliberately prefer an ASCII-safe source/file stem, then the mesh name,
     // then a numbered fallback. This name is used by both single-layer and
     // batch exports, so they cannot drift into different naming rules.
-    let source_stem = exact_layer_source_path(paths, index)
+    let source_stem = source_path_for_export_defaults(paths, index)
         .and_then(|path| path.file_stem())
         .and_then(|stem| stem.to_str());
     let raw = source_stem.or_else(|| {
@@ -472,7 +472,8 @@ fn mesh_export_warning_summary(
 }
 
 pub(super) fn sanitize_filename_stem(raw: &str) -> String {
-    raw.trim()
+    let cleaned = raw
+        .trim()
         .chars()
         .map(|character| match character {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
@@ -481,7 +482,41 @@ pub(super) fn sanitize_filename_stem(raw: &str) -> String {
         })
         .collect::<String>()
         .trim_matches(['.', ' '])
-        .to_string()
+        .to_string();
+    if is_windows_device_stem(&cleaned) {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    }
+}
+
+fn is_windows_device_stem(stem: &str) -> bool {
+    let base = stem.split('.').next().unwrap_or_default();
+    matches!(
+        base.to_ascii_lowercase().as_str(),
+        "con"
+            | "prn"
+            | "aux"
+            | "nul"
+            | "com1"
+            | "com2"
+            | "com3"
+            | "com4"
+            | "com5"
+            | "com6"
+            | "com7"
+            | "com8"
+            | "com9"
+            | "lpt1"
+            | "lpt2"
+            | "lpt3"
+            | "lpt4"
+            | "lpt5"
+            | "lpt6"
+            | "lpt7"
+            | "lpt8"
+            | "lpt9"
+    )
 }
 
 #[cfg(test)]
@@ -568,6 +603,24 @@ mod tests {
             "upper"
         );
         Ok(())
+    }
+
+    #[test]
+    fn derived_layer_stem_uses_the_nearest_source_when_it_has_no_path() -> Result<()> {
+        let scene = exportable_scene()?;
+        let paths = vec![PathBuf::new(), PathBuf::from("/case/upper.obj")];
+        assert_eq!(
+            default_layer_export_stem(&paths, &scene, 0, MeshWriteFormat::Obj),
+            "upper"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_stems_avoid_windows_device_names() {
+        assert_eq!(sanitize_filename_stem("CON"), "_CON");
+        assert_eq!(sanitize_filename_stem("lpt1.final"), "_lpt1.final");
+        assert_eq!(sanitize_filename_stem("COM10"), "COM10");
     }
 
     #[test]
