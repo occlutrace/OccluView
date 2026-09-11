@@ -79,3 +79,21 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
         "render_scene_pixels must restore a map after rebuilding its prepared scene"
     );
 }
+
+#[test]
+fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
+    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
+    let render_now = crate::primary_ui_tests::method_body(source, "pub(super) fn render_now");
+    assert!(
+        render_now.contains("self.note_offscreen_failure(terminal_offscreen_error(&e))"),
+        "render_now must consume and classify a failed offscreen frame"
+    );
+    let pending =
+        crate::primary_ui_tests::method_body(source, "pub(super) fn render_pending_frame");
+    assert!(
+        pending.contains("self.render.offscreen_failed")
+            && pending.contains("consume_redraw()")
+            && pending.contains("!self.render.offscreen_failed"),
+        "the pending-frame path must stop retrying a terminal offscreen failure"
+    );
+}
