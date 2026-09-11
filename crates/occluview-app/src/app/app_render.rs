@@ -112,12 +112,21 @@ impl OccluViewApp {
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
                 self.note_offscreen_failure_anyhow(&e);
-                self.ui.app_error = Some(AppErrorDialog {
-                    title: self.ui.locale.tr("render-failed-title"),
-                    summary: self.ui.locale.tr("render-failed-summary"),
-                    details: format!("Render failed\n\n{e:#}"),
-                    action: AppErrorAction::None,
-                });
+                let terminal = self.render.offscreen_failed;
+                // A retryable failure is transient by definition: report it in
+                // the status line and keep the reason where the operator can
+                // find it, but do not raise the modal. On a machine that misses
+                // the deadline repeatedly, one dialog per attempt would bury the
+                // viewport and offer no way out; the terminal case keeps the
+                // dialog because the path really is off until restart.
+                if terminal {
+                    self.ui.app_error = Some(AppErrorDialog {
+                        title: self.ui.locale.tr("render-failed-title"),
+                        summary: self.ui.locale.tr("render-failed-summary"),
+                        details: format!("Render failed\n\n{e:#}"),
+                        action: AppErrorAction::None,
+                    });
+                }
                 self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
                 return;
             }
@@ -323,14 +332,20 @@ impl OccluViewApp {
 
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
         if !self.offscreen_available() {
-            return Err(anyhow::anyhow!(
-                "offscreen rendering is deferred after a previous GPU failure"
-            ));
+            // Typed, because the caller classifies the failure by its cause. A
+            // bare string would fall through to the conservative "cannot
+            // classify" branch and latch the path off permanently — turning the
+            // deferral into exactly the state it exists to avoid, on the first
+            // frame that arrives inside the wait.
+            return Err(anyhow::Error::new(RenderError::ReadbackTimeout {
+                timeout: OFFSCREEN_RETRY_DELAY,
+            })
+            .context("offscreen rendering is waiting out a retry delay"));
         }
         if self.render.offscreen_failed {
-            return Err(anyhow::anyhow!(
-                "offscreen rendering is disabled after a previous GPU failure"
-            ));
+            return Err(anyhow::Error::new(RenderError::Surface(
+                "offscreen rendering is disabled after a previous GPU failure".to_owned(),
+            )));
         }
         if self.render.offscreen.is_none() {
             self.render.offscreen = Some(
@@ -949,6 +964,14 @@ impl OccluViewApp {
                 self.sync_live_viewport();
             } else if !self.offscreen_available() {
                 self.render.invalidation.consume_redraw();
+                // Wake up when the wait is over. Without this the retry waits
+                // for the operator's next input, and on a machine with no live
+                // viewport - exactly the machine this path serves - a still
+                // window would never try again.
+                if let Some(deadline) = self.render.offscreen_retry_after {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    ctx.request_repaint_after(remaining);
+                }
             } else {
                 self.render_now(ctx);
             }

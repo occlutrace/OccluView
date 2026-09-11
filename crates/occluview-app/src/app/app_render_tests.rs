@@ -176,3 +176,43 @@ fn the_graphics_fault_dialog_offers_the_retry_action() {
         "retrying graphics must clear the latch the paint path obeys"
     );
 }
+
+/// The deferred retry has to survive the frames that arrive during its wait.
+///
+/// `ensure_offscreen` runs on the section path, which the operator drives by
+/// dragging the cut plane — the very action that causes a readback to miss its
+/// deadline. When it refused with a bare string, the caller could not classify
+/// the cause and latched the path off permanently: one drag inside the 750 ms
+/// window and the section panel went dead for the session, which is the state
+/// the deferral exists to avoid.
+#[test]
+fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
+    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
+    let ensure = crate::primary_ui_tests::method_body(source, "pub(super) fn ensure_offscreen");
+    assert!(!ensure.is_empty(), "ensure_offscreen must exist");
+    let deferral = ensure
+        .split_once("if !self.offscreen_available()")
+        .and_then(|(_, rest)| rest.split_once("if self.render.offscreen_failed"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    assert!(
+        deferral.contains("anyhow::Error::new(RenderError::ReadbackTimeout"),
+        "a deferral must carry a typed cause, or the caller latches the path off"
+    );
+    assert!(
+        !deferral.contains("anyhow::anyhow!"),
+        "a bare string cannot be classified by the caller"
+    );
+
+    // And the wait has to end by itself.
+    let pending =
+        crate::primary_ui_tests::method_body(source, "pub(super) fn render_pending_frame");
+    assert!(
+        pending.contains("request_repaint_after"),
+        "the retry must schedule its own wake-up; otherwise it waits for input"
+    );
+    assert!(
+        pending.contains("offscreen_retry_after"),
+        "the wake-up must be derived from the retry deadline"
+    );
+}
