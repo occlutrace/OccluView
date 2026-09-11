@@ -376,6 +376,7 @@ fn measure_job(generation: u64) -> super::AlignJob {
     let (moving_positions, moving_indices) = tilted_sheet(0.30);
     super::AlignJob {
         generation,
+        request_id: 0,
         kind: super::AlignJobKind::Measure,
         moving_positions: Arc::new(moving_positions),
         moving_indices: Arc::new(moving_indices),
@@ -530,4 +531,24 @@ fn a_second_job_of_the_same_kind_replaces_the_one_still_queued() {
         "five submissions produced {} results — the queue is not collapsing",
         completions.len()
     );
+}
+
+/// A cancellation request can race with the last few instructions of a fast
+/// job. Generation alone cannot distinguish that completion from the newest
+/// job when both belong to the same scene. The request sequence is the
+/// latest-wins guard for that same-generation race.
+#[test]
+fn an_older_same_generation_completion_is_not_applied() {
+    let worker = super::AlignWorker::spawn();
+    let generation = worker.generation();
+    worker.submit(measure_job(generation));
+    worker.submit(measure_job(generation));
+
+    let completions = harvest_quiet(&worker);
+    assert_eq!(
+        completions.len(),
+        1,
+        "only the newest same-generation request may reach the UI"
+    );
+    assert_eq!(completions[0].request_id, 2);
 }
