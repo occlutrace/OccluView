@@ -1,6 +1,16 @@
 //! Tests for the refine stage, split out of `icp.rs` to hold the workspace's
 //! file budget.
 
+// Fixture builders place grid indices into `f32` millimetres and turn small
+// millimetre offsets back into indices. Every cast is bounded by the fixture's
+// own size, which the pedantic cast lints cannot express.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 use crate::icp::{refine, IcpReport, Orientation, RefineSettings};
 use crate::{CancelFlag, FitRejection, Rigid, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
