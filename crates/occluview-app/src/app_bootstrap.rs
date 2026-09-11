@@ -1107,7 +1107,11 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
         // value in the next startup breadcrumb if every dialog channel fails.
         let report = report_path
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "not written".to_owned());
+            // Keep the no-file state machine-readable. This sentinel is also
+            // handled by the Windows diagnostics dialog below; a prose
+            // fallback here would bypass the presentation-sink contract
+            // before the locale manager exists.
+            .unwrap_or_else(|| "none".to_owned());
         tracing::error!(report, details, "OccluView could not continue");
         notify_desktop("OccluView could not start", &report, "critical");
     }
@@ -1116,7 +1120,11 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 fn show_diagnostics_message(report_path: Option<&Path>) {
     let report = report_path
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "not written".to_owned());
+        // Keep the no-file state machine-readable. This sentinel is also
+        // handled by the Windows diagnostics dialog below; a prose fallback
+        // here would bypass the presentation-sink contract before the locale
+        // manager exists.
+        .unwrap_or_else(|| "none".to_owned());
 
     #[cfg(windows)]
     {
