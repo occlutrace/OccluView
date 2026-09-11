@@ -194,8 +194,14 @@ struct Correspondence {
 /// Returns [`FitRejection::TooFewPairs`] when the moving mesh is empty or too
 /// little of it reaches the fixed surface to determine a pose, and
 /// [`FitRejection::Runaway`] when the result would move the mesh farther than
-/// its own size. A surface with enough pairs but no accepted improvement returns
+/// its own size plus the influence radius plus the coarse hypothesis this start
+/// proved. Those are the two bounded stages the total move is made of; the
+/// refinement's own travel is not allowed to grow beyond the first two terms.
+/// A surface with enough pairs but no accepted improvement returns
 /// [`FitRejection::NoImprovement`] instead of silently claiming a refined pose.
+/// A solve that stops on an iteration budget returns its best report with
+/// `converged == false`, which is not by itself a success: callers must consult
+/// [`IcpReport::is_trustworthy_refinement`].
 pub fn refine(
     moving: Soup<'_>,
     fixed: &SurfaceIndex,
@@ -288,6 +294,12 @@ pub fn refine(
     // Measure displacement at the mesh centre; the pose translation column can
     // change during rotation even when the geometry moves little.
     let moved_by = (pose.apply(center) - start.apply(center)).length();
+    // Two bounded stages make up this total: the coarse hypothesis
+    // (`choose_start_pose` admits nothing beyond COARSE_MAX_SHIFT_FACTOR over
+    // the moving extent plus the influence radius) and the refinement, which is
+    // bounded by the moving mesh's own size plus the influence radius. Read
+    // against their sum, the guard refuses a refine that wandered off the patch
+    // it was seated on; it is not a second opinion on the coarse stage.
     let allowed = extent.max(1.0) + initial_pose.coarse_shift + settings.influence_radius_mm.abs();
     if moved_by > allowed {
         return Err(FitRejection::Runaway { moved_by, allowed });
@@ -785,7 +797,25 @@ fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandi
         }
     }
     if candidate.summary.geometric_rms < current.summary.geometric_rms * STALL_IMPROVEMENT {
-        return true;
+        // A lower residual is only an improvement if it still explains the same
+        // surface. A small smooth patch can beat the true seating on residual
+        // alone while covering almost none of the moving scan, and the search
+        // floor admits a candidate at 1% coverage. Keep the incumbent unless
+        // the candidate holds its coverage, or explains materially more of the
+        // fixed surface. Two coarse tolerances, not the commitment floor: the
+        // trust gate still decides whether anything may be committed.
+        let keeps_coverage =
+            candidate.summary.coverage + COARSE_TIE_COVERAGE >= current.summary.coverage;
+        let explains_more_fixed = match (candidate.reciprocal, current.reciprocal) {
+            (Some(candidate_evidence), Some(current_evidence)) => {
+                candidate_evidence.coverage + COARSE_RECIPROCAL_ADVANTAGE
+                    >= current_evidence.coverage
+            }
+            // Without fixed-surface evidence on both sides there is nothing to
+            // weigh a coverage loss against, so residual alone decides.
+            _ => true,
+        };
+        return keeps_coverage || explains_more_fixed;
     }
     if candidate.summary.geometric_rms > current.summary.geometric_rms * (1.0 / STALL_IMPROVEMENT) {
         return false;

@@ -2,7 +2,11 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use super::{forward_coverage_is_sufficient, run_level, sample_vertices, vertex_normals, Level};
+use super::icp_overlap::ReciprocalSummary;
+use super::{
+    coarse_candidate_is_better, forward_coverage_is_sufficient, run_level, sample_vertices,
+    vertex_normals, CoarseCandidate, Level, Summary,
+};
 use crate::{CancelFlag, FitRejection, RefineSettings, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
 
@@ -16,6 +20,66 @@ fn flat_sheet() -> (Vec<f32>, Vec<u32>) {
         0, 1, 3, 1, 4, 3, 1, 2, 4, 2, 5, 4, 3, 4, 6, 4, 7, 6, 4, 5, 7, 5, 8, 7,
     ];
     (positions, indices)
+}
+
+/// A coarse candidate for the comparator tests: only the evidence the decision
+/// reads is filled in.
+fn candidate(rms: f64, coverage: f64, reciprocal_coverage: Option<f64>) -> CoarseCandidate {
+    CoarseCandidate {
+        rigid: crate::Rigid::default(),
+        summary: Summary {
+            inliers: 400,
+            inlier_ratio: 0.9,
+            coverage,
+            rms,
+            geometric_rms: rms,
+            median_abs: rms * 0.5,
+            p95_abs: rms * 1.5,
+            weak_rot_axes: [false; 3],
+            weak_trans_axes: [false; 3],
+        },
+        reciprocal: reciprocal_coverage.map(|coverage| ReciprocalSummary {
+            matched: 64,
+            coverage,
+            geometric_rms: rms,
+        }),
+        shift: 1.0,
+        component: Some(0),
+    }
+}
+
+/// A small smooth patch can have a lower residual than the true seating while
+/// covering almost none of the moving scan, and the search floor admits a
+/// candidate at 1% coverage. The operator's own start has to survive that.
+#[test]
+fn a_lower_residual_cannot_discard_the_coverage_it_does_not_explain() {
+    let start = candidate(0.35, 1.0, Some(0.80));
+    let distractor = candidate(0.05, 0.012, Some(0.05));
+
+    assert!(
+        !coarse_candidate_is_better(&distractor, &start),
+        "a 1.2%-coverage patch must not displace a start that explains the whole scan"
+    );
+    // The same residual wins when it still explains the surface.
+    let tight = candidate(0.05, 0.99, Some(0.80));
+    assert!(
+        coarse_candidate_is_better(&tight, &start),
+        "a better residual at the same coverage is a real improvement"
+    );
+    // Or when it recovers materially more of the fixed surface: this is the
+    // partial-crop case the seed search exists for.
+    let wider = candidate(0.05, 0.50, Some(0.95));
+    assert!(
+        coarse_candidate_is_better(&wider, &start),
+        "recovering more of the fixed surface justifies a coverage loss"
+    );
+    // A lower residual that loses coverage and explains no more of the fixed
+    // surface is the failure this guard exists for.
+    let narrower = candidate(0.05, 0.50, Some(0.70));
+    assert!(
+        !coarse_candidate_is_better(&narrower, &start),
+        "a coverage loss with no fixed-surface gain must keep the incumbent"
+    );
 }
 
 #[test]
