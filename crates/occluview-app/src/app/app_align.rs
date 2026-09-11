@@ -594,9 +594,7 @@ mod tests {
             "the click path must consume the swap the tool reported"
         );
         assert!(
-            source.contains(
-                "self.adopt_swapped_roles(self.ui.locale.tr(\"align-status-turned\"))"
-            ),
+            source.contains("self.adopt_swapped_roles(self.ui.locale.tr(\"align-status-turned\"))"),
             "a click-driven swap owes the same invalidation as the panel button"
         );
     }
