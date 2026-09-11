@@ -300,9 +300,10 @@ fn no_source_file_carries_a_path_from_one_machine() {
 }
 
 #[test]
-fn occluview_formats_has_two_explicit_unsafe_boundaries() {
-    // This crate crosses two platform boundaries: memory mapping and the
-    // Windows drive-type query. Keep that small, explicit, and reviewable.
+fn occluview_formats_has_three_explicit_unsafe_boundaries() {
+    // This crate crosses three platform boundaries: memory mapping, the
+    // Windows drive-type query, and atomic Windows file replacement. Keep
+    // those small, explicit, and reviewable.
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().and_then(Path::parent);
     let Some(workspace_root) = workspace_root else {
@@ -328,8 +329,9 @@ fn occluview_formats_has_two_explicit_unsafe_boundaries() {
 
     assert_eq!(
         sites.len(),
-        2,
-        "occluview-formats should hold exactly the mmap and drive-type-query \
+        3,
+        "occluview-formats should hold exactly the mmap, drive-type-query, and \
+         atomic-file-replacement \
          unsafe blocks:\n{}",
         sites.join("\n")
     );
