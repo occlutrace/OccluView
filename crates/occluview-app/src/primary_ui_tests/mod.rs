@@ -67,6 +67,21 @@ pub(crate) fn production_source(source: &'static str) -> &'static str {
         .map_or(source, |(production, _)| production)
 }
 
+/// One method's body: from its signature to the first line closing at the impl
+/// indentation.
+///
+/// A guard that searched everything after a signature accepted a helper that
+/// was merely *defined* later in the same file, so deleting the call inside the
+/// method left it green. Scoping to the body is what binds an assertion to the
+/// code it claims to protect.
+pub(crate) fn method_body<'a>(source: &'a str, signature: &str) -> &'a str {
+    source
+        .split_once(signature)
+        .and_then(|(_, rest)| rest.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .unwrap_or_default()
+}
+
 pub(super) fn main_source() -> &'static str {
     include_str!("../main.rs")
 }
