@@ -458,9 +458,8 @@ struct SculptSliderControl<'a> {
 
 fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
     let row_height = ui.spacing().interact_size.y;
-    // The caption rides its own line. Keep the rail to half of the panel: a
-    // full-width rail is visually too dominant in this compact tool menu, and
-    // the fixed width makes Size and Force read as one small control group.
+    // The caption rides its own line. The rail owns the full content width so
+    // the operator gets a stable, easy-to-grab target in the compact panel.
     let slider_width = sculpt_slider_width(ui.available_width());
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(control.label).size(11.0).weak());
@@ -496,10 +495,10 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
     response.on_hover_text(control.tooltip);
 }
 
-/// Reserve only half of the sculpt panel for the slider rail. Kept pure so
+/// Reserve the full available content width for the slider rail. Kept pure so
 /// the compact control geometry is explicit and regression-testable.
 fn sculpt_slider_width(available_width: f32) -> f32 {
-    (available_width * 0.5).max(0.0)
+    available_width.max(0.0)
 }
 
 fn close_holes_limit_control(
@@ -689,8 +688,8 @@ mod tests {
     }
 
     #[test]
-    fn sculpt_slider_uses_half_of_the_panel_width() {
-        assert!((sculpt_slider_width(212.0) - 106.0).abs() < f32::EPSILON);
+    fn sculpt_slider_uses_the_full_panel_width() {
+        assert!((sculpt_slider_width(212.0) - 212.0).abs() < f32::EPSILON);
         assert!(sculpt_slider_width(0.0).abs() < f32::EPSILON);
     }
 
