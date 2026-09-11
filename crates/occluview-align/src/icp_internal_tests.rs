@@ -83,6 +83,44 @@ fn a_lower_residual_cannot_discard_the_coverage_it_does_not_explain() {
     );
 }
 
+/// The coverage the candidate keeps is measured against the incumbent, not
+/// against a fixed number of points. An absolute allowance did not matter in
+/// the fixture above (a 50-point gap either way) but decided the outcome within
+/// two points of the 1% search floor, which is where a small patch competes
+/// with the operator's start.
+#[test]
+fn a_residual_win_near_the_search_floor_cannot_shrink_coverage_by_half() {
+    // The incumbent is already close to the floor, so an absolute two-point
+    // allowance used to accept the loss of most of what it had.
+    let near_floor_start = candidate(0.35, 0.025, Some(0.80));
+    let thinner = candidate(0.05, 0.010, Some(0.70));
+    assert!(
+        !coarse_candidate_is_better(&thinner, &near_floor_start),
+        "losing 60% of a barely-covered start is not an improvement"
+    );
+    // Reciprocal evidence that merely ties is not a gain either.
+    let tied = candidate(0.05, 0.012, Some(0.80));
+    assert!(
+        !coarse_candidate_is_better(&tied, &candidate(0.35, 1.0, Some(0.80))),
+        "equal fixed-surface evidence cannot excuse a 99% coverage loss"
+    );
+    // Losing the fixed-surface evidence entirely is not a gain: a moving point
+    // cloud has no reverse surface to query, and treating that absence as one
+    // let a residual-only win discard the operator's coverage.
+    let cloud_start = candidate(0.35, 1.0, None);
+    let cloud_patch = candidate(0.05, 0.30, None);
+    assert!(
+        !coarse_candidate_is_better(&cloud_patch, &cloud_start),
+        "an absent fixed surface must not authorize a coverage loss"
+    );
+    // A point-cloud candidate that keeps its coverage still wins on residual.
+    let cloud_tight = candidate(0.05, 0.95, None);
+    assert!(
+        coarse_candidate_is_better(&cloud_tight, &cloud_start),
+        "a point cloud can still improve on residual when it explains as much"
+    );
+}
+
 #[test]
 fn rank_deficient_nonzero_residual_is_not_reported_as_refined() {
     let (positions, indices) = flat_sheet();

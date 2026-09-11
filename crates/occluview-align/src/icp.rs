@@ -434,6 +434,11 @@ struct GlobalSeedContext<'a> {
 
 const COARSE_TIE_RELATIVE_RMS: f64 = 0.02;
 const COARSE_TIE_COVERAGE: f64 = 0.02;
+/// Fraction of the incumbent's forward coverage a candidate must keep to win on
+/// residual alone. Relative, not absolute: an absolute allowance lifted the 1%
+/// search floor to an effective 3%, which is exactly the regime where a small
+/// patch competes with the operator's own start.
+const COARSE_COVERAGE_KEEP_FRACTION: f64 = 0.9;
 const COARSE_RECIPROCAL_ADVANTAGE: f64 = 0.01;
 const COARSE_RECIPROCAL_RMS_FACTOR: f64 = 1.25;
 const COARSE_POSE_TRANSLATION_EPS_MM: f64 = 0.01;
@@ -778,6 +783,28 @@ fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3)
         .map(|(index, _)| index)
 }
 
+/// Whether a candidate keeps enough of the incumbent's forward coverage.
+fn coarse_keeps_coverage(candidate: f64, current: f64) -> bool {
+    candidate >= current * COARSE_COVERAGE_KEEP_FRACTION
+}
+
+/// Whether a candidate explains materially more of the fixed surface.
+///
+/// Missing evidence on either side is not a gain: a point-cloud layer has no
+/// reverse surface to query, and treating that absence as "explains more" let a
+/// residual-only win discard most of the operator's coverage.
+fn coarse_explains_more_fixed(
+    candidate: Option<ReciprocalSummary>,
+    current: Option<ReciprocalSummary>,
+) -> bool {
+    match (candidate, current) {
+        (Some(candidate), Some(current)) => {
+            candidate.coverage > current.coverage + COARSE_RECIPROCAL_ADVANTAGE
+        }
+        _ => false,
+    }
+}
+
 fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandidate) -> bool {
     // A forward-only low residual can come from a small smooth patch. When
     // both triangle soups are available, prefer a candidate that explains
@@ -791,7 +818,7 @@ fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandi
             > current_reciprocal.coverage + COARSE_RECIPROCAL_ADVANTAGE
             && candidate.summary.geometric_rms
                 <= current.summary.geometric_rms * COARSE_RECIPROCAL_RMS_FACTOR
-            && candidate.summary.coverage + COARSE_TIE_COVERAGE >= current.summary.coverage;
+            && coarse_keeps_coverage(candidate.summary.coverage, current.summary.coverage);
         if reciprocal_advantage {
             return true;
         }
@@ -801,21 +828,11 @@ fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandi
         // surface. A small smooth patch can beat the true seating on residual
         // alone while covering almost none of the moving scan, and the search
         // floor admits a candidate at 1% coverage. Keep the incumbent unless
-        // the candidate holds its coverage, or explains materially more of the
-        // fixed surface. Two coarse tolerances, not the commitment floor: the
-        // trust gate still decides whether anything may be committed.
-        let keeps_coverage =
-            candidate.summary.coverage + COARSE_TIE_COVERAGE >= current.summary.coverage;
-        let explains_more_fixed = match (candidate.reciprocal, current.reciprocal) {
-            (Some(candidate_evidence), Some(current_evidence)) => {
-                candidate_evidence.coverage + COARSE_RECIPROCAL_ADVANTAGE
-                    >= current_evidence.coverage
-            }
-            // Without fixed-surface evidence on both sides there is nothing to
-            // weigh a coverage loss against, so residual alone decides.
-            _ => true,
-        };
-        return keeps_coverage || explains_more_fixed;
+        // the candidate keeps its coverage, or explains materially more of the
+        // fixed surface. Coarse tolerances, not the commitment floor: the trust
+        // gate still decides whether anything may be committed.
+        return coarse_keeps_coverage(candidate.summary.coverage, current.summary.coverage)
+            || coarse_explains_more_fixed(candidate.reciprocal, current.reciprocal);
     }
     if candidate.summary.geometric_rms > current.summary.geometric_rms * (1.0 / STALL_IMPROVEMENT) {
         return false;
