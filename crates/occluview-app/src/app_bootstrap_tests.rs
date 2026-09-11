@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn native_options_use_the_low_latency_surface_contract() {
-    let options = native_options(&[]);
+    let options = native_options(&GraphicsPreflight::default());
 
     assert_eq!(
         options.wgpu_options.surface,
@@ -114,8 +114,9 @@ fn adapter_ranking_respects_the_requested_power_profile() {
 }
 
 #[test]
-fn compatible_startup_profile_uses_single_sample_rendering() {
-    assert_eq!(LIVE_VIEWPORT_SAMPLE_COUNT, 1);
+fn live_sample_policy_uses_msaa_when_the_selected_adapter_supports_it() {
+    assert_eq!(select_live_sample_count(true), 4);
+    assert_eq!(select_live_sample_count(false), 1);
 }
 
 #[test]

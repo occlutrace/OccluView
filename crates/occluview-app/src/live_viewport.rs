@@ -9,8 +9,6 @@ use occluview_render::{
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::LIVE_VIEWPORT_SAMPLE_COUNT;
-
 pub(super) type SharedLiveViewport = Arc<Mutex<LiveViewport>>;
 
 /// One frame's display-only Sculpt cursor. The target identity is kept next
@@ -44,12 +42,13 @@ pub(super) struct LiveViewport {
 impl LiveViewport {
     pub(super) fn from_render_state(
         render_state: &egui_wgpu::RenderState,
+        sample_count: u16,
     ) -> Result<SharedLiveViewport, RenderError> {
         let renderer = Renderer::with_shared_device_sample_count(
             Arc::new(render_state.device.clone()),
             Arc::new(render_state.queue.clone()),
             render_state.target_format,
-            u32::from(LIVE_VIEWPORT_SAMPLE_COUNT),
+            u32::from(sample_count),
         )?;
         let fallback_texture = GpuTexture::fallback(&renderer, renderer.device(), renderer.queue());
         let camera_bind_group = renderer.camera_bind_group();

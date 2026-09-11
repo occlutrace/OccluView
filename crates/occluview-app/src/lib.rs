@@ -99,11 +99,6 @@ pub use app_bootstrap::main_entry;
 pub(crate) const APP_USER_MODEL_ID: &str = "OccluTrace.OccluView";
 #[cfg(target_os = "linux")]
 const LINUX_DESKTOP_APP_ID: &str = "ai.occlutrace.OccluView";
-// Keep the common renderer profile valid on adapters that expose only the
-// baseline sample count. egui still feather-antialiases its UI, while the
-// custom viewport can render on older integrated GPUs instead of failing its
-// first multisampled texture creation.
-pub(crate) const LIVE_VIEWPORT_SAMPLE_COUNT: u16 = 1;
 
 #[cfg(test)]
 mod cut_manipulator_hostile_tests;
