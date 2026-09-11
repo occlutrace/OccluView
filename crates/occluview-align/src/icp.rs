@@ -464,6 +464,11 @@ const GLOBAL_SEED_REFINE_ITERATIONS: u32 = 8;
 /// Do not pay for a global anchor sweep when the current pose already explains
 /// most of the moving samples. A weak local overlap still triggers recovery.
 const GLOBAL_SEED_MIN_FORWARD_COVERAGE: f64 = 0.5;
+/// A high-coverage but high-residual local patch is still accidental evidence.
+/// The threshold is a fraction of the operator's correspondence radius, so it
+/// scales with the same physical tolerance instead of a mesh-size-independent
+/// magic number.
+const GLOBAL_SEED_MAX_START_RMS_FRACTION: f64 = 0.25;
 
 /// Prefer a centered coarse hypothesis when it clearly explains more of the
 /// same surface than the caller's rough pose.
@@ -490,14 +495,14 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
     let moving_anchor = sampled_centroid(level.moving, &seed_samples).unwrap_or(moving_center);
     let score = |pose: Rigid| score_candidate(level, pose);
     let mut candidates = Vec::new();
-    if let Some((summary, reciprocal)) = score(level.start) {
-        candidates.push(CoarseCandidate {
-            rigid: level.start,
-            summary,
-            reciprocal,
-            shift: 0.0,
-            component: nearest_component_index(level, level.start, moving_center),
-        });
+    // Remember whether the operator's pose itself produced usable evidence.
+    // A centered component seed can see a neighbouring surface through a
+    // generous influence radius even when the requested pose has no hit at
+    // all. Letting that accidental seed decide whether global recovery runs
+    // was the reason a small partial crop stayed sideways.
+    let (start_candidate, start_has_strong_evidence) = coarse_start_candidate(level, moving_center);
+    if let Some(candidate) = start_candidate {
+        candidates.push(candidate);
     }
 
     // A component centre is a global coarse hypothesis, not a local radius
@@ -546,7 +551,8 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
         }
     }
 
-    let needs_global_seed = candidates.is_empty()
+    let needs_global_seed = !start_has_strong_evidence
+        || candidates.is_empty()
         || candidates
             .iter()
             .all(|candidate| candidate.summary.coverage < GLOBAL_SEED_MIN_FORWARD_COVERAGE);
@@ -591,6 +597,28 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
         rigid: best.rigid,
         coarse_shift: best.shift,
     })
+}
+
+fn coarse_start_candidate(
+    level: &Level<'_>,
+    moving_center: DVec3,
+) -> (Option<CoarseCandidate>, bool) {
+    let evidence = score_candidate(level, level.start);
+    let strong = evidence.is_some_and(|(summary, _)| {
+        summary.coverage >= GLOBAL_SEED_MIN_FORWARD_COVERAGE
+            && summary.geometric_rms.is_finite()
+            && summary.geometric_rms
+                <= level.settings.influence_radius_mm.abs().max(f64::EPSILON)
+                    * GLOBAL_SEED_MAX_START_RMS_FRACTION
+    });
+    let candidate = evidence.map(|(summary, reciprocal)| CoarseCandidate {
+        rigid: level.start,
+        summary,
+        reciprocal,
+        shift: 0.0,
+        component: nearest_component_index(level, level.start, moving_center),
+    });
+    (candidate, strong)
 }
 
 /// Search a bounded set of fixed-surface anchors for a crop whose current
