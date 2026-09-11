@@ -20,8 +20,10 @@ remain in the Git history.
   over a revoked worker.
 - Sculpt brush sliders fill the panel again: the rail itself uses the full
   width, not just the row that contains it.
-- Cut View keeps a solid cap across the cut, including after the stencil pass
-  that builds the cap mask.
+- The renderer's stencil cap passes keep their geometry-precise depth again,
+  which is what makes a filled cross-section possible. The viewer itself still
+  draws the hollow preview (`show_hollow`), so the cap is exercised by the
+  renderer's golden-image tests rather than by the main window.
 
 ### Reliability
 

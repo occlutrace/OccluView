@@ -193,6 +193,13 @@ impl CutTool {
         Some(CutViewSpec {
             plane: ClipPlane::new(normal.to_array(), distance),
             cap_color: CAP_COLOR,
+            // `true` is the hollow (discard-only) cut: the cross-section shows
+            // the ghost of the cut-away side and the section panel's contour,
+            // not a filled cap. The stencil cap path in the renderer
+            // (`show_hollow: false`) is therefore not reachable from the
+            // viewer today; it is exercised only by the renderer's golden-image
+            // tests. Keep that difference in mind when reading "solid cut"
+            // claims, and set this to `false` to reach the cap passes.
             show_hollow: true,
         })
     }
