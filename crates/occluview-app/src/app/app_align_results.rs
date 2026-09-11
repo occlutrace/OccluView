@@ -509,8 +509,17 @@ mod tests {
                 String::new(),
             ),
         ];
+        // The keys are resolved at render time from a variable, so the scanner
+        // that checks literal `.tr("key")` call sites cannot see them. Close
+        // the loop here: a renamed catalog key has to fail this test rather
+        // than reach the operator as a `⟦key⟧` marker.
+        let embedded = crate::i18n::catalog::embedded_en_keys();
         for (failure, key, a, b) in cases {
             assert_eq!(align_failure_parts(failure), (key, a, b));
+            assert!(
+                embedded.contains(key),
+                "the typed failure key {key} must exist in the English catalog"
+            );
         }
     }
 
