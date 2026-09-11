@@ -193,6 +193,26 @@ fn cancellable_stroke_honors_shutdown_before_mutating_the_session() {
 }
 
 #[test]
+fn cancellable_normal_recompute_stops_before_a_large_scope() {
+    let positions = vec![Vec3::ZERO, Vec3::X, Vec3::Y];
+    let incident = crate::brush_csr::Csr::from_rows(&[vec![0], vec![0], vec![0]]);
+    let indices = vec![0, 1, 2];
+    let cancel = std::sync::atomic::AtomicBool::new(true);
+
+    assert!(
+        crate::brush_math::scope_area_normals(
+            &[0, 1, 2],
+            &incident,
+            &indices,
+            &positions,
+            Some(&cancel),
+        )
+        .is_none(),
+        "a cancelled worker must not enter the normal write-back phase"
+    );
+}
+
+#[test]
 fn falloff_leaves_vertices_outside_the_radius_untouched() {
     let mesh = bumpy_patch(0.6);
     let mut session = BrushSession::prepare(&mesh).expect("prepare");
