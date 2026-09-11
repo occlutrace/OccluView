@@ -292,7 +292,7 @@ fn write_mesh_to_file(
     writer.flush()?;
     writer
         .into_inner()
-        .map_err(|error| error.into_error())?
+        .map_err(std::io::IntoInnerError::into_error)?
         .sync_all()?;
     Ok(report)
 }
@@ -319,7 +319,7 @@ fn create_export_temp(path: &Path) -> Result<(std::path::PathBuf, File), FormatE
             .open(&temporary)
         {
             Ok(file) => return Ok((temporary, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }
     }

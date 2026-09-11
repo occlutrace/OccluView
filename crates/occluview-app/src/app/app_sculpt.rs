@@ -635,6 +635,9 @@ impl OccluViewApp {
     /// authoritative hit. Hovering performs one guarded BVH pick; a held drag
     /// reuses the exact hit that scheduled the dabs, so the surface light never
     /// adds a second scan-sized traversal to the hot path.
+    // The cursor is one authoritative presentation path: hit validation,
+    // surface feedback, and the screen-space ring must share the same sample.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn paint_sculpt_cursor_impl(
         &self,
         ui: &egui::Ui,

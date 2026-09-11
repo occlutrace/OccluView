@@ -150,6 +150,9 @@ impl OccluViewApp {
 
     /// Write every visible layer to its own file in a chosen folder, each in
     /// its current pose.
+    // This is deliberately one batch transaction so partial successes,
+    // warnings, dirty-state reconciliation, and the final error dialog agree.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn save_each_layer_dialog(&mut self) {
         let Some(scene) = self.document.scene.clone() else {
             return;

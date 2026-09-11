@@ -151,7 +151,7 @@ pub(crate) fn cone_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
             },
             SculptToolVertex {
                 position: [0.0, 0.0, 1.0],
-                normal: cone_normal((x0 + x1) * 0.5, (y0 + y1) * 0.5),
+                normal: cone_normal(x0.midpoint(x1), y0.midpoint(y1)),
             },
         ]);
         indices.extend_from_slice(&[start, start + 1, start + 2]);

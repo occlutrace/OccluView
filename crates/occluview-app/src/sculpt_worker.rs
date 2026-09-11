@@ -180,12 +180,11 @@ impl SculptCommandQueue {
             if state.shutdown {
                 return None;
             }
-            state = match self.wake.wait(state) {
-                Ok(state) => state,
-                Err(_) => {
-                    self.report_failure();
-                    return None;
-                }
+            state = if let Ok(state) = self.wake.wait(state) {
+                state
+            } else {
+                self.report_failure();
+                return None;
             };
         }
     }
@@ -363,13 +362,12 @@ impl WorkerState {
         // During the one-frame window between a worker rebuild publication and
         // UI installation the old pick mesh has the wrong vertex count. Keep
         // the state explicitly cold rather than allowing a mismatched pick.
-        let shadow_len = match pick.shadow.read() {
-            Ok(shadow) => shadow.len(),
-            Err(_) => {
-                self.set_error(SculptFailure::ShadowPoisoned);
-                return;
-            }
+        let Ok(shadow) = pick.shadow.read() else {
+            self.set_error(SculptFailure::ShadowPoisoned);
+            return;
         };
+        let shadow_len = shadow.len();
+        drop(shadow);
         if pick.mesh.vertices().len() != shadow_len {
             pick.dirty_triangles.clear();
             return;
@@ -378,12 +376,12 @@ impl WorkerState {
         pick.dirty_triangles.sort_unstable();
         pick.dirty_triangles.dedup();
         if pick.dirty_triangles.len() > MAX_DYNAMIC_PICK_TRIANGLES {
-            let refreshed = match pick.shadow.read() {
-                Ok(shadow) => pick.mesh.with_sculpted_vertices(shadow.clone()),
-                Err(_) => {
+            let refreshed = {
+                let Ok(shadow) = pick.shadow.read() else {
                     self.set_error(SculptFailure::ShadowPoisoned);
                     return;
-                }
+                };
+                pick.mesh.with_sculpted_vertices(shadow.clone())
             };
             let Some(refreshed) = refreshed else {
                 self.set_error(SculptFailure::ShadowShapeMismatch);
@@ -401,12 +399,11 @@ impl WorkerState {
         };
         while completions.len() >= MAX_PENDING_COMPLETIONS && !self.stopping.load(Ordering::Acquire)
         {
-            completions = match self.completion_wake.wait(completions) {
-                Ok(completions) => completions,
-                Err(_) => {
-                    self.set_error(SculptFailure::WorkerStatePoisoned);
-                    return false;
-                }
+            completions = if let Ok(completions) = self.completion_wake.wait(completions) {
+                completions
+            } else {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return false;
             };
         }
         if self.stopping.load(Ordering::Acquire) {

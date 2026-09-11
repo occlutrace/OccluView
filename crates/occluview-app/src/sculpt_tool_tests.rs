@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::float_cmp)]
+#![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
 use super::*;
 use glam::Quat;
 use occluview_core::{Mesh, SceneMesh};

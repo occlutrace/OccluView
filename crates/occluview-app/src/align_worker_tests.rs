@@ -2,7 +2,12 @@
 //!
 //! A `#[path]` child module of `align_worker.rs`, split out to hold the
 //! workspace's 800-line file budget.
-#![allow(clippy::expect_used, clippy::float_cmp, clippy::items_after_statements)]
+#![allow(
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::items_after_statements,
+    clippy::panic
+)]
 
 use super::{
     color_map, matching_inputs_changed, AlignSettings, MeasureKey, SurfaceKey, WORKING_MAX_MM,

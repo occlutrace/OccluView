@@ -32,18 +32,13 @@ pub(crate) const MARKED_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
 pub(crate) const MARKED_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
 
 /// Which scan of the pair a marking belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AlignSide {
     /// The scan being placed.
+    #[default]
     Moving,
     /// The scan that stays put.
     Fixed,
-}
-
-impl Default for AlignSide {
-    fn default() -> Self {
-        Self::Moving
-    }
 }
 
 impl AlignSide {

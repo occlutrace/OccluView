@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, DabFailure, Ordering, SculptCommand, SculptCommandQueue, SculptCompletion, SculptFailure,
+    SculptSession, WorkerState,
+};
 
 pub(super) fn run_worker(
     mut session: SculptSession,
