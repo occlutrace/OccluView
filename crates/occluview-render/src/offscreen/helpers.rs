@@ -225,6 +225,12 @@ impl Offscreen {
             output_buffer.unmap();
             return Err(RenderError::Surface(error));
         }
+        if self.renderer.is_gpu_faulted() {
+            output_buffer.unmap();
+            return Err(RenderError::Surface(
+                "offscreen GPU renderer became unavailable during readback".to_owned(),
+            ));
+        }
         let mapped = match poll_result {
             Ok(_) => wait_for_map_callback(&map_rx, deadline),
             Err(wgpu::PollError::Timeout) => Err(readback_timeout(deadline)),

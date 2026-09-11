@@ -187,8 +187,9 @@ fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() 
     ));
     assert!(clean.is_ok(), "a triangle renders: {clean:?}");
 
-    super::record_gpu_error(
+    super::record_gpu_fault(
         &offscreen.renderer().gpu_error,
+        &offscreen.renderer().gpu_faulted,
         "buffer allocation refused".to_string(),
     );
     // Map the pixels away before asserting: a failure here must print the

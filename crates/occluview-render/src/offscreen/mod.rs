@@ -381,6 +381,20 @@ pub struct Offscreen {
 }
 
 impl Offscreen {
+    /// Refuse new work after the device has reported a fault. The live app
+    /// disables its callback at the same boundary; offscreen callers need the
+    /// equivalent guard so a thumbnail, cut preview, or export cannot submit a
+    /// second command stream to a device that is already known to be invalid.
+    fn ensure_gpu_ready(&self) -> Result<(), RenderError> {
+        if !self.renderer.is_gpu_faulted() {
+            return Ok(());
+        }
+        let message = self.renderer.take_gpu_error().unwrap_or_else(|| {
+            "offscreen GPU renderer is unavailable after a previous device fault".to_owned()
+        });
+        Err(RenderError::Surface(message))
+    }
+
     /// Create a headless renderer at any reasonable output format.
     ///
     /// # Errors
