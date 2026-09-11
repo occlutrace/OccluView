@@ -287,7 +287,15 @@ impl OccluViewApp {
             normal: triangle_normal(entry, hit.triangle_index),
         };
 
-        self.tools.align.status = Some(match self.tools.align.tool.click(point) {
+        let outcome = self.tools.align.tool.click(point);
+        // The first point can contradict the arm-time role guess and swap the
+        // two scans. That is the same role change the panel button performs, so
+        // it owes the same invalidation: without it the map kept describing the
+        // direction the panel no longer showed.
+        if self.tools.align.tool.take_role_swap() {
+            self.adopt_swapped_roles(self.ui.locale.tr("align-status-turned"));
+        }
+        self.tools.align.status = Some(match outcome {
             ClickOutcome::Ignored => return true,
             ClickOutcome::StartedPair => self.ui.locale.tr("align-status-now-other"),
             ClickOutcome::CompletedPair(index) => self
@@ -575,6 +583,21 @@ mod tests {
         assert!(
             source.contains("worker.submit(AlignJob {"),
             "the tool must reach the maths by submitting a job"
+        );
+    }
+
+    #[test]
+    fn a_click_that_turns_the_pair_around_invalidates_the_fit() {
+        let source = production();
+        assert!(
+            source.contains("if self.tools.align.tool.take_role_swap() {"),
+            "the click path must consume the swap the tool reported"
+        );
+        assert!(
+            source.contains(
+                "self.adopt_swapped_roles(self.ui.locale.tr(\"align-status-turned\"))"
+            ),
+            "a click-driven swap owes the same invalidation as the panel button"
         );
     }
 

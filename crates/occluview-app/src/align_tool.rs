@@ -64,6 +64,8 @@ pub(crate) struct AlignTool {
     /// operator's. A guess is overridden by the first placed point; a choice
     /// never is.
     implied: bool,
+    /// Set when a click traded the roles, and cleared by [`Self::take_role_swap`].
+    role_swap_pending: bool,
 }
 
 impl AlignTool {
@@ -157,6 +159,15 @@ impl AlignTool {
         true
     }
 
+    /// Whether clicks have traded the roles since this was last asked.
+    ///
+    /// The swap itself is a tool decision; dropping the map and the refined
+    /// claim that described the old direction belongs to the application, so
+    /// the fact is handed over rather than acted on here.
+    pub(crate) fn take_role_swap(&mut self) -> bool {
+        std::mem::take(&mut self.role_swap_pending)
+    }
+
     /// Place a clicked surface point.
     pub(crate) fn click(&mut self, point: AlignPoint) -> ClickOutcome {
         if !self.armed {
@@ -169,7 +180,10 @@ impl AlignTool {
         if self.implied {
             self.implied = false;
             if self.fixed == Some(layer) {
-                self.swap_roles();
+                // A swap is a role change, and the roles decide which
+                // direction the map measures. Report it instead of applying
+                // the consequences here: the application owns the invalidation.
+                self.role_swap_pending = self.swap_roles();
             }
         }
 
