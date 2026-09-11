@@ -122,10 +122,10 @@ fn real_main() -> Result<()> {
     let startup_activation_token = single_instance::capture_activation_token();
 
     append_startup_stage("graphics-preflight");
-    preflight_graphics_device()?;
+    let preflight_adapters = preflight_graphics_devices()?;
     append_startup_stage("graphics-preflight-ok");
     append_startup_stage("graphics-init");
-    let native_options = native_options();
+    let native_options = native_options(&preflight_adapters);
 
     eframe::run_native(
         "OccluView 3D Viewer",
@@ -180,7 +180,7 @@ fn real_main() -> Result<()> {
     Ok(())
 }
 
-fn native_options() -> eframe::NativeOptions {
+fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptions {
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetup::without_display_handle();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(create_new) = &mut wgpu_setup {
         // eframe creates the adapter/device before it calls our app creator.
@@ -189,8 +189,9 @@ fn native_options() -> eframe::NativeOptions {
         // support.
         create_new.device_descriptor = Arc::new(device_descriptor_for_adapter);
         let power_preference = create_new.power_preference;
+        let preflight_adapters = preflight_adapters.to_vec();
         create_new.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
-            select_native_adapter(adapters, surface, power_preference)
+            select_native_adapter(adapters, surface, power_preference, &preflight_adapters)
         }));
     }
 
@@ -230,12 +231,21 @@ fn select_native_adapter(
     adapters: &[wgpu::Adapter],
     surface: Option<&wgpu::Surface<'_>>,
     power_preference: wgpu::PowerPreference,
+    preflight_adapters: &[AdapterIdentity],
 ) -> Result<wgpu::Adapter, String> {
     let mut best: Option<(i32, usize)> = None;
     for (index, adapter) in adapters.iter().enumerate() {
         let info = adapter.get_info();
         if surface.is_some_and(|surface| surface.get_capabilities(adapter).formats.is_empty()) {
             tracing::debug!(adapter = %info.name, backend = ?info.backend, "skipping adapter without a surface format");
+            continue;
+        }
+        if !preflight_adapters.is_empty()
+            && !preflight_adapters
+                .iter()
+                .any(|candidate| candidate.matches(&info))
+        {
+            tracing::debug!(adapter = %info.name, backend = ?info.backend, "skipping adapter that failed graphics preflight");
             continue;
         }
 
@@ -283,6 +293,33 @@ fn adapter_device_score(
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AdapterIdentity {
+    name: String,
+    vendor: u32,
+    device: u32,
+    device_type: wgpu::DeviceType,
+    device_pci_bus_id: String,
+    backend: wgpu::Backend,
+}
+
+impl AdapterIdentity {
+    fn from_info(info: &wgpu::AdapterInfo) -> Self {
+        Self {
+            name: info.name.clone(),
+            vendor: info.vendor,
+            device: info.device,
+            device_type: info.device_type,
+            device_pci_bus_id: info.device_pci_bus_id.clone(),
+            backend: info.backend,
+        }
+    }
+
+    fn matches(&self, info: &wgpu::AdapterInfo) -> bool {
+        self == &Self::from_info(info)
+    }
+}
+
 fn validate_graphics_environment() -> Result<()> {
     let raw_backends = std::env::var_os("WGPU_BACKEND");
     let raw_power_preference = std::env::var_os("WGPU_POWER_PREF");
@@ -320,7 +357,7 @@ fn validate_graphics_environment_values(
 /// never reaches the application creator. Try every adapter in preference
 /// order: a broken discrete driver must not hide a usable integrated or CPU
 /// adapter on a colleague's laptop.
-fn preflight_graphics_device() -> Result<()> {
+fn preflight_graphics_devices() -> Result<Vec<AdapterIdentity>> {
     let (descriptor, power_preference) = native_graphics_profile();
     let backends = descriptor.backends;
     let instance = wgpu::Instance::new(descriptor);
@@ -340,10 +377,12 @@ fn preflight_graphics_device() -> Result<()> {
     }
 
     let mut failures = Vec::new();
+    let mut working_adapters = Vec::new();
     for adapter in adapters {
         let info = adapter.get_info();
         match pollster::block_on(adapter.request_device(&device_descriptor_for_adapter(&adapter))) {
             Ok((_device, _queue)) => {
+                working_adapters.push(AdapterIdentity::from_info(&info));
                 tracing::info!(
                     adapter = %info.name,
                     backend = ?info.backend,
@@ -351,10 +390,18 @@ fn preflight_graphics_device() -> Result<()> {
                     power_preference = ?power_preference,
                     "graphics device preflight passed"
                 );
-                return Ok(());
             }
             Err(error) => failures.push(format!("{} ({:?}): {error}", info.name, info.backend)),
         }
+    }
+    if !working_adapters.is_empty() {
+        if !failures.is_empty() {
+            tracing::warn!(
+                failed_adapters = ?failures,
+                "some graphics adapters failed preflight; restricting surface selection to working adapters"
+            );
+        }
+        return Ok(working_adapters);
     }
     Err(anyhow::anyhow!(
         "no graphics adapter could create a device; run `occluview --diagnostics`; attempts: {}",
@@ -641,7 +688,7 @@ fn unix_timestamp_nanos() -> u128 {
 fn graphics_diagnostics_report() -> String {
     use std::fmt::Write as _;
 
-    let descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    let (descriptor, _) = native_graphics_profile();
     let backends = descriptor.backends;
     let instance = wgpu::Instance::new(descriptor);
     let adapters = pollster::block_on(instance.enumerate_adapters(backends));

@@ -739,7 +739,10 @@ fn camera_only_offscreen_redraw_skips_scene_resync() {
 fn live_window_uses_matching_msaa_for_custom_wgpu_viewport() {
     let source = app_bootstrap_source();
     let live_viewport = include_str!("../live_viewport.rs");
-    let native_options = function_source(source, "fn native_options() -> eframe::NativeOptions {");
+    let native_options = function_source(
+        source,
+        "fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptions {",
+    );
 
     assert!(
         native_options.contains("multisampling: LIVE_VIEWPORT_SAMPLE_COUNT"),
@@ -759,7 +762,10 @@ fn live_window_uses_matching_msaa_for_custom_wgpu_viewport() {
 #[test]
 fn live_window_requests_one_frame_of_swapchain_latency() {
     let source = app_bootstrap_source();
-    let native_options = function_source(source, "fn native_options() -> eframe::NativeOptions {");
+    let native_options = function_source(
+        source,
+        "fn native_options(preflight_adapters: &[AdapterIdentity]) -> eframe::NativeOptions {",
+    );
 
     assert!(
         native_options.contains("surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY"),
