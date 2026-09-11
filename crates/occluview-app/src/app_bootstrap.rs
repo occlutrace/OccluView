@@ -23,7 +23,12 @@ const STARTUP_JOURNAL_FILE: &str = "startup-journal.log";
 const MAX_RENDER_TEXTURE_DIMENSION: u32 = 8192;
 const LIVE_MSAA_SAMPLE_COUNT: u16 = 4;
 const LIVE_SAFE_SAMPLE_COUNT: u16 = 1;
-const LIVE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+/// The depth/stencil format every live-pass pipeline declares.
+///
+/// Taken from the render crate that builds those pipelines, so the window's
+/// request and the pipelines cannot drift apart: a mismatch is a validation
+/// error on every draw, not a graceful degradation.
+const LIVE_DEPTH_FORMAT: wgpu::TextureFormat = occluview_render::live_depth_format();
 const LIVE_SURFACE_FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8Unorm,
     wgpu::TextureFormat::Bgra8Unorm,
@@ -279,9 +284,7 @@ fn select_native_adapter(
             tracing::debug!(adapter = %info.name, backend = ?info.backend, "skipping adapter that failed graphics preflight");
             continue;
         }
-        if preflight.live_sample_count > LIVE_SAFE_SAMPLE_COUNT
-            && !adapter_supports_live_sample_count(adapter, surface, preflight.live_sample_count)
-        {
+        if !adapter_supports_live_sample_count(adapter, surface, preflight.live_sample_count) {
             // Warned, not debugged: this skip is the one that can leave the
             // selector with no adapter at all, and the default log filter would
             // hide the reason from a support report otherwise.
@@ -326,10 +329,6 @@ fn adapter_supports_live_sample_count(
     surface: Option<&wgpu::Surface<'_>>,
     sample_count: u16,
 ) -> bool {
-    let count = u32::from(sample_count);
-    if count <= u32::from(LIVE_SAFE_SAMPLE_COUNT) {
-        return true;
-    }
     let color_format = surface
         .map(|surface| surface.get_capabilities(adapter).formats)
         .map_or_else(
@@ -337,15 +336,40 @@ fn adapter_supports_live_sample_count(
             |formats| eframe::egui_wgpu::preferred_framebuffer_format(&formats).ok(),
         );
     color_format.is_some_and(|format| {
-        adapter
-            .get_texture_format_features(format)
-            .flags
-            .sample_count_supported(count)
-            && adapter
-                .get_texture_format_features(LIVE_DEPTH_FORMAT)
-                .flags
-                .sample_count_supported(count)
+        format_supports_live_render(
+            adapter.get_texture_format_features(format),
+            sample_count,
+            true,
+        ) && format_supports_live_render(
+            adapter.get_texture_format_features(LIVE_DEPTH_FORMAT),
+            sample_count,
+            false,
+        )
     })
+}
+
+/// Check the complete format contract used by the live egui render pass.
+///
+/// `sample_count_supported(1)` is deliberately true even for formats that
+/// cannot be render attachments, so checking the sample count alone lets an
+/// adapter pass preflight and fail later while eframe creates the swapchain or
+/// a custom pipeline. The live color target is also used by translucent
+/// pipelines, which requires the format's `BLENDABLE` feature.
+fn format_supports_live_render(
+    features: wgpu::TextureFormatFeatures,
+    sample_count: u16,
+    requires_blending: bool,
+) -> bool {
+    features
+        .allowed_usages
+        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+        && (!requires_blending
+            || features
+                .flags
+                .contains(wgpu::TextureFormatFeatureFlags::BLENDABLE))
+        && features
+            .flags
+            .sample_count_supported(u32::from(sample_count))
 }
 
 fn adapter_device_score(
@@ -409,21 +433,17 @@ impl AdapterIdentity {
 /// profile. The selector repeats the check against the exact surface format
 /// once the window exists.
 fn adapter_supports_preflight_msaa_4(adapter: &wgpu::Adapter) -> bool {
-    adapter_supports_format_sample_count(adapter, LIVE_DEPTH_FORMAT, LIVE_MSAA_SAMPLE_COUNT)
-        && LIVE_SURFACE_FORMATS.iter().all(|&format| {
-            adapter_supports_format_sample_count(adapter, format, LIVE_MSAA_SAMPLE_COUNT)
-        })
-}
-
-fn adapter_supports_format_sample_count(
-    adapter: &wgpu::Adapter,
-    format: wgpu::TextureFormat,
-    sample_count: u16,
-) -> bool {
-    adapter
-        .get_texture_format_features(format)
-        .flags
-        .sample_count_supported(u32::from(sample_count))
+    format_supports_live_render(
+        adapter.get_texture_format_features(LIVE_DEPTH_FORMAT),
+        LIVE_MSAA_SAMPLE_COUNT,
+        false,
+    ) && LIVE_SURFACE_FORMATS.iter().all(|&format| {
+        format_supports_live_render(
+            adapter.get_texture_format_features(format),
+            LIVE_MSAA_SAMPLE_COUNT,
+            true,
+        )
+    })
 }
 
 fn select_live_sample_count(selected_adapter_supports_msaa_4: bool) -> u16 {

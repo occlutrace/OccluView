@@ -54,6 +54,8 @@ const DEFAULT_POINT_SPLAT_VIEWPORT: [f32; 2] = [1024.0, 768.0];
 #[path = "pipeline_init.rs"]
 mod init;
 
+pub use init::live_depth_format;
+
 #[path = "pipeline_ghost.rs"]
 mod ghost;
 
