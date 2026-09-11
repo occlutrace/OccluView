@@ -225,6 +225,32 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
     );
 }
 
+#[test]
+fn stencil_mask_passes_preserve_depth_for_the_cap_and_shaded_pass() {
+    let source = include_str!("pipeline_init.rs");
+    for label in [
+        "label: Some(\"occluview stencil-back pipeline\")",
+        "label: Some(\"occluview stencil-front pipeline\")",
+    ] {
+        let Some(start) = source.find(label) else {
+            panic!("stencil pipeline label missing: {label}");
+        };
+        let block = &source[start..];
+        let Some(end) = block.find("multisample,") else {
+            panic!("stencil pipeline state is incomplete: {label}");
+        };
+        assert!(
+            block[..end].contains("depth_write_enabled: Some(false)"),
+            "{label} must build a stencil-only mask without poisoning the final depth test"
+        );
+    }
+    assert!(
+        source.contains("label: Some(\"occluview cap pipeline\")")
+            && source.contains("depth_write_enabled: Some(true)"),
+        "the cap must remain the pass that writes cut-plane depth"
+    );
+}
+
 /// Draw Sculpt's display-only volume into a pass shaped exactly like the live
 /// one: this renderer's depth format and sample count.
 #[allow(clippy::expect_used)]
