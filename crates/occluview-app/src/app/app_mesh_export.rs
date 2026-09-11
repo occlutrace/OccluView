@@ -366,11 +366,45 @@ pub(super) fn normalize_layer_export_path(
     path: PathBuf,
     fallback_format: MeshWriteFormat,
 ) -> PathBuf {
-    if path.extension().is_none() {
+    let path = if path.extension().is_none() {
         path.with_extension(mesh_write_extension(fallback_format))
     } else {
         path
+    };
+    collapse_repeated_terminal_extension(path)
+}
+
+/// Native save dialogs may append the active filter extension even when the
+/// editable name already contains it (`scan.stl` -> `scan.stl.stl`). Collapse
+/// only adjacent copies of the actual final extension. A name such as
+/// `scan.stl.obj` remains intentional and continues to select OBJ.
+fn collapse_repeated_terminal_extension(path: PathBuf) -> PathBuf {
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return path;
+    };
+    if extension.is_empty() {
+        return path;
     }
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        // A non-UTF-8 filename is valid on Unix. Leave it byte-for-byte intact
+        // rather than replacing a user-chosen name just to fix a cosmetic case.
+        return path;
+    };
+
+    let mut base = stem;
+    let mut repeated = false;
+    while let Some((prefix, suffix)) = base.rsplit_once('.') {
+        if !suffix.eq_ignore_ascii_case(extension) {
+            break;
+        }
+        base = prefix;
+        repeated = true;
+    }
+    if !repeated {
+        return path;
+    }
+
+    path.with_file_name(format!("{base}.{extension}"))
 }
 
 fn default_layer_export_name(
@@ -602,6 +636,39 @@ mod tests {
         assert_eq!(
             normalize_layer_export_path(PathBuf::from("edited.obj"), MeshWriteFormat::StlBinary),
             PathBuf::from("edited.obj")
+        );
+    }
+
+    #[test]
+    fn export_dialog_does_not_persist_repeated_terminal_extensions() {
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("edited.stl.stl"),
+                MeshWriteFormat::StlBinary
+            ),
+            PathBuf::from("edited.stl")
+        );
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("edited.STL.StL"),
+                MeshWriteFormat::StlBinary
+            ),
+            PathBuf::from("edited.StL")
+        );
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("case/edited.ply.ply.ply"),
+                MeshWriteFormat::PlyBinaryLittleEndian,
+            ),
+            PathBuf::from("case/edited.ply")
+        );
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("edited.stl.obj"),
+                MeshWriteFormat::StlBinary
+            ),
+            PathBuf::from("edited.stl.obj"),
+            "a different final format is an intentional filename, not a duplicate"
         );
     }
 
