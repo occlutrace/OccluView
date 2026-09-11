@@ -343,10 +343,20 @@ pub fn refine(
     })
 }
 
+/// Whether a sampling level produced usable evidence.
+///
 /// A missing coarse sample set is harmless — the dense pass can still be the
-/// first usable level. Once a coarse report exists, however, an empty dense
-/// set is a missing required evidence stage, not permission to keep the coarse
-/// report and call the result refined.
+/// first usable level. Once a coarse report exists, an empty dense set is a
+/// missing required evidence stage, not permission to keep the coarse report
+/// and call the result refined.
+///
+/// This is a guard, not a live path: `sample_vertices` returns nothing only for
+/// a soup with no usable vertex, so emptiness does not depend on the budget and
+/// no level can be empty while another has evidence. It stays because the refine
+/// contract must not rest on that property forever — a future sampler that can
+/// skip a level would otherwise let a sparse accidental coarse sample authorize
+/// a refined pose. `an_empty_dense_level_cannot_reuse_coarse_evidence` pins the
+/// rule itself; the production path that could reach it is absent.
 fn level_samples_are_usable(
     previous_summary: Option<Summary>,
     samples: &[u32],
