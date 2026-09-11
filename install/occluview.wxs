@@ -11,7 +11,7 @@
 <?define ProductVersion = "1.1.1" ?>
 <?endif?>
 <?ifndef BuildDir?>
-<?define BuildDir = "target\x86_64-pc-windows-msvc\release" ?>
+<?define BuildDir = "target\x86_64-pc-windows-msvc\release-unwind" ?>
 <?endif?>
 <?ifndef IncludeDiagnostics?>
 <?define IncludeDiagnostics = "0" ?>

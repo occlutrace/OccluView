@@ -511,6 +511,16 @@ fn shipped_desktop_profiles_can_contain_a_sculpt_worker_panic() {
 }
 
 #[test]
+fn wix_default_build_directory_matches_the_shipped_unwind_profile() {
+    let wxs = include_str!("../../../install/occluview.wxs");
+
+    assert!(
+        wxs.contains("<?define BuildDir = \"target\\x86_64-pc-windows-msvc\\release-unwind\" ?>"),
+        "a direct WiX invocation must use the same shipped app profile as build-msi.ps1"
+    );
+}
+
+#[test]
 fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     // The viewer stays on the current dependency graph, but Explorer loads a
     // separate COM DLL. Its release payload must therefore come from the
