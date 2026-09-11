@@ -119,6 +119,81 @@ fn live_sample_policy_uses_msaa_when_the_selected_adapter_supports_it() {
     assert_eq!(select_live_sample_count(false), 1);
 }
 
+fn adapter_identity(device_type: wgpu::DeviceType, supports_live_msaa_4: bool) -> AdapterIdentity {
+    AdapterIdentity {
+        name: format!("fixture-{device_type:?}"),
+        vendor: 0,
+        device: 0,
+        device_type,
+        device_pci_bus_id: String::new(),
+        backend: wgpu::Backend::Vulkan,
+        supports_live_msaa_4,
+    }
+}
+
+/// The capability that decides the count belongs to the adapter the surface
+/// selector will pick, and the selector picks by device score. Reading it from
+/// a different adapter would enable 4x on hardware that cannot present it, or
+/// leave it off on hardware that can.
+#[test]
+fn live_sample_count_follows_the_adapter_the_selector_will_pick() {
+    let power = wgpu::PowerPreference::HighPerformance;
+    let integrated_without = adapter_identity(wgpu::DeviceType::IntegratedGpu, false);
+    let discrete_with = adapter_identity(wgpu::DeviceType::DiscreteGpu, true);
+    let integrated_with = adapter_identity(wgpu::DeviceType::IntegratedGpu, true);
+    let discrete_without = adapter_identity(wgpu::DeviceType::DiscreteGpu, false);
+
+    assert_eq!(
+        live_sample_count_for(&[integrated_without.clone(), discrete_with], power, None),
+        4,
+        "the discrete adapter wins the score and supports 4x"
+    );
+    assert_eq!(
+        live_sample_count_for(&[integrated_with, discrete_without], power, None),
+        1,
+        "the discrete adapter wins the score and cannot do 4x; the integrated one must not decide"
+    );
+    assert_eq!(
+        live_sample_count_for(&[], power, None),
+        1,
+        "no adapter at all must not ask for multisampled targets"
+    );
+}
+
+/// An operator override is the only route in for a driver that rejects the
+/// multisampled pass: eframe builds that pass before the app exists, so there
+/// is nothing to retry inside one launch.
+#[test]
+fn the_msaa_environment_override_wins_over_adapter_capability() {
+    assert_eq!(live_msaa_override(Some("1")), Some(1));
+    assert_eq!(live_msaa_override(Some(" off ")), Some(1));
+    assert_eq!(live_msaa_override(Some("false")), Some(1));
+    assert_eq!(live_msaa_override(Some("4")), Some(4));
+    assert_eq!(live_msaa_override(Some("yes")), None, "a typo stays safe");
+    assert_eq!(live_msaa_override(None), None);
+
+    let capable = adapter_identity(wgpu::DeviceType::DiscreteGpu, true);
+    assert_eq!(
+        live_sample_count_for(
+            std::slice::from_ref(&capable),
+            wgpu::PowerPreference::HighPerformance,
+            live_msaa_override(Some("1"))
+        ),
+        1,
+        "the override must turn multisampling off on capable hardware"
+    );
+    let capable_but_unsupported = adapter_identity(wgpu::DeviceType::DiscreteGpu, false);
+    assert_eq!(
+        live_sample_count_for(
+            std::slice::from_ref(&capable_but_unsupported),
+            wgpu::PowerPreference::HighPerformance,
+            live_msaa_override(Some("4"))
+        ),
+        4,
+        "the override must be able to force the multisampled profile back on"
+    );
+}
+
 #[test]
 fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
     let first = report_file_name("startup-failure", 42, 7, 0);

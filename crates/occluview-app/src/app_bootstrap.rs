@@ -298,9 +298,9 @@ fn select_native_adapter(
     }
 
     let Some((_, index)) = best else {
-        return Err(
-            "no graphics adapter can present to the desktop surface; run `occluview --diagnostics` and check the GPU driver".to_string(),
-        );
+        return Err(format!(
+            "no graphics adapter can present to the desktop surface; run `occluview --diagnostics` and check the GPU driver, or set {LIVE_MSAA_ENV}=1 to start without multisampling",
+        ));
     };
     let adapter = adapters[index].clone();
     let info = adapter.get_info();
@@ -430,6 +430,47 @@ fn select_live_sample_count(selected_adapter_supports_msaa_4: bool) -> u16 {
     }
 }
 
+/// Environment switch for the live multisampling profile.
+///
+/// `OCCLUVIEW_LIVE_MSAA=1` forces the single-sample path. The selector cannot
+/// retry after eframe has built its render pass, so a driver that cannot
+/// present the multisampled configuration would otherwise leave the operator no
+/// way in without a new build. `=4` forces the multisampled profile back on.
+const LIVE_MSAA_ENV: &str = "OCCLUVIEW_LIVE_MSAA";
+
+/// Parse [`LIVE_MSAA_ENV`]. Anything unrecognized leaves the decision to the
+/// adapter capability, which is the safe default for a typo.
+fn live_msaa_override(value: Option<&str>) -> Option<u16> {
+    match value.map(str::trim) {
+        Some("1" | "off" | "false") => Some(LIVE_SAFE_SAMPLE_COUNT),
+        Some("4") => Some(LIVE_MSAA_SAMPLE_COUNT),
+        _ => None,
+    }
+}
+
+/// The live viewport sample count for the adapters the preflight proved usable.
+///
+/// The capability that counts belongs to the adapter the surface selector is
+/// expected to pick, so it has to be scored exactly the way that selector
+/// scores adapters. This one value configures eframe's render pass and the
+/// custom viewport's pipelines together; an operator override therefore wins
+/// outright, because a machine whose driver rejects the multisampled surface
+/// has no other route to a window.
+fn live_sample_count_for(
+    adapters: &[AdapterIdentity],
+    power_preference: wgpu::PowerPreference,
+    override_count: Option<u16>,
+) -> u16 {
+    if let Some(count) = override_count {
+        return count;
+    }
+    let selected_supports_msaa_4 = adapters
+        .iter()
+        .max_by_key(|adapter| adapter_device_score(adapter.device_type, power_preference))
+        .is_some_and(|adapter| adapter.supports_live_msaa_4);
+    select_live_sample_count(selected_supports_msaa_4)
+}
+
 fn validate_graphics_environment() -> Result<()> {
     let raw_backends = std::env::var_os("WGPU_BACKEND");
     let raw_power_preference = std::env::var_os("WGPU_POWER_PREF");
@@ -511,14 +552,14 @@ fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
                 "some graphics adapters failed preflight; restricting surface selection to working adapters"
             );
         }
-        let selected_supports_msaa_4 = working_adapters
-            .iter()
-            .max_by_key(|adapter| adapter_device_score(adapter.device_type, power_preference))
-            .is_some_and(|adapter| adapter.supports_live_msaa_4);
-        let live_sample_count = select_live_sample_count(selected_supports_msaa_4);
+        let live_sample_count = live_sample_count_for(
+            &working_adapters,
+            power_preference,
+            live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
+        );
         tracing::info!(
             sample_count = live_sample_count,
-            msaa4_capable_selected_adapter = selected_supports_msaa_4,
+            override_env = %LIVE_MSAA_ENV,
             "live viewport sample count selected"
         );
         return Ok(GraphicsPreflight {
@@ -811,7 +852,7 @@ fn unix_timestamp_nanos() -> u128 {
 fn graphics_diagnostics_report() -> String {
     use std::fmt::Write as _;
 
-    let (descriptor, _) = native_graphics_profile();
+    let (descriptor, power_preference) = native_graphics_profile();
     let backends = descriptor.backends;
     let instance = wgpu::Instance::new(descriptor);
     let adapters = pollster::block_on(instance.enumerate_adapters(backends));
@@ -828,6 +869,25 @@ fn graphics_diagnostics_report() -> String {
         report,
         "WGPU_POWER_PREF: {}",
         std::env::var("WGPU_POWER_PREF").unwrap_or_else(|_| "<unset>".to_string())
+    );
+    let _ = writeln!(
+        report,
+        "{LIVE_MSAA_ENV}: {}",
+        std::env::var(LIVE_MSAA_ENV).unwrap_or_else(|_| "<unset>".to_string())
+    );
+    // The count that decides both eframe's pass and the live viewport's
+    // pipelines, so a startup failure can be read against the adapter facts
+    // printed below it.
+    let identities: Vec<AdapterIdentity> =
+        adapters.iter().map(AdapterIdentity::from_adapter).collect();
+    let _ = writeln!(
+        report,
+        "live_sample_count: {}",
+        live_sample_count_for(
+            &identities,
+            power_preference,
+            live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
+        )
     );
     let _ = writeln!(report, "DISPLAY: {}", environment_state("DISPLAY"));
     let _ = writeln!(
@@ -856,6 +916,16 @@ fn graphics_diagnostics_report() -> String {
             report,
             "  max_texture_dimension_2d: supported={} requested={}",
             supported.max_texture_dimension_2d, requested.max_texture_dimension_2d
+        );
+        let _ = writeln!(
+            report,
+            "  msaa{count}_preflight: {}",
+            if adapter_supports_preflight_msaa_4(adapter) {
+                "supported"
+            } else {
+                "unsupported"
+            },
+            count = LIVE_MSAA_SAMPLE_COUNT,
         );
         let device_status = match pollster::block_on(
             adapter.request_device(&device_descriptor_for_adapter(adapter)),
