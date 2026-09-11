@@ -695,3 +695,92 @@ fn an_older_same_generation_completion_is_not_applied() {
     );
     assert_eq!(completions[0].request_id, 2);
 }
+
+/// A cylinder, the fixture the observability tests use to prove a *non-`None`*
+/// blind mode: an axial screw that slides along the axis without changing any
+/// distance the map can see. It is full rank and every vertex has a nearest
+/// hit, so `observability()` returns `Some` — which is exactly why "refuse the
+/// unobservable measurement" cannot be written as "refuse when it is `None`".
+fn cylinder_positions(radius: f32, length: f32, around: usize, along: usize) -> Vec<f32> {
+    let mut positions = Vec::new();
+    for ring in 0..along {
+        #[allow(clippy::cast_precision_loss)]
+        let z = ring as f32 / (along - 1) as f32 * length - length * 0.5;
+        for step in 0..around {
+            #[allow(clippy::cast_precision_loss)]
+            let angle = step as f32 / around as f32 * std::f32::consts::TAU;
+            positions.extend_from_slice(&[radius * angle.cos(), radius * angle.sin(), z]);
+        }
+    }
+    positions
+}
+
+fn cylinder_indices(around: usize, along: usize) -> Vec<u32> {
+    let mut indices = Vec::new();
+    for ring in 0..along - 1 {
+        for step in 0..around {
+            let next = (step + 1) % around;
+            let a = (ring * around + step) as u32;
+            let b = (ring * around + next) as u32;
+            let c = ((ring + 1) * around + step) as u32;
+            let d = ((ring + 1) * around + next) as u32;
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    indices
+}
+
+/// A surface the map cannot confirm must be refused even when it is measurable
+/// enough to produce a full summary. A cylinder slides along its own axis with
+/// every distance unchanged, so the heatmap looks clean next to a pose nothing
+/// in the measurement supports.
+#[test]
+fn a_weakly_observable_measurement_is_refused_like_an_unmeasurable_one() {
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let positions = cylinder_positions(5.0, 24.0, 96, 40);
+    let indices = cylinder_indices(96, 40);
+    let fixed_key = SurfaceKey {
+        geometry: 31,
+        pose: 32,
+        markings: 0,
+    };
+    let job = super::AlignJob {
+        generation: 0,
+        request_id: 0,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: std::sync::Arc::new(positions.clone()),
+        moving_indices: std::sync::Arc::new(indices.clone()),
+        fixed_world_positions: std::sync::Arc::new(positions),
+        fixed_indices: std::sync::Arc::new(indices),
+        fixed_key,
+        measure_key: MeasureKey {
+            moving: (33, 34),
+            fixed: fixed_key,
+            mask: 0,
+            influence_radius_bits: 2.0_f64.to_bits(),
+            orientation: Orientation::Match,
+        },
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings {
+            influence_radius_mm: 2.0,
+            ..AlignSettings::default()
+        },
+    };
+
+    let outcome = super::execute(&job, &cancel, &mut cache);
+
+    assert!(
+        matches!(
+            outcome,
+            super::AlignOutcome::Failed {
+                rejection: super::AlignFailure::MeasurementUnobservable
+            }
+        ),
+        "a blind axial slide must be refused before it is published"
+    );
+}
