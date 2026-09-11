@@ -201,13 +201,7 @@ impl OccluViewApp {
         if !self.tools.align.tool.swap_roles() {
             return;
         }
-        // The markings belong to surfaces, not to roles.
-        self.tools.align.markings.swap_sides();
-        // The Brush selects a physical surface; keep that surface selected
-        // when the moving/fixed labels are exchanged.
-        self.tools.align.brush.swap_target_side();
-        // A map is a measurement of one scan against the other, in that order.
-        self.forget_align_fit(&self.ui.locale.tr("align-status-turned"));
+        self.adopt_swapped_roles(self.ui.locale.tr("align-status-turned"));
         let named = self.align_roles().map_or_else(
             || self.ui.locale.tr("align-status-turned"),
             |roles| {
@@ -221,6 +215,20 @@ impl OccluViewApp {
             },
         );
         self.tools.align.status = Some(named);
+    }
+
+    /// Apply everything a moving-to-fixed swap owes.
+    ///
+    /// Two callers reach it: the panel button, which is the operator asking for
+    /// the swap, and the first point of a pair, which can quietly contradict
+    /// the arm-time guess. The markings belong to surfaces rather than roles,
+    /// and the Brush selects a physical surface, so both follow the swap. A map
+    /// is a measurement of one scan against the other in a particular order, so
+    /// it does not survive.
+    pub(super) fn adopt_swapped_roles(&mut self, reason: String) {
+        self.tools.align.markings.swap_sides();
+        self.tools.align.brush.swap_target_side();
+        self.forget_align_fit(&reason);
     }
 
     /// Drop the pair so a different two scans can be picked, without closing the
