@@ -288,8 +288,8 @@ mod tests {
     #[test]
     fn the_brush_is_its_own_movable_window() {
         let source = production();
-        assert!(source.contains("egui::Window::new(locale.tr(\"align-brush-title\"))"));
-        assert!(source.contains(".constrain_to(viewport_rect)"));
+        assert!(source.contains("egui::Window::new(view.locale.tr(\"align-brush-title\"))"));
+        assert!(source.contains(".constrain_to(view.viewport_rect)"));
         assert!(
             !source.contains(".anchor("),
             "an anchored window cannot be moved off the mesh being painted"
