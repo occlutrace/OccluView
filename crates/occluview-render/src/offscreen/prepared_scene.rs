@@ -286,6 +286,34 @@ impl PreparedScene {
         }
     }
 
+    /// Draw the display-only Sculpt surface field for one stable prepared
+    /// entry. Both the scene index and topology token are checked so a cursor
+    /// from a replaced layer cannot light a neighbouring mesh for one frame.
+    pub fn draw_sculpt_surface_feedback(
+        &self,
+        renderer: &Renderer,
+        rpass: &mut wgpu::RenderPass<'_>,
+        camera_bg: &wgpu::BindGroup,
+        clip_bg: &wgpu::BindGroup,
+        target_index: usize,
+        topology: &PreparedSceneTopology,
+    ) -> bool {
+        let Some(entry) = self.entries.get(target_index) else {
+            return false;
+        };
+        if !entry.visible || entry.kind != MeshKind::TriangleMesh || entry.topology != *topology {
+            return false;
+        }
+        renderer.draw_sculpt_surface_feedback(
+            rpass,
+            camera_bg,
+            &entry.mesh_bind_group,
+            clip_bg,
+            &entry.mesh,
+        );
+        true
+    }
+
     /// Draw the cut-away side of every visible triangle mesh as a translucent
     /// ghost (cut-view invariant: a cross-section fades geometry, never
     /// deletes it). Call this *after* [`Self::draw_with_clip`], which draws the

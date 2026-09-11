@@ -3,7 +3,7 @@
 //! re-upload-free stroke commit, wheel resize/re-intensify, and the brush
 //! cursor. The geometry kernel lives in `occlu-mesh-edit`.
 
-use super::{egui, mesh_editor_overlay, OccluViewApp};
+use super::{egui, live_viewport, mesh_editor_overlay, OccluViewApp};
 use crate::sculpt_tool::{
     uniform_scene_scale, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
     MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
@@ -11,8 +11,12 @@ use crate::sculpt_tool::{
 };
 use crate::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
-use glam::Vec3;
+use glam::{Mat4, Quat, Vec3};
 use occluview_core::{BrushMode, BrushStroke, SceneMeshId, ScenePickHit};
+use occluview_render::{
+    sculpt_surface_light_intensity, sculpt_tool_length, PreparedSceneTopology, SculptBrushUniform,
+    SculptToolShape, SculptToolUniform,
+};
 use std::sync::Arc;
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
@@ -265,6 +269,7 @@ impl OccluViewApp {
         response: &egui::Response,
         pan_drag_active: bool,
     ) -> bool {
+        self.tools.sculpt.clear_cursor_hit();
         self.poll_sculpt_preparation(ctx);
         if !self.document.edit_mode.has_active_session() {
             if self.tools.sculpt.armed.is_some() || self.tools.sculpt.stroke.is_some() {
@@ -342,6 +347,9 @@ impl OccluViewApp {
             ctx.request_repaint();
             return true;
         };
+        self.tools
+            .sculpt
+            .set_cursor_hit([pointer.x, pointer.y], hit);
         self.paint_sculpt_dabs(ctx, &hit, DabInput { kind, shift, dt });
         true
     }
@@ -606,19 +614,21 @@ impl OccluViewApp {
             .map(|(_, layer_id)| layer_id)
     }
 
-    /// The brush cursor is deliberately screen-space: a surface-projected ring
-    /// required a second BVH pick plus 48 projected points and six filled glow
-    /// polygons on every repaint. A quiet ring communicates brush size without
-    /// competing with the model or introducing hover latency.
+    /// Paint the cursor after viewport input has had a chance to cache its
+    /// authoritative hit. Hovering performs one guarded BVH pick; a held drag
+    /// reuses the exact hit that scheduled the dabs, so the surface light never
+    /// adds a second scan-sized traversal to the hot path.
     pub(super) fn paint_sculpt_cursor_impl(
         &self,
         ui: &egui::Ui,
         viewport_response: &egui::Response,
     ) {
         let Some(kind) = self.tools.sculpt.armed else {
+            self.publish_sculpt_cursor(None);
             return;
         };
         if !self.document.edit_mode.has_active_session() {
+            self.publish_sculpt_cursor(None);
             return;
         }
         // The cursor must follow the same ownership boundary as the drag: a
@@ -626,18 +636,48 @@ impl OccluViewApp {
         // the viewport rectangle, and a preparing worker is not ready to
         // accept a dab yet.
         if !viewport_response.contains_pointer() || self.tools.sculpt.worker.is_none() {
+            self.publish_sculpt_cursor(None);
             return;
         }
         let viewport_rect = viewport_response.rect;
         let Some(camera) = self.render.camera.as_ref() else {
+            self.publish_sculpt_cursor(None);
             return;
         };
         let Some(pointer) = ui.ctx().pointer_hover_pos() else {
+            self.publish_sculpt_cursor(None);
             return;
         };
         if !viewport_rect.contains(pointer) {
+            self.publish_sculpt_cursor(None);
             return;
         }
+        let pointer_key = [pointer.x, pointer.y];
+        let hit = self
+            .tools
+            .sculpt
+            .cursor_hit_for(pointer_key)
+            .or_else(|| self.sculpt_surface_hit(viewport_rect, pointer));
+        let Some(hit) = hit else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
+        let Some(scene) = self.document.scene.as_ref() else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
+        let Some(entry) = scene.meshes().get(hit.layer_index) else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
+        if entry.id() != hit.layer_id {
+            self.publish_sculpt_cursor(None);
+            return;
+        }
+        let Some(normal) = sculpt_face_normal(scene, &hit, camera) else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
         let shift = ui.ctx().input(|input| input.modifiers.shift);
         // The ring shows the footprint a dab would actually cover, so the
         // Shift-widened Smooth reads on screen before the first stroke lands.
@@ -645,6 +685,41 @@ impl OccluViewApp {
             kind.dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ui.ctx()), shift);
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
         let color = sculpt_cursor_color(kind, shift);
+        let strength = kind.dab_strength(intensity01, shift);
+        let shape = match kind {
+            SculptToolKind::AddRemove => SculptToolShape::Cone,
+            SculptToolKind::Smooth => SculptToolShape::Cylinder,
+        };
+        let color_rgba = color.to_array().map(|channel| f32::from(channel) / 255.0);
+        let tool_length = sculpt_tool_length(strength);
+        let tool_rotation = Quat::from_rotation_arc(Vec3::Z, normal);
+        let tool_model = Mat4::from_scale_rotation_translation(
+            Vec3::new(radius_world, radius_world, tool_length),
+            tool_rotation,
+            hit.point + normal * 0.02,
+        );
+        self.publish_sculpt_cursor(Some(live_viewport::SculptCursor {
+            target_index: hit.layer_index,
+            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
+            brush: SculptBrushUniform {
+                center: hit.point.to_array(),
+                radius: radius_world,
+                normal: normal.to_array(),
+                intensity: sculpt_surface_light_intensity(strength),
+                color: color_rgba,
+                tip: shape as u32,
+                visible: 1,
+                padding: [0; 2],
+            },
+            tool: SculptToolUniform {
+                model: tool_model.to_cols_array(),
+                color: color_rgba,
+                opacity: 0.20 + 0.12 * strength,
+                shape: shape as u32,
+                visible: 1,
+                padding: 0,
+            },
+        }));
 
         let ortho_height = camera.orthographic_height.max(f32::EPSILON);
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
@@ -652,7 +727,7 @@ impl OccluViewApp {
             let canvas = ui.painter();
             // The ring must preview the force the dab will actually use:
             // Shift+Smooth is a full-strength pass, not a dim 50% cursor.
-            let intensity = kind.dab_strength(intensity01, shift);
+            let intensity = strength;
             canvas.circle_filled(
                 pointer,
                 radius_px,
@@ -670,6 +745,64 @@ impl OccluViewApp {
             );
             canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
         }
+    }
+
+    fn publish_sculpt_cursor(&self, cursor: Option<live_viewport::SculptCursor>) {
+        let Some(viewport) = self.render.live_viewport.as_ref() else {
+            return;
+        };
+        if let Ok(mut viewport) = viewport.lock() {
+            viewport.set_sculpt_cursor(cursor);
+        }
+    }
+}
+
+fn sculpt_face_normal(
+    scene: &occluview_core::Scene,
+    hit: &ScenePickHit,
+    camera: &occluview_core::Camera,
+) -> Option<Vec3> {
+    let entry = scene.meshes().get(hit.layer_index)?;
+    if entry.id() != hit.layer_id {
+        return None;
+    }
+    let base = hit.triangle_index.checked_mul(3)?;
+    let indices = entry.mesh.indices().get(base..base.checked_add(3)?)?;
+    let vertex = |index: u32| {
+        entry
+            .mesh
+            .vertices()
+            .get(usize::try_from(index).ok()?)
+            .map(|vertex| Vec3::from_array(vertex.position))
+    };
+    let [a, b, c] = [
+        vertex(indices[0])?,
+        vertex(indices[1])?,
+        vertex(indices[2])?,
+    ];
+    let local = (b - a).cross(c - a).normalize_or_zero();
+    if !local.is_finite() || local.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let determinant = entry.transform.matrix3.determinant();
+    if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+        return None;
+    }
+    let normal = entry
+        .transform
+        .matrix3
+        .inverse()
+        .transpose()
+        .mul_vec3(local)
+        .normalize_or_zero();
+    if !normal.is_finite() || normal.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let toward_camera = (camera.eye() - hit.point).normalize_or_zero();
+    if toward_camera.length_squared() > f32::EPSILON && normal.dot(toward_camera) < 0.0 {
+        Some(-normal)
+    } else {
+        Some(normal)
     }
 }
 
@@ -703,10 +836,9 @@ fn sculpt_target(
 /// do not introduce the saturated blue accent used by the old editor chrome.
 fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
     match (kind, shift) {
-        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(118, 151, 132),
-        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(164, 116, 108),
-        (SculptToolKind::Smooth, false) => egui::Color32::from_rgb(142, 146, 154),
-        (SculptToolKind::Smooth, true) => egui::Color32::from_rgb(172, 166, 151),
+        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(255, 145, 58),
+        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(74, 177, 255),
+        (SculptToolKind::Smooth, _) => egui::Color32::from_rgb(178, 126, 255),
     }
 }
 

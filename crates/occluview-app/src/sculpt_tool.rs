@@ -126,6 +126,12 @@ pub(crate) struct SculptTool {
     /// Undo/redo waits for an asynchronous sculpt completion before swapping
     /// an older scene over the worker's current shadow.
     pub(crate) pending_history: Option<bool>,
+    /// The last surface hit acquired by the viewport input pass. The cursor
+    /// painter runs after that pass and reuses it for held drags, avoiding a
+    /// second BVH traversal on every repaint.
+    pub(crate) cursor_hit: Option<occluview_core::ScenePickHit>,
+    /// Pointer coordinates belonging to [`Self::cursor_hit`].
+    pub(crate) cursor_pointer: Option<[f32; 2]>,
     pending: Option<PendingSculptPreparation>,
 }
 
@@ -143,6 +149,7 @@ impl SculptTool {
     /// drag so a half-applied stroke does not leak between tools.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
+        self.clear_cursor_hit();
         self.armed = if self.armed == Some(kind) {
             None
         } else {
@@ -153,6 +160,7 @@ impl SculptTool {
     pub(crate) fn disarm(&mut self) {
         self.armed = None;
         self.stroke = None;
+        self.clear_cursor_hit();
         self.finish_requested = false;
         self.finish_retry = false;
         self.pending_history = None;
@@ -168,6 +176,7 @@ impl SculptTool {
     /// the fresh scene on the next stroke.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
+        self.clear_cursor_hit();
         self.worker = None;
         self.finish_requested = false;
         self.finish_retry = false;
@@ -181,6 +190,20 @@ impl SculptTool {
         self.worker
             .as_ref()
             .is_some_and(|worker| worker.layer_id == layer_id && worker.topology_id == topology_id)
+    }
+
+    pub(crate) fn clear_cursor_hit(&mut self) {
+        self.cursor_hit = None;
+        self.cursor_pointer = None;
+    }
+
+    pub(crate) fn set_cursor_hit(&mut self, pointer: [f32; 2], hit: occluview_core::ScenePickHit) {
+        self.cursor_pointer = Some(pointer);
+        self.cursor_hit = Some(hit);
+    }
+
+    pub(crate) fn cursor_hit_for(&self, pointer: [f32; 2]) -> Option<occluview_core::ScenePickHit> {
+        (self.cursor_pointer == Some(pointer)).then_some(self.cursor_hit?)
     }
 
     pub(crate) fn pending_matches(&self, layer_id: SceneMeshId, topology_id: u64) -> bool {

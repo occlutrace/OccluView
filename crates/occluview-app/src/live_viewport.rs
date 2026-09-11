@@ -2,8 +2,8 @@
 
 use eframe::{egui, egui_wgpu, wgpu};
 use occluview_render::{
-    ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneUpdate,
-    RenderError, Renderer,
+    ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneTopology,
+    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptToolUniform,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -11,6 +11,17 @@ use std::time::Instant;
 use super::LIVE_VIEWPORT_SAMPLE_COUNT;
 
 pub(super) type SharedLiveViewport = Arc<Mutex<LiveViewport>>;
+
+/// One frame's display-only Sculpt cursor. The target identity is kept next
+/// to the GPU inputs so a stale hover cannot light a different layer after a
+/// scene reorder or topology rebuild.
+#[derive(Clone, Copy)]
+pub(super) struct SculptCursor {
+    pub(super) target_index: usize,
+    pub(super) topology: PreparedSceneTopology,
+    pub(super) brush: SculptBrushUniform,
+    pub(super) tool: SculptToolUniform,
+}
 
 pub(super) struct LiveViewport {
     renderer: Renderer,
@@ -26,6 +37,7 @@ pub(super) struct LiveViewport {
     show_ghost: bool,
     prepared_scene: Option<PreparedScene>,
     selection_overlay: Option<PreparedScene>,
+    sculpt_cursor: Option<SculptCursor>,
 }
 
 impl LiveViewport {
@@ -55,6 +67,7 @@ impl LiveViewport {
             show_ghost: true,
             prepared_scene: None,
             selection_overlay: None,
+            sculpt_cursor: None,
         })))
     }
 
@@ -117,7 +130,7 @@ impl LiveViewport {
     /// [`PreparedScene::write_entry_vertices_sparse`]).
     pub(super) fn write_scene_vertices_sparse(
         &self,
-        topology: &occluview_render::PreparedSceneTopology,
+        topology: &PreparedSceneTopology,
         vertices: &[occluview_core::Vertex],
         touched: &[usize],
     ) -> bool {
@@ -128,7 +141,7 @@ impl LiveViewport {
 
     pub(super) fn write_scene_vertices(
         &self,
-        topology: &occluview_render::PreparedSceneTopology,
+        topology: &PreparedSceneTopology,
         vertices: &[occluview_core::Vertex],
     ) -> bool {
         self.prepared_scene
@@ -141,9 +154,24 @@ impl LiveViewport {
             (!sources.is_empty()).then(|| PreparedScene::prepare(&self.renderer, sources));
     }
 
+    /// Replace the display-only Sculpt cursor and upload its uniforms before
+    /// the egui paint callback runs. Clearing it writes hidden no-op values so
+    /// a cursor cannot persist after a miss, window occlusion, or scene swap.
+    pub(super) fn set_sculpt_cursor(&mut self, cursor: Option<SculptCursor>) {
+        let brush = cursor.map_or(SculptBrushUniform::hidden(), |cursor| cursor.brush);
+        let tool = cursor.map_or(SculptToolUniform::hidden(), |cursor| cursor.tool);
+        self.renderer.set_sculpt_brush(&brush);
+        self.renderer.set_sculpt_tool(&tool);
+        self.sculpt_cursor = cursor;
+    }
+
     pub(super) fn clear(&mut self) {
         self.prepared_scene = None;
         self.selection_overlay = None;
+        self.sculpt_cursor = None;
+        self.renderer
+            .set_sculpt_brush(&SculptBrushUniform::hidden());
+        self.renderer.set_sculpt_tool(&SculptToolUniform::hidden());
     }
 
     /// Take the most recent wgpu uncaptured error recorded by the device error
@@ -183,6 +211,23 @@ impl LiveViewport {
                 &self.fallback_texture.bind_group,
                 &self.clip_bind_group,
             );
+        }
+        if let Some(cursor) = self.sculpt_cursor {
+            let drawn = scene.draw_sculpt_surface_feedback(
+                &self.renderer,
+                render_pass,
+                &self.camera_bind_group,
+                &self.clip_bind_group,
+                cursor.target_index,
+                &cursor.topology,
+            );
+            if drawn {
+                self.renderer.draw_sculpt_tool(
+                    render_pass,
+                    &self.camera_bind_group,
+                    &self.clip_bind_group,
+                );
+            }
         }
     }
 }
