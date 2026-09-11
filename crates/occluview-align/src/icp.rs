@@ -5,7 +5,7 @@
 //! Correspondence search is parallel, while normal equations are accumulated
 //! serially in sample order to keep floating-point results deterministic.
 
-use glam::{DMat3, DQuat, DVec3};
+use glam::{DMat3, DQuat, DVec3, EulerRot};
 use rayon::prelude::*;
 
 use crate::pairs::FitRejection;
@@ -41,6 +41,11 @@ const MIN_CORRESPONDENCES: usize = 6;
 /// to land on a neighbouring patch. Partial scans remain allowed; this is a
 /// deliberately small one-percent floor on the moving surface.
 const MIN_FORWARD_COVERAGE_FRACTION: f64 = 0.01;
+
+/// A committed refinement must explain a meaningful portion of the moving
+/// surface. The looser one-percent floor above is still useful while searching
+/// for a local correspondence set, but it is not enough to authorize a pose.
+const MIN_REFINEMENT_COVERAGE_FRACTION: f64 = 0.05;
 
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
@@ -144,6 +149,33 @@ pub struct IcpReport {
     pub weak_rot_axes: [bool; 3],
     /// Per world axis, whether translation along it is undetermined.
     pub weak_trans_axes: [bool; 3],
+}
+
+impl IcpReport {
+    /// Whether this report is strong enough to authorize a pose commit and the
+    /// deviation map that follows it.
+    ///
+    /// `refine` intentionally returns its best report when an iteration budget
+    /// stalls so callers can inspect diagnostics. That report is not, by
+    /// itself, a successful registration: a stalled local patch, a
+    /// rank-deficient plane, or a tiny overlap must not become a heatmap. The
+    /// application uses this explicit gate instead of treating every
+    /// `Ok(report)` as refined.
+    #[must_use]
+    pub fn is_trustworthy_refinement(&self) -> bool {
+        self.converged
+            && self.inliers >= MIN_CORRESPONDENCES as u32
+            && self.coverage.is_finite()
+            && self.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
+            && self.inlier_ratio.is_finite()
+            && self.inlier_ratio > 0.0
+            && self.rms.is_finite()
+            && self.rms >= 0.0
+            && self.median_abs.is_finite()
+            && self.p95_abs.is_finite()
+            && !self.weak_rot_axes.into_iter().any(|weak| weak)
+            && !self.weak_trans_axes.into_iter().any(|weak| weak)
+    }
 }
 
 /// One accepted moving-vertex-to-fixed-surface correspondence.
@@ -402,46 +434,86 @@ fn choose_start_pose(level: &Level<'_>) -> Rigid {
     // can justify. The mesh extent is deliberately not a fallback here: a
     // large arch must not make an arbitrary far-away component eligible.
     let max_shift = level.settings.influence_radius_mm.abs() * 2.0;
+    let orientation_deltas = coarse_orientation_deltas();
     for &(fixed_min, fixed_max) in level.fixed.component_bounds() {
         let fixed_center = (fixed_min + fixed_max) * 0.5;
-        let candidate = Rigid::new(
-            level.start.rotation,
-            fixed_center - level.start.rotation * moving_center,
-        );
-        let shift = (candidate.translation - level.start.translation).length();
-        if !shift.is_finite() || shift > max_shift {
-            continue;
-        }
-        let Some(centered) = score(candidate) else {
-            continue;
-        };
-        let baseline_coverage_ok = reciprocal_evidence_is_usable(level, centered.1)
-            && base.is_none_or(|(_, base_reciprocal)| {
-                reciprocal_coverage_ok(base_reciprocal, centered.1)
-            });
-        let Some((_, current, current_shift)) = best else {
-            best = Some((candidate, centered, shift));
-            continue;
-        };
-        let better = centered.0.geometric_rms < current.0.geometric_rms * STALL_IMPROVEMENT;
-        let reciprocal_tie_break = match (current.1, centered.1) {
-            (Some(current_reciprocal), Some(candidate_reciprocal)) => {
-                candidate_reciprocal.coverage > current_reciprocal.coverage + 0.05
-                    && candidate_reciprocal.geometric_rms
-                        <= current_reciprocal.geometric_rms * 1.25 + 1e-9
-                    && centered.0.geometric_rms
-                        <= current.0.geometric_rms * (1.0 / STALL_IMPROVEMENT)
+        for (delta_index, &delta) in orientation_deltas.iter().enumerate() {
+            // `Inverted` is an explicit winding-repair escape hatch. Do not
+            // manufacture an upside-down physical pose merely because that
+            // would make an otherwise same-facing surface satisfy the setting.
+            // The identity candidate still permits a genuinely inverted fixed
+            // mesh to refine; global orientation recovery belongs to the normal
+            // matching modes.
+            if level.settings.orientation == Orientation::Inverted && delta_index != 0 {
+                continue;
             }
-            _ => false,
-        };
-        let tied_and_closer = (centered.0.geometric_rms - current.0.geometric_rms).abs()
-            <= f64::EPSILON
-            && shift < current_shift;
-        if baseline_coverage_ok && (better || reciprocal_tie_break || tied_and_closer) {
-            best = Some((candidate, centered, shift));
+            // Corrections are expressed in world space. The candidate is
+            // centered around the fixed component, so a quarter-turn around a
+            // distant file origin does not count as a twelve-millimetre move
+            // when the actual scan centre stayed put.
+            let rotation = delta * level.start.rotation;
+            let candidate = Rigid::new(rotation, fixed_center - rotation * moving_center);
+            let shift =
+                (candidate.apply(moving_center) - level.start.apply(moving_center)).length();
+            if !shift.is_finite() || shift > max_shift {
+                continue;
+            }
+            let Some(centered) = score(candidate) else {
+                continue;
+            };
+            let baseline_coverage_ok = reciprocal_evidence_is_usable(level, centered.1)
+                && base.is_none_or(|(_, base_reciprocal)| {
+                    reciprocal_coverage_ok(base_reciprocal, centered.1)
+                });
+            let Some((_, current, current_shift)) = best else {
+                best = Some((candidate, centered, shift));
+                continue;
+            };
+            let better = centered.0.geometric_rms < current.0.geometric_rms * STALL_IMPROVEMENT;
+            let reciprocal_tie_break = match (current.1, centered.1) {
+                (Some(current_reciprocal), Some(candidate_reciprocal)) => {
+                    candidate_reciprocal.coverage > current_reciprocal.coverage + 0.05
+                        && candidate_reciprocal.geometric_rms
+                            <= current_reciprocal.geometric_rms * 1.25 + 1e-9
+                        && centered.0.geometric_rms
+                            <= current.0.geometric_rms * (1.0 / STALL_IMPROVEMENT)
+                }
+                _ => false,
+            };
+            let tied_and_closer = (centered.0.geometric_rms - current.0.geometric_rms).abs()
+                <= f64::EPSILON
+                && shift < current_shift;
+            if baseline_coverage_ok && (better || reciprocal_tie_break || tied_and_closer) {
+                best = Some((candidate, centered, shift));
+            }
         }
     }
     best.map_or(level.start, |(pose, _, _)| pose)
+}
+
+/// Bounded global orientation probes used before local point-to-plane ICP.
+///
+/// Importers and manual placement commonly leave a scan quarter-turned or
+/// upside down while its centre is already near the target. Comparing only the
+/// current rotation then lets the first tangent patch win and can return a
+/// sideways pose. These 24 cube orientations cover the principal dental-CAD
+/// axis conventions at a fixed, deterministic cost; the subsequent ICP remains
+/// responsible for fine arbitrary-angle correction.
+fn coarse_orientation_deltas() -> [DQuat; 24] {
+    let quarter = std::f64::consts::FRAC_PI_2;
+    let turns = [0.0, quarter, std::f64::consts::PI, -quarter];
+    core::array::from_fn(|index| {
+        let face = index / 4;
+        let turn = turns[index % 4];
+        match face {
+            0 => DQuat::from_euler(EulerRot::XYZ, 0.0, 0.0, turn),
+            1 => DQuat::from_euler(EulerRot::XYZ, quarter, 0.0, turn),
+            2 => DQuat::from_euler(EulerRot::XYZ, -quarter, 0.0, turn),
+            3 => DQuat::from_euler(EulerRot::XYZ, std::f64::consts::PI, 0.0, turn),
+            4 => DQuat::from_euler(EulerRot::XYZ, 0.0, quarter, turn),
+            _ => DQuat::from_euler(EulerRot::XYZ, 0.0, -quarter, turn),
+        }
+    })
 }
 
 /// Run one resolution level to convergence or to its iteration ceiling.

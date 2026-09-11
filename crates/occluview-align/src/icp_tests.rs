@@ -1,7 +1,7 @@
 //! Tests for the refine stage, split out of `icp.rs` to hold the workspace's
 //! file budget.
 
-use crate::icp::{refine, Orientation, RefineSettings};
+use crate::icp::{refine, IcpReport, Orientation, RefineSettings};
 use crate::{CancelFlag, FitRejection, Rigid, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
 
@@ -91,6 +91,39 @@ fn settings() -> RefineSettings {
         orientation: Orientation::Match,
         max_iterations: 40,
     }
+}
+
+fn trustworthy_report() -> IcpReport {
+    IcpReport {
+        rigid: Rigid::IDENTITY,
+        iterations: 4,
+        converged: true,
+        inliers: 800,
+        inlier_ratio: 0.8,
+        coverage: 0.8,
+        rms: 0.02,
+        median_abs: 0.01,
+        p95_abs: 0.05,
+        weak_rot_axes: [false; 3],
+        weak_trans_axes: [false; 3],
+    }
+}
+
+#[test]
+fn only_converged_full_rank_coverage_can_authorize_refinement() {
+    assert!(trustworthy_report().is_trustworthy_refinement());
+
+    let mut stalled = trustworthy_report();
+    stalled.converged = false;
+    assert!(!stalled.is_trustworthy_refinement());
+
+    let mut local_patch = trustworthy_report();
+    local_patch.coverage = 0.01;
+    assert!(!local_patch.is_trustworthy_refinement());
+
+    let mut rank_deficient = trustworthy_report();
+    rank_deficient.weak_trans_axes[0] = true;
+    assert!(!rank_deficient.is_trustworthy_refinement());
 }
 
 fn soup<'a>(positions: &'a [f32], indices: &'a [u32]) -> Soup<'a> {
@@ -446,6 +479,30 @@ fn best_fit_recovers_from_a_one_mm_lateral_start() {
     assert!(
         report.rigid.translation.length() < 0.05,
         "a rough lateral start settled sideways at {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_recovers_from_a_quarter_turn_start() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let rotation = DQuat::from_axis_angle(DVec3::Z, std::f64::consts::FRAC_PI_2);
+    let centre = DVec3::splat(6.0);
+    let start = Rigid::new(rotation, centre - rotation * centre);
+
+    let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+    let remaining_rotation = report.rigid.rotation.to_scaled_axis().length();
+
+    assert!(
+        remaining_rotation < 0.05,
+        "a rough quarter-turn start stayed sideways: {:?}",
+        report.rigid
+    );
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "a rough quarter-turn start did not return to the source pose: {:?}",
         report.rigid.translation
     );
 }
