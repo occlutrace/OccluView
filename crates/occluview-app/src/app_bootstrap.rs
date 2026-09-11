@@ -282,11 +282,15 @@ fn select_native_adapter(
         if preflight.live_sample_count > LIVE_SAFE_SAMPLE_COUNT
             && !adapter_supports_live_sample_count(adapter, surface, preflight.live_sample_count)
         {
-            tracing::debug!(
+            // Warned, not debugged: this skip is the one that can leave the
+            // selector with no adapter at all, and the default log filter would
+            // hide the reason from a support report otherwise.
+            tracing::warn!(
                 adapter = %info.name,
                 backend = ?info.backend,
                 sample_count = preflight.live_sample_count,
-                "skipping adapter that cannot create the configured multisampled live targets"
+                "skipping adapter that cannot create the configured multisampled live targets; \
+                 set {LIVE_MSAA_ENV}=1 to start without multisampling"
             );
             continue;
         }
@@ -456,6 +460,17 @@ fn live_msaa_override(value: Option<&str>) -> Option<u16> {
 /// custom viewport's pipelines together; an operator override therefore wins
 /// outright, because a machine whose driver rejects the multisampled surface
 /// has no other route to a window.
+///
+/// Residual gap, by construction: this runs before a window exists, so it
+/// cannot see which of these adapters can present to the desktop surface. A
+/// machine whose highest-scoring capable adapter turns out to be
+/// non-presentable - a headless or secondary GPU - can have the count set to
+/// 4x while the only presentable adapter supports 1x, and the surface selector
+/// then refuses every candidate. That refusal names [`LIVE_MSAA_ENV`], and the
+/// diagnostics report prints the per-adapter facts, so it is diagnosable and
+/// recoverable without a new build; degrading inside the selector is not an
+/// option, because eframe builds its render pass from this same count before
+/// the selector runs.
 fn live_sample_count_for(
     adapters: &[AdapterIdentity],
     power_preference: wgpu::PowerPreference,
@@ -888,19 +903,21 @@ fn graphics_diagnostics_report() -> String {
         "{LIVE_MSAA_ENV}: {}",
         std::env::var(LIVE_MSAA_ENV).unwrap_or_else(|_| "<unset>".to_string())
     );
-    // The count that decides both eframe's pass and the live viewport's
-    // pipelines, so a startup failure can be read against the adapter facts
-    // printed below it.
-    let identities: Vec<AdapterIdentity> =
-        adapters.iter().map(AdapterIdentity::from_adapter).collect();
+    let mut working_identities: Vec<AdapterIdentity> = Vec::new();
+
+    // Startup decides the count over the adapters whose device request
+    // succeeded, so the report has to use that same set. Printing it over every
+    // enumerated adapter would describe a startup that never happened on a
+    // machine where a broken driver enumerates and fails to create a device.
+    let live_sample_count = live_sample_count_for(
+        &working_identities,
+        power_preference,
+        live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
+    );
     let _ = writeln!(
         report,
-        "live_sample_count: {}",
-        live_sample_count_for(
-            &identities,
-            power_preference,
-            live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
-        )
+        "live_sample_count: {live_sample_count} (over {} adapter(s) that created a device)",
+        working_identities.len()
     );
     let _ = writeln!(report, "DISPLAY: {}", environment_state("DISPLAY"));
     let _ = writeln!(
@@ -943,7 +960,10 @@ fn graphics_diagnostics_report() -> String {
         let device_status = match pollster::block_on(
             adapter.request_device(&device_descriptor_for_adapter(adapter)),
         ) {
-            Ok((_device, _queue)) => "ok".to_string(),
+            Ok((_device, _queue)) => {
+                working_identities.push(AdapterIdentity::from_adapter(adapter));
+                "ok".to_string()
+            }
             Err(error) => format!("error: {error}"),
         };
         let _ = writeln!(report, "  device_request: {device_status}");
@@ -1113,13 +1133,21 @@ fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
         let Some((program, args)) = notification_command(channel, title, &body, urgency) else {
             continue;
         };
-        if std::process::Command::new(&program)
-            .args(&args)
-            .spawn()
-            .is_ok()
-        {
-            tracing::info!(channel, "startup notice handed to the desktop");
-            return channel;
+        match run_notification(&program, &args) {
+            Ok(true) => {
+                tracing::info!(channel, "startup notice shown to the operator");
+                return channel;
+            }
+            Ok(false) => {
+                // The program ran and refused the message: `notify-send`
+                // exits non-zero when no notification daemon answers, which
+                // is the common case on a bare session. Trying the next
+                // channel is the whole point of the list.
+                tracing::warn!(channel, "the desktop did not accept the notice");
+            }
+            Err(error) => {
+                tracing::warn!(channel, %error, "the notice program could not be run");
+            }
         }
     }
     // Best effort only: the report and the non-zero exit status remain the
@@ -1127,9 +1155,22 @@ fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
     // installed or the process is launched outside a graphical session. Saying
     // so in the journal is what stops a silent exit from reading as a crash.
     tracing::error!(
-        "no desktop notification channel is available; the report path is the only operator-visible signal"
+        "no desktop notification channel delivered the notice; the report path is the only operator-visible signal"
     );
     "none"
+}
+
+/// Run one notification program and report whether it accepted the message.
+///
+/// Waiting for the exit status is what separates "the message was shown" from
+/// "a binary with that name exists": `notify-send` succeeds only when a
+/// notification daemon answered it. `zenity` and `kdialog` are modal dialogs
+/// that return when dismissed, which is intended here - on this path the
+/// message has to outlive the process that raised it.
+#[cfg(not(windows))]
+fn run_notification(program: &str, args: &[String]) -> std::io::Result<bool> {
+    let status = std::process::Command::new(program).args(args).status()?;
+    Ok(status.success())
 }
 
 /// The notification channels tried, in the order they are attempted.
@@ -1143,8 +1184,8 @@ const NOTIFICATION_CHANNELS: [&str; 3] = ["notify-send", "zenity", "kdialog"];
 ///
 /// The body carries the report file name and the title names the product, so a
 /// desktop dialog is readable without the console a `.desktop` launch never
-/// has. `zenity` and `kdialog` block until dismissed, which is intended on this
-/// fatal path: the message has to outlive the process that raised it.
+/// has. Each channel's exit status is read by [`run_notification`], so a
+/// channel with no service behind it does not consume the message.
 #[cfg(not(windows))]
 fn notification_command(
     channel: &str,
