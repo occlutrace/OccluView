@@ -175,6 +175,51 @@ impl TriangleBvh {
         }
         best
     }
+
+    /// Pick using a live vertex array while keeping the tree built for the
+    /// original topology. Unchanged triangles still use the logarithmic tree;
+    /// triangles whose vertices moved are checked directly because their new
+    /// positions may have left the old node bounds.
+    pub(crate) fn pick_with_dirty_vertices<K>(
+        &self,
+        vertices: &[Vertex],
+        indices: &[u32],
+        origin: Vec3,
+        direction: Vec3,
+        dirty_triangles: &[usize],
+        keep: K,
+    ) -> Option<BvhHit>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        let mut best = self.pick(vertices, indices, origin, direction, &keep);
+        let direction = direction.normalize_or_zero();
+        if direction.length_squared() <= f32::EPSILON {
+            return best;
+        }
+        for &triangle in dirty_triangles {
+            let Some(base) = triangle.checked_mul(3) else {
+                continue;
+            };
+            let Some(corners) = indices.get(base..base + 3) else {
+                continue;
+            };
+            let a = position(vertices, corners[0]);
+            let b = position(vertices, corners[1]);
+            let c = position(vertices, corners[2]);
+            let Some((distance, point)) = ray_triangle(origin, direction, a, b, c) else {
+                continue;
+            };
+            if keep(point) && best.as_ref().is_none_or(|hit| distance < hit.distance) {
+                best = Some(BvhHit {
+                    triangle_index: triangle,
+                    point,
+                    distance,
+                });
+            }
+        }
+        best
+    }
 }
 
 struct TriBounds {

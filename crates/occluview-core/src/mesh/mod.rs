@@ -371,6 +371,67 @@ impl Mesh {
             .map(|hit| (hit.triangle_index, hit.point))
     }
 
+    /// Pick against a live vertex array from an interactive editor without
+    /// rebuilding the mesh or its BVH on the caller's thread. `dirty_triangles`
+    /// are checked directly because their new bounds are not represented by
+    /// the original tree; all other triangles use the cached logarithmic path.
+    /// The cached tree must already be warm, which keeps this API safe for UI
+    /// hot paths.
+    pub fn pick_ray_local_with_vertices<K>(
+        &self,
+        vertices: &[Vertex],
+        dirty_triangles: &[usize],
+        origin: Vec3,
+        direction: Vec3,
+        keep: K,
+    ) -> Option<(usize, Vec3)>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        if self.kind != MeshKind::TriangleMesh
+            || self.indices.is_empty()
+            || vertices.len() != self.vertices.len()
+        {
+            return None;
+        }
+        let bvh = self.bvh.get()?;
+        bvh.pick_with_dirty_vertices(
+            vertices,
+            &self.indices,
+            origin,
+            direction,
+            dirty_triangles,
+            keep,
+        )
+        .map(|hit| (hit.triangle_index, hit.point))
+    }
+
+    /// Return a triangle's geometric normal from a live vertex array. The
+    /// array must have the same shape as this mesh; malformed indices fail
+    /// closed instead of panicking in a cursor/render helper.
+    #[must_use]
+    pub fn triangle_normal_local_with_vertices(
+        &self,
+        vertices: &[Vertex],
+        triangle: usize,
+    ) -> Option<Vec3> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        let base = triangle.checked_mul(3)?;
+        let corners = self.indices.get(base..base.checked_add(3)?)?;
+        let [a, b, c] = corners else {
+            return None;
+        };
+        let a = vertices.get(usize::try_from(*a).ok()?)?;
+        let b = vertices.get(usize::try_from(*b).ok()?)?;
+        let c = vertices.get(usize::try_from(*c).ok()?)?;
+        let normal = (Vec3::from_array(b.position) - Vec3::from_array(a.position))
+            .cross(Vec3::from_array(c.position) - Vec3::from_array(a.position))
+            .normalize_or_zero();
+        (normal.length_squared() > f32::EPSILON && normal.is_finite()).then_some(normal)
+    }
+
     /// Force the picking BVH to build now (e.g. on a background thread when a
     /// tool arms), so the first interactive pick doesn't pay the build on the UI
     /// thread. The BVH is shared via `Arc<OnceLock>`, so warming it here makes
