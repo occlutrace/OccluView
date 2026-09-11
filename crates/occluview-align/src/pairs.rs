@@ -115,6 +115,8 @@ pub enum FitRejection {
     /// The surface had enough correspondences, but no trustworthy improvement
     /// over the current placement could be accepted.
     NoImprovement,
+    /// More than one coarse surface candidate was equally plausible.
+    Ambiguous,
     /// A supplied point or normal was not finite.
     NonFinite,
 }

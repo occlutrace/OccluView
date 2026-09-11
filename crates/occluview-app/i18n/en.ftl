@@ -837,6 +837,7 @@ align-reject-unit = The scans use different units
 align-reject-apart = Check the matching arrows and move the scans closer
 align-reject-runaway = Move the scans closer and try Best fit matching again
 align-reject-no-improvement = Best fit could not confirm an improvement — move the scans closer and try again
+align-reject-ambiguous = Best fit found more than one equally plausible surface — mark the matching area or place the scans closer
 align-reject-nonfinite = The selected point or surface is invalid
 align-status-stepped = Stepped through history
 align-status-moving-hand = Moving by hand

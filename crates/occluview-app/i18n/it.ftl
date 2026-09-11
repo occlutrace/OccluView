@@ -834,6 +834,7 @@ align-reject-unit = Le scansioni usano unità diverse
 align-reject-apart = Controlla le frecce e avvicina le scansioni
 align-reject-runaway = Avvicina le scansioni e riprova Best fit matching
 align-reject-no-improvement = Nessun miglioramento confermato — avvicina le scansioni e riprova
+align-reject-ambiguous = Trovate più superfici ugualmente plausibili — marca la zona corretta o avvicina le scansioni
 align-reject-nonfinite = Il punto o la superficie selezionati non sono validi
 align-status-stepped = Passi nella storia
 align-status-moving-hand = Muovo a mano
