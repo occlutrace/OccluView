@@ -202,3 +202,103 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
         "the headless device must ask for the adapter's buffer ceiling"
     );
 }
+
+/// The live egui viewport always has a depth/stencil attachment. Sculpt's
+/// display-only volume is drawn into that same pass, so its pipeline must
+/// declare the same depth format even though it does not write depth and is
+/// intentionally depth-independent (`Always`).
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_tool_pipeline_is_compatible_with_the_live_depth_pass() {
+    use crate::{GpuCamera, SculptToolShape, SculptToolUniform};
+    use glam::Mat4;
+
+    let renderer = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+    let device = renderer.device();
+    let size = wgpu::Extent3d {
+        width: 32,
+        height: 24,
+        depth_or_array_layers: 1,
+    };
+    let color = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sculpt live compatibility color"),
+        size,
+        mip_level_count: 1,
+        sample_count: renderer.sample_count(),
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sculpt live compatibility depth"),
+        size,
+        mip_level_count: 1,
+        sample_count: renderer.sample_count(),
+        dimension: wgpu::TextureDimension::D2,
+        format: renderer.depth_format(),
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+
+    renderer.set_camera(&GpuCamera::new(
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        glam::Vec3::Z,
+        glam::Vec3::ZERO,
+    ));
+    renderer.set_sculpt_tool(&SculptToolUniform {
+        model: Mat4::IDENTITY.to_cols_array(),
+        color: [0.2, 0.8, 1.0, 1.0],
+        opacity: 0.5,
+        shape: SculptToolShape::Cone as u32,
+        visible: 1,
+        padding: 0,
+    });
+    let camera_bg = renderer.camera_bind_group();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sculpt live compatibility encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sculpt live compatibility pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        renderer.draw_sculpt_tool(&mut pass, &camera_bg, renderer.disabled_clip_bind_group());
+    }
+    renderer.queue().submit(std::iter::once(encoder.finish()));
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+    assert_eq!(
+        renderer.take_gpu_error(),
+        None,
+        "Sculpt's live volume draw must not submit an incompatible depth pipeline"
+    );
+}
