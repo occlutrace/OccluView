@@ -1365,12 +1365,12 @@ fn symmetric_eigendecomposition(mut matrix: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 
     for _ in 0..64 {
         let mut pivot = (0, 1);
         let mut largest = 0.0_f64;
-        for row in 0..6 {
-            for column in (row + 1)..6 {
-                let magnitude = matrix[row][column].abs();
+        for (row_index, row) in matrix.iter().enumerate() {
+            for (column, &value) in row.iter().enumerate().skip(row_index + 1) {
+                let magnitude = value.abs();
                 if magnitude > largest {
                     largest = magnitude;
-                    pivot = (row, column);
+                    pivot = (row_index, column);
                 }
             }
         }
@@ -1390,16 +1390,41 @@ fn symmetric_eigendecomposition(mut matrix: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 
         let cosine = 1.0 / (1.0 + t * t).sqrt();
         let sine = t * cosine;
 
-        for index in 0..6 {
+        let mut rotated_p = [0.0_f64; 6];
+        let mut rotated_q = [0.0_f64; 6];
+        for (index, (row, (new_p, new_q))) in matrix
+            .iter()
+            .zip(rotated_p.iter_mut().zip(rotated_q.iter_mut()))
+            .enumerate()
+        {
             if index == p || index == q {
                 continue;
             }
-            let aip = matrix[index][p];
-            let aiq = matrix[index][q];
-            matrix[index][p] = cosine * aip - sine * aiq;
-            matrix[p][index] = matrix[index][p];
-            matrix[index][q] = sine * aip + cosine * aiq;
-            matrix[q][index] = matrix[index][q];
+            let aip = row[p];
+            let aiq = row[q];
+            *new_p = cosine * aip - sine * aiq;
+            *new_q = sine * aip + cosine * aiq;
+        }
+        for (index, (row, (&new_p, &new_q))) in matrix
+            .iter_mut()
+            .zip(rotated_p.iter().zip(rotated_q.iter()))
+            .enumerate()
+        {
+            if index == p || index == q {
+                continue;
+            }
+            row[p] = new_p;
+            row[q] = new_q;
+        }
+        for (index, (slot, &value)) in matrix[p].iter_mut().zip(rotated_p.iter()).enumerate() {
+            if index != p && index != q {
+                *slot = value;
+            }
+        }
+        for (index, (slot, &value)) in matrix[q].iter_mut().zip(rotated_q.iter()).enumerate() {
+            if index != p && index != q {
+                *slot = value;
+            }
         }
         matrix[p][p] = cosine * cosine * app - 2.0 * sine * cosine * apq + sine * sine * aqq;
         matrix[q][q] = sine * sine * app + 2.0 * sine * cosine * apq + cosine * cosine * aqq;
