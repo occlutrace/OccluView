@@ -124,7 +124,10 @@ fn diagnostics_keeps_an_invalid_environment_error_in_the_report() {
 fn diagnostics_fails_when_no_report_path_was_created() {
     assert!(require_report_path(None).is_err());
     let path = PathBuf::from("/tmp/occluview-diagnostics.txt");
-    assert_eq!(require_report_path(Some(path.clone())).unwrap(), path);
+    assert_eq!(
+        require_report_path(Some(path.clone())).expect("a present report path is valid"),
+        path
+    );
 }
 
 #[test]

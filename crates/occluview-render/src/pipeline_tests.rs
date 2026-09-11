@@ -232,17 +232,22 @@ fn stencil_mask_passes_preserve_depth_for_the_cap_and_shaded_pass() {
         "label: Some(\"occluview stencil-back pipeline\")",
         "label: Some(\"occluview stencil-front pipeline\")",
     ] {
-        let Some(start) = source.find(label) else {
-            panic!("stencil pipeline label missing: {label}");
-        };
-        let block = &source[start..];
-        let Some(end) = block.find("multisample,") else {
-            panic!("stencil pipeline state is incomplete: {label}");
-        };
-        assert!(
-            block[..end].contains("depth_write_enabled: Some(false)"),
-            "{label} must build a stencil-only mask without poisoning the final depth test"
-        );
+        let start = source.find(label);
+        assert!(start.is_some(), "stencil pipeline label missing: {label}");
+        if let Some(start) = start {
+            let block = &source[start..];
+            let end = block.find("multisample,");
+            assert!(
+                end.is_some(),
+                "stencil pipeline state is incomplete: {label}"
+            );
+            if let Some(end) = end {
+                assert!(
+                    block[..end].contains("depth_write_enabled: Some(false)"),
+                    "{label} must build a stencil-only mask without poisoning the final depth test"
+                );
+            }
+        }
     }
     assert!(
         source.contains("label: Some(\"occluview cap pipeline\")")
