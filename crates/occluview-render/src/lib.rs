@@ -54,7 +54,7 @@ pub use offscreen::{
     AdapterPolicy, AdapterResult, ClippedMeshRequest, CutMeshRequest, Offscreen, PreparedScene,
     PreparedSceneClipRequest, PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate,
     PreparedViewportClipRequest, PreparedViewportRequest, RenderDeadline, SceneDrawEntry,
-    ThumbnailSpec, ViewportSpec,
+    SculptSurfaceFeedbackRequest, ThumbnailSpec, ViewportSpec,
 };
 pub use pipeline::Renderer;
 pub use sculpt_cursor::{

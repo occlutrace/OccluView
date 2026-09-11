@@ -3,7 +3,8 @@
 use eframe::{egui, egui_wgpu, wgpu};
 use occluview_render::{
     ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneTopology,
-    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptToolUniform,
+    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptSurfaceFeedbackRequest,
+    SculptToolUniform,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -218,12 +219,14 @@ impl LiveViewport {
         }
         if let Some(cursor) = self.sculpt_cursor {
             let drawn = scene.draw_sculpt_surface_feedback(
-                &self.renderer,
                 render_pass,
-                &self.camera_bind_group,
-                &self.clip_bind_group,
-                cursor.target_index,
-                &cursor.topology,
+                SculptSurfaceFeedbackRequest::new(
+                    &self.renderer,
+                    &self.camera_bind_group,
+                    &self.clip_bind_group,
+                    cursor.target_index,
+                    &cursor.topology,
+                ),
             );
             if drawn {
                 self.renderer.draw_sculpt_tool(
