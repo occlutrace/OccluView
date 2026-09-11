@@ -663,7 +663,17 @@ fn paint(
     // A numerically valid distance map can still be blind to a rigid slide or
     // turn. Do not publish colours that look authoritative when the sampled
     // surface cannot determine the motion that produced them.
-    if stats.summary.is_some() && seen.is_none() {
+    //
+    // `observability()` returning `None` is the degenerate end of that: too
+    // little surface, or samples that do not span six degrees of freedom. A
+    // surface can also be *weakly* observable — full rank, every vertex with a
+    // nearest hit, and still a direction whose hidden displacement is more than
+    // ten times what the map shows. That is the case the observability doc calls
+    // untrustworthy, and it reaches here as `Some` with a low worst sensitivity.
+    // Publishing it would put a clean-looking map next to a pose the surfaces
+    // cannot confirm, which is the outcome this refusal exists to prevent.
+    let observable = seen.is_some_and(|seen| !seen.has_blind_direction());
+    if stats.summary.is_some() && !observable {
         return AlignOutcome::Failed {
             rejection: AlignFailure::MeasurementUnobservable,
         };
