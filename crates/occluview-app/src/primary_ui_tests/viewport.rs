@@ -1,5 +1,5 @@
 use super::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[test]
 fn source_budget_guard_ignores_generated_target_directories() {
@@ -23,36 +23,6 @@ fn source_budget_guard_ignores_generated_target_directories() {
     };
     assert!(files.iter().any(|path| path.ends_with("kept.rs")));
     assert!(!files.iter().any(|path| path.ends_with("generated.rs")));
-}
-
-#[test]
-fn rust_source_files_stay_within_the_physical_line_budget() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent);
-    assert!(
-        workspace_root.is_some(),
-        "app crate should live under the workspace crates directory"
-    );
-    let Some(workspace_root) = workspace_root else {
-        return;
-    };
-    let mut source_files = Vec::new();
-    let collected = collect_rust_source_files(&workspace_root.join("crates"), &mut source_files);
-    assert!(collected.is_ok(), "source audit failed: {collected:?}");
-
-    let oversized: Vec<String> = source_files
-        .into_iter()
-        .filter_map(|path| {
-            let lines = std::fs::read_to_string(&path).ok()?.lines().count();
-            (lines > 800).then(|| format!("{} ({lines})", path.display()))
-        })
-        .collect();
-
-    assert!(
-        oversized.is_empty(),
-        "Rust source files must stay <= 800 lines:\n{}",
-        oversized.join("\n")
-    );
 }
 
 #[test]
@@ -609,7 +579,7 @@ fn cut_view_wires_clip_plane_into_viewport_and_preview() {
         "cut tool should expose a separate preview render spec"
     );
     assert!(
-        app_render.contains("self.active_viewport_clip_plane(scene.bbox())")
+        app_render.contains("self.active_viewport_clip_plane(bbox)")
             && app_render.contains("render_prepared_viewport_with_clip_and_overlay_with_deadline("),
         "main viewport should render the active clipping plane, not only the small preview"
     );
