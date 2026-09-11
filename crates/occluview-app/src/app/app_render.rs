@@ -19,6 +19,7 @@ use super::{
     PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
     ThumbnailSpec, ViewportSpec,
 };
+use occluview_core::Aabb;
 use occluview_render::{
     AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
     RenderDeadline,
@@ -29,6 +30,57 @@ const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
 const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
 
 impl OccluViewApp {
+    /// Whether a selection overlay may be drawn over the current scene.
+    ///
+    /// Sculpt streams a display-only worker shadow into the prepared scene
+    /// while the document remains at its last committed mesh. The selection
+    /// overlay has its own GPU geometry and cannot safely follow that shadow
+    /// sparsely, so hiding it during Sculpt is safer than showing stale faces.
+    /// The mode transition and the sculpt commit invalidate it for a rebuild.
+    fn selection_overlay_visible(&self) -> bool {
+        self.tools.sculpt.armed.is_none() && self.tools.sculpt.stroke.is_none()
+    }
+
+    /// Bounds for the pixels currently shown by the renderer.
+    ///
+    /// During an active Sculpt stroke the prepared GPU scene contains the
+    /// worker shadow, while `Scene::bbox()` still describes the committed
+    /// mesh. Replacing only the worker layer's local bounds keeps Cut View,
+    /// clipping and camera framing from lagging behind a large displacement.
+    fn effective_scene_bbox(&self, scene: &Scene) -> Aabb {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
+            return scene.bbox();
+        };
+        let shadow_handle = worker.shadow();
+        let Some(shadow) = shadow_handle.try_read().ok() else {
+            return scene.bbox();
+        };
+        let sculpted_local = Aabb::enclose_points(
+            shadow
+                .iter()
+                .map(|vertex| glam::Vec3::from_array(vertex.position)),
+        );
+        if sculpted_local.is_empty()
+            || !sculpted_local.min.is_finite()
+            || !sculpted_local.max.is_finite()
+        {
+            return scene.bbox();
+        }
+        scene
+            .meshes()
+            .iter()
+            .filter(|entry| entry.visible)
+            .map(|entry| {
+                let local = if entry.id() == worker.layer_id {
+                    sculpted_local
+                } else {
+                    entry.mesh.bbox_cached()
+                };
+                transformed_bbox(local, entry.transform)
+            })
+            .fold(Aabb::EMPTY, Aabb::enclose_box)
+    }
+
     pub(super) fn render_now(&mut self, ctx: &egui::Context) {
         let render_started_at = Instant::now();
         let (spec, pixels) = match self.render_scene_pixels() {
@@ -86,7 +138,7 @@ impl OccluViewApp {
             self.tools.cut_view.disable();
             return;
         };
-        let bbox = scene.bbox();
+        let bbox = self.effective_scene_bbox(&scene);
         let Some(cut) = self.tools.cut_view.cut_view_spec(bbox) else {
             return;
         };
@@ -113,7 +165,7 @@ impl OccluViewApp {
         let Some(frame) = self.tools.bridge_split_section.frame() else {
             return;
         };
-        let bbox = scene.bbox();
+        let bbox = self.effective_scene_bbox(&scene);
         let plane = occluview_render::ClipPlane::new(
             frame.normal().to_array(),
             frame.normal().dot(frame.pose().center),
@@ -139,7 +191,7 @@ impl OccluViewApp {
         half_extent: f32,
         basis: crate::cut_ruler::SliceBasis,
     ) -> Option<(egui::ColorImage, crate::cut_ruler::SliceCam)> {
-        let bbox = scene.bbox();
+        let bbox = self.effective_scene_bbox(scene);
         let restore_deviation = self.align_overlay_is_up();
         if let Err(e) = self.ensure_offscreen() {
             tracing::error!(error = ?e, "section-view offscreen init failed");
@@ -212,10 +264,7 @@ impl OccluViewApp {
         Some((color_image, slice_cam))
     }
 
-    fn active_viewport_clip_plane(
-        &self,
-        bbox: occluview_core::Aabb,
-    ) -> occluview_render::ClipPlane {
+    fn active_viewport_clip_plane(&self, bbox: Aabb) -> occluview_render::ClipPlane {
         if self.tools.bridge_split_active() {
             return self.tools.bridge_split_section.frame().map_or_else(
                 occluview_render::ClipPlane::disabled,
@@ -264,8 +313,9 @@ impl OccluViewApp {
             self.reset_camera_to_home();
         }
         let scene = self.document.scene.clone().context("no scene loaded")?;
+        let bbox = self.effective_scene_bbox(&scene);
         let mut cam = self.render.camera.context("camera unavailable")?;
-        cam.fit_clip_planes_to_bbox(scene.bbox());
+        cam.fit_clip_planes_to_bbox(bbox);
         self.ensure_offscreen()?;
 
         let [width_px, height_px] = self.render.render_extent_px;
@@ -333,8 +383,12 @@ impl OccluViewApp {
             .prepared_scene
             .as_ref()
             .context("prepared scene unavailable")?;
-        let selection_overlay = self.render.prepared_selection_overlay.as_ref();
-        let clip_plane = self.active_viewport_clip_plane(scene.bbox());
+        let selection_overlay = self
+            .render
+            .prepared_selection_overlay
+            .as_ref()
+            .filter(|_| self.selection_overlay_visible());
+        let clip_plane = self.active_viewport_clip_plane(bbox);
         let pixels = if clip_plane.enabled != 0 {
             pollster::block_on(
                 offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
@@ -431,17 +485,19 @@ impl OccluViewApp {
             self.render.invalidation.consume_redraw();
             return;
         };
+        let bbox = self.effective_scene_bbox(scene);
         let Some(mut cam) = self.render.camera else {
             return;
         };
-        cam.fit_clip_planes_to_bbox(scene.bbox());
+        cam.fit_clip_planes_to_bbox(bbox);
 
         let [width_px, height_px] = self.render.render_extent_px;
         let aspect = f32::from(width_px) / f32::from(height_px.max(1));
         let view = build_view_matrix(&cam);
         let proj = build_proj_matrix(&cam, aspect);
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
-        let clip_plane = self.active_viewport_clip_plane(scene.bbox());
+        let clip_plane = self.active_viewport_clip_plane(bbox);
+        let selection_overlay_visible = self.selection_overlay_visible();
 
         let (repush_deviation, scene_rebuilt) = match live_viewport.lock() {
             Ok(mut viewport) => {
@@ -461,12 +517,16 @@ impl OccluViewApp {
                 let repush_deviation =
                     (rebuilt && restore_deviation) || self.tools.align.deviation_push_pending;
                 if self.render.invalidation.live_overlay_stale() {
-                    let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
-                    let sources = overlay.as_ref().map_or_else(
-                        Vec::new,
-                        super::selection_overlay::SelectionOverlayScene::prepared_sources,
-                    );
-                    viewport.sync_selection_overlay(&sources);
+                    if selection_overlay_visible {
+                        let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
+                        let sources = overlay.as_ref().map_or_else(
+                            Vec::new,
+                            super::selection_overlay::SelectionOverlayScene::prepared_sources,
+                        );
+                        viewport.sync_selection_overlay(&sources);
+                    } else {
+                        viewport.sync_selection_overlay(&[]);
+                    }
                     self.render.invalidation.consume_live_overlay();
                 }
                 self.render.invalidation.consume_redraw();
@@ -775,6 +835,27 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
     }
+}
+
+/// Transform a local AABB conservatively for camera and section framing.
+fn transformed_bbox(local: Aabb, transform: glam::Affine3A) -> Aabb {
+    if local.is_empty() {
+        return Aabb::EMPTY;
+    }
+    let corners = [
+        local.min,
+        glam::Vec3::new(local.min.x, local.min.y, local.max.z),
+        glam::Vec3::new(local.min.x, local.max.y, local.min.z),
+        glam::Vec3::new(local.min.x, local.max.y, local.max.z),
+        glam::Vec3::new(local.max.x, local.min.y, local.min.z),
+        glam::Vec3::new(local.max.x, local.min.y, local.max.z),
+        glam::Vec3::new(local.max.x, local.max.y, local.min.z),
+        local.max,
+    ];
+    corners
+        .into_iter()
+        .map(|corner| transform.transform_point3(corner))
+        .fold(Aabb::EMPTY, Aabb::enclose_point)
 }
 
 pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
