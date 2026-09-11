@@ -56,8 +56,8 @@ pub use mesh::{
     mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
     normalize_bridge_split_input, prepare_bridge_split_source, repair_mesh_in_mesh,
     selected_connected_components_in_mesh, CoreBridgeSplitError, CoreBridgeSplitResult,
-    CoreMeshEditResult, CoreMeshRepairResult, Mesh, MeshBuilder, MeshKind, MeshTexture,
-    PreparedBridgeSplitSource, PrincipalFrame, Vertex,
+    CoreMeshEditResult, CoreMeshRepairResult, LiveRayPick, Mesh, MeshBuilder, MeshKind,
+    MeshTexture, PreparedBridgeSplitSource, PrincipalFrame, Vertex,
 };
 pub use occlu_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, BrushMode, BrushSession, BrushStroke,

@@ -63,7 +63,10 @@ fn a_live_vertex_pick_checks_triangles_that_left_the_original_bvh_bounds() {
         .collect();
 
     let hit = mesh
-        .pick_ray_local_with_vertices(&live, &[0], Vec3::new(0.25, 0.25, 10.0), -Vec3::Z, |_| true)
+        .pick_ray_local_with_vertices(
+            LiveRayPick::new(&live, &[0], Vec3::new(0.25, 0.25, 10.0), -Vec3::Z),
+            |_| true,
+        )
         .expect("dirty triangle should be picked at its live position");
     assert_eq!(hit.0, 0);
     assert!((hit.1.z - 5.0).abs() < 1e-5);

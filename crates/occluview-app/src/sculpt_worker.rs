@@ -696,10 +696,7 @@ impl SculptWorker {
         let pick = self.state.pick.try_read().ok()?;
         let shadow = pick.shadow.try_read().ok()?;
         pick.mesh.pick_ray_local_with_vertices(
-            &shadow,
-            &pick.dirty_triangles,
-            origin,
-            direction,
+            occluview_core::LiveRayPick::new(&shadow, &pick.dirty_triangles, origin, direction),
             |_| true,
         )
     }
