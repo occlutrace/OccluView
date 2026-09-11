@@ -337,13 +337,13 @@ impl OccluViewApp {
             // classify" branch and latch the path off permanently — turning the
             // deferral into exactly the state it exists to avoid, on the first
             // frame that arrives inside the wait.
-            return Err(anyhow::Error::new(RenderError::ReadbackTimeout {
+            return Err(Error::new(RenderError::ReadbackTimeout {
                 timeout: OFFSCREEN_RETRY_DELAY,
             })
             .context("offscreen rendering is waiting out a retry delay"));
         }
         if self.render.offscreen_failed {
-            return Err(anyhow::Error::new(RenderError::Surface(
+            return Err(Error::new(RenderError::Surface(
                 "offscreen rendering is disabled after a previous GPU failure".to_owned(),
             )));
         }
