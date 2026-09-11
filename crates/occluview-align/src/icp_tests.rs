@@ -22,9 +22,45 @@ fn dome(n: usize, step: f32) -> (Vec<f32>, Vec<u32>) {
             #[allow(clippy::cast_precision_loss)]
             let y = j as f32 * step;
             let (dx, dy) = (x - centre, y - centre);
+            let texture = 0.25 * (0.7 * x).sin() * (0.53 * y).cos() + 0.12 * (0.31 * x * y).sin();
+            let landmark = 1.5 * (-((x - 33.0).powi(2) + (y - 33.0).powi(2)) / 3.0).exp();
+            positions.extend_from_slice(&[
+                x,
+                y,
+                0.05 * dx * dx + 0.04 * dy * dy + texture + landmark,
+            ]);
+        }
+    }
+    (positions, grid_indices(n))
+}
+
+/// A local patch cut from a much larger connected surface. Its vertex frame is
+/// local, but its shape is sampled at `origin`, so the correct rigid answer is
+/// the translation that puts the patch back over that window. This is the
+/// case a component-centre seed cannot solve on its own.
+fn dome_patch(n: usize, step: f32, origin: DVec3) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);
+    #[allow(clippy::cast_precision_loss)]
+    let centre = 20.0_f32;
+    for j in 0..=n {
+        for i in 0..=n {
             #[allow(clippy::cast_precision_loss)]
-            let texture = ((i * 5 + j * 3) % 7) as f32 * 0.02;
-            positions.extend_from_slice(&[x, y, 0.05 * dx * dx + 0.04 * dy * dy + texture]);
+            let x = i as f32 * step;
+            #[allow(clippy::cast_precision_loss)]
+            let y = j as f32 * step;
+            let global_x = x + origin.x as f32;
+            let global_y = y + origin.y as f32;
+            let dx = global_x - centre;
+            let dy = global_y - centre;
+            let texture = 0.25 * (0.7 * global_x).sin() * (0.53 * global_y).cos()
+                + 0.12 * (0.31 * global_x * global_y).sin();
+            let landmark =
+                1.5 * (-((global_x - 33.0).powi(2) + (global_y - 33.0).powi(2)) / 3.0).exp();
+            positions.extend_from_slice(&[
+                x,
+                y,
+                0.05 * dx * dx + 0.04 * dy * dy + texture + landmark,
+            ]);
         }
     }
     (positions, grid_indices(n))
@@ -569,6 +605,30 @@ fn best_fit_recovers_when_the_initial_gap_is_outside_the_search_radius() {
         report.rigid.translation.length() < 0.05,
         "the bounded center hypothesis did not recover the nearby mesh: {:?}",
         report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_finds_a_partial_patch_inside_a_large_connected_scan() {
+    let (fixed, fixed_indices) = dome(80, 0.5);
+    let patch_origin = DVec3::new(27.0, 27.0, 0.0);
+    let (moving, moving_indices) = dome_patch(24, 0.5, patch_origin);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+    let start = Rigid::IDENTITY;
+
+    let outcome = refine(
+        soup(&moving, &moving_indices),
+        &fixed_index,
+        start,
+        &settings(),
+        &CancelFlag::new(),
+    );
+    let report = outcome.expect("Best fit should find the matching internal patch");
+
+    assert!(
+        (report.rigid.translation - patch_origin).length() < 0.1,
+        "partial patch was not returned to its source window: {:?}",
+        report.rigid
     );
 }
 
