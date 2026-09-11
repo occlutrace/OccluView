@@ -10,6 +10,13 @@ fn native_options_use_the_low_latency_surface_contract() {
         options.wgpu_options.surface,
         eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY
     );
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = options.wgpu_options.wgpu_setup else {
+        panic!("OccluView must create its own wgpu setup");
+    };
+    assert!(
+        setup.native_adapter_selector.is_some(),
+        "startup must reject adapters that cannot present to the desktop surface"
+    );
 }
 
 #[test]
@@ -34,6 +41,34 @@ fn graphics_limits_keep_the_requested_budget_when_hardware_supports_it() {
     let requested = device_limits_for_backend(wgpu::Backend::Vulkan, &supported);
 
     assert_eq!(requested.max_texture_dimension_2d, 8192);
+}
+
+#[test]
+fn an_unknown_backend_override_is_detectably_empty() {
+    assert!(wgpu::Backends::from_comma_list("not-a-backend").is_empty());
+    assert!(!wgpu::Backends::from_comma_list("vulkan,gl").is_empty());
+}
+
+#[test]
+fn adapter_ranking_respects_the_requested_power_profile() {
+    assert!(
+        adapter_device_score(
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::PowerPreference::LowPower
+        ) > adapter_device_score(
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::PowerPreference::HighPerformance
+        )
+    );
+    assert!(
+        adapter_device_score(
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::PowerPreference::HighPerformance
+        ) > adapter_device_score(
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::PowerPreference::LowPower
+        )
+    );
 }
 
 #[test]
