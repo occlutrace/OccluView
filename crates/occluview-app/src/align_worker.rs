@@ -217,6 +217,9 @@ pub(crate) enum AlignFailure {
     MovingSurfaceMissing,
     /// The cached measurement was dropped before it could be coloured.
     MeasurementDropped,
+    /// The map has samples, but they do not expose enough rigid motion to be
+    /// a reliable visual confirmation of the match.
+    MeasurementUnobservable,
 }
 
 /// What a finished job produced.
@@ -596,7 +599,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
     match surface_job {
         SurfaceJob::Refine => {
             match refine(moving, index, job.pose, &job.settings.refine(), cancel) {
-                Ok(report) if report.is_trustworthy_refinement() => {
+                Ok(report) if report.is_trustworthy_refinement_for(&job.settings.refine()) => {
                     AlignOutcome::Refined { pose: report.rigid }
                 }
                 Ok(_) => AlignOutcome::Failed {
@@ -657,6 +660,14 @@ fn paint(
     stats: DeviationStats,
     seen: Option<Observability>,
 ) -> AlignOutcome {
+    // A numerically valid distance map can still be blind to a rigid slide or
+    // turn. Do not publish colours that look authoritative when the sampled
+    // surface cannot determine the motion that produced them.
+    if stats.summary.is_some() && seen.is_none() {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MeasurementUnobservable,
+        };
+    }
     // Automatic scaling exposes measured structure while keeping the selected
     // working range bounded; tolerance remains a statistics threshold only.
     let mut ramp = job.settings.ramp();

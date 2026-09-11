@@ -418,6 +418,112 @@ fn measure_job(generation: u64) -> super::AlignJob {
     }
 }
 
+/// A shallow bumpy surface spans all six rigid modes while remaining inside
+/// the default two-millimetre correspondence radius. It is the positive
+/// control for the observability gate; the flat sheet above is its negative
+/// control.
+fn observable_measure_job(generation: u64) -> super::AlignJob {
+    use std::sync::Arc;
+
+    const STEPS: usize = 20;
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    for row in 0..=STEPS {
+        for column in 0..=STEPS {
+            #[allow(clippy::cast_precision_loss)]
+            let x = column as f32 / STEPS as f32 * 10.0;
+            #[allow(clippy::cast_precision_loss)]
+            let y = row as f32 / STEPS as f32 * 10.0;
+            let z = 0.35 * (x * 0.8).sin() + 0.25 * (y * 1.1).cos();
+            positions.extend_from_slice(&[x, y, z]);
+        }
+    }
+    let width = u32::try_from(STEPS + 1).unwrap_or(1);
+    for row in 0..u32::try_from(STEPS).unwrap_or(0) {
+        for column in 0..u32::try_from(STEPS).unwrap_or(0) {
+            let corner = row * width + column;
+            indices.extend_from_slice(&[corner, corner + 1, corner + width]);
+            indices.extend_from_slice(&[corner + 1, corner + width + 1, corner + width]);
+        }
+    }
+    let fixed_key = SurfaceKey {
+        geometry: 11,
+        pose: 12,
+        markings: 0,
+    };
+    super::AlignJob {
+        generation,
+        request_id: 0,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: Arc::new(positions.clone()),
+        moving_indices: Arc::new(indices.clone()),
+        fixed_world_positions: Arc::new(positions),
+        fixed_indices: Arc::new(indices),
+        fixed_key,
+        measure_key: MeasureKey {
+            moving: (13, 14),
+            fixed: fixed_key,
+            mask: 0,
+            influence_radius_bits: 2.0_f64.to_bits(),
+            orientation: Orientation::Match,
+        },
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings {
+            influence_radius_mm: 2.0,
+            ..AlignSettings::default()
+        },
+    }
+}
+
+/// A line has enough vertices to produce a distance summary, but its true
+/// rigid-motion metric is rank deficient. The worker must refuse its map
+/// instead of presenting a numerically tidy but geometrically unobservable
+/// result.
+fn line_measure_job(generation: u64) -> super::AlignJob {
+    use std::sync::Arc;
+
+    let mut positions = Vec::new();
+    for index in 0..100 {
+        #[allow(clippy::cast_precision_loss)]
+        let x = index as f32 / 99.0 * 10.0;
+        positions.extend_from_slice(&[x, 0.0, 0.0]);
+    }
+    let (fixed_positions, fixed_indices) = fixed_sheet();
+    let fixed_key = SurfaceKey {
+        geometry: 21,
+        pose: 22,
+        markings: 0,
+    };
+    super::AlignJob {
+        generation,
+        request_id: 0,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: Arc::new(positions),
+        moving_indices: Arc::new(Vec::new()),
+        fixed_world_positions: Arc::new(fixed_positions),
+        fixed_indices: Arc::new(fixed_indices),
+        fixed_key,
+        measure_key: MeasureKey {
+            moving: (23, 24),
+            fixed: fixed_key,
+            mask: 0,
+            influence_radius_bits: 2.0_f64.to_bits(),
+            orientation: Orientation::Match,
+        },
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings {
+            influence_radius_mm: 2.0,
+            ..AlignSettings::default()
+        },
+    }
+}
+
 /// Poll until a result arrives, or give up. Bounded so a wedged worker fails the
 /// test instead of hanging the suite. `is_busy` is no good here: it is still
 /// false in the moment between submitting and the thread picking the job up.
@@ -449,7 +555,7 @@ fn harvest_quiet(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
 fn a_job_of_the_current_generation_comes_back() {
     let worker = super::AlignWorker::spawn();
     let generation = worker.generation();
-    worker.submit(measure_job(generation));
+    worker.submit(observable_measure_job(generation));
     let completions = harvest_one(&worker);
     assert_eq!(
         completions.len(),
@@ -459,6 +565,21 @@ fn a_job_of_the_current_generation_comes_back() {
     assert!(matches!(
         completions[0].outcome,
         super::AlignOutcome::Measured { .. }
+    ));
+}
+
+#[test]
+fn a_line_measurement_with_a_summary_is_rejected_as_unobservable() {
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let outcome = super::execute(&line_measure_job(0), &cancel, &mut cache);
+
+    assert!(matches!(
+        outcome,
+        super::AlignOutcome::Failed {
+            rejection: super::AlignFailure::MeasurementUnobservable
+        }
     ));
 }
 

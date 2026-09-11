@@ -148,6 +148,13 @@ impl OccluViewApp {
                 self.apply_measured_outcome(colors, stats, seen, scale_mm);
             }
             AlignOutcome::Failed { rejection } => {
+                if matches!(rejection, AlignFailure::MeasurementUnobservable) {
+                    // The old map, if any, belongs to a measurement whose
+                    // geometry did not expose enough rigid motion. It must not
+                    // remain visible while the concise refusal is shown.
+                    self.tools.align.settings.show_deviation = false;
+                    self.clear_deviation_overlay();
+                }
                 let (key, a, b) = align_failure_parts(rejection);
                 self.tools.align.status = Some(
                     self.ui
@@ -166,7 +173,7 @@ impl OccluViewApp {
         &mut self,
         colors: Vec<[u8; 4]>,
         stats: occluview_align::DeviationStats,
-        _seen: Option<occluview_align::Observability>,
+        seen: Option<occluview_align::Observability>,
         scale_mm: f64,
     ) {
         // A measurement can finish after the operator hides the map or after
@@ -194,6 +201,15 @@ impl OccluViewApp {
             self.tools.align.status = Some(self.ui.locale.tr("align-status-no-summary"));
             return;
         };
+        // Keep this presentation-side guard even though the worker rejects the
+        // same state. It protects the invariant if a future worker path forgets
+        // to use `paint`, and it removes any previous map before returning.
+        if seen.is_none() {
+            self.tools.align.settings.show_deviation = false;
+            self.clear_deviation_overlay();
+            self.tools.align.status = Some(self.ui.locale.tr("align-fail-unobservable"));
+            return;
+        }
         self.tools.align.stats = Some(stats);
         if !self.apply_deviation_colors(colors) {
             // A generation mismatch should normally discard this completion,
@@ -380,6 +396,9 @@ fn align_failure_parts(failure: AlignFailure) -> (&'static str, String, String) 
             ("align-fail-no-surface-moving", String::new(), String::new())
         }
         AlignFailure::MeasurementDropped => ("align-fail-recolor", String::new(), String::new()),
+        AlignFailure::MeasurementUnobservable => {
+            ("align-fail-unobservable", String::new(), String::new())
+        }
         AlignFailure::Fit(rejection) => fit_rejection_parts(rejection),
     }
 }
@@ -436,6 +455,10 @@ mod tests {
                 "align-fail-no-surface-moving",
             ),
             (AlignFailure::MeasurementDropped, "align-fail-recolor"),
+            (
+                AlignFailure::MeasurementUnobservable,
+                "align-fail-unobservable",
+            ),
             (
                 AlignFailure::Fit(FitRejection::TooFewPairs { have: 2, need: 3 }),
                 "align-reject-toofew",
