@@ -923,22 +923,6 @@ fn graphics_diagnostics_report() -> String {
         "{LIVE_MSAA_ENV}: {}",
         std::env::var(LIVE_MSAA_ENV).unwrap_or_else(|_| "<unset>".to_string())
     );
-    let mut working_identities: Vec<AdapterIdentity> = Vec::new();
-
-    // Startup decides the count over the adapters whose device request
-    // succeeded, so the report has to use that same set. Printing it over every
-    // enumerated adapter would describe a startup that never happened on a
-    // machine where a broken driver enumerates and fails to create a device.
-    let live_sample_count = live_sample_count_for(
-        &working_identities,
-        power_preference,
-        live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
-    );
-    let _ = writeln!(
-        report,
-        "live_sample_count: {live_sample_count} (over {} adapter(s) that created a device)",
-        working_identities.len()
-    );
     let _ = writeln!(report, "DISPLAY: {}", environment_state("DISPLAY"));
     let _ = writeln!(
         report,
@@ -952,6 +936,7 @@ fn graphics_diagnostics_report() -> String {
         return report;
     }
 
+    let mut working_identities: Vec<AdapterIdentity> = Vec::new();
     for (index, adapter) in adapters.iter().enumerate() {
         let info = adapter.get_info();
         let supported = adapter.limits();
@@ -988,6 +973,20 @@ fn graphics_diagnostics_report() -> String {
         };
         let _ = writeln!(report, "  device_request: {device_status}");
     }
+    // Startup decides the count over the adapters whose device request
+    // succeeded, so the report has to use that same set. Printing it over every
+    // enumerated adapter would describe a startup that never happened on a
+    // machine where a broken driver enumerates and fails to create a device.
+    let live_sample_count = live_sample_count_for(
+        &working_identities,
+        power_preference,
+        live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
+    );
+    let _ = writeln!(
+        report,
+        "live_sample_count: {live_sample_count} (over {} adapter(s) that created a device)",
+        working_identities.len()
+    );
     report
 }
 
