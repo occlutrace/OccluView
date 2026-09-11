@@ -161,6 +161,13 @@ impl OccluViewApp {
             }
             self.render.invalidation.consume_offscreen_scene();
         }
+        if scene_rebuilt {
+            if self.push_sculpt_shadow_offscreen() != Some(true) {
+                if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                    worker.request_full_sync();
+                }
+            }
+        }
         if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
             self.tools.align.deviation_push_pending = !self.push_deviation_colors_offscreen();
         }
@@ -303,6 +310,13 @@ impl OccluViewApp {
             }
             self.render.invalidation.consume_offscreen_scene();
         }
+        if scene_rebuilt {
+            if self.push_sculpt_shadow_offscreen() != Some(true) {
+                if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                    worker.request_full_sync();
+                }
+            }
+        }
         if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
             self.tools.align.deviation_push_pending = !self.push_deviation_colors_offscreen();
         }
@@ -429,7 +443,7 @@ impl OccluViewApp {
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let clip_plane = self.active_viewport_clip_plane(scene.bbox());
 
-        let repush = match live_viewport.lock() {
+        let (repush_deviation, scene_rebuilt) = match live_viewport.lock() {
             Ok(mut viewport) => {
                 viewport.set_show_ghost(self.persistence.settings.show_cut_ghost);
                 viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
@@ -456,14 +470,26 @@ impl OccluViewApp {
                     self.render.invalidation.consume_live_overlay();
                 }
                 self.render.invalidation.consume_redraw();
-                repush_deviation
+                (repush_deviation, rebuilt)
             }
             Err(e) => {
                 tracing::warn!(error = ?e, "live viewport lock failed");
-                false
+                (false, false)
             }
         };
-        if repush {
+        if scene_rebuilt
+            && self
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .is_some_and(|_| self.push_sculpt_shadow_live() != Some(true))
+        {
+            if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                worker.request_full_sync();
+            }
+        }
+        if repush_deviation {
             // A push before the viewport has a prepared scene writes nowhere.
             // Keep the request standing until one exists, or the very first
             // measurement would come out in the scan's own colours.

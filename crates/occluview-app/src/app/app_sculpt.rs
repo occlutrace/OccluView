@@ -599,14 +599,28 @@ impl OccluViewApp {
         let scene = self.document.scene.as_ref()?;
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
-        // The preparation worker warms this exact layer. Never allow a cold
-        // scan-sized BVH to build on the egui thread, and do not wait on
-        // unrelated visible layers.
-        if !entry.mesh.bvh_is_ready() {
+        let worker = self.tools.sculpt.worker.as_ref()?;
+        if worker.layer_id != layer_id || worker.topology_id != entry.mesh.topology_id() {
             return None;
         }
         let (origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
-        scene.pick_layer_ray_hit(origin, direction, layer_id)
+        let inverse = entry.transform.inverse();
+        let (triangle_index, local_point) = worker.pick_local_ray(
+            inverse.transform_point3(origin),
+            inverse.transform_vector3(direction),
+        )?;
+        let point = entry.transform.transform_point3(local_point);
+        let distance = (point - origin).dot(direction.normalize_or_zero());
+        distance.is_finite().then_some(ScenePickHit {
+            layer_index: scene
+                .meshes()
+                .iter()
+                .position(|candidate| candidate.id() == layer_id)?,
+            layer_id,
+            triangle_index,
+            point,
+            distance,
+        })
     }
 
     fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
@@ -674,7 +688,16 @@ impl OccluViewApp {
             self.publish_sculpt_cursor(None);
             return;
         }
-        let Some(normal) = sculpt_face_normal(scene, &hit, camera) else {
+        let live_normal = self
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .filter(|worker| {
+                worker.layer_id == hit.layer_id && worker.topology_id == entry.mesh.topology_id()
+            })
+            .and_then(|worker| worker.local_triangle_normal(hit.triangle_index));
+        let Some(normal) = sculpt_face_normal(scene, &hit, camera, live_normal) else {
             self.publish_sculpt_cursor(None);
             return;
         };
@@ -761,26 +784,31 @@ fn sculpt_face_normal(
     scene: &occluview_core::Scene,
     hit: &ScenePickHit,
     camera: &occluview_core::Camera,
+    live_local_normal: Option<Vec3>,
 ) -> Option<Vec3> {
     let entry = scene.meshes().get(hit.layer_index)?;
     if entry.id() != hit.layer_id {
         return None;
     }
-    let base = hit.triangle_index.checked_mul(3)?;
-    let indices = entry.mesh.indices().get(base..base.checked_add(3)?)?;
-    let vertex = |index: u32| {
-        entry
-            .mesh
-            .vertices()
-            .get(usize::try_from(index).ok()?)
-            .map(|vertex| Vec3::from_array(vertex.position))
-    };
-    let [a, b, c] = [
-        vertex(indices[0])?,
-        vertex(indices[1])?,
-        vertex(indices[2])?,
-    ];
-    let local = (b - a).cross(c - a).normalize_or_zero();
+    let local = live_local_normal.unwrap_or_else(|| {
+        let base = hit.triangle_index.saturating_mul(3);
+        let Some(indices) = entry.mesh.indices().get(base..base.saturating_add(3)) else {
+            return Vec3::ZERO;
+        };
+        let vertex = |index: u32| {
+            entry
+                .mesh
+                .vertices()
+                .get(usize::try_from(index).ok()?)
+                .map(|vertex| Vec3::from_array(vertex.position))
+        };
+        let (Some(a), Some(b), Some(c)) =
+            (vertex(indices[0]), vertex(indices[1]), vertex(indices[2]))
+        else {
+            return Vec3::ZERO;
+        };
+        (b - a).cross(c - a).normalize_or_zero()
+    });
     if !local.is_finite() || local.length_squared() <= f32::EPSILON {
         return None;
     }

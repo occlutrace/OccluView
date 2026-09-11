@@ -4,14 +4,14 @@
 //! bounded command queue and the worker-side [`SculptSession`]; the UI only
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
-use crate::sculpt_tool::{DabFailure, SculptRebuild, SculptSession};
+use crate::sculpt_tool::{DabFailure, SculptPickState, SculptRebuild, SculptSession};
 use glam::Affine3A;
 use occluview_core::{BrushMode, BrushStroke, Mesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock, TryLockError};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 #[path = "sculpt_worker_loop.rs"]
 mod worker_loop;
@@ -26,6 +26,10 @@ const MAX_QUEUED_COMMANDS: usize = 64;
 /// backlog so a slow frame rate applies backpressure to the kernel thread.
 const MAX_PENDING_COMPLETIONS: usize = 2;
 const MAX_PENDING_TOUCHES: usize = 250_000;
+/// A direct dirty-triangle scan stays cheap for small strokes. Once it would
+/// become a second large traversal on every cursor move, the worker refits a
+/// fresh dynamic pick mesh and starts a new bounded dirty window.
+const MAX_DYNAMIC_PICK_TRIANGLES: usize = 100_000;
 
 enum SculptCommand {
     Apply {
@@ -231,6 +235,7 @@ fn make_room_for_apply(state: &mut QueueState) -> bool {
 
 struct WorkerState {
     shadow: Arc<RwLock<Vec<Vertex>>>,
+    pick: Arc<RwLock<SculptPickState>>,
     pending_touched: Mutex<Vec<usize>>,
     full_sync: AtomicBool,
     /// Ordered whole-layer rebuilds from densifying dabs. A later unread
@@ -314,6 +319,12 @@ impl WorkerState {
         pending.clear();
         drop(pending);
         self.full_sync.store(false, Ordering::Release);
+        let Ok(mut pick) = self.pick.write() else {
+            self.set_error(SculptFailure::WorkerStatePoisoned);
+            return;
+        };
+        pick.dirty_triangles.clear();
+        drop(pick);
         let Ok(mut rebuilds) = self.rebuild.lock() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
@@ -328,22 +339,58 @@ impl WorkerState {
         }
     }
 
-    fn record_touched(&self, touched: Vec<usize>) {
+    fn record_touched(&self, touched: Vec<usize>, dirty_triangles: Vec<usize>) {
         let Ok(_publish) = self.publish_boundary.lock() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        if touched.is_empty() || self.full_sync.load(Ordering::Acquire) {
-            return;
+        if !touched.is_empty() && !self.full_sync.load(Ordering::Acquire) {
+            let Ok(mut pending) = self.pending_touched.lock() else {
+                self.set_error(SculptFailure::WorkerStatePoisoned);
+                return;
+            };
+            pending.extend(touched);
+            if pending.len() > MAX_PENDING_TOUCHES {
+                pending.clear();
+                self.full_sync.store(true, Ordering::Release);
+            }
         }
-        let Ok(mut pending) = self.pending_touched.lock() else {
+
+        let Ok(mut pick) = self.pick.write() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        pending.extend(touched);
-        if pending.len() > MAX_PENDING_TOUCHES {
-            pending.clear();
-            self.full_sync.store(true, Ordering::Release);
+        // During the one-frame window between a worker rebuild publication and
+        // UI installation the old pick mesh has the wrong vertex count. Keep
+        // the state explicitly cold rather than allowing a mismatched pick.
+        let shadow_len = match pick.shadow.read() {
+            Ok(shadow) => shadow.len(),
+            Err(_) => {
+                self.set_error(SculptFailure::ShadowPoisoned);
+                return;
+            }
+        };
+        if pick.mesh.vertices().len() != shadow_len {
+            pick.dirty_triangles.clear();
+            return;
+        }
+        pick.dirty_triangles.extend(dirty_triangles);
+        pick.dirty_triangles.sort_unstable();
+        pick.dirty_triangles.dedup();
+        if pick.dirty_triangles.len() > MAX_DYNAMIC_PICK_TRIANGLES {
+            let refreshed = match pick.shadow.read() {
+                Ok(shadow) => pick.mesh.with_sculpted_vertices(shadow.clone()),
+                Err(_) => {
+                    self.set_error(SculptFailure::ShadowPoisoned);
+                    return;
+                }
+            };
+            let Some(refreshed) = refreshed else {
+                self.set_error(SculptFailure::ShadowShapeMismatch);
+                return;
+            };
+            pick.mesh = Arc::new(refreshed);
+            pick.dirty_triangles.clear();
         }
     }
 
@@ -540,6 +587,7 @@ pub(crate) struct SculptWorker {
     pub(crate) local_per_world: f32,
     state: Arc<WorkerState>,
     queue: Arc<SculptCommandQueue>,
+    worker_thread: Option<JoinHandle<()>>,
 }
 
 impl SculptWorker {
@@ -552,6 +600,11 @@ impl SculptWorker {
         let error = Arc::new(Mutex::new(None));
         let state = Arc::new(WorkerState {
             shadow: Arc::clone(&session.shadow),
+            pick: Arc::new(RwLock::new(SculptPickState {
+                mesh: Arc::clone(&session.base_mesh),
+                shadow: Arc::clone(&session.shadow),
+                dirty_triangles: Vec::new(),
+            })),
             pending_touched: Mutex::new(Vec::new()),
             full_sync: AtomicBool::new(false),
             rebuild: Mutex::new(VecDeque::new()),
@@ -570,7 +623,7 @@ impl SculptWorker {
             .num_threads(pool_threads)
             .thread_name(|index| format!("occluview-sculpt-kernel-{index}"))
             .build();
-        match pool {
+        let worker_thread = match pool {
             Ok(pool) => {
                 let spawn_result = thread::Builder::new()
                     .name("occluview-sculpt-worker".to_string())
@@ -591,18 +644,23 @@ impl SculptWorker {
                             worker_queue.mark_idle();
                         }
                     });
-                if let Err(error) = spawn_result {
-                    state.set_error(SculptFailure::Spawn {
-                        detail: error.to_string(),
-                    });
+                match spawn_result {
+                    Ok(handle) => Some(handle),
+                    Err(error) => {
+                        state.set_error(SculptFailure::Spawn {
+                            detail: error.to_string(),
+                        });
+                        None
+                    }
                 }
             }
             Err(error) => {
                 state.set_error(SculptFailure::KernelPool {
                     detail: error.to_string(),
                 });
+                None
             }
-        }
+        };
         Self {
             layer_id,
             topology_id,
@@ -611,6 +669,7 @@ impl SculptWorker {
             local_per_world,
             state,
             queue,
+            worker_thread,
         }
     }
 
@@ -624,6 +683,43 @@ impl SculptWorker {
 
     pub(crate) fn shadow(&self) -> Arc<RwLock<Vec<Vertex>>> {
         Arc::clone(&self.state.shadow)
+    }
+
+    /// Pick the current live Sculpt surface in mesh-local coordinates. A
+    /// contended read means the worker is publishing a dab; returning `None`
+    /// for that frame keeps the UI non-blocking and retries on repaint.
+    pub(crate) fn pick_local_ray(
+        &self,
+        origin: glam::Vec3,
+        direction: glam::Vec3,
+    ) -> Option<(usize, glam::Vec3)> {
+        let pick = self.state.pick.try_read().ok()?;
+        let shadow = pick.shadow.try_read().ok()?;
+        pick.mesh.pick_ray_local_with_vertices(
+            &shadow,
+            &pick.dirty_triangles,
+            origin,
+            direction,
+            |_| true,
+        )
+    }
+
+    pub(crate) fn local_triangle_normal(&self, triangle: usize) -> Option<glam::Vec3> {
+        let pick = self.state.pick.try_read().ok()?;
+        let shadow = pick.shadow.try_read().ok()?;
+        pick.mesh
+            .triangle_normal_local_with_vertices(&shadow, triangle)
+    }
+
+    /// Install the freshly rebuilt topology into the dynamic picker after the
+    /// UI has accepted the same mesh into the scene.
+    pub(crate) fn replace_pick_mesh(&self, mesh: Arc<Mesh>) {
+        if let Ok(mut pick) = self.state.pick.write() {
+            pick.mesh = mesh;
+            pick.dirty_triangles.clear();
+        } else {
+            self.state.set_error(SculptFailure::WorkerStatePoisoned);
+        }
     }
 
     #[cfg(test)]
@@ -741,6 +837,15 @@ impl Drop for SculptWorker {
         self.state.stopping.store(true, Ordering::Release);
         self.state.completion_wake.notify_all();
         self.queue.shutdown();
+        let Some(worker_thread) = self.worker_thread.take() else {
+            return;
+        };
+        // The worker never owns this handle, so this branch is defensive only;
+        // still avoid a self-join if a future refactor moves the owner into
+        // the worker closure.
+        if worker_thread.thread().id() != thread::current().id() {
+            let _ = worker_thread.join();
+        }
     }
 }
 
