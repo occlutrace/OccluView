@@ -249,7 +249,7 @@ pub fn refine(
 
     for budget in [COARSE_BUDGET, DENSE_BUDGET] {
         let samples = sample_vertices(moving, budget);
-        if samples.is_empty() {
+        if !level_samples_are_usable(summary, &samples)? {
             continue;
         }
         let outcome = run_level(&Level {
@@ -309,6 +309,26 @@ pub fn refine(
         weak_rot_axes: summary.weak_rot_axes,
         weak_trans_axes: summary.weak_trans_axes,
     })
+}
+
+/// A missing coarse sample set is harmless — the dense pass can still be the
+/// first usable level. Once a coarse report exists, however, an empty dense
+/// set is a missing required evidence stage, not permission to keep the coarse
+/// report and call the result refined.
+fn level_samples_are_usable(
+    previous_summary: Option<Summary>,
+    samples: &[u32],
+) -> Result<bool, FitRejection> {
+    if !samples.is_empty() {
+        return Ok(true);
+    }
+    if previous_summary.is_some() {
+        return Err(FitRejection::TooFewPairs {
+            have: 0,
+            need: MIN_CORRESPONDENCES,
+        });
+    }
+    Ok(false)
 }
 
 /// The report for a run that was cancelled before it did anything.
@@ -575,12 +595,11 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
         });
     };
 
-    if candidates.iter().copied().any(|candidate| {
-        candidate.component != best.component
-            && candidate.shift <= best.shift + COARSE_TIE_SHIFT_MM
-            && poses_are_distinct(candidate.rigid, best.rigid)
-            && coarse_candidates_are_equivalent(&candidate, &best)
-    }) {
+    if candidates
+        .iter()
+        .copied()
+        .any(|candidate| coarse_candidates_are_ambiguous(&candidate, &best))
+    {
         return Err(FitRejection::Ambiguous);
     }
 
@@ -924,6 +943,17 @@ fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCa
     }
 }
 
+fn coarse_candidates_are_ambiguous(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
+    // Connected-component identity is useful for ranking hypotheses, but it
+    // is not evidence that two poses are different answers. Repeated cusps or
+    // symmetric windows can live in one component, and choosing one of them
+    // deterministically would authorize a misleading heatmap. Treat every
+    // distinct, equally supported nearby pose as ambiguous.
+    candidate.shift <= best.shift + COARSE_TIE_SHIFT_MM
+        && poses_are_distinct(candidate.rigid, best.rigid)
+        && coarse_candidates_are_equivalent(candidate, best)
+}
+
 fn poses_are_distinct(left: Rigid, right: Rigid) -> bool {
     (left.translation - right.translation).length() > COARSE_POSE_TRANSLATION_EPS_MM
         || (left.rotation * right.rotation.inverse())
@@ -1210,15 +1240,7 @@ fn summarize(
     )]
     let p95_slot = ((magnitudes.len() as f64) * 0.95).ceil() as usize;
 
-    let largest = (0..6).fold(0.0f64, |best, index| best.max(matrix[index][index]));
-    let limit = largest * WEAK_AXIS_FRACTION;
-    let weak = |offset: usize| {
-        [
-            matrix[offset][offset] <= limit,
-            matrix[offset + 1][offset + 1] <= limit,
-            matrix[offset + 2][offset + 2] <= limit,
-        ]
-    };
+    let (weak_rot_axes, weak_trans_axes) = weak_axes_from_normal_matrix(matrix);
 
     #[allow(clippy::cast_precision_loss)]
     let sampled_count = sampled.max(1) as f64;
@@ -1234,9 +1256,132 @@ fn summarize(
             .get(p95_slot.clamp(1, magnitudes.len()) - 1)
             .copied()
             .unwrap_or(0.0),
-        weak_rot_axes: weak(0),
-        weak_trans_axes: weak(3),
+        weak_rot_axes,
+        weak_trans_axes,
     }
+}
+
+/// Classify weak motion directions from the weighted normal matrix.
+///
+/// The rotational and translational Jacobian columns have different units, so
+/// a raw eigendecomposition would make the answer depend on the mesh scale.
+/// Normalize each column first to form a dimensionless correlation matrix. A
+/// zero eigenvalue then means that some combination of motion columns is
+/// unobservable, even when every individual diagonal is large. That is the
+/// case a diagonal-only guard misses for repeated or locally symmetric
+/// surfaces.
+fn weak_axes_from_normal_matrix(matrix: &[[f64; 6]; 6]) -> ([bool; 3], [bool; 3]) {
+    let mut diagonal = [0.0; 6];
+    for (index, value) in diagonal.iter_mut().enumerate() {
+        *value = matrix[index][index];
+    }
+    if matrix.iter().flatten().any(|value| !value.is_finite()) {
+        return ([true; 3], [true; 3]);
+    }
+    let mut weak = [false; 6];
+    if !diagonal.iter().any(|value| *value > f64::MIN_POSITIVE) {
+        return ([true; 3], [true; 3]);
+    }
+
+    // Normalize by each column's own energy. Comparing raw rotation and
+    // translation diagonals would make rank depend on the mesh's unit scale;
+    // a correlation matrix keeps only the geometry's angular relationships.
+    let mut correlation = [[0.0_f64; 6]; 6];
+    for row in 0..6 {
+        for column in 0..6 {
+            let row_scale = diagonal[row];
+            let column_scale = diagonal[column];
+            let denominator = (row_scale * column_scale).sqrt();
+            correlation[row][column] = if denominator.is_finite() && denominator > 0.0 {
+                matrix[row][column] / denominator
+            } else {
+                0.0
+            };
+        }
+    }
+    let (eigenvalues, eigenvectors) = symmetric_eigendecomposition(correlation);
+    let mut found_weak_eigenvalue = false;
+    for (eigen_index, &eigenvalue) in eigenvalues.iter().enumerate() {
+        if !eigenvalue.is_finite() || eigenvalue <= WEAK_AXIS_FRACTION {
+            found_weak_eigenvalue = true;
+            for axis in 0..6 {
+                if eigenvectors[axis][eigen_index].abs() > 1e-3 {
+                    weak[axis] = true;
+                }
+            }
+        }
+    }
+    if found_weak_eigenvalue && !weak.into_iter().any(|axis| axis) {
+        // A malformed matrix must fail closed even if its eigenvectors did not
+        // produce a usable component classification.
+        weak = [true; 6];
+    }
+
+    ([weak[0], weak[1], weak[2]], [weak[3], weak[4], weak[5]])
+}
+
+/// Deterministic Jacobi eigendecomposition for a real symmetric 6x6 matrix.
+/// The normal matrix is tiny and assembled in a fixed order, so a bounded
+/// fixed-sweep solver is preferable to introducing a scale-sensitive external
+/// linear-algebra dependency into the alignment kernel.
+fn symmetric_eigendecomposition(mut matrix: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 6]; 6]) {
+    let mut vectors = [[0.0_f64; 6]; 6];
+    for (index, row) in vectors.iter_mut().enumerate() {
+        row[index] = 1.0;
+    }
+    for _ in 0..64 {
+        let mut pivot = (0, 1);
+        let mut largest = 0.0_f64;
+        for row in 0..6 {
+            for column in (row + 1)..6 {
+                let magnitude = matrix[row][column].abs();
+                if magnitude > largest {
+                    largest = magnitude;
+                    pivot = (row, column);
+                }
+            }
+        }
+        if largest <= 1e-12 {
+            break;
+        }
+        let (p, q) = pivot;
+        let app = matrix[p][p];
+        let aqq = matrix[q][q];
+        let apq = matrix[p][q];
+        if apq == 0.0 {
+            continue;
+        }
+        let tau = (aqq - app) / (2.0 * apq);
+        let sign = if tau >= 0.0 { 1.0 } else { -1.0 };
+        let t = sign / (tau.abs() + (1.0 + tau * tau).sqrt());
+        let cosine = 1.0 / (1.0 + t * t).sqrt();
+        let sine = t * cosine;
+
+        for index in 0..6 {
+            if index == p || index == q {
+                continue;
+            }
+            let aip = matrix[index][p];
+            let aiq = matrix[index][q];
+            matrix[index][p] = cosine * aip - sine * aiq;
+            matrix[p][index] = matrix[index][p];
+            matrix[index][q] = sine * aip + cosine * aiq;
+            matrix[q][index] = matrix[index][q];
+        }
+        matrix[p][p] = cosine * cosine * app - 2.0 * sine * cosine * apq + sine * sine * aqq;
+        matrix[q][q] = sine * sine * app + 2.0 * sine * cosine * apq + cosine * cosine * aqq;
+        matrix[p][q] = 0.0;
+        matrix[q][p] = 0.0;
+
+        for row in &mut vectors {
+            let vip = row[p];
+            let viq = row[q];
+            row[p] = cosine * vip - sine * viq;
+            row[q] = sine * vip + cosine * viq;
+        }
+    }
+    let eigenvalues = core::array::from_fn(|index| matrix[index][index]);
+    (eigenvalues, vectors)
 }
 
 /// Solve the damped normal equations, growing the damping until the system is
