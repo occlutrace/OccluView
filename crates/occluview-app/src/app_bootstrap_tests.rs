@@ -422,3 +422,18 @@ fn crash_report_includes_recent_log_lines() {
         "captured log lines reach the crash report"
     );
 }
+
+/// `run_and_return` is what makes a fatal `run_native` failure an error we can
+/// report. With it false, eframe's wrapper exits the process itself with code 0
+/// and no return value, so every startup failure that happens after the window
+/// request - adapter selection in particular - would look like a clean exit with
+/// no window and no crash report. eframe defaults it to true; this pins our
+/// reliance on that default.
+#[test]
+fn the_window_loop_must_return_fatal_errors_instead_of_exiting_silently() {
+    let options = native_options(&GraphicsPreflight::default());
+    assert!(
+        options.run_and_return,
+        "a fatal startup failure must reach main_entry as an error, not exit 0"
+    );
+}
