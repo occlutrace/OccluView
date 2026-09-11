@@ -139,10 +139,19 @@ impl OccluViewApp {
         self.tools.align.settings = settings;
         self.tools.align.constraint = constraint;
         self.tools.align.brush = brush;
-        if matching_inputs_changed(previous_settings, settings)
-            && self.tools.align.refined_match_ready
-        {
-            self.forget_align_fit(&self.ui.locale.tr("align-status-settings-changed"));
+        if matching_inputs_changed(previous_settings, settings) {
+            // A running job holds the settings snapshot it was submitted with,
+            // so its generation is dead the moment one of these inputs moves.
+            // Abandoning is therefore unconditional: gating it on the refined
+            // claim let an orientation edit land inside a running Best fit, and
+            // that job then armed the claim from inputs the operator had
+            // already changed. The user-facing "measure again" notice still
+            // waits for a fit that actually existed.
+            if self.tools.align.refined_match_ready {
+                self.forget_align_fit(&self.ui.locale.tr("align-status-settings-changed"));
+            } else {
+                self.abandon_align_jobs();
+            }
         }
         let tab_changed = self.tools.align.tab != tab;
         self.tools.align.tab = tab;
@@ -308,6 +317,45 @@ mod tests {
         assert!(
             source.contains("self.forget_align_fit"),
             "a changed optimizer input must remove the old refined match"
+        );
+    }
+
+    /// A settings edit lands while a job may be running with the pre-edit
+    /// snapshot. Abandoning it cannot depend on the refined claim, or the job
+    /// that should have died is exactly the one allowed to arm it.
+    #[test]
+    fn a_settings_change_abandons_a_running_fit_without_waiting_for_a_claim() {
+        let source = production();
+        let branch = source
+            .split_once("if matching_inputs_changed(previous_settings, settings)")
+            .and_then(|(_, rest)| rest.split_once("let tab_changed"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(!branch.is_empty(), "the settings boundary must exist");
+        assert!(
+            branch.contains("self.abandon_align_jobs()"),
+            "an in-flight job must be abandoned even when no refined fit was landed yet"
+        );
+        assert!(
+            !branch.contains("&& self.tools.align.refined_match_ready"),
+            "the abort must not be conditional on the claim it is supposed to protect"
+        );
+    }
+
+    /// The orientation rule steers the next fit. While one is running it holds
+    /// the settings snapshot it was submitted with, so the rule has to be
+    /// disabled with the rest of the matching cluster.
+    #[test]
+    fn the_orientation_rule_is_disabled_while_a_fit_runs() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("../align_panel_settings.rs"));
+        assert!(
+            source.contains("facing(ui, &mut settings.orientation, enabled, locale)"),
+            "the orientation cluster must receive the panel's enabled state"
+        );
+        assert!(
+            source.contains("ui.add_enabled_ui(enabled, |ui| {"),
+            "the orientation radios must be disabled with the matching cluster"
         );
     }
 }
