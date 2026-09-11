@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn native_options_use_the_low_latency_surface_contract() {
-    let options = native_options();
+    let options = native_options(&[]);
 
     assert_eq!(
         options.wgpu_options.surface,
