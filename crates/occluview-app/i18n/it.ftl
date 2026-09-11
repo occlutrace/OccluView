@@ -509,6 +509,7 @@ align-status-scaled = Questa scansione ha un placement scalato, non allineabile
 align-status-pose-refused = Fit finito, ma la sua scansione non c’è più
 align-status-worker-unavailable = Il worker di allineamento si è fermato — riavvia lo strumento
 align-status-measure-dropped = Misura scartata — il pennello ha i colori
+align-status-measure-unavailable = Misura non applicata — la scansione è cambiata; esegui di nuovo Best fit matching
 align-status-map-elsewhere = La mappa è nel tab Automatico — torna lì
 align-status-aligned-points = Allineato sui punti
 
@@ -648,6 +649,8 @@ sculpt-failure-spawn = Impossibile avviare il worker di scultura: { $detail }
 sculpt-failure-kernel-pool = Impossibile creare il pool di kernel di scultura: { $detail }
 sculpt-failure-missing-undo-baseline = Il tratto di scultura non ha una base di annullamento
 sculpt-failure-shadow-poisoned = Il lock dell'ombra di scultura è avvelenato
+sculpt-failure-shadow-shape = L’ombra della scultura non corrisponde più alla mesh attiva
+sculpt-failure-invalid-vertex-index = Il worker di scultura ha restituito un indice di vertice non valido
 sculpt-failure-worker-state-poisoned = Lo stato del worker di scultura è corrotto — riavvia Sculpt
 sculpt-failure-vertex-count-changed = Il risultato di scultura ha modificato il numero di vertici
 sculpt-failure-topology-rebuild = Ricostruzione della topologia di scultura non riuscita: { $detail }

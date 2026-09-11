@@ -511,6 +511,7 @@ align-status-scaled = Esse escaneamento tem escala aplicada, não alinhável
 align-status-pose-refused = Ajuste pronto, mas seu escaneamento sumiu
 align-status-worker-unavailable = O processo de alinhamento parou — reinicie a ferramenta
 align-status-measure-dropped = Medição descartada — o pincel tem as cores
+align-status-measure-unavailable = Medição não aplicada — o escaneamento mudou; execute Best fit matching novamente
 align-status-map-elsewhere = O mapa está na aba Automático — volta lá
 align-status-aligned-points = Alinhado por pontos
 
@@ -650,6 +651,8 @@ sculpt-failure-spawn = Não foi possível iniciar o processo de escultura: { $de
 sculpt-failure-kernel-pool = Não foi possível criar o pool de núcleos de escultura: { $detail }
 sculpt-failure-missing-undo-baseline = O traço de escultura não tem base para desfazer
 sculpt-failure-shadow-poisoned = O bloqueio de sombra de escultura foi corrompido
+sculpt-failure-shadow-shape = A sombra da escultura não corresponde mais à malha ativa
+sculpt-failure-invalid-vertex-index = O processo de escultura retornou um índice de vértice inválido
 sculpt-failure-worker-state-poisoned = O estado do processo de escultura foi corrompido — reinicie o Sculpt
 sculpt-failure-vertex-count-changed = O resultado da escultura mudou o número de vértices
 sculpt-failure-topology-rebuild = Falha ao reconstruir a topologia da escultura: { $detail }

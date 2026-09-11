@@ -513,6 +513,7 @@ align-status-scaled = That scan carries a scaled placement, which cannot be alig
 align-status-pose-refused = The fit finished, but the scan it was for is no longer available
 align-status-worker-unavailable = Alignment worker stopped — restart the alignment tool
 align-status-measure-dropped = Measurement dropped — the marking brush owns the colours
+align-status-measure-unavailable = Measurement not applied — the scan changed; run Best fit matching again
 align-status-map-elsewhere = Distance map is on the Automatically tab — it comes back there
 align-status-aligned-points = Aligned on points
 
@@ -652,6 +653,8 @@ sculpt-failure-spawn = Could not start sculpt worker: { $detail }
 sculpt-failure-kernel-pool = Could not create sculpt kernel pool: { $detail }
 sculpt-failure-missing-undo-baseline = Sculpt stroke has no undo baseline
 sculpt-failure-shadow-poisoned = Sculpt shadow lock was poisoned
+sculpt-failure-shadow-shape = Sculpt display shadow no longer matches the live mesh
+sculpt-failure-invalid-vertex-index = Sculpt worker returned an invalid vertex index
 sculpt-failure-worker-state-poisoned = Sculpt worker state was corrupted — restart Sculpt
 sculpt-failure-vertex-count-changed = Sculpt result changed the vertex count
 sculpt-failure-topology-rebuild = Sculpt topology rebuild failed: { $detail }

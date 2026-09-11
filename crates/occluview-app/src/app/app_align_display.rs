@@ -31,13 +31,15 @@ impl OccluViewApp {
     ///
     /// The upload is left to the viewport sync, which runs once per frame and
     /// knows whether the prepared scene it would write into still exists.
-    pub(super) fn apply_deviation_colors(&mut self, colors: Vec<[u8; 4]>) {
+    pub(super) fn apply_deviation_colors(&mut self, colors: Vec<[u8; 4]>) -> bool {
         let Some(layer) = self.align_mapped_layer() else {
-            return;
+            return false;
         };
-        if self.attach_overlay_colors(layer, colors, AlignOverlay::Map) {
-            self.ghost_other_layer();
+        if !self.attach_overlay_colors(layer, colors, AlignOverlay::Map) {
+            return false;
         }
+        self.ghost_other_layer();
+        true
     }
 
     /// Put per-vertex colours on one layer and record what they mean.
@@ -200,6 +202,7 @@ impl OccluViewApp {
         let mut wrote = true;
         for (layer, colors) in pending {
             let Some(entry) = layer_of(&scene, layer) else {
+                wrote = false;
                 continue;
             };
             let topology = PreparedSceneTopology::from_mesh(&entry.mesh);

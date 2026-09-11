@@ -583,6 +583,7 @@ align-status-scaled = Этот скан несёт масштабированн�
 align-status-pose-refused = Подгонка завершена, но скан, для которого она была, уже недоступен
 align-status-worker-unavailable = Обработчик совмещения остановился — перезапустите инструмент совмещения
 align-status-measure-dropped = Измерение сброшено — цветами владеет кисть пометок
+align-status-measure-unavailable = Измерение не применено — скан изменился; снова выполните точное совмещение
 align-status-map-elsewhere = Карта расстояний на вкладке «Автоматически» — она вернётся туда
 align-status-aligned-points = Совмещено по точкам
 
@@ -740,6 +741,8 @@ sculpt-failure-spawn = Не удалось запустить воркер ск�
 sculpt-failure-kernel-pool = Не удалось создать пул ядер скульптинга: { $detail }
 sculpt-failure-missing-undo-baseline = У штриха скульптинга нет базы для отмены
 sculpt-failure-shadow-poisoned = Блокировка тени скульптинга отравлена
+sculpt-failure-shadow-shape = Тень скульптинга больше не соответствует рабочей сетке
+sculpt-failure-invalid-vertex-index = Воркер скульптинга вернул недопустимый индекс вершины
 sculpt-failure-worker-state-poisoned = Состояние воркера скульптинга повреждено — перезапустите Sculpt
 sculpt-failure-vertex-count-changed = Результат скульптинга изменил число вершин
 sculpt-failure-topology-rebuild = Не удалось восстановить топологию скульптинга: { $detail }

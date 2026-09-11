@@ -509,6 +509,7 @@ align-status-scaled = Ese escaneo trae colocación escalada, no alineable
 align-status-pose-refused = El ajuste terminó, pero su escaneo ya no está
 align-status-worker-unavailable = El proceso de alineación se detuvo — reinicia la herramienta
 align-status-measure-dropped = Medición descartada — el pincel posee los colores
+align-status-measure-unavailable = Medición no aplicada — el escaneo cambió; ejecuta Best fit matching de nuevo
 align-status-map-elsewhere = El mapa está en la pestaña Automático — vuelve allí
 align-status-aligned-points = Alineado por puntos
 
@@ -648,6 +649,8 @@ sculpt-failure-spawn = No se pudo iniciar el proceso de esculpido: { $detail }
 sculpt-failure-kernel-pool = No se pudo crear el grupo de núcleos de esculpido: { $detail }
 sculpt-failure-missing-undo-baseline = El trazo de esculpido no tiene base para deshacer
 sculpt-failure-shadow-poisoned = El bloqueo de sombra de esculpido se corrompió
+sculpt-failure-shadow-shape = La sombra del esculpido ya no coincide con la malla activa
+sculpt-failure-invalid-vertex-index = El proceso de esculpido devolvió un índice de vértice no válido
 sculpt-failure-worker-state-poisoned = El estado del proceso de esculpido se corrompió — reinicia Sculpt
 sculpt-failure-vertex-count-changed = El resultado de esculpido cambió el número de vértices
 sculpt-failure-topology-rebuild = No se pudo reconstruir la topología del esculpido: { $detail }

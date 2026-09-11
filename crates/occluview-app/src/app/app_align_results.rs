@@ -140,7 +140,17 @@ impl OccluViewApp {
             return;
         };
         self.tools.align.stats = Some(stats);
-        self.apply_deviation_colors(colors);
+        if !self.apply_deviation_colors(colors) {
+            // A generation mismatch should normally discard this completion,
+            // but the layer can still disappear between the worker snapshot
+            // and this UI poll. Never leave a refined/visible claim behind a
+            // measurement that could not be attached to the current mesh.
+            self.tools.align.refined_match_ready = false;
+            self.tools.align.settings.show_deviation = false;
+            self.clear_deviation_overlay();
+            self.tools.align.status = Some(self.ui.locale.tr("align-status-measure-unavailable"));
+            return;
+        }
         self.tools.align.status = Some(self.ui.locale.tr("align-status-measured"));
     }
 
@@ -523,6 +533,10 @@ mod tests {
         assert!(
             remainder.contains("self.apply_deviation_colors(colors)"),
             "the summary path still paints"
+        );
+        assert!(
+            remainder.contains("if !self.apply_deviation_colors(colors)"),
+            "a dropped color attachment must not leave a refined map claim behind"
         );
     }
 

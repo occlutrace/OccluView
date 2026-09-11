@@ -509,6 +509,7 @@ align-status-scaled = Ce scan porte un placement à l’échelle, non alignable
 align-status-pose-refused = Ajustement fini, mais son scan n’est plus là
 align-status-worker-unavailable = Le processus d’alignement s’est arrêté — relancez l’outil
 align-status-measure-dropped = Mesure jetée — le pinceau possède les couleurs
+align-status-measure-unavailable = Mesure non appliquée — le scan a changé ; relancez Best fit matching
 align-status-map-elsewhere = La carte est sur l’onglet Auto — elle y revient
 align-status-aligned-points = Aligné sur points
 
@@ -648,6 +649,8 @@ sculpt-failure-spawn = Impossible de démarrer le processus de sculpture : { $de
 sculpt-failure-kernel-pool = Impossible de créer le pool de noyaux de sculpture : { $detail }
 sculpt-failure-missing-undo-baseline = Le trait de sculpture n'a pas de référence d'annulation
 sculpt-failure-shadow-poisoned = Le verrou d'ombre de sculpture est empoisonné
+sculpt-failure-shadow-shape = L’ombre de sculpture ne correspond plus au maillage actif
+sculpt-failure-invalid-vertex-index = Le processus de sculpture a renvoyé un index de sommet invalide
 sculpt-failure-worker-state-poisoned = L’état du processus de sculpture est corrompu — relancez Sculpt
 sculpt-failure-vertex-count-changed = Le résultat de sculpture a modifié le nombre de sommets
 sculpt-failure-topology-rebuild = Échec de reconstruction de la topologie de sculpture : { $detail }
