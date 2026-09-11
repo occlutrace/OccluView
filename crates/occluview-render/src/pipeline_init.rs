@@ -467,9 +467,11 @@ impl Renderer {
             label: Some("occluview sculpt tool shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SCULPT_TOOL_SHADER_SRC)),
         });
-        // The tool volume deliberately has no depth attachment. The reference
-        // cursor remains readable over dense surfaces, while clipping still
-        // follows the active cut plane in the fragment shader.
+        // The tool volume remains depth-independent at the semantic level:
+        // it never writes depth and always passes the depth test, so the
+        // reference cursor stays readable over dense surfaces. It still has
+        // to declare the live pass's depth format because eframe places this
+        // draw in the same Depth24PlusStencil8 render pass.
         let sculpt_tool_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("occluview sculpt tool volume pipeline"),
             layout: Some(&sculpt_tool_pipeline_layout),
@@ -494,7 +496,13 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample,
             multiview_mask: None,
             cache: None,
