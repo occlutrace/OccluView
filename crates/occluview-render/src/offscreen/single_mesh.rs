@@ -307,7 +307,14 @@ impl Offscreen {
                             store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(0),
+                            // The second face pass must consume the mask made
+                            // by the first; clearing here silently makes the
+                            // cap test zero for every pixel.
+                            load: if index == 0 {
+                                wgpu::LoadOp::Clear(0)
+                            } else {
+                                wgpu::LoadOp::Load
+                            },
                             store: wgpu::StoreOp::Store,
                         }),
                     }),
@@ -414,7 +421,14 @@ impl Offscreen {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        // A solid cap writes the cut-plane depth. Keeping the
+                        // depth buffer lets the final shaded pass remain
+                        // behind it when the camera looks into the cut.
+                        load: if cut.show_hollow {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: Some(wgpu::Operations {
