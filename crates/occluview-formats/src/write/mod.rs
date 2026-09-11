@@ -273,7 +273,7 @@ fn write_mesh_file(
     // operator's `CASE/upper.ply` shortcut would leave the archive copy
     // untouched while the app reported a successful export. Resolving also
     // keeps the temporary beside the file the rename lands on.
-    let destination = resolve_overwrite_destination(path);
+    let destination = resolve_overwrite_destination(path)?;
     let (temporary, file) = create_export_temp(&destination)?;
     let result = write_mesh_to_file(file, mesh, format, options);
     let report = match result {
@@ -292,34 +292,49 @@ fn write_mesh_file(
 
 /// Follow a destination symlink chain to the file an overwrite targets.
 ///
-/// The walk is bounded: a chain longer than the limit, a broken link, or a
-/// loop leaves the caller on the last path it resolved. A regular file costs
-/// one `symlink_metadata` probe and is returned unchanged.
-fn resolve_overwrite_destination(path: &Path) -> PathBuf {
+/// A regular file costs one `symlink_metadata` probe and is returned
+/// unchanged.
+///
+/// A chain that is still pointing at a link when the bound runs out - a loop,
+/// or deeper than any case-folder shortcut should be - is an error. The publish
+/// step is a rename, which would replace the link inode and leave the file it
+/// pointed at with the previous geometry while reporting success.
+///
+/// # Errors
+///
+/// Returns [`std::io::ErrorKind::InvalidInput`] when the chain cannot be
+/// resolved to a regular path.
+fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
     /// Enough for the "case folder is a link into the archive" layouts this
     /// exists for, without letting a long chain walk somewhere unexpected.
     const MAX_DESTINATION_LINKS: usize = 8;
     let mut current = path.to_path_buf();
     for _ in 0..MAX_DESTINATION_LINKS {
+        // A missing path is not an error: `create_export_temp` and the rename
+        // create it, and that is what the caller wants for a new file.
         let Ok(metadata) = std::fs::symlink_metadata(&current) else {
-            break;
+            return Ok(current);
         };
         if !metadata.file_type().is_symlink() {
-            break;
+            return Ok(current);
         }
-        let Ok(target) = std::fs::read_link(&current) else {
-            break;
-        };
+        let target = std::fs::read_link(&current)?;
         current = if target.is_absolute() {
             target
         } else {
             match current.parent() {
                 Some(parent) => parent.join(target),
-                None => break,
+                None => return Ok(current),
             }
         };
     }
-    current
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "destination {} is a symbolic-link chain that does not resolve to a file after {MAX_DESTINATION_LINKS} steps",
+            path.display()
+        ),
+    ))
 }
 
 fn write_mesh_to_file(
@@ -383,7 +398,7 @@ fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Res
             let _ = std::fs::remove_file(temporary);
             Ok(())
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(error),
+        Err(error) if !linkless_publish_required(&error) => Err(error),
         // exFAT, vfat, and link-disabled network mounts have no `link(2)` at
         // all, so the publish step failed for a reason that has nothing to do
         // with the destination name. The create-new contract is about the
@@ -391,6 +406,16 @@ fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Res
         // destination exclusively and copying the finished bytes in.
         Err(_) => publish_by_exclusive_copy(temporary, destination),
     }
+}
+
+/// Whether a failed link-based publish has to take the link-free path.
+///
+/// A collision is the create-new contract working: it must stay classified so
+/// the batch exporter can advance to the next numbered name. Every other
+/// failure means the filesystem could not link at all.
+#[cfg(not(windows))]
+fn linkless_publish_required(error: &std::io::Error) -> bool {
+    error.kind() != std::io::ErrorKind::AlreadyExists
 }
 
 /// Publish a finished temporary into a reserved destination name, without
@@ -768,6 +793,68 @@ mod tests {
             std::fs::read(&destination).expect("read export"),
             b"complete export",
             "the first export survives the second publish"
+        );
+    }
+
+    /// The fallback must not swallow a real collision: the batch exporter has
+    /// to see `AlreadyExists` to advance to the next numbered name, while every
+    /// other link failure means the filesystem cannot link at all.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_link_collision_stays_classified_and_other_failures_fall_back() {
+        assert!(!linkless_publish_required(&std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "a file with that name exists",
+        )));
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Unsupported,
+            std::io::ErrorKind::Other,
+        ] {
+            assert!(
+                linkless_publish_required(&std::io::Error::new(kind, "link unavailable")),
+                "{kind:?} means the filesystem could not link, so the fallback applies"
+            );
+        }
+    }
+
+    /// A chain that never reaches a regular file must fail the export instead
+    /// of renaming onto a link: the rename would replace the link inode and
+    /// leave the file it pointed at with the previous geometry, which is the
+    /// silent divergence the symlink resolution exists to prevent. The link is
+    /// left exactly as it was.
+    #[cfg(unix)]
+    #[test]
+    fn an_unresolvable_link_chain_fails_instead_of_replacing_the_link() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let first = directory.path().join("a.obj");
+        let second = directory.path().join("b.obj");
+        symlink(&second, &first).expect("first link");
+        symlink(&first, &second).expect("closing the loop");
+
+        let error = resolve_overwrite_destination(&first)
+            .expect_err("a link loop must not resolve to a file");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+        let mesh = triangle_mesh();
+        let outcome = write_mesh_overwrite(
+            &first,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        );
+        assert!(
+            outcome.is_err(),
+            "exporting onto an unresolvable link must fail, not report success"
+        );
+        assert!(
+            std::fs::symlink_metadata(&first)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink(),
+            "a failed export must leave the link alone"
         );
     }
 
