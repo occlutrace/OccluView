@@ -133,6 +133,10 @@ pub(crate) struct SculptTool {
     /// Pointer coordinates belonging to [`Self::cursor_hit`].
     pub(crate) cursor_pointer: Option<[f32; 2]>,
     pending: Option<PendingSculptPreparation>,
+    /// Canceled preparation workers are reaped without blocking the UI. They
+    /// remain owned here until their non-cancellable kernel phase finishes,
+    /// so dropping a receiver never leaves an untracked CPU/RAM worker behind.
+    retired_preparations: Vec<thread::JoinHandle<()>>,
 }
 
 struct PendingSculptPreparation {
@@ -140,6 +144,7 @@ struct PendingSculptPreparation {
     topology_id: u64,
     cancel: Arc<AtomicBool>,
     receiver: mpsc::Receiver<Result<SculptSession, String>>,
+    thread: thread::JoinHandle<()>,
 }
 
 impl SculptTool {
@@ -233,6 +238,7 @@ impl SculptTool {
     /// snapshot; the UI only stores a receiver and remains responsive while
     /// welding, adjacency construction, and grid setup run.
     pub(crate) fn queue_preparation(&mut self, scene: Arc<Scene>, index: usize) -> bool {
+        self.reap_finished_preparations();
         let Some(entry) = scene.meshes().get(index) else {
             return false;
         };
@@ -255,6 +261,12 @@ impl SculptTool {
         }
 
         self.cancel_pending_preparation();
+        // A previous cancellation may still be inside the O(n) BVH/kernel
+        // preparation. Do not launch a second scan-sized worker on a weak
+        // laptop; wait for the owned worker to finish and retry next frame.
+        if !self.retired_preparations.is_empty() {
+            return false;
+        }
         let (sender, receiver) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
@@ -305,35 +317,66 @@ impl SculptTool {
                     let _ = sender.send(result);
                 }
             });
-        if spawned.is_err() {
+        let Ok(thread) = spawned else {
             return false;
-        }
+        };
         self.pending = Some(PendingSculptPreparation {
             layer_id,
             topology_id,
             cancel,
             receiver,
+            thread,
         });
         false
     }
 
     pub(crate) fn poll_preparation(&mut self) -> Option<Result<SculptSession, String>> {
+        self.reap_finished_preparations();
         let pending = self.pending.take()?;
         match pending.receiver.try_recv() {
-            Ok(result) => Some(result),
+            Ok(result) => {
+                let _ = pending.thread.join();
+                Some(result)
+            }
             Err(mpsc::TryRecvError::Empty) => {
                 self.pending = Some(pending);
                 None
             }
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err(
-                "sculpt preparation worker stopped unexpectedly".to_string(),
-            )),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let _ = pending.thread.join();
+                Some(Err(
+                    "sculpt preparation worker stopped unexpectedly".to_string()
+                ))
+            }
         }
     }
 
     fn cancel_pending_preparation(&mut self) {
         if let Some(pending) = self.pending.take() {
             pending.cancel.store(true, Ordering::Relaxed);
+            self.retired_preparations.push(pending.thread);
+        }
+        self.reap_finished_preparations();
+    }
+
+    fn reap_finished_preparations(&mut self) {
+        let mut active = Vec::with_capacity(self.retired_preparations.len());
+        for worker in self.retired_preparations.drain(..) {
+            if worker.is_finished() {
+                let _ = worker.join();
+            } else {
+                active.push(worker);
+            }
+        }
+        self.retired_preparations = active;
+    }
+}
+
+impl Drop for SculptTool {
+    fn drop(&mut self) {
+        self.cancel_pending_preparation();
+        for worker in self.retired_preparations.drain(..) {
+            let _ = worker.join();
         }
     }
 }
