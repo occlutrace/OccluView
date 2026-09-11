@@ -13,9 +13,9 @@
 
 use super::icp_overlap::ReciprocalSummary;
 use super::{
-    coarse_candidate_is_better, correspondences_at_radius, forward_coverage_is_sufficient,
-    influence_radius_ladder, run_level, sample_vertices, vertex_normals, CoarseCandidate, Level,
-    Summary,
+    coarse_candidate_is_better, coarse_candidates_are_ambiguous, correspondences_at_radius,
+    forward_coverage_is_sufficient, influence_radius_ladder, level_samples_are_usable, run_level,
+    sample_vertices, vertex_normals, weak_axes_from_normal_matrix, CoarseCandidate, Level, Summary,
 };
 use crate::{CancelFlag, FitRejection, RefineSettings, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
@@ -161,6 +161,72 @@ fn rank_deficient_nonzero_residual_is_not_reported_as_refined() {
     assert!(
         matches!(outcome, Err(FitRejection::NoImprovement)),
         "rank-deficient nonzero residual must not authorize a heatmap"
+    );
+}
+
+#[test]
+fn correlated_motion_columns_are_marked_weak_even_with_large_diagonals() {
+    let mut matrix = [[0.0; 6]; 6];
+    for (index, row) in matrix.iter_mut().enumerate() {
+        row[index] = 1.0;
+    }
+    // Rotation X and translation X carry exactly the same signal. The
+    // diagonal-only check sees six healthy columns; the normalized matrix has
+    // a zero eigenvalue for their difference.
+    matrix[0][3] = 1.0;
+    matrix[3][0] = 1.0;
+
+    let (weak_rot, weak_trans) = weak_axes_from_normal_matrix(&matrix);
+
+    assert!(weak_rot[0], "the hidden rotational component was accepted");
+    assert!(
+        weak_trans[0],
+        "the hidden translational component was accepted"
+    );
+    assert!(!weak_rot[1] && !weak_rot[2]);
+    assert!(!weak_trans[1] && !weak_trans[2]);
+}
+
+#[test]
+fn independent_motion_columns_are_not_scaled_into_degeneracy() {
+    let mut matrix = [[0.0; 6]; 6];
+    for (index, row) in matrix.iter_mut().enumerate() {
+        // Deliberately span twelve orders of magnitude. These are different
+        // units in a real normal matrix, so raw diagonal comparison must not
+        // reject the smaller columns merely because the mesh is large.
+        row[index] = if index < 3 { 1.0e12 } else { 1.0e-6 };
+    }
+
+    let (weak_rot, weak_trans) = weak_axes_from_normal_matrix(&matrix);
+
+    assert_eq!(weak_rot, [false; 3]);
+    assert_eq!(weak_trans, [false; 3]);
+}
+
+#[test]
+fn an_empty_dense_level_cannot_reuse_coarse_evidence() {
+    let coarse = candidate(0.05, 0.8, Some(0.8)).summary;
+
+    assert!(matches!(
+        level_samples_are_usable(Some(coarse), &[]),
+        Err(FitRejection::TooFewPairs { have: 0, .. })
+    ));
+    assert_eq!(
+        level_samples_are_usable(None, &[]).expect("an empty first level is skippable"),
+        false
+    );
+    assert!(level_samples_are_usable(Some(coarse), &[0]).expect("a real level is usable"));
+}
+
+#[test]
+fn equally_supported_poses_in_one_component_are_ambiguous() {
+    let best = candidate(0.05, 0.8, Some(0.8));
+    let mut twin = candidate(0.05, 0.8, Some(0.8));
+    twin.rigid = crate::Rigid::new(DQuat::IDENTITY, DVec3::new(2.0, 0.0, 0.0));
+
+    assert!(
+        coarse_candidates_are_ambiguous(&twin, &best),
+        "a repeated/symmetric window must not be selected by component id"
     );
 }
 
