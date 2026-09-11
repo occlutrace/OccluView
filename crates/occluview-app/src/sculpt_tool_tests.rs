@@ -4,6 +4,39 @@ use glam::Quat;
 use occluview_core::{Mesh, SceneMesh};
 use std::thread;
 
+/// Warming the picking tree is a single `OnceLock::get_or_init`, so the only
+/// way to keep a canceled preparation from holding the worker - and the
+/// layer's mesh - alive for a scan-sized build is to not start it. Both paths
+/// that warm a tree on a background thread check the cancel flag first, and
+/// the pick path warms its own when a live session needs one.
+#[test]
+fn a_warm_bvh_is_never_started_for_an_abandoned_worker() {
+    let source = include_str!("sculpt_tool.rs");
+    let production = source
+        .split("\n#[cfg(test)]\nmod tests")
+        .next()
+        .unwrap_or(source);
+    for (label, marker) in [
+        (
+            "preparation",
+            "if !worker_cancel.load(Ordering::Relaxed) {\n                    mesh.warm_bvh();",
+        ),
+        (
+            "rebuild",
+            "if !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {\n            mesh.warm_bvh();",
+        ),
+    ] {
+        assert!(
+            production.contains(marker),
+            "the {label} path must check cancellation before warming the picking tree"
+        );
+    }
+    assert!(
+        !production.contains("\n                mesh.warm_bvh();"),
+        "an unconditional warm would block cancellation for the whole build"
+    );
+}
+
 /// The undo baseline is speculative work: most strokes are never undone.
 /// `snapshot_mesh` records what building it with the caches costs the first
 /// dab of every stroke.
