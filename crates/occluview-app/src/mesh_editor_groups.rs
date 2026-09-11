@@ -459,7 +459,7 @@ struct SculptSliderControl<'a> {
 fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
     let row_height = ui.spacing().interact_size.y;
     // The caption rides its own line. The rail owns the full content width so
-    // the operator gets a stable, easy-to-grab target in the compact panel.
+    // the operator gets a stable, wide target in the compact panel.
     let slider_width = sculpt_slider_width(ui.available_width());
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(control.label).size(11.0).weak());
@@ -631,7 +631,7 @@ pub(super) fn icon(
 
 /// A text-only session button sized to match the icon rows. `primary` renders
 /// the accented commit style (Done): a solid accent fill with light text so it
-/// is the one obvious action, mirroring the dental CAD OK button.
+/// is the primary commit action, mirroring the dental CAD OK button.
 pub(super) fn tall_text_button(
     ui: &mut egui::Ui,
     width: f32,

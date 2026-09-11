@@ -177,7 +177,7 @@ impl SculptTool {
     /// tool. Called whenever the scene geometry changes underneath us (a load,
     /// a delete, another mesh edit, or an undo/redo) — a preserved-`topology_id`
     /// sculpt commit is undone WITHOUT changing the id, so the id alone cannot
-    /// tell the geometry reverted; the session must simply be re-prepared from
+    /// tell the geometry reverted; the session must be re-prepared from
     /// the fresh scene on the next stroke.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
@@ -262,8 +262,9 @@ impl SculptTool {
 
         self.cancel_pending_preparation();
         // A previous cancellation may still be inside the O(n) BVH/kernel
-        // preparation. Do not launch a second scan-sized worker on a weak
-        // laptop; wait for the owned worker to finish and retry next frame.
+        // preparation. Do not launch a second scan-sized worker on a
+        // resource-constrained machine; wait for the owned worker to finish
+        // and retry next frame.
         if !self.retired_preparations.is_empty() {
             return false;
         }

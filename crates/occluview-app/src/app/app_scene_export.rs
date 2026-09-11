@@ -340,8 +340,7 @@ fn export_path_already_exists(error: &occluview_formats::FormatError) -> bool {
 ///
 /// Names already in the directory count as taken for the same reason. The
 /// operator chose a folder, not filenames, so nothing ever asks about
-/// overwriting, and the obvious folder to choose twice is the one the last
-/// export went to.
+/// overwriting, and the last export directory is likely to be chosen again.
 ///
 /// Comparison is case-insensitive because the platforms this ships on treat
 /// `Upper.stl` and `upper.stl` as the same file.
