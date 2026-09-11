@@ -715,6 +715,7 @@ fn cylinder_positions(radius: f32, length: f32, around: usize, along: usize) -> 
     positions
 }
 
+#[allow(clippy::cast_possible_truncation)] // Indices are bounded by the fixture grid.
 fn cylinder_indices(around: usize, along: usize) -> Vec<u32> {
     let mut indices = Vec::new();
     for ring in 0..along - 1 {
