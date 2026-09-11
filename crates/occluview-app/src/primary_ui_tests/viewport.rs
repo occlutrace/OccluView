@@ -452,13 +452,23 @@ fn viewport_orbit_grabs_cursor_while_secondary_dragging() {
         "app state should remember whether viewport orbit currently owns the cursor"
     );
     // The lock-and-hide mapping itself is pinned by the unit test at its
-    // definition (`app_viewport::tests`); what this test owns is that both ends
-    // of the drag route through it, so no branch can lock without a release.
-    assert!(
-        viewport_source.contains("self.set_viewport_orbit_cursor(ctx, true);")
-            && viewport_source.contains("self.set_viewport_orbit_cursor(ctx, false);"),
-        "grab and release must apply the one lock-state decision"
-    );
+    // definition (`app_viewport::tests`). What this test owns is which lock
+    // state each end of the drag applies, scoped to the method that applies it:
+    // a file-wide `contains` accepted the two call sites swapped.
+    for (method, expected) in [
+        ("pub(super) fn grab_viewport_orbit_cursor(", "true"),
+        ("pub(super) fn release_viewport_orbit_cursor(", "false"),
+    ] {
+        let body = crate::primary_ui_tests::method_body(&viewport_source, method);
+        assert!(
+            !body.is_empty(),
+            "{method} must exist for the orbit cursor contract"
+        );
+        assert!(
+            body.contains(&format!("self.set_viewport_orbit_cursor(ctx, {expected});")),
+            "{method} must apply the lock state {expected}"
+        );
+    }
     assert!(
         viewport_source.contains("self.release_viewport_orbit_cursor(ctx);"),
         "update should release cursor capture when the button/focus state no longer allows orbit"

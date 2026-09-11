@@ -69,7 +69,7 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
     // The body, not the rest of the file: the upload helper is *defined* below
     // this method, so "everything after the signature" was satisfied by the
     // definition even after the call was gone.
-    let body = method_body(source, "pub(super) fn render_scene_pixels");
+    let body = crate::primary_ui_tests::method_body(source, "pub(super) fn render_scene_pixels");
     assert!(
         !body.is_empty(),
         "render_scene_pixels must exist and end at the impl indentation"
@@ -78,15 +78,4 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
         body.contains("push_deviation_colors_offscreen()"),
         "render_scene_pixels must restore a map after rebuilding its prepared scene"
     );
-}
-
-/// One method's body: from its signature to the first line closing at the impl
-/// indentation, so a call has to be inside the method and not merely later in
-/// the file.
-fn method_body<'a>(source: &'a str, signature: &str) -> &'a str {
-    source
-        .split_once(signature)
-        .and_then(|(_, rest)| rest.split_once("\n    }"))
-        .map(|(body, _)| body)
-        .unwrap_or_default()
 }
