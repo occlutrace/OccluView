@@ -187,12 +187,12 @@ fn adapter_identity(device_type: wgpu::DeviceType, supports_live_msaa_4: bool) -
     }
 }
 
-/// The capability that decides the count belongs to the adapter the surface
-/// selector will pick, and the selector picks by device score. Reading it from
-/// a different adapter would enable 4x on hardware that cannot present it, or
-/// leave it off on hardware that can.
+/// The pre-window policy cannot know which adapter will own the eventual
+/// surface, so 4x is enabled only when every working candidate can satisfy it.
+/// That preserves AA on a single capable GPU and avoids a hybrid-GPU startup
+/// dead end when the selector later lands on a 1x-only adapter.
 #[test]
-fn live_sample_count_follows_the_adapter_the_selector_will_pick() {
+fn live_sample_count_is_safe_across_all_preflight_candidates() {
     let power = wgpu::PowerPreference::HighPerformance;
     let integrated_without = adapter_identity(wgpu::DeviceType::IntegratedGpu, false);
     let discrete_with = adapter_identity(wgpu::DeviceType::DiscreteGpu, true);
@@ -201,13 +201,37 @@ fn live_sample_count_follows_the_adapter_the_selector_will_pick() {
 
     assert_eq!(
         live_sample_count_for(&[integrated_without.clone(), discrete_with], power, None),
-        4,
-        "the discrete adapter wins the score and supports 4x"
+        1,
+        "a lower-scoring 1x-only adapter can become the presentable one"
     );
     assert_eq!(
         live_sample_count_for(&[integrated_with, discrete_without], power, None),
         1,
-        "the discrete adapter wins the score and cannot do 4x; the integrated one must not decide"
+        "a hybrid set with any 1x-only candidate must stay launchable"
+    );
+    assert_eq!(
+        live_sample_count_for(
+            &[
+                integrated_without,
+                adapter_identity(wgpu::DeviceType::DiscreteGpu, false)
+            ],
+            power,
+            None,
+        ),
+        1,
+        "no capable candidate must use the safe profile"
+    );
+    assert_eq!(
+        live_sample_count_for(
+            &[
+                adapter_identity(wgpu::DeviceType::IntegratedGpu, true),
+                adapter_identity(wgpu::DeviceType::DiscreteGpu, true),
+            ],
+            power,
+            None,
+        ),
+        4,
+        "4x stays enabled when every candidate proved the profile"
     );
     assert_eq!(
         live_sample_count_for(&[], power, None),
@@ -228,7 +252,7 @@ fn live_sample_count_keeps_the_selector_first_tie() {
             None,
         ),
         1,
-        "the native selector keeps the first equal-score adapter, so MSAA must not come from the later one"
+        "a later capable adapter cannot make an earlier 1x-only candidate fail"
     );
 }
 
@@ -315,8 +339,9 @@ fn every_desktop_notification_channel_builds_a_usable_command() {
             "{channel} must carry both the title and the body: {args:?}"
         );
         assert!(
-            args.iter()
-                .any(|arg| arg.contains("error") || arg.contains("critical")),
+            args.iter().any(|arg| arg.contains("error")
+                || arg.contains("critical")
+                || channel == "xmessage"),
             "{channel} must present this as an error: {args:?}"
         );
     }

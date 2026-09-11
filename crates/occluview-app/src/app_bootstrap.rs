@@ -478,49 +478,29 @@ fn live_msaa_override(value: Option<&str>) -> Option<u16> {
 
 /// The live viewport sample count for the adapters the preflight proved usable.
 ///
-/// The capability that counts belongs to the adapter the surface selector is
-/// expected to pick, so it has to be scored exactly the way that selector
-/// scores adapters. This one value configures eframe's render pass and the
-/// custom viewport's pipelines together; an operator override therefore wins
-/// outright, because a machine whose driver rejects the multisampled surface
-/// has no other route to a window.
-///
-/// Residual gap, by construction: this runs before a window exists, so it
-/// cannot see which of these adapters can present to the desktop surface. A
-/// machine whose highest-scoring capable adapter turns out to be
-/// non-presentable - a headless or secondary GPU - can have the count set to
-/// 4x while the only presentable adapter supports 1x, and the surface selector
-/// then refuses every candidate. That refusal names [`LIVE_MSAA_ENV`], and the
-/// diagnostics report prints the per-adapter facts, so it is diagnosable and
-/// recoverable without a new build; degrading inside the selector is not an
-/// option, because eframe builds its render pass from this same count before
-/// the selector runs.
+/// The preflight runs before a window exists, so it cannot see which adapter
+/// can present the eventual desktop surface. A 4x choice based on one
+/// high-scoring adapter can therefore make a hybrid machine fail when the
+/// surface selector later lands on another adapter that only supports 1x.
+/// Keep 4x as the normal hardware path when every working candidate proved the
+/// same profile; otherwise choose the universally safe single-sample pass.
+/// This one value configures eframe's render pass and the custom viewport's
+/// pipelines together. An explicit operator override still wins outright.
 fn live_sample_count_for(
     adapters: &[AdapterIdentity],
-    power_preference: wgpu::PowerPreference,
+    _power_preference: wgpu::PowerPreference,
     override_count: Option<u16>,
 ) -> u16 {
     if let Some(count) = override_count {
         return count;
     }
-    // Keep the selector's strict `>` tie rule: when two adapters have the same
-    // score, the native selector keeps the first one it was given. `max_by_key`
-    // keeps the last equal item, which could configure eframe for 4x while the
-    // surface selector picked an equal-score adapter that only supports 1x.
-    let selected_supports_msaa_4 = adapters
-        .iter()
-        .enumerate()
-        .fold(None, |best: Option<(i32, usize)>, (index, adapter)| {
-            let score = adapter_device_score(adapter.device_type, power_preference);
-            match best {
-                None => Some((score, index)),
-                Some((best_score, _best_index)) if score > best_score => Some((score, index)),
-                Some(best) => Some(best),
-            }
-        })
-        .and_then(|(_, index)| adapters.get(index))
-        .is_some_and(|adapter| adapter.supports_live_msaa_4);
-    select_live_sample_count(selected_supports_msaa_4)
+    // The selector may reject a higher-scoring adapter after it sees the
+    // surface. Since this function cannot inspect that surface yet, requiring
+    // the profile from every working candidate is the only default that never
+    // asks eframe for a pass the eventual adapter cannot satisfy.
+    let every_candidate_supports_msaa_4 =
+        !adapters.is_empty() && adapters.iter().all(|adapter| adapter.supports_live_msaa_4);
+    select_live_sample_count(every_candidate_supports_msaa_4)
 }
 
 fn validate_graphics_environment() -> Result<()> {
@@ -1122,22 +1102,21 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
 
     #[cfg(not(windows))]
     {
-        // Name, not path, as above -- and this line goes into the ring the
-        // NEXT report carries.
+        // A .desktop launch has no console. Give the operator the full path,
+        // not just a filename they cannot locate, and put the same actionable
+        // value in the next startup breadcrumb if every dialog channel fails.
         let report = report_path
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("none");
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "not written".to_owned());
         tracing::error!(report, details, "OccluView could not continue");
-        notify_desktop("OccluView could not start", report, "critical");
+        notify_desktop("OccluView could not start", &report, "critical");
     }
 }
 
 fn show_diagnostics_message(report_path: Option<&Path>) {
     let report = report_path
-        .and_then(|path| path.file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or("none");
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "not written".to_owned());
 
     #[cfg(windows)]
     {
@@ -1159,7 +1138,7 @@ fn show_diagnostics_message(report_path: Option<&Path>) {
     #[cfg(not(windows))]
     {
         tracing::info!(report, "graphics diagnostics written");
-        notify_desktop("OccluView graphics diagnostics", report, "normal");
+        notify_desktop("OccluView graphics diagnostics", &report, "normal");
     }
 }
 
@@ -1213,14 +1192,15 @@ fn run_notification(program: &str, args: &[String]) -> std::io::Result<bool> {
 /// The notification channels tried, in the order they are attempted.
 ///
 /// `notify-send` is the freedesktop one; `zenity` and `kdialog` are what a
-/// minimal desktop image tends to carry when no notification daemon answers.
+/// minimal desktop image tends to carry when no notification daemon answers;
+/// `xmessage` is the last X11-only modal fallback.
 #[cfg(not(windows))]
-const NOTIFICATION_CHANNELS: [&str; 3] = ["notify-send", "zenity", "kdialog"];
+const NOTIFICATION_CHANNELS: [&str; 4] = ["notify-send", "zenity", "kdialog", "xmessage"];
 
 /// The command line for one notification channel.
 ///
-/// The body carries the report file name and the title names the product, so a
-/// desktop dialog is readable without the console a `.desktop` launch never
+/// The body carries the full report path and the title names the product, so a
+/// desktop dialog is actionable without the console a `.desktop` launch never
 /// has. Each channel's exit status is read by [`run_notification`], so a
 /// channel with no service behind it does not consume the message.
 #[cfg(not(windows))]
@@ -1256,6 +1236,15 @@ fn notification_command(
                 body.to_string(),
                 "--title".to_string(),
                 title.to_string(),
+            ],
+        )),
+        "xmessage" => Some((
+            "xmessage".to_string(),
+            vec![
+                "-center".to_string(),
+                "-title".to_string(),
+                title.to_string(),
+                body.to_string(),
             ],
         )),
         _ => None,
