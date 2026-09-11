@@ -10,9 +10,11 @@ mod stl;
 
 use crate::error::FormatError;
 use occluview_core::{Mesh, MeshKind};
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Mesh export format supported by the shared writer contract.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -183,15 +185,117 @@ fn write_mesh_file(
     create_new: bool,
 ) -> Result<MeshWriteReport, FormatError> {
     ensure_format_can_represent(mesh, format)?;
-    let file = if create_new {
-        OpenOptions::new().write(true).create_new(true).open(path)?
-    } else {
-        File::create(path)?
+    if create_new {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        let result = write_mesh_to_file(file, mesh, format, options);
+        if result.is_err() {
+            // `create_new` is used for artifacts that must never be mistaken
+            // for a complete export. Do not leave a truncated file behind
+            // when the writer or final flush fails.
+            let _ = std::fs::remove_file(path);
+        }
+        return result;
+    }
+
+    // An overwrite is a transaction: the old destination remains readable
+    // until the complete new mesh has been flushed and the same-directory
+    // rename commits it. Writing the target directly used to turn a disk-full
+    // or interrupted export into an empty/partial scan.
+    let (temporary, file) = create_export_temp(path)?;
+    let result = write_mesh_to_file(file, mesh, format, options);
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
     };
+    if let Err(error) = replace_export_file(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(report)
+}
+
+fn write_mesh_to_file(
+    file: File,
+    mesh: &Mesh,
+    format: MeshWriteFormat,
+    options: MeshWriteOptions,
+) -> Result<MeshWriteReport, FormatError> {
     let mut writer = BufWriter::new(file);
     let report = write_mesh(&mut writer, mesh, format, options)?;
     writer.flush()?;
     Ok(report)
+}
+
+static NEXT_EXPORT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn create_export_temp(path: &Path) -> Result<(std::path::PathBuf, File), FormatError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("mesh"));
+    for _ in 0..16 {
+        let id = NEXT_EXPORT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let mut temporary_name = OsString::from(".");
+        temporary_name.push(file_name);
+        temporary_name.push(format!(".occluview-{id}.tmp"));
+        let temporary = parent.join(temporary_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not reserve a temporary export path",
+    )
+    .into())
+}
+
+#[cfg(not(windows))]
+fn replace_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    // Both paths are created in the destination directory, so rename is an
+    // atomic replacement on the supported Unix filesystems.
+    std::fs::rename(temporary, destination)
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn replace_export_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary: Vec<u16> = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(temporary.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 pub(super) fn write_f32_le(writer: &mut impl Write, value: f32) -> Result<(), FormatError> {
@@ -285,6 +389,46 @@ mod tests {
         assert_eq!(report.format, MeshWriteFormat::Obj);
         let bytes = std::fs::read(file.path()).expect("read back");
         assert!(!bytes.starts_with(b"stale bytes"));
+    }
+
+    #[test]
+    fn overwrite_commits_a_complete_file_without_leaving_a_sibling_temp() {
+        let mesh = triangle_mesh();
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.obj");
+        std::fs::write(&destination, b"previous export").expect("seed file");
+
+        write_mesh_overwrite(
+            &destination,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        )
+        .expect("overwrite");
+
+        let bytes = std::fs::read(&destination).expect("read complete export");
+        assert!(bytes.starts_with(b"o sample\n"));
+        assert!(!bytes.starts_with(b"previous export"));
+        assert!(std::fs::read_dir(directory.path())
+            .expect("read directory")
+            .filter_map(Result::ok)
+            .all(|entry| { !entry.file_name().to_string_lossy().contains(".occluview-") }));
+    }
+
+    #[test]
+    fn overwrite_temp_files_are_unique_siblings_of_the_destination() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.ply");
+        let (first_path, first_file) = create_export_temp(&destination).expect("first temp");
+        let (second_path, second_file) = create_export_temp(&destination).expect("second temp");
+        drop(first_file);
+        drop(second_file);
+
+        assert_ne!(first_path, second_path);
+        assert_eq!(first_path.parent(), destination.parent());
+        assert_eq!(second_path.parent(), destination.parent());
+        std::fs::remove_file(first_path).expect("remove first temp");
+        std::fs::remove_file(second_path).expect("remove second temp");
     }
 
     #[test]
