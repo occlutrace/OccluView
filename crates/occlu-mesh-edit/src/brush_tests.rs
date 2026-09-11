@@ -758,8 +758,9 @@ fn a_dab_reports_the_triangles_needed_for_live_surface_picking() {
         .all(|pair| pair[0] < pair[1]));
     assert!(outcome.dirty_triangles.iter().all(|&triangle| {
         mesh.indices
-            .chunks_exact(3)
-            .nth(triangle)
+            .as_chunks::<3>()
+            .0
+            .get(triangle)
             .is_some_and(|corners| {
                 corners
                     .iter()
