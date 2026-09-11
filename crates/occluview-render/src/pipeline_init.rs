@@ -16,6 +16,18 @@ use std::{
     sync::{atomic::AtomicU32, Arc},
 };
 
+/// The depth/stencil format every live-pass pipeline declares.
+///
+/// eframe derives the live pass attachment from the application's
+/// `depth_buffer: 24` / `stencil_buffer: 8`, which resolves to this format, and
+/// egui's own pipelines are built for the same one. Keeping it in a named
+/// function gives the tests something to compare a probe against instead of
+/// duplicating the literal.
+#[must_use]
+pub const fn live_depth_format() -> wgpu::TextureFormat {
+    wgpu::TextureFormat::Depth24PlusStencil8
+}
+
 impl Renderer {
     /// Create a renderer against a headless device (no surface). Used by the
     /// offscreen thumbnail path and by golden-image tests.
@@ -137,7 +149,7 @@ impl Renderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Result<Self, RenderError> {
-        let depth_format = wgpu::TextureFormat::Depth24PlusStencil8;
+        let depth_format = live_depth_format();
         let sample_count = sample_count.max(1);
         let multisample = multisample_state(sample_count);
 

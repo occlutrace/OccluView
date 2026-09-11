@@ -330,26 +330,40 @@ fn sculpt_tool_pipeline_is_compatible_with_a_multisampled_live_pass() {
     let device = std::sync::Arc::clone(&single.device);
     let queue = std::sync::Arc::clone(&single.queue);
 
-    // Probe before building the pipeline: an adapter that cannot create a 4x
-    // target cannot run the multisampled profile either, and the application
-    // selects the single-sample profile there. A probe keeps that adapter from
-    // being reported as a pipeline defect.
-    let _probe = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("live multisample probe"),
-        size: wgpu::Extent3d {
-            width: 32,
-            height: 24,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 4,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    // Probe before building the pipeline. The application turns multisampling
+    // on only when BOTH the colour target and the depth attachment support 4x
+    // (`adapter_supports_prefill_msaa_4`), so an adapter missing either one runs
+    // the single-sample profile and must not be reported as a pipeline defect.
+    // Probe both, and say which one was missing rather than returning silently.
+    let size = wgpu::Extent3d {
+        width: 32,
+        height: 24,
+        depth_or_array_layers: 1,
+    };
+    let probe = |label: &'static str, format: wgpu::TextureFormat| {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        texture
+    };
+    let color_probe = probe(
+        "live multisample color probe",
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    let depth_probe = probe("live multisample depth probe", crate::live_depth_format());
+    drop((color_probe, depth_probe));
     if single.take_gpu_error().is_some() {
+        // This adapter never selects the multisampled profile in the
+        // application, so the single-sample pass is the configuration that has
+        // to be proven here - which the test above already does.
         return;
     }
 

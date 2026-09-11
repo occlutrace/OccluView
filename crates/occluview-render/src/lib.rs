@@ -56,6 +56,7 @@ pub use offscreen::{
     PreparedViewportClipRequest, PreparedViewportRequest, RenderDeadline, SceneDrawEntry,
     SculptSurfaceFeedbackRequest, ThumbnailSpec, ViewportSpec,
 };
+pub use pipeline::live_depth_format;
 pub use pipeline::Renderer;
 pub use sculpt_cursor::{
     sculpt_surface_light_intensity, sculpt_tool_length, SculptBrushUniform, SculptToolShape,
