@@ -69,6 +69,8 @@ impl OccluViewApp {
         let was_excluding = excluding;
         let mut drop_pending = false;
         let moved = self.align_session_moved();
+        let panel_roles = self.align_roles();
+        let brush_roles = self.align_roles();
         let action = crate::align_panel::show(
             ctx,
             viewport_rect,
@@ -77,7 +79,7 @@ impl OccluViewApp {
                 settings: &mut settings,
                 status: self.tools.align.status.as_deref(),
                 refined_match_ready: self.tools.align.refined_match_ready,
-                roles: self.align_roles(),
+                roles: panel_roles,
                 busy,
                 worker_failed,
                 moved,
@@ -97,6 +99,7 @@ impl OccluViewApp {
                 ctx,
                 viewport_rect,
                 &mut brush,
+                brush_roles.as_ref(),
                 !busy,
                 &self.ui.locale,
             ) {
@@ -180,6 +183,9 @@ impl OccluViewApp {
         }
         // The markings belong to surfaces, not to roles.
         self.tools.align.markings.swap_sides();
+        // The Brush selects a physical surface; keep that surface selected
+        // when the moving/fixed labels are exchanged.
+        self.tools.align.brush.swap_target_side();
         // A map is a measurement of one scan against the other, in that order.
         self.forget_align_fit(&self.ui.locale.tr("align-status-turned"));
         let named = self.align_roles().map_or_else(
@@ -202,6 +208,7 @@ impl OccluViewApp {
     fn clear_align_pair(&mut self) {
         self.tools.align.tool.clear();
         self.clear_align_mask();
+        self.tools.align.brush.reset_target_side();
         self.forget_align_fit(&self.ui.locale.tr("align-status-cleared"));
         self.tools.align.status = Some(self.ui.locale.tr("align-status-click-moving"));
     }

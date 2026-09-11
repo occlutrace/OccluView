@@ -40,9 +40,23 @@ pub(crate) enum AlignSide {
     Fixed,
 }
 
+impl Default for AlignSide {
+    fn default() -> Self {
+        Self::Moving
+    }
+}
+
 impl AlignSide {
     /// Both sides, for the commands that mean "the mesh" rather than "this one".
     pub(crate) const BOTH: [Self; 2] = [Self::Moving, Self::Fixed];
+
+    /// The other member of the pair.
+    pub(crate) const fn opposite(self) -> Self {
+        match self {
+            Self::Moving => Self::Fixed,
+            Self::Fixed => Self::Moving,
+        }
+    }
 }
 
 /// One whole-mesh command from the Brush tool window.

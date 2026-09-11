@@ -190,6 +190,7 @@ impl OccluViewApp {
         self.tools.align.rejected.clear();
         self.tools.align.session_poses.clear();
         self.tools.align.brush.set_armed(false);
+        self.tools.align.brush.reset_target_side();
         // A session that ended on Manually used to re-open there, with the tab
         // the operator last left rather than the one the tool starts in. The
         // drag constraint is the same class of leak and worse to diagnose: an
