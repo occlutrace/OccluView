@@ -259,31 +259,34 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
     );
 }
 
+/// One pipeline's state block: from its label to the end of its descriptor.
+///
+/// A file-wide `contains` cannot pin a specific pipeline, because the main
+/// shaded and wireframe pipelines declare the same fields elsewhere in the
+/// file. That is how the cap regression of 69edf59 survived a check written to
+/// catch it.
+///
+/// Returns `None` when the label or the end of its descriptor is missing, so a
+/// moved label fails the caller instead of silently matching another block.
+fn pipeline_state<'a>(source: &'a str, label: &str) -> Option<&'a str> {
+    let start = source.find(label)?;
+    let block = &source[start..];
+    let end = block.find("multisample,")?;
+    Some(&block[..end])
+}
+
+/// The stencil masks must not poison the depth the shaded pass and the cap
+/// rely on, and the cap must be the pass that writes cut-plane depth.
 #[test]
 fn stencil_mask_passes_preserve_depth_for_the_cap_and_shaded_pass() {
     let source = include_str!("pipeline_init.rs");
-
-    // One pipeline's state block: from its label to the end of its descriptor.
-    // A file-wide `contains` cannot pin a specific pipeline, because the main
-    // shaded and wireframe pipelines declare the same fields elsewhere in the
-    // file. That is how the cap regression of 69edf59 survived a check written
-    // to catch it.
-    fn state_of<'a>(source: &'a str, label: &str) -> &'a str {
-        let start = source
-            .find(label)
-            .unwrap_or_else(|| panic!("pipeline label missing: {label}"));
-        let block = &source[start..];
-        let end = block
-            .find("multisample,")
-            .unwrap_or_else(|| panic!("pipeline state is incomplete: {label}"));
-        &block[..end]
-    }
 
     for label in [
         "label: Some(\"occluview stencil-back pipeline\")",
         "label: Some(\"occluview stencil-front pipeline\")",
     ] {
-        let state = state_of(source, label);
+        let state = pipeline_state(source, label)
+            .unwrap_or_else(|| unreachable!("{label} must be a complete pipeline state block"));
         assert!(
             state.contains("depth_write_enabled: Some(false)"),
             "{label} must build a stencil-only mask without poisoning the final depth test"
@@ -302,7 +305,8 @@ fn stencil_mask_passes_preserve_depth_for_the_cap_and_shaded_pass() {
 
     // The cap is the one pass that must write depth: the shaded pass `Load`s it
     // so geometry behind the cut plane cannot paint over the cap.
-    let cap = state_of(source, "label: Some(\"occluview cap pipeline\")");
+    let cap = pipeline_state(source, "label: Some(\"occluview cap pipeline\")")
+        .unwrap_or_else(|| unreachable!("the cap pipeline must be a complete state block"));
     assert!(
         cap.contains("depth_write_enabled: Some(true)"),
         "the cap must remain the pass that writes cut-plane depth"
