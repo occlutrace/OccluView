@@ -473,6 +473,9 @@ align-pair-swap-hint = Adatta al contrario — le frecce seguono
 
 align-brush-title = Pennello
 align-brush-close-hint = Chiudi il pennello — i segni restano
+align-brush-mesh-selection = Selezione mesh
+align-brush-moving = Mobile
+align-brush-fixed = Fissa
 align-brush-size = misura del pennello
 align-brush-inverse = Pennello inverso
 align-brush-inverse-hint = Un trascinamento cancella invece di marcare. Shift inverte di nuovo

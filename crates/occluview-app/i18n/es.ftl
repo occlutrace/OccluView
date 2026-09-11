@@ -473,6 +473,9 @@ align-pair-swap-hint = Ajustar al revés — las flechas van con él
 
 align-brush-title = Pincel
 align-brush-close-hint = Cerrar el pincel — se conservan las marcas
+align-brush-mesh-selection = Selección de malla
+align-brush-moving = Móvil
+align-brush-fixed = Fija
 align-brush-size = tamaño del pincel
 align-brush-inverse = Pincel inverso
 align-brush-inverse-hint = Arrastrar pela en vez de marcar. Shift lo invierte

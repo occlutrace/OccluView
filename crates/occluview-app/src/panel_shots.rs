@@ -83,6 +83,11 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
             fixed: "lower-arch-scan.stl".to_owned(),
             implied: false,
         });
+        let brush_roles = Some(crate::align_panel_roles::AlignRoles {
+            moving: "upper-arch-scan.stl".to_owned(),
+            fixed: "lower-arch-scan.stl".to_owned(),
+            implied: false,
+        });
         let _ = crate::align_panel::show(
             ctx,
             SCREEN,
@@ -111,6 +116,7 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
                 ctx,
                 SCREEN,
                 &mut brush,
+                brush_roles.as_ref(),
                 true,
                 &crate::i18n::LocaleManager::for_tests(),
             );

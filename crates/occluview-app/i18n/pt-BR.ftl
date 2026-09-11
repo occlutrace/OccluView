@@ -475,6 +475,9 @@ align-pair-swap-hint = Ajustar ao contrário — as setas acompanham
 
 align-brush-title = Pincel
 align-brush-close-hint = Fechar o pincel — marcas mantidas
+align-brush-mesh-selection = Seleção de malha
+align-brush-moving = Móvel
+align-brush-fixed = Fixa
 align-brush-size = tamanho do pincel
 align-brush-inverse = Pincel inverso
 align-brush-inverse-hint = Arrastar apaga em vez de marcar. Shift inverte de novo

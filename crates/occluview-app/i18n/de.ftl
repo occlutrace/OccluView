@@ -473,6 +473,9 @@ align-pair-swap-hint = Andersherum fitten — Pfeile wandern mit
 
 align-brush-title = Pinsel
 align-brush-close-hint = Pinsel schließen — Markierungen bleiben
+align-brush-mesh-selection = Mesh-Auswahl
+align-brush-moving = Beweglich
+align-brush-fixed = Fest
 align-brush-size = Pinselgröße
 align-brush-inverse = Pinsel invertieren
 align-brush-inverse-hint = Einfaches Ziehen löscht statt zu markieren. Shift kehrt wieder um

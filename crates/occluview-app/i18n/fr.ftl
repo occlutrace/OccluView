@@ -473,6 +473,9 @@ align-pair-swap-hint = Ajuster dans l’autre sens — les flèches suivent
 
 align-brush-title = Pinceau
 align-brush-close-hint = Fermer le pinceau — marques gardées
+align-brush-mesh-selection = Sélection du maillage
+align-brush-moving = Mobile
+align-brush-fixed = Fixe
 align-brush-size = taille du pinceau
 align-brush-inverse = Pinceau inversé
 align-brush-inverse-hint = Un glisser simple efface au lieu de marquer. Shift inverse à nouveau

@@ -11,8 +11,9 @@
 use eframe::egui;
 
 use crate::align_brush::AlignBrush;
-use crate::align_markings::MaskCommand;
+use crate::align_markings::{AlignSide, MaskCommand};
 use crate::align_panel::chip;
+use crate::align_panel_roles::AlignRoles;
 use crate::icons::AppIcon;
 use crate::ui_theme;
 
@@ -34,6 +35,7 @@ pub(crate) fn show(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
     brush: &mut AlignBrush,
+    roles: Option<&AlignRoles>,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<BrushPanelAction> {
@@ -53,7 +55,7 @@ pub(crate) fn show(
             ui.set_width(WINDOW_WIDTH - 24.0);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.style_mut().animation_time = 0.05;
-            action = body(ui, brush, enabled, locale);
+            action = body(ui, brush, roles, enabled, locale);
         });
     action
 }
@@ -62,16 +64,60 @@ pub(crate) fn show(
 fn body(
     ui: &mut egui::Ui,
     brush: &mut AlignBrush,
+    roles: Option<&AlignRoles>,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<BrushPanelAction> {
     let mut action = header(ui, locale);
     ui.add_space(2.0);
+    if let Some(roles) = roles {
+        mesh_selection(ui, brush, roles, enabled, locale);
+        ui.add_space(2.0);
+    }
     action = action.or(commands(ui, enabled, locale));
     ui.add_space(2.0);
     size(ui, brush, enabled, locale);
     automatic(ui, brush, enabled, locale);
     action
+}
+
+/// Select the physical mesh the brush edits.
+///
+/// The two scans overlap by design, so nearest-surface picking is not a safe
+/// substitute: it can paint the other scan. Exocad exposes this as an
+/// explicit Mesh selection, and keeping it visible in the Brush window makes
+/// the target unambiguous while the operator works.
+fn mesh_selection(
+    ui: &mut egui::Ui,
+    brush: &mut AlignBrush,
+    roles: &AlignRoles,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) {
+    ui.label(
+        egui::RichText::new(locale.tr("align-brush-mesh-selection"))
+            .size(11.0)
+            .color(ui_theme::text_muted()),
+    );
+    for side in AlignSide::BOTH {
+        let role_key = match side {
+            AlignSide::Moving => "align-brush-moving",
+            AlignSide::Fixed => "align-brush-fixed",
+        };
+        let label = format!("{} · {}", locale.tr(role_key), roles.side_name(side));
+        if chip(
+            ui,
+            ui.available_width(),
+            None,
+            &label,
+            enabled,
+            brush.target_side() == side,
+        )
+        .clicked()
+        {
+            brush.set_target_side(side);
+        }
+    }
 }
 
 /// The title strip, with the only way out of the window that is not the
@@ -264,6 +310,7 @@ mod tests {
         // Control captions resolve through the catalog; the keys are
         // what the window must reference.
         for control in [
+            "align-brush-mesh-selection",
             "align-brush-size",
             "align-brush-inverse",
             "align-brush-auto-radius",
@@ -282,6 +329,11 @@ mod tests {
         assert!(
             !source.contains("align-brush-percent-marked"),
             "brush must not show a marked percentage"
+        );
+        assert!(
+            source.contains("brush.target_side() == side")
+                && source.contains("brush.set_target_side(side)"),
+            "the brush needs an explicit mesh selection"
         );
     }
 

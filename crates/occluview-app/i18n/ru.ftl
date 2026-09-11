@@ -547,6 +547,9 @@ align-pair-swap-hint = Совместить наоборот — стрелки 
 
 align-brush-title = Кисть
 align-brush-close-hint = Закрыть кисть — пометки сохранятся
+align-brush-mesh-selection = Выбор сетки
+align-brush-moving = Подвижная
+align-brush-fixed = Неподвижная
 align-brush-size = размер кисти
 align-brush-inverse = Инверсия кисти
 align-brush-inverse-hint = Простое перетаскивание стирает вместо пометки. Shift инвертирует снова

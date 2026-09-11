@@ -477,6 +477,9 @@ align-pair-swap-hint = Fit the other way round — the arrows move with it
 
 align-brush-title = Brush tool
 align-brush-close-hint = Close the brush — the markings are kept
+align-brush-mesh-selection = Mesh selection
+align-brush-moving = Moving
+align-brush-fixed = Fixed
 align-brush-size = brush size
 align-brush-inverse = Brush inverse
 align-brush-inverse-hint = A plain drag clears instead of marks. Shift inverses it again
