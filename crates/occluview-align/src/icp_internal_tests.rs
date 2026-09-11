@@ -211,10 +211,7 @@ fn an_empty_dense_level_cannot_reuse_coarse_evidence() {
         level_samples_are_usable(Some(coarse), &[]),
         Err(FitRejection::TooFewPairs { have: 0, .. })
     ));
-    assert_eq!(
-        level_samples_are_usable(None, &[]).expect("an empty first level is skippable"),
-        false
-    );
+    assert!(!level_samples_are_usable(None, &[]).expect("an empty first level is skippable"));
     assert!(level_samples_are_usable(Some(coarse), &[0]).expect("a real level is usable"));
 }
 

@@ -275,16 +275,16 @@ fn refine_rejects_a_flat_sheet_as_ambiguous() {
     let mesh = soup(&positions, &indices);
     let index = SurfaceIndex::build(mesh).unwrap();
 
-    let result = refine(
-        mesh,
-        &index,
-        Rigid::IDENTITY,
-        &settings(),
-        &CancelFlag::new(),
-    )
-    .expect_err("a flat sheet has equally supported lateral poses");
-
-    assert_eq!(result, FitRejection::Ambiguous);
+    assert!(matches!(
+        refine(
+            mesh,
+            &index,
+            Rigid::IDENTITY,
+            &settings(),
+            &CancelFlag::new(),
+        ),
+        Err(FitRejection::Ambiguous)
+    ));
 }
 
 #[test]
