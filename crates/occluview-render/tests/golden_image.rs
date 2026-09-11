@@ -561,6 +561,26 @@ fn point_cloud_renders_readable_splats() {
     );
 }
 
+#[test]
+fn point_cloud_splat_edges_use_fractional_coverage() {
+    let pixels = render_point_cloud_to_pixels();
+    let lumas: Vec<i32> = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|pixel| i32::from(pixel[0]) + i32::from(pixel[1]) + i32::from(pixel[2]))
+        .collect();
+    let background = *lumas.iter().min().expect("point-cloud pixels");
+    let peak = *lumas.iter().max().expect("point-cloud pixels");
+
+    assert!(
+        lumas
+            .iter()
+            .any(|&luma| luma > background + 15 && luma < peak - 15),
+        "splat edges must blend between the background and the point colour: background={background}, peak={peak}"
+    );
+}
+
 /// A shallow dome in one flat colour.
 ///
 /// Curvature is the point: a flat triangle has uniform luminance under any
