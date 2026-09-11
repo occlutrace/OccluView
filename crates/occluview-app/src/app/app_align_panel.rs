@@ -47,6 +47,9 @@ impl OccluViewApp {
     }
 
     /// Draw the panel and the Brush tool window, then run what they asked for.
+    // Keep panel state capture, window rendering, and action application in one
+    // ordered UI transaction; changing that order can submit stale settings.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn show_align_panel(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
         let busy = self
             .tools
@@ -97,11 +100,13 @@ impl OccluViewApp {
         if excluding {
             match crate::align_panel_brush::show(
                 ctx,
-                viewport_rect,
-                &mut brush,
-                brush_roles.as_ref(),
-                !busy,
-                &self.ui.locale,
+                crate::align_panel_brush::BrushPanelView {
+                    viewport_rect,
+                    brush: &mut brush,
+                    roles: brush_roles.as_ref(),
+                    enabled: !busy,
+                    locale: &self.ui.locale,
+                },
             ) {
                 Some(crate::align_panel_brush::BrushPanelAction::Mask(command)) => {
                     mask_command = Some(command);

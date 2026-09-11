@@ -114,11 +114,13 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
             brush.set_armed(true);
             let _ = crate::align_panel_brush::show(
                 ctx,
-                SCREEN,
-                &mut brush,
-                brush_roles.as_ref(),
-                true,
-                &crate::i18n::LocaleManager::for_tests(),
+                crate::align_panel_brush::BrushPanelView {
+                    viewport_rect: SCREEN,
+                    brush: &mut brush,
+                    roles: brush_roles.as_ref(),
+                    enabled: true,
+                    locale: &crate::i18n::LocaleManager::for_tests(),
+                },
             );
         }
     });
