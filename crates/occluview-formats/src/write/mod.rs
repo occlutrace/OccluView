@@ -687,11 +687,6 @@ mod tests {
             .all(|entry| { !entry.file_name().to_string_lossy().contains(".occluview-") }));
     }
 
-    /// Some filesystems cannot hard-link at all. The fallback has to keep the
-    /// contract that matters there: an existing destination is never replaced,
-    /// and a collision is still reported as such so the batch exporter can
-    /// advance to the next numbered name.
-    #[cfg(not(windows))]
     /// Case folders are often symlinks into a lab archive. The publish step is
     /// a rename, and rename replaces the link itself, so an operator overwriting
     /// `CASE/upper.ply` would get a success message while the archive copy kept
@@ -738,6 +733,12 @@ mod tests {
         );
     }
 
+    /// Some filesystems cannot hard-link at all. The fallback has to keep the
+    /// contract that matters there: an existing destination is never replaced,
+    /// and a collision is still reported as such so the batch exporter can
+    /// advance to the next numbered name. The fallback never runs on Windows,
+    /// which has its own no-replace publish path.
+    #[cfg(not(windows))]
     #[test]
     fn a_publish_without_link_support_still_never_replaces_a_destination() {
         let directory = tempfile::tempdir().expect("temp directory");
