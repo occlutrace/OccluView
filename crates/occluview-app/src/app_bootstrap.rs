@@ -223,7 +223,7 @@ fn native_graphics_profile() -> (wgpu::InstanceDescriptor, wgpu::PowerPreference
 
 /// Select the best adapter that can actually present to the desktop surface.
 /// The stock eframe selector stops at its first request-adapter result; a
-/// hybrid laptop can enumerate a software or headless adapter before the
+/// hybrid system can enumerate a software or headless adapter before the
 /// usable integrated GPU. Filtering surface capabilities and ranking the
 /// remaining adapters keeps that choice deterministic while preserving the
 /// configured power preference.
@@ -356,7 +356,7 @@ fn validate_graphics_environment_values(
 /// driver becomes a visible startup error instead of an eframe callback that
 /// never reaches the application creator. Try every adapter in preference
 /// order: a broken discrete driver must not hide a usable integrated or CPU
-/// adapter on a colleague's laptop.
+/// adapter on a machine with both integrated and discrete graphics.
 fn preflight_graphics_devices() -> Result<Vec<AdapterIdentity>> {
     let (descriptor, power_preference) = native_graphics_profile();
     let backends = descriptor.backends;
@@ -465,8 +465,8 @@ fn root_viewport_builder() -> egui::ViewportBuilder {
 /// `--version` for scripts and packaging checks, printed before the
 /// single-instance handshake so it never focuses a running viewer. On
 /// Windows this is a GUI-subsystem binary: with no console attached the
-/// line goes to a null stdout and the process simply exits cleanly; it
-/// prints whenever stdout is piped or redirected, and always on Linux.
+/// line is discarded when no console is attached; it prints whenever stdout is
+/// piped or redirected, and always on Linux.
 /// Attaching a parent console would drag in Win32 console plumbing for one
 /// line.
 #[allow(clippy::print_stdout)]
@@ -615,7 +615,7 @@ fn startup_stage_line(stage: &str, stamp_nanos: u128, pid: u32) -> String {
 }
 
 /// Leave a tiny persistent breadcrumb at the last startup boundary. It is
-/// deliberately metadata-only: native driver crashes can happen before Rust
+/// Metadata only: native driver crashes can happen before Rust
 /// reaches the panic hook, but the next report can still say whether the
 /// process reached logging, graphics initialization, or the window callback.
 fn append_startup_stage(stage: &str) {
