@@ -582,7 +582,12 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: Some(true),
+                    // These passes build only the stencil mask. Writing their
+                    // mesh depth would make the final opaque pass's `Less`
+                    // test reject the same surface as equal before it can
+                    // paint, and would also leave no usable depth for the
+                    // cut-plane cap.
+                    depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState {
                         front: wgpu::StencilFaceState::default(),
@@ -629,7 +634,9 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: Some(true),
+                    // Stencil winding is an occlusion mask, not a depth pass;
+                    // preserve the clear depth for the cap and shaded draw.
+                    depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState {
                         front: wgpu::StencilFaceState {
