@@ -12,7 +12,7 @@ use super::OccluViewApp;
 use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
-fn visibility_change_affects_pair(
+fn change_affects_pair(
     moving: Option<SceneMeshId>,
     fixed: Option<SceneMeshId>,
     changed_layers: &[SceneMeshId],
@@ -32,13 +32,34 @@ impl OccluViewApp {
         &mut self,
         changed_layers: &[SceneMeshId],
     ) {
-        if visibility_change_affects_pair(
+        if change_affects_pair(
             self.tools.align.tool.moving_layer(),
             self.tools.align.tool.fixed_layer(),
             changed_layers,
         ) {
             let reason = self.ui.locale.tr("align-status-visibility-changed");
             self.invalidate_deviation_map(&reason);
+        }
+    }
+
+    /// Invalidate a fit when one of the two selected surfaces is replaced.
+    ///
+    /// A sculpt or mesh-edit commit swaps the layer's mesh in place, so it
+    /// never passes through `set_scene` and its invalidation. The map and the
+    /// refined claim both describe the surface that was measured; once that
+    /// surface is a different mesh, neither is true any more. Both roles
+    /// count, because the deviation is a property of the pair.
+    pub(super) fn invalidate_alignment_for_geometry_changes(
+        &mut self,
+        changed_layers: &[SceneMeshId],
+    ) {
+        if change_affects_pair(
+            self.tools.align.tool.moving_layer(),
+            self.tools.align.tool.fixed_layer(),
+            changed_layers,
+        ) {
+            let reason = self.ui.locale.tr("align-status-scan-changed");
+            self.forget_align_fit(&reason);
         }
     }
 
@@ -662,30 +683,43 @@ mod tests {
     }
 
     #[test]
-    fn visibility_invalidation_is_scoped_to_the_selected_pair() {
-        use super::visibility_change_affects_pair;
+    fn change_invalidation_is_scoped_to_the_selected_pair() {
+        use super::change_affects_pair;
         use occluview_core::{Mesh, SceneMesh};
 
         let moving = SceneMesh::new(Mesh::empty()).id();
         let fixed = SceneMesh::new(Mesh::empty()).id();
         let unrelated = SceneMesh::new(Mesh::empty()).id();
 
-        assert!(visibility_change_affects_pair(
-            Some(moving),
-            Some(fixed),
-            &[moving]
-        ));
-        assert!(visibility_change_affects_pair(
-            Some(moving),
-            Some(fixed),
-            &[fixed]
-        ));
-        assert!(!visibility_change_affects_pair(
+        assert!(change_affects_pair(Some(moving), Some(fixed), &[moving]));
+        assert!(change_affects_pair(Some(moving), Some(fixed), &[fixed]));
+        assert!(!change_affects_pair(
             Some(moving),
             Some(fixed),
             &[unrelated]
         ));
-        assert!(!visibility_change_affects_pair(None, None, &[]));
+        assert!(!change_affects_pair(None, None, &[]));
+    }
+
+    /// Replacing a paired surface in place is a geometry change, not a
+    /// presentation one: the outlier marks index pairs by position and
+    /// describe one particular fit, so they go with the map.
+    #[test]
+    fn a_geometry_change_forgets_the_whole_fit() {
+        let source = production();
+        let boundary = source
+            .split_once("pub(super) fn invalidate_alignment_for_geometry_changes(")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            !boundary.is_empty(),
+            "the geometry boundary must exist for the sculpt commit to call"
+        );
+        assert!(
+            boundary.contains("self.forget_align_fit(&reason)"),
+            "a replaced surface must drop the refined fit and its outlier marks"
+        );
     }
 
     /// A completion that was already in flight must not resurrect a map the

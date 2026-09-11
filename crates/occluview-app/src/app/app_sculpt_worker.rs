@@ -452,6 +452,13 @@ impl OccluViewApp {
         // geometry, while prepared-scene reconciliation remains cheap when
         // topology is unchanged.
         self.render.invalidation.scene_geometry_changed();
+        // A sculpted scan is a different surface. This path replaces the mesh
+        // in place instead of going through `set_scene`, so the alignment
+        // invalidation that `set_scene` performs has to be repeated here: a
+        // heatmap and a refined-match claim measured against the pre-stroke
+        // geometry describe a surface the operator can no longer see, and the
+        // mesh editor is reachable while Align is armed.
+        self.invalidate_alignment_for_geometry_changes(&[layer_id]);
         if self.can_render_cut_view() {
             self.tools.cut_view.mark_dirty();
         }
@@ -515,6 +522,31 @@ mod tests {
         topology.sculpt_topology_changed();
         assert!(topology.live_scene_stale() && topology.offscreen_scene_stale());
         assert!(!topology.live_overlay_stale() && !topology.offscreen_overlay_stale());
+    }
+
+    /// A sculpt commit swaps a paired layer's mesh in place, so it never
+    /// passes through `set_scene` and the alignment invalidation that lives
+    /// there. The heatmap and the refined-match claim were measured against
+    /// the pre-stroke surface; both must be revoked by the commit that
+    /// replaced it, whichever role the sculpted scan holds.
+    #[test]
+    fn a_sculpt_commit_revokes_the_alignment_measured_against_the_old_mesh() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_sculpt_worker.rs"))
+                .replace("\r\n", "\n");
+        let commit = source
+            .split_once("fn commit_sculpt_scene(")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body)
+            .unwrap_or_default();
+        assert!(
+            !commit.is_empty(),
+            "commit_sculpt_scene must exist for this contract to mean anything"
+        );
+        assert!(
+            commit.contains("self.invalidate_alignment_for_geometry_changes(&[layer_id])"),
+            "the in-place mesh swap must revoke the alignment that described the old surface"
+        );
     }
 
     /// Source contract for the two-stroke interleave hazard.
