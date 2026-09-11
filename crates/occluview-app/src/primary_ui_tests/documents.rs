@@ -224,15 +224,15 @@ fn the_controls_catalogue_names_the_wired_gestures() {
         );
     }
 
-    for section in [
-        "Navigation",
-        "Mesh Editing",
-        "Sculpt",
-        "Layers and Explorer Preview",
+    for section_key in [
+        "help-section-navigation",
+        "help-section-mesh-editing",
+        "help-section-sculpt",
+        "help-section-layers-preview",
     ] {
         assert!(
-            catalogue.contains(section),
-            "the controls catalogue should include the {section} section"
+            catalogue.contains(section_key),
+            "the controls catalogue should include the {section_key} section key"
         );
     }
 }
