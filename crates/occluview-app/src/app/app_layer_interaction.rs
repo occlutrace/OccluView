@@ -244,6 +244,7 @@ impl OccluViewApp {
             visible: entry.visible,
             wireframe: entry.wireframe,
             face_editable: !entry.mesh.is_point_cloud(),
+            can_export: !entry.mesh.vertices().is_empty(),
             show_vertex_colors: entry.show_vertex_colors,
             show_texture: entry.show_texture && entry.show_vertex_colors,
             has_color_data: entry.mesh.carries_color_data(),
