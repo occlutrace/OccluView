@@ -110,7 +110,11 @@ pub(crate) struct SurfaceSample {
     pub(crate) point: DVec3,
     /// The triangle's geometric normal.
     pub(crate) normal: DVec3,
+    /// Connected component containing this triangle.
+    pub(crate) component: usize,
 }
+
+type ComponentData = (Vec<(DVec3, DVec3)>, Vec<usize>);
 
 /// A spatial index answering "what is the closest surface point to this?".
 #[derive(Clone, Debug)]
@@ -127,6 +131,7 @@ pub struct SurfaceIndex {
     blocks: [i64; 3],
     gaps: Vec<u8>,
     components: Vec<(DVec3, DVec3)>,
+    triangle_components: Vec<usize>,
 }
 
 impl SurfaceIndex {
@@ -232,6 +237,9 @@ impl SurfaceIndex {
             dims = grid_dims(extent, cell);
         }
 
+        let (components, triangle_components) =
+            component_data(&mut parent, &triangle_anchors, component_bounds)?;
+
         let index = Self {
             corners,
             normals,
@@ -244,7 +252,8 @@ impl SurfaceIndex {
             items: Vec::new(),
             blocks: [1; 3],
             gaps: Vec::new(),
-            components: component_bounds.into_values().collect(),
+            components,
+            triangle_components,
         };
         Some(index.in_cell_order().with_buckets().with_gaps())
     }
@@ -291,10 +300,12 @@ impl SurfaceIndex {
         self.corners
             .iter()
             .zip(&self.normals)
+            .zip(&self.triangle_components)
             .step_by(stride)
-            .map(|(corners, &normal)| SurfaceSample {
+            .map(|((corners, &normal), &component)| SurfaceSample {
                 point: (corners[0] + corners[1] + corners[2]) / 3.0,
                 normal,
+                component,
             })
             .collect()
     }
@@ -670,6 +681,25 @@ impl SurfaceIndex {
         let high = low + DVec3::splat(self.cell);
         (point.clamp(low, high) - point).length_squared()
     }
+}
+
+/// Resolve each retained triangle to the deterministic component order used
+/// by the coarse alignment hypotheses.
+fn component_data(
+    parent: &mut [usize],
+    triangle_anchors: &[usize],
+    component_bounds: BTreeMap<usize, (DVec3, DVec3)>,
+) -> Option<ComponentData> {
+    let component_roots: Vec<usize> = component_bounds.keys().copied().collect();
+    let components: Vec<(DVec3, DVec3)> = component_bounds.into_values().collect();
+    let triangle_components = triangle_anchors
+        .iter()
+        .map(|&anchor| {
+            let root = find(parent, anchor);
+            component_roots.binary_search(&root).ok()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((components, triangle_components))
 }
 
 /// Pick `values` out in the order `order` names them.

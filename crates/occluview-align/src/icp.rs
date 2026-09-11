@@ -412,12 +412,41 @@ struct StartPose {
     coarse_shift: f64,
 }
 
+struct GlobalSeedContext<'a> {
+    samples: &'a [u32],
+    moving_anchor: DVec3,
+    moving_center: DVec3,
+    orientations: &'a [DQuat],
+    max_shift: f64,
+}
+
 const COARSE_TIE_RELATIVE_RMS: f64 = 0.02;
 const COARSE_TIE_COVERAGE: f64 = 0.02;
+const COARSE_RECIPROCAL_ADVANTAGE: f64 = 0.01;
+const COARSE_RECIPROCAL_RMS_FACTOR: f64 = 1.25;
 const COARSE_POSE_TRANSLATION_EPS_MM: f64 = 0.01;
 const COARSE_POSE_ROTATION_EPS_RAD: f64 = 0.01;
 const COARSE_TIE_SHIFT_MM: f64 = 0.5;
 const COARSE_MAX_SHIFT_FACTOR: f64 = 4.0;
+/// Samples used by the bounded global seed search. This is intentionally much
+/// smaller than either ICP level: it locates a plausible patch, then the
+/// existing full-resolution objective and reciprocal guard decide whether it
+/// is real.
+const GLOBAL_SEED_SAMPLE_BUDGET: usize = 512;
+/// Surface anchors tried by the global seed search. A triangle representative
+/// is a usable surface point even when the moving scan is only a crop of a
+/// larger connected scan.
+const GLOBAL_ANCHOR_BUDGET: usize = 384;
+/// Full-resolution candidates retained after the cheap anchor pass.
+const GLOBAL_CANDIDATE_BUDGET: usize = 16;
+/// Iterations spent locally refining each global seed before comparing seeds.
+/// The normal refinement pass still runs afterwards with the operator's full
+/// budget; this bounded pass only prevents a smooth wrong patch from winning
+/// on its unrefined anchor residual.
+const GLOBAL_SEED_REFINE_ITERATIONS: u32 = 8;
+/// Do not pay for a global anchor sweep when the current pose already explains
+/// most of the moving samples. A weak local overlap still triggers recovery.
+const GLOBAL_SEED_MIN_FORWARD_COVERAGE: f64 = 0.5;
 
 /// Prefer a centered coarse hypothesis when it clearly explains more of the
 /// same surface than the caller's rough pose.
@@ -440,21 +469,9 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
             coarse_shift: 0.0,
         });
     };
-    let score = |pose: Rigid| {
-        let found = correspondences(level, pose, level.settings.influence_radius_mm);
-        let matched = found.iter().flatten().count();
-        if !forward_coverage_is_sufficient(matched, level.samples.len()) {
-            return None;
-        }
-        let kept = trim(&found, level.settings.matching_ratio);
-        if kept.len() < MIN_CORRESPONDENCES {
-            return None;
-        }
-        let (matrix, _, _) = accumulate(&kept);
-        let summary = summarize(&kept, matched, level.samples.len(), &matrix);
-        let reciprocal = reciprocal_evidence(level, pose, level.settings.influence_radius_mm);
-        reciprocal_evidence_is_usable(level, reciprocal).then_some((summary, reciprocal))
-    };
+    let seed_samples = sample_vertices(level.moving, GLOBAL_SEED_SAMPLE_BUDGET);
+    let moving_anchor = sampled_centroid(level.moving, &seed_samples).unwrap_or(moving_center);
+    let score = |pose: Rigid| score_candidate(level, pose);
     let mut candidates = Vec::new();
     if let Some((summary, reciprocal)) = score(level.start) {
         candidates.push(CoarseCandidate {
@@ -512,6 +529,25 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
         }
     }
 
+    let needs_global_seed = candidates.is_empty()
+        || candidates
+            .iter()
+            .all(|candidate| candidate.summary.coverage < GLOBAL_SEED_MIN_FORWARD_COVERAGE);
+    if needs_global_seed {
+        let global = global_seed_candidates(
+            level,
+            GlobalSeedContext {
+                samples: &seed_samples,
+                moving_anchor,
+                moving_center,
+                orientations: &orientation_deltas,
+                max_shift: max_coarse_shift,
+            },
+        );
+        candidates.extend(global);
+        refine_seed_candidates(level, &mut candidates, moving_center);
+    }
+
     let Some(best) = candidates.iter().copied().reduce(|current, candidate| {
         if coarse_candidate_is_better(&candidate, &current) {
             candidate
@@ -540,6 +576,179 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
     })
 }
 
+/// Search a bounded set of fixed-surface anchors for a crop whose current
+/// pose has no useful overlap. The cheap sample pass keeps the number of full
+/// nearest-surface evaluations bounded; all returned candidates still use the
+/// same reciprocal evidence as every other coarse hypothesis.
+fn global_seed_candidates(
+    level: &Level<'_>,
+    context: GlobalSeedContext<'_>,
+) -> Vec<CoarseCandidate> {
+    if context.samples.is_empty() {
+        return Vec::new();
+    }
+    let anchor_level = Level {
+        moving: level.moving,
+        normals: level.normals,
+        fixed: level.fixed,
+        moving_surface: level.moving_surface,
+        fixed_samples: level.fixed_samples,
+        samples: context.samples,
+        settings: level.settings,
+        cancel: level.cancel,
+        start: level.start,
+    };
+    let mut hypotheses = Vec::new();
+    for (anchor_index, anchor) in level
+        .fixed
+        .representative_samples(GLOBAL_ANCHOR_BUDGET)
+        .into_iter()
+        .enumerate()
+    {
+        if anchor_index % 32 == 0 && level.cancel.is_cancelled() {
+            break;
+        }
+        for (delta_index, &delta) in context.orientations.iter().enumerate() {
+            if level.settings.orientation == Orientation::Inverted && delta_index != 0 {
+                continue;
+            }
+            let rotation = delta * level.start.rotation;
+            let candidate = Rigid::new(rotation, anchor.point - rotation * context.moving_anchor);
+            let shift = (candidate.apply(context.moving_center)
+                - level.start.apply(context.moving_center))
+            .length();
+            if !shift.is_finite() || shift > context.max_shift {
+                continue;
+            }
+            let Some(summary) = forward_summary(&anchor_level, candidate) else {
+                continue;
+            };
+            hypotheses.push(CoarseCandidate {
+                rigid: candidate,
+                summary,
+                reciprocal: None,
+                shift,
+                component: Some(anchor.component),
+            });
+        }
+    }
+
+    // The acceptance comparator intentionally has tolerance bands and is not
+    // a total order. A sort comparator must be one: use a deterministic
+    // lexicographic ranking for this cheap shortlist, then return to the
+    // tolerance-aware comparator once the full evidence is available.
+    hypotheses.sort_by(coarse_seed_order);
+    hypotheses.truncate(GLOBAL_CANDIDATE_BUDGET);
+    hypotheses
+        .into_iter()
+        .filter_map(|hypothesis| {
+            if level.cancel.is_cancelled() {
+                return None;
+            }
+            score_candidate(level, hypothesis.rigid).map(|(summary, reciprocal)| CoarseCandidate {
+                rigid: hypothesis.rigid,
+                summary,
+                reciprocal,
+                shift: hypothesis.shift,
+                component: hypothesis.component,
+            })
+        })
+        .collect()
+}
+
+/// Let each retained global anchor take a short local ICP step before coarse
+/// ranking. A one-shot point-to-surface residual can make a smooth wrong patch
+/// look better than the distinctive patch that actually continues to converge.
+fn refine_seed_candidates(
+    level: &Level<'_>,
+    candidates: &mut [CoarseCandidate],
+    moving_center: DVec3,
+) {
+    if candidates.is_empty() {
+        return;
+    }
+    let seed_settings = RefineSettings {
+        max_iterations: level
+            .settings
+            .max_iterations
+            .min(GLOBAL_SEED_REFINE_ITERATIONS),
+        ..*level.settings
+    };
+    for candidate in candidates {
+        if level.cancel.is_cancelled() {
+            break;
+        }
+        let local_level = Level {
+            moving: level.moving,
+            normals: level.normals,
+            fixed: level.fixed,
+            moving_surface: level.moving_surface,
+            fixed_samples: level.fixed_samples,
+            samples: level.samples,
+            settings: &seed_settings,
+            cancel: level.cancel,
+            start: candidate.rigid,
+        };
+        let Ok(local) = run_level(&local_level) else {
+            continue;
+        };
+        if !local.summary.geometric_rms.is_finite()
+            || local.summary.geometric_rms > candidate.summary.geometric_rms
+        {
+            continue;
+        }
+        let reciprocal = reciprocal_evidence(level, local.pose, level.settings.influence_radius_mm);
+        if !reciprocal_evidence_is_usable(level, reciprocal) {
+            continue;
+        }
+        candidate.rigid = local.pose;
+        candidate.summary = local.summary;
+        candidate.reciprocal = reciprocal;
+        candidate.shift =
+            (local.pose.apply(moving_center) - level.start.apply(moving_center)).length();
+    }
+}
+
+/// Score a pose against the forward surface and, when possible, the bounded
+/// reverse surface. Keeping this in one function prevents the global seed pass
+/// from accidentally becoming an acceptance path with weaker evidence.
+fn score_candidate(level: &Level<'_>, pose: Rigid) -> Option<(Summary, Option<ReciprocalSummary>)> {
+    let summary = forward_summary(level, pose)?;
+    let reciprocal = reciprocal_evidence(level, pose, level.settings.influence_radius_mm);
+    reciprocal_evidence_is_usable(level, reciprocal).then_some((summary, reciprocal))
+}
+
+/// Calculate only the forward objective for a coarse seed or a full candidate.
+fn forward_summary(level: &Level<'_>, pose: Rigid) -> Option<Summary> {
+    let found = correspondences(level, pose, level.settings.influence_radius_mm);
+    let matched = found.iter().flatten().count();
+    if !forward_coverage_is_sufficient(matched, level.samples.len()) {
+        return None;
+    }
+    let kept = trim(&found, level.settings.matching_ratio);
+    if kept.len() < MIN_CORRESPONDENCES {
+        return None;
+    }
+    let (matrix, _, _) = accumulate(&kept);
+    Some(summarize(&kept, matched, level.samples.len(), &matrix))
+}
+
+/// A surface crop's bounding-box centre can sit well above its actual surface
+/// when curvature is strong. Use the deterministic sample centroid for global
+/// anchoring, while retaining the bounds centre for displacement bookkeeping.
+#[allow(clippy::cast_precision_loss)]
+fn sampled_centroid(soup: Soup<'_>, samples: &[u32]) -> Option<DVec3> {
+    let mut sum = DVec3::ZERO;
+    let mut count = 0usize;
+    for &raw in samples {
+        let vertex = usize::try_from(raw).ok()?;
+        let point = vertex_at(soup.positions, vertex)?;
+        sum += point;
+        count += 1;
+    }
+    (count > 0).then(|| sum / count as f64)
+}
+
 fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3) -> Option<usize> {
     let point = pose.apply(moving_center);
     level
@@ -558,6 +767,23 @@ fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3)
 }
 
 fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandidate) -> bool {
+    // A forward-only low residual can come from a small smooth patch. When
+    // both triangle soups are available, prefer a candidate that explains
+    // materially more of the fixed surface as long as its forward residual is
+    // still within a bounded coarse tolerance. This is what keeps a partial
+    // scan from being attracted to a visually similar but wrong window.
+    if let (Some(candidate_reciprocal), Some(current_reciprocal)) =
+        (candidate.reciprocal, current.reciprocal)
+    {
+        let reciprocal_advantage = candidate_reciprocal.coverage
+            > current_reciprocal.coverage + COARSE_RECIPROCAL_ADVANTAGE
+            && candidate.summary.geometric_rms
+                <= current.summary.geometric_rms * COARSE_RECIPROCAL_RMS_FACTOR
+            && candidate.summary.coverage + COARSE_TIE_COVERAGE >= current.summary.coverage;
+        if reciprocal_advantage {
+            return true;
+        }
+    }
     if candidate.summary.geometric_rms < current.summary.geometric_rms * STALL_IMPROVEMENT {
         return true;
     }
@@ -578,6 +804,37 @@ fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandi
         _ => false,
     };
     reciprocal_better || candidate.shift + COARSE_TIE_SHIFT_MM < current.shift
+}
+
+fn coarse_seed_order(left: &CoarseCandidate, right: &CoarseCandidate) -> std::cmp::Ordering {
+    right
+        .summary
+        .coverage
+        .total_cmp(&left.summary.coverage)
+        .then_with(|| {
+            left.summary
+                .geometric_rms
+                .total_cmp(&right.summary.geometric_rms)
+        })
+        .then_with(|| left.shift.total_cmp(&right.shift))
+        .then_with(|| {
+            left.rigid
+                .translation
+                .x
+                .total_cmp(&right.rigid.translation.x)
+        })
+        .then_with(|| {
+            left.rigid
+                .translation
+                .y
+                .total_cmp(&right.rigid.translation.y)
+        })
+        .then_with(|| {
+            left.rigid
+                .translation
+                .z
+                .total_cmp(&right.rigid.translation.z)
+        })
 }
 
 fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
