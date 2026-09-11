@@ -354,6 +354,17 @@ function Assert-NoInstalledProducts {
     }
 }
 
+function Assert-InstalledExecutableStarts {
+    # `--version` exits before graphics/window setup. It still exercises the
+    # installed EXE's loader, architecture, static CRT and entry boundary, so
+    # a silent post-install process failure becomes a lifecycle failure with
+    # an exit code instead of being mistaken for a successful MSI.
+    $process = Start-Process -FilePath $appExe -ArgumentList @("--version") -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "Installed OccluView executable failed its --version smoke with exit code $($process.ExitCode)."
+    }
+}
+
 function Assert-InstalledRegistry {
     Assert-PathExists $appExe
     Assert-PathExists $shellDll
@@ -526,6 +537,7 @@ try {
     }
     Invoke-MsiExec -Arguments "/i `"$resolvedMsi`" /qn /norestart" -LogPath $installLog
     Assert-InstalledRegistry
+    Assert-InstalledExecutableStarts
     if ($Diagnostic) {
         Assert-DiagnosticPayload
         Assert-DiagnosticSwitchUnchanged $diagnosticSwitchBefore
@@ -549,6 +561,7 @@ try {
             Stop-ActivePreviewHost $previewHolder
         }
         Assert-InstalledRegistry
+        Assert-InstalledExecutableStarts
         & (Join-Path $PSScriptRoot "test-thumbnail-provider.ps1")
         & (Join-Path $PSScriptRoot "test-preview-handler.ps1") -PreviewClsid $previewClsid
         $productCode = Assert-OneInstalledProduct

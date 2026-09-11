@@ -691,6 +691,14 @@ fn windows_package_lifecycle_allows_only_monotonic_major_upgrades() {
         "the preview-holder process must be cleaned up after the upgrade probe"
     );
     assert!(
+        lifecycle.contains("function Assert-InstalledExecutableStarts")
+            && lifecycle
+                .matches("Assert-InstalledExecutableStarts")
+                .count()
+                >= 3,
+        "Windows lifecycle must start the installed EXE after install and upgrade"
+    );
+    assert!(
         lifecycle.contains("\"-HoldOpenSeconds\", \"90\""),
         "the preview surrogate must remain live for the actual upgrade window"
     );
