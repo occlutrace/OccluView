@@ -177,9 +177,31 @@ pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_m
 /// The number written under each end of the legend bar, in millimetres.
 fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
     match mode {
+        // A zero maximum still has a hot side: everything past exact zero. The
+        // right label says so instead of repeating "0.00 mm", which would
+        // claim the bar has no range at all.
+        RampMode::Magnitude if scale_mm <= 0.0 => ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
         RampMode::Magnitude => ("0.00 mm".to_owned(), format!("{scale_mm:.2} mm")),
         RampMode::Signed => (format!("−{scale_mm:.2} mm"), format!("+{scale_mm:.2} mm")),
     }
+}
+
+/// The colour the legend bar carries at `step` of `steps`.
+///
+/// A zero display maximum is a real state of the operator's range control:
+/// exact zero is the cold stop and every non-zero deviation is past the range.
+/// Sweeping a zero scale linearly would paint the whole bar cold while the
+/// measured surface reads hot, so the two stops are painted directly here. Any
+/// other scale is the honest linear sweep of the values the bar labels.
+pub(crate) fn legend_color_at(
+    step: usize,
+    steps: usize,
+    ramp: &occluview_align::RampSettings,
+) -> [u8; 4] {
+    if ramp.mode == RampMode::Magnitude && ramp.scale_mm <= 0.0 {
+        return occluview_align::ramp_color(if step == 0 { 0.0 } else { f64::INFINITY }, ramp);
+    }
+    occluview_align::ramp_color(legend_value_mm(step, steps, ramp.mode, ramp.scale_mm), ramp)
 }
 
 /// Paint the deviation legend: the colour ramp with the numeric bounds of the
@@ -196,18 +218,16 @@ pub(crate) fn paint_legend(
 
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, HEIGHT), egui::Sense::hover());
     let painter = ui.painter();
+    let ramp = occluview_align::RampSettings {
+        scale_mm: settings.scale_mm,
+        tolerance_mm: settings.tolerance_mm,
+        // The production Align Meshes legend is continuous too; old
+        // persisted band counts must not disagree with the map.
+        bands: None,
+        mode: settings.ramp_mode,
+    };
     for step in 0..STEPS {
-        let color = occluview_align::ramp_color(
-            legend_value_mm(step, STEPS, settings.ramp_mode, settings.scale_mm),
-            &occluview_align::RampSettings {
-                scale_mm: settings.scale_mm,
-                tolerance_mm: settings.tolerance_mm,
-                // The production Align Meshes legend is continuous too; old
-                // persisted band counts must not disagree with the map.
-                bands: None,
-                mode: settings.ramp_mode,
-            },
-        );
+        let color = legend_color_at(step, STEPS, &ramp);
         #[allow(clippy::cast_precision_loss)]
         let x0 = rect.left() + rect.width() * (step as f32 / STEPS as f32);
         #[allow(clippy::cast_precision_loss)]
@@ -268,19 +288,89 @@ fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
 
 #[cfg(test)]
 mod tests {
-    use super::{legend_bounds, legend_value_mm, LEGEND_STEPS};
+    use super::{legend_bounds, legend_color_at, legend_value_mm, LEGEND_STEPS};
     use occluview_align::{ramp_color, RampMode, RampSettings};
 
-    fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {
-        let ramp = RampSettings {
+    fn ramp(mode: RampMode, scale_mm: f64) -> RampSettings {
+        RampSettings {
             scale_mm,
             tolerance_mm: 0.2,
             bands: None,
             mode,
-        };
+        }
+    }
+
+    fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {
+        let ramp = ramp(mode, scale_mm);
         (0..LEGEND_STEPS)
-            .map(|step| ramp_color(legend_value_mm(step, LEGEND_STEPS, mode, scale_mm), &ramp))
+            .map(|step| legend_color_at(step, LEGEND_STEPS, &ramp))
             .collect()
+    }
+
+    /// The operator's range control accepts 0.00 mm, and the surface then reads
+    /// hot for every non-zero deviation. The bar has to agree with that instead
+    /// of painting sixty-four cold swatches under a red surface, and its right
+    /// label has to name the open end.
+    #[test]
+    fn a_zero_maximum_legend_still_shows_its_hot_side() {
+        let bar = bar(RampMode::Magnitude, 0.0);
+        let cold = ramp_color(0.0, &ramp(RampMode::Magnitude, 0.0));
+        let hot = ramp_color(0.05, &ramp(RampMode::Magnitude, 0.0));
+        assert_ne!(cold, hot, "the fixture needs two distinct stops");
+
+        assert_eq!(
+            bar[0], cold,
+            "exact zero has to stay the cold stop at a zero maximum"
+        );
+        assert!(
+            bar[1..].iter().all(|swatch| *swatch == hot),
+            "every non-zero deviation is past a zero maximum and must read hot"
+        );
+        assert_eq!(
+            legend_bounds(RampMode::Magnitude, 0.0),
+            ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
+            "the open end has to be labelled as such"
+        );
+    }
+
+    /// A bar that disagrees with the surface is worse than no legend. For every
+    /// scale the control allows above the degenerate zero maximum, the swatch
+    /// nearest a measured value must carry that value's colour.
+    #[test]
+    fn every_legend_swatch_carries_the_colour_of_the_value_it_stands_for() {
+        for scale_mm in [0.01, 0.05, 0.10] {
+            let ramp = ramp(RampMode::Magnitude, scale_mm);
+            for value_mm in [0.0, 0.005, 0.02, 0.08] {
+                let painted = ramp_color(value_mm, &ramp);
+                let (distance, nearest) = (0..LEGEND_STEPS)
+                    .map(|step| {
+                        let at = legend_value_mm(step, LEGEND_STEPS, ramp.mode, ramp.scale_mm);
+                        (
+                            (at - value_mm).abs(),
+                            legend_color_at(step, LEGEND_STEPS, &ramp),
+                        )
+                    })
+                    .min_by(|left, right| {
+                        left.0
+                            .partial_cmp(&right.0)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .expect("a legend step");
+                assert!(
+                    distance.is_finite(),
+                    "a distance is needed to report a mismatch"
+                );
+                for channel in 0..3 {
+                    let surface = i32::from(painted[channel]);
+                    let bar = i32::from(nearest[channel]);
+                    assert!(
+                        (surface - bar).abs() <= 24,
+                        "at scale {scale_mm} the bar shows {nearest:?} for a surface reading \
+                         {painted:?} at {value_mm} mm"
+                    );
+                }
+            }
+        }
     }
 
     /// The magnitude bar must sweep its non-negative domain. A negative half
