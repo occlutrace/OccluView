@@ -50,6 +50,44 @@ fn triangle_mesh() -> Mesh {
     b.build().expect("valid triangle mesh")
 }
 
+fn closed_cube_mesh() -> Mesh {
+    let mut b = MeshBuilder::new();
+    let mut push_quad = |positions: [[f32; 3]; 4], normal: Vec3| {
+        let indices = positions.map(|position| {
+            b.push_vertex(Vertex::at(Vec3::from_array(position)).with_normal(normal))
+        });
+        b.push_triangle(indices[0], indices[1], indices[2]);
+        b.push_triangle(indices[0], indices[2], indices[3]);
+    };
+    let lo = -0.5;
+    let hi = 0.5;
+    push_quad(
+        [[lo, lo, hi], [hi, lo, hi], [hi, hi, hi], [lo, hi, hi]],
+        Vec3::Z,
+    );
+    push_quad(
+        [[lo, lo, lo], [lo, hi, lo], [hi, hi, lo], [hi, lo, lo]],
+        -Vec3::Z,
+    );
+    push_quad(
+        [[hi, lo, lo], [hi, hi, lo], [hi, hi, hi], [hi, lo, hi]],
+        Vec3::X,
+    );
+    push_quad(
+        [[lo, lo, lo], [lo, lo, hi], [lo, hi, hi], [lo, hi, lo]],
+        -Vec3::X,
+    );
+    push_quad(
+        [[lo, hi, lo], [lo, hi, hi], [hi, hi, hi], [hi, hi, lo]],
+        Vec3::Y,
+    );
+    push_quad(
+        [[lo, lo, lo], [hi, lo, lo], [hi, lo, hi], [lo, lo, hi]],
+        -Vec3::Y,
+    );
+    b.build().expect("valid closed cube mesh")
+}
+
 fn camera_looking_at_origin() -> GpuCamera {
     let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
     let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
@@ -58,6 +96,17 @@ fn camera_looking_at_origin() -> GpuCamera {
         proj,
         Vec3::new(0.0, 0.0, 1.0),
         Vec3::new(0.0, 0.0, 2.0),
+    )
+}
+
+fn camera_looking_from_negative_z() -> GpuCamera {
+    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, -2.0), Vec3::ZERO, Vec3::Y);
+    let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    GpuCamera::new(
+        view,
+        proj,
+        Vec3::new(0.0, 0.0, -1.0),
+        Vec3::new(0.0, 0.0, -2.0),
     )
 }
 
@@ -499,6 +548,40 @@ fn cut_triangle_capped_renders() {
         .filter(|px| px[0] > 50 || px[1] > 50 || px[2] > 50)
         .count();
     assert!(non_bg > 0, "capped cut rendered nothing visible");
+}
+
+#[test]
+fn solid_cut_paints_the_cap_of_a_closed_mesh() {
+    let _gpu = gpu_test_lock();
+    let mesh = closed_cube_mesh();
+    let cam = camera_looking_from_negative_z();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+
+    let cut = occluview_render::CutViewSpec {
+        plane: ClipPlane::new([0.0, 0.0, 1.0], 0.0),
+        cap_color: [0.0, 1.0, 0.0, 1.0],
+        show_hollow: false,
+    };
+    let pixels = pollster::block_on(offscreen.render_with_cut_with_deadline(CutMeshRequest {
+        mesh: &mesh,
+        camera: &cam,
+        cut: &cut,
+        half_extent: 1.0,
+        spec: dark_thumbnail_spec(),
+        deadline: test_render_deadline(),
+    }))
+    .expect("closed solid cut render");
+
+    let cap_pixels = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[1] > 220 && px[0] < 20 && px[2] < 20)
+        .count();
+    assert!(
+        cap_pixels > 100,
+        "solid cut did not paint a visible cap: green_pixels={cap_pixels}"
+    );
 }
 
 /// Validates the convenience entry point `render_cut_view` — auto-frames an
