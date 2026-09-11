@@ -188,18 +188,40 @@ fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
 
 /// The colour the legend bar carries at `step` of `steps`.
 ///
-/// A zero display maximum is a real state of the operator's range control:
-/// exact zero is the cold stop and every non-zero deviation is past the range.
-/// Sweeping a zero scale linearly would paint the whole bar cold while the
-/// measured surface reads hot, so the two stops are painted directly here. Any
+/// A zero display maximum is a real state of the operator's range control, and
+/// `ramp_color` answers it without dividing by the scale: exact zero keeps its
+/// own stop and every non-zero deviation is past the range. Sweeping a zero
+/// scale linearly would paint the whole bar as exact zero while the measured
+/// surface reads beyond it, so the two stops are painted directly here. The
+/// signed ramp has the same zero argument, with the sign choosing the stop. Any
 /// other scale is the honest linear sweep of the values the bar labels.
 pub(crate) fn legend_color_at(
     step: usize,
     steps: usize,
     ramp: &occluview_align::RampSettings,
 ) -> [u8; 4] {
-    if ramp.mode == RampMode::Magnitude && ramp.scale_mm <= 0.0 {
-        return occluview_align::ramp_color(if step == 0 { 0.0 } else { f64::INFINITY }, ramp);
+    if ramp.scale_mm <= 0.0 {
+        let value = match ramp.mode {
+            RampMode::Magnitude => {
+                if step == 0 {
+                    0.0
+                } else {
+                    f64::INFINITY
+                }
+            }
+            // The signed bar runs cold to hot through nominal zero; with no
+            // range at all, the nominal stop keeps the exact-zero centre and
+            // the ends carry the two saturated sides.
+            RampMode::Signed => {
+                let centre = steps / 2;
+                match step.cmp(&centre) {
+                    std::cmp::Ordering::Less => f64::NEG_INFINITY,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => f64::INFINITY,
+                }
+            }
+        };
+        return occluview_align::ramp_color(value, ramp);
     }
     occluview_align::ramp_color(legend_value_mm(step, steps, ramp.mode, ramp.scale_mm), ramp)
 }
@@ -331,6 +353,29 @@ mod tests {
             ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
             "the open end has to be labelled as such"
         );
+    }
+
+    /// The signed ramp has the same zero-maximum state, and it needs the input
+    /// the mapping would receive: the nominal stop at exact zero and the two
+    /// saturated sides for the signed ends. A magnitude-only special case left
+    /// it as a solid nominal green bar under a red/blue surface.
+    #[test]
+    fn a_zero_maximum_signed_legend_still_spans_both_sides() {
+        let signed = ramp(RampMode::Signed, 0.0);
+        let bar = bar(RampMode::Signed, 0.0);
+        let cold = ramp_color(f64::NEG_INFINITY, &signed);
+        let nominal = ramp_color(0.0, &signed);
+        let hot = ramp_color(f64::INFINITY, &signed);
+
+        assert_ne!(cold, nominal, "the fixture needs a cold side");
+        assert_ne!(nominal, hot, "the fixture needs a hot side");
+        assert_eq!(bar[0], cold, "the bar must start cold");
+        assert_eq!(
+            bar[LEGEND_STEPS / 2],
+            nominal,
+            "exact zero keeps its nominal stop in the middle"
+        );
+        assert_eq!(bar[LEGEND_STEPS - 1], hot, "the bar must end hot");
     }
 
     /// A bar that disagrees with the surface is worse than no legend. For every
