@@ -355,6 +355,22 @@ fn non_finite_input_is_refused() {
 }
 
 #[test]
+fn non_finite_bounds_are_refused_before_overlap_can_be_claimed() {
+    let moving = spread();
+    let fixed = posed(&moving);
+    let bounds = FitBounds {
+        moving_center: DVec3::new(f64::NAN, 0.0, 0.0),
+        moving_extent: 40.0,
+        fixed_center: centre(&fixed),
+        fixed_extent: 40.0,
+    };
+
+    let outcome = fit_pairs(&moving, &fixed, None, &bounds);
+
+    assert_eq!(outcome, Err(FitRejection::NonFinite));
+}
+
+#[test]
 fn mismatched_lengths_are_refused_rather_than_truncated() {
     let outcome = fit(&spread(), &spread()[..2], None, 40.0);
     assert!(
