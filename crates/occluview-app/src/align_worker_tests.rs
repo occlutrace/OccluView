@@ -368,6 +368,23 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     }
 }
 
+#[test]
+fn worker_does_not_authorize_a_rank_deficient_refinement() {
+    let mut job = measure_job(0);
+    job.kind = super::AlignJobKind::Refine;
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let outcome = super::execute(&job, &cancel, &mut cache);
+
+    assert!(matches!(
+        outcome,
+        super::AlignOutcome::Failed {
+            rejection: super::AlignFailure::Fit(occluview_align::FitRejection::NoImprovement)
+        }
+    ));
+}
+
 /// One real measurement job, on geometry small enough to finish immediately.
 fn measure_job(generation: u64) -> super::AlignJob {
     use std::sync::Arc;

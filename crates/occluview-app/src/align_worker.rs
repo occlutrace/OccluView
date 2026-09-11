@@ -596,7 +596,12 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
     match surface_job {
         SurfaceJob::Refine => {
             match refine(moving, index, job.pose, &job.settings.refine(), cancel) {
-                Ok(report) => AlignOutcome::Refined { pose: report.rigid },
+                Ok(report) if report.is_trustworthy_refinement() => {
+                    AlignOutcome::Refined { pose: report.rigid }
+                }
+                Ok(_) => AlignOutcome::Failed {
+                    rejection: AlignFailure::Fit(FitRejection::NoImprovement),
+                },
                 Err(rejection) => AlignOutcome::Failed {
                     rejection: AlignFailure::Fit(rejection),
                 },
