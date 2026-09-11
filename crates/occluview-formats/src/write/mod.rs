@@ -165,14 +165,58 @@ pub fn write_mesh_overwrite(
 /// an existing scan destroyed that scan and returned an error having written
 /// nothing. The only such rejection is STL's, and it depends on the mesh kind
 /// alone, so it can be answered before opening anything.
-fn ensure_format_can_represent(mesh: &Mesh, format: MeshWriteFormat) -> Result<(), FormatError> {
+fn ensure_format_can_represent(
+    mesh: &Mesh,
+    format: MeshWriteFormat,
+    options: MeshWriteOptions,
+) -> Result<(), FormatError> {
+    let malformed = |reason: &str| FormatError::Malformed {
+        format: format.label(),
+        offset: 0,
+        reason: reason.to_owned(),
+    };
+    if mesh.vertices().is_empty() {
+        return Err(malformed("mesh contains no vertices"));
+    }
+    if mesh
+        .vertices()
+        .iter()
+        .any(|vertex| vertex.position.iter().any(|value| !value.is_finite()))
+    {
+        return Err(malformed("mesh contains a non-finite vertex position"));
+    }
+    if options.include_normals
+        && mesh
+            .vertices()
+            .iter()
+            .any(|vertex| vertex.normal.iter().any(|value| !value.is_finite()))
+    {
+        return Err(malformed("mesh contains a non-finite vertex normal"));
+    }
+    if format == MeshWriteFormat::Obj
+        && options.include_uvs
+        && mesh.has_uvs()
+        && mesh
+            .vertices()
+            .iter()
+            .any(|vertex| vertex.uv.iter().any(|value| !value.is_finite()))
+    {
+        return Err(malformed("mesh contains a non-finite texture coordinate"));
+    }
+    if mesh.kind() == MeshKind::TriangleMesh {
+        if !mesh.indices().len().is_multiple_of(3) {
+            return Err(malformed("triangle index count is not a multiple of three"));
+        }
+        let vertex_count = u32::try_from(mesh.vertices().len())
+            .map_err(|_| malformed("mesh has more vertices than 32-bit indices allow"))?;
+        if mesh.indices().iter().any(|index| *index >= vertex_count) {
+            return Err(malformed("triangle index is outside the vertex array"));
+        }
+    }
     if format == MeshWriteFormat::StlBinary && mesh.kind() != MeshKind::TriangleMesh {
-        return Err(FormatError::Malformed {
-            format: MeshWriteFormat::StlBinary.label(),
-            offset: 0,
-            reason: "STL export requires a triangle mesh; point clouds are not supported"
-                .to_string(),
-        });
+        return Err(malformed(
+            "STL export requires a triangle mesh; point clouds are not supported",
+        ));
     }
     Ok(())
 }
@@ -184,7 +228,7 @@ fn write_mesh_file(
     options: MeshWriteOptions,
     create_new: bool,
 ) -> Result<MeshWriteReport, FormatError> {
-    ensure_format_can_represent(mesh, format)?;
+    ensure_format_can_represent(mesh, format, options)?;
     if create_new {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
         let result = write_mesh_to_file(file, mesh, format, options);
@@ -457,6 +501,50 @@ mod tests {
             after, seed,
             "a failed export must leave the destination exactly as it found it"
         );
+    }
+
+    #[test]
+    fn an_empty_mesh_is_rejected_before_touching_the_destination() {
+        let file = NamedTempFile::new().expect("temp file");
+        let seed = b"previous export";
+        std::fs::write(file.path(), seed).expect("seed destination");
+
+        let result = write_mesh_overwrite(
+            file.path(),
+            &Mesh::empty(),
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        );
+
+        assert!(result.is_err(), "an empty placeholder is not an export");
+        assert_eq!(std::fs::read(file.path()).expect("read destination"), seed);
+    }
+
+    #[test]
+    fn a_non_finite_position_is_rejected_before_touching_the_destination() {
+        let file = NamedTempFile::new().expect("temp file");
+        let seed = b"previous export";
+        std::fs::write(file.path(), seed).expect("seed destination");
+        let mesh = Mesh::new(
+            Some("bad".to_owned()),
+            vec![
+                Vertex::at(glam::Vec3::new(f32::NAN, 0.0, 0.0)),
+                Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)),
+                Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("shape is valid even though its payload is not");
+
+        let result = write_mesh_overwrite(
+            file.path(),
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        );
+
+        assert!(result.is_err(), "non-finite positions are not exportable");
+        assert_eq!(std::fs::read(file.path()).expect("read destination"), seed);
     }
 
     #[test]
