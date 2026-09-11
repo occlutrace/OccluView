@@ -262,31 +262,58 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
 #[test]
 fn stencil_mask_passes_preserve_depth_for_the_cap_and_shaded_pass() {
     let source = include_str!("pipeline_init.rs");
+
+    // One pipeline's state block: from its label to the end of its descriptor.
+    // A file-wide `contains` cannot pin a specific pipeline, because the main
+    // shaded and wireframe pipelines declare the same fields elsewhere in the
+    // file. That is how the cap regression of 69edf59 survived a check written
+    // to catch it.
+    fn state_of<'a>(source: &'a str, label: &str) -> &'a str {
+        let start = source
+            .find(label)
+            .unwrap_or_else(|| panic!("pipeline label missing: {label}"));
+        let block = &source[start..];
+        let end = block
+            .find("multisample,")
+            .unwrap_or_else(|| panic!("pipeline state is incomplete: {label}"));
+        &block[..end]
+    }
+
     for label in [
         "label: Some(\"occluview stencil-back pipeline\")",
         "label: Some(\"occluview stencil-front pipeline\")",
     ] {
-        let start = source.find(label);
-        assert!(start.is_some(), "stencil pipeline label missing: {label}");
-        if let Some(start) = start {
-            let block = &source[start..];
-            let end = block.find("multisample,");
-            assert!(
-                end.is_some(),
-                "stencil pipeline state is incomplete: {label}"
-            );
-            if let Some(end) = end {
-                assert!(
-                    block[..end].contains("depth_write_enabled: Some(false)"),
-                    "{label} must build a stencil-only mask without poisoning the final depth test"
-                );
-            }
-        }
+        let state = state_of(source, label);
+        assert!(
+            state.contains("depth_write_enabled: Some(false)"),
+            "{label} must build a stencil-only mask without poisoning the final depth test"
+        );
+        // `LessEqual` is what keeps the mask off the geometry behind the cut
+        // plane; only the stencil face state decides the winding.
+        assert!(
+            state.contains("depth_compare: Some(wgpu::CompareFunction::LessEqual)"),
+            "{label} must still test against the cut plane's depth"
+        );
+        assert!(
+            state.contains("write_mask: wgpu::ColorWrites::empty()"),
+            "{label} is a mask pass and must not tint the viewport"
+        );
     }
+
+    // The cap is the one pass that must write depth: the shaded pass `Load`s it
+    // so geometry behind the cut plane cannot paint over the cap.
+    let cap = state_of(source, "label: Some(\"occluview cap pipeline\")");
     assert!(
-        source.contains("label: Some(\"occluview cap pipeline\")")
-            && source.contains("depth_write_enabled: Some(true)"),
+        cap.contains("depth_write_enabled: Some(true)"),
         "the cap must remain the pass that writes cut-plane depth"
+    );
+    assert!(
+        cap.contains("depth_compare: Some(wgpu::CompareFunction::LessEqual)"),
+        "the cap must paint exactly on the cut plane, not only in front of it"
+    );
+    assert!(
+        cap.contains("format: depth_format"),
+        "the cap belongs to the same depth attachment as the rest of the pass"
     );
 }
 

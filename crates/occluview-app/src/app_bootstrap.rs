@@ -498,6 +498,11 @@ fn live_sample_count_for(
     // surface. Since this function cannot inspect that surface yet, requiring
     // the profile from every working candidate is the only default that never
     // asks eframe for a pass the eventual adapter cannot satisfy.
+    //
+    // The cost is real and documented in the README: a hybrid machine that
+    // enumerates one device without 4x support renders the whole session at one
+    // sample, even when the device it actually presents on supports 4x. The
+    // operator override is the escape hatch in both directions.
     let every_candidate_supports_msaa_4 =
         !adapters.is_empty() && adapters.iter().all(|adapter| adapter.supports_live_msaa_4);
     select_live_sample_count(every_candidate_supports_msaa_4)
