@@ -292,7 +292,17 @@ impl SculptTool {
                 if worker_cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                mesh.warm_bvh();
+                // Warming the picking tree is an O(n) build inside an
+                // `OnceLock`, so it cannot be interrupted once it starts. Skip
+                // it when nobody is waiting for this preparation any more: a
+                // cancel that lands during the build would otherwise keep the
+                // worker (and the layer's memory) alive for the whole build,
+                // which is exactly the delay `cancel_pending_preparation`
+                // exists to avoid. The build still happens on demand at the
+                // first pick of a live session.
+                if !worker_cancel.load(Ordering::Relaxed) {
+                    mesh.warm_bvh();
+                }
                 let prepared = {
                     let buffers = mesh_edit_buffers_from_mesh(&mesh);
                     BrushSession::prepare(&buffers).map_err(|error| error.to_string())
@@ -629,7 +639,14 @@ impl SculptSession {
         // dead for good. This runs on the worker thread, where an O(n) rebuild
         // has already been paid; a clone shares the warmed tree, so the commit
         // path's refit keeps it alive from here on.
-        mesh.warm_bvh();
+        //
+        // The same cancellation rule as preparation applies: this build cannot
+        // be interrupted, so do not start it for a stroke the operator has
+        // already abandoned. The pick path warms the tree itself when it needs
+        // one.
+        if !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            mesh.warm_bvh();
+        }
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Ok(None);
         }
