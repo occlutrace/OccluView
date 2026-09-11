@@ -410,6 +410,13 @@ mod tests {
     }
 
     /// Typed failures map to their catalog keys at the presentation boundary.
+    ///
+    /// The keys are resolved at render time from a variable, so the scanner
+    /// that checks literal `.tr("key")` call sites cannot see them, and the
+    /// pair is what has to be checked: the helper's answer against the key this
+    /// table names, and that key against the catalog the renderer resolves
+    /// through. Without the second half, renaming a key in the catalogs and in
+    /// both of those places reaches the operator as a `⟦key⟧` marker.
     #[test]
     fn typed_failures_resolve_to_their_catalog_keys() {
         use super::align_failure_parts;
@@ -420,26 +427,15 @@ mod tests {
             (
                 AlignFailure::FixedSurfaceMissing,
                 "align-fail-no-surface-fixed",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::MovingSurfaceMissing,
                 "align-fail-no-surface-moving",
-                String::new(),
-                String::new(),
             ),
-            (
-                AlignFailure::MeasurementDropped,
-                "align-fail-recolor",
-                String::new(),
-                String::new(),
-            ),
+            (AlignFailure::MeasurementDropped, "align-fail-recolor"),
             (
                 AlignFailure::Fit(FitRejection::TooFewPairs { have: 2, need: 3 }),
                 "align-reject-toofew",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Unpaired {
@@ -447,30 +443,22 @@ mod tests {
                     fixed: 5,
                 }),
                 "align-reject-unpaired",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Degenerate {
                     weak_axes: [false; 3],
                 }),
                 "align-reject-degenerate-plain",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Degenerate {
                     weak_axes: [true, false, true],
                 }),
                 "align-reject-degenerate-plain",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::UnitMismatch { ratio: 2.5 }),
                 "align-reject-unit",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Apart {
@@ -478,8 +466,6 @@ mod tests {
                     allowed: 3.0,
                 }),
                 "align-reject-apart",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Runaway {
@@ -487,35 +473,27 @@ mod tests {
                     allowed: 5.0,
                 }),
                 "align-reject-runaway",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::NoImprovement),
                 "align-reject-no-improvement",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::Ambiguous),
                 "align-reject-ambiguous",
-                String::new(),
-                String::new(),
             ),
             (
                 AlignFailure::Fit(FitRejection::NonFinite),
                 "align-reject-nonfinite",
-                String::new(),
-                String::new(),
             ),
         ];
-        // The keys are resolved at render time from a variable, so the scanner
-        // that checks literal `.tr("key")` call sites cannot see them. Close
-        // the loop here: a renamed catalog key has to fail this test rather
-        // than reach the operator as a `⟦key⟧` marker.
         let embedded = crate::i18n::catalog::embedded_en_keys();
-        for (failure, key, a, b) in cases {
-            assert_eq!(align_failure_parts(failure), (key, a, b));
+        for (failure, key) in cases {
+            assert_eq!(
+                align_failure_parts(failure),
+                (key, String::new(), String::new()),
+                "the typed failure must resolve to its own catalog key"
+            );
             assert!(
                 embedded.contains(key),
                 "the typed failure key {key} must exist in the English catalog"
