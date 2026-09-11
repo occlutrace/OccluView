@@ -371,6 +371,7 @@ fn move_export_file(
 ) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
     use windows::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
@@ -396,7 +397,19 @@ fn move_export_file(
             flags,
         )
     }
-    .map_err(|error| std::io::Error::other(error.to_string()))
+    // Without `MOVEFILE_REPLACE_EXISTING`, an existing destination fails here
+    // with ERROR_ALREADY_EXISTS (or ERROR_FILE_EXISTS). Callers detect a
+    // create-new collision by `ErrorKind::AlreadyExists`, so a flat
+    // `ErrorKind::Other` made the batch retry treat every collision as a hard
+    // failure on Windows. Keep the Win32 text for the operator either way.
+    .map_err(|error| {
+        let code = error.code();
+        if code == ERROR_ALREADY_EXISTS.to_hresult() || code == ERROR_FILE_EXISTS.to_hresult() {
+            std::io::Error::new(std::io::ErrorKind::AlreadyExists, error.to_string())
+        } else {
+            std::io::Error::other(error.to_string())
+        }
+    })
 }
 
 pub(super) fn write_f32_le(writer: &mut impl Write, value: f32) -> Result<(), FormatError> {
@@ -571,7 +584,18 @@ mod tests {
             MeshWriteOptions::default(),
         );
 
-        assert!(result.is_err(), "create-new export must reject collisions");
+        let error = result.expect_err("create-new export must reject collisions");
+        // The batch exporter retries the next numbered name when it sees this
+        // kind. On Windows the collision is only detectable at publish time,
+        // inside `MoveFileExW`, so the classification has to survive the Win32
+        // error conversion there.
+        assert!(
+            matches!(
+                &error,
+                FormatError::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists
+            ),
+            "a create-new collision must be classified for retry, got {error:?}"
+        );
         assert_eq!(std::fs::read(&destination).expect("read seed"), seed);
         assert!(std::fs::read_dir(directory.path())
             .expect("read directory")
