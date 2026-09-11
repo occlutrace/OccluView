@@ -160,6 +160,22 @@ fn live_sample_count_follows_the_adapter_the_selector_will_pick() {
     );
 }
 
+#[test]
+fn live_sample_count_keeps_the_selector_first_tie() {
+    let first = adapter_identity(wgpu::DeviceType::IntegratedGpu, false);
+    let second = adapter_identity(wgpu::DeviceType::IntegratedGpu, true);
+
+    assert_eq!(
+        live_sample_count_for(
+            &[first, second],
+            wgpu::PowerPreference::HighPerformance,
+            None,
+        ),
+        1,
+        "the native selector keeps the first equal-score adapter, so MSAA must not come from the later one"
+    );
+}
+
 /// An operator override is the only route in for a driver that rejects the
 /// multisampled pass: eframe builds that pass before the app exists, so there
 /// is nothing to retry inside one launch.
