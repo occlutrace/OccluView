@@ -201,7 +201,7 @@ gzip -9 -n -c install/linux/occluview-cli.1 \
 # browser show. It has to come from the release notes for this version, not from
 # a fixed string: the shipped package used to claim the previous release's date.
 release_date="$(awk -v v="$version" '
-  $0 == "## " v " - " {
+  index($0, "## " v " - ") == 1 {
     if ($4 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) { print $4; exit }
   }
 ' CHANGELOG.md)"
