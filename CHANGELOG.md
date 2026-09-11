@@ -8,16 +8,29 @@ remain in the Git history.
 ### Viewer
 
 - Align heatmaps now appear only after a current confirmed match, with a compact
-  absolute millimetre legend and saturated display colours.
+  absolute millimetre legend and saturated display colours. A sculpt stroke,
+  a hand drag, a role swap made by the first matching click, or a change to the
+  matching inputs withdraws the map and the match it measured; the legend stays
+  readable at the 0.00 mm end of the range control.
 - Sculpt worker topology changes, cancellation, and repeated strokes preserve
-  ordered geometry and undo boundaries.
+  ordered geometry and undo boundaries. A stroke that cannot finish now reports
+  the reason in a dialog and stands the brush down instead of leaving it armed
+  over a revoked worker.
 
 ### Reliability
 
 - Weak Linux graphics adapters receive adapter-aware wgpu limits and a
   single-sample compatibility profile; startup failures now produce a visible
-  diagnostic signal and a non-zero exit status.
-- Added `occluview --diagnostics` and installed-package graphics smoke checks.
+  diagnostic signal and a non-zero exit status. `OCCLUVIEW_LIVE_MSAA=1` starts
+  without multisampling when a driver rejects it, and a fatal startup is
+  offered to the desktop through the notification service the system provides.
+- Added `occluview --diagnostics` and installed-package graphics smoke checks;
+  the report now names the chosen live sample count and each adapter's
+  multisample support.
+- Exporting over a file that is a symbolic link updates the file it points at
+  instead of replacing the link, and "Export each layer" keeps working in
+  folders on removable media or network shares that cannot hard-link, which
+  also restores its collision retry on Windows.
 
 - Added a compact Help reference for the complete keyboard and mouse controls,
   with a contextual reminder in the viewport.
