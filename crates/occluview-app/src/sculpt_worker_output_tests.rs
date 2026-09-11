@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn drained_update_is_not_lost_on_shadow_contention() {
     let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
+    worker.state.record_touched(vec![0, 1, 2], Vec::new());
     let write_guard = worker
         .state
         .shadow
@@ -97,7 +97,7 @@ fn touched_overflow_escalates_to_full_sync() {
     let worker = test_worker();
     worker
         .state
-        .record_touched(vec![0; MAX_PENDING_TOUCHES + 1]);
+        .record_touched(vec![0; MAX_PENDING_TOUCHES + 1], Vec::new());
     let update = worker.take_update().expect("overflow must stay visible");
     assert!(
         update.full_sync,
@@ -110,7 +110,7 @@ fn touched_overflow_escalates_to_full_sync() {
 #[test]
 fn take_update_defers_when_backlog_locked() {
     let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
+    worker.state.record_touched(vec![0, 1, 2], Vec::new());
     worker.state.request_full_sync();
     let held = worker
         .state
@@ -173,7 +173,7 @@ fn take_rebuild_defers_when_slot_locked() {
 #[test]
 fn rebuild_supersedes_queued_sparse_updates() {
     let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
+    worker.state.record_touched(vec![0, 1, 2], Vec::new());
     let mesh = Mesh::new(
         Some("rebuild-supersede".to_string()),
         vec![
@@ -272,7 +272,7 @@ fn rebuild_queue_preserves_every_topology_transition_in_order() {
 #[test]
 fn restored_update_redrains_identical_sparse_ids() {
     let worker = test_worker();
-    worker.state.record_touched(vec![3, 1, 2, 1]);
+    worker.state.record_touched(vec![3, 1, 2, 1], Vec::new());
     let drained = worker.take_update().expect("pending update must drain");
     worker.restore_update(drained);
     let retry = worker.take_update().expect("restored update must redrain");
@@ -304,7 +304,7 @@ fn restore_overflow_escalates_to_full_sync() {
 #[test]
 fn restore_after_rebuild_escalates_to_full_sync() {
     let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
+    worker.state.record_touched(vec![0, 1, 2], Vec::new());
     let drained = worker.take_update().expect("pending update must drain");
     let mesh = Mesh::new(
         Some("restore-rebuild".to_string()),

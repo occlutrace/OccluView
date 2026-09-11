@@ -149,6 +149,10 @@ impl LiveViewport {
             .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
     }
 
+    pub(super) fn has_prepared_scene(&self) -> bool {
+        self.prepared_scene.is_some()
+    }
+
     pub(super) fn sync_selection_overlay(&mut self, sources: &[PreparedSceneSource<'_>]) {
         self.selection_overlay =
             (!sources.is_empty()).then(|| PreparedScene::prepare(&self.renderer, sources));

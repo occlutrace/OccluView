@@ -63,7 +63,7 @@ pub(super) fn run_worker(
                 if let Some(rebuild) = outcome.rebuild {
                     state.record_rebuild(stroke_id, rebuild);
                 } else {
-                    state.record_touched(outcome.touched);
+                    state.record_touched(outcome.touched, outcome.dirty_triangles);
                 }
                 if state.has_error() {
                     queue.mark_idle();

@@ -194,6 +194,7 @@ impl OccluViewApp {
         let layer_id = worker.layer_id;
         let expected = worker.topology_id;
         let new_topology_id = rebuild.mesh.topology_id();
+        let rebuilt_mesh = Arc::new(rebuild.mesh);
         let Some(mut scene_arc) = self.document.scene.take() else {
             return false;
         };
@@ -211,13 +212,16 @@ impl OccluViewApp {
                 self.document.scene = Some(scene_arc);
                 return false;
             }
-            entry.mesh = Arc::new(rebuild.mesh);
+            entry.mesh = Arc::clone(&rebuilt_mesh);
         }
         self.document.edit_mode.sync_to_scene(&scene_arc);
         self.document.scene = Some(scene_arc);
         if let Some(worker) = self.tools.sculpt.worker.as_mut() {
             worker.topology_id = new_topology_id;
             worker.topology = rebuild.topology;
+        }
+        if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+            worker.replace_pick_mesh(rebuilt_mesh);
         }
         // The uploaded geometry is the wrong SIZE now, so the prepared scene
         // must be rebuilt rather than reconciled.
@@ -251,30 +255,28 @@ impl OccluViewApp {
             worker.restore_update(SculptUpdate { touched, full_sync });
             return SculptFlushOutcome::Deferred;
         };
+        let mut has_target = false;
+        let mut rejected = false;
         if let Some(live_viewport) = self.render.live_viewport.as_ref() {
             let Ok(viewport) = live_viewport.try_lock() else {
                 worker.restore_update(SculptUpdate { touched, full_sync });
                 return SculptFlushOutcome::Deferred;
             };
-            let applied = if full_sync {
-                viewport.write_scene_vertices(&worker.topology, &shadow)
-            } else {
-                viewport.write_scene_vertices_sparse(&worker.topology, &shadow, &touched)
-            };
-            if applied {
-                SculptFlushOutcome::Applied
-            } else {
-                worker.request_full_sync();
-                self.render.invalidation.sculpt_topology_changed();
-                if self.can_render_cut_view() {
-                    self.tools.cut_view.mark_dirty();
-                }
-                SculptFlushOutcome::GpuRejected
+            if viewport.has_prepared_scene() {
+                has_target = true;
+                let applied = if full_sync {
+                    viewport.write_scene_vertices(&worker.topology, &shadow)
+                } else {
+                    viewport.write_scene_vertices_sparse(&worker.topology, &shadow, &touched)
+                };
+                rejected |= !applied;
             }
-        } else if let (Some(offscreen), Some(prepared)) = (
+        }
+        if let (Some(offscreen), Some(prepared)) = (
             self.render.offscreen.as_ref(),
             self.render.prepared_scene.as_ref(),
         ) {
+            has_target = true;
             let applied = if full_sync {
                 prepared.write_entry_vertices(offscreen.renderer(), &worker.topology, &shadow)
             } else {
@@ -285,21 +287,50 @@ impl OccluViewApp {
                     &touched,
                 )
             };
-            if applied {
-                SculptFlushOutcome::Applied
-            } else {
-                worker.request_full_sync();
-                self.render.invalidation.sculpt_topology_changed();
-                if self.can_render_cut_view() {
-                    self.tools.cut_view.mark_dirty();
-                }
-                SculptFlushOutcome::GpuRejected
+            rejected |= !applied;
+        }
+        if rejected {
+            worker.request_full_sync();
+            self.render.invalidation.sculpt_topology_changed();
+            if self.can_render_cut_view() {
+                self.tools.cut_view.mark_dirty();
             }
+            SculptFlushOutcome::GpuRejected
+        } else if has_target {
+            SculptFlushOutcome::Applied
         } else {
-            // No GPU target: the CPU shadow stays authoritative and the
-            // commit path sources it, so there is no stale GPU state to fix.
+            // No prepared GPU target: the CPU shadow stays authoritative and
+            // the next render rebuild path installs it before drawing.
             SculptFlushOutcome::NoTarget
         }
+    }
+
+    /// Re-apply the worker's current vertices after a live scene rebuild.
+    /// Scene preparation reads the committed document mesh, while an active
+    /// stroke lives in the worker shadow; the latter is the authoritative
+    /// display state until the stroke commits.
+    pub(super) fn push_sculpt_shadow_live(&self) -> Option<bool> {
+        let worker = self.tools.sculpt.worker.as_ref()?;
+        let live_viewport = self.render.live_viewport.as_ref()?;
+        let viewport = live_viewport.try_lock().ok()?;
+        if !viewport.has_prepared_scene() {
+            return None;
+        }
+        let shadow_arc = worker.shadow();
+        let shadow = shadow_arc.try_read().ok()?;
+        Some(viewport.write_scene_vertices(&worker.topology, &shadow))
+    }
+
+    /// Re-apply the worker's current vertices after an offscreen scene
+    /// rebuild. This keeps the fallback viewport and Cut View in lockstep
+    /// with the live surface during a stroke.
+    pub(super) fn push_sculpt_shadow_offscreen(&self) -> Option<bool> {
+        let worker = self.tools.sculpt.worker.as_ref()?;
+        let offscreen = self.render.offscreen.as_ref()?;
+        let prepared = self.render.prepared_scene.as_ref()?;
+        let shadow_arc = worker.shadow();
+        let shadow = shadow_arc.try_read().ok()?;
+        Some(prepared.write_entry_vertices(offscreen.renderer(), &worker.topology, &shadow))
     }
 
     /// Finish the drag: the worker creates the mesh off the UI thread and the

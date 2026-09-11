@@ -21,6 +21,7 @@ use std::time::Duration;
 fn worker_for(mesh: &Mesh) -> SculptWorker {
     let entry = SceneMesh::new(mesh.clone());
     let layer_id = entry.id();
+    mesh.warm_bvh();
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
     SculptWorker::spawn(SculptSession {
         layer_id,
@@ -174,6 +175,26 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
     let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
     assert!(source.contains("apply_dab_cancellable"));
     assert!(source.contains("&state.stopping"));
+}
+
+#[test]
+fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
+    let worker = test_worker();
+    {
+        let shadow = worker.shadow();
+        let mut shadow = shadow.write().expect("live shadow");
+        for vertex in &mut *shadow {
+            vertex.position[0] += 10.0;
+        }
+    }
+    worker.state.record_touched(vec![0, 1, 2, 3], vec![0, 1]);
+
+    let (triangle, point) = worker
+        .pick_local_ray(Vec3::new(10.25, 0.25, 10.0), -Vec3::Z)
+        .expect("the dirty live triangles must remain pickable");
+    assert!(triangle < 2);
+    assert!((point.x - 10.25).abs() < 1e-5);
+    assert!((point.z).abs() < 1e-5);
 }
 
 #[test]

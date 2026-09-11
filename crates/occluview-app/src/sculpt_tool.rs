@@ -384,6 +384,16 @@ pub(crate) struct SculptRebuild {
     pub(crate) topology: PreparedSceneTopology,
 }
 
+/// Read-mostly surface state used by the interactive Sculpt raycast. The
+/// original mesh owns a stable BVH; the shadow contains the current live
+/// vertices, and only triangles touched since the last refit are checked
+/// outside that tree.
+pub(crate) struct SculptPickState {
+    pub(crate) mesh: Arc<Mesh>,
+    pub(crate) shadow: Arc<RwLock<Vec<Vertex>>>,
+    pub(crate) dirty_triangles: Vec<usize>,
+}
+
 /// What one dab produced: either a sparse vertex update, or a whole-layer
 /// rebuild when densification changed the topology.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -413,6 +423,9 @@ pub(crate) struct DabOutcome {
     /// Vertex ids whose position or normal changed, for a sparse GPU write.
     /// Empty when `rebuild` is set — the rebuild supersedes it.
     pub(crate) touched: Vec<usize>,
+    /// Triangles that must be considered against the live shadow by the
+    /// interactive raycast.
+    pub(crate) dirty_triangles: Vec<usize>,
     /// Set when this dab grew the mesh.
     pub(crate) rebuild: Option<SculptRebuild>,
     /// Set when the kernel result cannot be published safely. This must abort
@@ -481,12 +494,14 @@ impl SculptSession {
             return match self.rebuild_after_densify(cancel) {
                 Ok(Some(rebuild)) => Some(DabOutcome {
                     touched: Vec::new(),
+                    dirty_triangles: Vec::new(),
                     rebuild: Some(rebuild),
                     failure: None,
                 }),
                 Ok(None) => None,
                 Err(failure) => Some(DabOutcome {
                     touched: Vec::new(),
+                    dirty_triangles: Vec::new(),
                     rebuild: None,
                     failure: Some(failure),
                 }),
@@ -496,12 +511,14 @@ impl SculptSession {
             return Some(DabOutcome::default());
         }
         let normal_vertices = outcome.normal_vertices;
+        let dirty_triangles = outcome.dirty_triangles;
         if self
             .patch_shadow(&outcome.touched_vertices, &normal_vertices)
             .is_err()
         {
             return Some(DabOutcome {
                 touched: Vec::new(),
+                dirty_triangles: Vec::new(),
                 rebuild: None,
                 failure: Some(DabFailure::ShadowPoisoned),
             });
@@ -511,6 +528,7 @@ impl SculptSession {
         touched.extend(normal_vertices);
         Some(DabOutcome {
             touched,
+            dirty_triangles,
             rebuild: None,
             failure: None,
         })
