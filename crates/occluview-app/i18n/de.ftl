@@ -195,7 +195,6 @@ mesh-exported-aligned = { $name } in ausgerichteter Position als { $format } exp
 mesh-exported-aligned-warnings = { $name } in ausgerichteter Position als { $format } exportiert (Warnungen: { $warnings }): { $path }
 mesh-exported-unmoved = { $name } exportiert (Scan wurde nicht bewegt) als { $format }: { $path }
 mesh-exported-unmoved-warnings = { $name } exportiert (Scan wurde nicht bewegt) als { $format } (Warnungen: { $warnings }): { $path }
-mesh-warning-point-cloud = Punktwolke für STL ausgelassen
 mesh-warning-vertex-colors = Vertexfarben nicht geschrieben
 mesh-warning-uvs = UVs nicht geschrieben
 mesh-warning-texture-image = Texturbild nicht geschrieben

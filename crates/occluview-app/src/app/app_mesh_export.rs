@@ -493,7 +493,6 @@ pub(super) fn mesh_export_warning_summary(
     let labels: Vec<String> = warnings
         .iter()
         .map(|warning| match warning {
-            MeshWriteWarning::PointCloudRejectedForStl => locale.tr("mesh-warning-point-cloud"),
             MeshWriteWarning::VertexColorsNotWritten => locale.tr("mesh-warning-vertex-colors"),
             MeshWriteWarning::UvsNotWritten => locale.tr("mesh-warning-uvs"),
             MeshWriteWarning::TextureImageNotWritten => locale.tr("mesh-warning-texture-image"),

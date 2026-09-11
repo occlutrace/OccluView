@@ -195,7 +195,6 @@ mesh-exported-aligned = { $name } exportado en su posición alineada como { $for
 mesh-exported-aligned-warnings = { $name } exportado en su posición alineada como { $format } (avisos: { $warnings }): { $path }
 mesh-exported-unmoved = { $name } exportado (sin mover) como { $format }: { $path }
 mesh-exported-unmoved-warnings = { $name } exportado (sin mover) como { $format } (avisos: { $warnings }): { $path }
-mesh-warning-point-cloud = nube de puntos omitida en STL
 mesh-warning-vertex-colors = colores de vértice no incluidos
 mesh-warning-uvs = UV no incluidos
 mesh-warning-texture-image = imagen de textura no incluida

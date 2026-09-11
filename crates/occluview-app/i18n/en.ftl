@@ -198,7 +198,6 @@ mesh-exported-aligned = Exported { $name } in its aligned position as { $format 
 mesh-exported-aligned-warnings = Exported { $name } in its aligned position as { $format } (warnings: { $warnings }): { $path }
 mesh-exported-unmoved = Exported { $name } (this scan has not been moved) as { $format }: { $path }
 mesh-exported-unmoved-warnings = Exported { $name } (this scan has not been moved) as { $format } (warnings: { $warnings }): { $path }
-mesh-warning-point-cloud = point cloud omitted from STL
 mesh-warning-vertex-colors = vertex colors not included
 mesh-warning-uvs = UVs not included
 mesh-warning-texture-image = texture image not included

@@ -217,7 +217,6 @@ mesh-exported-aligned = { $name } экспортирован в выровнен
 mesh-exported-aligned-warnings = { $name } экспортирован в выровненной позиции как { $format } (предупреждения: { $warnings }): { $path }
 mesh-exported-unmoved = { $name } экспортирован (скан не сдвигался) как { $format }: { $path }
 mesh-exported-unmoved-warnings = { $name } экспортирован (скан не сдвигался) как { $format } (предупреждения: { $warnings }): { $path }
-mesh-warning-point-cloud = облако точек пропущено для STL
 mesh-warning-vertex-colors = цвета вершин не записаны
 mesh-warning-uvs = UV не записаны
 mesh-warning-texture-image = изображение текстуры не записано

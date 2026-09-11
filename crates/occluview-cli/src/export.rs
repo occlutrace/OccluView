@@ -158,7 +158,6 @@ fn os_str_ascii_case_equal(left: &OsStr, right: &OsStr) -> bool {
 pub(crate) fn print_write_warnings(report: &MeshWriteReport) {
     for warning in &report.warnings {
         let message = match warning {
-            MeshWriteWarning::PointCloudRejectedForStl => "point cloud omitted from STL",
             MeshWriteWarning::VertexColorsNotWritten => "vertex colors not included",
             MeshWriteWarning::UvsNotWritten => "UVs not included",
             MeshWriteWarning::TextureImageNotWritten => "texture image not included",

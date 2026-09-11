@@ -61,8 +61,6 @@ impl Default for MeshWriteOptions {
 /// Non-fatal export warnings emitted by the writer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MeshWriteWarning {
-    /// STL does not support point clouds.
-    PointCloudRejectedForStl,
     /// Vertex colors were present but not written.
     VertexColorsNotWritten,
     /// UVs were present but not written.
@@ -342,7 +340,7 @@ fn write_mesh_to_file(
 
 static NEXT_EXPORT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
-fn create_export_temp(path: &Path) -> Result<(std::path::PathBuf, File), FormatError> {
+fn create_export_temp(path: &Path) -> Result<(PathBuf, File), FormatError> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -747,7 +745,7 @@ mod tests {
         let destination = directory.path().join("scan.obj");
         std::fs::write(&temporary, b"complete export").expect("stage temporary");
 
-        super::publish_by_exclusive_copy(&temporary, &destination).expect("first publish");
+        publish_by_exclusive_copy(&temporary, &destination).expect("first publish");
         assert_eq!(
             std::fs::read(&destination).expect("read export"),
             b"complete export"
@@ -758,7 +756,7 @@ mod tests {
         );
 
         std::fs::write(&temporary, b"second export").expect("stage second temporary");
-        let error = super::publish_by_exclusive_copy(&temporary, &destination)
+        let error = publish_by_exclusive_copy(&temporary, &destination)
             .expect_err("an existing destination is never replaced");
         assert_eq!(
             error.kind(),
