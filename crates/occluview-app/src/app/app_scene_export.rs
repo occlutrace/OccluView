@@ -1,9 +1,10 @@
 //! Whole-scene export with each visible layer's pose baked into its geometry.
 
 use super::app_mesh_export::{
-    default_layer_export_directory, default_layer_export_format, default_layer_export_stem,
-    fallback_mesh_write_format, layer_export_file_dialog, mesh_export_format_from_path,
-    mesh_write_extension, normalize_layer_export_path,
+    append_mesh_export_warnings, default_layer_export_directory, default_layer_export_format,
+    default_layer_export_stem, fallback_mesh_write_format, layer_export_file_dialog,
+    mesh_export_format_from_path, mesh_export_warning_summary, mesh_write_extension,
+    normalize_layer_export_path,
 };
 use super::{AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
@@ -108,7 +109,7 @@ impl OccluViewApp {
             .map(SceneMesh::id)
             .collect();
         match write_mesh_overwrite(&path, &mesh, format, MeshWriteOptions::default()) {
-            Ok(_) => {
+            Ok(report) => {
                 let saved = if dropped_texture {
                     self.ui.locale.tr_with(
                         "export-scene-saved-unmerged",
@@ -120,9 +121,14 @@ impl OccluViewApp {
                         &[("path", &path.display().to_string())],
                     )
                 };
+                let warnings = mesh_export_warning_summary(&report.warnings, &self.ui.locale);
                 self.document.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
-                self.ui.status_message = Some(saved);
+                self.ui.status_message = Some(append_mesh_export_warnings(
+                    saved,
+                    warnings.as_deref(),
+                    &self.ui.locale,
+                ));
             }
             Err(error) => {
                 let summary = self.ui.locale.tr_with(
@@ -200,14 +206,20 @@ impl OccluViewApp {
         let mut written = 0usize;
         let mut successful_layers = Vec::with_capacity(visible.len());
         let mut failures = Vec::new();
+        let mut warning_messages = Vec::new();
         for ((_, entry), (path, (stem, format))) in
             visible.iter().zip(destinations.iter().zip(&specs))
         {
             match write_layer_export_new_with_retry(path, &directory, stem, *format, entry) {
-                Ok((actual_path, _report)) => {
+                Ok((actual_path, report)) => {
                     written += 1;
                     if actual_path != *path {
                         renamed += 1;
+                    }
+                    if let Some(warnings) =
+                        mesh_export_warning_summary(&report.warnings, &self.ui.locale)
+                    {
+                        warning_messages.push(format!("{}: {warnings}", actual_path.display()));
                     }
                     successful_layers.push(entry.id());
                 }
@@ -253,7 +265,12 @@ impl OccluViewApp {
                 ],
             ),
         };
-        self.ui.status_message = Some(status);
+        let warning_text = (!warning_messages.is_empty()).then(|| warning_messages.join("; "));
+        self.ui.status_message = Some(append_mesh_export_warnings(
+            status,
+            warning_text.as_deref(),
+            &self.ui.locale,
+        ));
         if !failures.is_empty() {
             self.ui.app_error = Some(AppErrorDialog {
                 title: self.ui.locale.tr("mesh-export-failed-title"),
