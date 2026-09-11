@@ -71,9 +71,14 @@ jobs:
       - name: Install mingw
         run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - name: cargo check (cross-platform crates)
+        # `--all-targets` matters here: a test or helper guarded by
+        # `cfg(not(windows))` while its caller is not (or the reverse) only
+        # fails once test targets are compiled for this target, and the fast
+        # Linux lane is where that should surface rather than the Windows
+        # runner.
         run: |
-          cargo check -p occluview-core -p occluview-formats -p occluview-render \
-            --locked --target x86_64-pc-windows-gnu
+          cargo clippy -p occluview-core -p occluview-formats -p occluview-render \
+            --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 
   windows-only:
     name: build (windows integration)
