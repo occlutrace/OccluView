@@ -35,8 +35,15 @@ pub(crate) struct LayerOverlayChanges {
 /// that rule lives with the contact feature, not with the overlay that draws the
 /// rows.
 pub(crate) struct LayerContactRows<'a> {
-    /// Index of the layer currently wearing contact marks, if any.
-    pub(crate) marked_index: Option<usize>,
+    /// Whether each layer is currently wearing contact marks, one entry per
+    /// scene layer.
+    ///
+    /// A reading paints BOTH arches of its pair, so both rows offer to close it;
+    /// a single "the" marked index could only ever name one of them and left the
+    /// other offering to open a second reading on the same scans.
+    ///
+    /// Shorter than the layer list means "not marked".
+    pub(crate) marked: &'a [bool],
     /// Whether a contact reading can be opened, one entry per scene layer.
     /// Shorter than the layer list means "not readable".
     pub(crate) readable: &'a [bool],
@@ -92,7 +99,7 @@ pub(crate) fn show(
                                 show_texture: entry.show_texture && entry.show_vertex_colors,
                                 has_color_data: entry.mesh.carries_color_data(),
                                 has_texture: entry.mesh.texture().is_some(),
-                                contacts: contacts.marked_index == Some(index),
+                                contacts: contacts.marked.get(index).copied().unwrap_or(false),
                                 can_read_contacts: contacts
                                     .readable
                                     .get(index)

@@ -83,7 +83,7 @@ impl OccluViewApp {
 
         let paths = self.persistence.current_paths.clone();
         let active_layer_id = self.document.edit_mode.selected_layer_id();
-        let (marked_index, readable) = self.contact_rows(scene.as_ref());
+        let (marked, readable) = self.contact_rows(scene.as_ref());
         let changes = layers_overlay::show(
             ui,
             viewport_rect,
@@ -91,7 +91,7 @@ impl OccluViewApp {
             &paths,
             active_layer_id,
             layers_overlay::LayerContactRows {
-                marked_index,
+                marked: &marked,
                 readable: &readable,
             },
             &self.ui.locale,
@@ -280,13 +280,18 @@ impl OccluViewApp {
     /// reading: readability depends on the OTHER layers (a reading needs a
     /// second visible surface), so a stored copy would go stale the moment a
     /// scan was hidden or removed.
-    pub(super) fn contact_rows(&self, scene: &Scene) -> (Option<usize>, Vec<bool>) {
-        let marked = self.tools.contacts.pair().and_then(|pair| {
-            scene
-                .meshes()
-                .iter()
-                .position(|entry| entry.id() == pair.subject)
-        });
+    pub(super) fn contact_rows(&self, scene: &Scene) -> (Vec<bool>, Vec<bool>) {
+        // Which layers the menu offers to CLOSE on. A reading paints BOTH arches,
+        // so either participant can take the marks down — `HideContacts` closes
+        // the pair whichever row raised it.
+        let pair = self.tools.contacts.pair();
+        let marked = scene
+            .meshes()
+            .iter()
+            .map(|entry| {
+                pair.is_some_and(|pair| entry.id() == pair.subject || entry.id() == pair.antagonist)
+            })
+            .collect();
         let readable = scene
             .meshes()
             .iter()
@@ -548,6 +553,35 @@ impl OccluViewApp {
 #[cfg(test)]
 mod tests {
     use super::{discard_lasso_outline, egui, MeshSelectionDrag};
+
+    /// Both arches of a reading must offer to close it.
+    ///
+    /// A reading paints both participants, so a row that wears marks must say
+    /// so or its menu offers to open a *second* reading on the same two scans
+    /// while the first is still up. The rows are built from the pair, not from
+    /// its subject: this pins the shape that makes that possible — a flag per
+    /// layer, since one "marked index" can only ever name one of the two.
+    #[test]
+    fn a_reading_marks_both_of_its_arches() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
+        let body = crate::primary_ui_tests::method_body(source, "pub(super) fn contact_rows");
+        assert!(!body.is_empty(), "contact_rows must exist");
+        assert!(
+            body.contains("pair.antagonist"),
+            "the antagonist must be marked too, or its own menu offers a second reading"
+        );
+        assert!(
+            body.contains("entry.id() == pair.subject"),
+            "the subject is still one of the two"
+        );
+        let overlay =
+            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
+        assert!(
+            !overlay.contains("marked_index"),
+            "a single index cannot mark both arches; the rows are per layer"
+        );
+    }
 
     #[test]
     fn context_menu_drops_only_an_in_progress_lasso() {
