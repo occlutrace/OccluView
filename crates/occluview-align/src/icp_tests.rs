@@ -162,6 +162,50 @@ fn trustworthy_report() -> IcpReport {
     }
 }
 
+/// Two different jaws must not be authorized as an alignment.
+///
+/// The numbers are measured, not invented. Running `refine` on a real upper
+/// and a real lower arch (the fixtures in `real_scans.rs`, `calmcase` pair)
+/// produces this report at every starting distance from touching to 40 mm
+/// apart: 34.5 % of the moving surface finds a point on the other jaw within
+/// the 2 mm search radius, so coverage and the geometric-RMS ceiling both pass
+/// while the pose is meaningless — the two jaws have no single correct joint
+/// position, they only meet where the occlusal surfaces touch.
+///
+/// The median is what separates this from a real alignment: 0.42 mm here,
+/// against a discretisation error for an arch seated on a displaced copy of
+/// itself. This test pins the gate that rejects it, so nobody later relaxes
+/// the median and lets a confidently wrong pose paint a heatmap.
+#[test]
+fn two_different_jaws_are_not_authorized_as_an_alignment() {
+    let two_jaws = IcpReport {
+        geometric_rms: 0.5777,
+        median_abs: 0.4203,
+        p95_abs: 1.0643,
+        coverage: 0.3454,
+        inlier_ratio: 0.2763,
+        ..trustworthy_report()
+    };
+    assert!(
+        !two_jaws.is_trustworthy_refinement_for(&settings()),
+        "a pose that only touches the other jaw's occlusal surface must not be \
+         authorized: {two_jaws:?}"
+    );
+
+    // The same gate still accepts a real seating, and the difference is the
+    // median rather than any of the coarse measures.
+    let seated = IcpReport {
+        geometric_rms: 0.02,
+        median_abs: 0.01,
+        p95_abs: 0.05,
+        ..trustworthy_report()
+    };
+    assert!(
+        seated.is_trustworthy_refinement_for(&settings()),
+        "a seated pair must still be authorized: {seated:?}"
+    );
+}
+
 #[test]
 fn only_converged_full_rank_coverage_can_authorize_refinement() {
     assert!(trustworthy_report().is_trustworthy_refinement());

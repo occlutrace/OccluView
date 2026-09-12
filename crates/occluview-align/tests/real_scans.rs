@@ -439,6 +439,15 @@ fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
         );
         match outcome {
             Ok(report) => {
+                println!(
+                    "GATE apart={shift_mm} rms={:.4} geo={:.4} med={:.4} p95={:.4} cov={:.4} ratio={:.4}",
+                    report.rms,
+                    report.geometric_rms,
+                    report.median_abs,
+                    report.p95_abs,
+                    report.coverage,
+                    report.inlier_ratio
+                );
                 let back = (report.rigid.translation - start.translation).length();
                 println!(
                     "start {shift_mm:>5.1} mm -> ok  rms={:.4} coverage={:.3} converged={} moved={:.3} mm",
@@ -509,10 +518,34 @@ fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_presen
             &CancelFlag::new(),
         );
         match outcome {
-            Ok(report) => println!(
-                "apart {shift_mm:>5.1} mm -> accepted rms={:.4} coverage={:.4} (must be refused)",
-                report.rms, report.coverage
-            ),
+            Ok(report) => {
+                // A pose here is a confident answer to a question with no
+                // answer. The two jaws relate only where their occlusal
+                // surfaces meet, and several positions explain that equally
+                // well; a heatmap over one of them would look authoritative
+                // and mean nothing. This branch used to PRINT the problem
+                // instead of failing on it, so the test passed while the
+                // solver returned exactly what it was written to forbid.
+                //
+                // A refusal is the correct outcome; what is checked here is
+                // that the pose is not reported as a fit. `is_trustworthy`
+                // is the gate the worker applies before the operator is told
+                // anything, so a report it rejects is still a refusal from
+                // the operator's side.
+                assert!(
+                    !report.is_trustworthy_refinement_for(&RefineSettings::default()),
+                    "two different jaws must not be reported as an alignment at \
+                     {shift_mm} mm apart: rms={:.4} median={:.4} coverage={:.4}",
+                    report.rms,
+                    report.median_abs,
+                    report.coverage
+                );
+                println!(
+                    "apart {shift_mm:>5.1} mm -> accepted pose refused to the operator \
+                     (rms={:.4} med={:.4}), as it should be",
+                    report.rms, report.median_abs
+                );
+            }
             Err(FitRejection::Ambiguous) => {
                 println!("apart {shift_mm:>5.1} mm -> refused as ambiguous, as it should be");
             }
