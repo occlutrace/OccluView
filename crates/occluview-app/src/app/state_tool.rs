@@ -47,6 +47,12 @@ pub(super) struct ToolState {
     /// display, markings, drag, brush and session poses. One struct so the app
     /// carries a single `align` field instead of eighteen loose ones.
     pub(super) align: AlignState,
+    /// The occlusal contact reading: the pair it runs between, the law it is
+    /// read under, the load depth, the packed fields the viewport paints, and
+    /// its own worker. Deliberately independent of `align`: a reading runs over
+    /// its own pair and takes its roles as arguments, so nothing here can pick
+    /// up whichever scans the alignment happened to be looking at.
+    pub(super) contacts: crate::contact::ContactState,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: EditorTab,
 }
@@ -61,6 +67,7 @@ impl ToolState {
             measure: MeasureTool::default(),
             sculpt: SculptTool::default(),
             align: AlignState::default(),
+            contacts: crate::contact::ContactState::default(),
             editor_tab: EditorTab::default(),
         }
     }

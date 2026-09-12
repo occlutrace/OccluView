@@ -1,0 +1,24 @@
+[package]
+name = "occluview-contact"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "Occlusal contact metrology: signed surface fields and clinical colour laws."
+
+[dependencies]
+glam = { workspace = true }
+occluview-align = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+# The determinism test installs its own rayon pool to pin that the result does
+# not depend on the thread count.
+rayon = { workspace = true }
+
+[lints]
+workspace = true

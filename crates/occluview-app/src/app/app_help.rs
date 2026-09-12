@@ -141,6 +141,10 @@ impl OccluViewApp {
                 crate::mesh_editor_overlay::EditorTab::EditMesh => HintContext::MeshEditing,
                 crate::mesh_editor_overlay::EditorTab::Sculpt => HintContext::Sculpt,
             }
+        } else if self.tools.contacts.is_open() {
+            // A reading is a tool the operator is in the middle of using, so its
+            // gestures replace the plain navigation reminder until it closes.
+            HintContext::Contacts
         } else {
             HintContext::Navigation
         }

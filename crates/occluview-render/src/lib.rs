@@ -13,6 +13,8 @@
 //!   struct byte-for-byte).
 //! - [`gpu`] - GPU mesh upload (vertex/index buffers) from `occluview_core::Mesh`.
 //! - [`pipeline`] - render pipeline creation (device + shader + layout).
+//! - [`contact_texture`] - the packed contact field a layer paints by (group 2),
+//!   with its ramp carried in the per-mesh uniform.
 //! - [`offscreen`] - headless render-to-texture (thumbnails, golden tests).
 //!
 //! ## Status
@@ -32,6 +34,7 @@
 
 pub mod camera;
 pub mod clipping;
+pub mod contact_texture;
 pub mod cut_camera;
 pub mod error;
 pub mod gpu;
@@ -43,18 +46,19 @@ pub mod texture;
 
 pub use camera::{camera_ortho_proj_matrix, camera_view_matrix, GpuCamera};
 pub use clipping::{ClipPlane, CutViewSpec};
+pub use contact_texture::{ContactFieldTexels, GpuContactMaterial, FIELD_FAR_SENTINEL_MM};
 pub use cut_camera::{
     cut_view_camera, cut_view_camera_focused, cut_view_camera_focused_with_up, slice_view_basis,
     slice_view_basis_with_up,
 };
 pub use error::RenderError;
 pub use gpu::GpuMesh;
-pub use mesh_uniform::GpuMeshUniform;
+pub use mesh_uniform::{GpuMeshUniform, CONTACT_STOP_CAPACITY};
 pub use offscreen::{
-    AdapterPolicy, AdapterResult, ClippedMeshRequest, CutMeshRequest, Offscreen, PreparedScene,
-    PreparedSceneClipRequest, PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate,
-    PreparedViewportClipRequest, PreparedViewportRequest, RenderDeadline, SceneDrawEntry,
-    SculptSurfaceFeedbackRequest, ThumbnailSpec, ViewportSpec,
+    AdapterPolicy, AdapterResult, ClippedMeshRequest, ContactPaintSource, CutMeshRequest,
+    Offscreen, PreparedScene, PreparedSceneClipRequest, PreparedSceneSource, PreparedSceneTopology,
+    PreparedSceneUpdate, PreparedViewportClipRequest, PreparedViewportRequest, RenderDeadline,
+    SceneDrawEntry, SculptSurfaceFeedbackRequest, ThumbnailSpec, ViewportSpec,
 };
 pub use pipeline::live_depth_format;
 pub use pipeline::Renderer;

@@ -85,6 +85,18 @@ pub(super) fn apply_layer_context_action_with_status(
         return apply_layer_repair_action_with_status(app, scene, paths, request);
     }
 
+    // A contact reading is not a mesh edit: it measures the scene and paints
+    // the measurement. It is routed here because this is where a layer context
+    // action lands, and it must run before the edit-mode guard below decides
+    // anything about the mesh.
+    if matches!(
+        request.action,
+        LayerContextAction::Contacts | LayerContextAction::HideContacts
+    ) {
+        app.apply_contact_context_action(scene, request);
+        return LayerContextApply::default();
+    }
+
     if request.action == LayerContextAction::ExportLayer {
         app.save_layer_export_dialog(scene, paths, request);
         return LayerContextApply::default();

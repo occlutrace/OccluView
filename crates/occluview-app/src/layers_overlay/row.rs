@@ -33,6 +33,10 @@ pub(super) struct LayerRowState {
     pub(super) face_editable: bool,
     pub(super) can_export: bool,
     pub(super) show_vertex_colors: bool,
+    /// Whether this layer wears occlusal-contact marks right now.
+    pub(super) contacts: bool,
+    /// Whether a contact reading can be opened on this layer.
+    pub(super) can_read_contacts: bool,
     pub(super) show_texture: bool,
     pub(super) has_color_data: bool,
     pub(super) has_texture: bool,
@@ -103,6 +107,8 @@ pub(super) fn show_layer_row(
         show_texture: state.show_texture && state.show_vertex_colors,
         has_color_data: state.has_color_data,
         has_texture: state.has_texture,
+        contacts: state.contacts,
+        can_read_contacts: state.can_read_contacts,
     };
 
     // Click-sense catch-all under the controls: a right-click in the gaps

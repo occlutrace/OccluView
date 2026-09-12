@@ -17,6 +17,8 @@ impl SelectionOverlaySource {
             uniform: self.uniform,
             visible: true,
             wireframe: true,
+            // A selection overlay is a display aid, never a measurement.
+            contact: None,
         }
     }
 }
@@ -114,7 +116,7 @@ fn selection_overlay_for_layer(
             show_vertex_colors: 1,
             show_texture: 1,
             measured_map: 0,
-            padding: [0; 2],
+            ..GpuMeshUniform::identity()
         },
     })
 }

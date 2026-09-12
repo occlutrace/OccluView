@@ -28,6 +28,7 @@ pub(crate) enum HintContext {
     Align,
     Cut,
     Measure,
+    Contacts,
 }
 
 const NAVIGATION: &[HintRow] = &[
@@ -243,6 +244,31 @@ const LAYERS_AND_EXPLORER_PREVIEW: &[HintRow] = &[
     },
 ];
 
+/// The occlusal contact reading: how to open one, what the one slider does, and
+/// which of the two readings answers which question.
+const CONTACTS: &[HintRow] = &[
+    HintRow {
+        gesture: "RMB on a layer",
+        key: "help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites",
+    },
+    HintRow {
+        gesture: "Pointer over the map",
+        key: "help-hint-contacts-read-the-contact-depth-under-the-cursor",
+    },
+    HintRow {
+        gesture: "Heavy at",
+        key: "help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded",
+    },
+    HintRow {
+        gesture: "Contacts / Approach",
+        key: "help-hint-contacts-switch-between-marks-only-and-the-whole-approach",
+    },
+    HintRow {
+        gesture: "Esc",
+        key: "help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans",
+    },
+];
+
 pub(crate) const ALL_SECTIONS: &[HintSection] = &[
     HintSection {
         key: "help-section-navigation",
@@ -269,6 +295,10 @@ pub(crate) const ALL_SECTIONS: &[HintSection] = &[
         rows: CUT_VIEW,
     },
     HintSection {
+        key: "help-section-contacts",
+        rows: CONTACTS,
+    },
+    HintSection {
         key: "help-section-layers-preview",
         rows: LAYERS_AND_EXPLORER_PREVIEW,
     },
@@ -288,6 +318,9 @@ pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
             "LMB plant or move · Ctrl+wheel in Section resizes · F flips · Esc closes"
         }
         HintContext::Measure => "LMB measure · RMB clears · Wheel zooms · Esc closes",
+        HintContext::Contacts => {
+            "Right-click a layer · Show contacts · drag Heavy at to repaint · Esc closes"
+        }
     }
 }
 
@@ -300,30 +333,54 @@ pub(crate) const fn contextual_line_key(context: HintContext) -> &'static str {
         HintContext::Align => "help-hintline-align",
         HintContext::Cut => "help-hintline-cut",
         HintContext::Measure => "help-hintline-measure",
+        HintContext::Contacts => "help-hintline-contacts",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{contextual_line, HintContext, ALL_SECTIONS};
+    use super::{contextual_line, contextual_line_key, HintContext, ALL_SECTIONS};
+
+    /// Every context, listed once for the tests that must cover all of them.
+    ///
+    /// A new variant is forced into `contextual_line_key` by its exhaustive
+    /// `match`, and into this list by the two tests below failing without it.
+    const ALL_CONTEXTS: &[HintContext] = &[
+        HintContext::Navigation,
+        HintContext::MeshEditing,
+        HintContext::Sculpt,
+        HintContext::Align,
+        HintContext::Cut,
+        HintContext::Measure,
+        HintContext::Contacts,
+    ];
 
     #[test]
     fn catalogue_has_every_display_section_with_rows() {
-        assert_eq!(ALL_SECTIONS.len(), 7);
+        assert_eq!(ALL_SECTIONS.len(), 8);
         assert!(ALL_SECTIONS.iter().all(|section| !section.rows.is_empty()));
+    }
+
+    /// Every context's line must be the English catalog's own text: the
+    /// catalogue is what renders, so a source literal that drifts from it is a
+    /// second, invisible copy of the wording.
+    #[test]
+    fn every_contextual_line_is_pinned_to_its_catalog_entry() {
+        #![allow(clippy::expect_used)]
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        for context in ALL_CONTEXTS {
+            assert_eq!(
+                catalog.text(contextual_line_key(*context)).as_deref(),
+                Some(contextual_line(*context)),
+                "{context:?} hint line drifted from its catalog entry"
+            );
+        }
     }
 
     #[test]
     fn every_context_has_a_contextual_line() {
-        for context in [
-            HintContext::Navigation,
-            HintContext::MeshEditing,
-            HintContext::Sculpt,
-            HintContext::Align,
-            HintContext::Cut,
-            HintContext::Measure,
-        ] {
-            assert!(!contextual_line(context).is_empty());
+        for context in ALL_CONTEXTS {
+            assert!(!contextual_line(*context).is_empty());
         }
     }
 }

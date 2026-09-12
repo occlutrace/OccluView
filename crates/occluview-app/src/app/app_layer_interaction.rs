@@ -83,12 +83,17 @@ impl OccluViewApp {
 
         let paths = self.persistence.current_paths.clone();
         let active_layer_id = self.document.edit_mode.selected_layer_id();
+        let (marked_index, readable) = self.contact_rows(scene.as_ref());
         let changes = layers_overlay::show(
             ui,
             viewport_rect,
             scene.as_ref(),
             &paths,
             active_layer_id,
+            layers_overlay::LayerContactRows {
+                marked_index,
+                readable: &readable,
+            },
             &self.ui.locale,
         );
         // Ownership is handed over, not borrowed: the material-only path
@@ -259,7 +264,35 @@ impl OccluViewApp {
             show_texture: entry.show_texture && entry.show_vertex_colors,
             has_color_data: entry.mesh.carries_color_data(),
             has_texture: entry.mesh.texture().is_some(),
+            contacts: self
+                .tools
+                .contacts
+                .pair()
+                .is_some_and(|pair| pair.subject == hit.layer_id),
+            can_read_contacts: crate::contact::can_read_contacts(scene, hit.layer_id),
         })
+    }
+
+    /// Which layer wears contact marks, and which layers a reading can be opened
+    /// on — the two facts the layer rows and the viewport menu need.
+    ///
+    /// Computed once per frame from the live scene rather than stored beside the
+    /// reading: readability depends on the OTHER layers (a reading needs a
+    /// second visible surface), so a stored copy would go stale the moment a
+    /// scan was hidden or removed.
+    pub(super) fn contact_rows(&self, scene: &Scene) -> (Option<usize>, Vec<bool>) {
+        let marked = self.tools.contacts.pair().and_then(|pair| {
+            scene
+                .meshes()
+                .iter()
+                .position(|entry| entry.id() == pair.subject)
+        });
+        let readable = scene
+            .meshes()
+            .iter()
+            .map(|entry| crate::contact::can_read_contacts(scene, entry.id()))
+            .collect();
+        (marked, readable)
     }
 
     /// Native right-click on a mesh (a stationary secondary click, so RMB-drag
