@@ -53,6 +53,23 @@ const MIN_REFINEMENT_COVERAGE_FRACTION: f64 = 0.05;
 /// it follows the physical search setting rather than a mesh-size guess.
 const MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION: f64 = 0.5;
 
+/// How far the TYPICAL matched vertex may sit from the surface it matched.
+///
+/// A fraction of the operator's correspondence radius, like the ceiling above,
+/// but this one is what tells an alignment from an accident. Two different
+/// jaws can be brought close enough that a third of one surface finds points on
+/// the other within the search radius; measured, that seating reports a
+/// geometric RMS of 0.58 mm and a coverage of 35 %, so it satisfies every
+/// threshold above while being exactly the "confidently wrong pose" this gate
+/// exists to stop.
+///
+/// The median separates them cleanly. On the same pair: the two-jaw seating has
+/// a median of 0.42 mm, while an arch seated against a displaced copy of itself
+/// has a median at the surface's own discretisation error. The threshold sits
+/// between those, scaled by the radius so it follows the operator's setting
+/// rather than a mesh-size guess.
+const MAX_REFINEMENT_MEDIAN_FRACTION: f64 = 0.10;
+
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
 const HUBER_FACTOR: f64 = 1.345;
@@ -179,8 +196,12 @@ impl IcpReport {
     /// it as refined and paint a misleading map.
     #[must_use]
     pub fn is_trustworthy_refinement_for(&self, settings: &RefineSettings) -> bool {
-        let limit = settings.influence_radius_mm.abs() * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
+        let radius = settings.influence_radius_mm.abs();
+        let limit = radius * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
+        let median_limit = radius * MAX_REFINEMENT_MEDIAN_FRACTION;
         self.is_trustworthy_refinement_with_limit(limit)
+            && self.median_abs.is_finite()
+            && self.median_abs <= median_limit
     }
 
     fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {
