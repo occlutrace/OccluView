@@ -194,6 +194,8 @@ pub(crate) struct ContactState {
     /// re-submit after a display change never copies a mesh.
     pub(crate) geometry: AlignGeometry,
     next_revision: u64,
+    /// Whether the details popover is showing beside the bar.
+    details_open: bool,
 }
 
 impl Default for ContactState {
@@ -213,6 +215,7 @@ impl Default for ContactState {
             worker: None,
             geometry: AlignGeometry::default(),
             next_revision: 0,
+            details_open: false,
         }
     }
 }
@@ -413,6 +416,19 @@ impl ContactState {
     /// older reading land last.
     pub(crate) fn is_busy(&self) -> bool {
         self.in_flight.is_some() || self.worker.as_ref().is_some_and(ContactWorker::is_busy)
+    }
+
+    /// Whether the details popover is showing beside the bar.
+    ///
+    /// Lives in the state rather than in egui memory so it survives the frames
+    /// the bar is not drawn (a hidden window, a modal in front).
+    pub(crate) fn details_open(&self) -> bool {
+        self.details_open
+    }
+
+    /// Toggle the details popover.
+    pub(crate) fn toggle_details(&mut self) {
+        self.details_open = !self.details_open;
     }
 
     /// The worker, started on first use.

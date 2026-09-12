@@ -150,6 +150,10 @@ impl OccluViewApp {
             });
         let over_egui = pointer.is_some_and(|point| {
             layers_rect.contains(point)
+                // The contact bar draws on the Background layer, so the layer
+                // test above cannot see it: without this the cut disc takes the
+                // wheel through the bar and the slider never moves.
+                || crate::app::app_contact_bar::contact_bar_rect(viewport_rect).contains(point)
                 || ctx
                     .layer_id_at(point)
                     .is_some_and(|layer| layer.order != egui::Order::Background)
