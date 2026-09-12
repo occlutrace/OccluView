@@ -1,4 +1,5 @@
-// OccluView mesh shader: studio-lit, vertex-color, or texture-mapped.
+// OccluView mesh shader: studio-lit, vertex-color, or texture-mapped, with an
+// optional per-fragment occlusal-contact ramp.
 //
 // Vertex format matches occluview_core::Vertex (#[repr(C)], 36 bytes):
 //   position: [f32; 3]  @ offset 0
@@ -9,9 +10,17 @@
 // Bindings:
 //   group 0 binding 0: camera uniform (view + projection + light + eye)
 //   group 1 binding 0: per-mesh uniform (model matrix + tint + opacity +
-//                      has_texture flag)
+//                      has_texture flag + the contact ramp)
 //   group 2 binding 0: texture_2d (optional; bound only when has_texture != 0)
 //   group 2 binding 1: sampler    (optional; same)
+//   group 2 binding 2: contact field, Rgba8Unorm holding one f32 bit pattern
+//                      per texel; read with `textureLoad` in the vertex stage
+//                      (never sampled, never filtered)
+//
+// The contact field is a signed distance in millimetres per vertex: positive is
+// a gap to the opposing surface, zero is exact touch, negative is penetration
+// depth. `vs_main` decodes it, the varying interpolates it, and `fs_main` looks
+// the colour up per fragment — see `contact_ramp_color`.
 
 const POINT_SPLAT_RADIUS_PX: f32 = 3.5;
 const BACKFACE_INSPECTION_TINT: vec3<f32> = vec3<f32>(0.52, 0.60, 0.66);
@@ -58,8 +67,21 @@ struct MeshUniform {
     show_texture: u32,
     // 1 = this layer shows a measured colour map (deviation heatmap).
     measured_map: u32,
-    _padding_0: u32,
-    _padding_1: u32,
+    // 1 = this layer paints the occlusal contact field from `contact_stops`.
+    contact_map: u32,
+    // Texels per row of the packed field texture, so a vertex index becomes a
+    // texture coordinate without `textureDimensions`.
+    contact_field_width: f32,
+    // (widest painted gap mm, far-edge feather mm, 0, 0)
+    contact_gap: vec4<f32>,
+    // (mm, L, a, b) per stop in Oklab, descending in mm — the ramp's own
+    // numbers, produced by occluview_contact::stop_table on the CPU.
+    contact_stops: array<vec4<f32>, 16>,
+    // Stops in use; at least 1, so the `stop_count - 1` walk stays in range.
+    contact_stop_count: u32,
+    contact_padding_0: u32,
+    contact_padding_1: u32,
+    contact_padding_2: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -67,6 +89,11 @@ struct MeshUniform {
 
 @group(2) @binding(0) var mesh_texture: texture_2d<f32>;
 @group(2) @binding(1) var mesh_sampler: sampler;
+// The packed signed field, one f32 bit pattern per texel. Loaded — never
+// sampled — so no filtering can average a distance with a sentinel, and so the
+// vertex stage may read it (textureSample with implicit derivatives is
+// fragment-only; textureLoad is not).
+@group(2) @binding(2) var contact_field: texture_2d<f32>;
 
 // Cross-section clipping plane (group 3). When enabled, fragments on the
 // "below" side of the plane (dot(world_pos, normal) - distance < 0) are
@@ -94,7 +121,33 @@ struct VertexOut {
     @location(3) world_pos: vec3<f32>,
     @location(4) splat_uv: vec2<f32>,
     @location(5) splat_enabled: f32,
+    // Signed contact field in millimetres for this vertex, or 0 when the layer
+    // paints no contact field. Interpolated: the FIELD is linear across a
+    // triangle, so its value at a fragment is exact, and the non-linear ramp is
+    // looked up from it per fragment rather than interpolated as a colour.
+    @location(6) contact_mm: f32,
 };
+
+/// Decode this vertex's signed contact field, in millimetres, from the packed
+/// field texture.
+///
+/// One f32 per texel, stored as the little-endian byte pattern across the RGBA
+/// channels of an Rgba8Unorm texture: four-byte formats cannot be bound next to
+/// a filtering sampler (`unfilterable-float`), so the value is smuggled through
+/// a filterable one and unpacked by hand. `contact_field_width` turns the vertex
+/// index into a coordinate, which keeps the shader free of
+/// `textureDimensions` and lets the field be row-padded on the CPU.
+fn contact_field_mm(vertex_index: u32) -> f32 {
+    let width = u32(max(mesh_uniform.contact_field_width, 1.0));
+    let x = vertex_index % width;
+    let y = vertex_index / width;
+    let packed = textureLoad(contact_field, vec2<i32>(i32(x), i32(y)), 0);
+    let bits = u32(packed.r * 255.0 + 0.5)
+        | (u32(packed.g * 255.0 + 0.5) << 8u)
+        | (u32(packed.b * 255.0 + 0.5) << 16u)
+        | (u32(packed.a * 255.0 + 0.5) << 24u);
+    return bitcast<f32>(bits);
+}
 
 fn point_splat_corner(vertex_index: u32) -> vec2<f32> {
     let corner = vertex_index % 6u;
@@ -122,6 +175,7 @@ fn vertex_out(
     world_pos: vec4<f32>,
     splat_uv: vec2<f32>,
     splat_enabled: f32,
+    contact_mm: f32,
 ) -> VertexOut {
     var out: VertexOut;
     out.clip_pos = clip_pos;
@@ -140,15 +194,22 @@ fn vertex_out(
     out.world_pos = world_pos.xyz;
     out.splat_uv = splat_uv;
     out.splat_enabled = splat_enabled;
+    out.contact_mm = contact_mm;
     return out;
 }
 
 @vertex
-fn vs_main(in: VertexIn) -> VertexOut {
+fn vs_main(in: VertexIn, @builtin(vertex_index) vertex_index: u32) -> VertexOut {
     // World position via the per-mesh model matrix.
     let world_pos = mesh_uniform.model * vec4<f32>(in.position, 1.0);
     let clip_pos = camera.projection * camera.view * world_pos;
-    return vertex_out(in, clip_pos, world_pos, vec2<f32>(0.0, 0.0), 0.0);
+    // Guarded: a layer without contacts must not read a field texture bound for
+    // some other layer's material.
+    var contact_mm = 0.0;
+    if (mesh_uniform.contact_map != 0u) {
+        contact_mm = contact_field_mm(vertex_index);
+    }
+    return vertex_out(in, clip_pos, world_pos, vec2<f32>(0.0, 0.0), 0.0, contact_mm);
 }
 
 @vertex
@@ -166,7 +227,80 @@ fn vs_point_splat(in: VertexIn, @builtin(vertex_index) vertex_index: u32) -> Ver
     );
     let clip_offset = corner * ndc_radius * center_clip.w;
     let clip_pos = center_clip + vec4<f32>(clip_offset, 0.0, 0.0);
-    return vertex_out(in, clip_pos, world_pos, corner, 1.0);
+    // A point cloud never carries contacts (a point has no opposing surface to
+    // measure along), so this pass reports the neutral value.
+    return vertex_out(in, clip_pos, world_pos, corner, 1.0, 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Occlusal contact ramp.
+//
+// The stop table arrives in Oklab from `occluview_contact::stop_table`, which
+// its own tests pin against the CPU `ContactScale::color_at`; this is the same
+// evaluation, in the same space, so a colour the legend shows is the colour the
+// surface wears.
+//
+// Interpolating in Oklab rather than sRGB is what keeps a blue→cyan→green→
+// yellow→red run vivid: the perceptual straight line has no neon band and no
+// hue overshoot, while an sRGB lerp between the same stops passes through
+// washed-out mud. The encode back to sRGB at the end is required, not
+// decorative: the CPU hands back display-sRGB bytes and the whole pipeline
+// writes raw values into an Rgba8Unorm target, so the shader has to arrive in
+// the same space.
+// ---------------------------------------------------------------------------
+
+fn oklab_to_linear_contact(oklab: vec3<f32>) -> vec3<f32> {
+    let l3 = oklab.x + 0.3963377774 * oklab.y + 0.2158037573 * oklab.z;
+    let m3 = oklab.x - 0.1055613458 * oklab.y - 0.0638541728 * oklab.z;
+    let s3 = oklab.x - 0.0894841775 * oklab.y - 1.291485548 * oklab.z;
+    let l = l3 * l3 * l3;
+    let m = m3 * m3 * m3;
+    let s = s3 * s3 * s3;
+    return clamp(
+        vec3<f32>(
+            4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+            -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+            -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+        ),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+}
+
+fn linear_to_srgb_contact(linear: vec3<f32>) -> vec3<f32> {
+    let c = clamp(linear, vec3<f32>(0.0), vec3<f32>(1.0));
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return clamp(select(hi, lo, c <= vec3<f32>(0.0031308)), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+/// The ramp's colour at a signed field value, in display sRGB.
+///
+/// Walks the descending stop table, clamps outside it to the end stops, and
+/// treats a zero-width span as its upper stop — a duplicate stop is a caller's
+/// choice (the articulating-paper law carries its touch colour flat across a
+/// 10 um measurement tolerance), not a division by zero.
+fn contact_ramp_color(signed_mm: f32) -> vec3<f32> {
+    let count = max(mesh_uniform.contact_stop_count, 1u);
+    let first = mesh_uniform.contact_stops[0];
+    let last = mesh_uniform.contact_stops[count - 1u];
+    let value = clamp(signed_mm, last.x, first.x);
+    var oklab = last.yzw;
+    for (var i = 0u; i + 1u < count; i = i + 1u) {
+        let high = mesh_uniform.contact_stops[i];
+        let low = mesh_uniform.contact_stops[i + 1u];
+        if (value > high.x || value < low.x) {
+            continue;
+        }
+        let span = high.x - low.x;
+        var t = 0.0;
+        if (span > 0.0) {
+            t = (high.x - value) / span;
+        }
+        oklab = mix(high.yzw, low.yzw, t);
+        break;
+    }
+    return linear_to_srgb_contact(oklab_to_linear_contact(oklab));
 }
 
 @fragment
@@ -246,6 +380,24 @@ fn fs_main(
     } else {
         base_rgb = in.color;
         base_a = 1.0;
+    }
+
+    // Occlusal contact paint, evaluated HERE and not at the vertices. The field
+    // is linear across a triangle, the ramp is not, so interpolating the field
+    // and looking the colour up per fragment is the only arithmetic that both
+    // keeps the ramp's hues and puts the edge of the painted band exactly where
+    // the field crosses it — no smear across a triangle, no washed-out rim.
+    //
+    // The paint ends by WEIGHT, never by fading toward white: a ramp that washes
+    // out reads as a lighting artefact rather than as data. Inside the far band
+    // only the opacity moves, so a vertex measured a hair short of touching
+    // fades into the bare surface instead of drifting to another colour.
+    if (mesh_uniform.contact_map != 0u) {
+        let far = mesh_uniform.contact_gap.x;
+        let fade = mesh_uniform.contact_gap.y;
+        let t = clamp((far - in.contact_mm) / max(fade, 1e-6), 0.0, 1.0);
+        let weight = t * t * (3.0 - 2.0 * t);
+        base_rgb = mix(base_rgb, contact_ramp_color(in.contact_mm), weight);
     }
 
     // A measured colour map keeps its hue and skips the tint, so a ramp reaches

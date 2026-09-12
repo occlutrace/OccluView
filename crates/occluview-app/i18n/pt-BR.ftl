@@ -843,3 +843,67 @@ align-reject-ambiguous = O ajuste encontrou várias superfícies igualmente prov
 align-reject-nonfinite = O ponto ou a superfície selecionados são inválidos
 align-status-stepped = Passos pelo histórico
 align-status-moving-hand = Movendo à mão
+
+## Contatos oclusais: clique com o botão direito em um escaneamento e veja onde
+## ele encontra o escaneamento antagonista. Uma leitura é o papel de articular
+## (apenas marcas, coloridas por profundidade), a outra o mapa de aproximação
+## (quão perto, em toda parte). Um controle move a profundidade que a escala lê
+## como carga total, e recolore um campo já medido em vez de medir de novo.
+layer-menu-contacts = Mostrar contatos
+layer-menu-hide-contacts = Ocultar contatos
+
+contact-title = Contatos oclusais
+contact-close-hint = Fechar a leitura e retirar as marcas dos dois escaneamentos
+contact-against = { $subject } contra { $antagonist }
+contact-unknown-layer = um escaneamento que não está mais aberto
+
+contact-mode-marks = Contatos
+contact-mode-marks-hint = Onde as superfícies se encontram, colorido pela intensidade — o resto fica limpo, como o papel de articular deixa
+contact-mode-approach = Aproximação
+contact-mode-approach-hint = Quão perto o outro escaneamento está em toda parte, carga incluída
+
+contact-load-label = carga em
+contact-load-suffix = mm
+contact-load-hint = A profundidade em que esta escala é lida como carga total. Movê-la recolore o mapa já medido, sem medir de novo.
+contact-flatten = Uma cor por contato
+contact-flatten-hint = Reduzir cada área de contato ao seu ponto mais profundo. Desligado mantém a distribuição de força dentro de cada marca.
+
+contact-legend-deepest = { $mm } mm na oclusão
+
+contact-stats-area = Área de contato
+contact-stats-contacts = Contatos
+contact-stats-deepest = Mais profundo
+
+contact-readout-gap = folga
+contact-readout-load = carga
+
+contact-status-measuring = Medindo…
+contact-status-measuring-hint = As duas superfícies estão sendo lidas uma contra a outra
+contact-status-remeasuring = Medindo de novo…
+contact-status-remeasuring-hint = Um escaneamento se moveu, então as distâncias mudaram. O mapa está sendo lido novamente.
+contact-status-needs-second = Uma leitura de contatos precisa de um segundo escaneamento visível para medir
+contact-status-no-surface = Um dos escaneamentos não tem superfície para medir
+contact-status-worker-failed = A medição não foi concluída
+
+contact-opened = Lendo contatos em { $label }
+contact-closed = Leitura de contatos encerrada
+help-section-contacts = Contatos oclusais
+help-hintline-contacts = Clique com o botão direito em uma camada · Mostrar contatos · o controle «carga em» recolore · Esc fecha
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Ler os contatos oclusais contra o escaneamento antagonista
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Ler a profundidade do contato sob o ponteiro, em qualquer das arcadas
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Mover a profundidade que a escala lê como carga total
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Alternar entre apenas marcas e toda a aproximação
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Fechar a leitura e retirar as marcas dos dois escaneamentos
+contact-retry = Ler novamente
+contact-status-subject-unusable = O escaneamento desta leitura não pode ser medido agora
+contact-status-subject-unusable-hint = Mostre-o de novo ou deixe-o como malha de triângulos, e a leitura continua
+contact-status-antagonist-unusable = O escaneamento usado como referência não pode ser medido agora
+contact-status-antagonist-unusable-hint = Mostre-o de novo ou deixe-o como malha de triângulos, e a leitura continua
+contact-status-no-overlap = Os escaneamentos estão longe demais
+contact-status-no-overlap-hint = Nada em nenhuma das superfícies ficou ao alcance da leitura. Verifique se estão em oclusão.
+contact-status-failed-hint = Leia novamente; se continuar falhando, o par talvez precise de reparo antes.
+contact-status-needs-second-hint = Abra o escaneamento antagonista ou mostre-o de novo e inicie a leitura
+contact-legend-gap = folga até { $mm } mm
+contact-stats-balance = Área por lado
+contact-stats-balance-hint = Área de contato de cada lado da linha média do próprio escaneamento. A divisão segue as coordenadas do escaneamento, então um caso girado ou espelhado pode trocar os números.
+layer-menu-contacts-unavailable = Uma leitura de contatos precisa de duas malhas de triângulos visíveis — mostre ou abra antes o escaneamento antagonista

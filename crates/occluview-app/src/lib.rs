@@ -57,6 +57,10 @@ mod app_paths;
 mod app_settings;
 mod bridge_split;
 mod bridge_split_overlay;
+mod contact;
+#[cfg(test)]
+mod contact_render_tests;
+mod contact_worker;
 mod cut_geometry;
 mod cut_manipulator;
 mod cut_overlay;

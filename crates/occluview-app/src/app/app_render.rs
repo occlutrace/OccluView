@@ -16,14 +16,13 @@ use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
     paint_axis_gizmo, paint_scale_bar, AppErrorAction, AppErrorDialog, Arc, AxisGizmoInput,
     Context, CutTool, GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen,
-    PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene,
-    SceneMesh, ThumbnailSpec, ViewportSpec,
+    RenderedFrame, Result, Scene, SceneMesh, ThumbnailSpec, ViewportSpec,
 };
 use anyhow::Error;
 use occluview_core::Aabb;
 use occluview_render::{
-    AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
-    RenderDeadline, RenderError,
+    AdapterPolicy, PreparedSceneClipRequest, PreparedSceneTopology, PreparedViewportClipRequest,
+    PreparedViewportRequest, RenderDeadline, RenderError,
 };
 use std::time::Duration;
 
@@ -236,14 +235,14 @@ impl OccluViewApp {
         let offscreen = self.render.offscreen.as_ref()?;
         let mut scene_rebuilt = false;
         if self.render.invalidation.offscreen_scene_stale() {
-            let updates = prepared_scene_updates(scene);
+            let updates = self.prepared_scene_updates(scene);
             let rebuild = self
                 .render
                 .prepared_scene
                 .as_mut()
                 .is_none_or(|prepared| !prepared.update(offscreen.renderer(), &updates));
             if rebuild {
-                let sources = prepared_scene_sources(scene);
+                let sources = self.prepared_scene_sources(scene);
                 self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
                 scene_rebuilt = true;
             }
@@ -390,7 +389,7 @@ impl OccluViewApp {
         let restore_deviation = self.align_overlay_is_up();
         let mut scene_rebuilt = false;
         if self.render.invalidation.offscreen_scene_stale() {
-            let updates = prepared_scene_updates(&scene);
+            let updates = self.prepared_scene_updates(&scene);
             let rebuild = self
                 .render
                 .prepared_scene
@@ -398,7 +397,7 @@ impl OccluViewApp {
                 .is_none_or(|prepared| !prepared.update(offscreen.renderer(), &updates));
             if rebuild {
                 let prepare_started_at = Instant::now();
-                let sources = prepared_scene_sources(&scene);
+                let sources = self.prepared_scene_sources(&scene);
                 let vertex_count: usize = sources
                     .iter()
                     .map(|source| source.mesh.vertices().len())
@@ -609,8 +608,8 @@ impl OccluViewApp {
                 viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
                 let mut rebuilt = false;
                 if self.render.invalidation.live_scene_stale() {
-                    let sources = prepared_scene_sources(scene);
-                    let updates = prepared_scene_updates(scene);
+                    let sources = self.prepared_scene_sources(scene);
+                    let updates = self.prepared_scene_updates(scene);
                     // Only a real rebuild re-uploads the scan's own colours. A
                     // uniform-only reconcile leaves the map on the GPU exactly
                     // where it was, so pushing it again would move thirty-four
@@ -940,6 +939,14 @@ impl OccluViewApp {
         // A click the axis gizmo snapped on never doubles as a measure anchor.
         let align_ui_consumed =
             self.show_align_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        // The contact reading runs whether or not the Align tool is armed, and
+        // its readout is painted after the panels so the chip sits above them.
+        self.drain_contacts_worker(ctx);
+        self.sync_contacts_with_scene(ctx);
+        self.handle_contact_escape(ctx);
+        let contact_ui_consumed = self.show_contact_panel(ctx, response.rect);
+        self.show_contact_hover(ui, response, ctx);
+        let contact_ui_consumed = contact_ui_consumed && !align_ui_consumed;
         let measure_ui_consumed =
             self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
         if let Some(axis) = axis_snap {
@@ -949,7 +956,12 @@ impl OccluViewApp {
                 ctx.request_repaint();
             }
         }
-        if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed && !align_ui_consumed {
+        if !bridge_ui_consumed
+            && !cut_ui_consumed
+            && !measure_ui_consumed
+            && !align_ui_consumed
+            && !contact_ui_consumed
+        {
             self.handle_viewport_input(ctx, response, response.rect, axis_snap.is_some());
         }
         // Input resolves and caches the authoritative sculpt hit first. The
@@ -1017,34 +1029,8 @@ pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         show_vertex_colors: u32::from(entry.show_vertex_colors || deviation),
         show_texture: u32::from(entry.show_texture && !deviation),
         measured_map: u32::from(deviation),
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     }
-}
-
-pub(super) fn prepared_scene_sources(scene: &Scene) -> Vec<PreparedSceneSource<'_>> {
-    scene
-        .meshes()
-        .iter()
-        .map(|entry| PreparedSceneSource {
-            mesh: &entry.mesh,
-            uniform: scene_mesh_uniform(entry),
-            visible: entry.visible,
-            wireframe: entry.wireframe,
-        })
-        .collect()
-}
-
-pub(super) fn prepared_scene_updates(scene: &Scene) -> Vec<PreparedSceneUpdate> {
-    scene
-        .meshes()
-        .iter()
-        .map(|entry| PreparedSceneUpdate {
-            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
-            uniform: scene_mesh_uniform(entry),
-            visible: entry.visible,
-            wireframe: entry.wireframe,
-        })
-        .collect()
 }
 
 #[cfg(test)]

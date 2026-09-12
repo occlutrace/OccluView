@@ -28,6 +28,20 @@ pub(crate) struct LayerOverlayChanges {
     pub(crate) layer_edits: Vec<LayerRowChange>,
 }
 
+/// What the layer rows and the viewport menu need to offer the contact reading.
+///
+/// Passed in rather than read from the scene: whether a reading can be opened on
+/// a layer depends on the other layers (it needs a second visible surface), and
+/// that rule lives with the contact feature, not with the overlay that draws the
+/// rows.
+pub(crate) struct LayerContactRows<'a> {
+    /// Index of the layer currently wearing contact marks, if any.
+    pub(crate) marked_index: Option<usize>,
+    /// Whether a contact reading can be opened, one entry per scene layer.
+    /// Shorter than the layer list means "not readable".
+    pub(crate) readable: &'a [bool],
+}
+
 // Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn show(
@@ -36,6 +50,7 @@ pub(crate) fn show(
     scene: &Scene,
     paths: &[PathBuf],
     active_layer_id: Option<SceneMeshId>,
+    contacts: LayerContactRows<'_>,
     locale: &crate::i18n::LocaleManager,
 ) -> LayerOverlayChanges {
     let layer_count = scene.meshes().len();
@@ -77,6 +92,12 @@ pub(crate) fn show(
                                 show_texture: entry.show_texture && entry.show_vertex_colors,
                                 has_color_data: entry.mesh.carries_color_data(),
                                 has_texture: entry.mesh.texture().is_some(),
+                                contacts: contacts.marked_index == Some(index),
+                                can_read_contacts: contacts
+                                    .readable
+                                    .get(index)
+                                    .copied()
+                                    .unwrap_or(false),
                             },
                             LayerRowView {
                                 index,

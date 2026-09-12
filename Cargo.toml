@@ -24,6 +24,7 @@ members = [
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
     "crates/occluview-align",
+    "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
     "crates/occluview-formats",
@@ -42,6 +43,7 @@ exclude = ["fuzz"]
 default-members = [
     "crates/occlu-mesh-edit",
     "crates/occluview-align",
+    "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
     "crates/occluview-formats",
@@ -71,6 +73,7 @@ occlu-geometry-math = { path = "crates/occlu-geometry-math" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-align   = { path = "crates/occluview-align" }
+occluview-contact = { path = "crates/occluview-contact" }
 occluview-core    = { path = "crates/occluview-core" }
 occluview-hps = { path = "crates/occluview-hps" }
 occluview-formats = { path = "crates/occluview-formats" }

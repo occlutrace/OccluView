@@ -25,8 +25,7 @@ use eframe::egui;
 use glam::Mat4;
 use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
-    GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, PreparedSceneTopology,
-    PreparedSceneUpdate, ThumbnailSpec, ViewportSpec,
+    GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, ThumbnailSpec, ViewportSpec,
 };
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::Arc;
@@ -45,6 +44,9 @@ mod app_align_panel;
 mod app_align_results;
 mod app_align_session;
 mod app_bridge_split;
+mod app_contact;
+mod app_contact_hover;
+mod app_contact_panel;
 mod app_cut_measure;
 mod app_dialogs;
 mod app_empty_state;
@@ -61,6 +63,7 @@ mod app_recent_popup;
 mod app_render;
 #[cfg(test)]
 mod app_render_characterization_tests;
+mod app_render_contact;
 mod app_scale_bar;
 mod app_scene_commit;
 mod app_scene_export;

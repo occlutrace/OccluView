@@ -244,8 +244,12 @@ impl Renderer {
     }
 
     /// The texture bind group layout (group 2): a `texture_2d<f32>` at binding
-    /// 0 and a `sampler` at binding 1. Exposed so callers can build bind groups
-    /// against their own uploaded textures.
+    /// 0, a `sampler` at binding 1, and the packed contact field at binding 2.
+    /// Exposed so callers can build bind groups against their own uploaded
+    /// textures. Every bind group built against it must supply all three
+    /// bindings — use [`crate::GpuContactMaterial`], [`crate::GpuTexture`], or
+    /// [`crate::GpuTexture::fallback`], each of which fills the field binding
+    /// with the inert sentinel texel when the layer paints no contacts.
     pub fn texture_layout(&self) -> &wgpu::BindGroupLayout {
         &self.texture_layout
     }
@@ -631,7 +635,16 @@ fn clip_plane_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 
 /// Bind group layout for the texture + sampler (group 2): a
 /// `texture_2d<f32>` at binding 0 (fragment), a filtering sampler at binding
-/// 1 (fragment).
+/// 1 (fragment), and the packed contact field at binding 2 (vertex and
+/// fragment).
+///
+/// The field is its own binding rather than a fifth bind group because wgpu's
+/// default `max_bind_groups` is four and groups 0..3 are already taken. It
+/// stays `Rgba8Unorm` (`Float { filterable: true }`) on purpose: the same group
+/// holds a filtering sampler, and wgpu rejects an `unfilterable-float` texture
+/// next to one — the packed f32 is smuggled through the filterable format and
+/// unpacked bit-by-bit in the shader instead. Nothing ever *samples* it, so no
+/// filter can average a measured distance with a sentinel.
 fn texture_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("occluview texture layout"),
@@ -650,6 +663,16 @@ fn texture_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
         ],

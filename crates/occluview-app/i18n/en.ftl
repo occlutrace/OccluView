@@ -844,3 +844,69 @@ align-reject-ambiguous = Best fit found more than one equally plausible surface 
 align-reject-nonfinite = The selected point or surface is invalid
 align-status-stepped = Stepped through history
 align-status-moving-hand = Moving by hand
+
+# ---------------------------------------------------------------------------
+# Occlusal contacts: right-click a scan and read where it meets the scan it
+# bites against. One reading is articulating paper (marks only, coloured by
+# depth); the other is the approach map (how close, everywhere). One slider
+# moves the depth the ramp calls fully loaded, and it re-colours a measurement
+# already in hand rather than re-measuring.
+# ---------------------------------------------------------------------------
+layer-menu-contacts = Show contacts
+layer-menu-hide-contacts = Hide contacts
+
+contact-title = Occlusal contacts
+contact-close-hint = Close the reading and take the marks off both scans
+contact-against = { $subject } against { $antagonist }
+contact-unknown-layer = a scan that is no longer open
+
+contact-mode-marks = Contacts
+contact-mode-marks-hint = Where the surfaces meet, coloured by how hard — the rest stays bare, as articulating paper leaves it
+contact-mode-approach = Approach
+contact-mode-approach-hint = How close the other scan is everywhere, load included
+
+contact-load-label = heavy at
+contact-load-suffix = mm
+contact-load-hint = The depth this ramp reads as fully loaded. Moving it recolours the map already measured — no re-measurement.
+contact-flatten = One colour per contact
+contact-flatten-hint = Flatten every contact patch to its deepest point. Off keeps the force distribution inside each mark.
+
+contact-legend-deepest = { $mm } mm into the bite
+
+contact-stats-area = Contact area
+contact-stats-contacts = Contacts
+contact-stats-deepest = Deepest
+
+contact-readout-gap = gap
+contact-readout-load = load
+
+contact-status-measuring = Measuring…
+contact-status-measuring-hint = Reading the two surfaces against each other
+contact-status-remeasuring = Re-measuring…
+contact-status-remeasuring-hint = A scan moved, so the distances changed. The map is being read again.
+contact-status-needs-second = A contact reading needs a second visible scan to measure against
+contact-status-needs-second-hint = Open the opposing scan, or show it again, and start the reading
+contact-status-subject-unusable = The scan this reading is about cannot be measured right now
+contact-status-subject-unusable-hint = Show it again, or leave it as a triangle mesh, and the reading resumes
+contact-status-antagonist-unusable = The scan this reading is measured against cannot be measured right now
+contact-status-antagonist-unusable-hint = Show it again, or leave it as a triangle mesh, and the reading resumes
+contact-status-no-overlap = The two scans are too far apart to read
+contact-status-no-overlap-hint = Nothing on either surface came within the reading's reach. Check that the scans are in occlusion.
+contact-status-no-surface = One of the two scans has no surface to measure
+contact-status-worker-failed = The measurement did not complete
+contact-status-failed-hint = Read again; if it keeps failing, the pair may need repairing first.
+contact-retry = Read again
+
+contact-opened = Reading contacts on { $label }
+contact-closed = Contact reading closed
+help-section-contacts = Occlusal Contacts
+help-hintline-contacts = Right-click a layer · Show contacts · drag Heavy at to repaint · Esc closes
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Read its occlusal contacts against the scan it bites against
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Read the contact depth under the cursor, on either arch
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Move the depth the ramp calls fully loaded
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Switch between marks only and the whole approach
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Close the reading and take the marks off both scans
+contact-legend-gap = gap up to { $mm } mm
+contact-stats-balance = Area each side
+contact-stats-balance-hint = Contact area either side of this scan's own mid-line. The split follows the scan's coordinates, so a rotated or mirrored case can swap the two numbers.
+layer-menu-contacts-unavailable = A contact reading needs two visible triangle meshes — show or open the opposing scan first

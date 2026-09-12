@@ -2607,6 +2607,7 @@ dependencies = [
  "glam",
  "image",
  "occluview-align",
+ "occluview-contact",
  "occluview-core",
  "occluview-formats",
  "occluview-render",
@@ -2646,6 +2647,15 @@ dependencies = [
  "tempfile",
  "tracing-subscriber",
  "windows",
+]
+
+[[package]]
+name = "occluview-contact"
+version = "1.1.1"
+dependencies = [
+ "glam",
+ "occluview-align",
+ "rayon",
 ]
 
 [[package]]

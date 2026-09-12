@@ -66,6 +66,11 @@ pub(crate) enum LayerContextAction {
     RepairMesh,
     UndoLastMeshEdit,
     ExportLayer,
+    /// Read this layer's occlusal contacts: measure it against the scan it
+    /// bites against and paint where they meet.
+    Contacts,
+    /// Take the contact marks off this layer.
+    HideContacts,
     Remove,
 }
 
@@ -114,7 +119,9 @@ pub(crate) fn apply_layer_context_action(
         | LayerContextAction::CloseHoles
         | LayerContextAction::RepairMesh
         | LayerContextAction::UndoLastMeshEdit
-        | LayerContextAction::ExportLayer => LayerContextApply::default(),
+        | LayerContextAction::ExportLayer
+        | LayerContextAction::Contacts
+        | LayerContextAction::HideContacts => LayerContextApply::default(),
         LayerContextAction::Remove => {
             let removed = scene.remove(index).is_some();
             LayerContextApply {
@@ -490,7 +497,7 @@ mod tests {
         // Crop, cut, separate, delete and close-holes are NOT in the layer
         // menu -- menu.rs asserts their absence -- because they act on a
         // selection only the Mesh Editor can make.
-        let surfaces: [(LayerContextAction, &[Surface]); 16] = [
+        let surfaces: [(LayerContextAction, &[Surface]); 18] = [
             (LayerContextAction::NextTint, &[Surface::LayerMenu]),
             (LayerContextAction::ToggleWireframe, &[Surface::LayerMenu]),
             (
@@ -527,6 +534,11 @@ mod tests {
                 &[Surface::MeshEditorPanel("Undo")],
             ),
             (LayerContextAction::ExportLayer, &[Surface::LayerMenu]),
+            // The contact reading is raised from the menu only. It is not a row
+            // toggle: it measures the scene, and a row control would have to
+            // explain which surface it measured against.
+            (LayerContextAction::Contacts, &[Surface::LayerMenu]),
+            (LayerContextAction::HideContacts, &[Surface::LayerMenu]),
             (
                 LayerContextAction::Remove,
                 &[Surface::LayerMenu, Surface::LayerRow],

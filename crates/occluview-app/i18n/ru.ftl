@@ -931,3 +931,67 @@ align-job-align = Сопоставление…
 align-job-refine = Уточнение…
 align-job-measure = Измерение…
 align-markings-dropped = Пометки сброшены — поверхность скана изменилась после закраски
+
+## Окклюзионные контакты: правый клик по скану — и видно, где он смыкается со
+## встречным сканом. Одно чтение — артикуляционная бумага (только отпечатки,
+## окрашенные по глубине), другое — карта сближения (насколько близко, везде).
+## Один ползунок задаёт глубину, которую шкала считает полной нагрузкой, и он
+## перекрашивает уже измеренное поле, а не измеряет заново.
+layer-menu-contacts = Показать контакты
+layer-menu-hide-contacts = Скрыть контакты
+
+contact-title = Окклюзионные контакты
+contact-close-hint = Закрыть чтение и снять отметки с обоих сканов
+contact-against = { $subject } относительно { $antagonist }
+contact-unknown-layer = скан, который больше не открыт
+
+contact-mode-marks = Контакты
+contact-mode-marks-hint = Где поверхности смыкаются, с цветом по силе — остальное остаётся чистым, как после артикуляционной бумаги
+contact-mode-approach = Сближение
+contact-mode-approach-hint = Насколько близко встречный скан везде, включая нагрузку
+
+contact-load-label = нагрузка при
+contact-load-suffix = мм
+contact-load-hint = Глубина, при которой шкала читается как полная нагрузка. Сдвиг перекрашивает уже измеренную карту — без повторного измерения.
+contact-flatten = Один цвет на контакт
+contact-flatten-hint = Свести каждый отпечаток контакта к его самой глубокой точке. Выключено — сохраняется распределение силы внутри отпечатка.
+
+contact-legend-deepest = { $mm } мм в смыкание
+
+contact-stats-area = Площадь контакта
+contact-stats-contacts = Контакты
+contact-stats-deepest = Самая глубокая
+
+contact-readout-gap = зазор
+contact-readout-load = нагрузка
+
+contact-status-measuring = Измерение…
+contact-status-measuring-hint = Поверхности читаются одна относительно другой
+contact-status-remeasuring = Повторное измерение…
+contact-status-remeasuring-hint = Скан переместился, расстояния изменились. Карта читается заново.
+contact-status-needs-second = Для чтения контактов нужен второй видимый скан
+contact-status-no-surface = У одного из сканов нет поверхности для измерения
+contact-status-worker-failed = Измерение не завершилось
+
+contact-opened = Чтение контактов на { $label }
+contact-closed = Чтение контактов закрыто
+help-section-contacts = Окклюзионные контакты
+help-hintline-contacts = Правый клик по слою · Показать контакты · ползунок «нагрузка при» перекрашивает карту · Esc закрывает
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Прочитать окклюзионные контакты относительно встречного скана
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Прочитать глубину контакта под курсором, на любой из челюстей
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Сдвинуть глубину, которую шкала считает полной нагрузкой
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Переключить между только отпечатками и всей зоной сближения
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Закрыть чтение и снять отметки с обоих сканов
+contact-retry = Прочитать заново
+contact-status-subject-unusable = Скан, о котором идёт чтение, сейчас нельзя измерить
+contact-status-subject-unusable-hint = Покажите его снова или оставьте полигональной сеткой — чтение возобновится
+contact-status-antagonist-unusable = Встречный скан, относительно которого идёт измерение, сейчас нельзя измерить
+contact-status-antagonist-unusable-hint = Покажите его снова или оставьте полигональной сеткой — чтение возобновится
+contact-status-no-overlap = Сканы слишком далеко друг от друга
+contact-status-no-overlap-hint = Ни одна из поверхностей не попала в зону чтения. Проверьте, что сканы стоят в окклюзии.
+contact-status-failed-hint = Прочитать заново; если снова не удаётся, пару, возможно, нужно сначала отремонтировать.
+contact-status-needs-second-hint = Откройте встречный скан или покажите его снова и начните чтение
+contact-legend-gap = зазор до { $mm } мм
+contact-stats-balance = Площадь по сторонам
+contact-stats-balance-hint = Площадь контакта по обе стороны от собственной средней линии скана. Деление идёт по координатам скана, поэтому при повороте или зеркале числа могут поменяться местами.
+layer-menu-contacts-unavailable = Для чтения контактов нужны два видимых полигональных скана — сначала покажите или откройте встречный

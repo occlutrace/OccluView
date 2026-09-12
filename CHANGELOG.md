@@ -44,6 +44,43 @@ remain in the Git history.
   instead of replacing the link, and "Export each layer" keeps working in
   folders on removable media or network shares that cannot hard-link, which
   also restores its collision retry on Windows.
+- Added an occlusal contact reading. Right-click a scan and choose Show
+  contacts: the scan is measured against the scan it bites against — the
+  nearest visible surface — and BOTH arches are painted where they meet. The
+  panel offers two readings of the same bite and one slider. Contacts marks
+  only where the surfaces actually meet and colours each mark by how deep the
+  bite is there, the way articulating paper leaves the rest of the tooth bare;
+  Approach paints how close the other scan is everywhere, load included, for
+  judging a jaw relationship rather than the contacts themselves. Heavy at
+  moves the depth the ramp calls fully loaded, and it recolours the
+  measurement already in hand instead of re-measuring: the field is what the
+  surfaces do, and the ramp is only what the colours say about it. One colour
+  per contact flattens every patch to its deepest point for a case whose
+  marks are better read as areas than as distributions.
+- The contact map carries a pointer readout: point at the surface and the
+  value under the cursor is shown in micrometres below a millimetre, beside a
+  swatch of the exact colour the surface wears there. A vertex with no
+  opposing surface inside the search radius reports nothing at all rather than
+  a plausible zero.
+- Three properties of such a map decide whether it can be read, and each is
+  enforced rather than assumed. Red sits on the load side, because red at the
+  far end puts a ring around every mark — a tooth curves away from a contact
+  within half a millimetre, so the geometry guarantees the ring. Almost
+  nothing is painted, because painting the whole approach turns a case with a
+  handful of real contacts into a field of colour with the marks lost inside
+  it. And the paint ends by weight rather than by fading toward white, which
+  reads as a lighting artefact instead of as data. Colour mixing runs in
+  Oklab, so the ramp has no neon band or hue overshoot between its stops.
+- The measurement is a Rust kernel (`occluview-contact`) that runs on its own
+  background thread beside the alignment worker, so a million-vertex pair
+  never freezes the window. It is deliberately independent of the align
+  session: a reading runs over its own pair, takes its roles as arguments, and
+  does not inherit the exclusion brush — those marks are indexed by the align
+  session's roles, and applying them to a different pair would paint out an
+  arbitrary region of a scan with nothing on screen to say why.
+- The painted band reaches the screen through a stop table in the per-mesh
+  uniform, evaluated in the fragment shader, so moving the slider is a uniform
+  write and never a re-upload or a bind-group rebuild.
 
 - Added a compact Help reference for the complete keyboard and mouse controls,
   with a contextual reminder in the viewport.

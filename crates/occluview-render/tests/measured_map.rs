@@ -58,7 +58,7 @@ fn identity_uniform(tint: [f32; 4], opacity: f32) -> GpuMeshUniform {
         show_vertex_colors: 1,
         show_texture: 1,
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     }
 }
 

@@ -126,10 +126,39 @@ Use the **Help** button in the toolbar for the complete keyboard and mouse refer
 - In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** changes Sculpt brush intensity.
   Holding **Shift** during a drag removes or strengthens the active brush mode.
 - In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag** rotates a scan in Align Manual mode; stationary **RMB click** undoes the last alignment point.
+- Right-click a layer to read its **occlusal contacts**: the marks land on both
+  scans, and the pointer reports the depth under the cursor.
 - **Ctrl+Middle-click** hides a layer; **Ctrl+Shift+Middle-click** restores the
   last hidden layer; **Shift+Middle-click** toggles translucency.
 - The bottom-right axis triad follows the camera and snaps to a labeled axis
   when an endpoint is clicked.
+
+## Occlusal contacts
+
+Right-click a scan and choose “Show contacts”. The scan is measured against
+the scan it bites against — the nearest visible surface — and both arches are
+painted where they meet. The panel carries two readings and one slider:
+
+- “Contacts” marks only where the surfaces actually meet and colours each mark
+  by how deep the bite is there, the way articulating paper leaves the rest of
+  the tooth bare.
+- “Approach” paints how close the other scan is everywhere, load included, for
+  judging a jaw relationship rather than the contacts themselves.
+- **Heavy at** moves the depth the ramp calls fully loaded. It recolours the
+  measurement already in hand, so the boundary between a light contact and a
+  heavy one is found by dragging rather than by re-measuring.
+- **One colour per contact** flattens every patch to its deepest point. Leave it
+  off to keep the distribution inside each mark. Changing it re-measures.
+
+Point at either arch to read the value under the cursor in micrometres, with a
+swatch of the exact colour the surface carries there; over a spot where nothing
+was measured, the readout does not appear at all. The numbers under the slider —
+contact area, patch count, deepest penetration — describe the scan the reading
+was opened on, named first in the panel title. **Esc** closes the reading and
+takes the marks off both scans.
+
+Two scans further apart than half a millimetre are a legitimate reading with
+nothing in it, not a failure: the panel says so and both arches stay bare.
 
 ## The cut view
 

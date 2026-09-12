@@ -839,3 +839,67 @@ align-job-align = Richte aus…
 align-job-refine = Verfeinere…
 align-job-measure = Messe…
 align-markings-dropped = Markierungen verworfen — Scanoberfläche hat sich seitdem geändert
+
+## Okklusalkontakte: Rechtsklick auf einen Scan und lesen, wo er den Gegenscan
+## berührt. Die eine Lesart ist Artikulationspapier (nur Marken, nach Tiefe
+## gefärbt), die andere die Annäherungskarte (wie nah, überall). Ein Regler
+## verschiebt die Tiefe, ab der die Skala als voll belastet gilt, und färbt eine
+## bereits gemessene Karte neu, statt neu zu messen.
+layer-menu-contacts = Kontakte anzeigen
+layer-menu-hide-contacts = Kontakte ausblenden
+
+contact-title = Okklusalkontakte
+contact-close-hint = Lesung schließen und die Marken von beiden Scans nehmen
+contact-against = { $subject } gegen { $antagonist }
+contact-unknown-layer = ein Scan, der nicht mehr geöffnet ist
+
+contact-mode-marks = Kontakte
+contact-mode-marks-hint = Wo die Flächen sich berühren, nach Stärke gefärbt — der Rest bleibt frei, wie Artikulationspapier ihn lässt
+contact-mode-approach = Annäherung
+contact-mode-approach-hint = Wie nah der Gegenscan überall ist, Belastung eingeschlossen
+
+contact-load-label = belastet ab
+contact-load-suffix = mm
+contact-load-hint = Die Tiefe, ab der diese Skala als voll belastet gilt. Verschieben färbt die bereits gemessene Karte neu — ohne neue Messung.
+contact-flatten = Eine Farbe je Kontakt
+contact-flatten-hint = Jede Kontaktfläche auf ihren tiefsten Punkt reduzieren. Aus behält die Kraftverteilung innerhalb jeder Marke.
+
+contact-legend-deepest = { $mm } mm in den Biss
+
+contact-stats-area = Kontaktfläche
+contact-stats-contacts = Kontakte
+contact-stats-deepest = Am tiefsten
+
+contact-readout-gap = Abstand
+contact-readout-load = Belastung
+
+contact-status-measuring = Messung…
+contact-status-measuring-hint = Die beiden Flächen werden gegeneinander gelesen
+contact-status-remeasuring = Erneute Messung…
+contact-status-remeasuring-hint = Ein Scan hat sich bewegt, die Abstände haben sich geändert. Die Karte wird neu gelesen.
+contact-status-needs-second = Eine Kontaktlesung braucht einen zweiten sichtbaren Scan zum Messen
+contact-status-no-surface = Einer der beiden Scans hat keine Fläche zum Messen
+contact-status-worker-failed = Die Messung wurde nicht abgeschlossen
+
+contact-opened = Kontakte auf { $label } werden gelesen
+contact-closed = Kontaktlesung geschlossen
+help-section-contacts = Okklusalkontakte
+help-hintline-contacts = Rechtsklick auf eine Ebene · Kontakte anzeigen · Regler „belastet ab“ färbt neu · Esc schließt
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Die Okklusalkontakte gegen den Gegenscan lesen
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Die Kontakttiefe unter dem Zeiger lesen, auf beiden Zahnbögen
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Die Tiefe verschieben, ab der die Skala voll belastet heißt
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Zwischen nur Marken und der ganzen Annäherung wechseln
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Die Lesung schließen und die Marken von beiden Scans nehmen
+contact-retry = Erneut lesen
+contact-status-subject-unusable = Der Scan, um den es in dieser Lesung geht, lässt sich gerade nicht messen
+contact-status-subject-unusable-hint = Wieder einblenden oder als Dreiecksnetz belassen — die Lesung läuft weiter
+contact-status-antagonist-unusable = Der Scan, gegen den gemessen wird, lässt sich gerade nicht messen
+contact-status-antagonist-unusable-hint = Wieder einblenden oder als Dreiecksnetz belassen — die Lesung läuft weiter
+contact-status-no-overlap = Die Scans liegen zu weit auseinander
+contact-status-no-overlap-hint = Nichts auf beiden Flächen lag in Reichweite der Lesung. Prüfen, ob die Scans in Okklusion stehen.
+contact-status-failed-hint = Erneut lesen; scheitert es weiter, muss das Paar eventuell zuerst repariert werden.
+contact-status-needs-second-hint = Den Gegenscan öffnen oder wieder einblenden und die Lesung starten
+contact-legend-gap = Abstand bis { $mm } mm
+contact-stats-balance = Fläche je Seite
+contact-stats-balance-hint = Kontaktfläche beiderseits der eigenen Mittellinie des Scans. Die Teilung folgt den Koordinaten des Scans; bei gedrehtem oder gespiegeltem Fall können die Zahlen tauschen.
+layer-menu-contacts-unavailable = Eine Kontaktlesung braucht zwei sichtbare Dreiecksnetze — zuerst den Gegenscan einblenden oder öffnen
