@@ -72,6 +72,7 @@ for deb in "$@"; do
   grep -F "Version:" "$control/control" >/dev/null
   grep -F "Depends:" "$control/control" >/dev/null
   grep -F "libegl1" "$control/control" >/dev/null
+  grep -F "libstdc++6" "$control/control" >/dev/null
   grep -F "libxkbcommon-x11-0" "$control/control" >/dev/null
   grep -F "Recommends: xdg-desktop-portal, libnotify-bin" "$control/control" >/dev/null
 
