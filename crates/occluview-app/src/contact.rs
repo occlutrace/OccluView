@@ -604,7 +604,7 @@ pub(crate) fn contact_job_keys(
     })
 }
 
-/// Widest packed field texture row.
+/// Preferred packed field texture row length.
 ///
 /// The shader only needs the row stride to turn a vertex index into a texel, so
 /// this is a texture-shape choice rather than a correctness one: one row per
@@ -612,6 +612,29 @@ pub(crate) fn contact_job_keys(
 /// which matters because a very tall single-column texture is the shape drivers
 /// handle worst.
 pub(crate) const CONTACT_FIELD_TEXTURE_WIDTH: u32 = 1024;
+
+/// The row length a field of `vertex_count` values must use on this device.
+///
+/// The preferred width is only a preference: a field is `ceil(n / width)` rows
+/// tall, so a large enough scan overflows `max_texture_dimension_2d` and the
+/// texture cannot be created at all — the reading would fail on the machine
+/// with the most data to read. Widening the row keeps the texture inside the
+/// limit; a pathological scan that would still overflow is refused here rather
+/// than at texture creation, so the caller gets "not packed" instead of a
+/// wgpu validation error.
+#[must_use]
+pub(crate) fn contact_field_width(vertex_count: usize, device_limit: u32) -> Option<u32> {
+    let count = u32::try_from(vertex_count).ok()?;
+    if count == 0 || device_limit == 0 {
+        return None;
+    }
+    if count <= CONTACT_FIELD_TEXTURE_WIDTH.saturating_mul(device_limit) {
+        return Some(CONTACT_FIELD_TEXTURE_WIDTH.min(count));
+    }
+    // Rows would not fit one * texel each: widen until they do.
+    let width = count.div_ceil(device_limit);
+    (width <= device_limit).then_some(width)
+}
 
 /// The align-crate soup for one layer, already posed into world space.
 ///
