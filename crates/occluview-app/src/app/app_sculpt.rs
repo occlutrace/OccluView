@@ -602,16 +602,24 @@ impl OccluViewApp {
         let scene = self.document.scene.as_ref()?;
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
-        let worker = self.tools.sculpt.worker.as_ref()?;
-        if worker.layer_id != layer_id || worker.topology_id != entry.mesh.topology_id() {
-            return None;
-        }
         let (origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
         let inverse = entry.transform.inverse();
-        let (triangle_index, local_point) = worker.pick_local_ray(
-            inverse.transform_point3(origin),
-            inverse.transform_vector3(direction),
-        )?;
+        let local_origin = inverse.transform_point3(origin);
+        let local_direction = inverse.transform_vector3(direction);
+        let worker = self.tools.sculpt.worker.as_ref().filter(|worker| {
+            worker.layer_id == layer_id && worker.topology_id == entry.mesh.topology_id()
+        });
+        // Preparing a scan-sized brush BVH takes seconds; the cursor must not
+        // wait for it. The mesh's own pick tree answers meanwhile — the worker
+        // builds one for exactly this reason — so the ring is on the surface
+        // from the first hover instead of appearing once preparation lands.
+        let (triangle_index, local_point) =
+            match worker.and_then(|worker| worker.pick_local_ray(local_origin, local_direction)) {
+                Some(hit) => hit,
+                None => entry
+                    .mesh
+                    .pick_ray_local(local_origin, local_direction, |_| true)?,
+            };
         let point = entry.transform.transform_point3(local_point);
         let distance = (point - origin).dot(direction.normalize_or_zero());
         distance.is_finite().then_some(ScenePickHit {

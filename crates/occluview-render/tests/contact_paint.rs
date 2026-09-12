@@ -147,14 +147,17 @@ fn field_at_column(x: usize) -> f32 {
     FIELD_LEFT_MM + (FIELD_RIGHT_MM - FIELD_LEFT_MM) * across
 }
 
-/// A uniform that paints `stops`, with the measured-map treatment a contact
-/// reading carries: reduced lighting and no tint, so the ramp's own hue is what
-/// reaches the screen.
+/// A uniform that paints `stops`.
+///
+/// A reading does NOT set the measured-map flag any more. That flag makes a
+/// layer skip its tint and its lighting so a ramp keeps its own hue, and a
+/// contact reading uses it for nothing: the paint is mixed over the finished
+/// surface instead, so a scan keeps the treatment the operator gave it and only
+/// the marks change. The fixture now matches the app, which is also what exposed
+/// the earlier mismatch: the flag used to return before the paint ran, so this
+/// test had been asking for a path the viewer no longer took.
 fn contact_uniform(stops: &[[f32; 4]]) -> GpuMeshUniform {
-    let mut uniform = GpuMeshUniform {
-        measured_map: 1,
-        ..GpuMeshUniform::identity()
-    };
+    let mut uniform = GpuMeshUniform::identity();
     let copied = uniform.set_contact_paint(4, PAINT_FAR_MM, FAR_FADE_MM, stops);
     assert_eq!(copied, stops.len(), "the fixture's ramp must fit the table");
     uniform
@@ -162,10 +165,7 @@ fn contact_uniform(stops: &[[f32; 4]]) -> GpuMeshUniform {
 
 /// The same layer with no contact field painted.
 fn bare_uniform() -> GpuMeshUniform {
-    GpuMeshUniform {
-        measured_map: 1,
-        ..GpuMeshUniform::identity()
-    }
+    GpuMeshUniform::identity()
 }
 
 fn prepare(

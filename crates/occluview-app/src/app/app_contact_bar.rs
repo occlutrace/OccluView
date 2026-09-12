@@ -82,7 +82,7 @@ impl OccluViewApp {
         let flatten = self.tools.contacts.flatten_patches();
         let busy = self.tools.contacts.is_busy();
         let status = self.tools.contacts.status();
-        let stats = self.tools.contacts.stats();
+        let numbers = self.tools.contacts.stats();
         let refused = self.tools.contacts.refused();
         let title = self.contact_bar_title();
         let details_open = self.tools.contacts.details_open();
@@ -94,87 +94,22 @@ impl OccluViewApp {
                 ui.set_width(rect.width());
                 ui.set_height(rect.height());
                 ui_theme::overlay_frame().show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
-                    ui.horizontal_centered(|ui| {
-                        paint_identity(ui, &title);
-                        ui.add_space(2.0);
-                        paint_mode_pair(ui, locale, mode, &mut request);
-                        ui.add_space(2.0);
-                        // The legend is what makes the colours readable, so it
-                        // is the last thing to go, not the first: it takes
-                        // whatever the controls leave and only disappears once
-                        // that is genuinely too narrow to read a ramp.
-                        let reserved = MODE_BUTTON_WIDTH * 2.0
-                            + SLIDER_WIDTH
-                            + DETAILS_BUTTON_WIDTH
-                            + 78.0
-                            + 24.0;
-                        let legend_width = (rect.width() - reserved).clamp(0.0, LEGEND_MAX_WIDTH);
-                        if legend_width >= LEGEND_MIN_WIDTH {
-                            paint_legend(ui, scale, legend_width);
-                            ui.add_space(2.0);
-                        }
-                        // Everything from here to the right edge belongs to
-                        // the action group; reserving it keeps the slider's
-                        // value from being painted over.
-                        let actions_width = DETAILS_BUTTON_WIDTH
-                            + 34.0
-                            + if refused { 78.0 + 8.0 } else { 0.0 }
-                            + if busy { 22.0 } else { 0.0 };
-                        // What the controls to the left already took, measured
-                        // from the bar's own left edge so the sum cannot drift
-                        // when a button is added or a label changes width.
-                        let used = (ui.min_rect().right() - rect.left()).max(0.0) + 8.0;
-                        let load_width = (rect.width() - used - actions_width - 26.0)
-                            .clamp(120.0, SLIDER_WIDTH);
-                        paint_load(ui, locale, &mut load_mm, &mut request, load_width);
-                        if busy {
-                            ui.add(egui::Spinner::new().size(14.0));
-                        }
-                        // A reading that cannot run says why on the bar itself.
-                        // Behind the Details button, "show the opposing scan
-                        // first" only reached an operator who had already
-                        // decided to look for it.
-                        if let Some(status) = status.filter(|status| {
-                            !matches!(
-                                status,
-                                ContactStatus::Measuring | ContactStatus::Remeasuring
-                            )
-                        }) {
-                            ui.label(
-                                egui::RichText::new(locale.tr(status.key()))
-                                    .size(11.0)
-                                    .color(ui_theme::text_weak()),
-                            )
-                            .on_hover_text(locale.tr(status_hint_key(status)));
-                        }
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(actions_width, CHIP_HEIGHT),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                            if ui
-                                .small_button("✕")
-                                .on_hover_text(locale.tr("contact-close-hint"))
-                                .clicked()
-                            {
-                                request.close = true;
-                            }
-                            paint_details_toggle(ui, locale, details_open, &mut request);
-                            if refused
-                                && crate::align_panel::chip(
-                                    ui,
-                                    78.0,
-                                    None,
-                                    &locale.tr("contact-retry"),
-                                    !busy,
-                                    false,
-                                )
-                                .clicked()
-                            {
-                                request.retry = true;
-                            }
-                        });
-                    });
+                    paint_strip(
+                        ui,
+                        rect,
+                        StripView {
+                            locale,
+                            title: &title,
+                            mode,
+                            scale,
+                            load_mm: &mut load_mm,
+                            details_open,
+                            busy,
+                            refused,
+                            status,
+                        },
+                        &mut request,
+                    );
                 });
             })
             .response;
@@ -187,7 +122,15 @@ impl OccluViewApp {
         let hovered = response.hovered();
 
         if self.tools.contacts.details_open() {
-            self.show_contact_details(ui, viewport_rect, ctx, stats, status);
+            self.show_contact_details(
+                ui,
+                viewport_rect,
+                ctx,
+                DetailsContent {
+                    numbers,
+                    sentence: status,
+                },
+            );
         }
         hovered
     }
@@ -248,6 +191,105 @@ impl OccluViewApp {
             &[("subject", &subject), ("antagonist", &against)],
         )
     }
+}
+
+/// What the strip reads from the reading, gathered once so the painter takes
+/// one argument instead of eight.
+struct StripView<'a> {
+    locale: &'a crate::i18n::LocaleManager,
+    /// What the reading is called: which scan, against which.
+    title: &'a str,
+    mode: ContactMode,
+    scale: ContactScale,
+    load_mm: &'a mut f64,
+    details_open: bool,
+    busy: bool,
+    refused: bool,
+    status: Option<ContactStatus>,
+}
+
+/// One row of controls, left to right, inside the bar's frame.
+fn paint_strip(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    view: StripView<'_>,
+    request: &mut ContactBarRequest,
+) {
+    let locale = view.locale;
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
+    ui.horizontal_centered(|ui| {
+        paint_identity(ui, view.title);
+        ui.add_space(2.0);
+        paint_mode_pair(ui, locale, view.mode, request);
+        ui.add_space(2.0);
+
+        // The legend is what makes the colours readable, so it is the last
+        // thing to go: it takes whatever the controls leave, and only
+        // disappears once that is genuinely too narrow to read a ramp.
+        let reserved = MODE_BUTTON_WIDTH * 2.0 + SLIDER_WIDTH + DETAILS_BUTTON_WIDTH + 78.0 + 24.0;
+        let legend_width = (rect.width() - reserved).clamp(0.0, LEGEND_MAX_WIDTH);
+        if legend_width >= LEGEND_MIN_WIDTH {
+            paint_legend(ui, view.scale, legend_width);
+            ui.add_space(2.0);
+        }
+
+        // Everything from here to the right edge belongs to the action group;
+        // reserving it keeps the slider's value from being painted over.
+        let actions_width = DETAILS_BUTTON_WIDTH
+            + 34.0
+            + if view.refused { 78.0 + 8.0 } else { 0.0 }
+            + if view.busy { 22.0 } else { 0.0 };
+        let used = (ui.min_rect().right() - rect.left()).max(0.0) + 8.0;
+        let load_width = (rect.width() - used - actions_width - 26.0).clamp(120.0, SLIDER_WIDTH);
+        paint_load(ui, locale, view.load_mm, request, load_width);
+        if view.busy {
+            ui.add(egui::Spinner::new().size(14.0));
+        }
+        // A reading that cannot run says why on the bar itself. Behind the
+        // Details button, "show the opposing scan first" only reached an
+        // operator who had already decided to look for it.
+        if let Some(status) = view.status.filter(|status| {
+            !matches!(
+                status,
+                ContactStatus::Measuring | ContactStatus::Remeasuring
+            )
+        }) {
+            ui.label(
+                egui::RichText::new(locale.tr(status.key()))
+                    .size(11.0)
+                    .color(ui_theme::text_weak()),
+            )
+            .on_hover_text(locale.tr(status_hint_key(status)));
+        }
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(actions_width, CHIP_HEIGHT),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                if ui
+                    .small_button("✕")
+                    .on_hover_text(locale.tr("contact-close-hint"))
+                    .clicked()
+                {
+                    request.close = true;
+                }
+                paint_details_toggle(ui, locale, view.details_open, request);
+                if view.refused
+                    && crate::align_panel::chip(
+                        ui,
+                        78.0,
+                        None,
+                        &locale.tr("contact-retry"),
+                        !view.busy,
+                        false,
+                    )
+                    .clicked()
+                {
+                    request.retry = true;
+                }
+            },
+        );
+    });
 }
 
 /// Where the bar sits: along the top of the viewport, clear of the layer list.
@@ -395,8 +437,7 @@ impl OccluViewApp {
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
-        stats: Option<ContactStats>,
-        status: Option<ContactStatus>,
+        shown: DetailsContent,
     ) {
         let locale = &self.ui.locale;
         let bar = contact_bar_rect(viewport_rect);
@@ -428,16 +469,16 @@ impl OccluViewApp {
                 {
                     toggle = Some(!flatten);
                 }
-                if let Some(stats) = stats {
-                    paint_stats(ui, stats, locale);
+                if let Some(numbers) = shown.numbers {
+                    paint_stats(ui, numbers, locale);
                 }
-                if let Some(status) = status {
+                if let Some(sentence) = shown.sentence {
                     ui.label(
-                        egui::RichText::new(locale.tr(status.key()))
+                        egui::RichText::new(locale.tr(sentence.key()))
                             .color(ui_theme::text_weak())
                             .size(11.0),
                     )
-                    .on_hover_text(locale.tr(status_hint_key(status)));
+                    .on_hover_text(locale.tr(status_hint_key(sentence)));
                 }
                 let [red, green, blue, alpha] = self.tools.contacts.scale().color_at(0.0);
                 let (swatch, _) = ui.allocate_exact_size(
@@ -474,6 +515,15 @@ impl OccluViewApp {
             self.tools.contacts.toggle_details();
         }
     }
+}
+
+/// What the details popover reads from the reading.
+#[derive(Clone, Copy)]
+struct DetailsContent {
+    /// The numbers the last measurement found, if any.
+    numbers: Option<ContactStats>,
+    /// The sentence the reading is showing, if any.
+    sentence: Option<ContactStatus>,
 }
 
 /// The extra sentence a status earns.
