@@ -692,14 +692,7 @@ fn intercept_unsaved_close_request(
 
 /// Slim vertical hairline between toolbar groups.
 fn toolbar_divider(ui: &mut egui::Ui) {
-    ui.add_space(6.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, 18.0), egui::Sense::hover());
-    ui.painter().vline(
-        rect.center().x,
-        egui::Rangef::new(rect.top(), rect.bottom()),
-        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
-    );
-    ui.add_space(6.0);
+    ui_theme::vertical_divider(ui, 18.0);
 }
 
 #[cfg(test)]

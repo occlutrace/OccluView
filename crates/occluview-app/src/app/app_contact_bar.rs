@@ -50,6 +50,11 @@ const DETAILS_BUTTON_WIDTH: f32 = 78.0;
 const BAR_MAX_WIDTH: f32 = 940.0;
 /// Space left for the layers overlay, which owns the top-left corner.
 const LAYERS_OVERLAY_CLEARANCE: f32 = 300.0;
+/// Width of the ✕ that closes the reading.
+const CLOSE_BUTTON_WIDTH: f32 = 26.0;
+/// One side of `ui_theme::overlay_frame()`'s inner margin. Kept here so the
+/// strip can size itself against the space the frame actually leaves.
+const FRAME_PADDING_X: f32 = 10.0;
 
 /// What the bar asked for this frame, applied by the caller after the closure
 /// so the bar never holds a second mutable borrow of the app.
@@ -91,9 +96,15 @@ impl OccluViewApp {
         let rect = contact_bar_rect(viewport_rect);
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                ui.set_width(rect.width());
+                // The frame's own margins are inside the rect, so the strip is
+                // laid out against what is LEFT of it. Sizing against the outer
+                // rect pushed the last controls past the right edge.
+                let inner = rect.shrink2(egui::vec2(FRAME_PADDING_X, 0.0));
+                ui.set_width(inner.width());
                 ui.set_height(rect.height());
+                ui.set_max_width(inner.width());
                 ui_theme::overlay_frame().show(ui, |ui| {
+                    ui.set_max_width(inner.width());
                     paint_strip(
                         ui,
                         rect,
@@ -221,26 +232,36 @@ fn paint_strip(
         paint_identity(ui, view.title);
         ui.add_space(2.0);
         paint_mode_pair(ui, locale, view.mode, request);
-        ui.add_space(2.0);
+        ui_theme::vertical_divider(ui, CHIP_HEIGHT - 8.0);
 
         // The legend is what makes the colours readable, so it is the last
         // thing to go: it takes whatever the controls leave, and only
         // disappears once that is genuinely too narrow to read a ramp.
         let reserved = MODE_BUTTON_WIDTH * 2.0 + SLIDER_WIDTH + DETAILS_BUTTON_WIDTH + 78.0 + 24.0;
-        let legend_width = (rect.width() - reserved).clamp(0.0, LEGEND_MAX_WIDTH);
+        let bar_width = rect.width() - FRAME_PADDING_X * 2.0;
+        let legend_width = (bar_width - reserved).clamp(0.0, LEGEND_MAX_WIDTH);
         if legend_width >= LEGEND_MIN_WIDTH {
             paint_legend(ui, view.scale, legend_width);
             ui.add_space(2.0);
         }
 
-        // Everything from here to the right edge belongs to the action group;
-        // reserving it keeps the slider's value from being painted over.
+        // Everything from here to the right edge belongs to the action group.
+        // Its width is MEASURED from the controls it holds rather than
+        // predicted from constants: a prediction goes stale the moment a
+        // divider or a button changes size, and the failure is silent — the row
+        // simply overflows and the close button lands off the strip.
         let actions_width = DETAILS_BUTTON_WIDTH
-            + 34.0
-            + if view.refused { 78.0 + 8.0 } else { 0.0 }
+            + CLOSE_BUTTON_WIDTH
+            + ui.spacing().item_spacing.x * 2.0
+            + if view.refused {
+                78.0 + ui.spacing().item_spacing.x
+            } else {
+                0.0
+            }
             + if view.busy { 22.0 } else { 0.0 };
-        let used = (ui.min_rect().right() - rect.left()).max(0.0) + 8.0;
-        let load_width = (rect.width() - used - actions_width - 26.0).clamp(120.0, SLIDER_WIDTH);
+        let used = (ui.min_rect().right() - rect.left() - FRAME_PADDING_X).max(0.0)
+            + ui.spacing().item_spacing.x;
+        let load_width = (bar_width - used - actions_width).clamp(120.0, SLIDER_WIDTH);
         paint_load(ui, locale, view.load_mm, request, load_width);
         if view.busy {
             ui.add(egui::Spinner::new().size(14.0));
@@ -262,10 +283,20 @@ fn paint_strip(
             .on_hover_text(locale.tr(status_hint_key(status)));
         }
 
-        ui.allocate_ui_with_layout(
+        // The actions are pinned to the RIGHT EDGE of the bar rather than
+        // appended to the row. A row that runs out of width silently drops what
+        // does not fit, and the control it dropped was the ✕ that closes the
+        // reading — the one control that must never be unreachable.
+        let actions_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.right() - FRAME_PADDING_X - actions_width,
+                ui.min_rect().center().y - CHIP_HEIGHT * 0.5,
+            ),
             egui::vec2(actions_width, CHIP_HEIGHT),
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(actions_rect), |ui| {
+            ui.set_width(actions_width);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button("✕")
                     .on_hover_text(locale.tr("contact-close-hint"))
@@ -287,8 +318,8 @@ fn paint_strip(
                 {
                     request.retry = true;
                 }
-            },
-        );
+            });
+        });
     });
 }
 
