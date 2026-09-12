@@ -97,8 +97,9 @@ impl OccluViewApp {
             )
         {
             self.tools.align.settings.show_deviation = false;
+            // This already invalidates the scene for the layers it restores;
+            // a second invalidation here would repeat that work for nothing.
             self.clear_deviation_overlay();
-            self.mark_scene_materials_changed();
         }
         self.tools.contacts.open(ContactPair {
             subject: layer,
@@ -378,7 +379,7 @@ impl OccluViewApp {
                     uniform: super::app_render_contact::scene_mesh_uniform_with_contacts(
                         entry,
                         field.map(|_| &scale),
-                        CONTACT_FIELD_TEXTURE_WIDTH,
+                        field_width(field),
                     ),
                     visible: entry.visible,
                     wireframe: entry.wireframe,
@@ -405,7 +406,7 @@ impl OccluViewApp {
                     uniform: super::app_render_contact::scene_mesh_uniform_with_contacts(
                         entry,
                         field.map(|_| &scale),
-                        CONTACT_FIELD_TEXTURE_WIDTH,
+                        field_width(field),
                     ),
                     visible: entry.visible,
                     wireframe: entry.wireframe,
@@ -450,6 +451,17 @@ fn pack_fields(
 /// The GPU paint for one layer's finished field.
 fn contact_paint(field: &ContactLayerField) -> ContactPaintSource {
     ContactPaintSource::new(Arc::clone(&field.texels), field.revision)
+}
+
+/// The row length the field was actually packed with.
+///
+/// Read from the packed texture rather than assumed to be the preferred 1024:
+/// the shader turns a vertex index into a texel with this number, so a field
+/// packed wider to fit the device limit would decode every vertex after the
+/// first row from the wrong texel. A layer with no field reports the preferred
+/// width; nothing reads it there, because `contact_map` is zero.
+fn field_width(field: Option<&ContactLayerField>) -> u32 {
+    field.map_or(CONTACT_FIELD_TEXTURE_WIDTH, |field| field.texels.width)
 }
 
 /// Pack one field through the contact crate's own rule — the crate owns the
