@@ -196,11 +196,11 @@ fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
         .map(|(body, _)| body)
         .unwrap_or_default();
     assert!(
-        deferral.contains("anyhow::Error::new(RenderError::ReadbackTimeout"),
+        deferral.contains("Error::new(RenderError::ReadbackTimeout"),
         "a deferral must carry a typed cause, or the caller latches the path off"
     );
     assert!(
-        !deferral.contains("anyhow::anyhow!"),
+        !deferral.contains("anyhow!("),
         "a bare string cannot be classified by the caller"
     );
 
