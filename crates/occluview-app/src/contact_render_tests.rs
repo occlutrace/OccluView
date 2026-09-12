@@ -188,9 +188,13 @@ fn render_frame(
             table.ramp[3],
             &table.stops[..usize::try_from(table.count).unwrap_or(0)],
         );
-        // A contact reading is a measurement: it keeps its own hue, so the layer
-        // draws under the measured-map treatment.
-        uniform.measured_map = 1;
+        // The measured-map treatment is NOT used for a contact reading, and
+        // setting it here was a bug: that branch skips the tint and the studio
+        // light and returns early, so the whole layer rendered as a flat white
+        // shell and the marks were never reached. The app has painted the ramp
+        // into the base colour and let the light act on it since commit
+        // ec6b585; this fixture had been left behind on the old shape. The
+        // render below is therefore the one the operator actually sees.
         uniform
     };
 
