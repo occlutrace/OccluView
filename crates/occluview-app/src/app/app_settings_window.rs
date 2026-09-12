@@ -53,17 +53,6 @@ impl OccluViewApp {
                 self.persistence.settings.zoom_sensitivity = value;
                 self.persistence.settings_persistence.mark_dirty();
             }
-            SettingsAction::SetRecentFilesLimit(limit) => {
-                self.persistence.settings.recent_files_limit = limit;
-                // Apply a smaller limit to the live list immediately.
-                let stored = self.persistence.recent_files.serialize();
-                self.persistence.recent_files = crate::recent_files::RecentFiles::deserialize(
-                    self.persistence.settings.recent_files_limit(),
-                    &stored,
-                );
-                self.persistence.settings_persistence.mark_dirty();
-                self.persistence.save_recent_files();
-            }
             SettingsAction::SetViewportBackground(background) => {
                 self.persistence.settings.viewport_background = background;
                 // Prepared scenes cache the clear color on both paths.
@@ -112,6 +101,10 @@ impl OccluViewApp {
             SettingsAction::OpenAbout => {
                 egui::Popup::close_id(&trigger.ctx, settings_popup_id());
                 self.ui.information_dialog = InformationDialog::About;
+            }
+            SettingsAction::OpenShortcuts => {
+                egui::Popup::close_id(&trigger.ctx, settings_popup_id());
+                self.ui.information_dialog = InformationDialog::KeyboardMouse;
             }
         }
     }

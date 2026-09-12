@@ -5,6 +5,7 @@ use super::super::{
     AppErrorAction, AppErrorDialog, EditModeController, LayerContextAction, LayerContextApply,
     LayerContextRequest, OccluViewApp, PathBuf, Scene,
 };
+use super::selection_batch::apply_visible_selected_face_mesh_edit_action_with_limit;
 use super::structural::{
     apply_cut_selection_to_new_layer, apply_separate_selected_components, structural_scene_apply,
     MAX_SEPARATE_COMPONENTS,
@@ -13,7 +14,7 @@ use super::whole_mesh::{edit_command_for_layer_action, layer_edit_status};
 use super::{resolve_layer, with_undoable_note, SelectedFaceEditContext};
 use occluview_core::{
     crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
-    selected_connected_components_in_mesh, CoreError, MeshEditOptions,
+    selected_connected_components_in_mesh, CoreError, MeshEditOptions, SceneMeshId,
 };
 use std::sync::Arc;
 
@@ -123,6 +124,81 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                 details: format!(
                     "Selection edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"
                 ),
+                action: AppErrorAction::None,
+            });
+            LayerContextApply::default()
+        }
+    }
+}
+
+/// Run a menu selection action across every layer the operator marked.
+///
+/// The Mesh Editor's own buttons already work this way; the layer context menu
+/// did not, so an action taken from the menu edited only the layer it was
+/// opened on and left the other marked layers alone. The menu still chooses
+/// WHICH action runs — the visible selection plan decides what it runs on.
+pub(super) fn apply_visible_selection_action_with_status(
+    app: &mut OccluViewApp,
+    scene: &mut Scene,
+    paths: &[PathBuf],
+    request: LayerContextRequest,
+) -> LayerContextApply {
+    let plan = app.document.edit_mode.visible_selection_plan(scene);
+    if plan.is_empty() {
+        // Not a multi-layer request after all: the menu may have been opened on
+        // a layer whose marks belong to the page the operator is not looking at.
+        // Fall back to the single-layer path so the refusal copy stays exact.
+        return apply_selected_face_mesh_edit_action_with_status(app, scene, paths, request);
+    }
+    let target_layers: Vec<SceneMeshId> = plan.iter().map(|selection| selection.layer_id).collect();
+    let ids_before: Vec<SceneMeshId> = scene
+        .meshes()
+        .iter()
+        .map(occluview_core::SceneMesh::id)
+        .collect();
+    let action = request.action;
+    match apply_visible_selected_face_mesh_edit_action_with_limit(
+        scene,
+        &mut app.document.edit_mode,
+        action,
+        None,
+    ) {
+        Ok(apply) if apply.scene_changed => {
+            for layer_id in &target_layers {
+                app.document.mark_mesh_edits_unsaved(*layer_id);
+            }
+            for id in scene
+                .meshes()
+                .iter()
+                .map(occluview_core::SceneMesh::id)
+                .filter(|id| !ids_before.contains(id))
+            {
+                app.document.mark_mesh_edits_unsaved(id);
+            }
+            app.ui.status_message = Some(app.ui.locale.tr_plural(
+                "batchedit-status",
+                &[(
+                    "label",
+                    &super::whole_mesh::batch_action_label(action, &app.ui.locale),
+                )],
+                &[("n", target_layers.len())],
+            ));
+            apply
+        }
+        Ok(_) => {
+            app.ui.status_message = Some(app.ui.locale.tr("edit-no-changes-hidden"));
+            LayerContextApply::default()
+        }
+        Err(error) => {
+            let summary = app.ui.locale.tr_with(
+                "edit-apply-failed-summary",
+                &[("detail", &error.to_string())],
+            );
+            app.ui.status_message = Some(summary.clone());
+            app.ui.app_error = Some(AppErrorDialog {
+                title: app.ui.locale.tr("edit-apply-failed-title"),
+                summary,
+                details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
                 action: AppErrorAction::None,
             });
             LayerContextApply::default()

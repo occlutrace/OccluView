@@ -2,6 +2,8 @@
 
 use super::session_tests::{triangle_mesh, two_triangle_mesh};
 use super::*;
+use crate::app::app_layer_edits::apply_visible_selected_face_mesh_edit_action_with_limit;
+use crate::layer_actions::LayerContextAction;
 use occluview_core::{CameraProjection, Scene, SceneMesh, SceneMeshId, ScenePickHit};
 
 fn hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) -> ScenePickHit {
@@ -200,4 +202,62 @@ fn visible_bulk_operations_ignore_hidden_layers() {
     assert!(controller.invert_visible_selections(&scene));
     assert_eq!(controller.visible_selected_face_count(&scene), 0);
     assert!(!controller.clear_visible_selections(&scene));
+}
+
+/// A menu action must run on every marked layer, not only the clicked one.
+///
+/// The operator marks faces with the Marquee or the Lasso, and those marks land
+/// on every visible layer they crossed. Taking Delete from the LAYER MENU used
+/// to edit only the layer the menu was opened on, which read as "it only edits
+/// one object". The action follows the same visible-selection plan the Mesh
+/// Editor's buttons use, so this pins that plan as the thing that decides the
+/// target set.
+#[test]
+fn a_menu_action_targets_every_marked_visible_layer() {
+    let Some(mesh_a) = two_triangle_mesh("A") else {
+        return;
+    };
+    let Some(mesh_b) = two_triangle_mesh("B") else {
+        return;
+    };
+    let mut scene = Scene::new();
+    let index_a = scene.add(SceneMesh::new(mesh_a));
+    let index_b = scene.add(SceneMesh::new(mesh_b));
+    let id_a = scene.meshes()[index_a].id();
+    let id_b = scene.meshes()[index_b].id();
+    let mut controller = EditModeController::new(4, 1_000_000);
+
+    assert!(controller.select_face_hit(&scene, hit(index_a, id_a, 0)));
+    assert!(controller.select_face_hit(&scene, hit(index_b, id_b, 1)));
+
+    // Exactly what the context-menu path reads before it acts.
+    let targets: Vec<SceneMeshId> = controller
+        .visible_selection_plan(&scene)
+        .into_iter()
+        .map(|selection| selection.layer_id)
+        .collect();
+    assert_eq!(
+        targets.len(),
+        2,
+        "a menu action must carry both marked layers, not just the clicked one"
+    );
+    assert!(targets.contains(&id_a) && targets.contains(&id_b));
+
+    // And the batch executor really edits both.
+    let Ok(apply) = apply_visible_selected_face_mesh_edit_action_with_limit(
+        &mut scene,
+        &mut controller,
+        LayerContextAction::DeleteSelectedFaces,
+        None,
+    ) else {
+        unreachable!("deleting one marked face per layer must succeed");
+    };
+    assert!(apply.scene_changed, "the scene must change");
+    for entry in scene.meshes() {
+        assert_eq!(
+            entry.mesh.triangle_count(),
+            1,
+            "each layer keeps the one triangle that was not marked"
+        );
+    }
 }

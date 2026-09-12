@@ -7,7 +7,7 @@
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
 use crate::interaction_hints::{contextual_line, contextual_line_key, HintContext, ALL_SECTIONS};
-use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
+
 use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
 use eframe::egui;
@@ -16,26 +16,6 @@ use crate::i18n::LocaleManager;
 
 const HELP_ROW_HEIGHT: f32 = 25.0;
 const HELP_GESTURE_WIDTH: f32 = 196.0;
-
-/// Canonical English wording (pinned by source guards): the toggle reads
-/// "Help" with the tooltip "Show keyboard and mouse controls". Rendering
-/// goes through the `help-toggle` / `help-toggle-tooltip` catalog keys.
-pub(super) fn show_help_toolbar_toggle(
-    ui: &mut egui::Ui,
-    enabled: bool,
-    locale: &LocaleManager,
-) -> egui::Response {
-    toolbar_toggle(
-        ui,
-        ToolbarToggle::new(
-            crate::icons::AppIcon::Licenses,
-            &locale.text("help-toggle"),
-            enabled,
-            false,
-            &locale.text("help-toggle-tooltip"),
-        ),
-    )
-}
 
 impl OccluViewApp {
     pub(super) fn show_help_dialog(&mut self, ctx: &egui::Context) {

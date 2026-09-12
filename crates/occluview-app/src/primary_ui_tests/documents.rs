@@ -251,6 +251,7 @@ const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("Enter", &["**Enter**"]),
     ("Escape", &["**Esc**"]),
     ("F", &["**F**"]),
+    ("F1", &["**F1**"]),
     ("M", &["**M**"]),
     ("Num1", &["**1**"]),
     ("Num2", &["**2**"]),
@@ -420,7 +421,8 @@ fn the_readme_points_operators_to_the_complete_controls_reference() {
     let readme = include_str!("../../../../README.md");
 
     for phrase in [
-        "**Help**",
+        "**F1**",
+        "Settings → Keyboard shortcuts",
         "complete keyboard and mouse reference",
         "**Shift+wheel** changes Sculpt brush size",
         "**Ctrl+wheel** changes Sculpt brush intensity",
