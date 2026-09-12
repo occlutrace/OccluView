@@ -495,9 +495,14 @@ const COARSE_TIE_COVERAGE: f64 = 0.02;
 const COARSE_COVERAGE_KEEP_FRACTION: f64 = 0.9;
 const COARSE_RECIPROCAL_ADVANTAGE: f64 = 0.01;
 const COARSE_RECIPROCAL_RMS_FACTOR: f64 = 1.25;
-const COARSE_POSE_TRANSLATION_EPS_MM: f64 = 0.01;
-const COARSE_POSE_ROTATION_EPS_RAD: f64 = 0.01;
 const COARSE_TIE_SHIFT_MM: f64 = 0.5;
+/// How far two coarse hypotheses may move the scan and still count as one
+/// answer, as a fraction of the correspondence radius.
+///
+/// Half the radius: hypotheses that place the surface inside the distance the
+/// search itself treats as "the same place" are one seating seen twice, not two
+/// answers to choose between. See [`poses_are_distinct`].
+const COARSE_ANSWER_TOLERANCE_FRACTION: f64 = 0.5;
 const COARSE_MAX_SHIFT_FACTOR: f64 = 4.0;
 /// Samples used by the bounded global seed search. This is intentionally much
 /// smaller than either ICP level: it locates a plausible patch, then the
@@ -638,11 +643,14 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
         });
     };
 
-    if candidates
-        .iter()
-        .copied()
-        .any(|candidate| coarse_candidates_are_ambiguous(&candidate, &best))
-    {
+    if candidates.iter().copied().any(|candidate| {
+        coarse_candidates_are_ambiguous(
+            &candidate,
+            &best,
+            moving_extent,
+            COARSE_ANSWER_TOLERANCE_FRACTION * level.settings.influence_radius_mm.abs(),
+        )
+    }) {
         return Err(FitRejection::Ambiguous);
     }
 
@@ -986,23 +994,66 @@ fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCa
     }
 }
 
-fn coarse_candidates_are_ambiguous(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
+/// Turn between two poses, in radians.
+fn turn_between(left: Rigid, right: Rigid) -> f64 {
+    (left.rotation * right.rotation.inverse())
+        .to_scaled_axis()
+        .length()
+}
+
+/// How far a coarse hypothesis may turn the scan and still be answering the
+/// operator's question.
+///
+/// A hypothesis that flips or rolls the jaw is not a rival answer to the same
+/// question, it is a different question. The coarse search tries 24 cube
+/// orientations, so an upside-down pose that happens to cover a comparable
+/// patch used to tie with the upright seating and the whole fit was refused as
+/// `Ambiguous` — measured on a real arch pair, at every starting distance from
+/// touching to 40 mm apart. `Orientation` is how an operator asks for a flipped
+/// answer; the ambiguity guard is not.
+const COARSE_SAME_QUESTION_RAD: f64 = std::f64::consts::FRAC_PI_2;
+
+fn coarse_candidates_are_ambiguous(
+    candidate: &CoarseCandidate,
+    best: &CoarseCandidate,
+    extent: f64,
+    tolerance: f64,
+) -> bool {
     // Connected-component identity is useful for ranking hypotheses, but it
     // is not evidence that two poses are different answers. Repeated cusps or
     // symmetric windows can live in one component, and choosing one of them
     // deterministically would authorize a misleading heatmap. Treat every
     // distinct, equally supported nearby pose as ambiguous.
+    //
+    // "Distinct" means distinct as an ANSWER, so a hypothesis that turns the
+    // scan onto a different face of the cube is not a rival: see
+    // `COARSE_SAME_QUESTION_RAD`.
     candidate.shift <= best.shift + COARSE_TIE_SHIFT_MM
-        && poses_are_distinct(candidate.rigid, best.rigid)
+        && turn_between(candidate.rigid, best.rigid) <= COARSE_SAME_QUESTION_RAD
+        && poses_are_distinct(candidate.rigid, best.rigid, extent, tolerance)
         && coarse_candidates_are_equivalent(candidate, best)
 }
 
-fn poses_are_distinct(left: Rigid, right: Rigid) -> bool {
-    (left.translation - right.translation).length() > COARSE_POSE_TRANSLATION_EPS_MM
-        || (left.rotation * right.rotation.inverse())
-            .to_scaled_axis()
-            .length()
-            > COARSE_POSE_ROTATION_EPS_RAD
+/// Whether two coarse poses are different ANSWERS, judged at the scan's scale.
+///
+/// Comparing a translation against one epsilon and a rotation against another
+/// treats the two independently, and that is what refused every real arch pair:
+/// two hypotheses six MICROMETRES apart in translation and 0.62 degrees apart in
+/// rotation — one seating, parameterised twice — cleared the rotation epsilon
+/// (0.57 degrees) and were declared two rival answers.
+///
+/// What matters is how far the two poses actually move the geometry. A rotation
+/// of `dr` about the scan's centre moves its rim by `dr * extent/2`, so the
+/// displacement at the rim is the sum, and it is compared against a fraction of
+/// the correspondence radius: hypotheses nearer than that place the surface
+/// within the distance the search itself treats as the same place.
+fn poses_are_distinct(left: Rigid, right: Rigid, extent: f64, tolerance: f64) -> bool {
+    let turned = (left.rotation * right.rotation.inverse())
+        .to_scaled_axis()
+        .length();
+    let rim_shift =
+        (left.translation - right.translation).length() + turned * extent.max(0.0) * 0.5;
+    rim_shift > tolerance
 }
 
 /// Bounded global orientation probes used before local point-to-plane ICP.
