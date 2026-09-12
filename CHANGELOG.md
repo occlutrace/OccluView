@@ -7,6 +7,25 @@ remain in the Git history.
 
 ### Viewer
 
+- Best fit matching seats two scans again. A refusal that used to fire on a
+  successful fit — "could not confirm an improvement" — is gone: the solver
+  decided whether to keep a pose by the size of the residual it had reached,
+  and two real scans never reach a nanometre, so a pair it had already seated
+  came back as a failure with nothing moved and no map. It now returns the best
+  pose it measured, and the search radius starts at the number the operator
+  set instead of a quarter of it.
+- Two different jaws are still refused, and for the reason that distinguishes
+  them from an alignment: they have no single correct joint position, they only
+  meet where their occlusal surfaces touch. That case reaches a fifth of one
+  surface on the other, so it satisfied every coarse measure the tool had; the
+  median distance of a matched point is what separates it from a real seating.
+- A contact mark takes the light the scan around it takes. The ramp used to be
+  mixed over the finished surface, which no mark can take a highlight from, so
+  it read as a flat sticker and arrived darker than the legend it is read
+  against — the blue stop's 216 was reaching the screen as 173. It is painted
+  into the base colour now and the diffuse light is divided back out, so the
+  law's colour arrives at the law's value and the mark carries a highlight.
+
 - Align heatmaps now appear only after a current confirmed match, with a compact
   absolute millimetre legend and saturated display colours. A sculpt stroke,
   a hand drag, a role swap made by the first matching click, or a change to the
