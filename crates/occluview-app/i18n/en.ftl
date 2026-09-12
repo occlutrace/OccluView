@@ -911,3 +911,4 @@ layer-menu-contacts-unavailable = A contact reading needs two visible triangle m
 contact-details = Details
 contact-details-hint = The numbers and the one colour per contact rule
 contact-details-close = Hide details
+settings-shortcuts-hint = Keyboard and mouse reference (F1)

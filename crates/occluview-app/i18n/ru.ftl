@@ -996,3 +996,4 @@ layer-menu-contacts-unavailable = Для чтения контактов нуж�
 contact-details = Подробности
 contact-details-hint = Числа и правило «один цвет на контакт»
 contact-details-close = Скрыть подробности
+settings-shortcuts-hint = Справка по клавиатуре и мыши (F1)

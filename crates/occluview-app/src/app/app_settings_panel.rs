@@ -294,9 +294,15 @@ pub(super) fn show_settings_popup(
             ui.add_space(3.0);
             // The keyboard and mouse reference lives here now that it is off
             // the toolbar: Settings is where an operator looks for a list, and
-            // the width it frees belongs to the tools.
+            // the width it frees belongs to the tools. The shortcut is shown on
+            // the row so the operator learns the faster way in from the slower
+            // one.
+            // The key is named in the hover hint rather than on a second line:
+            // the panel has a fixed height it must fit, and naming the key is
+            // what a hover is for.
             if ui
                 .add(egui::Button::new(locale.tr("settings-shortcuts")).frame(false))
+                .on_hover_text(locale.tr("settings-shortcuts-hint"))
                 .clicked()
             {
                 action = Some(SettingsAction::OpenShortcuts);

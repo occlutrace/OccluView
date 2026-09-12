@@ -906,3 +906,4 @@ layer-menu-contacts-unavailable = Una lectura de contactos necesita dos mallas d
 contact-details = Detalles
 contact-details-hint = Los números y la regla de un color por contacto
 contact-details-close = Ocultar detalles
+settings-shortcuts-hint = Referencia de teclado y ratón (F1)

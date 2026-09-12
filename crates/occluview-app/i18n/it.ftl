@@ -906,3 +906,4 @@ layer-menu-contacts-unavailable = Una lettura dei contatti richiede due mesh tri
 contact-details = Dettagli
 contact-details-hint = I numeri e la regola un colore per contatto
 contact-details-close = Nascondi dettagli
+settings-shortcuts-hint = Riferimento tastiera e mouse (F1)

@@ -904,3 +904,4 @@ layer-menu-contacts-unavailable = Eine Kontaktlesung braucht zwei sichtbare Drei
 contact-details = Details
 contact-details-hint = Die Zahlen und die Regel „eine Farbe pro Kontakt“
 contact-details-close = Details ausblenden
+settings-shortcuts-hint = Tastatur- und Mausreferenz (F1)
