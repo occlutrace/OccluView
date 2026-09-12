@@ -128,6 +128,14 @@ where
     })
 }
 
+/// Entries the Open menu's recent list keeps.
+///
+/// Fixed rather than a preference: it changed how long a menu was, which has no
+/// clinical outcome, and it sat in a panel of choices that change what the
+/// operator sees on a scan. The field stays in the settings file so an existing
+/// document keeps loading, but nothing writes it any more.
+pub(crate) const RECENT_FILES_LIMIT: usize = 8;
+
 /// The durable choices exposed by the preferences panel. Many independent
 /// toggles is the shape of a preferences document; collapsing them into enums
 /// would be the over-engineering here.
@@ -182,7 +190,7 @@ impl Default for Settings {
             double_click_resets_camera: true,
             orbit_sensitivity: 1.0,
             zoom_sensitivity: 1.0,
-            recent_files_limit: 8,
+            recent_files_limit: RECENT_FILES_LIMIT,
             viewport_background: ViewportBackground::default(),
             show_cut_ghost: true,
             unit_display: UnitDisplay::default(),
@@ -202,10 +210,6 @@ impl Settings {
 
     pub(crate) fn zoom_sensitivity(&self) -> f32 {
         self.zoom_sensitivity.clamp(0.25, 4.0)
-    }
-
-    pub(crate) fn recent_files_limit(&self) -> usize {
-        self.recent_files_limit.clamp(4, 20)
     }
 
     pub(crate) fn ui_scale(&self) -> f32 {
@@ -404,7 +408,8 @@ mod tests {
         // it is a live preference again, so a rewritten document keeps it.
         assert_eq!(
             rewritten["recent_files_limit"],
-            Settings::default().recent_files_limit
+            Settings::default().recent_files_limit,
+            "an existing document keeps a field nothing writes any more"
         );
         Ok(())
     }
