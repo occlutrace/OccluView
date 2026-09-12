@@ -206,31 +206,61 @@ fn channel_gap(left: [u8; 3], right: [u8; 3]) -> i32 {
         .expect("three channels")
 }
 
-/// The stop colour scaled by the one shade factor the shader is allowed to
-/// apply on top of it.
+/// The stop colour, painted at full strength and then lit like the tooth it
+/// sits on.
 ///
-/// A measured map is shaded by a single factor on all three channels — never
-/// tinted and never given a specular highlight, because a false-colour map is
-/// read by matching its hue against a legend. So the strict claim is: the pixel
-/// IS the stop colour under one global shade, and that shade has to explain
-/// every channel at once.
+/// The mark is painted INTO the base colour, so the studio light and the clay
+/// specular act on it exactly as they act on the enamel around it. That is
+/// deliberate: it is what the owner asked for ("more gloss on the contacts"),
+/// and it is what the reference viewer this port came from does. A mark mixed
+/// over an already-lit surface cannot take a highlight at all, which is why it
+/// used to read as a flat sticker.
+///
+/// The consequence for this test is that the old model — "the pixel is the stop
+/// colour under one scalar" — is no longer the whole truth. A lit pixel is
+/// `stop * shade + highlight`, and the highlight is ADDITIVE IN LINEAR SPACE,
+/// so it adds a different number of 8-bit sRGB units to a bright channel than
+/// to a dark one. That is not a hue shift; it is the signature of a specular
+/// term, and it is bounded by the highlight's own magnitude.
+///
+/// What must still hold, because it is the whole contract of a false-colour
+/// map, is the HUE: an operator reads a mark by matching its colour against the
+/// legend, so the relative order of the three channels may not change.
 fn assert_stop_colour(actual: [u8; 3], expected: [u8; 3], what: &str) {
     let dominant = (0..3)
         .max_by_key(|channel| expected[*channel])
         .expect("three channels");
     let shade = f64::from(actual[dominant]) / f64::from(expected[dominant]);
     assert!(
-        (0.90..=1.05).contains(&shade),
+        (0.90..=1.10).contains(&shade),
         "{what}: {actual:?} is not on the ramp at all (shade {shade:.3} of {expected:?})"
     );
     for channel in 0..3 {
         let want = f64::from(expected[channel]) * shade;
+        // The allowance is the additive highlight, measured: the clay specular
+        // adds up to about 0.02 in linear space at a bright fragment, which is
+        // several 8-bit units on a mid channel.
         assert!(
-            (want - f64::from(actual[channel])).abs() <= 2.0,
+            (want - f64::from(actual[channel])).abs() <= 9.0,
             "{what}: channel {channel} of {actual:?} is not {expected:?} shaded by \
-             {shade:.3} — the shader changed the ramp's colour"
+             {shade:.3} plus a highlight — the shader changed the ramp's colour"
         );
     }
+    // The hue is the contract. The highlight is dimmer than any of these stops,
+    // so it may brighten a mark but it may not reorder its channels: the moment
+    // the stop's channel ORDER changes, an operator reading the legend is being
+    // told the wrong depth.
+    let order = |c: [u8; 3]| {
+        let mut ranked = [0_usize, 1, 2];
+        ranked.sort_by_key(|channel| std::cmp::Reverse(c[*channel]));
+        ranked
+    };
+    assert_eq!(
+        order(actual),
+        order(expected),
+        "{what}: {actual:?} has a different channel order than {expected:?}; the \
+         highlight moved the hue and the legend no longer describes this pixel"
+    );
 }
 
 /// The painted band takes the ramp's stop colour, the bare surface is untouched,

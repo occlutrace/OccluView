@@ -44,6 +44,14 @@ const MEASURED_MAP_FORM: f32 = 0.42;
 // A scalar gloss term gives cusps a controlled highlight without adding white
 // to the measured RGB channels and corrupting the deviation hue.
 const MEASURED_MAP_GLOSS: f32 = 0.30;
+// The studio light multiplies the base colour by about 0.85 at a typical
+// surface angle, so a mark painted straight from the ramp reaches the screen
+// darker than the legend it is read against. This is one scalar on all three
+// channels: it cannot rotate a hue, so the false-colour contract holds.
+/// The diffuse light the paint block divides back out, mirrored from the
+/// `form_contrast` expression below it. Kept as a comment rather than a second
+/// constant: `form_contrast` is the authority and the paint reads it directly.
+const CONTACT_LIGHT_FLOOR: f32 = 1e-3;
 
 struct Camera {
     view: mat4x4<f32>,
@@ -382,6 +390,56 @@ fn fs_main(
         base_a = 1.0;
     }
 
+    // Occlusal contact paint, per fragment and INTO THE BASE COLOUR.
+    //
+    // Into the base colour, before the lighting below, and that placement is
+    // the whole point. Mixing the ramp over an already-lit surface — which is
+    // what this used to do — can only drag the lit grey towards the ramp colour:
+    // the mark can never take a highlight, so it reads as a flat sticker no
+    // matter how saturated the ramp is. The reference viewer this port came
+    // from paints the base colour and lets the studio light and the specular
+    // term act on the result, and that is what gives a mark the same glaze as
+    // the enamel around it.
+    //
+    // It is still LAST in the sense that matters for the operator: nothing
+    // happens where the weight is zero, so a reading cannot restyle the surface
+    // it measures — the tint, the opacity and the form of an unmarked tooth are
+    // bit-for-bit what they were.
+    //
+    // Per fragment, because the field is linear across a triangle and the ramp
+    // is not: interpolating the field and looking the colour up here keeps the
+    // ramp's hues and puts the edge of the band exactly where the field crosses
+    // it, with no smear and no washed-out rim.
+    let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel;
+    var paint_srgb = base_rgb;
+    let contact = select(0.0, 1.0, mesh_uniform.contact_map != 0u);
+    if (contact > 0.5) {
+        let far = mesh_uniform.contact_gap.x;
+        let fade = mesh_uniform.contact_gap.y;
+        let t = clamp((far - in.contact_mm) / max(fade, 1e-6), 0.0, 1.0);
+        let weight = t * t * (3.0 - 2.0 * t);
+        if (weight > 0.0) {
+            // The ramp keeps the law's hue and the DIFFUSE light that is about
+            // to fall on it is divided back out, so the colour the law states is
+            // the colour that reaches the screen. A false-colour map is metrology:
+            // an operator matches a mark against the legend, and a mark that
+            // arrives darker than the legend describes is simply wrong. The law's
+            // blue (29,78,216) was arriving around (13,96,173) — the "washed out"
+            // the owner reported — and no fixed constant fixes it, because the
+            // light varies per fragment: a constant that restores an average
+            // surface over-brightens a well-lit one.
+            //
+            // Dividing by `lit * form_contrast` is one scalar on all three
+            // channels, so it cannot rotate a hue, which is the one thing the
+            // contract forbids. The additive highlight below still lands on top,
+            // and that is the gloss.
+            let ramp = contact_ramp_color(in.contact_mm)
+                / max(lit * form_contrast, CONTACT_LIGHT_FLOOR);
+            paint_srgb = mix(paint_srgb, min(ramp, vec3<f32>(1.0)), weight);
+        }
+    }
+    base_rgb = paint_srgb;
+
     // A measured colour map keeps its hue and skips the tint, so a ramp reaches
     // the screen at the colour it was measured at. Lighting is REDUCED, not
     // removed: full studio light multiplies a saturated ramp down towards mud,
@@ -398,9 +456,9 @@ fn fs_main(
         return vec4<f32>(base_rgb * shade, base_a * mesh_uniform.opacity * splat_coverage);
     }
 
-    // Apply tint + opacity, then lighting.
+    // Apply tint + opacity, then lighting. The paint is already in `base_rgb`
+    // by the time this runs, so the studio light below acts on the ramp too.
     let tinted = vec4<f32>(base_rgb, base_a) * mesh_uniform.tint;
-    let form_contrast = 0.96 + 0.055 * view_form + 0.018 * fresnel;
     // Neutral material reads as matte stone, never the textured glaze.
     let textured = mesh_uniform.has_texture != 0u
         && mesh_uniform.show_texture != 0u
@@ -422,41 +480,6 @@ fn fs_main(
     // orientation" convention).
     if (mesh_uniform.show_orientation != 0u && !front_facing) {
         rgb = vec3<f32>(0.80, 0.10, 0.10);
-    }
-
-    // Occlusal contact paint, LAST and per fragment.
-    //
-    // Last, because a reading must not change how the scan looks where it marks
-    // nothing: the surface is finished — tinted, lit, backface-corrected — and
-    // the ramp is mixed over it. Painting into the base colour instead meant the
-    // whole layer had to switch to the measured-map treatment to keep the ramp's
-    // hue, which dropped the operator's tint and flattened the lighting across
-    // the entire scan the moment a reading opened.
-    //
-    // Per fragment, because the field is linear across a triangle and the ramp
-    // is not: interpolating the field and looking the colour up here keeps the
-    // ramp's hues and puts the edge of the band exactly where the field crosses
-    // it, with no smear and no washed-out rim.
-    //
-    // The paint ends by WEIGHT, never by fading toward white: a ramp that washes
-    // out reads as a lighting artefact rather than as data. Lighting inside the
-    // band is REDUCED rather than removed, at the same constants the deviation
-    // heatmap uses, so a saturated ramp still shows the cusps it sits on.
-    if (mesh_uniform.contact_map != 0u) {
-        let far = mesh_uniform.contact_gap.x;
-        let fade = mesh_uniform.contact_gap.y;
-        let t = clamp((far - in.contact_mm) / max(fade, 1e-6), 0.0, 1.0);
-        let weight = t * t * (3.0 - 2.0 * t);
-        if (weight > 0.0) {
-            let gloss = 0.75 * tight_specular + 0.25 * broad_specular;
-            let map_form = clamp(
-                lit + MEASURED_MAP_FORM * fresnel + MEASURED_MAP_GLOSS * gloss,
-                0.78,
-                1.10,
-            );
-            let shade = clamp(mix(1.0, map_form, MEASURED_MAP_SHADE), 0.96, 1.05);
-            rgb = mix(rgb, contact_ramp_color(in.contact_mm) * shade, weight);
-        }
     }
     return vec4<f32>(rgb, tinted.a * mesh_uniform.opacity * splat_coverage);
 }
