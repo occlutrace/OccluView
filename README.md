@@ -109,7 +109,7 @@ interface renders English.
 
 ## Controls
 
-Use the **Help** button in the toolbar for the complete keyboard and mouse reference.
+Press **F1** — or open **Settings → Keyboard shortcuts** — for the complete keyboard and mouse reference.
 
 - Open a scan with **Ctrl+O**. Opening another file adds a layer; toolbar Open
   replaces the scene.

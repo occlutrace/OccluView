@@ -24,7 +24,7 @@ use super::{state_document::DocumentState, state_ui::UiState, AppErrorAction, Ap
 use crate::edit_mode::{EditModeController, EditSessionToken};
 use occluview_core::{CoreError, SceneMesh, SceneMeshId};
 use repair::apply_layer_repair_action_with_status;
-use selection_ops::apply_selected_face_mesh_edit_action_with_status;
+use selection_ops::apply_visible_selection_action_with_status;
 
 #[cfg(test)]
 pub(crate) use selection_batch::apply_visible_selected_face_mesh_edit_action;
@@ -71,7 +71,12 @@ pub(super) fn apply_layer_context_action_with_status(
             | LayerContextAction::CutSelectionToNewLayer
             | LayerContextAction::SeparateSelectedComponents
     ) {
-        return apply_selected_face_mesh_edit_action_with_status(app, scene, paths, request);
+        // The operator marks faces with the Marquee or the Lasso, and those
+        // marks live on every visible layer they crossed. Running the action
+        // against only the layer the menu was opened on left the other marked
+        // layers untouched — "it only edits one object" — so the action follows
+        // the same visible-selection plan the Mesh Editor's own buttons use.
+        return apply_visible_selection_action_with_status(app, scene, paths, request);
     }
 
     if matches!(

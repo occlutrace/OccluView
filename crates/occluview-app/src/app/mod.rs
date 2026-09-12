@@ -53,7 +53,7 @@ mod app_empty_state;
 mod app_guard_dialog;
 mod app_help;
 mod app_input;
-mod app_layer_edits;
+pub(crate) mod app_layer_edits;
 mod app_layer_interaction;
 mod app_load_errors;
 mod app_loading;

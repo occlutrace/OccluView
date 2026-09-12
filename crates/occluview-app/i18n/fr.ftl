@@ -42,8 +42,6 @@ error-open-body = Ouverture impossible de { $path }.
 help-title = Commandes clavier et souris
 help-subtitle = Cette référence correspond aux commandes d’OccluView.
 help-close = Fermer
-help-toggle = Aide
-help-toggle-tooltip = Afficher les commandes clavier et souris
 
 help-section-navigation = Navigation
 help-section-tools = Outils
@@ -754,8 +752,6 @@ settings-orbit = Vitesse orbitale
 settings-orbit-hint = Vitesse d’orbite au bouton droit
 settings-zoom = Vitesse de zoom
 settings-zoom-hint = Ce que chaque cran rapproche
-settings-recent = Scènes récentes
-settings-recent-hint = Entrées dans le menu Ouvrir
 settings-background = Fond
 settings-bg-gray = Gris
 settings-bg-white = Blanc
@@ -784,6 +780,7 @@ settings-update-skipped = Version ignorée
 settings-update-failed = Vérification impossible
 settings-save-error = Préférences non enregistrées. Nouvel essai…
 settings-save-error-hint = Fichier de préférences indisponible
+settings-shortcuts = Raccourcis clavier
 settings-about = À propos d’OccluView
 
 bridge-busy = Terminer ou annuler la division d’abord

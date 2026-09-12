@@ -138,22 +138,40 @@ fn toolbar_and_about_are_operator_focused() {
 }
 
 #[test]
-fn help_is_a_direct_toolbar_surface_with_a_non_consuming_hint() {
+fn the_shortcut_reference_lives_in_settings_and_on_f1() {
     let dialogs = app_dialogs_source();
     let state = repo_source_file("src/app/state.rs");
     let help = repo_source_file("src/app/app_help.rs");
+    let settings = repo_source_file("src/app/app_settings_panel.rs");
+    let settings_window = repo_source_file("src/app/app_settings_window.rs");
 
+    // It is a keyboard and mouse reference, not a Help centre, and a permanent
+    // toolbar slot for a list nobody reads twice took width the tools need.
+    let toolbar = function_source(dialogs, "pub(super) fn show_toolbar");
     assert!(
-        dialogs.contains("show_help_toolbar_toggle")
-            && help.contains("AppIcon::Licenses")
-            && help.contains("Show keyboard and mouse controls")
-            && dialogs.contains("InformationDialog::KeyboardMouse"),
-        "Help should be a direct toolbar action with a discoverable tooltip"
+        !toolbar.contains("show_help_toolbar_toggle"),
+        "the toolbar must not carry a permanent Help button"
     );
+
+    // Settings is where an operator looks for a list.
+    assert!(
+        settings.contains("SettingsAction::OpenShortcuts")
+            && settings.contains("settings-shortcuts")
+            && settings_window.contains("InformationDialog::KeyboardMouse"),
+        "Settings must offer the shortcut reference and route it to the dialog"
+    );
+
+    // F1 is the one key every desktop app agrees on, and it is the replacement
+    // for the button.
+    assert!(
+        toolbar.contains("egui::Key::F1") && toolbar.contains("open_shortcuts"),
+        "F1 must open the shortcut reference"
+    );
+
     assert!(
         state.contains("InformationDialog::KeyboardMouse")
             && state.contains("self.show_help_dialog(ctx)"),
-        "the Help route should be explicit in the foreground information dispatcher"
+        "the route should stay explicit in the foreground information dispatcher"
     );
     assert!(
         dialogs.contains("status_overlay_rect(") && help.contains("contextual_line("),

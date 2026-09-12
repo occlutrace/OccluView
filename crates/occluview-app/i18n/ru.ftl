@@ -42,8 +42,6 @@ error-open-body = Не удалось открыть { $path }.
 help-title = Управление с клавиатуры и мыши
 help-subtitle = Справка соответствует элементам управления, доступным в OccluView.
 help-close = Закрыть
-help-toggle = Справка
-help-toggle-tooltip = Показать управление с клавиатуры и мыши
 
 help-section-navigation = Навигация
 help-section-tools = Инструменты
@@ -863,8 +861,6 @@ settings-orbit = Скорость вращения
 settings-orbit-hint = Как быстро вид вращается при перетаскивании правой кнопкой
 settings-zoom = Скорость масштаба
 settings-zoom-hint = Насколько каждое деление колеса приближает
-settings-recent = Недавние сцены
-settings-recent-hint = Записей в меню «Открыть»
 settings-background = Фон
 settings-bg-gray = Серый
 settings-bg-white = Белый
@@ -893,6 +889,7 @@ settings-update-skipped = Версия пропущена
 settings-update-failed = Не удалось проверить
 settings-save-error = Не удалось сохранить настройки. Повторная попытка…
 settings-save-error-hint = Файл настроек сейчас недоступен
+settings-shortcuts = Горячие клавиши
 settings-about = Об OccluView
 
 bridge-busy = Сначала завершите или отмените разделение моста

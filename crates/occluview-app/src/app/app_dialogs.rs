@@ -1,5 +1,5 @@
 use super::app_guard_dialog::{show_guard_dialog, GuardDialogAction, GuardDialogSpec};
-use super::app_help::{render_contextual_hint, show_help_toolbar_toggle};
+use super::app_help::render_contextual_hint;
 use super::app_recent_popup::RecentFilesAction;
 use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::information_dialog::InformationDialog;
@@ -60,6 +60,14 @@ impl OccluViewApp {
             if consume(&ctx, &edit_shortcut) {
                 toggle_edit_mesh = true;
             }
+        }
+        // F1 opens the keyboard and mouse reference. It is the one key every
+        // desktop app agrees on, and it replaces the toolbar button that used
+        // to be the only way in.
+        let mut open_shortcuts = false;
+        if !self.ui.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
+            open_shortcuts =
+                ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1));
         }
         let mut do_add = false;
         let mut do_open = ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
@@ -261,14 +269,11 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let help_response = show_help_toolbar_toggle(
-                            ui,
-                            !self.ui.close_guard_open,
-                            &self.ui.locale,
-                        );
-                        if help_response.clicked() {
-                            self.ui.information_dialog = InformationDialog::KeyboardMouse;
-                        }
+                        // No Help button here. What it opened is a keyboard and
+                        // mouse reference, and a permanent toolbar slot for a
+                        // list nobody reads twice took the width the real tools
+                        // need. It lives in Settings, on F1, and behind the
+                        // viewport's own hint line.
                         let response = show_settings_toolbar_toggle(
                             ui,
                             !self.ui.close_guard_open,
@@ -348,6 +353,9 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
 
+        if open_shortcuts {
+            self.ui.information_dialog = InformationDialog::KeyboardMouse;
+        }
         if do_open {
             self.open_files_dialog();
         }

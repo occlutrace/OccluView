@@ -45,8 +45,6 @@ error-open-body = Could not open { $path }.
 help-title = Keyboard and mouse controls
 help-subtitle = The reference below matches the controls currently available in OccluView.
 help-close = Close
-help-toggle = Help
-help-toggle-tooltip = Show keyboard and mouse controls
 
 help-section-navigation = Navigation
 help-section-tools = Tools
@@ -757,8 +755,6 @@ settings-orbit = Orbit speed
 settings-orbit-hint = How fast the view orbits while the right mouse button drags
 settings-zoom = Zoom speed
 settings-zoom-hint = How much each scroll notch zooms
-settings-recent = Recent scenes
-settings-recent-hint = Entries kept in the Open chevron
 settings-background = Background
 settings-bg-gray = Gray
 settings-bg-white = White
@@ -787,6 +783,7 @@ settings-update-skipped = Version skipped
 settings-update-failed = Couldn't check
 settings-save-error = Preferences could not be saved. Retrying…
 settings-save-error-hint = The settings file is currently unavailable
+settings-shortcuts = Keyboard shortcuts
 settings-about = About OccluView
 
 bridge-busy = Finish or cancel Bridge split first

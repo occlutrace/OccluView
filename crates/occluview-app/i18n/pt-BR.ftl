@@ -43,8 +43,6 @@ error-open-body = Não foi possível abrir { $path }.
 help-title = Controles de teclado e mouse
 help-subtitle = A referência corresponde aos controles do OccluView.
 help-close = Fechar
-help-toggle = Ajuda
-help-toggle-tooltip = Mostrar os controles de teclado e mouse
 
 help-section-navigation = Navegação
 help-section-tools = Ferramentas
@@ -756,8 +754,6 @@ settings-orbit = Velocidade orbital
 settings-orbit-hint = Quão rápido orbita arrastando com o direito
 settings-zoom = Velocidade de zoom
 settings-zoom-hint = Quanto cada clique da roda aproxima
-settings-recent = Cenas recentes
-settings-recent-hint = Entradas no menu Abrir
 settings-background = Fundo
 settings-bg-gray = Cinza
 settings-bg-white = Branco
@@ -786,6 +782,7 @@ settings-update-skipped = Versão pulada
 settings-update-failed = Não deu para verificar
 settings-save-error = Preferências não salvas. Tentando de novo…
 settings-save-error-hint = Arquivo de preferências indisponível
+settings-shortcuts = Atalhos de teclado
 settings-about = Sobre o OccluView
 
 bridge-busy = Termine ou cancele a divisão antes

@@ -42,8 +42,6 @@ error-open-body = { $path } konnte nicht geöffnet werden.
 help-title = Tastatur- und Maussteuerung
 help-subtitle = Die Referenz entspricht den derzeit in OccluView verfügbaren Steuerelementen.
 help-close = Schließen
-help-toggle = Hilfe
-help-toggle-tooltip = Tastatur- und Maussteuerung anzeigen
 
 help-section-navigation = Navigation
 help-section-tools = Werkzeuge
@@ -771,8 +769,6 @@ settings-orbit = Orbitgeschwindigkeit
 settings-orbit-hint = Wie schnell die Ansicht bei gedrückter rechter Maustaste kreist
 settings-zoom = Zoomgeschwindigkeit
 settings-zoom-hint = Wie stark jede Raststufe zoomt
-settings-recent = Letzte Szenen
-settings-recent-hint = Einträge im Öffnen-Menü
 settings-background = Hintergrund
 settings-bg-gray = Grau
 settings-bg-white = Weiß
@@ -801,6 +797,7 @@ settings-update-skipped = Version übersprungen
 settings-update-failed = Konnte nicht prüfen
 settings-save-error = Einstellungen konnten nicht gespeichert werden. Neuer Versuch…
 settings-save-error-hint = Einstellungsdatei derzeit nicht verfügbar
+settings-shortcuts = Tastenkürzel
 settings-about = Über OccluView
 
 bridge-busy = Brückentrennung erst beenden oder abbrechen
