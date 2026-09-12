@@ -902,3 +902,7 @@ contact-legend-gap = gioco fino a { $mm } mm
 contact-stats-balance = Area per lato
 contact-stats-balance-hint = Area di contatto ai due lati della linea mediana della scansione. La divisione segue le coordinate della scansione, quindi un caso ruotato o specchiato può scambiare i numeri.
 layer-menu-contacts-unavailable = Una lettura dei contatti richiede due mesh triangolari visibili: mostrate o aprite prima la scansione antagonista
+
+contact-details = Dettagli
+contact-details-hint = I numeri e la regola un colore per contatto
+contact-details-close = Nascondi dettagli

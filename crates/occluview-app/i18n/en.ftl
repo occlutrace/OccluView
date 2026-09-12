@@ -907,3 +907,7 @@ contact-legend-gap = gap up to { $mm } mm
 contact-stats-balance = Area each side
 contact-stats-balance-hint = Contact area either side of this scan's own mid-line. The split follows the scan's coordinates, so a rotated or mirrored case can swap the two numbers.
 layer-menu-contacts-unavailable = A contact reading needs two visible triangle meshes — show or open the opposing scan first
+
+contact-details = Details
+contact-details-hint = The numbers and the one colour per contact rule
+contact-details-close = Hide details

@@ -902,3 +902,7 @@ contact-legend-gap = jeu jusqu'à { $mm } mm
 contact-stats-balance = Surface par côté
 contact-stats-balance-hint = Surface de contact de part et d'autre de la ligne médiane du scan. La répartition suit les coordonnées du scan : un cas tourné ou en miroir peut échanger les deux nombres.
 layer-menu-contacts-unavailable = Une lecture de contacts exige deux maillages triangulaires visibles : affichez ou ouvrez d'abord le scan antagoniste
+
+contact-details = Détails
+contact-details-hint = Les chiffres et la règle une couleur par contact
+contact-details-close = Masquer les détails

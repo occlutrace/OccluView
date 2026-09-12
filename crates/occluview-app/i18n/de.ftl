@@ -900,3 +900,7 @@ contact-legend-gap = Abstand bis { $mm } mm
 contact-stats-balance = Fläche je Seite
 contact-stats-balance-hint = Kontaktfläche beiderseits der eigenen Mittellinie des Scans. Die Teilung folgt den Koordinaten des Scans; bei gedrehtem oder gespiegeltem Fall können die Zahlen tauschen.
 layer-menu-contacts-unavailable = Eine Kontaktlesung braucht zwei sichtbare Dreiecksnetze — zuerst den Gegenscan einblenden oder öffnen
+
+contact-details = Details
+contact-details-hint = Die Zahlen und die Regel „eine Farbe pro Kontakt“
+contact-details-close = Details ausblenden

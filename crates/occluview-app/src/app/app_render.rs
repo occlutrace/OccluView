@@ -944,7 +944,7 @@ impl OccluViewApp {
         self.drain_contacts_worker(ctx);
         self.sync_contacts_with_scene(ctx);
         self.handle_contact_escape(ctx);
-        let contact_ui_consumed = self.show_contact_panel(ctx, response.rect);
+        let contact_ui_consumed = self.show_contact_bar(ui, response.rect, ctx);
         self.show_contact_hover(ui, response, ctx);
         let contact_ui_consumed = contact_ui_consumed && !align_ui_consumed;
         let measure_ui_consumed =

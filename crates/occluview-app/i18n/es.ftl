@@ -902,3 +902,7 @@ contact-legend-gap = holgura hasta { $mm } mm
 contact-stats-balance = Área por lado
 contact-stats-balance-hint = Área de contacto a cada lado de la línea media del propio escaneo. El reparto sigue las coordenadas del escaneo, así que un caso girado o reflejado puede intercambiar los números.
 layer-menu-contacts-unavailable = Una lectura de contactos necesita dos mallas de triángulos visibles: muestre o abra antes el escaneo antagonista
+
+contact-details = Detalles
+contact-details-hint = Los números y la regla de un color por contacto
+contact-details-close = Ocultar detalles
