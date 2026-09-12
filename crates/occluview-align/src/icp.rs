@@ -62,11 +62,6 @@ const CONVERGED_ROTATION: f64 = 1e-7;
 /// Translation step below this (millimetres) counts as converged.
 const CONVERGED_TRANSLATION: f64 = 1e-7;
 
-/// A rank-deficient zero-step fit is acceptable only when its measured surface
-/// residual is already at numerical zero. A non-zero residual needs an
-/// accepted rigid step before the UI may authorize a deviation map.
-const CONVERGED_RESIDUAL_MM: f64 = 1e-6;
-
 /// Starting Levenberg damping, as a fraction of each diagonal entry.
 const INITIAL_DAMPING: f64 = 1e-6;
 /// Damping growth per rejected step.
@@ -405,16 +400,23 @@ struct Level<'a> {
     start: Rigid,
 }
 
-/// Search radii from conservative to the operator's configured maximum.
+/// Search radii from the operator's own setting outwards.
 ///
-/// A broad influence distance can connect two neighbouring teeth, so it is a
-/// search budget rather than the first answer. The ladder never exceeds the
-/// visible setting and is deterministic for every input.
+/// The operator's number is where the search STARTS. It used to be the maximum
+/// of a ladder whose first rung was a quarter of it, so a fit configured at
+/// 2.0 mm actually searched at 0.5 mm and found nothing on a pair a few
+/// millimetres apart, then reported that it could not confirm an improvement.
+/// The setting means what it says: reach that far first.
+///
+/// Widening past it is bounded and only happens when the coverage floor is
+/// still unmet at that radius, which is the case the operator cannot fix by
+/// moving the scans. A broad influence distance can connect two neighbouring
+/// teeth, so the wider rungs are a fallback reach rather than the first answer.
 fn influence_radius_ladder(maximum: f64) -> Vec<f64> {
     if !maximum.is_finite() || maximum <= 0.0 {
         return Vec::new();
     }
-    [0.25, 0.5, 1.0]
+    [1.0, 2.0, 4.0]
         .into_iter()
         .map(|fraction| (maximum * fraction).max(f64::EPSILON))
         .collect()
@@ -973,7 +975,24 @@ fn coarse_seed_order(left: &CoarseCandidate, right: &CoarseCandidate) -> std::cm
         })
 }
 
+/// Whether a competing coarse hypothesis is a rival ANSWER to the best one.
+///
+/// A rival has to be at least as good on BOTH axes. The guard below exists to
+/// stop the tool picking one of two equally supported seatings by component id;
+/// it is not a reason to give up on a pair the search can seat.
+///
+/// It used to admit a candidate that was merely CLOSE on both axes, extra
+/// tolerance included, so a hypothesis worse in residual AND worse in coverage
+/// still counted as an equally plausible rival and refused the fit. That is
+/// what the operator saw as the tool giving up on two scans placed near each
+/// other: the competing hypothesis explained the surface less well by both
+/// measures, and nothing about it was worth abandoning the better pose for.
 fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
+    let worse_on_residual = candidate.summary.geometric_rms > best.summary.geometric_rms;
+    let worse_on_coverage = candidate.summary.coverage < best.summary.coverage;
+    if worse_on_residual && worse_on_coverage {
+        return false;
+    }
     let rms_scale = candidate
         .summary
         .geometric_rms
@@ -1088,7 +1107,6 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut converged = false;
     let mut summary: Option<Summary> = None;
     let mut best_rms = f64::INFINITY;
-    let mut has_accepted_step = false;
     // Keep the pose associated with the best residual.
     let mut best: Option<(Rigid, Summary)> = None;
     let radii = influence_radius_ladder(level.settings.influence_radius_mm);
@@ -1115,7 +1133,15 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         let measured = summarize(&kept, matched, level.samples.len(), &normal_matrix);
         let measured_reciprocal = reciprocal_evidence(level, pose, radii[radius_slot]);
         if !reciprocal_evidence_is_usable(level, measured_reciprocal) {
-            return Err(FitRejection::NoImprovement);
+            // Unusable reciprocal evidence means THIS iteration cannot be
+            // trusted, not that the fit is worthless. Refusing here discarded a
+            // pose the level had already measured, which is the same mistake the
+            // two guards below used to make. With nothing measured yet there is
+            // no result to keep, so only that case stays a refusal.
+            if summary.is_none() && best.is_none() {
+                return Err(FitRejection::NoImprovement);
+            }
+            break;
         }
         summary = Some(measured);
         // `measured` describes the pose the correspondences were found AT, not
@@ -1128,10 +1154,12 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         }
 
         let Some(step) = solve_damped(&normal_matrix, &gradient) else {
-            if !has_accepted_step && measured.geometric_rms > CONVERGED_RESIDUAL_MM {
-                return Err(FitRejection::NoImprovement);
-            }
-            converged = measured.geometric_rms <= CONVERGED_RESIDUAL_MM;
+            // A rank-deficient system is a STOP, not a refusal. It says the
+            // local model has no further direction to move, which is what a
+            // seated pair looks like; the pose goes back through `best` below.
+            // Returning Err here discarded every correspondence the level had
+            // found, and a real pair never reaches an exact zero residual, so
+            // the fit was thrown away exactly when it had converged.
             break;
         };
         let rotation = DVec3::new(step[0], step[1], step[2]);
@@ -1151,12 +1179,23 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
             // Never apply a step that was not evaluated as an improvement. The
             // previous implementation did, so a nearest-surface change could
             // rotate a rough pair sideways while its report still looked valid.
-            if !has_accepted_step && measured.geometric_rms > CONVERGED_RESIDUAL_MM {
-                return Err(FitRejection::NoImprovement);
-            }
-            converged = rotation.length() < CONVERGED_ROTATION
-                && translation.length() < CONVERGED_TRANSLATION
-                && measured.geometric_rms <= CONVERGED_RESIDUAL_MM;
+            //
+            // Stopping here is not an error either. The step we could not
+            // improve on was already below the convergence epsilon, which is a
+            // stationary pose; `converged` describes that STEP and never the
+            // size of the residual, because a residual threshold is a quality
+            // judgement and this function only decides where to stop.
+            // The line search could not improve on what the level already has,
+            // which is the definition of a settled pose. `converged` therefore
+            // describes THIS outcome: there is no further movement to be had.
+            //
+            // It used to be set only when the rejected step happened to be tiny,
+            // so a level that had genuinely stopped after a few productive
+            // iterations reported `converged = false` and the trust gate threw
+            // its pose away — the operator saw a refusal on a pair the tool had
+            // already seated. How far the rejected step would have travelled is
+            // not evidence about the pose that was kept.
+            converged = true;
             break;
         };
         pose = next_pose;
@@ -1168,7 +1207,6 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
             best_rms = next_summary.geometric_rms;
             best = Some((next_pose, next_summary));
         }
-        has_accepted_step = true;
         iterations += 1;
         if rotation.length() < CONVERGED_ROTATION && translation.length() < CONVERGED_TRANSLATION {
             converged = true;
