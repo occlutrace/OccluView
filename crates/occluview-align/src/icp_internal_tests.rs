@@ -300,8 +300,164 @@ fn radius_ladder_widens_past_a_six_point_edge_patch() {
     let result = correspondences_at_radius(&level, level.start, &radii, &mut radius_slot);
 
     assert!(result.is_ok(), "the useful 2 mm band was not reached");
+    // The operator's own 2 mm is now the FIRST rung, so a six-point edge patch
+    // 2 mm away is found without any widening at all. This used to assert slot
+    // 2, which was the third rung of a ladder that started at a quarter of the
+    // operator's setting.
     assert_eq!(
-        radius_slot, 2,
-        "the ladder stopped before the meaningful rung"
+        radius_slot, 0,
+        "the operator's own radius must be the first rung, not a later one"
     );
+}
+
+/// A hypothesis that is worse on both axes is not a rival answer.
+///
+/// The equivalence test used to be an absolute difference against each
+/// tolerance. A candidate 1.9 % worse in residual AND 1.9 % worse in coverage
+/// therefore counted as "equally plausible", the ambiguity guard refused the
+/// fit, and the operator saw the tool give up on a pair it could have seated.
+/// Nothing about such a candidate is better than the incumbent, so it is search
+/// noise: the guard must keep the better pose and carry on.
+#[test]
+fn a_candidate_worse_on_both_axes_is_not_a_rival_answer() {
+    let mut best = candidate(0.050, 0.800, Some(0.800));
+    best.rigid = crate::Rigid::IDENTITY;
+    // Two millimetres away on a 60 mm scan with a 1 mm tolerance, so the guard
+    // reaches the equivalence test rather than stopping at "not distinct".
+    let mut worse = candidate(0.050 * 1.019, 0.800 * 0.981, Some(0.800 * 0.981));
+    worse.rigid = crate::Rigid::new(DQuat::IDENTITY, DVec3::new(2.0, 0.0, 0.0));
+
+    assert!(
+        !coarse_candidates_are_ambiguous(&worse, &best, 60.0, 1.0),
+        "a candidate worse in residual and coverage must not refuse the fit"
+    );
+
+    // The real rival is unchanged: a hypothesis that explains the same surface
+    // exactly as well, two millimetres away, is still a second answer.
+    let twin = {
+        let mut twin = candidate(0.050, 0.800, Some(0.800));
+        twin.rigid = crate::Rigid::IDENTITY;
+        twin
+    };
+    let mut rival = candidate(0.050, 0.800, Some(0.800));
+    rival.rigid = crate::Rigid::new(DQuat::IDENTITY, DVec3::new(2.0, 0.0, 0.0));
+    assert!(
+        coarse_candidates_are_ambiguous(&rival, &twin, 60.0, 1.0),
+        "an equally supported distinct pose is still ambiguous"
+    );
+}
+
+/// The ladder starts where the operator set it, not at a quarter of it.
+#[test]
+fn the_search_radius_starts_at_the_operators_own_setting() {
+    let radii = influence_radius_ladder(2.0);
+
+    assert_eq!(
+        radii.first().copied(),
+        Some(2.0),
+        "the first radius must be the setting the operator sees"
+    );
+    assert!(
+        radii.windows(2).all(|pair| pair[0] < pair[1]),
+        "the ladder still has to widen monotonically: {radii:?}"
+    );
+}
+
+/// A level that can no longer move the surface is converged, whatever its
+/// residual measured.
+///
+/// `converged` used to also require the residual to be at or below a
+/// nanometre. Two real surfaces never meet that closely — their best possible
+/// answer carries the sampling error between them — so a level that had
+/// genuinely stopped was reported as unconverged and the worker turned it into
+/// "Best fit could not confirm an improvement". The stopping rule may only
+/// describe the step that was taken; how good the fit turned out to be is the
+/// trust gate's judgement, not this one's.
+/// A level that can no longer move the surface is converged, whatever its
+/// residual measured.
+///
+/// `converged` used to also require the residual to be at or below a
+/// nanometre. Two independently sampled real surfaces never meet that closely
+/// — their best possible answer carries the sampling error between them — so a
+/// level that had genuinely stopped was reported as unconverged, and the worker
+/// turned that into "Best fit could not confirm an improvement" on a pair the
+/// solver had in fact seated. The stopping rule may only describe the step that
+/// was taken; how good the fit turned out to be is the trust gate's judgement.
+///
+/// The moving surface is sampled independently of the fixed one, so a step can
+/// reduce the residual without ever reaching zero. A mesh fitted to an index
+/// built from its own vertices reaches an exact zero and would let the old rule
+/// pass by accident — which is why the fixtures in this file could stay green
+/// while the real tool refused every pair.
+#[test]
+fn a_level_that_cannot_move_any_further_is_converged_whatever_its_residual() {
+    // Half a cell apart at the same physical extent: no rigid pose seats these
+    // two samplings of the same dome exactly.
+    let (moving_positions, moving_indices) = dome_for_level(24, 0.5);
+    let (fixed_positions, fixed_indices) = dome_for_level(48, 0.25);
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &moving_indices,
+        mask: None,
+    };
+    let fixed_soup = Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    };
+    let fixed = SurfaceIndex::build(fixed_soup).expect("a dome indexes");
+    let normals = vertex_normals(moving);
+    let fixed_samples = fixed.representative_samples(256);
+    let samples = sample_vertices(moving, 512);
+    let settings = RefineSettings {
+        max_iterations: 200,
+        ..RefineSettings::default()
+    };
+    let cancel = CancelFlag::new();
+    let level = Level {
+        moving,
+        normals: &normals,
+        fixed: &fixed,
+        moving_surface: Some(&fixed),
+        fixed_samples: &fixed_samples,
+        samples: &samples,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::new(DQuat::IDENTITY, DVec3::new(0.0, 0.0, 0.4)),
+    };
+
+    let outcome = run_level(&level).expect("a level with real overlap reports");
+
+    assert!(
+        outcome.converged,
+        "a level that stopped stepping is converged: iterations={} rms={}",
+        outcome.iterations, outcome.summary.geometric_rms
+    );
+}
+
+/// A curved fixture the level tests can build directly.
+#[allow(clippy::cast_precision_loss)]
+fn dome_for_level(n: usize, step: f32) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);
+    let centre = n as f32 * step * 0.5;
+    for j in 0..=n {
+        for i in 0..=n {
+            let x = i as f32 * step;
+            let y = j as f32 * step;
+            let (dx, dy) = (x - centre, y - centre);
+            let texture = 0.25 * (0.7 * x).sin() * (0.53 * y).cos() + 0.12 * (0.31 * x * y).sin();
+            positions.extend_from_slice(&[x, y, 0.05 * dx * dx + 0.04 * dy * dy + texture]);
+        }
+    }
+    let mut indices = Vec::with_capacity(n * n * 6);
+    let stride = u32::try_from(n + 1).expect("stride fits");
+    let span = u32::try_from(n).expect("span fits");
+    for j in 0..span {
+        for i in 0..span {
+            let a = j * stride + i;
+            indices.extend_from_slice(&[a, a + 1, a + stride]);
+            indices.extend_from_slice(&[a + 1, a + stride + 1, a + stride]);
+        }
+    }
+    (positions, indices)
 }

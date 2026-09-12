@@ -10,6 +10,11 @@
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
 )]
+// A test that cannot seat a scan has to say WHICH placement and WHICH refusal,
+// and a settled pair has to be read out of the report. Both are the point of
+// the test rather than an accident, so the workspace's production-code lints
+// are turned off here the same way the sibling test modules do it.
+#![allow(clippy::panic, clippy::expect_used)]
 
 use crate::icp::{refine, IcpReport, Orientation, RefineSettings};
 use crate::{CancelFlag, FitRejection, Rigid, Soup, SurfaceIndex};
@@ -783,9 +788,9 @@ fn a_fit_that_runs_out_of_iterations_never_authorizes_a_map() {
     );
 
     // One accepted step is a result, not a refusal: the trust gate is what
-    // stops it becoming a heatmap. (`refine` reports `NoImprovement` when the
-    // solve cannot establish overlap at all; that path is pinned by
-    // `rank_deficient_nonzero_residual_is_not_reported_as_refined`.)
+    // stops it becoming a heatmap. (`refine` reports `NoImprovement` only when
+    // no correspondence set was ever usable; a level that ran out of budget or
+    // could not improve still returns the best pose it measured.)
     let report =
         refine(mesh, &index, start, &limited, &CancelFlag::new()).unwrap_or_else(|rejection| {
             unreachable!("a step was accepted, so the solve returns a report: {rejection:?}")
@@ -822,4 +827,202 @@ fn a_single_accepted_step_is_the_pose_that_refine_returns() {
         "the accepted first step was discarded before returning the report: {:?}",
         report.rigid
     );
+}
+
+/// A hand placement of one scan must seat it back onto the surface it came from.
+///
+/// The older fixtures in this file fit a mesh against an index built from THAT
+/// SAME mesh with the identity start, so they only ever exercise a pair that is
+/// already seated and a zero-residual answer is reachable. That is not the
+/// operator's case: they place one scan near another and ask the tool to close
+/// the gap, and the pose it must find is a real displacement.
+///
+/// Here the layer starts at a known hand placement — a few millimetres out and
+/// a few degrees turned — and the correct answer is known by construction: the
+/// identity, which puts the scan back where it was. The distances walk what a
+/// hand actually produces, from nearly seated to more than a centimetre out.
+///
+/// This pins the old refusal: the loop returned `Err(NoImprovement)` from
+/// inside instead of the best pose it had already measured, so a pair the
+/// solver could seat came back to the operator as "could not confirm an
+/// improvement".
+#[test]
+fn a_scan_moved_by_a_known_transform_seats_back_onto_its_source() {
+    let (positions, indices) = dome(24, 0.5);
+    let fixed = soup(&positions, &indices);
+    let index = SurfaceIndex::build(fixed).unwrap();
+
+    for (shift_mm, turn_deg) in [(2.0_f64, 1.0_f64), (5.0, 3.0), (12.0, 7.0)] {
+        // The hand placement, expressed as the pose the layer is carrying. The
+        // moving soup holds the same LOCAL vertices as the fixture, so the
+        // correct answer is the identity: put the scan back where it was.
+        let placement = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), turn_deg.to_radians()),
+            DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+        );
+        let moving = soup(&positions, &indices);
+
+        let report = refine(moving, &index, placement, &settings(), &CancelFlag::new())
+            .unwrap_or_else(|rejection| {
+                panic!(
+                    "a {shift_mm} mm / {turn_deg} deg hand placement must be seated, not refused: \
+                 {rejection:?}"
+                )
+            });
+
+        // Measure how far the surface is left from the source, at the vertices,
+        // not on the translation column: a rotation about the centre moves that
+        // column even when the geometry has already landed.
+        let mut worst = 0.0_f64;
+        for vertex in positions.as_chunks::<3>().0 {
+            let point = DVec3::new(
+                f64::from(vertex[0]),
+                f64::from(vertex[1]),
+                f64::from(vertex[2]),
+            );
+            worst = worst.max((report.rigid.apply(point) - point).length());
+        }
+        assert!(
+            worst < 0.05,
+            "a {shift_mm} mm placement was left {worst:.4} mm from its source: {:?}",
+            report.rigid
+        );
+        assert!(
+            report.coverage > 0.05,
+            "the seating must explain a real part of the surface: {report:?}"
+        );
+    }
+}
+
+/// One unproductive iteration must not throw away what the level measured.
+///
+/// A rank-deficient normal matrix is a stop. Returning `Err` there discarded
+/// every correspondence the level had found, which is what the operator saw as
+/// "Best fit could not confirm an improvement" on a pair the solver had in fact
+/// already seated.
+/// An unproductive iteration must return what the level measured, not refuse.
+///
+/// When the solve cannot produce a step — a rank-deficient normal matrix, which
+/// is what a surface with one undetermined direction gives — the loop stops.
+/// It used to return `Err(NoImprovement)` instead, which discarded the
+/// correspondences the level had already measured and surfaced to the operator
+/// as "Best fit could not confirm an improvement" on a pair that had in fact
+/// been seated. Stopping and refusing are different answers and the operator
+/// only sees one of them.
+///
+/// The fixture curves along X and is a straight line along Y, so rotation about
+/// the in-plane axis is undetermined: the solve stays rank deficient, and the
+/// coarse stage still has a single answer because the shape is not symmetric.
+/// An unproductive iteration must return what the level measured, not refuse.
+///
+/// When the solve cannot produce a step — a rank-deficient normal matrix, which
+/// is what a surface with one undetermined direction gives — the loop stops.
+/// It used to return `Err(NoImprovement)` instead, discarding the
+/// correspondences the level had already measured, and the operator saw "Best
+/// fit could not confirm an improvement" on a pair the solver had in fact
+/// seated. Stopping and refusing are different answers and the panel only shows
+/// one of them.
+///
+/// The fixture curves along X and is dead straight along Y, so rotation about
+/// the in-plane axis is undetermined. It is tilted as well, which is what puts
+/// a real residual in front of the guard: with the sheets coincident the
+/// residual is zero, the old `> 1e-6` test was false, and the bug hid. This is
+/// the shape of a scan placed by hand — a small tilt and a real gap.
+#[test]
+fn an_unproductive_iteration_returns_the_best_pose_instead_of_refusing() {
+    let n = 24usize;
+    let mut positions = Vec::new();
+    for j in 0..=n {
+        for i in 0..=n {
+            let x = i as f32 * 0.5;
+            let y = j as f32 * 0.5;
+            // Form in BOTH directions, deliberately. A surface curved only
+            // across x is a cylinder: sliding it along y changes nothing, so
+            // every position along that axis explains the data equally well and
+            // `Ambiguous` is the correct answer. That fixture would test the
+            // ambiguity guard rather than the one this test is about.
+            let bend = 0.05 * (x - 6.0) * (x - 6.0) + 0.045 * (y - 6.0) * (y - 6.0);
+            positions.extend_from_slice(&[x, y, bend]);
+        }
+    }
+    let mut indices = Vec::new();
+    let stride = 25_u32;
+    for j in 0..24_u32 {
+        for i in 0..24_u32 {
+            let a = j * stride + i;
+            indices.extend_from_slice(&[a, a + 1, a + stride]);
+            indices.extend_from_slice(&[a + 1, a + stride + 1, a + stride]);
+        }
+    }
+    let fixed = soup(&positions, &indices);
+    let index = SurfaceIndex::build(fixed).unwrap();
+    let moving = soup(&positions, &indices);
+
+    for angle in [0.02_f64, 0.05, 0.1] {
+        let start = Rigid::new(
+            DQuat::from_axis_angle(DVec3::Z, angle),
+            DVec3::new(0.0, 0.0, 0.3),
+        );
+        let report = refine(moving, &index, start, &settings(), &CancelFlag::new()).unwrap_or_else(
+            |rejection| {
+                panic!(
+                    "a level that measured a real overlap must report it, not refuse \
+                     (tilt {angle}): {rejection:?}"
+                )
+            },
+        );
+        assert!(
+            report.geometric_rms > 0.0,
+            "the guard only means anything when the residual is real: {report:?}"
+        );
+        assert!(
+            report.coverage > 0.0,
+            "the reported pose must carry the measured overlap: {report:?}"
+        );
+    }
+}
+
+/// A seated scan must also pass the trust gate, not just the solver.
+///
+/// This is the piece the two halves of the bug met in. The solver could reach
+/// a correct pose while reporting `converged = false`, and the worker refuses
+/// anything `is_trustworthy_refinement_for` rejects — so a pair the tool had
+/// already seated came back to the operator as "Best fit could not confirm an
+/// improvement". Testing either half alone would have missed it: the pose was
+/// right and the report was wrong.
+#[test]
+fn a_seated_scan_is_trustworthy_at_every_hand_placement() {
+    let (positions, indices) = dome(24, 0.5);
+    let fixed = soup(&positions, &indices);
+    let index = SurfaceIndex::build(fixed).unwrap();
+
+    for (shift_mm, turn_deg) in [(2.0_f64, 1.0_f64), (5.0, 3.0), (12.0, 7.0)] {
+        let placement = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), turn_deg.to_radians()),
+            DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+        );
+        let report = refine(
+            soup(&positions, &indices),
+            &index,
+            placement,
+            &settings(),
+            &CancelFlag::new(),
+        )
+        .unwrap_or_else(|rejection| {
+            panic!(
+                "a {shift_mm} mm / {turn_deg} deg placement must be seated, not refused: \
+                 {rejection:?}"
+            )
+        });
+
+        assert!(
+            report.converged,
+            "the solver settled on the source surface but did not say so: {report:?}"
+        );
+        assert!(
+            report.is_trustworthy_refinement_for(&settings()),
+            "a pose that seats the scan was rejected by the trust gate, which is what \
+             the operator sees as 'could not confirm an improvement': {report:?}"
+        );
+    }
 }
