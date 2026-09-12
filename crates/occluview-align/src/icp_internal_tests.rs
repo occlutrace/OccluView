@@ -221,9 +221,24 @@ fn equally_supported_poses_in_one_component_are_ambiguous() {
     let mut twin = candidate(0.05, 0.8, Some(0.8));
     twin.rigid = crate::Rigid::new(DQuat::IDENTITY, DVec3::new(2.0, 0.0, 0.0));
 
+    // A 2 mm slide on a scan with a 2 mm influence radius: half a radius is
+    // 1 mm, so 2 mm is unmistakably a different answer.
     assert!(
-        coarse_candidates_are_ambiguous(&twin, &best),
+        coarse_candidates_are_ambiguous(&twin, &best, 60.0, 1.0),
         "a repeated/symmetric window must not be selected by component id"
+    );
+
+    // The same call with the two poses six micrometres apart — one seating,
+    // parameterised twice — must NOT be treated as two answers. This is the
+    // case that refused every real arch pair.
+    let mut nudge = candidate(0.05, 0.8, Some(0.8));
+    nudge.rigid = crate::Rigid::new(
+        DQuat::from_axis_angle(DVec3::Z, 0.0109),
+        DVec3::new(0.006, 0.0, 0.0),
+    );
+    assert!(
+        !coarse_candidates_are_ambiguous(&nudge, &best, 60.0, 1.0),
+        "two parameterisations of one seating are not two answers"
     );
 }
 
