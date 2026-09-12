@@ -563,6 +563,18 @@ fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
             "no graphics adapter was found for the selected backend; run `occluview --diagnostics` and install or update the GPU driver"
         ));
     }
+    // Probing costs a device creation on every adapter, and a software adapter
+    // never releases its worker threads. Only the hardware candidates are worth
+    // a probe here; the CPU adapter stays in the list as the last resort wgpu
+    // itself falls back to, where its threads are doing real work.
+    let (hardware, software): (Vec<_>, Vec<_>) = adapters
+        .into_iter()
+        .partition(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu);
+    let adapters = if hardware.is_empty() {
+        software
+    } else {
+        hardware
+    };
 
     let mut failures = Vec::new();
     let mut working_adapters = Vec::new();
@@ -570,6 +582,16 @@ fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
         let info = adapter.get_info();
         match pollster::block_on(adapter.request_device(&device_descriptor_for_adapter(&adapter))) {
             Ok((_device, _queue)) => {
+                // The device is dropped here on purpose: this pass only asks
+                // whether the adapter can give one. That is also why the CPU
+                // adapter is skipped above it — a software driver starts its
+                // worker threads when the device is created and does not stop
+                // them when the device is dropped, so probing llvmpipe left
+                // three Vulkan helper threads and ten llvmpipe workers spinning
+                // for the life of the process. Measured on this machine: the
+                // viewer sat at 10% CPU with NO document open and 20% with one,
+                // simply because the preflight had touched the software
+                // adapter.
                 working_adapters.push(AdapterIdentity::from_adapter(&adapter));
                 tracing::info!(
                     adapter = %info.name,
