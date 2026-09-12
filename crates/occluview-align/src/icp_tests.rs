@@ -176,6 +176,56 @@ fn trustworthy_report() -> IcpReport {
 /// against a discretisation error for an arch seated on a displaced copy of
 /// itself. This test pins the gate that rejects it, so nobody later relaxes
 /// the median and lets a confidently wrong pose paint a heatmap.
+/// The median limit holds at both ends of the radius slider.
+///
+/// It is a fraction of the operator's search radius, and the radius is
+/// adjustable from 0.2 mm to 10 mm. Unclamped, that fraction fails in opposite
+/// directions at the two ends, and both failures matter:
+///
+/// - at 0.2 mm the limit lands at 0.02 mm, below the noise of a real scanner,
+///   so a CORRECT seating is refused;
+/// - at 10 mm it lands at 1 mm, wide enough to authorize two different jaws,
+///   so a meaningless pose is accepted with a heatmap over it.
+///
+/// The floor and ceiling are what keep the gate meaningful across the range.
+#[test]
+fn the_median_limit_holds_at_both_ends_of_the_radius_slider() {
+    // Scanner noise: a correct seating on two independent scans of one arch.
+    let noisy_seating = IcpReport {
+        geometric_rms: 0.03,
+        median_abs: 0.03,
+        p95_abs: 0.08,
+        ..trustworthy_report()
+    };
+
+    // The measured two-jaw seating, which must never be authorized.
+    let two_jaws = IcpReport {
+        geometric_rms: 0.5777,
+        median_abs: 0.4203,
+        p95_abs: 1.0643,
+        coverage: 0.3454,
+        inlier_ratio: 0.2763,
+        ..trustworthy_report()
+    };
+
+    for radius in [0.2_f64, 0.5, 1.0, 2.0, 5.0, 10.0] {
+        let narrow = RefineSettings {
+            influence_radius_mm: radius,
+            ..settings()
+        };
+        assert!(
+            noisy_seating.is_trustworthy_refinement_for(&narrow),
+            "a real seating must survive the gate at radius {radius}: the limit \
+             must not fall below scanner noise"
+        );
+        assert!(
+            !two_jaws.is_trustworthy_refinement_for(&narrow),
+            "two different jaws must not be authorized at radius {radius}: the \
+             limit must not rise to meet a meaningless seating"
+        );
+    }
+}
+
 #[test]
 fn two_different_jaws_are_not_authorized_as_an_alignment() {
     let two_jaws = IcpReport {

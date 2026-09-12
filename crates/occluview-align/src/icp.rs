@@ -70,6 +70,25 @@ const MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION: f64 = 0.5;
 /// rather than a mesh-size guess.
 const MAX_REFINEMENT_MEDIAN_FRACTION: f64 = 0.10;
 
+/// The floor under that limit, in millimetres.
+///
+/// The search radius is adjustable down to 0.2 mm, where a tenth of it is
+/// 0.02 mm — below the noise of the scanners this tool reads. A limit that
+/// tight would refuse a correct seating, which is the same failure the refusal
+/// this gate replaced produced, only arriving from the other side. The floor
+/// sits above scanner noise and well below the separation that matters.
+const MIN_REFINEMENT_MEDIAN_MM: f64 = 0.08;
+
+/// The ceiling over that limit, in millimetres.
+///
+/// The radius is also adjustable UP to 10 mm, where a tenth of it is a
+/// millimetre — wide enough to authorize two different jaws, which is the pose
+/// this gate exists to refuse. Measured on the real fixture pair that seating
+/// has a median of 0.42 mm, so the ceiling is set under it and above any
+/// seating that is actually an alignment. Without this end the gate weakens
+/// exactly when the operator widens the search.
+const MAX_REFINEMENT_MEDIAN_MM: f64 = 0.30;
+
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
 const HUBER_FACTOR: f64 = 1.345;
@@ -198,7 +217,8 @@ impl IcpReport {
     pub fn is_trustworthy_refinement_for(&self, settings: &RefineSettings) -> bool {
         let radius = settings.influence_radius_mm.abs();
         let limit = radius * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
-        let median_limit = radius * MAX_REFINEMENT_MEDIAN_FRACTION;
+        let median_limit = (radius * MAX_REFINEMENT_MEDIAN_FRACTION)
+            .clamp(MIN_REFINEMENT_MEDIAN_MM, MAX_REFINEMENT_MEDIAN_MM);
         self.is_trustworthy_refinement_with_limit(limit)
             && self.median_abs.is_finite()
             && self.median_abs <= median_limit
