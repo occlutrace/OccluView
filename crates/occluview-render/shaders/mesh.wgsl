@@ -382,24 +382,6 @@ fn fs_main(
         base_a = 1.0;
     }
 
-    // Occlusal contact paint, evaluated HERE and not at the vertices. The field
-    // is linear across a triangle, the ramp is not, so interpolating the field
-    // and looking the colour up per fragment is the only arithmetic that both
-    // keeps the ramp's hues and puts the edge of the painted band exactly where
-    // the field crosses it — no smear across a triangle, no washed-out rim.
-    //
-    // The paint ends by WEIGHT, never by fading toward white: a ramp that washes
-    // out reads as a lighting artefact rather than as data. Inside the far band
-    // only the opacity moves, so a vertex measured a hair short of touching
-    // fades into the bare surface instead of drifting to another colour.
-    if (mesh_uniform.contact_map != 0u) {
-        let far = mesh_uniform.contact_gap.x;
-        let fade = mesh_uniform.contact_gap.y;
-        let t = clamp((far - in.contact_mm) / max(fade, 1e-6), 0.0, 1.0);
-        let weight = t * t * (3.0 - 2.0 * t);
-        base_rgb = mix(base_rgb, contact_ramp_color(in.contact_mm), weight);
-    }
-
     // A measured colour map keeps its hue and skips the tint, so a ramp reaches
     // the screen at the colour it was measured at. Lighting is REDUCED, not
     // removed: full studio light multiplies a saturated ramp down towards mud,
@@ -440,6 +422,41 @@ fn fs_main(
     // orientation" convention).
     if (mesh_uniform.show_orientation != 0u && !front_facing) {
         rgb = vec3<f32>(0.80, 0.10, 0.10);
+    }
+
+    // Occlusal contact paint, LAST and per fragment.
+    //
+    // Last, because a reading must not change how the scan looks where it marks
+    // nothing: the surface is finished — tinted, lit, backface-corrected — and
+    // the ramp is mixed over it. Painting into the base colour instead meant the
+    // whole layer had to switch to the measured-map treatment to keep the ramp's
+    // hue, which dropped the operator's tint and flattened the lighting across
+    // the entire scan the moment a reading opened.
+    //
+    // Per fragment, because the field is linear across a triangle and the ramp
+    // is not: interpolating the field and looking the colour up here keeps the
+    // ramp's hues and puts the edge of the band exactly where the field crosses
+    // it, with no smear and no washed-out rim.
+    //
+    // The paint ends by WEIGHT, never by fading toward white: a ramp that washes
+    // out reads as a lighting artefact rather than as data. Lighting inside the
+    // band is REDUCED rather than removed, at the same constants the deviation
+    // heatmap uses, so a saturated ramp still shows the cusps it sits on.
+    if (mesh_uniform.contact_map != 0u) {
+        let far = mesh_uniform.contact_gap.x;
+        let fade = mesh_uniform.contact_gap.y;
+        let t = clamp((far - in.contact_mm) / max(fade, 1e-6), 0.0, 1.0);
+        let weight = t * t * (3.0 - 2.0 * t);
+        if (weight > 0.0) {
+            let gloss = 0.75 * tight_specular + 0.25 * broad_specular;
+            let map_form = clamp(
+                lit + MEASURED_MAP_FORM * fresnel + MEASURED_MAP_GLOSS * gloss,
+                0.78,
+                1.10,
+            );
+            let shade = clamp(mix(1.0, map_form, MEASURED_MAP_SHADE), 0.96, 1.05);
+            rgb = mix(rgb, contact_ramp_color(in.contact_mm) * shade, weight);
+        }
     }
     return vec4<f32>(rgb, tinted.a * mesh_uniform.opacity * splat_coverage);
 }

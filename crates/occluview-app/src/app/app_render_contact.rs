@@ -37,13 +37,12 @@ pub(super) fn scene_mesh_uniform_with_contacts(
             table.ramp[3],
             &table.stops[..usize::try_from(table.count).unwrap_or(0)],
         );
-        // A contact reading is a measurement, and a measurement keeps its own
-        // hue: the layer draws under the measured-map treatment, which drops the
-        // layer tint (a tint would shift the ramp away from the legend's
-        // colours) and reduces the studio light so a saturated ramp still shows
-        // a cusp. The operator's own colour and texture toggles are left alone —
-        // outside the painted band the scan looks exactly as they set it up.
-        uniform.measured_map = 1;
+        // The layer keeps the treatment the operator gave it. A reading paints
+        // the marks and nothing else: the ramp is mixed over the finished
+        // surface in the shader, so the scan must NOT switch to the
+        // measured-map treatment, which drops the tint and flattens the
+        // lighting across the whole layer. Doing that turned every scan white
+        // the moment a reading opened — a display change for a measurement.
     }
     uniform
 }
@@ -70,12 +69,15 @@ mod tests {
         SceneMesh::new(mesh)
     }
 
-    /// A contact reading is a measurement too, and the same rule applies: it
-    /// keeps its own hue. The tint is dropped (a tint would shift the ramp away
-    /// from the legend) and the lighting is reduced, both of which ride on the
-    /// measured-map flag.
+    /// A reading paints its marks and changes nothing else about the layer.
+    ///
+    /// The ramp is mixed over the finished surface in the shader, so the layer
+    /// must NOT switch to the measured-map treatment: that drops the tint and
+    /// flattens the lighting across the whole scan, which turned every model
+    /// white the moment a reading opened. A measurement is not a reason to
+    /// restyle the thing being measured.
     #[test]
-    fn a_contact_map_draws_as_a_measured_map() {
+    fn a_reading_does_not_restyle_the_layer_it_measures() {
         use occluview_contact::ContactScale;
 
         let entry = triangle_entry();
@@ -90,8 +92,16 @@ mod tests {
         let painted = super::scene_mesh_uniform_with_contacts(&entry, Some(&scale), 1024);
         assert_eq!(painted.contact_map, 1);
         assert_eq!(
-            painted.measured_map, 1,
-            "a contact map must draw as a measurement: its own hue, no tint"
+            painted.measured_map, plain.measured_map,
+            "a reading must not change how the layer is shaded"
+        );
+        assert!(
+            painted.tint.map(f32::to_bits) == plain.tint.map(f32::to_bits),
+            "the operator's tint survives a reading"
+        );
+        assert_eq!(
+            painted.show_texture, plain.show_texture,
+            "the operator's texture toggle survives a reading"
         );
         assert!(
             painted.contact_stop_count > 1,
