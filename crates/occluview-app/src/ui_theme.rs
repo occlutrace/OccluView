@@ -193,6 +193,21 @@ pub(crate) fn overlay_frame() -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(10, 8))
 }
 
+/// A hairline between two groups of toolbar-weight controls.
+///
+/// Shared by the app toolbar and the contact bar so two rows of the same kind of
+/// control are separated the same way instead of each inventing its own gap.
+pub(crate) fn vertical_divider(ui: &mut egui::Ui, height: f32) {
+    ui.add_space(6.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, height), egui::Sense::hover());
+    ui.painter().vline(
+        rect.center().x,
+        egui::Rangef::new(rect.top(), rect.bottom()),
+        egui::Stroke::new(1.0_f32, hairline()),
+    );
+    ui.add_space(6.0);
+}
+
 /// Fixed toolbar height.
 pub(crate) const MENUBAR_HEIGHT_PX: f32 = 34.0;
 
