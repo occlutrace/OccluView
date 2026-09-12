@@ -550,3 +550,37 @@ fn opening_a_reading_clears_the_align_heatmap() {
         "the overlay arrays must be dropped, not just the flag"
     );
 }
+
+/// A field texture must fit the device the scan is drawn on.
+///
+/// The packed field is `ceil(n / width)` rows tall. At the preferred 1024-wide
+/// row, a scan of more than 8.4 million vertices asks for more rows than the
+/// texture dimension this app requests of every device, and the texture cannot
+/// be created — the reading would fail on the machine with the largest case to
+/// read, which is the one that needs it most.
+#[test]
+fn a_large_field_widens_its_rows_instead_of_overflowing_the_texture_limit() {
+    let limit = crate::app_bootstrap::MAX_RENDER_TEXTURE_DIMENSION;
+
+    // The ordinary case keeps the preferred near-square shape.
+    assert_eq!(
+        contact_field_width(1_115_757, limit),
+        Some(CONTACT_FIELD_TEXTURE_WIDTH)
+    );
+    // A tiny field is one short row rather than a wide padded one.
+    assert_eq!(contact_field_width(300, limit), Some(300));
+
+    // The case that used to overflow: rows must fit inside the limit.
+    let huge = usize::try_from(limit).expect("limit fits usize") * 1024 + 1;
+    let width = contact_field_width(huge, limit).expect("still packable");
+    let rows = u32::try_from(huge).expect("fits").div_ceil(width);
+    assert!(
+        rows <= limit,
+        "a {huge}-vertex field packed {width} wide is {rows} rows, over the {limit} limit"
+    );
+    assert!(width > CONTACT_FIELD_TEXTURE_WIDTH);
+
+    // And a scan too large to pack at all is refused rather than half-packed.
+    assert_eq!(contact_field_width(usize::MAX, limit), None);
+    assert_eq!(contact_field_width(0, limit), None);
+}

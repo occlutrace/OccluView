@@ -455,7 +455,17 @@ fn contact_paint(field: &ContactLayerField) -> ContactPaintSource {
 /// Pack one field through the contact crate's own rule — the crate owns the
 /// "nothing measured here" sentinel, so the bytes the GPU reads and the rule
 /// the hover readout applies come from one place.
+///
+/// The row length is derived from the vertex count and the texture dimension
+/// this app requests of every device, not taken from the preferred constant: a
+/// field is `ceil(n / width)` rows tall, so a scan large enough would overflow
+/// the limit and the texture could not be created at all — the reading would
+/// fail on exactly the case with the most to read.
 fn pack(values: &[f32]) -> Option<Arc<ContactFieldTexels>> {
-    let packed = occluview_contact::pack_field_texels(values, CONTACT_FIELD_TEXTURE_WIDTH);
+    let width = crate::contact::contact_field_width(
+        values.len(),
+        crate::app_bootstrap::MAX_RENDER_TEXTURE_DIMENSION,
+    )?;
+    let packed = occluview_contact::pack_field_texels(values, width);
     ContactFieldTexels::new(packed.rgba, packed.width, packed.height).map(Arc::new)
 }

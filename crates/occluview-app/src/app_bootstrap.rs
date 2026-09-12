@@ -20,7 +20,7 @@ const CRASH_LOG_CAPACITY: usize = 50;
 const STARTUP_JOURNAL_CAPACITY: usize = 64;
 const STARTUP_JOURNAL_MAX_BYTES: u64 = 64 * 1024;
 const STARTUP_JOURNAL_FILE: &str = "startup-journal.log";
-const MAX_RENDER_TEXTURE_DIMENSION: u32 = 8192;
+pub(crate) const MAX_RENDER_TEXTURE_DIMENSION: u32 = 8192;
 const LIVE_MSAA_SAMPLE_COUNT: u16 = 4;
 const LIVE_SAFE_SAMPLE_COUNT: u16 = 1;
 /// The depth/stencil format every live-pass pipeline declares.
