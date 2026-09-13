@@ -286,7 +286,7 @@ impl OccluViewApp {
         // frame later, and one frame is enough for the release to land somewhere
         // that no longer expects it.
         self.finish_align_drag();
-        self.tools.align.drag = None;
+        self.abandon_align_drag();
         let entering_automatic =
             self.tools.align.tab == crate::align_panel::AlignTab::Automatically;
         self.abandon_align_jobs();

@@ -11,6 +11,11 @@
 //! - `unsaved_edit_layer_ids` names exactly the layers whose in-scene mesh
 //!   differs from disk; every applied mesh edit and its undo/redo routes
 //!   through [`DocumentState::mark_mesh_edits_unsaved`].
+//! - `unsaved_drag_pose` is the one provisional exception: an open Align
+//!   hand-drag has moved a layer, and the operator can still put it back. It is
+//!   kept out of the set because a set cannot tell the gesture's mark from a
+//!   committed edit on the same layer, and only [`DocumentState::has_unsaved_mesh_edits`]
+//!   reads it.
 //! - `edit_mode` owns selection and undo/redo; structural swaps re-sync it.
 //! - `active_load` / `queued_loads` mutate only the document; the camera
 //!   reset decision and the modified-during-load flag live here with them.
@@ -48,6 +53,10 @@ pub(super) struct DocumentState {
     pub(super) queued_loads: std::collections::VecDeque<SceneLoadRequest>,
     pub(super) load_queue_camera_reset: LoadQueueCameraReset,
     pub(super) camera_modified_during_load: bool,
+    /// Whether an open Align hand-drag has moved its layer away from the pose
+    /// the gesture started at. Set by the drag each frame, cleared when the
+    /// gesture ends. Kept out of [`Self::unsaved_edit_layer_ids`] on purpose.
+    pub(super) unsaved_drag_pose: bool,
 }
 
 /// In-progress mesh selection drag. Rectangle drags (default) track an origin
@@ -125,6 +134,7 @@ impl DocumentState {
             queued_loads: std::collections::VecDeque::new(),
             load_queue_camera_reset: LoadQueueCameraReset::Idle,
             camera_modified_during_load: false,
+            unsaved_drag_pose: false,
         }
     }
 
@@ -174,9 +184,14 @@ impl DocumentState {
 
     /// Whether anything in the scene differs from what is on disk.
     ///
-    /// Derived from the set of layers with pending edits.
+    /// Derived from the set of layers with pending edits and, when a hand-drag
+    /// is open, whether that gesture has moved its layer away from where it
+    /// started. The drag pose is not an entry in the set: a set cannot tell the
+    /// gesture's mark from a committed edit on the same layer, and the operator
+    /// can still put the pose back. It is still work while it is held, which is
+    /// what the load guard and the close guard are asking about.
     pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
-        !self.unsaved_edit_layer_ids.is_empty()
+        !self.unsaved_edit_layer_ids.is_empty() || self.unsaved_drag_pose
     }
 
     /// Forget the unsaved-edit tracking for the layers just written to disk.
