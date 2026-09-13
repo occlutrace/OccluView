@@ -19,7 +19,7 @@
 //! sentence it had.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -45,7 +45,9 @@ pub(crate) struct ContactJobKeys {
 pub(crate) enum ContactFailure {
     /// One of the two layers has no usable triangle surface.
     NoSurface,
-    /// Nothing usable came out of the compute.
+    /// Nothing usable came out of the compute. Also the reason recorded when the
+    /// worker could not run the job at all: the operator's panel says the same
+    /// sentence either way, and the log line carries the distinction.
     Worker,
 }
 
@@ -55,6 +57,11 @@ pub(crate) struct ContactJob {
     /// The generation this job belongs to, so a result the operator has already
     /// moved past is discarded rather than applied.
     pub(crate) generation: u64,
+    /// The identity of this request, assigned by [`ContactWorker::submit`] and
+    /// echoed back with the result. A generation says which scene the job
+    /// belongs to; this says which *measurement* it is, so an answer to a
+    /// superseded request cannot pass for the answer to the current one.
+    pub(crate) request_id: u64,
     /// What the measurement describes; echoed back with the result.
     pub(crate) keys: ContactJobKeys,
     /// Subject vertex positions, posed into world, xyz triples.
@@ -90,6 +97,8 @@ pub(crate) enum ContactOutcome {
 pub(crate) struct ContactCompletion {
     /// The generation the job belonged to.
     pub(crate) generation: u64,
+    /// The request that produced this completion.
+    pub(crate) request_id: u64,
     /// The keys the job was submitted for.
     pub(crate) keys: ContactJobKeys,
     /// The result.
@@ -112,13 +121,43 @@ pub(crate) struct ContactWorker {
     completions: Arc<Mutex<Vec<ContactCompletion>>>,
     running: Arc<Mutex<Option<CancelFlag>>>,
     generation: Arc<AtomicU64>,
+    request_sequence: Arc<AtomicU64>,
     busy: Arc<AtomicU64>,
+    /// Whether the worker can no longer run or publish anything. Set when the
+    /// thread could not be started and when a lock the job path needs is
+    /// poisoned; read by the app so a reading never waits on a worker that is
+    /// not there.
+    unusable: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
 impl ContactWorker {
     /// Start the worker thread.
     pub(crate) fn spawn() -> Self {
+        Self::spawn_with(|queue, completions, running, busy| {
+            thread::Builder::new()
+                .name("occluview-contacts".into())
+                .spawn(move || {
+                    run_worker(&queue, &completions, &running, &busy);
+                })
+        })
+    }
+
+    /// Start the worker, with thread creation supplied by the caller.
+    ///
+    /// Split out so the one failure this machine cannot produce on demand — the
+    /// OS refusing a new thread — is reachable in a test. The `Err` branch is
+    /// the production behaviour: the worker exists, holds no thread, and says
+    /// so through [`Self::has_failed`].
+    fn spawn_with<F>(spawn_thread: F) -> Self
+    where
+        F: FnOnce(
+            Arc<JobQueue>,
+            Arc<Mutex<Vec<ContactCompletion>>>,
+            Arc<Mutex<Option<CancelFlag>>>,
+            Arc<AtomicU64>,
+        ) -> std::io::Result<JoinHandle<()>>,
+    {
         let queue = Arc::new(JobQueue {
             state: Mutex::new(QueueState {
                 jobs: VecDeque::new(),
@@ -129,31 +168,55 @@ impl ContactWorker {
         let completions = Arc::new(Mutex::new(Vec::new()));
         let running: Arc<Mutex<Option<CancelFlag>>> = Arc::new(Mutex::new(None));
         let generation = Arc::new(AtomicU64::new(0));
+        let request_sequence = Arc::new(AtomicU64::new(0));
         let busy = Arc::new(AtomicU64::new(0));
-
-        let thread_queue = Arc::clone(&queue);
-        let thread_completions = Arc::clone(&completions);
-        let thread_running = Arc::clone(&running);
-        let thread_busy = Arc::clone(&busy);
-        let handle = thread::Builder::new()
-            .name("occluview-contacts".into())
-            .spawn(move || {
-                run_worker(
-                    &thread_queue,
-                    &thread_completions,
-                    &thread_running,
-                    &thread_busy,
-                );
-            })
-            .ok();
+        let unusable = Arc::new(AtomicBool::new(false));
+        let handle = spawn_thread(
+            Arc::clone(&queue),
+            Arc::clone(&completions),
+            Arc::clone(&running),
+            Arc::clone(&busy),
+        )
+        .map_err(|error| {
+            tracing::warn!(%error, "contact worker thread could not be started");
+            unusable.store(true, Ordering::Release);
+        })
+        .ok();
 
         Self {
             queue,
             completions,
             running,
             generation,
+            request_sequence,
             busy,
+            unusable,
             handle,
+        }
+    }
+
+    /// A worker whose thread could not start, for the tests that drive the
+    /// missing-executor half of a reading.
+    #[cfg(test)]
+    pub(crate) fn spawn_failing() -> Self {
+        Self::spawn_with(|_, _, _, _| Err(std::io::Error::other("no thread for the test")))
+    }
+
+    /// Whether the worker can still accept and publish work.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.unusable.load(Ordering::Acquire)
+    }
+
+    /// Publish a completion exactly as the worker thread does.
+    ///
+    /// Exists so a test can hold a superseded result in the publication slot —
+    /// the state a cancel cannot always prevent, because the compute may have
+    /// finished before the flag was set — without racing a real measurement to
+    /// that instant.
+    #[cfg(test)]
+    pub(crate) fn publish_for_tests(&self, completion: ContactCompletion) {
+        if let Ok(mut published) = self.completions.lock() {
+            published.push(completion);
         }
     }
 
@@ -176,6 +239,16 @@ impl ContactWorker {
             completions.clear();
         }
         self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// The identity of the most recent request, if any job has been submitted.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn latest_request(&self) -> Option<u64> {
+        match self.request_sequence.load(Ordering::SeqCst) {
+            0 => None,
+            request => Some(request),
+        }
     }
 
     /// The generation new jobs should carry.
@@ -202,28 +275,54 @@ impl ContactWorker {
     /// One pending job is the whole queue: a reading always describes the scene
     /// as it is now, and computing an older one on the way would only delay the
     /// answer the operator is waiting for.
-    pub(crate) fn submit(&self, job: ContactJob) {
+    ///
+    /// Returns the request identity the completion will carry, or `None` when
+    /// the worker cannot run the job at all — it never got a thread, or a lock
+    /// the job path needs is poisoned. A caller that gets `None` has to say so
+    /// on the panel: a reading that waits for a completion nobody will produce
+    /// is stuck on "Measuring" forever.
+    #[must_use]
+    pub(crate) fn submit(&self, mut job: ContactJob) -> Option<u64> {
+        if self.has_failed() {
+            return None;
+        }
         self.cancel_running();
+        let request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         let Ok(mut state) = self.queue.state.lock() else {
-            return;
+            mark_unusable(&self.unusable, "contact queue lock poisoned");
+            return None;
         };
+        job.request_id = request_id;
         state.jobs.clear();
         state.jobs.push_back(job);
         drop(state);
         self.queue.wake.notify_one();
+        Some(request_id)
     }
 
-    /// Take every completion that still belongs to the current generation.
+    /// Take every completion that answers the newest request in the current
+    /// generation.
+    ///
+    /// Both filters matter. The generation says the operator has not moved on
+    /// to a different scene; the request identity says this is the answer to the
+    /// measurement that is still being waited for. Cancellation alone cannot
+    /// guarantee the second — a compute that finished before the cancel flag was
+    /// set publishes its result anyway — so an older answer is dropped here
+    /// rather than handed to a caller that would read it as the current one.
     #[must_use]
     pub(crate) fn drain(&self) -> Vec<ContactCompletion> {
         let current = self.generation();
+        let newest = self.request_sequence.load(Ordering::SeqCst);
         let Ok(mut completions) = self.completions.lock() else {
+            mark_unusable(&self.unusable, "contact completion lock poisoned");
             return Vec::new();
         };
         let drained: Vec<ContactCompletion> = completions.drain(..).collect();
         drained
             .into_iter()
-            .filter(|completion| completion.generation == current)
+            .filter(|completion| {
+                completion.generation == current && completion.request_id == newest
+            })
             .collect()
     }
 }
@@ -288,6 +387,7 @@ fn run_worker(
         if let Ok(mut published) = completions.lock() {
             published.push(ContactCompletion {
                 generation: job.generation,
+                request_id: job.request_id,
                 keys: job.keys,
                 outcome,
             });
@@ -334,6 +434,17 @@ fn execute(job: &ContactJob, cancel: &CancelFlag) -> ContactOutcome {
         antagonist_signed_mm: field.antagonist_signed_mm,
         stats: field.stats,
         diagnostics: field.diagnostics,
+    }
+}
+
+/// Record that the worker cannot run or publish work any more.
+///
+/// Latching is the point: a poisoned queue or a thread the OS refused does not
+/// heal, and a worker that quietly retried would leave the panel claiming a
+/// measurement is coming.
+fn mark_unusable(unusable: &AtomicBool, reason: &'static str) {
+    if !unusable.swap(true, Ordering::AcqRel) {
+        tracing::warn!(reason, "contact worker cannot run");
     }
 }
 

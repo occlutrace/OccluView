@@ -33,6 +33,9 @@ fn job(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactJob {
     let (antagonist_positions, antagonist_indices) = plate(z_gap, 1.0);
     ContactJob {
         generation: worker.generation(),
+        // Filled in by `submit`, which is the only thing that assigns an
+        // identity.
+        request_id: 0,
         keys: keys(offset, false),
         subject_positions,
         subject_indices,
@@ -42,6 +45,29 @@ fn job(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactJob {
             search_radius_mm: occluview_contact::SEARCH_RADIUS_MM,
             flatten_patches: false,
         },
+    }
+}
+
+/// A measured completion carrying the identity of the request it answers.
+fn completion_for(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactCompletion {
+    let (subject_positions, subject_indices) = plate(0.0, 1.0);
+    let (antagonist_positions, antagonist_indices) = plate(z_gap, 1.0);
+    let job = ContactJob {
+        generation: worker.generation(),
+        request_id: 0,
+        keys: keys(offset, false),
+        subject_positions,
+        subject_indices,
+        antagonist_positions,
+        antagonist_indices,
+        settings: ContactSettings::default(),
+    };
+    let outcome = execute(&job, &CancelFlag::new());
+    ContactCompletion {
+        generation: job.generation,
+        request_id: job.request_id,
+        keys: job.keys,
+        outcome,
     }
 }
 
@@ -66,7 +92,7 @@ fn a_measurement_comes_back_for_both_sides() {
     // The antagonist plate sits a twentieth of a millimetre ABOVE the
     // subject's plane: the subject is therefore inside the antagonist, which is
     // the case a contact reading exists to report.
-    worker.submit(job(&worker, 0, 0.05));
+    let _ = worker.submit(job(&worker, 0, 0.05));
     let completion = wait_for_completion(&worker, Duration::from_secs(20)).expect("a completion");
     assert_eq!(completion.keys, keys(0, false));
     match completion.outcome {
@@ -122,8 +148,9 @@ fn a_layer_with_no_surface_is_refused() {
     let worker = ContactWorker::spawn();
     let (subject_positions, subject_indices) = plate(0.0, 1.0);
     let (antagonist_positions, _) = plate(-0.1, 1.0);
-    worker.submit(ContactJob {
+    let _ = worker.submit(ContactJob {
         generation: worker.generation(),
+        request_id: 0,
         keys: keys(1, false),
         subject_positions,
         subject_indices,
@@ -138,12 +165,76 @@ fn a_layer_with_no_surface_is_refused() {
     ));
 }
 
+/// Superseding a job retires its identity, so a completion the previous job
+/// managed to publish before the cancel landed can never be mistaken for the
+/// answer to the job the operator is waiting for.
+///
+/// The race this covers is the one cancellation cannot: the compute finishes,
+/// checks its flag before `submit` sets it, and pushes a completion for the
+/// *old* keys. The generation does not catch that — the operator never asked
+/// for a new generation, only for a new measurement — so the identity of the
+/// newest request has to.
+#[test]
+fn a_superseded_request_cannot_answer_the_latest_one() {
+    let worker = ContactWorker::spawn();
+    assert_eq!(worker.latest_request(), None, "nothing submitted yet");
+    let _ = worker.submit(job(&worker, 0, -0.1));
+    let first = worker.latest_request().expect("the first submission");
+    let _ = worker.submit(job(&worker, 7, -0.1));
+    let second = worker.latest_request().expect("the second submission");
+    assert_ne!(
+        first, second,
+        "submitting again retires the previous request"
+    );
+}
+
+/// A completion published for a superseded request is filtered at the worker
+/// boundary, not only at the panel: whatever the application does downstream, an
+/// answer to a question nobody is asking any more is not delivered.
+#[test]
+fn a_completion_for_a_superseded_request_is_not_drained() {
+    let worker = ContactWorker::spawn();
+    // The stale completion the cancel could not prevent: it was published for
+    // request 1 before the second submission arrived.
+    let first_id = worker.submit(job(&worker, 1, -0.1)).expect("queued");
+    let mut stale = completion_for(&worker, 1, 0.05);
+    stale.request_id = first_id;
+    worker.publish_for_tests(stale);
+    // The operator asks again. Nothing about the scene changed, so this is the
+    // same generation.
+    let second_id = worker.submit(job(&worker, 2, -0.1)).expect("queued");
+    assert_ne!(first_id, second_id);
+    let drained = worker.drain();
+    assert!(
+        drained
+            .iter()
+            .all(|completion| completion.keys != keys(1, false)),
+        "the superseded completion must not be delivered as the current answer"
+    );
+    let second = wait_for_completion(&worker, Duration::from_secs(20)).expect("a completion");
+    assert_eq!(second.keys, keys(2, false));
+    assert_eq!(second.request_id, second_id);
+}
+
+/// A worker that never got a thread says so instead of accepting jobs that will
+/// never produce a completion.
+#[test]
+fn a_worker_without_a_thread_refuses_to_accept_work() {
+    let worker = ContactWorker::spawn_failing();
+    assert!(worker.has_failed());
+    assert!(
+        worker.submit(job(&worker, 0, -0.1)).is_none(),
+        "a job with no executor must not be queued"
+    );
+    assert!(!worker.is_busy());
+}
+
 /// A bump discards what is in flight and clears the queue, so the map on screen
 /// describes the pair the operator is looking at now.
 #[test]
 fn a_generation_bump_discards_in_flight_work() {
     let worker = ContactWorker::spawn();
-    worker.submit(job(&worker, 0, -0.1));
+    let _ = worker.submit(job(&worker, 0, -0.1));
     worker.bump_generation();
     // The cancelled job must not publish: the completion list is cleared and the
     // worker's own flag stops the compute at its next checkpoint.
@@ -157,28 +248,26 @@ fn a_generation_bump_discards_in_flight_work() {
         waited += Duration::from_millis(10);
     }
     // The worker still works afterwards.
-    worker.submit(job(&worker, 2, -0.1));
+    let _ = worker.submit(job(&worker, 2, -0.1));
     let completion = wait_for_completion(&worker, Duration::from_secs(20)).expect("a completion");
     assert_eq!(completion.keys, keys(2, false));
 }
-
 /// Submitting again replaces the queued job: computing an older reading on the
 /// way would only delay the answer the operator is waiting for.
 #[test]
 fn a_new_submission_replaces_the_queued_one() {
     let worker = ContactWorker::spawn();
-    worker.submit(job(&worker, 0, -0.1));
-    worker.submit(job(&worker, 5, -0.1));
+    let _ = worker.submit(job(&worker, 0, -0.1));
+    let _ = worker.submit(job(&worker, 5, -0.1));
     let completion = wait_for_completion(&worker, Duration::from_secs(20)).expect("a completion");
     assert_eq!(completion.keys, keys(5, false));
 }
-
 /// Dropping the worker stops the thread and does not panic, which matters
 /// because a release build aborts on panic.
 #[test]
 fn dropping_the_worker_stops_it_cleanly() {
     let worker = ContactWorker::spawn();
-    worker.submit(job(&worker, 0, -0.1));
+    let _ = worker.submit(job(&worker, 0, -0.1));
     drop(worker);
 }
 
@@ -187,7 +276,7 @@ fn dropping_the_worker_stops_it_cleanly() {
 #[test]
 fn the_worker_reports_itself_busy() {
     let worker = ContactWorker::spawn();
-    worker.submit(job(&worker, 0, -0.1));
+    let _ = worker.submit(job(&worker, 0, -0.1));
     assert!(worker.is_busy());
     let _ = wait_for_completion(&worker, Duration::from_secs(20));
 }

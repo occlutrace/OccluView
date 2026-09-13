@@ -34,6 +34,21 @@ fn slab(z: f32, x: f32) -> Mesh {
     .expect("valid mesh")
 }
 
+/// A submitted request for `keys`, as the frame loop records one.
+fn request(id: u64, keys: ContactJobKeys, pair: ContactPair) -> ContactRequest {
+    ContactRequest { id, keys, pair }
+}
+
+/// One packed layer field, small enough for a state test.
+fn field(layer: SceneMeshId, value: f32) -> ContactLayerField {
+    ContactLayerField {
+        layer,
+        signed_mm: Arc::new(vec![value; 3]),
+        texels: Arc::new(ContactFieldTexels::new(vec![0, 0, 0, 0], 1, 1).expect("a 1x1 field")),
+        revision: 1,
+    }
+}
+
 fn scene_of(meshes: Vec<Mesh>) -> Scene {
     let mut scene = Scene::new();
     for mesh in meshes {
@@ -118,8 +133,13 @@ fn a_display_change_produces_no_new_job_keys() {
     let keys = contact_job_keys(&scene, pair, false).expect("a pair in the scene");
     let mut state = ContactState::default();
     state.open(pair);
-    state.mark_submitted(keys, ContactStatus::Measuring);
-    state.mark_measured(keys, ContactStats::default());
+    state.mark_submitted(request(1, keys, pair), ContactStatus::Measuring);
+    assert!(state.store_measured(
+        request(1, keys, pair),
+        field(pair.subject, 0.0),
+        field(pair.antagonist, 0.0),
+        ContactStats::default(),
+    ));
     assert!(state.set_load_mm(0.4), "the slider moved");
     assert!(
         state.set_mode(ContactMode::Approach),
@@ -349,13 +369,16 @@ fn a_refusal_is_not_retried_until_something_changes() {
         "a fresh reading has to measure"
     );
 
-    state.mark_submitted(keys, ContactStatus::Measuring);
+    state.mark_submitted(request(1, keys, pair), ContactStatus::Measuring);
     assert!(
         !state.needs_measurement(keys),
         "a job already in flight must not be queued twice"
     );
 
-    state.mark_failed(keys, ContactFailure::NoSurface);
+    assert!(
+        state.mark_failed(1, keys, ContactFailure::NoSurface),
+        "the failure answers the request that was in flight"
+    );
     assert!(
         !state.needs_measurement(keys),
         "a refusal must not be retried on the next frame"
@@ -367,7 +390,13 @@ fn a_refusal_is_not_retried_until_something_changes() {
     assert!(state.needs_measurement(retry));
 
     // And a measurement that landed is not re-run either.
-    state.mark_measured(retry, ContactStats::default());
+    state.mark_submitted(request(2, retry, pair), ContactStatus::Measuring);
+    assert!(state.store_measured(
+        request(2, retry, pair),
+        field(pair.subject, 0.0),
+        field(pair.antagonist, 0.0),
+        ContactStats::default(),
+    ));
     assert!(!state.needs_measurement(retry));
 }
 
@@ -425,7 +454,13 @@ fn only_a_refusal_offers_a_retry() {
     let mut state = ContactState::default();
     state.open(pair);
     assert!(!state.refused(), "a fresh reading is not a refusal");
-    state.mark_measured(keys, ContactStats::default());
+    state.mark_submitted(request(1, keys, pair), ContactStatus::Measuring);
+    assert!(state.store_measured(
+        request(1, keys, pair),
+        field(pair.subject, 0.0),
+        field(pair.antagonist, 0.0),
+        ContactStats::default(),
+    ));
     assert!(!state.refused(), "a reading that landed is not a refusal");
     state.status_override(ContactStatus::NoOverlap);
     assert!(
@@ -437,7 +472,8 @@ fn only_a_refusal_offers_a_retry() {
         !state.refused(),
         "a hidden scan is fixed by showing it, not by measuring again"
     );
-    state.mark_failed(keys, ContactFailure::Worker);
+    state.mark_submitted(request(9, keys, pair), ContactStatus::Measuring);
+    assert!(state.mark_failed(9, keys, ContactFailure::Worker));
     assert!(state.refused(), "a job that produced nothing earns a retry");
 }
 
@@ -490,17 +526,14 @@ fn a_hand_drag_holds_the_reading_back_and_takes_the_marks_down() {
     let keys = contact_job_keys(&scene, pair, false).expect("a pair in the scene");
     let mut state = ContactState::default();
     state.open(pair);
-    state.mark_measured(keys, ContactStats::default());
-    state.store_field(
-        pair.subject,
-        ContactLayerField {
-            layer: pair.subject,
-            signed_mm: Arc::new(vec![0.0; 3]),
-            texels: Arc::new(ContactFieldTexels::new(vec![0, 0, 0, 0], 1, 1).expect("a 1x1 field")),
-            revision: 1,
-        },
-    );
-    assert_eq!(state.fields().len(), 1);
+    state.mark_submitted(request(1, keys, pair), ContactStatus::Measuring);
+    assert!(state.store_measured(
+        request(1, keys, pair),
+        field(pair.subject, 0.0),
+        field(pair.antagonist, 0.1),
+        ContactStats::default(),
+    ));
+    assert_eq!(state.fields().len(), 2);
 
     state.hold_for_drag();
     assert!(
