@@ -275,6 +275,21 @@ impl OccluViewApp {
         }
     }
 
+    /// Drop the state that described the scene a Replace just replaced.
+    ///
+    /// The old scene and any unsaved edits on it are gone. A hand-drag is part
+    /// of that: its layer is being replaced, so the gesture is dropped rather
+    /// than committed into a scene it does not belong to. An Append is the
+    /// other case — it keeps the layer, so it commits the gesture instead; see
+    /// `set_scene`.
+    fn forget_replaced_scene_state(&mut self) {
+        self.document.edit_mode.clear();
+        self.discard_align_drag();
+        self.document.clear_unsaved_mesh_edits();
+        self.document.hidden_layer_stack.clear();
+        self.document.translucent_layer_restore.clear();
+    }
+
     fn loaded_replace_needs_guard(&self, pending: &PendingSceneLoad) -> bool {
         pending.mode == SceneLoadMode::Replace
             && replace_result_requires_guard(
@@ -321,11 +336,7 @@ impl OccluViewApp {
                 let recent_paths = current_paths.clone();
                 let queued_after_current = !self.document.queued_loads.is_empty();
                 if !append {
-                    self.document.edit_mode.clear();
-                    // The old scene (and any unsaved edits on it) is gone.
-                    self.document.clear_unsaved_mesh_edits();
-                    self.document.hidden_layer_stack.clear();
-                    self.document.translucent_layer_restore.clear();
+                    self.forget_replaced_scene_state();
                 }
                 let reset_camera = if append {
                     let reset = self.document.load_queue_camera_reset

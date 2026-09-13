@@ -36,11 +36,13 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        // A gesture is ended through `abandon_align_drag`, which also clears the
-        // provisional-pose term the guards read. Asserting the raw field write
-        // would pass while that term stayed set and the close guard kept asking
-        // about a drag that no longer exists.
-        "self.abandon_align_drag();",
+        // A gesture is ended through `discard_align_drag`, which drops the drag
+        // and the provisional-pose term together. Asserting the raw field write
+        // would pass while the term stayed set and the close guard kept asking
+        // about a drag that no longer exists. This is the discard rather than
+        // the committing form because this path is revoking the scene state, not
+        // turning a gesture into an edit.
+        "self.discard_align_drag();",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
         "self.tools.align.geometry.clear();",

@@ -34,6 +34,15 @@ impl OccluViewApp {
     /// cancelled session) go through here so there is one place that ends a
     /// gesture.
     pub(super) fn abandon_align_drag(&mut self) {
+        self.finish_align_drag();
+    }
+
+    /// Drop an open gesture without recording it, for the callers that are
+    /// removing the scene it described. A Replace or a Close destroys the pose
+    /// with the scene, so there is nothing left to record; an Append keeps the
+    /// layers, so it goes through [`Self::abandon_align_drag`] instead and the
+    /// move is committed.
+    pub(super) fn discard_align_drag(&mut self) {
         self.tools.align.drag = None;
         self.document.unsaved_drag_pose = false;
     }

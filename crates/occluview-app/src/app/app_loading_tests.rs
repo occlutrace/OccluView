@@ -747,3 +747,58 @@ fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
         "with the gesture released into the one recorded step"
     );
 }
+
+#[test]
+fn an_append_does_not_discard_a_held_drag_pose_it_carries_forward() {
+    // An append keeps the existing layers, poses included, so the drag's moved
+    // layer survives into the combined scene. The gesture is over (the append
+    // commits through `set_scene`), but the pose it made is still there and is
+    // still work. Dropping the term without committing the move leaves a moved
+    // scan that no history step describes and no save prompt names.
+    let mut app = test_app("append-carries-held-pose");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    app.persistence.current_paths = vec![PathBuf::from("/cases/a.stl")];
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)),
+    );
+    let moved = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+
+    app.apply_scene_load_result(
+        delivered_load(
+            &app,
+            named_scene("scene-b", 20.0),
+            SceneLoadMode::Append,
+            "/cases/b.stl",
+        ),
+        Ok(named_scene("scene-b", 20.0)),
+    );
+
+    // The moved layer is still in the scene with the pose the operator gave it.
+    let scene = app.document.scene.as_ref().expect("scene");
+    assert_eq!(scene.meshes().len(), 2, "fixture: the append landed");
+    assert_eq!(
+        scene.meshes()[0].transform,
+        moved,
+        "fixture: the append kept the moved pose"
+    );
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "a pose that survived into the new scene is still unsaved work"
+    );
+    assert!(
+        app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        "and it must be a committed edit, or the close guard cannot name it"
+    );
+    assert!(
+        app.document.edit_mode.undo_layer_id() == Some(layer_id),
+        "with the one history step the release would have recorded"
+    );
+}
