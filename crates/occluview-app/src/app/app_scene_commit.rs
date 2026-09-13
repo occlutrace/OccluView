@@ -74,14 +74,21 @@ mod tests {
         Vertex::at(Vec3::new(x, y, z))
     }
 
-    fn named_layer(name: &str) -> Option<SceneMesh> {
+    /// A layer fixture that fails loudly.
+    ///
+    /// It used to return `Option<SceneMesh>` and every test opened with
+    /// `let Some(..) else { return; }`. A fixture that cannot build its mesh
+    /// made those tests pass without asserting anything, which is the one
+    /// failure mode a test must not have. The mesh is a fixed triangle list, so
+    /// construction either always succeeds or the fixture itself is broken.
+    fn named_layer(name: &str) -> SceneMesh {
         let mesh = Mesh::new(
             Some(name.to_string()),
             vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
             vec![0, 1, 2],
         )
-        .ok()?;
-        Some(SceneMesh::new(mesh))
+        .expect("the fixture's fixed triangle list is a valid mesh");
+        SceneMesh::new(mesh)
     }
 
     fn scene_with_layers(layers: impl IntoIterator<Item = SceneMesh>) -> Scene {
@@ -94,18 +101,10 @@ mod tests {
 
     #[test]
     fn inserting_part_in_middle_preserves_retained_ids_and_gives_new_id_empty_path() {
-        let Some(lower) = named_layer("Lower") else {
-            return;
-        };
-        let Some(upper) = named_layer("Upper") else {
-            return;
-        };
-        let Some(prep) = named_layer("Prep") else {
-            return;
-        };
-        let Some(part_b) = named_layer("Part B") else {
-            return;
-        };
+        let lower = named_layer("Lower");
+        let upper = named_layer("Upper");
+        let prep = named_layer("Prep");
+        let part_b = named_layer("Part B");
         let old_scene = scene_with_layers([lower.clone(), upper.clone(), prep.clone()]);
         let new_scene = scene_with_layers([lower, part_b, upper, prep]);
         let old_paths = vec![
@@ -129,15 +128,9 @@ mod tests {
 
     #[test]
     fn removing_and_reordering_layers_maps_paths_by_stable_id() {
-        let Some(lower) = named_layer("Lower") else {
-            return;
-        };
-        let Some(upper) = named_layer("Upper") else {
-            return;
-        };
-        let Some(prep) = named_layer("Prep") else {
-            return;
-        };
+        let lower = named_layer("Lower");
+        let upper = named_layer("Upper");
+        let prep = named_layer("Prep");
         let old_scene = scene_with_layers([lower.clone(), upper, prep.clone()]);
         let new_scene = scene_with_layers([prep, lower]);
         let old_paths = vec![
@@ -159,12 +152,8 @@ mod tests {
 
     #[test]
     fn structural_undo_and_redo_share_the_same_reconciliation_helper() {
-        let Some(lower) = named_layer("Lower") else {
-            return;
-        };
-        let Some(split_part) = named_layer("Split Part") else {
-            return;
-        };
+        let lower = named_layer("Lower");
+        let split_part = named_layer("Split Part");
         let baseline = scene_with_layers([lower.clone()]);
         let split = scene_with_layers([lower, split_part]);
         let baseline_paths = vec![PathBuf::from("/cases/lower.stl")];
@@ -183,12 +172,8 @@ mod tests {
 
     #[test]
     fn derived_layer_keeps_the_source_export_path() {
-        let Some(source) = named_layer("Source") else {
-            return;
-        };
-        let derived = named_layer("Source part")
-            .expect("test mesh")
-            .with_source_layer_id(source.id());
+        let source = named_layer("Source");
+        let derived = named_layer("Source part").with_source_layer_id(source.id());
         let old_scene = scene_with_layers([source.clone()]);
         let new_scene = scene_with_layers([source, derived]);
         let old_paths = vec![PathBuf::from("/cases/source.stl")];
