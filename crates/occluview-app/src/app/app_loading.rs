@@ -295,7 +295,11 @@ impl OccluViewApp {
         self.ui.status_message = None;
     }
 
-    fn apply_scene_load_result(&mut self, pending: PendingSceneLoad, result: Result<Scene>) {
+    pub(super) fn apply_scene_load_result(
+        &mut self,
+        pending: PendingSceneLoad,
+        result: Result<Scene>,
+    ) {
         let append = pending.mode == SceneLoadMode::Append;
         match result {
             Ok(scene) => {

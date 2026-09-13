@@ -66,6 +66,23 @@ impl PersistenceState {
         }
     }
 
+    /// A persistence state for a headless test: no preferences read from disk,
+    /// no recent-file write, no update check. Mirrors `DocumentState::new` for
+    /// the domains a loading test does not exercise.
+    #[cfg(test)]
+    pub(super) fn for_tests() -> Self {
+        Self {
+            settings: Settings::default(),
+            settings_persistence: SettingsPersistence::default(),
+            language_persistence: SettingsPersistence::default(),
+            recent_files: RecentFiles::new(1),
+            last_export_dir: None,
+            current_paths: Vec::new(),
+            update_notice: UpdateNotice::begin_check(false),
+            sculpt_settings_dirty_since: None,
+        }
+    }
+
     pub(super) fn push_recent_scene(&mut self, paths: &[PathBuf]) {
         self.recent_files.push_paths(paths);
     }

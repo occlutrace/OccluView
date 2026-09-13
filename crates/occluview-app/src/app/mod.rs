@@ -57,6 +57,8 @@ pub(crate) mod app_layer_edits;
 mod app_layer_interaction;
 mod app_load_errors;
 mod app_loading;
+#[cfg(test)]
+mod app_loading_tests;
 mod app_mesh_editor;
 mod app_mesh_export;
 mod app_recent_popup;

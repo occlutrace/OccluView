@@ -804,10 +804,19 @@ impl OccluViewApp {
 
     pub(super) fn clear_scene(&mut self) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
+        // Detach the scene first. Revoking the alignment state below runs the
+        // overlay's own cleanup, and that cleanup edits the live scene in
+        // place (`clear_deviation_overlay` reaches `live_scene_mut`). With the
+        // scene still owned by `self.document`, that edit found a second handle
+        // alive -- this one -- and tripped the in-place-edit assertion in debug
+        // builds. Removing the last layer is a real path into here, so dropping
+        // the handle is the fix, not relaxing the assertion.
+        let scene = self.document.scene.take();
         // The last layer can disappear while Align Meshes is armed. Revoke its
         // pose, overlay, mask, and worker generation before a new scene may
         // reuse one of the old layer ids.
         self.reset_align_state_for_scene_clear();
+        drop(scene);
         // A clear has no replacement scene to validate against. Revoke the
         // persistent Sculpt worker before dropping the scene so a background
         // completion cannot outlive this generation and be mistaken for the

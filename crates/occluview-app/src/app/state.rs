@@ -124,6 +124,40 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
+    /// One app for a headless loading test: no live viewport, no startup files,
+    /// a skipped single-instance claim, and the update check off.
+    ///
+    /// Loading tests drive the real delivery path, which needs a real
+    /// `OccluViewApp`; every other construction path acquires a process-wide
+    /// single-instance lock and reads the operator's state directory. The state
+    /// directory is redirected to a per-test temporary directory here, so a test
+    /// never reads or writes settings, recent files, or the locale sidecar.
+    #[cfg(test)]
+    pub(crate) fn for_loading_tests(repaint_ctx: egui::Context, name: &str) -> Self {
+        let state_root = std::env::temp_dir().join(format!(
+            "occluview-loading-tests-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_root);
+        let _ = std::fs::create_dir_all(&state_root);
+        std::env::set_var("OCCLUVIEW_NO_UPDATE_CHECK", "1");
+        #[cfg(not(windows))]
+        std::env::set_var("XDG_STATE_HOME", &state_root);
+        #[cfg(windows)]
+        {
+            std::env::set_var("APPDATA", &state_root);
+            std::env::set_var("LOCALAPPDATA", &state_root);
+        }
+        Self {
+            ui: UiState::new(repaint_ctx.clone(), crate::i18n::LocaleManager::for_tests()),
+            render: RenderState::new(None),
+            document: DocumentState::new(),
+            persistence: PersistenceState::for_tests(),
+            tools: ToolState::new(),
+            platform: PlatformState::for_tests(repaint_ctx),
+        }
+    }
+
     pub(super) fn can_render_cut_view(&self) -> bool {
         self.document
             .scene
