@@ -6,84 +6,15 @@
 //! [`OccluViewApp::apply_scene_load_result`] — the one function every completed
 //! decode goes through — and read the document, the parked-open slot, and the
 //! edit session rather than a predicate.
-//!
-//! They build a real `OccluViewApp` through the test-only constructor below:
-//! disk state is redirected to a per-test temporary directory, the single
-//! instance guard is skipped, and the update check is off, so a test never
-//! touches the operator's settings, recent files, or locale sidecar.
 
 #![allow(clippy::expect_used)]
 
 use super::app_align_drag::AlignDrag;
+use super::app_test_support::{delivered_load, named_scene, scene_names, test_app};
 use super::layers_overlay::LayerOverlayChanges;
 use super::*;
 use crate::edit_mode::{BusyFinish, EditModeCommand};
 use glam::Affine3A;
-use occluview_core::{Mesh, SceneMesh, Vertex};
-
-/// A real app with a headless egui context, no live viewport, no startup files.
-fn test_app(name: &str) -> OccluViewApp {
-    OccluViewApp::for_loading_tests(egui::Context::default(), name)
-}
-
-/// A scene whose single layer is named, so a test can tell two scenes apart
-/// without reading geometry.
-fn named_scene(name: &str, x_offset: f32) -> Scene {
-    let mesh = Mesh::new(
-        Some(name.to_string()),
-        vec![
-            Vertex::at(glam::Vec3::new(x_offset, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(x_offset + 1.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(x_offset, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2],
-    )
-    .expect("test mesh");
-    let mut scene = Scene::new();
-    scene.add(SceneMesh::new(mesh));
-    scene
-}
-
-fn scene_names(app: &OccluViewApp) -> Vec<String> {
-    app.document
-        .scene
-        .as_ref()
-        .map(|scene| {
-            scene
-                .meshes()
-                .iter()
-                .map(|entry| entry.mesh.name().unwrap_or_default().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// A finished decode as `process_scene_loads` sees it once the channel yields.
-fn delivered_load(
-    app: &OccluViewApp,
-    scene: Scene,
-    mode: SceneLoadMode,
-    path: &str,
-) -> PendingSceneLoad {
-    let (sender, receiver) = mpsc::channel();
-    sender
-        .send(Ok(scene))
-        .expect("the channel was just created");
-    PendingSceneLoad {
-        paths: vec![PathBuf::from(path)],
-        source: if mode == SceneLoadMode::Append {
-            "add"
-        } else {
-            "open"
-        },
-        mode,
-        started_at: Instant::now(),
-        receiver,
-        superseded: false,
-        content_revision_at_request: app.document.content_revision,
-        dirty_at_request: false,
-    }
-}
 
 #[test]
 fn late_replace_arriving_during_a_busy_edit_is_parked_not_applied() {
