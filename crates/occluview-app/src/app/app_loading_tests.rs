@@ -10,7 +10,6 @@
 #![allow(clippy::expect_used)]
 
 use super::app_align_drag::AlignDrag;
-use super::app_mesh_export::SaveEditedLayersOutcome;
 use super::app_test_support::{
     delivered_load, named_scene, push_named_layer, scene_names, test_app,
 };
@@ -723,18 +722,28 @@ fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
         "fixture: work is held"
     );
 
-    // No dialog can be answered in a test, so the flow is expected to stop at
-    // the export dialog and report Aborted. What it must not do is claim there
-    // was nothing to save, which is the answer that drops the held pose.
-    let outcome = app.save_edited_layers_flow();
+    // The dialog loop opens a native file dialog, which a test must never do:
+    // the first version of this test called it and hung the Windows CI job on a
+    // modal nothing could answer. The step before any dialog — release the
+    // gesture, then build the work list — is the one under test.
+    let listed = app.pending_layer_exports();
 
-    assert_ne!(
-        std::mem::discriminant(&outcome),
-        std::mem::discriminant(&SaveEditedLayersOutcome::NothingToSave),
-        "a held drag is work: the save flow must offer it, not discard it"
+    assert!(
+        listed.is_some(),
+        "a held drag is work: the save flow must offer it, not answer \
+         NothingToSave and drop it"
+    );
+    let Some(listed) = listed else {
+        return;
+    };
+    let pending = listed.pending;
+    assert_eq!(
+        pending.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        vec![layer_id],
+        "and the work list must name the layer the operator moved"
     );
     assert!(
-        app.document.unsaved_edit_layer_ids.contains(&layer_id),
-        "and the move is now a committed edit, so a later save still has it"
+        app.document.edit_mode.undo_layer_id() == Some(layer_id),
+        "with the gesture released into the one recorded step"
     );
 }
