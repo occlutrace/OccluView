@@ -624,3 +624,75 @@ fn an_unreleased_drag_does_not_enter_the_committed_edit_set() {
         "releasing the gesture commits it into the set"
     );
 }
+
+#[test]
+fn a_scene_replace_clears_an_open_drags_provisional_pose() {
+    // The old scene is gone after a replace, so the drag's provisional pose —
+    // which described a layer in that scene — is gone with it. Leaving the term
+    // set makes the close guard ask about work that no longer exists, and the
+    // operator cannot answer it away because the drag it belonged to is gone.
+    let mut app = test_app("replace-clears-drag-pose");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
+    );
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "fixture: the open drag is holding a moved pose"
+    );
+
+    // The operator answers the guard with Discard, so the request was made with
+    // the dirty state recorded and is not parked a second time.
+    let mut pending = delivered_load(
+        &app,
+        named_scene("scene-b", 10.0),
+        SceneLoadMode::Replace,
+        "/cases/b.stl",
+    );
+    pending.dirty_at_request = true;
+    pending.content_revision_at_request = app.document.content_revision;
+    app.apply_scene_load_result(pending, Ok(named_scene("scene-b", 10.0)));
+
+    assert_eq!(
+        scene_names(&app),
+        vec!["scene-b".to_string()],
+        "fixture: the confirmed replace was applied"
+    );
+    assert!(
+        !app.document.has_unsaved_mesh_edits(),
+        "the replaced scene holds no work from the old one, drag pose included"
+    );
+}
+
+#[test]
+fn clearing_the_scene_clears_an_open_drags_provisional_pose() {
+    let mut app = test_app("clear-clears-drag-pose");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
+    );
+
+    app.clear_scene();
+
+    assert!(app.document.scene.is_none(), "fixture: the scene is gone");
+    assert!(
+        !app.document.has_unsaved_mesh_edits(),
+        "a cleared scene has nothing unsaved, drag pose included"
+    );
+}

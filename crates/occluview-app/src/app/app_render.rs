@@ -730,6 +730,12 @@ impl OccluViewApp {
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
+        // A hand-drag describes a layer in the scene it started in. Once a new
+        // scene is being swapped in, the gesture and the provisional pose it was
+        // holding describe nothing: `finish_align_drag` would look its layer up
+        // by id in a scene that never had it. Ending the gesture here is also
+        // what keeps the close guard from asking about work that just left.
+        self.abandon_align_drag();
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
