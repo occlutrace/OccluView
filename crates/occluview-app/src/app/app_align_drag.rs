@@ -176,18 +176,31 @@ impl OccluViewApp {
     /// It goes in PLACE, too. The app holds the only reference to the scene, so
     /// copying it per mouse-move frame moved forty megabytes of mesh on a full
     /// arch to change sixteen floats that live in the layer's uniform.
-    fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
+    pub(super) fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
+        let started_at = self.tools.align.drag.map(|drag| drag.start);
         let Some(live) = self.document.live_scene_mut() else {
             return;
         };
+        let mut pose = None;
         if let Some(entry) = live
             .meshes_mut()
             .iter_mut()
             .find(|entry| entry.id() == layer)
         {
             entry.transform = step * entry.transform;
+            pose = Some(entry.transform);
         }
         self.mark_scene_materials_changed();
+        // The pose is already in the live scene, so it is already work the
+        // operator can see. Recording it here instead of only at release keeps
+        // a scene replace from discarding a move that has not been released
+        // yet: the load guard and the unsaved-close guard both read this, and
+        // on a mouse-move frame neither had heard of the drag. A drag that has
+        // returned to where it started is not a change, so it is not flagged.
+        if let Some(pose) = pose.filter(|pose| Some(*pose) != started_at) {
+            let _ = pose;
+            self.document.mark_mesh_edits_unsaved(layer);
+        }
     }
 
     /// Close an open drag, recording the whole gesture as one undo step.
