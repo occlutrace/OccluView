@@ -479,8 +479,8 @@ impl IInitializeWithFile_Impl for ThumbnailProvider_Impl {
 
 impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
     /// Called by the shell with an item. This gives us a filesystem path on
-    /// Explorer code paths that do not use `IInitializeWithFile`, preserving
-    /// extension hints for HPS and using mmap-backed file loading.
+    /// Explorer code paths that do not use `IInitializeWithFile`, which
+    /// preserves the extension hint that selects the HPS container parser.
     fn Initialize(&self, psi: Ref<'_, IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
         com_entry(
             "thumbnail IInitializeWithItem",

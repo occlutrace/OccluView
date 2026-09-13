@@ -67,9 +67,9 @@ pub const V1_OPEN_EXTENSIONS: &[&str] = &["stl", "ply", "obj", "glb", "hps", LEG
 /// The common interface every format reader implements.
 ///
 /// A reader takes a byte stream and produces an [`occluview_core::Mesh`]. The
-/// caller decides I/O (file, mmap, in-memory); the reader does not touch the
-/// filesystem, which keeps it trivial to fuzz and to reuse in the thumbnail
-/// provider.
+/// caller decides the I/O — the file loaders in this crate read the whole file
+/// into an owned buffer — and the reader never touches the filesystem, which
+/// keeps it trivial to fuzz and to reuse in the thumbnail provider.
 pub trait FormatReader {
     /// Human-readable format name, e.g. `"STL (binary)"`.
     fn format_name(&self) -> &'static str;

@@ -116,9 +116,6 @@ pollster   = "0.4"
 # allocation-bound coverage.
 image      = { version = ">=0.25.5, <0.25.10", default-features = false, features = ["png", "jpeg"] }
 
-# Memory-mapped file loading for large meshes.
-memmap2    = "0.9"
-
 # ZIP package container support for HPS archives. Keep features
 # narrow: ordinary scanner packages use stored/deflated entries.
 zip        = { version = "2.4.2", default-features = false, features = ["deflate"] }
