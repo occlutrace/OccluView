@@ -22,27 +22,22 @@ pub(crate) struct AlignDrag {
     pub(super) start: Affine3A,
     /// Its centre in world, the pivot a Ctrl-drag turns about.
     pub(super) centroid: Vec3,
-    /// Whether this layer already had unsaved edits when the gesture began.
-    ///
-    /// The drag marks the layer as it moves, so a scene replace cannot discard
-    /// a pose the operator can see. If they put the scan back before releasing,
-    /// that mark has to come off again — unless it was there before the drag,
-    /// in which case the work it stands for is still unsaved and must survive.
-    pub(super) was_unsaved: bool,
-    /// The content revision immediately after this gesture's own last mark.
-    ///
-    /// `was_unsaved` answers "was this layer already dirty", which is not enough
-    /// on its own: another subsystem can commit an edit to the same layer while
-    /// the gesture is in flight — a finished sculpt stroke, a landed fit — and a
-    /// drag back to its starting pose must not clear that work. Every such
-    /// commit bumps the content revision, so the gesture records the revision it
-    /// left behind after marking and withdraws its mark only while the revision
-    /// still matches: anything else that landed in between made the layer
-    /// unsaved for a reason this drag knows nothing about.
-    pub(super) revision_after_own_mark: Option<u64>,
 }
 
 impl OccluViewApp {
+    /// Abandon an open gesture without recording it as an edit.
+    ///
+    /// Clearing `tools.align.drag` is not enough: the gesture also owns the
+    /// provisional-pose term that the load and close guards read, and leaving it
+    /// set would make them ask about a drag that no longer exists. Callers that
+    /// drop a drag from outside the release path (a tab switch, a scene clear, a
+    /// cancelled session) go through here so there is one place that ends a
+    /// gesture.
+    pub(super) fn abandon_align_drag(&mut self) {
+        self.tools.align.drag = None;
+        self.document.unsaved_drag_pose = false;
+    }
+
     /// Begin, continue, or finish a hand drag. Returns whether the drag owns
     /// this frame's pointer.
     ///
@@ -114,8 +109,6 @@ impl OccluViewApp {
                 centroid: entry
                     .transform
                     .transform_point3(entry.mesh.bbox_cached().center()),
-                was_unsaved: self.document.unsaved_edit_layer_ids.contains(&hit.layer_id),
-                revision_after_own_mark: None,
             });
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
@@ -213,46 +206,27 @@ impl OccluViewApp {
         }
         self.mark_scene_materials_changed();
         // The pose is already in the live scene, so it is already work the
-        // operator can see. Recording it here instead of only at release keeps
-        // a scene replace from discarding a move that has not been released
-        // yet: the load guard and the unsaved-close guard both read this, and
-        // on a mouse-move frame neither had heard of the drag.
+        // operator can see, and a scene replace landing right now would discard
+        // it. The guards read that through `has_unsaved_mesh_edits`, which asks
+        // this term as well as the committed-edit set.
         //
-        // The drag owns this mark for as long as the gesture lasts, so it also
-        // takes it back. An operator who moves a scan and puts it back exactly
-        // where it was has changed nothing, and a drag that ended by itself
-        // must not leave the close guard asking about a pose identical to the
-        // one on disk. A layer that was already unsaved stays unsaved: that
-        // work was not this gesture's to withdraw.
+        // It is a separate term on purpose. The set holds committed edits, and a
+        // set cannot tell two marks on one layer apart: writing this pose there
+        // made it impossible to withdraw the gesture's mark when the operator
+        // put the scan back without also withdrawing real work that landed
+        // mid-drag. As its own term, a round trip simply recomputes to `false`,
+        // and nothing the drag did not create is ever touched.
         let Some(pose) = pose else {
             return;
         };
-        if Some(pose) != started_at {
-            // A moved pose is unsaved work, whoever asked for the move.
-            self.document.mark_mesh_edits_unsaved(layer);
-            if let Some(drag) = self.tools.align.drag.as_mut() {
-                drag.revision_after_own_mark = Some(self.document.content_revision);
-            }
-            return;
-        }
-        // The pose is back where the gesture found it. Withdraw the mark only
-        // when this gesture is the only thing that has touched the document:
-        // a layer that was already unsaved, or one that something else made
-        // unsaved mid-gesture, holds work the drag did not create. Leaving a
-        // mark in that case costs the operator a question at close; clearing
-        // it would cost them the work.
-        let Some(drag) = self.tools.align.drag else {
-            return;
-        };
-        let own_mark_stands_alone =
-            drag.revision_after_own_mark == Some(self.document.content_revision);
-        if !drag.was_unsaved && own_mark_stands_alone {
-            self.document.forget_unsaved_edits(&[layer]);
-        }
+        self.document.unsaved_drag_pose = Some(pose) != started_at;
     }
 
     /// Close an open drag, recording the whole gesture as one undo step.
     pub(super) fn finish_align_drag(&mut self) -> bool {
+        // The gesture is over: whatever survives becomes a committed edit below,
+        // and the provisional-pose term is no longer a separate reason to warn.
+        self.document.unsaved_drag_pose = false;
         let Some(drag) = self.tools.align.drag.take() else {
             return false;
         };

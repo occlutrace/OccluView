@@ -174,7 +174,7 @@ impl OccluViewApp {
     /// must cancel jobs and remove overlays before a new scene can reuse a layer
     /// id.
     pub(super) fn reset_align_state_for_scene_clear(&mut self) {
-        self.tools.align.drag = None;
+        self.abandon_align_drag();
         self.clear_deviation_overlay();
         self.clear_align_mask();
         self.tools.align.refined_match_ready = false;

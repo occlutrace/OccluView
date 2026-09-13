@@ -36,7 +36,11 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        "self.tools.align.drag = None;",
+        // A gesture is ended through `abandon_align_drag`, which also clears the
+        // provisional-pose term the guards read. Asserting the raw field write
+        // would pass while that term stayed set and the close guard kept asking
+        // about a drag that no longer exists.
+        "self.abandon_align_drag();",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
         "self.tools.align.geometry.clear();",

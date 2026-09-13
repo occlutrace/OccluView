@@ -272,8 +272,6 @@ fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
         layer: layer_id,
         start: Affine3A::IDENTITY,
         centroid: glam::Vec3::ZERO,
-        was_unsaved: false,
-        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -352,8 +350,6 @@ fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
         layer: layer_id,
         start,
         centroid: glam::Vec3::ZERO,
-        was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
-        revision_after_own_mark: None,
     });
 
     // Out, then back along the same axis.
@@ -402,8 +398,6 @@ fn a_drag_that_returns_to_its_start_keeps_edits_that_were_already_unsaved() {
         layer: layer_id,
         start,
         centroid: glam::Vec3::ZERO,
-        was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
-        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -438,8 +432,6 @@ fn a_drag_that_returns_to_its_start_keeps_another_layers_unsaved_edits() {
         layer: layer_id,
         start,
         centroid: glam::Vec3::ZERO,
-        was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
-        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -472,8 +464,6 @@ fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
         layer: layer_id,
         start,
         centroid: glam::Vec3::ZERO,
-        was_unsaved: false,
-        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -522,8 +512,6 @@ fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
         layer: layer_id,
         start,
         centroid: glam::Vec3::ZERO,
-        was_unsaved: false,
-        revision_after_own_mark: None,
     });
 
     // Drag out: the gesture marks the layer.
@@ -553,5 +541,86 @@ fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
     assert!(
         app.document.has_unsaved_mesh_edits(),
         "an edit that landed during the gesture must still be unsaved work"
+    );
+}
+
+#[test]
+fn a_second_nudge_does_not_forget_a_mid_gesture_commit() {
+    // Same as above, but the operator keeps dragging after the other commit
+    // lands. The drag's own mark is re-stamped on every move, so a witness that
+    // only remembers the latest revision loses track of what happened before
+    // it — and the trip back would then clear an edit the drag never made.
+    let mut app = test_app("drag-round-trip-refreshed-witness");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+    });
+
+    let out = Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0));
+    app.nudge_align_layer(layer_id, out);
+    // Another subsystem commits to this layer while the button is still down.
+    app.document.mark_mesh_edits_unsaved(layer_id);
+    // The operator keeps dragging, so the drag marks again.
+    app.nudge_align_layer(layer_id, out);
+    // Then returns to where it started.
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(-6.0, 0.0, 0.0)),
+    );
+    assert_eq!(
+        app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+        start,
+        "fixture: the pose is back where it began"
+    );
+
+    app.finish_align_drag();
+
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "an edit that landed mid-gesture must survive however many nudges followed it"
+    );
+}
+
+#[test]
+fn an_unreleased_drag_does_not_enter_the_committed_edit_set() {
+    // The provisional pose is a second term, not an entry: entering the set would
+    // make the gesture's mark indistinguishable from a commit, which is what
+    // forced the earlier, flawed withdrawal. This pins the separation itself, so
+    // a future change that "simplifies" it back into the set fails here.
+    let mut app = test_app("drag-provisional-separation");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
+    );
+
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "an unreleased move is work: the guards must still see it"
+    );
+    assert!(
+        !app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        "but it is not a committed edit, so it must stay out of the set: a set \
+         cannot tell the gesture's own mark from work that landed mid-drag"
+    );
+
+    app.finish_align_drag();
+
+    assert!(
+        app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        "releasing the gesture commits it into the set"
     );
 }
