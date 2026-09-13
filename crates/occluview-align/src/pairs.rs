@@ -272,7 +272,11 @@ fn finish(
 ///
 /// Degeneracy is tested on both sides. Collinear clicks leave rotation about
 /// the line undetermined.
-fn horn_fit(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Result<Rigid, FitRejection> {
+pub(crate) fn horn_fit(
+    moving: &[DVec3],
+    fixed: &[DVec3],
+    keep: &[usize],
+) -> Result<Rigid, FitRejection> {
     let moving_centroid = centroid(moving, keep);
     let fixed_centroid = centroid(fixed, keep);
     if let Some(rejection) = line_degeneracy(moving, keep, moving_centroid) {

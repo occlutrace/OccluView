@@ -13,6 +13,9 @@ use crate::sample::{bounds_of, sample_vertices, vertex_at, vertex_normals};
 use crate::surface::SurfaceSample;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
+#[path = "feature_seed.rs"]
+mod feature_seed;
+
 #[path = "icp_overlap.rs"]
 mod icp_overlap;
 use icp_overlap::{reciprocal_evidence, reciprocal_evidence_is_usable, ReciprocalSummary};
@@ -308,7 +311,8 @@ pub fn refine(
         cancel,
         start,
     };
-    let initial_pose = choose_start_pose(&initial_level)?;
+    let (initial_pose, adaptive_settings, feature_seed) =
+        select_initial_pose(&initial_level, center)?;
     let mut pose = initial_pose.rigid;
     let mut iterations = 0u32;
     let mut converged = false;
@@ -326,7 +330,7 @@ pub fn refine(
             moving_surface: moving_surface.as_ref(),
             fixed_samples: &fixed_samples,
             samples: &samples,
-            settings,
+            settings: &adaptive_settings,
             cancel,
             start: pose,
         });
@@ -352,6 +356,13 @@ pub fn refine(
     // Measure displacement at the mesh centre; the pose translation column can
     // change during rotation even when the geometry moves little.
     let moved_by = (pose.apply(center) - start.apply(center)).length();
+    if let Some(seed) = feature_seed {
+        if pose.apply(center).distance(seed.rigid.apply(center)) > 1.0
+            || turn_between(pose, seed.rigid) > 0.1
+        {
+            return Err(FitRejection::NoImprovement);
+        }
+    }
     // Two bounded stages make up this total: the coarse hypothesis
     // (`choose_start_pose` admits nothing beyond COARSE_MAX_SHIFT_FACTOR over
     // the moving extent plus the influence radius) and the refinement, which is
@@ -377,6 +388,80 @@ pub fn refine(
         weak_rot_axes: summary.weak_rot_axes,
         weak_trans_axes: summary.weak_trans_axes,
     })
+}
+
+fn select_initial_pose(
+    level: &Level<'_>,
+    center: DVec3,
+) -> Result<(StartPose, RefineSettings, Option<feature_seed::FeatureSeed>), FitRejection> {
+    // An already seated scan needs no global search. Keep the cheap local
+    // path when almost the entire surface is within scanner tolerance.
+    let feature_seed = if near_surface_fraction(
+        level.moving,
+        level.samples,
+        level.fixed,
+        level.start,
+        level.cancel,
+    ) >= 0.9
+    {
+        None
+    } else {
+        feature_seed::find_feature_seed(level.moving_surface, level.fixed, level.cancel)
+    };
+    let initial_pose = if let Some(seed) = feature_seed {
+        let coarse_shift = seed.rigid.apply(center).distance(level.start.apply(center));
+        if !coarse_shift.is_finite() {
+            return Err(FitRejection::NonFinite);
+        }
+        StartPose {
+            rigid: seed.rigid,
+            coarse_shift,
+        }
+    } else {
+        choose_start_pose(level)?
+    };
+    let settings = RefineSettings {
+        matching_ratio: feature_seed.map_or(level.settings.matching_ratio, |_| {
+            level.settings.matching_ratio.min(
+                (near_surface_fraction(
+                    level.moving,
+                    level.samples,
+                    level.fixed,
+                    initial_pose.rigid,
+                    level.cancel,
+                ) * 0.8)
+                    .clamp(0.1, 0.8),
+            )
+        }),
+        ..*level.settings
+    };
+    Ok((initial_pose, settings, feature_seed))
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn near_surface_fraction(
+    moving: Soup<'_>,
+    samples: &[u32],
+    fixed: &SurfaceIndex,
+    pose: Rigid,
+    cancel: &CancelFlag,
+) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mut near = 0usize;
+    for (slot, &vertex) in samples.iter().enumerate() {
+        if slot % 256 == 0 && cancel.is_cancelled() {
+            return 0.0;
+        }
+        let Some(point) = vertex_at(moving.positions, vertex as usize) else {
+            continue;
+        };
+        if fixed.nearest(pose.apply(point), 0.2).is_some() {
+            near += 1;
+        }
+    }
+    near as f64 / samples.len() as f64
 }
 
 /// Whether a sampling level produced usable evidence.

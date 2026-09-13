@@ -184,6 +184,10 @@ pub(super) fn show_layer_row(
             // Opacity scrub.
             let slider_response = ui
                 .add_enabled_ui(visible, |ui| {
+                    // egui's Slider reads spacing.slider_width, even when
+                    // add_sized supplies a narrower rectangle. Without this
+                    // the row widened the whole Layers frame past its rect.
+                    ui.spacing_mut().slider_width = LAYER_ROW_SLIDER_WIDTH_PX;
                     ui.add_sized(
                         [LAYER_ROW_SLIDER_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX],
                         egui::Slider::new(&mut opacity, 0.1..=1.0)

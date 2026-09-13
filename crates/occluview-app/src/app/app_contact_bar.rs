@@ -31,7 +31,7 @@ const BAR_TOP_INSET: f32 = 10.0;
 /// Height of the legend bar, in points.
 const LEGEND_HEIGHT: f32 = 10.0;
 /// Narrowest the legend is allowed to get before the bar drops it.
-const LEGEND_MIN_WIDTH: f32 = 120.0;
+const LEGEND_MIN_WIDTH: f32 = 100.0;
 /// Widest the legend grows: past this the ramp reads as a ruler, not a scale.
 const LEGEND_MAX_WIDTH: f32 = 260.0;
 /// How many samples the legend bar is drawn from. One per point of its width is
@@ -45,11 +45,13 @@ const SLIDER_WIDTH: f32 = 196.0;
 /// the same family, and keeps the strip exactly `BAR_HEIGHT` tall.
 const CHIP_HEIGHT: f32 = 26.0;
 /// Width of the details button, reserved when the legend measures itself.
-const DETAILS_BUTTON_WIDTH: f32 = 78.0;
+const DETAILS_BUTTON_WIDTH: f32 = 92.0;
 /// Widest the bar grows, so it stays a strip on a wide monitor.
 const BAR_MAX_WIDTH: f32 = 940.0;
-/// Space left for the layers overlay, which owns the top-left corner.
-const LAYERS_OVERLAY_CLEARANCE: f32 = 300.0;
+/// Minimum room for the mode pair, load control, details and close actions.
+const BAR_SIDE_MIN_WIDTH: f32 = 520.0;
+const BAR_EDGE_INSET: f32 = 16.0;
+const BAR_LAYERS_GAP: f32 = 12.0;
 /// Width of the ✕ that closes the reading.
 const CLOSE_BUTTON_WIDTH: f32 = 26.0;
 /// One side of `ui_theme::overlay_frame()`'s inner margin. Kept here so the
@@ -93,7 +95,12 @@ impl OccluViewApp {
         let details_open = self.tools.contacts.details_open();
 
         let locale = &self.ui.locale;
-        let rect = contact_bar_rect(viewport_rect);
+        let layer_count = self
+            .document
+            .scene
+            .as_ref()
+            .map_or(0, |scene| scene.meshes().len());
+        let rect = contact_bar_rect(viewport_rect, layer_count);
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 // The frame's own margins are inside the rect, so the strip is
@@ -135,7 +142,7 @@ impl OccluViewApp {
         if self.tools.contacts.details_open() {
             self.show_contact_details(
                 ui,
-                viewport_rect,
+                rect,
                 ctx,
                 DetailsContent {
                     numbers,
@@ -201,6 +208,28 @@ impl OccluViewApp {
             "contact-against",
             &[("subject", &subject), ("antagonist", &against)],
         )
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn contact_bar_stays_clear_of_layers_and_inside_the_viewport() {
+        for width in [600.0, 1024.0, 1600.0] {
+            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 768.0));
+            let layers = crate::layers_overlay::layer_overlay_rect(viewport, 4);
+            let bar = contact_bar_rect(viewport, 4);
+            assert!(
+                viewport.contains_rect(bar),
+                "bar outside {width}px viewport: {bar:?}"
+            );
+            assert!(
+                !layers.intersects(bar),
+                "bar overlaps layers at {width}px: {bar:?}"
+            );
+        }
     }
 }
 
@@ -297,8 +326,21 @@ fn paint_strip(
         ui.scope_builder(egui::UiBuilder::new().max_rect(actions_rect), |ui| {
             ui.set_width(actions_width);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button("✕")
+                let (close_rect, close_response) = ui.allocate_exact_size(
+                    egui::vec2(CLOSE_BUTTON_WIDTH, CHIP_HEIGHT),
+                    egui::Sense::click(),
+                );
+                crate::icons::paint(
+                    ui.painter(),
+                    close_rect.shrink(5.0),
+                    AppIcon::Close,
+                    if close_response.hovered() {
+                        ui_theme::accent()
+                    } else {
+                        ui_theme::text_weak()
+                    },
+                );
+                if close_response
                     .on_hover_text(locale.tr("contact-close-hint"))
                     .clicked()
                 {
@@ -323,19 +365,28 @@ fn paint_strip(
     });
 }
 
-/// Where the bar sits: along the top of the viewport, clear of the layer list.
-///
-/// The layers overlay owns the top-left corner, so the bar starts to its right
-/// and grows toward the free space rather than centring over the list. The axis
-/// triad owns the bottom-right, which the top row never reaches.
-pub(crate) fn contact_bar_rect(viewport_rect: egui::Rect) -> egui::Rect {
-    let left = viewport_rect.left() + LAYERS_OVERLAY_CLEARANCE;
-    let available = (viewport_rect.right() - 16.0 - left).max(320.0);
-    let width = available.min(BAR_MAX_WIDTH);
-    egui::Rect::from_min_size(
-        egui::pos2(left, viewport_rect.top() + BAR_TOP_INSET),
-        egui::vec2(width, BAR_HEIGHT),
-    )
+/// Keep the horizontal reading beside Layers when it fits, otherwise put it
+/// below. Both overlays use this same Layers geometry, so a wider layer list
+/// cannot slide under the contact controls on a large window.
+pub(crate) fn contact_bar_rect(viewport_rect: egui::Rect, layer_count: usize) -> egui::Rect {
+    let layers = (layer_count > 0)
+        .then(|| crate::layers_overlay::layer_overlay_rect(viewport_rect, layer_count));
+    let side_left = layers.map_or(viewport_rect.left() + BAR_EDGE_INSET, |rect| {
+        rect.right() + BAR_LAYERS_GAP
+    });
+    let right = viewport_rect.right() - BAR_EDGE_INSET;
+    let (left, top) = if right - side_left >= BAR_SIDE_MIN_WIDTH {
+        (side_left, viewport_rect.top() + BAR_TOP_INSET)
+    } else {
+        (
+            viewport_rect.left() + BAR_EDGE_INSET,
+            layers.map_or(viewport_rect.top() + BAR_TOP_INSET, |rect| {
+                rect.bottom() + 8.0
+            }),
+        )
+    };
+    let width = (right - left).clamp(0.0, BAR_MAX_WIDTH);
+    egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, BAR_HEIGHT))
 }
 
 /// The reading's name and the mark that says what it is.
@@ -379,10 +430,18 @@ fn paint_load(
     request: &mut ContactBarRequest,
     width: f32,
 ) {
+    let show_value = width >= 170.0;
     ui.allocate_ui_with_layout(
         egui::vec2(width, CHIP_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
+            // Slider ignores add_sized's requested track width. Reserve the
+            // value editor explicitly, or it grows into the Details action.
+            ui.spacing_mut().slider_width = if show_value {
+                (width - 110.0).max(24.0)
+            } else {
+                (width - 50.0).max(24.0)
+            };
             // Label first, then the control: the same order every settings row
             // uses, so "heavy at" reads as the name of the slider rather than a
             // caption that drifted to the wrong side of it.
@@ -397,7 +456,7 @@ fn paint_load(
                     egui::Slider::new(load_mm, LOAD_MIN_MM..=LOAD_MAX_MM)
                         .suffix(locale.tr("contact-load-suffix"))
                         .fixed_decimals(2)
-                        .show_value(true),
+                        .show_value(show_value),
                 )
                 .on_hover_text(locale.tr("contact-load-hint"));
             if slider.changed() {
@@ -466,12 +525,11 @@ impl OccluViewApp {
     fn show_contact_details(
         &mut self,
         ui: &mut egui::Ui,
-        viewport_rect: egui::Rect,
+        bar: egui::Rect,
         ctx: &egui::Context,
         shown: DetailsContent,
     ) {
         let locale = &self.ui.locale;
-        let bar = contact_bar_rect(viewport_rect);
         let width = 268.0;
         let rect = egui::Rect::from_min_size(
             egui::pos2(bar.right() - width, bar.bottom() + 6.0),

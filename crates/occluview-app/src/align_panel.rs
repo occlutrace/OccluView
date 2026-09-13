@@ -16,7 +16,7 @@ use crate::icons::AppIcon;
 use crate::{align_panel_map, ui_theme};
 
 /// Fixed window width, matching the mesh editor so the two read as one family.
-const WINDOW_WIDTH: f32 = 272.0;
+const WINDOW_WIDTH: f32 = 320.0;
 /// Height of the two big fit buttons.
 const FIT_BUTTON_HEIGHT: f32 = 34.0;
 /// Height of a small labelled control.
@@ -78,6 +78,8 @@ pub(crate) enum AlignPanelAction {
 pub(crate) struct AlignPanelView<'a> {
     /// The click model.
     pub(crate) tool: &'a AlignTool,
+    /// Visible scene layers, used to keep the panel clear of Layers.
+    pub(crate) layer_count: usize,
     /// Live settings, edited in place.
     pub(crate) settings: &'a mut AlignSettings,
     /// Which directions a hand drag may move in, edited in place.
@@ -114,23 +116,57 @@ pub(crate) fn show(
     view: AlignPanelView<'_>,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let default_pos = viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 16.0, 16.0);
+    let default_pos = panel_default_pos(viewport_rect, view.layer_count);
     let mut action = None;
-    egui::Window::new(locale.text("align-panel-title"))
-        .id(egui::Id::new("occluview_align_window"))
+    let id = egui::Id::new("occluview_align_window");
+    let previous_rect = ctx.memory(|memory| memory.area_rect(id));
+    let mut window = egui::Window::new(locale.text("align-panel-title"))
+        .id(id)
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
         .resizable(false)
         .collapsible(false)
-        .title_bar(false)
-        .show(ctx, |ui| {
-            ui.set_min_width(WINDOW_WIDTH - 24.0);
-            ui.set_width(WINDOW_WIDTH - 24.0);
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-            ui.style_mut().animation_time = 0.05;
-            action = body(ui, view, locale);
-        });
+        .title_bar(false);
+    if panel_needs_reanchor(previous_rect, viewport_rect, view.layer_count) {
+        window = window.current_pos(default_pos);
+    }
+    window.show(ctx, |ui| {
+        ui.set_min_width(WINDOW_WIDTH - 24.0);
+        ui.set_width(WINDOW_WIDTH - 24.0);
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+        ui.style_mut().animation_time = 0.05;
+        action = body(ui, view, locale);
+    });
     action
+}
+
+/// A dragged panel can outlive a viewport resize. Move it only when its saved
+/// position would cover Layers or leave the available viewport.
+fn panel_needs_reanchor(
+    previous_rect: Option<egui::Rect>,
+    viewport: egui::Rect,
+    layer_count: usize,
+) -> bool {
+    previous_rect.is_some_and(|rect| {
+        !viewport.contains_rect(rect)
+            || rect.intersects(crate::layers_overlay::layer_overlay_rect(
+                viewport,
+                layer_count,
+            ))
+    })
+}
+
+/// Put the window at the top right when there is room, and below Layers in a
+/// narrow viewport. The window remains draggable after its first appearance.
+fn panel_default_pos(viewport: egui::Rect, layer_count: usize) -> egui::Pos2 {
+    let left = (viewport.right() - WINDOW_WIDTH - 16.0).max(viewport.left() + 8.0);
+    let layers = crate::layers_overlay::layer_overlay_rect(viewport, layer_count);
+    let top = if left < layers.right() + 8.0 {
+        layers.bottom() + 12.0
+    } else {
+        viewport.top() + 16.0
+    };
+    egui::pos2(left, top.min(viewport.bottom() - 40.0))
 }
 
 /// The window body: the open tab, then the commit row both tabs share.
@@ -146,10 +182,12 @@ fn body(
         ui.label(
             egui::RichText::new(locale.tr("align-title"))
                 .strong()
-                .size(14.0),
+                .size(15.0)
+                .color(ui_theme::text()),
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
+    ui.separator();
     tab_strip(ui, view.tab, locale);
     // The brush is available only on the automatic tab.
     if *view.tab != AlignTab::Automatically {
@@ -244,9 +282,10 @@ fn automatically(
     } else {
         None
     };
+    action = action.or(fits(ui, view.tool, enabled, locale));
+    ui.add_space(4.0);
     prompt(ui, view.tool, locale);
     action = action.or(back(ui, view.tool, enabled, locale));
-    action = action.or(fits(ui, view.tool, enabled, locale));
     ui.add_space(2.0);
     crate::align_panel_settings::matching(ui, view.settings, enabled, locale);
     ui.separator();
@@ -406,19 +445,6 @@ fn fits(
     if fit_button(
         ui,
         width,
-        AppIcon::AlignFit,
-        &locale.tr("align-fit-perform"),
-        tool.can_align() && enabled,
-        false,
-    )
-    .on_hover_text(locale.tr("align-fit-perform-hint"))
-    .clicked()
-    {
-        action = Some(AlignPanelAction::Align);
-    }
-    if fit_button(
-        ui,
-        width,
         AppIcon::AlignRefine,
         &locale.tr("align-fit-refine"),
         tool.can_measure() && enabled,
@@ -428,6 +454,19 @@ fn fits(
     .clicked()
     {
         action = Some(AlignPanelAction::Refine);
+    }
+    if fit_button(
+        ui,
+        width,
+        AppIcon::AlignFit,
+        &locale.tr("align-fit-perform"),
+        tool.can_align() && enabled,
+        false,
+    )
+    .on_hover_text(locale.tr("align-fit-perform-hint"))
+    .clicked()
+    {
+        action = Some(AlignPanelAction::Align);
     }
     action
 }

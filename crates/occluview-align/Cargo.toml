@@ -16,3 +16,4 @@ workspace = true
 [dependencies]
 glam = { workspace = true }
 rayon = { workspace = true }
+kdtree = "0.8"

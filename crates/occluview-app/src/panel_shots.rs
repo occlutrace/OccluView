@@ -93,6 +93,7 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
             SCREEN,
             AlignPanelView {
                 tool: &tool,
+                layer_count: 2,
                 settings: &mut settings,
                 constraint: &mut constraint,
                 excluding: &mut excluding,

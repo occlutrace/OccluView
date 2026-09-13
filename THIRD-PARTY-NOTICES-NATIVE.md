@@ -8,7 +8,8 @@ build script fetches and builds Manifold from source, and Manifold's CMake in
 turn fetches oneTBB and Clipper2.
 
 This file carries their notices, as Apache-2.0 section 4 requires of anyone
-redistributing the work. It is written by hand and updated when
+redistributing the work, and the notice for the Open3D feature-histogram
+algorithm adapted in the Rust alignment crate. It is written by hand and updated when
 `manifold-csg-sys` is upgraded, because the versions below come from that
 crate's pinned reference and Manifold's own `cmake/manifoldDeps.cmake` rather
 than from any manifest in this repository.
@@ -18,6 +19,7 @@ than from any manifest in this repository.
 | Manifold | 3.5.1 | Apache-2.0 | `manifold-csg-sys` clones `github.com/elalish/manifold` at tag `v3.5.1` and builds it |
 | oneTBB | 2022.3.0 | Apache-2.0 | Manifold's CMake fetches it; `libtbb.a` and `libtbbmalloc.a` are linked in |
 | Clipper2 | 2.0.1 | BSL-1.0 | Manifold's CMake fetches it and links it into `libmanifold.a` |
+| Open3D FPFH | 0.19.0 | MIT | Its local normal-histogram construction is adapted in `occluview-align/src/feature_seed.rs`; Open3D is not linked or bundled |
 
 Two things a reader should know rather than discover:
 
@@ -503,6 +505,40 @@ SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
 FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+## Open3D FPFH algorithm
+
+The local 33-bin feature construction in `occluview-align` follows
+`cpp/open3d/pipelines/registration/Feature.cpp` from Open3D v0.19.0.
+The registration, surface sampling, deterministic consensus, and acceptance
+checks are OccluView code. Open3D itself is not part of the package.
+
+```
+The MIT License (MIT)
+
+Open3D: www.open3d.org
+Copyright (c) 2018-2023 www.open3d.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+SPDX-License-Identifier: MIT
 ```
 
 ## Vendored icon assets

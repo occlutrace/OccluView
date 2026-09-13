@@ -114,6 +114,30 @@ pub(crate) struct SurfaceSample {
     pub(crate) component: usize,
 }
 
+/// One roughly uniform surface representative for global shape matching.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeaturePoint {
+    pub(crate) position: DVec3,
+    pub(crate) normal: DVec3,
+}
+
+pub(crate) const FEATURE_VOXEL_MM: f64 = 0.7;
+
+/// Bounded voxel coordinates keep the feature grid meaningful and prevent
+/// overflow in the local neighbourhood walk.
+#[allow(clippy::cast_possible_truncation)]
+pub(crate) fn feature_voxel_key(point: DVec3) -> Option<(i32, i32, i32)> {
+    let coordinate = |value: f64| {
+        let scaled = (value / FEATURE_VOXEL_MM).floor();
+        (scaled.is_finite() && scaled.abs() < 1_000_000.0).then_some(scaled as i32)
+    };
+    Some((
+        coordinate(point.x)?,
+        coordinate(point.y)?,
+        coordinate(point.z)?,
+    ))
+}
+
 type ComponentData = (Vec<(DVec3, DVec3)>, Vec<usize>);
 
 /// A spatial index answering "what is the closest surface point to this?".
@@ -285,6 +309,65 @@ impl SurfaceIndex {
     #[must_use]
     pub fn component_bounds(&self) -> &[(DVec3, DVec3)] {
         &self.components
+    }
+
+    /// Deterministically sample surface area and aggregate it into 0.7 mm
+    /// voxels. The source mesh's triangle count and order must not decide how
+    /// much matching evidence a physical patch contributes.
+    #[allow(clippy::cast_precision_loss)]
+    pub(crate) fn feature_cloud(&self) -> Vec<FeaturePoint> {
+        const SAMPLE_COUNT: usize = 30_000;
+        if self.corners.len() < 10_000 {
+            return Vec::new();
+        }
+        let areas: Vec<f64> = self
+            .corners
+            .iter()
+            .map(|triangle| {
+                (triangle[1] - triangle[0])
+                    .cross(triangle[2] - triangle[0])
+                    .length()
+                    * 0.5
+            })
+            .collect();
+        let total: f64 = areas.iter().sum();
+        if !total.is_finite() || total <= 0.0 {
+            return Vec::new();
+        }
+        let mut cells: BTreeMap<(i32, i32, i32), (DVec3, DVec3, u32)> = BTreeMap::new();
+        let mut triangle_slot = 0;
+        let mut preceding_area = 0.0;
+        for sample_slot in 0..SAMPLE_COUNT {
+            let target = (sample_slot as f64 + 0.5) * total / SAMPLE_COUNT as f64;
+            while triangle_slot + 1 < areas.len() && preceding_area + areas[triangle_slot] < target
+            {
+                preceding_area += areas[triangle_slot];
+                triangle_slot += 1;
+            }
+            let triangle = self.corners[triangle_slot];
+            let bary_u = radical_inverse(sample_slot + 1, 2).sqrt();
+            let bary_v = radical_inverse(sample_slot + 1, 3);
+            let point = triangle[0] * (1.0 - bary_u)
+                + triangle[1] * (bary_u * (1.0 - bary_v))
+                + triangle[2] * (bary_u * bary_v);
+            let Some(key) = feature_voxel_key(point) else {
+                return Vec::new();
+            };
+            let entry = cells.entry(key).or_insert((DVec3::ZERO, DVec3::ZERO, 0));
+            entry.0 += point;
+            entry.1 += self.normals[triangle_slot];
+            entry.2 += 1;
+        }
+        cells
+            .into_values()
+            .filter_map(|(point, normal, count)| {
+                let normal = normal.normalize_or_zero();
+                (count > 0 && normal.length_squared() > 0.0).then_some(FeaturePoint {
+                    position: point / f64::from(count),
+                    normal,
+                })
+            })
+            .collect()
     }
 
     /// Return at most `budget` deterministic triangle representatives.
@@ -729,6 +812,18 @@ impl SurfaceIndex {
         let high = low + DVec3::splat(self.cell);
         (point.clamp(low, high) - point).length_squared()
     }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn radical_inverse(mut index: usize, base: usize) -> f64 {
+    let mut result = 0.0;
+    let mut scale = 1.0 / base as f64;
+    while index > 0 {
+        result += (index % base) as f64 * scale;
+        index /= base;
+        scale /= base as f64;
+    }
+    result
 }
 
 /// Resolve each retained triangle to the deterministic component order used
