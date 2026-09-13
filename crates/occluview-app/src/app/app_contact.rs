@@ -344,6 +344,13 @@ impl OccluViewApp {
             // scene as it is now are the second half of the question, and they
             // are asked before anything is stored.
             if !self.completion_still_describes_the_scene(&request) {
+                // The surfaces moved out from under this answer. Drop it and
+                // release the request, so the frame loop measures the scene
+                // that is actually on screen.
+                self.tools
+                    .contacts
+                    .mark_answer_dropped(request.id, request.keys);
+                accepted = true;
                 continue;
             }
             match completion.outcome {
