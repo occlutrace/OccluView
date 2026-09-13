@@ -120,10 +120,23 @@ pub(crate) struct SculptTool {
     /// A mesh-edit Done action waits for the background commit before closing
     /// the edit session, so a fast click cannot discard a valid stroke.
     pub(crate) finish_requested: bool,
+    /// Queue pressure rejected a stroke boundary. Retry it from the worker
+    /// poll once older Apply commands have drained.
+    pub(crate) finish_retry: bool,
     /// Undo/redo waits for an asynchronous sculpt completion before swapping
     /// an older scene over the worker's current shadow.
     pub(crate) pending_history: Option<bool>,
+    /// The last surface hit acquired by the viewport input pass. The cursor
+    /// painter runs after that pass and reuses it for held drags, avoiding a
+    /// second BVH traversal on every repaint.
+    pub(crate) cursor_hit: Option<occluview_core::ScenePickHit>,
+    /// Pointer coordinates belonging to [`Self::cursor_hit`].
+    pub(crate) cursor_pointer: Option<[f32; 2]>,
     pending: Option<PendingSculptPreparation>,
+    /// Canceled preparation workers are reaped without blocking the UI. They
+    /// remain owned here until their non-cancellable kernel phase finishes,
+    /// so dropping a receiver never leaves an untracked CPU/RAM worker behind.
+    retired_preparations: Vec<thread::JoinHandle<()>>,
 }
 
 struct PendingSculptPreparation {
@@ -131,6 +144,7 @@ struct PendingSculptPreparation {
     topology_id: u64,
     cancel: Arc<AtomicBool>,
     receiver: mpsc::Receiver<Result<SculptSession, String>>,
+    thread: thread::JoinHandle<()>,
 }
 
 impl SculptTool {
@@ -140,6 +154,7 @@ impl SculptTool {
     /// drag so a half-applied stroke does not leak between tools.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
+        self.clear_cursor_hit();
         self.armed = if self.armed == Some(kind) {
             None
         } else {
@@ -150,7 +165,9 @@ impl SculptTool {
     pub(crate) fn disarm(&mut self) {
         self.armed = None;
         self.stroke = None;
+        self.clear_cursor_hit();
         self.finish_requested = false;
+        self.finish_retry = false;
         self.pending_history = None;
         self.worker = None;
         self.cancel_pending_preparation();
@@ -160,12 +177,14 @@ impl SculptTool {
     /// tool. Called whenever the scene geometry changes underneath us (a load,
     /// a delete, another mesh edit, or an undo/redo) — a preserved-`topology_id`
     /// sculpt commit is undone WITHOUT changing the id, so the id alone cannot
-    /// tell the geometry reverted; the session must simply be re-prepared from
+    /// tell the geometry reverted; the session must be re-prepared from
     /// the fresh scene on the next stroke.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
+        self.clear_cursor_hit();
         self.worker = None;
         self.finish_requested = false;
+        self.finish_retry = false;
         self.pending_history = None;
         self.cancel_pending_preparation();
     }
@@ -176,6 +195,20 @@ impl SculptTool {
         self.worker
             .as_ref()
             .is_some_and(|worker| worker.layer_id == layer_id && worker.topology_id == topology_id)
+    }
+
+    pub(crate) fn clear_cursor_hit(&mut self) {
+        self.cursor_hit = None;
+        self.cursor_pointer = None;
+    }
+
+    pub(crate) fn set_cursor_hit(&mut self, pointer: [f32; 2], hit: occluview_core::ScenePickHit) {
+        self.cursor_pointer = Some(pointer);
+        self.cursor_hit = Some(hit);
+    }
+
+    pub(crate) fn cursor_hit_for(&self, pointer: [f32; 2]) -> Option<occluview_core::ScenePickHit> {
+        (self.cursor_pointer == Some(pointer)).then_some(self.cursor_hit?)
     }
 
     pub(crate) fn pending_matches(&self, layer_id: SceneMeshId, topology_id: u64) -> bool {
@@ -190,14 +223,33 @@ impl SculptTool {
             .is_some_and(|worker| !worker.is_quiescent())
     }
 
+    /// Whether a mesh edit must wait for Sculpt to settle. `worker` can exist
+    /// idle for instant next-stroke reuse, so its presence alone is not busy.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.stroke.is_some()
+            || self.pending.is_some()
+            || self.worker_has_pending_work()
+            || self.finish_requested
+            || self.finish_retry
+            || self.pending_history.is_some()
+    }
+
     /// Queue the O(n) brush preparation. The worker owns the target mesh
     /// snapshot; the UI only stores a receiver and remains responsive while
     /// welding, adjacency construction, and grid setup run.
     pub(crate) fn queue_preparation(&mut self, scene: Arc<Scene>, index: usize) -> bool {
+        self.reap_finished_preparations();
         let Some(entry) = scene.meshes().get(index) else {
             return false;
         };
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
+            return false;
+        }
+        // A single averaged scale is only mathematically valid for a rigid or
+        // uniformly scaled transform. Refuse shear/non-uniform placement here
+        // instead of applying a direction-dependent brush radius as if it were
+        // isotropic.
+        if uniform_scene_scale(&entry.transform).is_none() {
             return false;
         }
         let layer_id = entry.id();
@@ -209,6 +261,13 @@ impl SculptTool {
         }
 
         self.cancel_pending_preparation();
+        // A previous cancellation may still be inside the O(n) BVH/kernel
+        // preparation. Do not launch a second scan-sized worker on a
+        // resource-constrained machine; wait for the owned worker to finish
+        // and retry next frame.
+        if !self.retired_preparations.is_empty() {
+            return false;
+        }
         let (sender, receiver) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
@@ -233,13 +292,23 @@ impl SculptTool {
                 if worker_cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                mesh.warm_bvh();
+                // Warming the picking tree is an O(n) build inside an
+                // `OnceLock`, so it cannot be interrupted once it starts. Skip
+                // it when nobody is waiting for this preparation any more: a
+                // cancel that lands during the build would otherwise keep the
+                // worker (and the layer's memory) alive for the whole build,
+                // which is exactly the delay `cancel_pending_preparation`
+                // exists to avoid. The build still happens on demand at the
+                // first pick of a live session.
+                if !worker_cancel.load(Ordering::Relaxed) {
+                    mesh.warm_bvh();
+                }
                 let prepared = {
                     let buffers = mesh_edit_buffers_from_mesh(&mesh);
                     BrushSession::prepare(&buffers).map_err(|error| error.to_string())
                 };
                 let result = prepared.map(move |session| {
-                    let scale = mean_uniform_scale(&transform);
+                    let scale = uniform_scene_scale(&transform).unwrap_or(1.0);
                     let shadow = Arc::new(RwLock::new(mesh.vertices().to_vec()));
                     let topology = PreparedSceneTopology::from_mesh(&mesh);
                     SculptSession {
@@ -259,35 +328,66 @@ impl SculptTool {
                     let _ = sender.send(result);
                 }
             });
-        if spawned.is_err() {
+        let Ok(thread) = spawned else {
             return false;
-        }
+        };
         self.pending = Some(PendingSculptPreparation {
             layer_id,
             topology_id,
             cancel,
             receiver,
+            thread,
         });
         false
     }
 
     pub(crate) fn poll_preparation(&mut self) -> Option<Result<SculptSession, String>> {
+        self.reap_finished_preparations();
         let pending = self.pending.take()?;
         match pending.receiver.try_recv() {
-            Ok(result) => Some(result),
+            Ok(result) => {
+                let _ = pending.thread.join();
+                Some(result)
+            }
             Err(mpsc::TryRecvError::Empty) => {
                 self.pending = Some(pending);
                 None
             }
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err(
-                "sculpt preparation worker stopped unexpectedly".to_string(),
-            )),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let _ = pending.thread.join();
+                Some(Err(
+                    "sculpt preparation worker stopped unexpectedly".to_string()
+                ))
+            }
         }
     }
 
     fn cancel_pending_preparation(&mut self) {
         if let Some(pending) = self.pending.take() {
             pending.cancel.store(true, Ordering::Relaxed);
+            self.retired_preparations.push(pending.thread);
+        }
+        self.reap_finished_preparations();
+    }
+
+    fn reap_finished_preparations(&mut self) {
+        let mut active = Vec::with_capacity(self.retired_preparations.len());
+        for worker in self.retired_preparations.drain(..) {
+            if worker.is_finished() {
+                let _ = worker.join();
+            } else {
+                active.push(worker);
+            }
+        }
+        self.retired_preparations = active;
+    }
+}
+
+impl Drop for SculptTool {
+    fn drop(&mut self) {
+        self.cancel_pending_preparation();
+        for worker in self.retired_preparations.drain(..) {
+            let _ = worker.join();
         }
     }
 }
@@ -338,15 +438,54 @@ pub(crate) struct SculptRebuild {
     pub(crate) topology: PreparedSceneTopology,
 }
 
+/// Read-mostly surface state used by the interactive Sculpt raycast. The
+/// original mesh owns a stable BVH; the shadow contains the current live
+/// vertices, and only triangles touched since the last refit are checked
+/// outside that tree.
+pub(crate) struct SculptPickState {
+    pub(crate) mesh: Arc<Mesh>,
+    pub(crate) shadow: Arc<RwLock<Vec<Vertex>>>,
+    pub(crate) dirty_triangles: Vec<usize>,
+}
+
 /// What one dab produced: either a sparse vertex update, or a whole-layer
 /// rebuild when densification changed the topology.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DabFailure {
+    /// The live display shadow could not be updated. The kernel result is no
+    /// longer safe to publish because the worker would otherwise stream stale
+    /// vertices and later commit an undo state that never matched the view.
+    ShadowPoisoned,
+    /// The display shadow no longer has the same shape as the kernel mesh.
+    /// Publishing any subset would make the GPU and the undo baseline disagree.
+    ShadowShapeMismatch {
+        shadow_count: usize,
+        live_count: usize,
+    },
+    /// The kernel returned an id outside its prepared vertex array.
+    InvalidVertexIndex {
+        vertex_id: usize,
+        vertex_count: usize,
+    },
+    /// A densifying dab changed the kernel topology, but its authoritative
+    /// scene mesh could not be rebuilt.
+    TopologyRebuild { detail: String },
+}
+
 #[derive(Default)]
 pub(crate) struct DabOutcome {
-    /// Touched vertex ids for a sparse GPU write. Empty when `rebuild` is set —
-    /// the rebuild supersedes it.
+    /// Vertex ids whose position or normal changed, for a sparse GPU write.
+    /// Empty when `rebuild` is set — the rebuild supersedes it.
     pub(crate) touched: Vec<usize>,
+    /// Triangles that must be considered against the live shadow by the
+    /// interactive raycast.
+    pub(crate) dirty_triangles: Vec<usize>,
     /// Set when this dab grew the mesh.
     pub(crate) rebuild: Option<SculptRebuild>,
+    /// Set when the kernel result cannot be published safely. This must abort
+    /// the worker; treating it as an empty dab would leave the GPU or undo
+    /// history on a stale state.
+    pub(crate) failure: Option<DabFailure>,
 }
 
 impl SculptSession {
@@ -355,47 +494,141 @@ impl SculptSession {
     /// rebuild when densification changed the topology. Marks the current
     /// stroke dirty so a stroke that actually changed geometry gets an undo
     /// entry (an empty dab does not).
+    #[cfg(test)]
     pub(crate) fn apply_dab(&mut self, stroke: BrushStroke, mode: BrushMode) -> DabOutcome {
-        if self.stroke_start_mesh.is_none() {
-            self.stroke_start_mesh = self.snapshot_mesh();
+        self.apply_dab_inner(stroke, mode, None).unwrap_or_default()
+    }
+
+    /// Cancellable worker variant. A cancellation never returns a dab outcome:
+    /// the owning worker is being torn down, so its potentially partial session
+    /// and shadow must be discarded together.
+    pub(crate) fn apply_dab_cancellable(
+        &mut self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        cancel: &AtomicBool,
+    ) -> Option<DabOutcome> {
+        self.apply_dab_inner(stroke, mode, Some(cancel))
+    }
+
+    fn apply_dab_inner(
+        &mut self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<DabOutcome> {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return None;
         }
-        let outcome = self.session.apply_stroke(stroke, mode);
+        if self.stroke_start_mesh.is_none() {
+            match self.snapshot_mesh() {
+                Ok(snapshot) => self.stroke_start_mesh = Some(snapshot),
+                Err(failure) => {
+                    return Some(DabOutcome {
+                        failure: Some(failure),
+                        ..DabOutcome::default()
+                    });
+                }
+            }
+        }
+        let outcome = match cancel {
+            Some(cancel) => self
+                .session
+                .apply_stroke_cancellable(stroke, mode, cancel)?,
+            None => self.session.apply_stroke(stroke, mode),
+        };
         if outcome.topology_changed() {
+            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                return None;
+            }
             // Vertex ids the caller already knows stay valid — densification
             // only APPENDS — but the array grew and the triangle list changed,
             // so a sparse write into the old buffers would be a corruption.
             // Hand back the rebuilt layer instead and drop this dab's ids.
-            return DabOutcome {
-                touched: Vec::new(),
-                rebuild: self.rebuild_after_densify(),
+            return match self.rebuild_after_densify(cancel) {
+                Ok(Some(rebuild)) => Some(DabOutcome {
+                    touched: Vec::new(),
+                    dirty_triangles: Vec::new(),
+                    rebuild: Some(rebuild),
+                    failure: None,
+                }),
+                Ok(None) => None,
+                Err(failure) => Some(DabOutcome {
+                    touched: Vec::new(),
+                    dirty_triangles: Vec::new(),
+                    rebuild: None,
+                    failure: Some(failure),
+                }),
             };
         }
         if outcome.touched_vertices.is_empty() {
-            return DabOutcome::default();
+            return Some(DabOutcome::default());
         }
-        self.patch_shadow(&outcome.touched_vertices);
+        let normal_vertices = outcome.normal_vertices;
+        let dirty_triangles = outcome.dirty_triangles;
+        if self
+            .patch_shadow(&outcome.touched_vertices, &normal_vertices)
+            .is_err()
+        {
+            return Some(DabOutcome {
+                touched: Vec::new(),
+                dirty_triangles: Vec::new(),
+                rebuild: None,
+                failure: Some(DabFailure::ShadowPoisoned),
+            });
+        }
         self.dirty_stroke = true;
-        DabOutcome {
-            touched: outcome.touched_vertices,
+        let mut touched = outcome.touched_vertices;
+        touched.extend(normal_vertices);
+        Some(DabOutcome {
+            touched,
+            dirty_triangles,
             rebuild: None,
-        }
+            failure: None,
+        })
     }
 
     /// The layer mesh as the session currently holds it (template + shadow).
     ///
     /// This cold undo baseline defers derived-cache work until restoration.
-    fn snapshot_mesh(&self) -> Option<Arc<Mesh>> {
-        let shadow = self.shadow.read().ok()?;
+    fn snapshot_mesh(&self) -> Result<Arc<Mesh>, DabFailure> {
+        let shadow = self.shadow.read().map_err(|_| DabFailure::ShadowPoisoned)?;
+        let shadow_count = shadow.len();
+        let live_count = self.session.vertices().len();
+        if shadow_count != live_count || self.base_mesh.vertices().len() != live_count {
+            return Err(DabFailure::ShadowShapeMismatch {
+                shadow_count,
+                live_count,
+            });
+        }
         self.base_mesh
             .with_sculpted_vertices_uncached(shadow.clone())
             .map(Arc::new)
+            .ok_or(DabFailure::ShadowShapeMismatch {
+                shadow_count,
+                live_count: self.base_mesh.vertices().len(),
+            })
     }
 
     /// Adopt the densified geometry: rebuild the template mesh, resize the
     /// display shadow to match, and take on the new GPU topology token so the
     /// dabs that follow can stream sparsely again.
-    fn rebuild_after_densify(&mut self) -> Option<SculptRebuild> {
-        let mesh = mesh_from_sculpt_session_like(&self.base_mesh, &self.session).ok()?;
+    fn rebuild_after_densify(
+        &mut self,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Option<SculptRebuild>, DabFailure> {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Ok(None);
+        }
+        let mesh =
+            mesh_from_sculpt_session_like(&self.base_mesh, &self.session).map_err(|error| {
+                DabFailure::TopologyRebuild {
+                    detail: format!("sculpt topology rebuild failed: {error}"),
+                }
+            })?;
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Ok(None);
+        }
         // Pick-ready before it ships. This mesh replaces the layer in the
         // scene, and the viewport lays a dab only where the cursor HITS the
         // surface — a hit test that refuses to build a scan-sized BVH on the
@@ -406,32 +639,82 @@ impl SculptSession {
         // dead for good. This runs on the worker thread, where an O(n) rebuild
         // has already been paid; a clone shares the warmed tree, so the commit
         // path's refit keeps it alive from here on.
-        mesh.warm_bvh();
+        //
+        // The same cancellation rule as preparation applies: this build cannot
+        // be interrupted, so do not start it for a stroke the operator has
+        // already abandoned. The pick path warms the tree itself when it needs
+        // one.
+        if !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            mesh.warm_bvh();
+        }
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Ok(None);
+        }
         {
-            let mut shadow = self.shadow.write().ok()?;
+            let mut shadow = self
+                .shadow
+                .write()
+                .map_err(|_| DabFailure::ShadowPoisoned)?;
             *shadow = mesh.vertices().to_vec();
         }
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Ok(None);
+        }
         let topology = PreparedSceneTopology::from_mesh(&mesh);
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Ok(None);
+        }
         self.base_mesh = Arc::new(mesh.clone());
         self.topology = topology;
         self.dirty_stroke = true;
-        Some(SculptRebuild { mesh, topology })
+        Ok(Some(SculptRebuild { mesh, topology }))
     }
 
     /// Copy the kernel's live position and normal for every touched vertex id
     /// into the display shadow. Color and UV are preserved untouched, so
     /// textured/colored scans keep their look while being sculpted.
-    pub(crate) fn patch_shadow(&mut self, touched: &[usize]) {
-        let Ok(mut shadow) = self.shadow.write() else {
-            return;
-        };
+    pub(crate) fn patch_shadow(
+        &mut self,
+        moved: &[usize],
+        normal_vertices: &[usize],
+    ) -> Result<(), DabFailure> {
+        let mut shadow = self
+            .shadow
+            .write()
+            .map_err(|_| DabFailure::ShadowPoisoned)?;
         let live = self.session.vertices();
-        for &vertex_id in touched {
-            if let (Some(target), Some(source)) = (shadow.get_mut(vertex_id), live.get(vertex_id)) {
-                target.position = source.position;
-                target.normal = source.normal;
-            }
+        let shadow_count = shadow.len();
+        let live_count = live.len();
+        if shadow_count != live_count {
+            return Err(DabFailure::ShadowShapeMismatch {
+                shadow_count,
+                live_count,
+            });
         }
+        if let Some(vertex_id) = moved
+            .iter()
+            .chain(normal_vertices.iter())
+            .copied()
+            .find(|&vertex_id| vertex_id >= live_count)
+        {
+            return Err(DabFailure::InvalidVertexIndex {
+                vertex_id,
+                vertex_count: live_count,
+            });
+        }
+        for &vertex_id in moved {
+            let source = live[vertex_id];
+            let target = &mut shadow[vertex_id];
+            target.position = source.position;
+            // The kernel normally includes moved vertices in its normal scope.
+            // Copying this here as well keeps the position update self-contained
+            // if a future kernel mode reports a narrower normal scope.
+            target.normal = source.normal;
+        }
+        for &vertex_id in normal_vertices {
+            shadow[vertex_id].normal = live[vertex_id].normal;
+        }
+        Ok(())
     }
 }
 
@@ -460,122 +743,36 @@ pub(crate) fn mean_uniform_scale(transform: &Affine3A) -> f32 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used, clippy::float_cmp)]
-    use super::*;
-    use glam::Quat;
-    use occluview_core::{Mesh, SceneMesh};
-
-    /// The undo baseline is speculative work: most strokes are never undone.
-    /// `snapshot_mesh` records what building it with the caches costs the first
-    /// dab of every stroke.
-    #[test]
-    fn the_stroke_baseline_is_snapshotted_cold() {
-        // Only the part above this module counts, or the guard matches the
-        // needle in its own assertion and passes on its own text.
-        let source = include_str!("sculpt_tool.rs");
-        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
-        assert!(
-            production.contains("with_sculpted_vertices_uncached(shadow.clone())"),
-            "the stroke's undo baseline must not pay for caches it usually never uses"
-        );
+/// Return the one scalar that converts world millimetres into local
+/// millimetres, but only when the linear transform really has an isotropic
+/// positive scale. Sculpting under non-uniform scale or shear would require a
+/// full inverse metric (and an elliptical brush footprint), not an average.
+pub(crate) fn uniform_scene_scale(transform: &Affine3A) -> Option<f32> {
+    const RELATIVE_TOLERANCE: f32 = 1.0e-4;
+    let m = transform.matrix3;
+    let axes = [m.x_axis, m.y_axis, m.z_axis];
+    let lengths = axes.map(glam::Vec3A::length);
+    let max = lengths.iter().copied().fold(0.0_f32, f32::max);
+    let min = lengths.iter().copied().fold(f32::INFINITY, f32::min);
+    if !max.is_finite()
+        || max <= f32::EPSILON
+        || !min.is_finite()
+        || (max - min) > max * RELATIVE_TOLERANCE
+        || !m.determinant().is_finite()
+        || m.determinant() <= f32::EPSILON
+    {
+        return None;
     }
-
-    #[test]
-    fn toggling_a_tool_arms_it_and_toggling_again_disarms() {
-        let mut tool = SculptTool::default();
-        tool.toggle(SculptToolKind::AddRemove);
-        assert_eq!(tool.armed, Some(SculptToolKind::AddRemove));
-        tool.toggle(SculptToolKind::Smooth);
-        assert_eq!(tool.armed, Some(SculptToolKind::Smooth));
-        tool.toggle(SculptToolKind::Smooth);
-        assert_eq!(tool.armed, None);
+    for (index, axis) in axes.iter().enumerate() {
+        for other in axes.iter().skip(index + 1) {
+            if axis.dot(*other).abs() > max * max * RELATIVE_TOLERANCE {
+                return None;
+            }
+        }
     }
-
-    #[test]
-    fn shift_flips_add_to_remove_and_forces_smooth() {
-        assert_eq!(SculptToolKind::AddRemove.brush_mode(false), BrushMode::Add);
-        assert_eq!(
-            SculptToolKind::AddRemove.brush_mode(true),
-            BrushMode::Remove
-        );
-        assert_eq!(SculptToolKind::Smooth.brush_mode(true), BrushMode::Smooth);
-        // Shift forces Smooth to maximum regardless of the slider; Add/Remove
-        // follows the intensity slider with or without Shift.
-        assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 1.0);
-        assert_eq!(SculptToolKind::Smooth.dab_strength(1.0, false), 1.0);
-        assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, false), 0.3);
-        assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, true), 0.3);
-    }
-
-    #[test]
-    fn shift_widens_only_the_smooth_footprint() {
-        let base = size_to_radius_mm(SCULPT_SIZE_DEFAULT);
-        assert_eq!(
-            SculptToolKind::Smooth.dab_radius_mm(base, true),
-            base * SHIFT_SMOOTH_RADIUS_BOOST
-        );
-        assert_eq!(SculptToolKind::Smooth.dab_radius_mm(base, false), base);
-        assert_eq!(SculptToolKind::AddRemove.dab_radius_mm(base, true), base);
-    }
-
-    #[test]
-    fn size_slider_maps_monotonically_into_the_mm_range() {
-        assert!(size_to_radius_mm(SCULPT_SIZE_MIN) < size_to_radius_mm(SCULPT_SIZE_MAX));
-        assert!(size_to_radius_mm(SCULPT_SIZE_MIN) >= SCULPT_RADIUS_MIN_MM - 1e-4);
-        assert!(size_to_radius_mm(SCULPT_SIZE_MAX) <= SCULPT_RADIUS_MAX_MM + 1e-4);
-    }
-
-    #[test]
-    fn mean_uniform_scale_reads_a_rigid_transform_as_one() {
-        let rigid = Affine3A::from_rotation_translation(
-            Quat::from_rotation_y(0.7),
-            Vec3::new(3.0, -2.0, 9.0),
-        );
-        assert!((mean_uniform_scale(&rigid) - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn mean_uniform_scale_survives_a_degenerate_transform() {
-        assert_eq!(mean_uniform_scale(&Affine3A::from_scale(Vec3::ZERO)), 1.0);
-    }
-
-    #[test]
-    fn persistent_session_accepts_a_second_stroke_after_first_commit() {
-        let mesh = Mesh::new(
-            Some("sculpt-test".to_string()),
-            vec![
-                Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-                Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-                Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-                Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2, 0, 2, 3],
-        )
-        .expect("test mesh");
-        let layer_id = SceneMesh::new(mesh.clone()).id();
-        let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
-        let mut session = SculptSession {
-            layer_id,
-            topology_id: mesh.topology_id(),
-            session: brush,
-            base_mesh: Arc::new(mesh.clone()),
-            shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
-            topology: PreparedSceneTopology::from_mesh(&mesh),
-            world_to_local: Affine3A::IDENTITY,
-            local_per_world: 1.0,
-            dirty_stroke: false,
-            stroke_start_mesh: None,
-        };
-        let stroke = BrushStroke {
-            center: [0.0, 0.0, 0.0],
-            radius_mm: 2.0,
-            strength: 1.0,
-            view_dir: [0.0, 0.0, -1.0],
-        };
-        assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
-        session.dirty_stroke = false;
-        assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
-    }
+    Some((lengths[0] + lengths[1] + lengths[2]) / 3.0)
 }
+
+#[cfg(test)]
+#[path = "sculpt_tool_tests.rs"]
+mod tests;

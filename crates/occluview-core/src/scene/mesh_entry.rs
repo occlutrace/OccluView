@@ -63,6 +63,11 @@ pub struct SceneMesh {
     /// color and texture. Hiding the map is therefore free, and an export is
     /// unaffected by whether a map happens to be on screen.
     deviation: Option<Arc<Vec<[u8; 4]>>>,
+    /// Stable identity of the imported layer this entry was derived from.
+    /// `None` means that this entry is itself a source layer. Structural
+    /// operations use this identity to preserve export provenance when a
+    /// source is split into one or more scene entries.
+    source_layer_id: Option<SceneMeshId>,
     /// Import-unit metadata: what the file declared and what scale was
     /// applied to reach millimeters. Never affects rendering by itself —
     /// coordinates are normalized once, at import.
@@ -90,6 +95,7 @@ impl SceneMesh {
             show_vertex_colors: true,
             show_texture,
             deviation: None,
+            source_layer_id: None,
             import_units: UnitInterpretation::assumed_millimeters(),
         }
     }
@@ -143,6 +149,30 @@ impl SceneMesh {
     #[must_use]
     pub fn id(&self) -> SceneMeshId {
         self.id
+    }
+
+    /// Stable identity of the source layer from which this entry was derived,
+    /// if it is a split/cut part rather than an imported top-level layer.
+    #[inline]
+    #[must_use]
+    pub fn source_layer_id(&self) -> Option<SceneMeshId> {
+        self.source_layer_id
+    }
+
+    /// Identity used to carry file/export provenance through derived layers.
+    /// A top-level imported layer is its own source.
+    #[inline]
+    #[must_use]
+    pub fn export_source_layer_id(&self) -> SceneMeshId {
+        self.source_layer_id.unwrap_or(self.id)
+    }
+
+    /// Mark this entry as a derived view of an imported source layer.
+    #[inline]
+    #[must_use]
+    pub fn with_source_layer_id(mut self, source_layer_id: SceneMeshId) -> Self {
+        self.source_layer_id = Some(source_layer_id);
+        self
     }
 
     /// Set the per-instance transform.
@@ -215,6 +245,7 @@ impl SceneMesh {
             // vertices, so carrying it onto new geometry would paint whichever
             // vertices happened to inherit those indices.
             deviation: None,
+            source_layer_id: self.source_layer_id,
             // Kept deliberately: same layer, same file provenance.
             import_units: self.import_units,
         }

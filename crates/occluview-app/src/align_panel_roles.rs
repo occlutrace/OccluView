@@ -10,6 +10,7 @@
 
 use eframe::egui;
 
+use crate::align_markings::AlignSide;
 use crate::icons::AppIcon;
 use crate::ui_theme;
 
@@ -53,6 +54,14 @@ impl AlignRoles {
             key,
             &[("moving", self.moving.trim()), ("fixed", self.fixed.trim())],
         )
+    }
+
+    /// The compact label used by the Brush tool's explicit mesh selector.
+    pub(crate) fn side_name(&self, side: AlignSide) -> String {
+        match side {
+            AlignSide::Moving => shorten(&self.moving),
+            AlignSide::Fixed => shorten(&self.fixed),
+        }
     }
 }
 

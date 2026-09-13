@@ -34,7 +34,7 @@ mod bridge_split_robust_tests;
 
 use crate::bbox::Aabb;
 use crate::error::CoreError;
-use bvh::TriangleBvh;
+use bvh::{DirtyVertexRay, TriangleBvh};
 use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -72,6 +72,39 @@ pub enum MeshKind {
     TriangleMesh,
     /// Point cloud: `indices` is empty; each vertex is drawn as a point.
     PointCloud,
+}
+
+/// A mesh-local ray query against a live sculpt snapshot. The cached BVH is
+/// still owned by [`Mesh`]; this value groups the mutable vertex view and the
+/// triangles whose bounds may have moved since that tree was built.
+#[derive(Clone, Copy, Debug)]
+pub struct LiveRayPick<'a> {
+    /// Current vertex positions, with the same length and indexing as the mesh.
+    pub vertices: &'a [Vertex],
+    /// Triangle indices whose live bounds must be checked directly.
+    pub dirty_triangles: &'a [usize],
+    /// Ray origin in mesh-local coordinates.
+    pub origin: Vec3,
+    /// Ray direction in mesh-local coordinates.
+    pub direction: Vec3,
+}
+
+impl<'a> LiveRayPick<'a> {
+    /// Construct a live ray query without copying the sculpt snapshot.
+    #[must_use]
+    pub const fn new(
+        vertices: &'a [Vertex],
+        dirty_triangles: &'a [usize],
+        origin: Vec3,
+        direction: Vec3,
+    ) -> Self {
+        Self {
+            vertices,
+            dirty_triangles,
+            origin,
+            direction,
+        }
+    }
 }
 
 /// A triangle mesh, the central geometry type.
@@ -369,6 +402,64 @@ impl Mesh {
             .get_or_init(|| TriangleBvh::build(&self.vertices, &self.indices));
         bvh.pick(&self.vertices, &self.indices, origin, direction, keep)
             .map(|hit| (hit.triangle_index, hit.point))
+    }
+
+    /// Pick against a live vertex array from an interactive editor without
+    /// rebuilding the mesh or its BVH on the caller's thread. `dirty_triangles`
+    /// are checked directly because their new bounds are not represented by
+    /// the original tree; all other triangles use the cached logarithmic path.
+    /// The cached tree must already be warm, which keeps this API safe for UI
+    /// hot paths.
+    pub fn pick_ray_local_with_vertices<K>(
+        &self,
+        query: LiveRayPick<'_>,
+        keep: K,
+    ) -> Option<(usize, Vec3)>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        if self.kind != MeshKind::TriangleMesh
+            || self.indices.is_empty()
+            || query.vertices.len() != self.vertices.len()
+        {
+            return None;
+        }
+        let bvh = self.bvh.get()?;
+        bvh.pick_with_dirty_vertices(
+            DirtyVertexRay {
+                vertices: query.vertices,
+                indices: &self.indices,
+                query,
+            },
+            keep,
+        )
+        .map(|hit| (hit.triangle_index, hit.point))
+    }
+
+    /// Return a triangle's geometric normal from a live vertex array. The
+    /// array must have the same shape as this mesh; malformed indices fail
+    /// closed instead of panicking in a cursor/render helper.
+    #[must_use]
+    pub fn triangle_normal_local_with_vertices(
+        &self,
+        vertices: &[Vertex],
+        triangle: usize,
+    ) -> Option<Vec3> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        let base = triangle.checked_mul(3)?;
+        let corners = self.indices.get(base..base.checked_add(3)?)?;
+        let [a, b, c] = corners else {
+            return None;
+        };
+        let a = vertices.get(usize::try_from(*a).ok()?)?;
+        let b = vertices.get(usize::try_from(*b).ok()?)?;
+        let c = vertices.get(usize::try_from(*c).ok()?)?;
+        let normal = (Vec3::from_array(b.position) - Vec3::from_array(a.position))
+            .cross(Vec3::from_array(c.position) - Vec3::from_array(a.position))
+            .normalize_or_zero();
+        (normal.length_squared() > f32::EPSILON && normal.is_finite()).then_some(normal)
     }
 
     /// Force the picking BVH to build now (e.g. on a background thread when a

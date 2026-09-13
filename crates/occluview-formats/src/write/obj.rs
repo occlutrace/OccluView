@@ -84,6 +84,16 @@ pub(super) fn write_mesh<W: Write>(
                 (false, false) => writeln!(writer, "f {a} {b} {c}")?,
             }
         }
+    } else if !mesh.vertices().is_empty() {
+        // OBJ's point element is the lossless counterpart of our point-cloud
+        // mesh. Omitting it used to produce a file that looked successful but
+        // loaded back with zero vertices because the reader only materialized
+        // vertices while parsing faces.
+        write!(writer, "p")?;
+        for index in 1..=mesh.vertices().len() {
+            write!(writer, " {index}")?;
+        }
+        writeln!(writer)?;
     }
 
     Ok(())
@@ -142,5 +152,37 @@ mod tests {
         let text = str::from_utf8(&bytes).expect("obj text");
         assert!(text.contains("vt 0.000000 0.000000"));
         assert!(text.contains("f 1/1/1 2/2/2 3/3/3"));
+    }
+
+    #[test]
+    fn preserves_point_cloud_vertices_with_obj_point_elements() {
+        let mesh = Mesh::point_cloud(
+            Some("cloud".to_string()),
+            vec![
+                Vertex::at(glam::Vec3::new(1.0, 2.0, 3.0))
+                    .with_normal(glam::Vec3::Z)
+                    .with_color([11, 22, 33, 255]),
+                Vertex::at(glam::Vec3::new(4.0, 5.0, 6.0)).with_normal(glam::Vec3::Z),
+            ],
+        );
+        let mut bytes = Vec::new();
+        crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        )
+        .expect("write point-cloud obj");
+        let text = str::from_utf8(&bytes).expect("obj text");
+        assert!(text.contains("p 1 2"));
+
+        let round_trip = crate::obj::read(&bytes).expect("read point-cloud obj");
+        assert!(round_trip.is_point_cloud());
+        assert_eq!(round_trip.vertices().len(), 2);
+        assert_eq!(
+            round_trip.vertices()[0].position,
+            mesh.vertices()[0].position
+        );
+        assert_eq!(round_trip.vertices()[0].color, [11, 22, 33, 255]);
     }
 }

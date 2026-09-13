@@ -8,6 +8,7 @@ use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
 use crate::gpu::{camera_bind_layout, GpuMesh};
 use crate::mesh_uniform::GpuMeshUniform;
+use crate::sculpt_cursor::{SculptBrushUniform, SculptToolShape, SculptToolUniform};
 use occluview_core::Vertex;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
@@ -16,8 +17,8 @@ use std::sync::{
 
 /// Shared latch for the most recent wgpu uncaptured error. wgpu's default
 /// uncaptured-error handler PANICS, which is a hard process abort in a release
-/// build (`panic = "abort"`) — a single driver hiccup or validation slip would
-/// kill the app. We install a handler that records the message here instead;
+/// default build (`panic = "abort"`) — a single driver hiccup or validation
+/// slip would kill the app. We install a handler that records the message here instead;
 /// the app polls [`Renderer::take_gpu_error`] and surfaces it honestly.
 pub(crate) type GpuErrorLatch = Arc<Mutex<Option<String>>>;
 
@@ -30,19 +31,43 @@ pub(crate) fn record_gpu_error(latch: &GpuErrorLatch, message: String) {
     }
 }
 
+/// Record a GPU fault and make the renderer fail closed for subsequent work.
+/// The error message is still drained by the UI once; the boolean remains set
+/// so later buffer writes and paint callbacks cannot submit more invalid work
+/// after the original fault has been surfaced.
+pub(crate) fn record_gpu_fault(
+    latch: &GpuErrorLatch,
+    faulted: &std::sync::atomic::AtomicBool,
+    message: String,
+) {
+    faulted.store(true, Ordering::Release);
+    record_gpu_error(latch, message);
+}
+
 /// Take and clear the latched error. Returns `None` when empty or poisoned;
 /// a poisoned latch must never block the UI poll.
 pub(crate) fn drain_gpu_error(latch: &GpuErrorLatch) -> Option<String> {
     latch.lock().ok().and_then(|mut slot| slot.take())
 }
 
+pub(crate) struct SculptSurfaceFeedbackBindings<'a> {
+    pub(crate) camera_bg: &'a wgpu::BindGroup,
+    pub(crate) mesh_bg: &'a wgpu::BindGroup,
+    pub(crate) clip_bg: &'a wgpu::BindGroup,
+    pub(crate) mesh: &'a GpuMesh,
+}
+
 const SHADER_SRC: &str = include_str!("../shaders/mesh.wgsl");
 const CAP_SHADER_SRC: &str = include_str!("../shaders/cap.wgsl");
+const SCULPT_FEEDBACK_SHADER_SRC: &str = include_str!("../shaders/sculpt_feedback.wgsl");
+const SCULPT_TOOL_SHADER_SRC: &str = include_str!("../shaders/sculpt_tool.wgsl");
 const POINT_SPLAT_VERTEX_COUNT: u32 = 6;
 const DEFAULT_POINT_SPLAT_VIEWPORT: [f32; 2] = [1024.0, 768.0];
 
 #[path = "pipeline_init.rs"]
 mod init;
+
+pub use init::live_depth_format;
 
 #[path = "pipeline_ghost.rs"]
 mod ghost;
@@ -106,6 +131,11 @@ pub struct Renderer {
     /// Cut-view ghost pipeline: re-draws the cut-away side translucent so a
     /// cross-section never fully removes geometry from the main viewport.
     pub(crate) ghost_pipeline: wgpu::RenderPipeline,
+    /// Additive display-only pass that leaves the Sculpt brush light on the
+    /// selected surface without re-drawing the mesh material.
+    pub(crate) sculpt_feedback_pipeline: wgpu::RenderPipeline,
+    /// Translucent cone/cylinder volume shown above the Sculpt contact patch.
+    pub(crate) sculpt_tool_pipeline: wgpu::RenderPipeline,
     pub(crate) camera_layout: wgpu::BindGroupLayout,
     pub(crate) camera_buffer: wgpu::Buffer,
     /// Layout for the per-mesh uniform (group 1): model matrix + tint +
@@ -115,6 +145,17 @@ pub struct Renderer {
     pub(crate) texture_layout: wgpu::BindGroupLayout,
     /// Layout for the clip plane (group 3): `ClipPlane` uniform.
     pub(crate) clip_layout: wgpu::BindGroupLayout,
+    sculpt_brush_buffer: wgpu::Buffer,
+    sculpt_brush_bind_group: wgpu::BindGroup,
+    sculpt_tool_buffer: wgpu::Buffer,
+    sculpt_tool_bind_group: wgpu::BindGroup,
+    sculpt_tool_shape: AtomicU32,
+    sculpt_tool_cone_buffer: wgpu::Buffer,
+    sculpt_tool_cone_vertex_bytes: u64,
+    sculpt_tool_cone_index_count: u32,
+    sculpt_tool_cylinder_buffer: wgpu::Buffer,
+    sculpt_tool_cylinder_vertex_bytes: u64,
+    sculpt_tool_cylinder_index_count: u32,
     point_splat_viewport_width_bits: AtomicU32,
     point_splat_viewport_height_bits: AtomicU32,
     /// Cached disabled clip-plane buffer + bind group. Bound at group 3 for
@@ -137,6 +178,9 @@ pub struct Renderer {
     sample_count: u32,
     /// Most recent wgpu uncaptured error, recorded by the device error handler.
     pub(crate) gpu_error: GpuErrorLatch,
+    /// Whether the device has reported a non-recoverable fault. Once set, the
+    /// live callback must stop touching the device until the app is restarted.
+    pub(crate) gpu_faulted: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Renderer {
@@ -200,8 +244,12 @@ impl Renderer {
     }
 
     /// The texture bind group layout (group 2): a `texture_2d<f32>` at binding
-    /// 0 and a `sampler` at binding 1. Exposed so callers can build bind groups
-    /// against their own uploaded textures.
+    /// 0, a `sampler` at binding 1, and the packed contact field at binding 2.
+    /// Exposed so callers can build bind groups against their own uploaded
+    /// textures. Every bind group built against it must supply all three
+    /// bindings — use [`crate::GpuContactMaterial`], [`crate::GpuTexture`], or
+    /// [`crate::GpuTexture::fallback`], each of which fills the field binding
+    /// with the inert sentinel texel when the layer paints no contacts.
     pub fn texture_layout(&self) -> &wgpu::BindGroupLayout {
         &self.texture_layout
     }
@@ -233,6 +281,23 @@ impl Renderer {
                 resource: uniform_buffer.as_entire_binding(),
             }],
         })
+    }
+
+    /// Upload the current display-only Sculpt surface-light input.
+    pub fn set_sculpt_brush(&self, brush: &SculptBrushUniform) {
+        self.queue
+            .write_buffer(&self.sculpt_brush_buffer, 0, bytemuck::bytes_of(brush));
+    }
+
+    /// Upload the current display-only Sculpt cone/cylinder input.
+    pub fn set_sculpt_tool(&self, tool: &SculptToolUniform) {
+        self.sculpt_tool_shape.store(tool.shape, Ordering::Relaxed);
+        self.queue
+            .write_buffer(&self.sculpt_tool_buffer, 0, bytemuck::bytes_of(tool));
+    }
+
+    pub(crate) fn sculpt_brush_bind_group(&self) -> &wgpu::BindGroup {
+        &self.sculpt_brush_bind_group
     }
 
     /// The cached disabled-clip bind group — bound at group 3 for draws that
@@ -328,6 +393,69 @@ impl Renderer {
         mesh.draw(rpass, occluview_core::MeshKind::TriangleMesh);
     }
 
+    /// Draw only the additive Sculpt surface field over one already-rendered
+    /// triangle mesh. The caller chooses the target entry, so neighbouring
+    /// layers never receive the cursor by accident.
+    pub(crate) fn draw_sculpt_surface_feedback(
+        &self,
+        rpass: &mut wgpu::RenderPass<'_>,
+        bindings: SculptSurfaceFeedbackBindings<'_>,
+    ) {
+        rpass.set_pipeline(&self.sculpt_feedback_pipeline);
+        rpass.set_bind_group(0, bindings.camera_bg, &[]);
+        rpass.set_bind_group(1, bindings.mesh_bg, &[]);
+        rpass.set_bind_group(2, bindings.clip_bg, &[]);
+        rpass.set_bind_group(3, self.sculpt_brush_bind_group(), &[]);
+        bindings
+            .mesh
+            .draw(rpass, occluview_core::MeshKind::TriangleMesh);
+    }
+
+    /// Draw the translucent Sculpt tool volume. It is intentionally
+    /// depth-independent, matching the reference cursor: the volume remains
+    /// visible while it hovers over a dense scan and cannot affect the depth
+    /// buffer or any authoritative picking result.
+    pub fn draw_sculpt_tool(
+        &self,
+        rpass: &mut wgpu::RenderPass<'_>,
+        camera_bg: &wgpu::BindGroup,
+        clip_bg: &wgpu::BindGroup,
+    ) {
+        rpass.set_pipeline(&self.sculpt_tool_pipeline);
+        rpass.set_bind_group(0, camera_bg, &[]);
+        rpass.set_bind_group(1, &self.sculpt_tool_bind_group, &[]);
+        rpass.set_bind_group(2, clip_bg, &[]);
+        // The shader treats an invalid shape as Cone. The CPU writes only the
+        // two enum tags, so this selection is fail-safe rather than a panic.
+        let (buffer, vertex_bytes, index_count) =
+            if self.sculpt_tool_shape() == SculptToolShape::Cylinder as u32 {
+                (
+                    &self.sculpt_tool_cylinder_buffer,
+                    self.sculpt_tool_cylinder_vertex_bytes,
+                    self.sculpt_tool_cylinder_index_count,
+                )
+            } else {
+                (
+                    &self.sculpt_tool_cone_buffer,
+                    self.sculpt_tool_cone_vertex_bytes,
+                    self.sculpt_tool_cone_index_count,
+                )
+            };
+        if index_count == 0 {
+            return;
+        }
+        rpass.set_vertex_buffer(0, buffer.slice(..vertex_bytes));
+        rpass.set_index_buffer(buffer.slice(vertex_bytes..), wgpu::IndexFormat::Uint32);
+        rpass.draw_indexed(0..index_count, 0, 0..1);
+    }
+
+    /// Read the shape tag from the just-uploaded uniform without exposing the
+    /// mutable GPU buffer. This is only used to choose a static geometry
+    /// buffer; the shader remains the authority on visibility/material.
+    fn sculpt_tool_shape(&self) -> u32 {
+        self.sculpt_tool_shape.load(Ordering::Relaxed)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_inner(
         &self,
@@ -380,6 +508,40 @@ impl Renderer {
         drain_gpu_error(&self.gpu_error)
     }
 
+    /// Whether this renderer must stop issuing GPU work after a device fault.
+    #[must_use]
+    pub fn is_gpu_faulted(&self) -> bool {
+        self.gpu_faulted.load(Ordering::Acquire)
+    }
+
+    /// Re-enter service after the operator acknowledged a graphics fault.
+    ///
+    /// The flag makes the live path stop submitting work, which is right while
+    /// a fault is unacknowledged: a driver that lost its device would otherwise
+    /// receive every frame's command stream. It is not a permanent latch, and
+    /// it is not evidence that the device is unusable. A `DeviceLostReason::
+    /// Destroyed` teardown is already filtered out before the flag is set, so
+    /// the remaining reasons include recoverable ones — a driver reset, a
+    /// laptop GPU switch, an external eGPU unplugged and re-attached, or a
+    /// transient allocation failure. wgpu's own recovery path recreates the
+    /// device while this process keeps the same render state, and a rebuild of
+    /// the offscreen path creates a brand-new device and queue while the live
+    /// viewport still holds the faulted one.
+    ///
+    /// Clearing the flag does not repair anything by itself: the next paint
+    /// either succeeds or raises the fault again, and the dialog is not
+    /// re-armed until the latch reports a new message. The alternative — the
+    /// only documented recovery — was to close the viewer and lose the scene.
+    pub fn clear_gpu_fault(&self) {
+        self.gpu_faulted.store(false, Ordering::Release);
+    }
+
+    /// Whether a fault is latched for the operator to see.
+    #[must_use]
+    pub fn is_gpu_error_pending(&self) -> bool {
+        self.gpu_error.lock().is_ok_and(|slot| slot.is_some())
+    }
+
     /// Depth texture format used by this pipeline.
     pub fn depth_format(&self) -> wgpu::TextureFormat {
         self.depth_format
@@ -418,6 +580,40 @@ fn mesh_uniform_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     })
 }
 
+/// Bind layout for the display-only surface brush field.
+pub(super) fn sculpt_brush_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("occluview sculpt brush layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size_of::<SculptBrushUniform>() as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
+/// Bind layout for the display-only cone/cylinder volume.
+pub(super) fn sculpt_tool_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("occluview sculpt tool layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size_of::<SculptToolUniform>() as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
 /// Bind group layout for the clip plane (group 3): one uniform buffer
 /// holding a [`ClipPlane`], visible to the fragment stage (where discard
 /// happens) and vertex stage (future: vertex-side clip distances).
@@ -439,7 +635,16 @@ fn clip_plane_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 
 /// Bind group layout for the texture + sampler (group 2): a
 /// `texture_2d<f32>` at binding 0 (fragment), a filtering sampler at binding
-/// 1 (fragment).
+/// 1 (fragment), and the packed contact field at binding 2 (vertex and
+/// fragment).
+///
+/// The field is its own binding rather than a fifth bind group because wgpu's
+/// default `max_bind_groups` is four and groups 0..3 are already taken. It
+/// stays `Rgba8Unorm` (`Float { filterable: true }`) on purpose: the same group
+/// holds a filtering sampler, and wgpu rejects an `unfilterable-float` texture
+/// next to one — the packed f32 is smuggled through the filterable format and
+/// unpacked bit-by-bit in the shader instead. Nothing ever *samples* it, so no
+/// filter can average a measured distance with a sentinel.
 fn texture_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("occluview texture layout"),
@@ -458,6 +663,16 @@ fn texture_bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
         ],

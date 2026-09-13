@@ -13,7 +13,7 @@ Render a PNG thumbnail.
 .B convert FILE -o OUTPUT
 Convert a mesh to STL, PLY, or OBJ according to the output extension.
 .TP
-.B close-holes FILE -o OUTPUT [--max-diameter MM]
+.B close-holes FILE -o OUTPUT [--limit-mm MM]
 Close eligible boundary loops and write the repaired mesh.
 .TP
 .B info FILE [FILE ...]
@@ -28,6 +28,21 @@ Show command-line help.
 .TP
 .BR \-V , " " \-\-version
 Show the installed version.
+.TP
+.BR \-o " " OUTPUT
+Destination file for
+.B convert
+and
+.BR close-holes .
+.TP
+.BR \-\-size " " PIXELS
+Thumbnail edge length, for
+.BR thumbnail .
+.TP
+.BR \-\-limit-mm " " MM
+Largest boundary loop the hole closer may close, for
+.BR close-holes .
+Omit it to use the tool default.
 .SH SEE ALSO
 .BR occluview (1)
 .SH BUGS

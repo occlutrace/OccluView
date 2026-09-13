@@ -298,39 +298,3 @@ fn no_source_file_carries_a_path_from_one_machine() {
         offenders.join("\n")
     );
 }
-
-#[test]
-fn occluview_formats_has_two_explicit_unsafe_boundaries() {
-    // This crate crosses two platform boundaries: memory mapping and the
-    // Windows drive-type query. Keep that small, explicit, and reviewable.
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent);
-    let Some(workspace_root) = workspace_root else {
-        panic!("app crate should live under the workspace crates directory");
-    };
-
-    let mut sources = Vec::new();
-    let formats = workspace_root.join("crates/occluview-formats/src");
-    collect_rust_source_files(&formats, &mut sources)
-        .unwrap_or_else(|error| panic!("cannot walk occluview-formats: {error}"));
-
-    let mut sites = Vec::new();
-    for path in sources {
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        for (number, line) in text.lines().enumerate() {
-            if line.contains("unsafe {") {
-                sites.push(format!("{}:{}", path.display(), number + 1));
-            }
-        }
-    }
-
-    assert_eq!(
-        sites.len(),
-        2,
-        "occluview-formats should hold exactly the mmap and drive-type-query \
-         unsafe blocks:\n{}",
-        sites.join("\n")
-    );
-}

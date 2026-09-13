@@ -203,11 +203,17 @@ impl PaintedVertices {
         if mesh.vertices().len() != colors.len() {
             return None;
         }
+        if touched
+            .iter()
+            .any(|index| usize::try_from(*index).map_or(true, |at| at >= mesh.vertices().len()))
+        {
+            return None;
+        }
         let slot = self.slot_for(mesh, colors.len());
         for index in touched {
             let at = *index as usize;
             let (Some(vertex), Some(color)) = (slot.vertices.get_mut(at), colors.get(at)) else {
-                continue;
+                return None;
             };
             vertex.color = *color;
         }
@@ -350,5 +356,18 @@ mod tests {
     fn a_map_of_the_wrong_length_is_refused() {
         let mut painted = PaintedVertices::default();
         assert!(painted.repaint(&triangle(), &[[0, 0, 0, 255]; 2]).is_none());
+    }
+
+    #[test]
+    fn a_sparse_patch_with_an_invalid_vertex_id_is_refused() {
+        let mesh = triangle();
+        let mut painted = PaintedVertices::default();
+        let colors = [[1, 2, 3, 255]; 3];
+        painted.repaint(&mesh, &colors).expect("a repaint");
+        let invalid = u32::try_from(mesh.vertices().len()).expect("small test mesh fits u32");
+        assert!(
+            painted.patch(&mesh, &colors, &[invalid]).is_none(),
+            "a patch must not report success after silently skipping an invalid id"
+        );
     }
 }

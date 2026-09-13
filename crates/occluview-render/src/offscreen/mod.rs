@@ -1,18 +1,22 @@
 //! Offscreen render-to-texture: used by the thumbnail worker and golden-image
 //! tests. One render target + depth, one draw, read back as RGBA8.
 
+use crate::contact_texture::{ContactFieldTexels, GpuContactMaterial};
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
 use crate::mesh_uniform::GpuMeshUniform;
 use crate::pipeline::Renderer;
 use crate::texture::GpuTexture;
 use occluview_core::{Mesh, MeshKind};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod helpers;
 mod prepared_scene;
 mod scene_render;
 mod single_mesh;
+
+pub use prepared_scene::SculptSurfaceFeedbackRequest;
 
 /// Adapter-selection policy for one headless offscreen renderer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -199,10 +203,54 @@ pub struct PreparedSceneSource<'a> {
     pub visible: bool,
     /// Whether to draw a technical wireframe overlay for this layer.
     pub wireframe: bool,
+    /// The packed contact field this layer paints, when it paints one.
+    pub contact: Option<ContactPaintSource>,
+}
+
+/// One layer's packed contact field, with the revision it belongs to.
+///
+/// The field is shared behind an `Arc` rather than borrowed so
+/// [`PreparedSceneUpdate`] stays free of a lifetime parameter — it is built
+/// once per frame per layer on the hot path, and a borrowed field would push a
+/// lifetime through every caller that holds a `Vec<PreparedSceneUpdate>`.
+///
+/// The revision is the caller's promise about the bytes: an update carrying the
+/// same revision as the field already on the GPU is treated as unchanged, so a
+/// per-frame re-derivation of the same `Vec<u8>` cannot quietly re-upload
+/// megabytes every frame. Bump it whenever the field changes.
+#[derive(Clone, Debug)]
+pub struct ContactPaintSource {
+    /// The packed signed field, one `f32` per vertex.
+    pub field: Arc<ContactFieldTexels>,
+    /// Caller's version token for `field`.
+    pub revision: u64,
+}
+
+impl ContactPaintSource {
+    /// A field at a known revision.
+    #[must_use]
+    pub fn new(field: Arc<ContactFieldTexels>, revision: u64) -> Self {
+        Self { field, revision }
+    }
+
+    /// The packed field.
+    #[must_use]
+    pub fn field(&self) -> &ContactFieldTexels {
+        &self.field
+    }
+
+    /// The revision token this field was published under.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
 }
 
 /// Per-frame material/visibility update for a prepared scene.
-#[derive(Clone, Copy, Debug)]
+///
+/// Not `Copy`: it may carry a shared contact field, and cloning that is a
+/// refcount bump rather than the per-frame byte copy `Copy` would imply.
+#[derive(Clone, Debug)]
 pub struct PreparedSceneUpdate {
     /// Topology identity expected for this prepared entry.
     pub topology: PreparedSceneTopology,
@@ -212,6 +260,9 @@ pub struct PreparedSceneUpdate {
     pub visible: bool,
     /// Whether to draw a technical wireframe overlay for this layer.
     pub wireframe: bool,
+    /// The contact field this layer paints, or `None` to stop painting one.
+    /// Uploaded only when its revision differs from the one already bound.
+    pub contact: Option<ContactPaintSource>,
 }
 
 /// GPU-uploaded topology identity for one prepared scene entry.
@@ -248,11 +299,20 @@ struct PreparedSceneEntry {
     uniform_buffer: wgpu::Buffer,
     mesh_bind_group: wgpu::BindGroup,
     texture: Option<GpuTexture>,
+    /// The layer's contact field material, with the revision of the field
+    /// currently on the GPU.
+    contact: Option<EntryContact>,
     kind: MeshKind,
     topology: PreparedSceneTopology,
     opacity: f32,
     visible: bool,
     wireframe: bool,
+}
+
+/// A prepared entry's bound contact field and the revision it was uploaded at.
+struct EntryContact {
+    material: GpuContactMaterial,
+    revision: u64,
 }
 
 /// Parameters for an offscreen render.
@@ -379,6 +439,20 @@ pub struct Offscreen {
 }
 
 impl Offscreen {
+    /// Refuse new work after the device has reported a fault. The live app
+    /// disables its callback at the same boundary; offscreen callers need the
+    /// equivalent guard so a thumbnail, cut preview, or export cannot submit a
+    /// second command stream to a device that is already known to be invalid.
+    fn ensure_gpu_ready(&self) -> Result<(), RenderError> {
+        if !self.renderer.is_gpu_faulted() {
+            return Ok(());
+        }
+        let message = self.renderer.take_gpu_error().unwrap_or_else(|| {
+            "offscreen GPU renderer is unavailable after a previous device fault".to_owned()
+        });
+        Err(RenderError::Surface(message))
+    }
+
     /// Create a headless renderer at any reasonable output format.
     ///
     /// # Errors

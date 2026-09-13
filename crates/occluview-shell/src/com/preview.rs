@@ -21,6 +21,24 @@ mod window;
 use theme::preview_theme;
 use window::ensure_preview_window_class;
 
+#[cfg(feature = "diagnostic-logs")]
+use crate::shell_diagnostics::{
+    elapsed_ms_since, prepare_shell_diagnostics, record_shell_error, record_shell_event,
+    ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticOutcome, ShellDiagnosticStage,
+};
+#[cfg(feature = "diagnostic-logs")]
+use occluview_render::AdapterResult;
+#[cfg(feature = "diagnostic-logs")]
+use std::time::Instant;
+
+#[cfg(feature = "diagnostic-logs")]
+const fn diagnostic_adapter(result: AdapterResult) -> ShellDiagnosticAdapter {
+    match result {
+        AdapterResult::Hardware => ShellDiagnosticAdapter::Hardware,
+        AdapterResult::Fallback => ShellDiagnosticAdapter::Fallback,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PreviewDragMode {
     #[default]
@@ -160,12 +178,58 @@ impl PreviewHandler {
             ));
         }
 
-        self.ensure_preview_scene_loaded()?;
+        #[cfg(feature = "diagnostic-logs")]
+        let (scene_was_loaded, started) = {
+            prepare_shell_diagnostics();
+            (self.preview_scene.borrow().is_some(), Instant::now())
+        };
+        let load_result = self.ensure_preview_scene_loaded();
+        #[cfg(feature = "diagnostic-logs")]
+        if !scene_was_loaded {
+            match &load_result {
+                Ok(()) => {
+                    if let Some(state) = self.preview_scene.borrow().as_ref() {
+                        let adapter = diagnostic_adapter(state.adapter_result());
+                        for stage in [
+                            ShellDiagnosticStage::SceneLoad,
+                            ShellDiagnosticStage::Adapter,
+                        ] {
+                            record_shell_event(
+                                ShellDiagnosticComponent::Preview,
+                                stage,
+                                ShellDiagnosticOutcome::Completed,
+                                adapter,
+                                elapsed_ms_since(started),
+                            );
+                        }
+                    }
+                }
+                Err(error) => record_shell_error(
+                    error,
+                    ShellDiagnosticComponent::Preview,
+                    ShellDiagnosticStage::SceneLoad,
+                    ShellDiagnosticAdapter::NotObserved,
+                    elapsed_ms_since(started),
+                ),
+            }
+        }
+        load_result?;
         let preview = self.preview_scene.borrow();
         let state = preview
             .as_ref()
             .ok_or_else(|| ShellError::Win32("preview scene unavailable".to_string()))?;
-        state.render_rgba_with_background(size_px, background_linear)
+        let rendered = state.render_rgba_with_background(size_px, background_linear);
+        #[cfg(feature = "diagnostic-logs")]
+        if let Err(error) = &rendered {
+            record_shell_error(
+                error,
+                ShellDiagnosticComponent::Preview,
+                ShellDiagnosticStage::Render,
+                diagnostic_adapter(state.adapter_result()),
+                elapsed_ms_since(started),
+            );
+        }
+        rendered
     }
 
     fn ensure_preview_scene_loaded(&self) -> Result<(), ShellError> {

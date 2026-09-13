@@ -102,6 +102,69 @@ fn build_ignores_out_of_range_and_non_finite_triangles() {
 }
 
 #[test]
+fn duplicated_triangle_soup_vertices_still_form_connected_components() {
+    // Binary STL stores three fresh vertex records per facet. Adjacent facets
+    // therefore share positions, not vertex ids; component discovery must weld
+    // those exact positions before choosing a coarse Best Fit hypothesis.
+    let positions = vec![
+        0.0, 0.0, 0.0, // first triangle
+        1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, // adjacent triangle, all ids duplicated
+        1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 10.0, 0.0, 0.0, // isolated triangle
+        11.0, 0.0, 0.0, 10.0, 1.0, 0.0,
+    ];
+    let indices: Vec<u32> = (0..9).collect();
+    let index = SurfaceIndex::build(soup(&positions, &indices)).expect("usable soup");
+
+    assert_eq!(
+        index.component_bounds().len(),
+        2,
+        "adjacent STL facets must not become separate pseudo-components"
+    );
+}
+
+#[test]
+fn representative_surface_samples_are_bounded_and_keep_normals() {
+    let (positions, indices) = plane(4, 1.0);
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+
+    let samples = index.representative_samples(2);
+
+    assert_eq!(samples.len(), 2);
+    assert!(samples
+        .iter()
+        .all(|sample| sample.normal.dot(DVec3::Z) > 0.99));
+    assert!(samples
+        .iter()
+        .all(|sample| sample.point.x >= 0.0 && sample.point.x <= 4.0));
+}
+
+#[test]
+fn representative_samples_keep_component_ids_after_spatial_reordering() {
+    // Put the first source component far to the right and the second one at
+    // the origin. The spatial index reorders them by cell; the component tag
+    // has to follow the same permutation or global Best Fit seeds inherit the
+    // wrong ambiguity identity.
+    let positions = vec![
+        100.0, 0.0, 0.0, 101.0, 0.0, 0.0, 100.0, 1.0, 0.0, // far
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, // near
+    ];
+    let indices = vec![0, 1, 2, 3, 4, 5];
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let samples = index.representative_samples(2);
+
+    assert_eq!(index.component_bounds().len(), 2);
+    for sample in samples {
+        let (low, high) = index.component_bounds()[sample.component];
+        assert!(
+            sample.point.x >= low.x - 1e-9 && sample.point.x <= high.x + 1e-9,
+            "sample at x={} was tagged as component {} with bounds {low:?}..{high:?}",
+            sample.point.x,
+            sample.component,
+        );
+    }
+}
+
+#[test]
 fn the_cell_size_follows_triangle_size() {
     let (coarse_positions, coarse_indices) = plane(4, 4.0);
     let (fine_positions, fine_indices) = plane(32, 0.25);

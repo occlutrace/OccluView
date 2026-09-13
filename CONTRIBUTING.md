@@ -25,10 +25,29 @@ For behaviour changes, add or update tests. Prefer behavioural assertions over
 source-text checks. Keep performance thresholds tied to a reproducible
 measurement.
 
+The workspace test list is the audit baseline. Refresh it before deleting or
+adding a large group of tests:
+
+```bash
+cargo test --workspace --all-targets --locked -- --list
+```
+
+Keep tests that prove observable geometry, state transitions, worker ordering,
+render output, packaging, or a reproducible performance budget. A small
+source-contract test is acceptable only when the runtime path is unavailable
+to the test harness and the assertion protects a concrete operator or release
+contract; it must inspect a narrow seam and fail closed if that seam moves.
+Remove cosmetic wording pins, deleted-feature negative checks, and tests that
+only duplicate the implementation's current string layout. Report-only
+inventory counts are preferred to arbitrary repository-wide test caps.
+
 ## Commits
 
 Use conventional commits (`fix(scope): ...`) with an imperative subject. Keep
-each commit focused and describe the engineering reason for the change.
+each commit focused and describe the engineering reason for the change. Keep
+comments and commit bodies factual: explain an invariant, boundary, or user
+visible contract, and omit process narration, filler, and claims not backed by
+the implementation or its checks.
 
 For visible changes, add a note to `CHANGELOG.md` under the version being
 prepared. Do not open a new version section: the release job publishes the

@@ -1,10 +1,43 @@
 use super::{
-    helpers::is_transparent, PreparedScene, PreparedSceneEntry, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, Renderer,
+    helpers::is_transparent, ContactPaintSource, EntryContact, PreparedScene, PreparedSceneEntry,
+    PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate,
 };
+use crate::contact_texture::GpuContactMaterial;
 use crate::gpu::GpuMesh;
+use crate::pipeline::{Renderer, SculptSurfaceFeedbackBindings};
 use crate::texture::GpuTexture;
 use occluview_core::{MeshKind, Vertex};
+
+/// Inputs for the display-only Sculpt surface feedback pass. The request
+/// keeps the target layer identity beside the GPU bindings so a stale cursor
+/// cannot accidentally light a neighbouring mesh.
+pub struct SculptSurfaceFeedbackRequest<'a> {
+    renderer: &'a Renderer,
+    camera_bg: &'a wgpu::BindGroup,
+    clip_bg: &'a wgpu::BindGroup,
+    target_index: usize,
+    topology: &'a PreparedSceneTopology,
+}
+
+impl<'a> SculptSurfaceFeedbackRequest<'a> {
+    /// Build a feedback request without copying any GPU state.
+    #[must_use]
+    pub fn new(
+        renderer: &'a Renderer,
+        camera_bg: &'a wgpu::BindGroup,
+        clip_bg: &'a wgpu::BindGroup,
+        target_index: usize,
+        topology: &'a PreparedSceneTopology,
+    ) -> Self {
+        Self {
+            renderer,
+            camera_bg,
+            clip_bg,
+            target_index,
+            topology,
+        }
+    }
+}
 
 /// Above this many touched vertices, a sparse (per-run) vertex update switches
 /// to a single whole-buffer write — the scattered soup runs would otherwise
@@ -28,11 +61,24 @@ impl PreparedScene {
                     .mesh
                     .texture()
                     .map(|texture| GpuTexture::upload(renderer, device, queue, texture));
+                let contact = source.contact.as_ref().map(|source| EntryContact {
+                    // The layer's own texture is bound with the field, so the
+                    // paint sits on the scan rather than replacing it.
+                    material: GpuContactMaterial::upload(
+                        renderer,
+                        device,
+                        queue,
+                        source.field(),
+                        texture.as_ref(),
+                    ),
+                    revision: source.revision(),
+                });
                 PreparedSceneEntry {
                     mesh,
                     uniform_buffer,
                     mesh_bind_group,
                     texture,
+                    contact,
                     kind: source.mesh.kind(),
                     topology,
                     opacity: source.uniform.opacity,
@@ -50,7 +96,13 @@ impl PreparedScene {
         Self::upload(renderer, sources)
     }
 
-    /// Update per-layer uniforms and visibility without re-uploading mesh buffers.
+    /// Update per-layer uniforms, visibility and the drawn contact field
+    /// without re-uploading mesh buffers.
+    ///
+    /// A uniform write is the whole cost of moving the one control a contact
+    /// reading has (the depth that reads as fully loaded), and the field is
+    /// re-uploaded only when its revision token changes — never merely because
+    /// a frame went by.
     ///
     /// Returns `false` if the caller's scene topology no longer matches this
     /// prepared scene and it should be rebuilt.
@@ -74,6 +126,7 @@ impl PreparedScene {
         {
             return false;
         }
+        let device = renderer.device();
         let queue = renderer.queue();
         for (entry, update) in self.entries.iter_mut().zip(updates) {
             queue.write_buffer(
@@ -84,6 +137,7 @@ impl PreparedScene {
             entry.opacity = update.uniform.opacity;
             entry.visible = update.visible;
             entry.wireframe = update.wireframe;
+            sync_entry_contact(entry, renderer, device, queue, update);
         }
         true
     }
@@ -125,7 +179,8 @@ impl PreparedScene {
     /// frame (see [`Self::write_entry_vertices`]) would move megabytes per dab
     /// and stutter; this writes only the affected vertices, coalesced into
     /// contiguous runs so scattered soup duplicates still cost few GPU writes.
-    /// Returns `false` when no entry matches or the vertex count differs.
+    /// Returns `false` when no entry matches, the vertex count differs, or the
+    /// touched ids do not describe a sorted in-range slice.
     pub fn write_entry_vertices_sparse(
         &self,
         renderer: &Renderer,
@@ -133,9 +188,15 @@ impl PreparedScene {
         vertices: &[Vertex],
         touched: &[usize],
     ) -> bool {
-        // The run-coalescing below needs `touched` strictly ascending — a
-        // reversed slice `vertices[start..=prev]` would panic. The sole caller
-        // sorts+dedups, so this only guards a future misuse.
+        // The run-coalescing below needs `touched` strictly ascending and
+        // in-range. Validate in release builds as well: silently skipping a
+        // bad id would report a successful upload while leaving part of the
+        // GPU shadow stale, and an unsorted id could make a range slice panic.
+        if !touched.windows(2).all(|pair| pair[0] < pair[1])
+            || touched.iter().any(|&id| id >= vertices.len())
+        {
+            return false;
+        }
         debug_assert!(
             touched.windows(2).all(|pair| pair[0] < pair[1]),
             "write_entry_vertices_sparse requires strictly ascending touched ids"
@@ -165,9 +226,6 @@ impl PreparedScene {
         // `touched` is ascending; flush a run whenever the ids stop being
         // consecutive so each `write_buffer` covers one contiguous span.
         for &id in touched {
-            if id >= vertices.len() {
-                continue;
-            }
             match run_start {
                 Some(_) if id == prev + 1 => {}
                 Some(start) => {
@@ -203,7 +261,58 @@ impl PreparedScene {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
 
+/// Re-upload an entry's contact field, or drop it, when the update says so.
+///
+/// The revision is the only trigger: an update that carries the same field
+/// revision as the one already bound leaves the GPU copy alone, so a caller
+/// that re-derives an identical packed field every frame pays nothing for it.
+fn sync_entry_contact(
+    entry: &mut PreparedSceneEntry,
+    renderer: &Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    update: &PreparedSceneUpdate,
+) {
+    let wanted = update.contact.as_ref().map(ContactPaintSource::revision);
+    let bound = entry.contact.as_ref().map(|contact| contact.revision);
+    if wanted == bound {
+        return;
+    }
+    entry.contact = update.contact.as_ref().map(|source| EntryContact {
+        // The layer's own texture is bound with the field, so the paint sits on
+        // the scan rather than replacing it.
+        material: GpuContactMaterial::upload(
+            renderer,
+            device,
+            queue,
+            source.field(),
+            entry.texture.as_ref(),
+        ),
+        revision: source.revision(),
+    });
+}
+
+impl PreparedSceneEntry {
+    /// The group-2 bind group this entry draws with: a bound contact field
+    /// wins, then the scan's own material texture, then the shared fallback.
+    ///
+    /// One method because four draw paths (opaque, transparent, wireframe,
+    /// ghost) each used to compute this inline, and a contact field that
+    /// reached three of them would read as a map that flickers with the
+    /// layer's opacity.
+    fn group2<'a>(&'a self, fallback: &'a wgpu::BindGroup) -> &'a wgpu::BindGroup {
+        if let Some(contact) = self.contact.as_ref() {
+            return contact.material.bind_group();
+        }
+        self.texture
+            .as_ref()
+            .map_or(fallback, |texture| &texture.bind_group)
+    }
+}
+
+impl PreparedScene {
     /// Draw this GPU-resident scene into an existing render pass.
     pub fn draw(
         &self,
@@ -231,15 +340,11 @@ impl PreparedScene {
             .iter()
             .filter(|entry| entry.visible && !is_transparent(entry.opacity))
         {
-            let tex_bg = entry
-                .texture
-                .as_ref()
-                .map_or(fallback_texture_bg, |texture| &texture.bind_group);
             renderer.draw(
                 rpass,
                 camera_bg,
                 &entry.mesh_bind_group,
-                tex_bg,
+                entry.group2(fallback_texture_bg),
                 clip_bg,
                 &entry.mesh,
                 entry.kind,
@@ -250,15 +355,11 @@ impl PreparedScene {
             .iter()
             .filter(|entry| entry.visible && is_transparent(entry.opacity))
         {
-            let tex_bg = entry
-                .texture
-                .as_ref()
-                .map_or(fallback_texture_bg, |texture| &texture.bind_group);
             renderer.draw_transparent(
                 rpass,
                 camera_bg,
                 &entry.mesh_bind_group,
-                tex_bg,
+                entry.group2(fallback_texture_bg),
                 clip_bg,
                 &entry.mesh,
                 entry.kind,
@@ -267,19 +368,44 @@ impl PreparedScene {
         for entry in self.entries.iter().filter(|entry| {
             entry.visible && entry.wireframe && entry.kind == MeshKind::TriangleMesh
         }) {
-            let tex_bg = entry
-                .texture
-                .as_ref()
-                .map_or(fallback_texture_bg, |texture| &texture.bind_group);
             renderer.draw_wireframe(
                 rpass,
                 camera_bg,
                 &entry.mesh_bind_group,
-                tex_bg,
+                entry.group2(fallback_texture_bg),
                 clip_bg,
                 &entry.mesh,
             );
         }
+    }
+
+    /// Draw the display-only Sculpt surface field for one stable prepared
+    /// entry. Both the scene index and topology token are checked so a cursor
+    /// from a replaced layer cannot light a neighbouring mesh for one frame.
+    pub fn draw_sculpt_surface_feedback(
+        &self,
+        rpass: &mut wgpu::RenderPass<'_>,
+        request: SculptSurfaceFeedbackRequest<'_>,
+    ) -> bool {
+        let Some(entry) = self.entries.get(request.target_index) else {
+            return false;
+        };
+        if !entry.visible
+            || entry.kind != MeshKind::TriangleMesh
+            || entry.topology != *request.topology
+        {
+            return false;
+        }
+        request.renderer.draw_sculpt_surface_feedback(
+            rpass,
+            SculptSurfaceFeedbackBindings {
+                camera_bg: request.camera_bg,
+                mesh_bg: &entry.mesh_bind_group,
+                clip_bg: request.clip_bg,
+                mesh: &entry.mesh,
+            },
+        );
+        true
     }
 
     /// Draw the cut-away side of every visible triangle mesh as a translucent
@@ -306,18 +432,71 @@ impl PreparedScene {
             .iter()
             .filter(|entry| entry.visible && entry.kind == MeshKind::TriangleMesh)
         {
-            let tex_bg = entry
-                .texture
-                .as_ref()
-                .map_or(fallback_texture_bg, |texture| &texture.bind_group);
             renderer.draw_ghost(
                 rpass,
                 camera_bg,
                 &entry.mesh_bind_group,
-                tex_bg,
+                entry.group2(fallback_texture_bg),
                 clip_bg,
                 &entry.mesh,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    /// The production half of this file — a source contract that scanned its
+    /// own assertions would pass on its own text.
+    fn production() -> String {
+        let source = include_str!("prepared_scene.rs").replace("\r\n", "\n");
+        let end = source.find("\n#[cfg(test)]").unwrap_or(source.len());
+        source[..end].to_owned()
+    }
+
+    /// One `update` and one uniform write is the entire cost of moving the
+    /// "heavy at" slider. The moment a periodic reconcile re-uploads geometry
+    /// or rebuilds the contact material, a slider drag starts copying hundreds
+    /// of megabytes per frame — which is exactly the failure this guards.
+    #[test]
+    fn a_reconcile_never_re_uploads_geometry_or_the_contact_field() {
+        let source = production();
+        let update = source
+            .split_once("pub fn update(")
+            .expect("a per-frame reconcile")
+            .1
+            .split_once("\n    /// Overwrite the vertex-buffer CONTENT")
+            .expect("the next method after the reconcile")
+            .0;
+
+        assert!(
+            !update.contains("GpuMesh::upload"),
+            "the per-frame update must never re-upload a mesh buffer"
+        );
+        assert!(
+            update.contains("sync_entry_contact(entry, renderer, device, queue, update)"),
+            "the update must route contact changes through the revision gate"
+        );
+        // The gate itself: equal revisions must return before any upload.
+        let gate = source
+            .split_once("fn sync_entry_contact(")
+            .expect("the contact revision gate")
+            .1;
+        let guard = gate
+            .find("if wanted == bound {")
+            .expect("the revision comparison");
+        let upload = gate
+            .find("GpuContactMaterial::upload(")
+            .expect("the upload the gate protects");
+        assert!(
+            guard < upload,
+            "an unchanged field revision must be compared before the material is rebuilt"
+        );
+        assert!(
+            gate[guard..upload].contains("return;"),
+            "an unchanged field revision must return before the material is rebuilt"
+        );
     }
 }

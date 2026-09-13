@@ -5,7 +5,7 @@
 // exact; the ray-math functions genuinely want short local names.
 #![allow(clippy::cast_possible_truncation, clippy::many_single_char_names)]
 
-use super::Vertex;
+use super::{LiveRayPick, Vertex};
 use glam::Vec3;
 use rayon::prelude::*;
 
@@ -21,6 +21,12 @@ pub(crate) struct BvhHit {
     pub(crate) point: Vec3,
     /// Ray parameter (distance along the unit local direction).
     pub(crate) distance: f32,
+}
+
+pub(super) struct DirtyVertexRay<'a> {
+    pub(super) vertices: &'a [Vertex],
+    pub(super) indices: &'a [u32],
+    pub(super) query: LiveRayPick<'a>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -171,6 +177,53 @@ impl TriangleBvh {
                 stack[depth] = node.left_or_start;
                 stack[depth + 1] = node.right_or_count;
                 depth += 2;
+            }
+        }
+        best
+    }
+
+    /// Pick using a live vertex array while keeping the tree built for the
+    /// original topology. Unchanged triangles still use the logarithmic tree;
+    /// triangles whose vertices moved are checked directly because their new
+    /// positions may have left the old node bounds.
+    pub(crate) fn pick_with_dirty_vertices<K>(
+        &self,
+        ray: DirtyVertexRay<'_>,
+        keep: K,
+    ) -> Option<BvhHit>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        let mut best = self.pick(
+            ray.vertices,
+            ray.indices,
+            ray.query.origin,
+            ray.query.direction,
+            &keep,
+        );
+        let direction = ray.query.direction.normalize_or_zero();
+        if direction.length_squared() <= f32::EPSILON {
+            return best;
+        }
+        for &triangle in ray.query.dirty_triangles {
+            let Some(base) = triangle.checked_mul(3) else {
+                continue;
+            };
+            let Some(corners) = ray.indices.get(base..base + 3) else {
+                continue;
+            };
+            let a = position(ray.vertices, corners[0]);
+            let b = position(ray.vertices, corners[1]);
+            let c = position(ray.vertices, corners[2]);
+            let Some((distance, point)) = ray_triangle(ray.query.origin, direction, a, b, c) else {
+                continue;
+            };
+            if keep(point) && best.as_ref().is_none_or(|hit| distance < hit.distance) {
+                best = Some(BvhHit {
+                    triangle_index: triangle,
+                    point,
+                    distance,
+                });
             }
         }
         best

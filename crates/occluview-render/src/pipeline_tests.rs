@@ -102,9 +102,64 @@ fn gpu_error_latch_records_and_drains_once() {
 }
 
 #[test]
+fn gpu_fault_stays_fail_closed_after_its_message_is_drained() {
+    let latch: super::GpuErrorLatch = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let faulted = std::sync::atomic::AtomicBool::new(false);
+
+    super::record_gpu_fault(&latch, &faulted, "device lost".to_string());
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::Acquire),
+        "draining the message must not make a failed device look healthy"
+    );
+    assert_eq!(
+        super::drain_gpu_error(&latch).as_deref(),
+        Some("device lost")
+    );
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::Acquire),
+        "the paint callback needs a persistent stop signal after UI polling"
+    );
+}
+
+/// The fault flag stops the frame loop from feeding a broken device, but it is
+/// not a verdict that the device is gone: a driver reset, a recovered eGPU, or
+/// a rebuilt offscreen device can leave it set on a working renderer. The
+/// operator's retry has to be able to clear it, and a *new* fault has to be
+/// able to set it again afterwards.
+#[test]
+fn an_acknowledged_fault_can_be_cleared_and_re_raised() {
+    let latch: super::GpuErrorLatch = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let faulted = std::sync::atomic::AtomicBool::new(false);
+
+    super::record_gpu_fault(&latch, &faulted, "device reset".to_string());
+    assert!(super::drain_gpu_error(&latch).is_some());
+    assert!(faulted.load(std::sync::atomic::Ordering::Acquire));
+
+    // What the retry button does.
+    faulted.store(false, std::sync::atomic::Ordering::Release);
+    assert!(
+        !faulted.load(std::sync::atomic::Ordering::Acquire),
+        "acknowledging must let the next frame try to draw again"
+    );
+
+    // A renderer whose device is genuinely gone raises it again immediately.
+    super::record_gpu_fault(&latch, &faulted, "device lost again".to_string());
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::Acquire),
+        "a later fault must re-arm the stop signal"
+    );
+    assert_eq!(
+        super::drain_gpu_error(&latch).as_deref(),
+        Some("device lost again"),
+        "the retried fault reaches the operator as a new message"
+    );
+}
+
+#[test]
 // Poisoning a mutex requires a deliberate panic while a guard is held. (This
-// can only happen in an unwinding build; the shipping binary is `panic = abort`
-// where poison never occurs — the guard still keeps the poll crash-proof.)
+// can only happen in an unwinding build; the default release profile is
+// `panic = abort` where poison never occurs — the guard still keeps the poll
+// crash-proof.)
 #[allow(clippy::expect_used, clippy::panic)]
 fn gpu_error_latch_poison_is_ignored_not_fatal() {
     // A worker that panics mid-record poisons the mutex. Draining a poisoned
@@ -167,8 +222,9 @@ fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() 
     ));
     assert!(clean.is_ok(), "a triangle renders: {clean:?}");
 
-    super::record_gpu_error(
+    super::record_gpu_fault(
         &offscreen.renderer().gpu_error,
+        &offscreen.renderer().gpu_faulted,
         "buffer allocation refused".to_string(),
     );
     // Map the pixels away before asserting: a failure here must print the
@@ -201,4 +257,241 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
         source.contains("max_buffer_size: adapter.limits().max_buffer_size,"),
         "the headless device must ask for the adapter's buffer ceiling"
     );
+}
+
+/// One pipeline's state block: from its label to the end of its descriptor.
+///
+/// A file-wide `contains` cannot pin a specific pipeline, because the main
+/// shaded and wireframe pipelines declare the same fields elsewhere in the
+/// file. That is how the cap regression of 69edf59 survived a check written to
+/// catch it.
+///
+/// Returns `None` when the label or the end of its descriptor is missing, so a
+/// moved label fails the caller instead of silently matching another block.
+fn pipeline_state<'a>(source: &'a str, label: &str) -> Option<&'a str> {
+    let start = source.find(label)?;
+    let block = &source[start..];
+    let end = block.find("multisample,")?;
+    Some(&block[..end])
+}
+
+/// The stencil masks must not poison the depth the shaded pass and the cap
+/// rely on, and the cap must be the pass that writes cut-plane depth.
+#[test]
+fn stencil_mask_passes_preserve_depth_for_the_cap_and_shaded_pass() {
+    let source = include_str!("pipeline_init.rs");
+
+    for label in [
+        "label: Some(\"occluview stencil-back pipeline\")",
+        "label: Some(\"occluview stencil-front pipeline\")",
+    ] {
+        let state = pipeline_state(source, label)
+            .unwrap_or_else(|| unreachable!("{label} must be a complete pipeline state block"));
+        assert!(
+            state.contains("depth_write_enabled: Some(false)"),
+            "{label} must build a stencil-only mask without poisoning the final depth test"
+        );
+        // `LessEqual` is what keeps the mask off the geometry behind the cut
+        // plane; only the stencil face state decides the winding.
+        assert!(
+            state.contains("depth_compare: Some(wgpu::CompareFunction::LessEqual)"),
+            "{label} must still test against the cut plane's depth"
+        );
+        assert!(
+            state.contains("write_mask: wgpu::ColorWrites::empty()"),
+            "{label} is a mask pass and must not tint the viewport"
+        );
+    }
+
+    // The cap is the one pass that must write depth: the shaded pass `Load`s it
+    // so geometry behind the cut plane cannot paint over the cap.
+    let cap = pipeline_state(source, "label: Some(\"occluview cap pipeline\")")
+        .unwrap_or_else(|| unreachable!("the cap pipeline must be a complete state block"));
+    assert!(
+        cap.contains("depth_write_enabled: Some(true)"),
+        "the cap must remain the pass that writes cut-plane depth"
+    );
+    assert!(
+        cap.contains("depth_compare: Some(wgpu::CompareFunction::LessEqual)"),
+        "the cap must paint exactly on the cut plane, not only in front of it"
+    );
+    assert!(
+        cap.contains("format: depth_format"),
+        "the cap belongs to the same depth attachment as the rest of the pass"
+    );
+}
+
+/// Draw Sculpt's display-only volume into a pass shaped exactly like the live
+/// one: this renderer's depth format and sample count.
+#[allow(clippy::expect_used)]
+fn draw_sculpt_into_a_live_shaped_pass(renderer: &crate::Renderer) {
+    use crate::{GpuCamera, SculptToolShape, SculptToolUniform};
+    use glam::Mat4;
+
+    let device = renderer.device();
+    let size = wgpu::Extent3d {
+        width: 32,
+        height: 24,
+        depth_or_array_layers: 1,
+    };
+    let color = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sculpt live compatibility color"),
+        size,
+        mip_level_count: 1,
+        sample_count: renderer.sample_count(),
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sculpt live compatibility depth"),
+        size,
+        mip_level_count: 1,
+        sample_count: renderer.sample_count(),
+        dimension: wgpu::TextureDimension::D2,
+        format: renderer.depth_format(),
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+
+    renderer.set_camera(&GpuCamera::new(
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        glam::Vec3::Z,
+        glam::Vec3::ZERO,
+    ));
+    renderer.set_sculpt_tool(&SculptToolUniform {
+        model: Mat4::IDENTITY.to_cols_array(),
+        color: [0.2, 0.8, 1.0, 1.0],
+        opacity: 0.5,
+        shape: SculptToolShape::Cone as u32,
+        visible: 1,
+        padding: 0,
+    });
+    let camera_bg = renderer.camera_bind_group();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sculpt live compatibility encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sculpt live compatibility pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        renderer.draw_sculpt_tool(&mut pass, &camera_bg, renderer.disabled_clip_bind_group());
+    }
+    renderer.queue().submit(std::iter::once(encoder.finish()));
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+    assert_eq!(
+        renderer.take_gpu_error(),
+        None,
+        "Sculpt's live volume draw must not submit an incompatible depth pipeline"
+    );
+}
+
+/// The live egui viewport always has a depth/stencil attachment, and eframe
+/// derives it from the app's `depth_buffer: 24` / `stencil_buffer: 8`.
+/// Declaring the format here, instead of reading it back from the renderer
+/// under test, is what makes this a contract: a pass format and a pipeline
+/// format that drifted together used to keep this suite green.
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_tool_pipeline_is_compatible_with_the_live_depth_pass() {
+    let renderer = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+
+    assert_eq!(
+        renderer.depth_format(),
+        wgpu::TextureFormat::Depth24PlusStencil8,
+        "the live pass is Depth24PlusStencil8, so every pipeline in it must declare the same"
+    );
+    draw_sculpt_into_a_live_shaped_pass(&renderer);
+}
+
+/// And at the multisampled profile the app selects whenever the adapter can
+/// create the multisampled live targets, which is the configuration the window
+/// actually runs there.
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_tool_pipeline_is_compatible_with_a_multisampled_live_pass() {
+    let single = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+    let device = std::sync::Arc::clone(&single.device);
+    let queue = std::sync::Arc::clone(&single.queue);
+
+    // Probe before building the pipeline. The application turns multisampling
+    // on only when BOTH the colour target and the depth attachment support 4x
+    // (`adapter_supports_prefill_msaa_4`), so an adapter missing either one runs
+    // the single-sample profile and must not be reported as a pipeline defect.
+    // Probe both, and say which one was missing rather than returning silently.
+    let size = wgpu::Extent3d {
+        width: 32,
+        height: 24,
+        depth_or_array_layers: 1,
+    };
+    let probe = |label: &'static str, format: wgpu::TextureFormat| {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        texture
+    };
+    let color_probe = probe(
+        "live multisample color probe",
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    let depth_probe = probe("live multisample depth probe", crate::live_depth_format());
+    drop((color_probe, depth_probe));
+    if single.take_gpu_error().is_some() {
+        // This adapter never selects the multisampled profile in the
+        // application, so the single-sample pass is the configuration that has
+        // to be proven here - which the test above already does.
+        return;
+    }
+
+    let multisampled = crate::Renderer::with_shared_device_sample_count(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        4,
+    )
+    .expect("a multisampled renderer");
+    assert_eq!(multisampled.sample_count(), 4);
+    draw_sculpt_into_a_live_shaped_pass(&multisampled);
 }

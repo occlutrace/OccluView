@@ -21,6 +21,7 @@ use std::time::Duration;
 fn worker_for(mesh: &Mesh) -> SculptWorker {
     let entry = SceneMesh::new(mesh.clone());
     let layer_id = entry.id();
+    mesh.warm_bvh();
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
     SculptWorker::spawn(SculptSession {
         layer_id,
@@ -51,6 +52,226 @@ fn test_worker() -> SculptWorker {
     worker_for(&mesh)
 }
 
+#[test]
+fn poisoned_live_shadow_stops_worker_without_publishing_a_stale_update() {
+    let worker = test_worker();
+    let shadow = worker.shadow();
+    let poison = thread::spawn(move || {
+        let _guard = shadow.write().expect("shadow lock");
+        panic!("test poison");
+    });
+    assert!(poison.join().is_err());
+
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    assert!(worker.try_apply(stroke, BrushMode::Add));
+    for _ in 0..2_000 {
+        if let Some(failure) = worker.take_error() {
+            assert_eq!(failure, SculptFailure::ShadowPoisoned);
+            assert!(worker.take_update().is_none());
+            assert!(worker.take_completion().is_none());
+            return;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    panic!("poisoned shadow did not stop the sculpt worker");
+}
+
+#[test]
+fn poisoned_worker_publication_is_reported_instead_of_retried_forever() {
+    let worker = test_worker();
+    thread::scope(|scope| {
+        let poison = scope.spawn(|| {
+            let _guard = worker
+                .state
+                .publish_boundary
+                .lock()
+                .expect("publication lock");
+            panic!("test poison");
+        });
+        assert!(poison.join().is_err());
+    });
+
+    assert!(worker.take_ordered_outputs().is_err());
+    assert_eq!(
+        worker.take_error(),
+        Some(SculptFailure::WorkerStatePoisoned)
+    );
+}
+
+#[test]
+fn poisoned_command_queue_is_reported_to_the_worker_owner() {
+    let error = Arc::new(Mutex::new(None));
+    let queue = SculptCommandQueue::with_error(Arc::clone(&error));
+    thread::scope(|scope| {
+        let poison = scope.spawn(|| {
+            let _guard = queue.state.lock().expect("queue lock");
+            panic!("test poison");
+        });
+        assert!(poison.join().is_err());
+    });
+    queue.wake.notify_one();
+
+    assert!(queue.pop().is_none());
+    assert_eq!(
+        error.lock().expect("worker error").as_ref(),
+        Some(&SculptFailure::WorkerStatePoisoned)
+    );
+}
+
+#[test]
+fn command_queue_has_a_global_bound_across_rapid_strokes() {
+    let queue = SculptCommandQueue::new();
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    for _ in 0..32 {
+        for _ in 0..APPLY_QUEUE_CAPACITY_PER_STROKE {
+            assert!(queue.push_apply(stroke, BrushMode::Add));
+        }
+        assert!(queue.push_finish());
+    }
+
+    let state = queue.state.lock().expect("queue state");
+    assert!(
+        state.commands.len() <= MAX_QUEUED_COMMANDS,
+        "rapid strokes must not grow the command queue without bound"
+    );
+}
+
+#[test]
+fn a_rejected_new_stroke_does_not_leave_a_phantom_open_stroke() {
+    let queue = SculptCommandQueue::new();
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    for _ in 0..MAX_QUEUED_COMMANDS {
+        assert!(queue.push_finish());
+    }
+
+    assert!(
+        !queue.push_apply(stroke, BrushMode::Add),
+        "a full queue of finish markers must reject a new apply"
+    );
+    let state = queue.state.lock().expect("queue state");
+    assert!(
+        state.open_stroke.is_none(),
+        "a rejected apply must not claim the next stroke id"
+    );
+}
+
+#[test]
+fn worker_passes_its_cancellation_token_into_the_kernel() {
+    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
+    assert!(source.contains("apply_dab_cancellable"));
+    assert!(source.contains("&state.stopping"));
+}
+
+#[test]
+fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
+    let worker = test_worker();
+    {
+        let shadow = worker.shadow();
+        let mut shadow = shadow.write().expect("live shadow");
+        for vertex in &mut *shadow {
+            vertex.position[0] += 10.0;
+        }
+    }
+    worker.state.record_touched(vec![0, 1, 2, 3], vec![0, 1]);
+
+    let (triangle, point) = worker
+        .pick_local_ray(Vec3::new(10.25, 0.25, 10.0), -Vec3::Z)
+        .expect("the dirty live triangles must remain pickable");
+    assert!(triangle < 2);
+    assert!((point.x - 10.25).abs() < 1e-5);
+    assert!((point.z).abs() < 1e-5);
+}
+
+#[test]
+fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
+    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
+    let start = source
+        .rfind("SculptCommand::Finish")
+        .expect("the Finish command branch must exist");
+    let finish = &source[start..(start + 2_000).min(source.len())];
+    for failure in [
+        "MissingUndoBaseline",
+        "ShadowPoisoned",
+        "VertexCountChanged",
+    ] {
+        let marker = format!("state.set_error(SculptFailure::{failure})");
+        let error = finish
+            .find(&marker)
+            .unwrap_or_else(|| panic!("terminal failure {failure} must be reported"));
+        let tail = &finish[error..(error + 600).min(finish.len())];
+        assert!(
+            tail.contains("queue.mark_idle();") && tail.contains("break;"),
+            "terminal failure {failure} must stop command consumption"
+        );
+    }
+}
+
+#[test]
+fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
+    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_tool.rs"));
+    let start = source
+        .find("pub(crate) fn is_busy")
+        .expect("the sculpt busy predicate must exist");
+    let body = &source[start..(start + 500).min(source.len())];
+    assert!(
+        body.contains("self.pending.is_some()"),
+        "mesh edits must wait while background preparation is still pending"
+    );
+}
+
+#[test]
+fn ordered_output_snapshot_keeps_rebuild_and_completion_together() {
+    let worker = test_worker();
+    let mesh = coarse_ridge_mesh();
+    let topology = PreparedSceneTopology::from_mesh(&mesh);
+    worker.state.record_rebuild(
+        1,
+        SculptRebuild {
+            topology,
+            mesh: mesh.clone(),
+        },
+    );
+    assert!(worker.state.push_completion(SculptCompletion {
+        before: Arc::new(mesh.clone()),
+        mesh,
+    }));
+
+    let (rebuilds, completions, update) = worker
+        .take_ordered_outputs()
+        .expect("the ordered output boundary must be available");
+    assert_eq!(
+        rebuilds.len(),
+        1,
+        "the topology replacement must be present"
+    );
+    assert_eq!(
+        completions.len(),
+        1,
+        "the matching completion must be present"
+    );
+    assert!(update.is_none(), "the fixture has no sparse update");
+    assert!(worker
+        .take_ordered_outputs()
+        .expect("the boundary must remain usable")
+        .0
+        .is_empty());
+}
+
 /// A 5x3 lattice at 4mm spacing folded along a sharp ridge — far coarser
 /// than the 3.5mm brush below, so a Smooth dab has to densify before it can
 /// relax anything.
@@ -77,7 +298,7 @@ fn coarse_ridge_mesh() -> Mesh {
 
 fn wait_for_rebuild(worker: &SculptWorker) -> SculptRebuild {
     for _ in 0..2_000 {
-        if let Some(rebuild) = worker.take_rebuild() {
+        if let Ok(Some(rebuild)) = worker.try_take_rebuild() {
             return rebuild;
         }
         thread::sleep(Duration::from_millis(1));
@@ -318,7 +539,10 @@ fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
     assert!(worker.try_apply(stroke, BrushMode::Add));
     assert!(worker.finish_stroke());
     let completion = wait_for_completion(&worker);
-    assert!(worker.take_rebuild().is_none(), "Add must not densify");
+    assert!(
+        worker.try_take_rebuild().expect("rebuild lock").is_none(),
+        "Add must not densify"
+    );
     assert_eq!(completion.mesh.vertices().len(), 4);
     assert_eq!(
         completion.mesh.topology_id(),
@@ -327,263 +551,5 @@ fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
     );
 }
 
-/// P1 lost-update regression: contention on the frame path must not drop
-/// the newest CPU state. A drained-but-unapplied update is restored, so a
-/// later poll applies authoritative latest state. Non-blocking throughout.
-#[test]
-fn drained_update_is_not_lost_on_shadow_contention() {
-    let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
-    let write_guard = worker
-        .state
-        .shadow
-        .write()
-        .expect("test holds the shadow write lock");
-    let drained = worker.take_update().expect("pending update must drain");
-    assert!(
-        worker.state.shadow.try_read().is_err(),
-        "held write lock must make the flush unavailable"
-    );
-    // Fixed `flush_sculpt_update` path: restore instead of dropping.
-    worker.restore_update(drained);
-    drop(write_guard);
-    let retry = worker.take_update();
-    assert!(
-        retry.is_some(),
-        "lost update: a drained-but-unapplied sculpt update vanished; \
-         contention must leave a pending retry or authoritative full-sync"
-    );
-    let retry = retry.expect("checked above");
-    assert!(
-        retry.full_sync || !retry.touched.is_empty(),
-        "retry must carry authoritative latest state"
-    );
-}
-
-/// Quiescence must count undrained worker output, not just the command
-/// queue: Done/undo gate on it, and a false quiet lets the session
-/// invalidate out from under unflushed deltas.
-#[test]
-fn quiescence_counts_undrained_deltas_not_just_the_queue() {
-    let worker = test_worker();
-    // No commands queued; a restored (drained-but-unapplied) update is
-    // still live work the next poll owes a flush.
-    worker.restore_update(SculptUpdate {
-        touched: vec![0],
-        full_sync: false,
-    });
-    assert!(
-        !worker.is_quiescent(),
-        "a restored update must read as pending work"
-    );
-    let _ = worker.take_update();
-    assert!(worker.is_quiescent(), "a drained worker must read quiet");
-}
-
-/// Same for the full-sync flag: an authoritative resync owed to the GPU
-/// is pending work even with an empty queue and no touched ids.
-#[test]
-fn quiescence_counts_a_pending_full_sync() {
-    let worker = test_worker();
-    worker.request_full_sync();
-    assert!(
-        !worker.is_quiescent(),
-        "an owed full sync must read as pending work"
-    );
-    let update = worker.take_update().expect("the flag must drain");
-    assert!(update.full_sync);
-    assert!(worker.is_quiescent());
-}
-
-/// Same for a densify rebuild: no Finish, no drain, yet the new topology
-/// (and its touches) is still owed to the UI.
-#[test]
-fn quiescence_counts_a_pending_layer_rebuild() {
-    let worker = worker_for(&coarse_ridge_mesh());
-    let dab = BrushStroke {
-        center: [0.0, 0.0, 0.0],
-        radius_mm: 3.5,
-        strength: 1.0,
-        view_dir: [0.0, 0.0, -1.0],
-    };
-    assert!(worker.try_apply(dab, BrushMode::Smooth));
-    thread::sleep(Duration::from_millis(200));
-    assert!(
-        !worker.is_quiescent(),
-        "an undrained densify rebuild must read as pending work"
-    );
-    worker
-        .take_rebuild()
-        .expect("the densifying dab must have produced a layer rebuild");
-}
-
-/// Coalescing keeps only the newest state: overflow escalates to one
-/// authoritative full sync instead of an unbounded delta backlog.
-#[test]
-fn touched_overflow_escalates_to_full_sync() {
-    let worker = test_worker();
-    worker
-        .state
-        .record_touched(vec![0; MAX_PENDING_TOUCHES + 1]);
-    let update = worker.take_update().expect("overflow must stay visible");
-    assert!(
-        update.full_sync,
-        "pending-touch overflow must become an authoritative full sync"
-    );
-}
-
-/// A contended backlog defers the drain instead of blocking the frame: the
-/// pending ids and the full-sync flag stay queued for the next poll.
-#[test]
-fn take_update_defers_when_backlog_locked() {
-    let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
-    worker.state.request_full_sync();
-    let held = worker
-        .state
-        .pending_touched
-        .lock()
-        .expect("test holds the backlog lock");
-    assert!(
-        worker.take_update().is_none(),
-        "a contended drain must defer, not block or half-drain"
-    );
-    drop(held);
-    let retry = worker.take_update().expect("deferred update must redrain");
-    assert!(
-        retry.full_sync,
-        "the full-sync flag must survive the deferred drain"
-    );
-}
-
-/// A contended rebuild slot defers the drain the same way.
-#[test]
-fn take_rebuild_defers_when_slot_locked() {
-    let worker = test_worker();
-    let mesh = Mesh::new(
-        Some("rebuild-defer".to_string()),
-        vec![
-            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 0, 2, 3],
-    )
-    .expect("rebuild mesh");
-    worker.state.record_rebuild(SculptRebuild {
-        topology: PreparedSceneTopology::from_mesh(&mesh),
-        mesh,
-    });
-    let held = worker
-        .state
-        .rebuild
-        .lock()
-        .expect("test holds the rebuild lock");
-    assert!(
-        worker.take_rebuild().is_none(),
-        "a contended rebuild drain must defer"
-    );
-    drop(held);
-    assert!(
-        worker.take_rebuild().is_some(),
-        "the deferred rebuild must redrain"
-    );
-}
-
-/// A densifying rebuild supersedes queued sparse ids, which index the
-/// pre-rebuild array. Newer rebuilds replace older unread ones.
-#[test]
-fn rebuild_supersedes_queued_sparse_updates() {
-    let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
-    let mesh = Mesh::new(
-        Some("rebuild-supersede".to_string()),
-        vec![
-            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 0, 2, 3],
-    )
-    .expect("rebuild mesh");
-    worker.state.record_rebuild(SculptRebuild {
-        topology: PreparedSceneTopology::from_mesh(&mesh),
-        mesh,
-    });
-    assert!(
-        worker.take_update().is_none(),
-        "stale sparse ids must not survive a topology rebuild"
-    );
-    assert!(
-        worker.take_rebuild().is_some(),
-        "the authoritative rebuild must remain queued"
-    );
-}
-
-/// Restoring a drained update is a lossless round-trip: the next drain
-/// returns the same sparse ids when no rebuild intervened.
-#[test]
-fn restored_update_redrains_identical_sparse_ids() {
-    let worker = test_worker();
-    worker.state.record_touched(vec![3, 1, 2, 1]);
-    let drained = worker.take_update().expect("pending update must drain");
-    worker.restore_update(drained);
-    let retry = worker.take_update().expect("restored update must redrain");
-    assert!(!retry.full_sync, "sparse restore must not escalate");
-    let mut ids = retry.touched;
-    ids.sort_unstable();
-    ids.dedup();
-    assert_eq!(ids, vec![1, 2, 3]);
-}
-
-/// A restore that would overflow the backlog escalates to a full sync at the
-/// same site as the record path, not just in `record_touched`.
-#[test]
-fn restore_overflow_escalates_to_full_sync() {
-    let worker = test_worker();
-    worker.restore_update(SculptUpdate {
-        touched: vec![0; MAX_PENDING_TOUCHES + 1],
-        full_sync: false,
-    });
-    let update = worker.take_update().expect("overflow must stay visible");
-    assert!(
-        update.full_sync,
-        "restore overflow must become an authoritative full sync"
-    );
-}
-
-/// A drained sparse update restored after a rebuild queued must not come
-/// back as stale ids: it escalates to a full sync of the latest shadow.
-#[test]
-fn restore_after_rebuild_escalates_to_full_sync() {
-    let worker = test_worker();
-    worker.state.record_touched(vec![0, 1, 2]);
-    let drained = worker.take_update().expect("pending update must drain");
-    let mesh = Mesh::new(
-        Some("restore-rebuild".to_string()),
-        vec![
-            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 0, 2, 3],
-    )
-    .expect("rebuild mesh");
-    worker.state.record_rebuild(SculptRebuild {
-        topology: PreparedSceneTopology::from_mesh(&mesh),
-        mesh,
-    });
-    worker.restore_update(drained);
-    let retry = worker.take_update().expect("restore must stay visible");
-    assert!(
-        retry.full_sync,
-        "post-rebuild restore must escalate, never resurrect stale ids"
-    );
-    assert!(
-        worker.take_rebuild().is_some(),
-        "the authoritative rebuild must remain queued"
-    );
-}
+#[path = "sculpt_worker_output_tests.rs"]
+mod output_tests;

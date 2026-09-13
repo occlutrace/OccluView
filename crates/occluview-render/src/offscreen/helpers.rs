@@ -1,4 +1,5 @@
 use super::{Offscreen, RenderDeadline, Renderer};
+use crate::contact_texture::{inert_field_texture, white_base};
 use crate::error::RenderError;
 use std::sync::mpsc;
 use wgpu::TextureView;
@@ -12,54 +13,19 @@ pub(super) struct RenderTargets<'a> {
 /// texture. Same pixel and same layout as [`crate::texture::GpuTexture::fallback`],
 /// which the live path uses; that one also keeps the texture and sampler around,
 /// which nothing here needs.
+///
+/// Binding 2 is the inert contact field: a single sentinel texel. Wgpu requires
+/// every binding in the layout to be present, and a scan rendered through this
+/// group paints no contacts (`contact_map == 0`), so the value is never read.
 pub(super) fn make_fallback_texture_bind_group(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &Renderer,
 ) -> wgpu::BindGroup {
-    let tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("occluview fallback white texture"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &tex,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &[255, 255, 255, 255],
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4),
-            rows_per_image: Some(1),
-        },
-        wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-    );
-    let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("occluview fallback sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
+    // The returned textures are deliberately not kept: the bind group holds a
+    // reference to each view, and a view keeps its texture alive.
+    let (_base_texture, tex_view, sampler) = white_base(device, queue);
+    let (_field_texture, field_view) = inert_field_texture(device, queue);
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("occluview fallback texture bind group"),
         layout: renderer.texture_layout(),
@@ -71,6 +37,10 @@ pub(super) fn make_fallback_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&field_view),
             },
         ],
     })
@@ -224,6 +194,12 @@ impl Offscreen {
         if let Some(error) = self.renderer.take_gpu_error() {
             output_buffer.unmap();
             return Err(RenderError::Surface(error));
+        }
+        if self.renderer.is_gpu_faulted() {
+            output_buffer.unmap();
+            return Err(RenderError::Surface(
+                "offscreen GPU renderer became unavailable during readback".to_owned(),
+            ));
         }
         let mapped = match poll_result {
             Ok(_) => wait_for_map_callback(&map_rx, deadline),

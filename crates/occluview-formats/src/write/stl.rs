@@ -12,8 +12,10 @@ pub(super) fn write_mesh<W: Write>(
     _options: MeshWriteOptions,
     report: &mut MeshWriteReport,
 ) -> Result<(), FormatError> {
+    // Defence in depth: the public entry points reject a point cloud before
+    // the destination is touched, so a report is never produced for this case.
+    // Reporting a warning here would describe a conversion that did not happen.
     if mesh.kind() != MeshKind::TriangleMesh {
-        report.warn(MeshWriteWarning::PointCloudRejectedForStl);
         return Err(FormatError::Malformed {
             format: MeshWriteFormat::StlBinary.label(),
             offset: 0,
@@ -107,9 +109,14 @@ mod tests {
         let error = write_mesh(&mut bytes, &mesh, MeshWriteOptions::default(), &mut report)
             .expect_err("point cloud should be rejected");
         assert!(error.to_string().contains("triangle mesh"));
-        assert!(report
-            .warnings
-            .contains(&MeshWriteWarning::PointCloudRejectedForStl));
+        assert!(
+            bytes.is_empty(),
+            "a rejected export must not write a partial file"
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "a rejected export must not claim a lossy conversion it never performed"
+        );
     }
 
     #[test]

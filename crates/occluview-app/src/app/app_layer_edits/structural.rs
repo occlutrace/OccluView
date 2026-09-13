@@ -266,6 +266,7 @@ pub(super) fn structural_scene_apply() -> LayerContextApply {
 
 pub(super) fn clone_layer_with_mesh(source: &SceneMesh, mesh: Mesh) -> SceneMesh {
     let mut cloned = SceneMesh::new(mesh)
+        .with_source_layer_id(source.export_source_layer_id())
         .with_transform(source.transform)
         .with_tint(source.tint)
         .with_opacity(source.opacity)

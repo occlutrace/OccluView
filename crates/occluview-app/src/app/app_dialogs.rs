@@ -1,10 +1,10 @@
 use super::app_guard_dialog::{show_guard_dialog, GuardDialogAction, GuardDialogSpec};
-use super::app_help::{render_contextual_hint, show_help_toolbar_toggle};
+use super::app_help::render_contextual_hint;
 use super::app_recent_popup::RecentFilesAction;
 use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::information_dialog::InformationDialog;
-use super::OccluViewApp;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
+use super::{AppErrorAction, OccluViewApp};
 use crate::icons::AppIcon;
 use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
 use crate::measure_tool::{self, MeasureMode};
@@ -60,6 +60,14 @@ impl OccluViewApp {
             if consume(&ctx, &edit_shortcut) {
                 toggle_edit_mesh = true;
             }
+        }
+        // F1 opens the keyboard and mouse reference. It is the one key every
+        // desktop app agrees on, and it replaces the toolbar button that used
+        // to be the only way in.
+        let mut open_shortcuts = false;
+        if !self.ui.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
+            open_shortcuts =
+                ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1));
         }
         let mut do_add = false;
         let mut do_open = ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
@@ -261,14 +269,11 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let help_response = show_help_toolbar_toggle(
-                            ui,
-                            !self.ui.close_guard_open,
-                            &self.ui.locale,
-                        );
-                        if help_response.clicked() {
-                            self.ui.information_dialog = InformationDialog::KeyboardMouse;
-                        }
+                        // No Help button here. What it opened is a keyboard and
+                        // mouse reference, and a permanent toolbar slot for a
+                        // list nobody reads twice took the width the real tools
+                        // need. It lives in Settings, on F1, and behind the
+                        // viewport's own hint line.
                         let response = show_settings_toolbar_toggle(
                             ui,
                             !self.ui.close_guard_open,
@@ -348,6 +353,9 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
 
+        if open_shortcuts {
+            self.ui.information_dialog = InformationDialog::KeyboardMouse;
+        }
         if do_open {
             self.open_files_dialog();
         }
@@ -538,6 +546,11 @@ impl OccluViewApp {
                 &[("count", &edited_count.to_string())],
             )
         };
+        let busy_note = self
+            .document
+            .edit_mode
+            .is_busy()
+            .then(|| self.ui.locale.tr("edit-session-busy"));
         let response = show_guard_dialog(
             ctx,
             &self.ui.locale,
@@ -545,7 +558,7 @@ impl OccluViewApp {
                 id: "edit-in-progress-guard",
                 title: &self.ui.locale.tr("guard-replace-title"),
                 headline: &headline,
-                note: None,
+                note: busy_note.as_deref(),
                 detail: &self.ui.locale.tr("guard-replace-detail"),
                 destructive_label: &self.ui.locale.tr("guard-replace-destructive"),
             },
@@ -560,6 +573,10 @@ impl OccluViewApp {
         if do_cancel {
             // Drop the parked open; keep the current scene and session.
             self.ui.pending_replace_open = None;
+            return;
+        }
+        if self.document.edit_mode.is_busy() && (do_discard || do_save) {
+            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
             return;
         }
         if do_discard {
@@ -606,6 +623,7 @@ impl OccluViewApp {
         };
         let mut open = true;
         let mut close_clicked = false;
+        let mut retry = false;
         egui::Window::new(error.title.as_str())
             .open(&mut open)
             .resizable(true)
@@ -636,6 +654,7 @@ impl OccluViewApp {
                         .interactive(false),
                 );
                 ui.add_space(4.0);
+                let mut retry_clicked = false;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(self.ui.locale.tr("error-close")).clicked() {
                         close_clicked = true;
@@ -643,10 +662,23 @@ impl OccluViewApp {
                     if ui.button(self.ui.locale.tr("error-copy-details")).clicked() {
                         ui.ctx().copy_text(error.details.clone());
                     }
+                    if error.action == AppErrorAction::RetryGraphics
+                        && ui
+                            .button(self.ui.locale.tr("error-retry-graphics"))
+                            .clicked()
+                    {
+                        retry_clicked = true;
+                    }
                 });
+                if retry_clicked {
+                    retry = true;
+                }
             });
-        if !open || close_clicked {
+        if !open || close_clicked || retry {
             self.ui.app_error = None;
+        }
+        if retry {
+            self.retry_gpu_after_fault(ctx);
         }
     }
 }
@@ -669,14 +701,7 @@ fn intercept_unsaved_close_request(
 
 /// Slim vertical hairline between toolbar groups.
 fn toolbar_divider(ui: &mut egui::Ui) {
-    ui.add_space(6.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, 18.0), egui::Sense::hover());
-    ui.painter().vline(
-        rect.center().x,
-        egui::Rangef::new(rect.top(), rect.bottom()),
-        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
-    );
-    ui.add_space(6.0);
+    ui_theme::vertical_divider(ui, 18.0);
 }
 
 #[cfg(test)]

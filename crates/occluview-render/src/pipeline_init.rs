@@ -1,15 +1,35 @@
 use super::{
     camera_bind_layout, cap_vertex_layout, clip_plane_bind_layout, mesh_uniform_bind_layout,
-    multisample_state, point_instance_layout, texture_bind_layout, Renderer, CAP_SHADER_SRC,
-    DEFAULT_POINT_SPLAT_VIEWPORT, SHADER_SRC,
+    multisample_state, point_instance_layout, sculpt_brush_bind_layout, sculpt_tool_bind_layout,
+    texture_bind_layout, Renderer, CAP_SHADER_SRC, DEFAULT_POINT_SPLAT_VIEWPORT,
+    SCULPT_FEEDBACK_SHADER_SRC, SCULPT_TOOL_SHADER_SRC, SHADER_SRC,
 };
 use crate::clipping::ClipPlane;
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
+use crate::sculpt_cursor::{
+    cone_geometry, cylinder_geometry, vertex_layout as sculpt_tool_vertex_layout,
+    SculptBrushUniform, SculptToolUniform,
+};
 use std::{
     borrow::Cow,
-    sync::{atomic::AtomicU32, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicU32},
+        Arc,
+    },
 };
+
+/// The depth/stencil format every live-pass pipeline declares.
+///
+/// eframe derives the live pass attachment from the application's
+/// `depth_buffer: 24` / `stencil_buffer: 8`, which resolves to this format, and
+/// egui's own pipelines are built for the same one. Keeping it in a named
+/// function gives the tests something to compare a probe against instead of
+/// duplicating the literal.
+#[must_use]
+pub const fn live_depth_format() -> wgpu::TextureFormat {
+    wgpu::TextureFormat::Depth24PlusStencil8
+}
 
 impl Renderer {
     /// Create a renderer against a headless device (no surface). Used by the
@@ -132,7 +152,7 @@ impl Renderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Result<Self, RenderError> {
-        let depth_format = wgpu::TextureFormat::Depth24PlusStencil8;
+        let depth_format = live_depth_format();
         let sample_count = sample_count.max(1);
         let multisample = multisample_state(sample_count);
 
@@ -143,10 +163,12 @@ impl Renderer {
         // renderer-creation path funnels through here, so both the live viewport
         // and the offscreen/thumbnail renderers get the safety net.
         let gpu_error: super::GpuErrorLatch = Arc::new(std::sync::Mutex::new(None));
+        let gpu_faulted = Arc::new(AtomicBool::new(false));
         {
             let sink = Arc::clone(&gpu_error);
+            let faulted = Arc::clone(&gpu_faulted);
             device.on_uncaptured_error(Arc::new(move |error| {
-                super::record_gpu_error(&sink, error.to_string());
+                super::record_gpu_fault(&sink, &faulted, error.to_string());
             }));
         }
         {
@@ -155,12 +177,14 @@ impl Renderer {
             // `Destroyed` fires on our own normal teardown (device dropped) and
             // is NOT a fault; anything else is a real loss to surface.
             let sink = Arc::clone(&gpu_error);
+            let faulted = Arc::clone(&gpu_faulted);
             device.set_device_lost_callback(move |reason, message| {
                 if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
                     return;
                 }
-                super::record_gpu_error(
+                super::record_gpu_fault(
                     &sink,
+                    &faulted,
                     format!("graphics device lost ({reason:?}): {message}"),
                 );
             });
@@ -175,6 +199,7 @@ impl Renderer {
         let mesh_layout = mesh_uniform_bind_layout(&device);
         let texture_layout = texture_bind_layout(&device);
         let clip_layout = clip_plane_bind_layout(&device);
+        let sculpt_brush_layout = sculpt_brush_bind_layout(&device);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("occluview pipeline layout"),
             bind_group_layouts: &[
@@ -185,6 +210,28 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
+        let sculpt_feedback_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("occluview sculpt feedback pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&camera_layout),
+                    Some(&mesh_layout),
+                    Some(&clip_layout),
+                    Some(&sculpt_brush_layout),
+                ],
+                immediate_size: 0,
+            });
+        let sculpt_tool_layout = sculpt_tool_bind_layout(&device);
+        let sculpt_tool_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("occluview sculpt tool pipeline layout"),
+                bind_group_layouts: &[
+                    Some(&camera_layout),
+                    Some(&sculpt_tool_layout),
+                    Some(&clip_layout),
+                ],
+                immediate_size: 0,
+            });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("occluview mesh pipeline"),
@@ -236,7 +283,11 @@ impl Renderer {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    // The point shader emits a smooth coverage alpha for the
+                    // outer part of each screen-space splat. Replacing the
+                    // target ignores that alpha and leaves a hard disc edge
+                    // even when live MSAA is available.
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -378,6 +429,108 @@ impl Renderer {
             multisample,
         );
 
+        let sculpt_feedback_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("occluview sculpt feedback shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SCULPT_FEEDBACK_SHADER_SRC)),
+        });
+        // The surface feedback pass is additive and depth-tested against the
+        // already-rendered target mesh. It emits only the brush field, so
+        // textures, scan colors, heatmaps, and their alpha are never doubled.
+        let sculpt_feedback_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("occluview sculpt surface feedback pipeline"),
+                layout: Some(&sculpt_feedback_layout),
+                vertex: wgpu::VertexState {
+                    module: &sculpt_feedback_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(GpuMesh::vertex_layout())],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &sculpt_feedback_shader,
+                    entry_point: Some("fs_sculpt_feedback"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Zero,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::RED
+                            | wgpu::ColorWrites::GREEN
+                            | wgpu::ColorWrites::BLUE,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample,
+                multiview_mask: None,
+                cache: None,
+            });
+
+        let sculpt_tool_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("occluview sculpt tool shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SCULPT_TOOL_SHADER_SRC)),
+        });
+        // The tool volume remains depth-independent at the semantic level:
+        // it never writes depth and always passes the depth test, so the
+        // reference cursor stays readable over dense surfaces. It still has
+        // to declare the live pass's depth format because eframe places this
+        // draw in the same Depth24PlusStencil8 render pass.
+        let sculpt_tool_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("occluview sculpt tool volume pipeline"),
+            layout: Some(&sculpt_tool_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &sculpt_tool_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(sculpt_tool_vertex_layout())],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &sculpt_tool_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample,
+            multiview_mask: None,
+            cache: None,
+        });
+
         let cap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("occluview cap shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CAP_SHADER_SRC)),
@@ -429,7 +582,12 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: Some(true),
+                    // These passes build only the stencil mask. Writing their
+                    // mesh depth would make the final opaque pass's `Less`
+                    // test reject the same surface as equal before it can
+                    // paint, and would also leave no usable depth for the
+                    // cut-plane cap.
+                    depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState {
                         front: wgpu::StencilFaceState::default(),
@@ -476,7 +634,9 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: Some(true),
+                    // Stencil winding is an occlusion mask, not a depth pass;
+                    // preserve the clear depth for the cap and shaded draw.
+                    depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState {
                         front: wgpu::StencilFaceState {
@@ -522,7 +682,7 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: Some(false),
+                depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState {
                     front: wgpu::StencilFaceState {
@@ -578,6 +738,64 @@ impl Renderer {
             }],
         });
 
+        let sculpt_brush_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occluview sculpt brush uniform"),
+            size: size_of::<SculptBrushUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(
+            &sculpt_brush_buffer,
+            0,
+            bytemuck::bytes_of(&SculptBrushUniform::hidden()),
+        );
+        let sculpt_brush_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("occluview sculpt brush bind group"),
+            layout: &sculpt_brush_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sculpt_brush_buffer.as_entire_binding(),
+            }],
+        });
+
+        let sculpt_tool_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occluview sculpt tool uniform"),
+            size: size_of::<SculptToolUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(
+            &sculpt_tool_buffer,
+            0,
+            bytemuck::bytes_of(&SculptToolUniform::hidden()),
+        );
+        let sculpt_tool_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("occluview sculpt tool bind group"),
+            layout: &sculpt_tool_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sculpt_tool_buffer.as_entire_binding(),
+            }],
+        });
+
+        let (cone_vertices, cone_indices) = cone_geometry();
+        let (sculpt_tool_cone_buffer, sculpt_tool_cone_vertex_bytes) = upload_sculpt_tool_buffer(
+            &device,
+            &queue,
+            "occluview sculpt cone buffer",
+            &cone_vertices,
+            &cone_indices,
+        );
+        let (cylinder_vertices, cylinder_indices) = cylinder_geometry();
+        let (sculpt_tool_cylinder_buffer, sculpt_tool_cylinder_vertex_bytes) =
+            upload_sculpt_tool_buffer(
+                &device,
+                &queue,
+                "occluview sculpt cylinder buffer",
+                &cylinder_vertices,
+                &cylinder_indices,
+            );
+
         Ok(Self {
             device,
             queue,
@@ -587,11 +805,25 @@ impl Renderer {
             transparent_point_pipeline,
             wireframe_pipeline,
             ghost_pipeline,
+            sculpt_feedback_pipeline,
+            sculpt_tool_pipeline,
             camera_layout,
             camera_buffer,
             mesh_layout,
             texture_layout,
             clip_layout,
+            sculpt_brush_buffer,
+            sculpt_brush_bind_group,
+            sculpt_tool_buffer,
+            sculpt_tool_bind_group,
+            sculpt_tool_shape: AtomicU32::new(0),
+            sculpt_tool_cone_buffer,
+            sculpt_tool_cone_vertex_bytes,
+            sculpt_tool_cone_index_count: u32::try_from(cone_indices.len()).unwrap_or(u32::MAX),
+            sculpt_tool_cylinder_buffer,
+            sculpt_tool_cylinder_vertex_bytes,
+            sculpt_tool_cylinder_index_count: u32::try_from(cylinder_indices.len())
+                .unwrap_or(u32::MAX),
             point_splat_viewport_width_bits: AtomicU32::new(
                 DEFAULT_POINT_SPLAT_VIEWPORT[0].to_bits(),
             ),
@@ -607,6 +839,30 @@ impl Renderer {
             cap_uniform_layout,
             sample_count,
             gpu_error,
+            gpu_faulted,
         })
     }
+}
+
+fn upload_sculpt_tool_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    vertices: &[crate::sculpt_cursor::SculptToolVertex],
+    indices: &[u32],
+) -> (wgpu::Buffer, u64) {
+    let vertex_bytes = bytemuck::cast_slice(vertices);
+    let index_bytes = bytemuck::cast_slice(indices);
+    let vertex_size = vertex_bytes.len() as u64;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: vertex_size + index_bytes.len() as u64,
+        usage: wgpu::BufferUsages::VERTEX
+            | wgpu::BufferUsages::INDEX
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, vertex_bytes);
+    queue.write_buffer(&buffer, vertex_size, index_bytes);
+    (buffer, vertex_size)
 }

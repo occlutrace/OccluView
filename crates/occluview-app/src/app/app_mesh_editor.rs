@@ -1,8 +1,8 @@
 use super::mesh_editor_overlay as editor;
 use super::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
-    apply_visible_selected_face_mesh_edit_action_with_limit, egui, pick_scene_hit, AppErrorDialog,
-    LayerContextAction, MeshEditorAction, MeshSelectionDrag, OccluViewApp, Scene,
+    apply_visible_selected_face_mesh_edit_action_with_limit, egui, pick_scene_hit, AppErrorAction,
+    AppErrorDialog, LayerContextAction, MeshEditorAction, MeshSelectionDrag, OccluViewApp, Scene,
     ScreenPolygonSelectionRequest,
 };
 use crate::viewer::lasso_capture::{self, LassoEvent};
@@ -10,7 +10,7 @@ use crate::viewer::lasso_capture::{self, LassoEvent};
 impl OccluViewApp {
     /// `_unguarded`, not `_impl`: calling it skips the dialog check.
     pub(super) fn handle_edit_shortcuts_unguarded(&mut self, ctx: &egui::Context) {
-        // Sculpt tool hotkeys (1 = Add/Remove, 2 = Smooth) — Edit-Mesh only,
+        // Sculpt tool hotkeys (1 = Add/Remove, 2 = Smooth) — Mesh Editor only,
         // handled before the other shortcuts so they claim the digit keys first.
         if self.handle_sculpt_hotkeys(ctx) {
             ctx.request_repaint();
@@ -49,6 +49,7 @@ impl OccluViewApp {
                 self.document.edit_mode.visible_selected_face_count(scene) > 0
             })
             && !self.document.edit_mode.is_busy()
+            && !self.tools.sculpt.is_busy()
             && ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -97,6 +98,7 @@ impl OccluViewApp {
             sculpt_armed: self.tools.sculpt.armed,
             dirty: self.document.edit_mode.is_dirty(),
             busy: self.document.edit_mode.is_busy(),
+            sculpt_pending: self.tools.sculpt.is_busy(),
             active_tab: self.tools.editor_tab,
         };
         let Some(action) = editor::show(ctx, viewport_rect, state, &self.ui.locale) else {
@@ -134,6 +136,11 @@ impl OccluViewApp {
         layer_action: LayerContextAction,
         ctx: &egui::Context,
     ) {
+        if self.tools.sculpt.is_busy() {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-finishing"));
+            ctx.request_repaint();
+            return;
+        }
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
@@ -201,6 +208,7 @@ impl OccluViewApp {
                     title: self.ui.locale.tr("edit-apply-failed-title"),
                     summary,
                     details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
+                    action: AppErrorAction::None,
                 });
                 ctx.request_repaint();
             }
@@ -372,7 +380,12 @@ impl OccluViewApp {
     /// selection overlay are dismissed, and the undo stack is kept so Ctrl-Z
     /// still reverts individual mesh ops afterwards.
     fn finish_mesh_edit_session(&mut self, ctx: &egui::Context) {
-        self.commit_sculpt_stroke(ctx);
+        if !self.commit_sculpt_stroke(ctx) {
+            if self.tools.sculpt.stroke.is_some() {
+                self.tools.sculpt.finish_requested = true;
+            }
+            return;
+        }
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.finish_requested = true;
             self.ui.status_message = Some(self.ui.locale.tr("sculpt-finishing"));
@@ -414,7 +427,12 @@ impl OccluViewApp {
         // Finalize any in-flight sculpt drag first (as Done/Cancel do), so the
         // undo acts on a settled scene and the stroke's dabs are not silently
         // dropped when the coming scene swap invalidates the sculpt session.
-        self.commit_sculpt_stroke(ctx);
+        if !self.commit_sculpt_stroke(ctx) {
+            if self.tools.sculpt.stroke.is_some() {
+                self.tools.sculpt.pending_history = Some(redo);
+            }
+            return;
+        }
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.pending_history = Some(redo);
             self.ui.status_message = Some(self.ui.locale.tr("sculpt-finishing-history"));

@@ -12,21 +12,20 @@
 //!    way, which is exactly the three frames a second the operator reported.
 //! 3. **The dab itself is parallel** — three milliseconds on a 942k-vertex arch.
 //!
-//! There is no mesh picker. The operator's dental CAD software needs one
-//! because its brush is modal; here the brush marks whichever mesh is under
-//! the cursor, so painting both sides of a comparison is one continuous
-//! gesture and there is nothing to get wrong.
+//! The Brush window has an explicit mesh selection. The two scans overlap by
+//! design, so choosing the nearest ray hit would make a stroke change the
+//! wrong mask whenever the other scan is slightly closer to the camera.
 
 use eframe::egui;
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid};
-use occluview_core::{Scene, SceneMesh, SceneMeshId};
+use occluview_core::{SceneMesh, SceneMeshId};
 
 use super::app_align::layer_of;
 use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
 use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MarkedOn, MaskCommand};
-use crate::viewer::pick_scene_hit;
+use crate::viewer::pick_layer_hit;
 
 /// The identity a mask painted on this layer has to match later.
 fn marked_on(entry: &SceneMesh) -> MarkedOn {
@@ -101,19 +100,18 @@ impl OccluViewApp {
             let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
-            let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
+            let painting = self.tools.align.brush.target_side();
+            let Some(layer_id) = self.side_layer(painting) else {
+                self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
                 return true;
             };
-            // Paint whichever member of the active pair is under the cursor.
-            let painting = if Some(hit.layer_id) == self.tools.align.tool.moving_layer() {
-                AlignSide::Moving
-            } else if Some(hit.layer_id) == self.tools.align.tool.fixed_layer() {
-                AlignSide::Fixed
-            } else {
-                self.tools.align.status = Some(self.ui.locale.tr("align-brush-not-in-alignment"));
+            let Some(hit) = pick_layer_hit(&camera, response.rect, pointer, &scene, layer_id)
+            else {
                 return true;
             };
-            let Some(entry) = layer_of(&scene, hit.layer_id) else {
+            // The picker is deliberately scoped to the selected layer. A
+            // nearest-hit picker would paint the other overlapping scan.
+            let Some(entry) = layer_of(&scene, layer_id) else {
                 return true;
             };
             let Some(pose) = Rigid::from_affine(&entry.transform) else {
@@ -148,7 +146,7 @@ impl OccluViewApp {
                     erase,
                 },
             );
-            (hit.layer_id, painting, changed)
+            (layer_id, painting, changed)
         };
         if changed > 0 {
             self.patch_region_preview(layer_id, painting);
@@ -237,33 +235,28 @@ impl OccluViewApp {
 
     /// Apply one whole-mesh command from the Brush tool window.
     ///
-    /// Both sides at once, because the buttons say "the mesh" and an operator
-    /// who has marked a region on each does not expect Fit everywhere to clear
-    /// only one of them.
+    /// Apply to the mesh selected in the Brush window.
+    ///
+    /// Exocad's Brush tool has an explicit Mesh selection, and commands such
+    /// as Fit everywhere follow that selection. Applying them to both sides
+    /// would silently destroy a mask the operator meant to keep.
     pub(super) fn apply_align_mask_command(&mut self, command: MaskCommand) {
-        // Each side comes out of the scene as a value and the handle dies with
-        // its block; repainting a preview edits the scene in place.
-        let mut reached = false;
-        for side in AlignSide::BOTH {
-            // One side at a time: a `SceneMesh` clone is a whole vertex array,
-            // so taking both up front doubles peak transient memory to save
-            // nothing.
-            let taken = {
-                let Some(scene) = self.document.scene.clone() else {
-                    return;
-                };
-                self.side_layer(side)
-                    .and_then(|layer| layer_of(&scene, layer).map(|entry| (layer, entry.clone())))
+        let side = self.tools.align.brush.target_side();
+        let Some(layer) = self.side_layer(side) else {
+            self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
+            return;
+        };
+        let taken = {
+            let Some(scene) = self.document.scene.clone() else {
+                return;
             };
-            let Some((layer, entry)) = taken else {
-                continue;
-            };
-            if self.apply_mask_command_to(command, side, &entry) {
-                reached = true;
-                self.repaint_region_preview(layer, side);
-            }
-        }
-        if !reached {
+            layer_of(&scene, layer).cloned()
+        };
+        let Some(entry) = taken else {
+            self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
+            return;
+        };
+        if !self.apply_mask_command_to(command, side, &entry) {
             // "Mark automatic" is the only command that can decline, and it
             // declines for one reason the operator can act on.
             if command == MaskCommand::MarkAutomatic {
@@ -271,6 +264,7 @@ impl OccluViewApp {
             }
             return;
         }
+        self.repaint_region_preview(layer, side);
         self.tools.align.status = Some(self.ui.locale.tr(command.report_key()));
         self.invalidate_deviation_map(&self.ui.locale.tr(command.report_key()));
     }
@@ -339,34 +333,6 @@ impl OccluViewApp {
     /// indexed by one layer's vertices.
     pub(super) fn clear_align_mask(&mut self) {
         self.tools.align.markings.clear();
-    }
-
-    /// What share of the two scans is marked, if either carries a mask that
-    /// fits its mesh.
-    ///
-    /// The panel asks every frame the Brush window is open. Walking both masks
-    /// to answer would be a two-million-byte scan per frame, so the counts are
-    /// maintained where the masks are edited and this only reads them.
-    pub(super) fn align_marked_fraction(&self) -> Option<f32> {
-        let scene = self.document.scene.as_ref()?;
-        self.tools.align.markings.marked_fraction(
-            self.side_identity(AlignSide::Moving, scene),
-            self.side_identity(AlignSide::Fixed, scene),
-        )
-    }
-
-    /// What a mask on this side has to match, or an identity nothing matches when
-    /// the side names no layer.
-    fn side_identity(&self, side: AlignSide, scene: &Scene) -> MarkedOn {
-        self.side_layer(side)
-            .and_then(|id| layer_of(scene, id))
-            .map_or(
-                MarkedOn {
-                    geometry: 0,
-                    vertex_count: 0,
-                },
-                marked_on,
-            )
     }
 
     /// Put the markings on both meshes, take them off, or leave them alone.
@@ -618,17 +584,17 @@ mod tests {
         );
     }
 
-    /// The operator's report: "on one surface it marks, on the other nothing".
-    /// That both sides carry markings is tested for real over `AlignMarkings`;
-    /// what this file owns is where the side comes from — the cursor, not a
-    /// picker.
+    /// The brush must follow the explicit Mesh selection. The two surfaces
+    /// overlap, so a nearest-hit picker would intermittently paint the wrong
+    /// side; `pick_layer_hit` is the causal guard.
     #[test]
-    fn the_side_a_dab_lands_on_comes_from_the_cursor() {
+    fn a_dab_is_scoped_to_the_explicit_mesh_selection() {
         let stroke = stroke();
         assert!(
-            stroke.contains("Some(hit.layer_id) == self.tools.align.tool.moving_layer()")
-                && stroke.contains("Some(hit.layer_id) == self.tools.align.tool.fixed_layer()"),
-            "the side must come from what is under the cursor"
+            stroke.contains("let painting = self.tools.align.brush.target_side()")
+                && stroke.contains("pick_layer_hit")
+                && !stroke.contains("pick_scene_hit"),
+            "the stroke must pick only on the explicitly selected mesh"
         );
     }
 

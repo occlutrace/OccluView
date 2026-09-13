@@ -90,6 +90,16 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
         egui::FontId::proportional(12.0),
         text,
     );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            TAB_H * 0.5,
+            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label));
     response
 }
 
@@ -111,7 +121,18 @@ fn close_cross(
             ui_theme::text_weak()
         },
     );
-    response.on_hover_text(locale.tr("meshedit-cancel-session"))
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let label = locale.tr("meshedit-cancel-session");
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
+    response.on_hover_text(label)
 }
 
 /// Selection mode (lasso + surface/through radio pair) and the dental CAD
@@ -435,11 +456,14 @@ struct SculptSliderControl<'a> {
     tooltip: &'a str,
 }
 
-fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderControl<'_>) {
+fn sculpt_slider_row(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    control: SculptSliderControl<'_>,
+) -> egui::Response {
     let row_height = ui.spacing().interact_size.y;
-    // The caption rides its own line. Keep the rail to half of the panel: a
-    // full-width rail is visually too dominant in this compact tool menu, and
-    // the fixed width makes Size and Force read as one small control group.
+    // The caption rides its own line. The rail owns the full content width so
+    // the operator gets a stable, wide target in the compact panel.
     let slider_width = sculpt_slider_width(ui.available_width());
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(control.label).size(11.0).weak());
@@ -453,6 +477,12 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
     });
     let response = ui
         .add_enabled_ui(enabled, |ui| {
+            // `Slider` uses `ui.spacing().slider_width` for its requested
+            // horizontal size. `add_sized` constrains the child but does not
+            // rewrite that spacing value, so leaving the default here makes
+            // the visible rail stay at egui's 100 px even though the child
+            // owns the whole panel width.
+            ui.spacing_mut().slider_width = slider_width;
             ui.add_sized(
                 [slider_width, row_height],
                 egui::Slider::new(control.value, control.range)
@@ -461,13 +491,24 @@ fn sculpt_slider_row(ui: &mut egui::Ui, enabled: bool, control: SculptSliderCont
             )
         })
         .inner;
-    response.on_hover_text(control.tooltip);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.25_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(enabled, f64::from(*control.value), control.label)
+    });
+    response.on_hover_text(control.tooltip)
 }
 
-/// Reserve only half of the sculpt panel for the slider rail. Kept pure so
+/// Reserve the full available content width for the slider rail. Kept pure so
 /// the compact control geometry is explicit and regression-testable.
 fn sculpt_slider_width(available_width: f32) -> f32 {
-    (available_width * 0.5).max(0.0)
+    available_width.max(0.0)
 }
 
 fn close_holes_limit_control(
@@ -481,21 +522,44 @@ fn close_holes_limit_control(
         .ctx()
         .data(|data| data.get_temp::<f32>(id))
         .unwrap_or(super::CLOSE_HOLES_LIMIT_DEFAULT_MM);
-    ui.add_enabled(enabled, egui::Checkbox::without_text(&mut armed))
-        .on_hover_text(locale.tr("meshedit-limit-checkbox-hint"));
+    let checkbox = ui.add_enabled(enabled, egui::Checkbox::without_text(&mut armed));
+    if checkbox.has_focus() {
+        ui.painter().rect_stroke(
+            checkbox.rect.shrink(1.0),
+            CELL_ROUNDING,
+            egui::Stroke::new(1.25_f32, ui_theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    checkbox.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            enabled,
+            armed,
+            locale.tr("meshedit-limit-label"),
+        )
+    });
+    checkbox.on_hover_text(locale.tr("meshedit-limit-checkbox-hint"));
     ui.label(
         egui::RichText::new(locale.tr("meshedit-limit-label"))
             .size(11.0)
             .weak(),
     );
-    ui.add_enabled(
+    let drag_value = ui.add_enabled(
         enabled && armed,
         egui::DragValue::new(&mut limit)
             .range(super::CLOSE_HOLES_LIMIT_MIN_MM..=super::CLOSE_HOLES_LIMIT_MAX_MM)
             .speed(0.5)
             .suffix(" mm"),
-    )
-    .on_hover_text(locale.tr("meshedit-limit-drag-hint"));
+    );
+    drag_value.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::DragValue,
+            enabled && armed,
+            locale.tr("meshedit-limit-label"),
+        )
+    });
+    drag_value.on_hover_text(locale.tr("meshedit-limit-drag-hint"));
     super::set_close_holes_limit_enabled(ui.ctx(), armed);
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
 }
@@ -505,7 +569,12 @@ pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
         crate::icons::paint(ui.painter(), rect, icon, ui_theme::accent());
-        ui.label(egui::RichText::new(title).strong().size(14.0));
+        ui.label(
+            egui::RichText::new(title)
+                .strong()
+                .size(14.0)
+                .color(ui_theme::text()),
+        );
     });
     ui.add_space(2.0);
 }
@@ -577,7 +646,7 @@ pub(super) fn icon(
 
 /// A text-only session button sized to match the icon rows. `primary` renders
 /// the accented commit style (Done): a solid accent fill with light text so it
-/// is the one obvious action, mirroring the dental CAD OK button.
+/// is the primary commit action, mirroring the dental CAD OK button.
 pub(super) fn tall_text_button(
     ui: &mut egui::Ui,
     width: f32,
@@ -603,6 +672,7 @@ pub(super) fn tall_text_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sculpt_tool::SCULPT_SIZE_DEFAULT;
 
     #[test]
     fn cell_width_splits_a_row_into_equal_columns() {
@@ -634,9 +704,34 @@ mod tests {
     }
 
     #[test]
-    fn sculpt_slider_uses_half_of_the_panel_width() {
-        assert!((sculpt_slider_width(212.0) - 106.0).abs() < f32::EPSILON);
+    fn sculpt_slider_uses_the_full_panel_width() {
+        assert!((sculpt_slider_width(212.0) - 212.0).abs() < f32::EPSILON);
         assert!(sculpt_slider_width(0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sculpt_slider_widget_really_uses_the_full_panel_width() {
+        let mut value = SCULPT_SIZE_DEFAULT;
+        let mut slider_rect = egui::Rect::NOTHING;
+        egui::__run_test_ui(|ui| {
+            ui.set_width(212.0);
+            slider_rect = sculpt_slider_row(
+                ui,
+                true,
+                SculptSliderControl {
+                    label: "Size",
+                    value: &mut value,
+                    range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
+                    tooltip: "Size",
+                },
+            )
+            .rect;
+        });
+        assert!(
+            (slider_rect.width() - 212.0).abs() < 0.01,
+            "visible sculpt rail is {} px, expected the full 212 px panel",
+            slider_rect.width()
+        );
     }
 
     #[test]
@@ -679,6 +774,7 @@ mod tests {
                 sculpt_armed: None,
                 dirty: true,
                 busy: false,
+                sculpt_pending: false,
                 active_tab: EditorTab::Sculpt,
             },
             MeshEditorPanelState {
@@ -695,7 +791,7 @@ mod tests {
             },
         ];
         for state in states {
-            let enabled = !state.busy;
+            let enabled = !state.busy && !state.sculpt_pending;
             let locale = crate::i18n::LocaleManager::for_tests();
             egui::__run_test_ui(|ui| {
                 ui.set_width(212.0);
@@ -705,8 +801,17 @@ mod tests {
                 let _ = close_holes(ui, enabled, &locale);
                 let _ = sculpt(ui, &state, enabled, &locale);
                 super::super::session_bar::status(ui, &state, &locale);
-                let _ = super::super::session_bar::session(ui, &state, enabled, &locale);
+                let _ = super::super::session_bar::session(ui, &state, !state.busy, &locale);
             });
         }
+    }
+
+    #[test]
+    fn compact_controls_expose_labels_to_keyboard_and_accessibility_users() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"));
+        assert!(source.contains("WidgetInfo::slider"));
+        assert!(source.contains("WidgetInfo::selected"));
+        assert!(source.contains("response.has_focus()"));
     }
 }

@@ -10,6 +10,8 @@
 //! - `vn x y z` - vertex normal (parsed and attached to the matching vertex).
 //! - `f a b c ...` - polygonal face; indices are 1-based, may carry
 //!   `/vt/vn` suffixes. We fan-triangulate polygons with `>3` corners.
+//! - `p a b ...` - point element; a file with vertices but no faces is loaded
+//!   as a point cloud so OBJ export does not silently erase its geometry.
 //! - `g`, `o`, `s`, `usemtl`, `mtllib`, `#` - group/object/smoothing/material
 //!   directives; tolerated, not geometry-affecting for v1.
 //!
@@ -66,6 +68,7 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     let mut builder = MeshBuilder::new()
         .with_name("OBJ")
         .from_input_of(bytes.len());
+    let mut has_faces = false;
 
     for (line_no, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
         // Strip comments: everything after the first '#' that is not in a
@@ -108,6 +111,7 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
             | "curv" | "curv2" | "surf" | "parm" | "trim" | "hole" | "scrv" | "sp" | "end"
             | "con" | "bmat" | "step" => {}
             "f" => {
+                has_faces = true;
                 let data = parse::MeshData {
                     positions: &positions,
                     normals: &normals,
@@ -120,6 +124,30 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
                 // Unknown directive: tolerated (OBJ has a long vendor tail).
             }
         }
+    }
+
+    // Many point-cloud OBJ writers emit only `v` records, while others add a
+    // `p` record. In either form there are no face corners for the normal OBJ
+    // path to materialize, so preserve the position payload explicitly.
+    if !has_faces {
+        for (index, position) in positions.iter().enumerate() {
+            let mut vertex = occluview_core::Vertex::at(*position);
+            if let Some(normal) = normals.get(index) {
+                vertex = vertex.with_normal(*normal);
+            }
+            if let Some(color) = colors.get(index).copied() {
+                if color != [255, 255, 255, 255] {
+                    vertex = vertex.with_color(color);
+                }
+            }
+            if let Some(uv) = texcoords.get(index).copied() {
+                if uv != [0.0, 0.0] {
+                    vertex = vertex.with_uv(uv);
+                }
+            }
+            builder.push_vertex(vertex);
+        }
+        builder = builder.as_point_cloud();
     }
 
     let _ = has_any_color; // builder records colors per-vertex; nothing to do here.

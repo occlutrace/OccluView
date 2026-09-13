@@ -7,25 +7,6 @@
 use super::*;
 
 #[test]
-fn the_readme_is_the_only_repository_guide_for_operators() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent);
-    assert!(
-        workspace_root.is_some(),
-        "app crate should live under the workspace crates directory"
-    );
-    let Some(workspace_root) = workspace_root else {
-        return;
-    };
-
-    assert!(workspace_root.join("README.md").is_file());
-    assert!(
-        !workspace_root.join("docs").exists(),
-        "operator instructions belong in README.md, not a repository docs tree"
-    );
-}
-
-#[test]
 fn the_changelog_only_names_versions_that_can_be_released() {
     // Release notes come from the section matching the current version.
     let changelog = include_str!("../../../../CHANGELOG.md");
@@ -224,15 +205,15 @@ fn the_controls_catalogue_names_the_wired_gestures() {
         );
     }
 
-    for section in [
-        "Navigation",
-        "Mesh Editing",
-        "Sculpt",
-        "Layers and Explorer Preview",
+    for section_key in [
+        "help-section-navigation",
+        "help-section-mesh-editing",
+        "help-section-sculpt",
+        "help-section-layers-preview",
     ] {
         assert!(
-            catalogue.contains(section),
-            "the controls catalogue should include the {section} section"
+            catalogue.contains(section_key),
+            "the controls catalogue should include the {section_key} section key"
         );
     }
 }
@@ -251,6 +232,7 @@ const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("Enter", &["**Enter**"]),
     ("Escape", &["**Esc**"]),
     ("F", &["**F**"]),
+    ("F1", &["**F1**"]),
     ("M", &["**M**"]),
     ("Num1", &["**1**"]),
     ("Num2", &["**2**"]),
@@ -420,7 +402,8 @@ fn the_readme_points_operators_to_the_complete_controls_reference() {
     let readme = include_str!("../../../../README.md");
 
     for phrase in [
-        "**Help**",
+        "**F1**",
+        "Settings → Keyboard shortcuts",
         "complete keyboard and mouse reference",
         "**Shift+wheel** changes Sculpt brush size",
         "**Ctrl+wheel** changes Sculpt brush intensity",

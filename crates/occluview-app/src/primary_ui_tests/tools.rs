@@ -21,6 +21,18 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
         .find("\n    }\n")
         .map_or(body.len(), |offset| offset + 6);
     let disarm = &body[..end];
+    assert!(
+        disarm.contains("self.reset_align_state_for_scene_clear();"),
+        "normal teardown must share the complete scene-clear reset"
+    );
+    let Some(helper_start) = source.find("pub(super) fn reset_align_state_for_scene_clear(") else {
+        panic!("the shared align teardown should exist");
+    };
+    let helper_body = &source[helper_start..];
+    let helper_end = helper_body
+        .find("\n    }\n")
+        .map_or(helper_body.len(), |offset| offset + 6);
+    let reset_body = &helper_body[..helper_end];
 
     for reset in [
         "self.finish_align_drag();",
@@ -37,11 +49,51 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
         "self.tools.align.tab = crate::align_panel::AlignTab::default();",
         "self.tools.align.constraint = crate::align_drag::DragConstraint::default();",
     ] {
+        let target = if reset == "self.finish_align_drag();" {
+            disarm
+        } else {
+            reset_body
+        };
         assert!(
-            disarm.contains(reset),
+            target.contains(reset),
             "closing the align tool must reset the session: missing `{reset}`"
         );
     }
+}
+
+#[test]
+fn clearing_the_last_scene_revokes_align_session_state() {
+    let source = repo_source_file("src/app/app_render.rs");
+    let Some(start) = source.find("pub(super) fn clear_scene(") else {
+        panic!("clear_scene should exist");
+    };
+    let body = &source[start..];
+    let Some(end) = body.find("\n    }\n") else {
+        panic!("clear_scene body closes");
+    };
+    let end = end + 6;
+    let clear_scene = &body[..end];
+    assert!(
+        clear_scene.contains("self.reset_align_state_for_scene_clear();"),
+        "clearing the last scene must revoke align overlays and worker results"
+    );
+    assert!(
+        clear_scene.contains("self.tools.sculpt.invalidate_session();")
+            && appears_before(
+                clear_scene,
+                "self.tools.sculpt.invalidate_session();",
+                "self.document.scene = None;"
+            ),
+        "clearing the last scene must cancel Sculpt before dropping its source"
+    );
+    assert!(
+        appears_before(
+            clear_scene,
+            "self.reset_align_state_for_scene_clear();",
+            "self.document.scene = None;"
+        ),
+        "align state must be reset while the old scene is still available"
+    );
 }
 
 #[test]

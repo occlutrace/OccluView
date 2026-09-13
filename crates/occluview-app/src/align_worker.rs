@@ -3,11 +3,12 @@
 //! Heavy alignment and deviation work runs off the UI thread.
 //!
 //! Each job carries a generation; completions from older generations are
-//! discarded. A job kind allows a queued job to be replaced by a newer request
-//! of the same kind.
+//! discarded. A monotonically increasing request id additionally makes the
+//! latest submission win when cancellation races with a fast completion in the
+//! same scene generation.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -15,29 +16,20 @@ use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
     deviation, deviation_stats, fit_pairs, observability, ramp_color, refine, CancelFlag,
-    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, IcpReport,
-    Observability, Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex,
-    Validity, NO_DATA_COLOR,
+    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability,
+    Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex, Validity,
+    NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 /// Initial display maximum, in millimetres.
-pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+pub(crate) const WORKING_MAX_MM: f64 = 0.20;
+/// Initial cool end of the displayed heatmap range.
+pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.05;
+/// Absolute zero of the operator-controlled deviation display range.
+pub(crate) const WORKING_SCALE_MIN_MM: f64 = 0.0;
 /// Initial nominal tolerance band, in millimetres.
-pub(crate) const WORKING_MIN_MM: f64 = 0.005;
-/// The nominal band of the standard range, in millimetres.
-pub(crate) const CLINICAL_MIN_MM: f64 = 0.01;
-/// Standard display maximum, in millimetres.
-pub(crate) const CLINICAL_MAX_MM: f64 = 0.20;
-/// Maximum display scale exposed by the panel, in millimetres.
-pub(crate) const CLINICAL_CEILING_MM: f64 = 1.0;
-
-/// Standard display ranges as `(maximum, tolerance)`, tightest first.
-pub(crate) const CLINICAL_RANGES: [(f64, f64); 3] = [
-    (WORKING_MAX_MM, WORKING_MIN_MM),
-    (CLINICAL_MAX_MM, CLINICAL_MIN_MM),
-    (0.50, 0.02),
-];
+pub(crate) const WORKING_MIN_MM: f64 = 0.01;
 
 /// Operator-facing knobs, in the operator's units.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,6 +42,8 @@ pub(crate) struct AlignSettings {
     pub(crate) orientation: Orientation,
     /// Deviation mapped to the ends of the colour ramp, in millimetres.
     pub(crate) scale_mm: f64,
+    /// Cool end of the displayed deviation range, in millimetres.
+    pub(crate) min_display_mm: f64,
     /// Tolerance band the statistics report, in millimetres.
     pub(crate) tolerance_mm: f64,
     /// Steps per side for a banded ramp; `None` is continuous.
@@ -71,8 +65,9 @@ impl Default for AlignSettings {
             orientation: Orientation::Match,
             // Start at the tightest standard range; manual changes remain
             // stable until the operator selects another range.
-            scale_mm: CLINICAL_RANGES[0].0,
-            tolerance_mm: CLINICAL_RANGES[0].1,
+            scale_mm: WORKING_MAX_MM,
+            min_display_mm: WORKING_MIN_DISPLAY_MM,
+            tolerance_mm: WORKING_MIN_MM,
             bands: None,
             // Magnitude is the default display mode; signed values are an
             // optional diagnostic.
@@ -90,6 +85,7 @@ impl AlignSettings {
             influence_radius_mm: self.influence_radius_mm,
             matching_ratio: self.matching_ratio,
             orientation: self.orientation,
+            local_only: true,
             ..RefineSettings::default()
         }
     }
@@ -103,12 +99,29 @@ impl AlignSettings {
 
     fn ramp(self) -> RampSettings {
         RampSettings {
-            scale_mm: self.scale_mm,
+            min_mm: self.min_display_mm.clamp(
+                WORKING_SCALE_MIN_MM,
+                self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
+            ),
+            scale_mm: self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
             tolerance_mm: self.tolerance_mm,
-            bands: self.bands,
+            // The operator-facing Align Meshes map is one continuous absolute
+            // scale. Keep the field only for loading old state; never let that
+            // legacy value quantize a production measurement.
+            bands: None,
             mode: self.ramp_mode,
         }
     }
+}
+
+/// Whether a settings edit changes the optimizer's interpretation of a fit.
+/// Display range and visibility are deliberately excluded: they can recolour
+/// an already landed measurement, while these three inputs require a new Best
+/// fit result before the heatmap may describe the session again.
+pub(crate) fn matching_inputs_changed(before: AlignSettings, after: AlignSettings) -> bool {
+    before.matching_ratio.to_bits() != after.matching_ratio.to_bits()
+        || before.influence_radius_mm.to_bits() != after.influence_radius_mm.to_bits()
+        || before.orientation != after.orientation
 }
 
 /// One correspondence, already in the frame each stage wants: the moving point
@@ -169,6 +182,10 @@ pub(crate) enum AlignJobKind {
 pub(crate) struct AlignJob {
     /// The generation this job belongs to.
     pub(crate) generation: u64,
+    /// The submission sequence assigned by [`AlignWorker::submit`]. The value
+    /// in a caller-built job is ignored and exists only to keep the snapshot
+    /// self-contained for the worker boundary.
+    pub(crate) request_id: u64,
     /// What to compute.
     pub(crate) kind: AlignJobKind,
     /// Moving layer geometry, in its own local frame.
@@ -210,6 +227,9 @@ pub(crate) enum AlignFailure {
     MovingSurfaceMissing,
     /// The cached measurement was dropped before it could be coloured.
     MeasurementDropped,
+    /// The map has samples, but they do not expose enough rigid motion to be
+    /// a reliable visual confirmation of the match.
+    MeasurementUnobservable,
 }
 
 /// What a finished job produced.
@@ -218,8 +238,6 @@ pub(crate) enum AlignOutcome {
     Aligned {
         /// The new layer pose.
         pose: Rigid,
-        /// Root-mean-square pair residual, in millimetres.
-        rms: f64,
         /// Pairs dropped as outliers.
         rejected: Vec<u32>,
     },
@@ -227,8 +245,6 @@ pub(crate) enum AlignOutcome {
     Refined {
         /// The new layer pose.
         pose: Rigid,
-        /// Diagnostics the panel reports.
-        report: Box<IcpReport>,
     },
     /// A measurement landed.
     Measured {
@@ -256,6 +272,8 @@ pub(crate) enum AlignOutcome {
 pub(crate) struct AlignCompletion {
     /// The generation the job belonged to.
     pub(crate) generation: u64,
+    /// The request that produced this completion.
+    pub(crate) request_id: u64,
     /// The result. Which job produced it is already implied by the variant.
     pub(crate) outcome: AlignOutcome,
 }
@@ -276,7 +294,9 @@ pub(crate) struct AlignWorker {
     completions: Arc<Mutex<Vec<AlignCompletion>>>,
     running: Arc<Mutex<Option<CancelFlag>>>,
     generation: Arc<AtomicU64>,
+    request_sequence: Arc<AtomicU64>,
     busy: Arc<AtomicU64>,
+    failed: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -293,21 +313,37 @@ impl AlignWorker {
         let completions = Arc::new(Mutex::new(Vec::new()));
         let running: Arc<Mutex<Option<CancelFlag>>> = Arc::new(Mutex::new(None));
         let generation = Arc::new(AtomicU64::new(0));
+        let request_sequence = Arc::new(AtomicU64::new(0));
         let busy = Arc::new(AtomicU64::new(0));
+        let failed = Arc::new(AtomicBool::new(false));
 
         let thread_queue = Arc::clone(&queue);
         let thread_completions = Arc::clone(&completions);
         let thread_running = Arc::clone(&running);
         let thread_busy = Arc::clone(&busy);
+        let thread_failed = Arc::clone(&failed);
         let handle = thread::Builder::new()
             .name("occluview-align".into())
             .spawn(move || {
-                run_worker(
-                    &thread_queue,
-                    &thread_completions,
-                    &thread_running,
-                    &thread_busy,
-                );
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_worker(
+                        &thread_queue,
+                        &thread_completions,
+                        &thread_running,
+                        &thread_busy,
+                        &thread_failed,
+                    );
+                }));
+                if let Err(payload) = result {
+                    mark_failed(
+                        &thread_failed,
+                        "align worker panicked",
+                        Some(panic_message(payload)),
+                    );
+                }
+            })
+            .map_err(|error| {
+                mark_failed(&failed, "thread spawn failed", Some(error.to_string()));
             })
             .ok();
 
@@ -316,20 +352,29 @@ impl AlignWorker {
             completions,
             running,
             generation,
+            request_sequence,
             busy,
+            failed,
             handle,
         }
+    }
+
+    /// Whether this worker can still accept or publish work.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
     }
 
     /// Move to a new generation, so every result still in flight is discarded.
     pub(crate) fn bump_generation(&self) -> u64 {
         self.cancel_running();
         let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        if let Ok(mut state) = self.queue.state.lock() {
-            state.jobs.clear();
+        match self.queue.state.lock() {
+            Ok(mut state) => state.jobs.clear(),
+            Err(_) => mark_failed(&self.failed, "queue lock poisoned", None),
         }
-        if let Ok(mut completions) = self.completions.lock() {
-            completions.clear();
+        match self.completions.lock() {
+            Ok(mut completions) => completions.clear(),
+            Err(_) => mark_failed(&self.failed, "completion lock poisoned", None),
         }
         next
     }
@@ -349,38 +394,55 @@ impl AlignWorker {
                 .is_ok_and(|state| !state.jobs.is_empty())
     }
 
-    /// Queue a job, replacing queued work of the same kind and cancelling the
-    /// running job.
-    pub(crate) fn submit(&self, job: AlignJob) {
+    /// Queue the newest job and cancel every older queued/running request.
+    ///
+    /// Align jobs are mutually exclusive snapshots: a queued refine followed
+    /// by a measure, or an old measure followed by a new refine, cannot both be
+    /// correct for the operator's current intent. Clearing the whole queue
+    /// avoids applying a stale kind after a newer kind has landed.
+    pub(crate) fn submit(&self, mut job: AlignJob) -> bool {
+        if self.has_failed() {
+            return false;
+        }
         self.cancel_running();
+        job.request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         let Ok(mut state) = self.queue.state.lock() else {
-            return;
+            mark_failed(&self.failed, "queue lock poisoned", None);
+            return false;
         };
-        state.jobs.retain(|queued| queued.kind != job.kind);
+        state.jobs.clear();
         state.jobs.push_back(job);
         drop(state);
         self.queue.wake.notify_one();
+        true
     }
 
     /// Take every completion that still belongs to the current generation.
     pub(crate) fn drain(&self) -> Vec<AlignCompletion> {
         let current = self.generation();
+        let newest_request = self.request_sequence.load(Ordering::SeqCst);
         let Ok(mut completions) = self.completions.lock() else {
+            mark_failed(&self.failed, "completion lock poisoned", None);
             return Vec::new();
         };
         let drained: Vec<AlignCompletion> = completions.drain(..).collect();
         drained
             .into_iter()
-            .filter(|completion| completion.generation == current)
+            .filter(|completion| {
+                completion.generation == current && completion.request_id == newest_request
+            })
             .collect()
     }
 
     /// Ask a running job to stop.
     pub(crate) fn cancel_running(&self) {
-        if let Ok(running) = self.running.lock() {
-            if let Some(flag) = running.as_ref() {
-                flag.cancel();
+        match self.running.lock() {
+            Ok(running) => {
+                if let Some(flag) = running.as_ref() {
+                    flag.cancel();
+                }
             }
+            Err(_) => mark_failed(&self.failed, "running-job lock poisoned", None),
         }
     }
 }
@@ -405,15 +467,18 @@ fn run_worker(
     completions: &Arc<Mutex<Vec<AlignCompletion>>>,
     running: &Arc<Mutex<Option<CancelFlag>>>,
     busy: &Arc<AtomicU64>,
+    failed: &Arc<AtomicBool>,
 ) {
     let mut cached = WorkerCache::default();
     loop {
         let job = {
             let Ok(mut state) = queue.state.lock() else {
+                mark_failed(failed, "queue lock poisoned", None);
                 return;
             };
             while state.jobs.is_empty() && !state.shutdown {
                 let Ok(next) = queue.wake.wait(state) else {
+                    mark_failed(failed, "queue wait poisoned", None);
                     return;
                 };
                 state = next;
@@ -428,9 +493,12 @@ fn run_worker(
         };
 
         let cancel = CancelFlag::new();
-        if let Ok(mut slot) = running.lock() {
-            *slot = Some(cancel.clone());
-        }
+        let Ok(mut slot) = running.lock() else {
+            mark_failed(failed, "running-job lock poisoned", None);
+            return;
+        };
+        *slot = Some(cancel.clone());
+        drop(slot);
         busy.fetch_add(1, Ordering::SeqCst);
 
         let outcome = execute(&job, &cancel, &mut cached);
@@ -439,19 +507,48 @@ fn run_worker(
         let abandoned = cancel.is_cancelled();
 
         busy.fetch_sub(1, Ordering::SeqCst);
-        if let Ok(mut slot) = running.lock() {
-            *slot = None;
-        }
+        let Ok(mut slot) = running.lock() else {
+            mark_failed(failed, "running-job lock poisoned", None);
+            return;
+        };
+        *slot = None;
+        drop(slot);
         if abandoned {
             continue;
         }
-        if let Ok(mut published) = completions.lock() {
-            published.push(AlignCompletion {
-                generation: job.generation,
-                outcome,
-            });
+        let Ok(mut published) = completions.lock() else {
+            mark_failed(failed, "completion lock poisoned", None);
+            return;
+        };
+        published.push(AlignCompletion {
+            generation: job.generation,
+            request_id: job.request_id,
+            outcome,
+        });
+    }
+}
+
+/// Record a terminal worker failure once and keep the UI-side state machine
+/// fail-closed. Details go to the diagnostic log; the panel receives only a
+/// stable localized status instead of an OS/thread error sentence.
+fn mark_failed(failed: &AtomicBool, reason: &'static str, detail: Option<String>) {
+    if !failed.swap(true, Ordering::AcqRel) {
+        if let Some(detail) = detail {
+            tracing::error!(reason, detail = %detail, "align worker stopped");
+        } else {
+            tracing::error!(reason, "align worker stopped");
         }
     }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "non-string panic payload".to_string()
 }
 
 /// What the worker keeps between jobs.
@@ -512,9 +609,11 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
     match surface_job {
         SurfaceJob::Refine => {
             match refine(moving, index, job.pose, &job.settings.refine(), cancel) {
-                Ok(report) => AlignOutcome::Refined {
-                    pose: report.rigid,
-                    report: Box::new(report),
+                Ok(report) if report.is_trustworthy_refinement_for(&job.settings.refine()) => {
+                    AlignOutcome::Refined { pose: report.rigid }
+                }
+                Ok(_) => AlignOutcome::Failed {
+                    rejection: AlignFailure::Fit(FitRejection::NoImprovement),
                 },
                 Err(rejection) => AlignOutcome::Failed {
                     rejection: AlignFailure::Fit(rejection),
@@ -571,14 +670,31 @@ fn paint(
     stats: DeviationStats,
     seen: Option<Observability>,
 ) -> AlignOutcome {
-    // Automatic scaling exposes measured structure while preserving the
-    // configured tolerance band.
+    // A numerically valid distance map can still be blind to a rigid slide or
+    // turn. Do not publish colours that look authoritative when the sampled
+    // surface cannot determine the motion that produced them.
+    //
+    // `None` is the degenerate end of that: too little surface, or samples that
+    // do not span six degrees of freedom. It is deliberately not extended to a
+    // *weak* blind direction. `observability()` exists to report those (see
+    // `hidden_displacement_mm`, measured at 0.94-1.007 of the truth on real arch
+    // scans), and `has_blind_direction` is the threshold that says "the estimate
+    // is doing real work here", not "this measurement is worthless". Refusing on
+    // it blocked legitimate full-arch alignments: the sensitivity allowed for a
+    // real arch in `real_scans.rs` extends below it.
+    if stats.summary.is_some() && seen.is_none() {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MeasurementUnobservable,
+        };
+    }
+    // Automatic scaling exposes measured structure while keeping the selected
+    // working range bounded; tolerance remains a statistics threshold only.
     let mut ramp = job.settings.ramp();
     if job.settings.auto_scale {
         // Leave room above the nominal band for a readable gradient.
         ramp.scale_mm = suggested_scale_mm(&stats)
             .max(job.settings.tolerance_mm * BAND_HEADROOM)
-            .min(CLINICAL_CEILING_MM);
+            .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
     }
     AlignOutcome::Measured {
         colors: color_map(map, &ramp),
@@ -663,7 +779,6 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     ) {
         Ok(fit) => AlignOutcome::Aligned {
             pose: fit.rigid,
-            rms: fit.pair_rms,
             rejected: fit.rejected,
         },
         Err(rejection) => AlignOutcome::Failed {

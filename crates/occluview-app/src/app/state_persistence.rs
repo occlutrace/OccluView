@@ -55,7 +55,7 @@ impl PersistenceState {
         };
         let update_check_on_start = settings.update_check_on_start;
         Self {
-            recent_files: load_recent_files(settings.recent_files_limit()),
+            recent_files: load_recent_files(crate::app_settings::RECENT_FILES_LIMIT),
             settings,
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),

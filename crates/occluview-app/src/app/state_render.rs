@@ -17,6 +17,7 @@
 //! prepared scenes are the cross-domain output the viewport consumes.
 
 use super::egui;
+use super::Instant;
 use crate::invalidation::RenderInvalidation;
 use crate::live_viewport::SharedLiveViewport;
 use crate::viewer::DEFAULT_RENDER_EXTENT_PX;
@@ -33,6 +34,18 @@ pub(super) struct RenderState {
     pub(super) camera: Option<Camera>,
     pub(super) live_viewport: Option<SharedLiveViewport>,
     pub(super) offscreen: Option<Offscreen>,
+    /// A terminal offscreen GPU failure must not be retried on every egui
+    /// repaint. The live path has its own fault latch; this one covers the
+    /// fallback path and cut-view readbacks.
+    pub(super) offscreen_failed: bool,
+    /// When the last retryable offscreen failure happened.
+    ///
+    /// A readback deadline is not a device verdict, so the fallback path gets
+    /// another attempt — but not on every repaint, which is the storm the
+    /// terminal latch was added to stop. The wait is short enough that an
+    /// operator who repositions the cut plane does not notice it and long
+    /// enough that a machine under load is not asked to fail on a loop.
+    pub(super) offscreen_retry_after: Option<Instant>,
     pub(super) prepared_scene: Option<PreparedScene>,
     pub(super) prepared_selection_overlay: Option<PreparedScene>,
     pub(super) render_extent_px: [u16; 2],
@@ -50,6 +63,8 @@ impl RenderState {
             camera: None,
             live_viewport,
             offscreen: None,
+            offscreen_failed: false,
+            offscreen_retry_after: None,
             prepared_scene: None,
             prepared_selection_overlay: None,
             render_extent_px: DEFAULT_RENDER_EXTENT_PX,
@@ -72,6 +87,7 @@ mod tests {
         assert!(state.prepared_scene.is_none());
         assert!(state.prepared_selection_overlay.is_none());
         assert!(state.rendered.is_none());
+        assert!(!state.offscreen_failed);
         assert!(!state.invalidation.redraw_pending());
         assert!(!state.invalidation.live_scene_stale());
         assert!(!state.invalidation.offscreen_scene_stale());

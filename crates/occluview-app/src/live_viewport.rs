@@ -2,15 +2,25 @@
 
 use eframe::{egui, egui_wgpu, wgpu};
 use occluview_render::{
-    ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneUpdate,
-    RenderError, Renderer,
+    ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneTopology,
+    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptSurfaceFeedbackRequest,
+    SculptToolUniform,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::LIVE_VIEWPORT_SAMPLE_COUNT;
-
 pub(super) type SharedLiveViewport = Arc<Mutex<LiveViewport>>;
+
+/// One frame's display-only Sculpt cursor. The target identity is kept next
+/// to the GPU inputs so a stale hover cannot light a different layer after a
+/// scene reorder or topology rebuild.
+#[derive(Clone, Copy)]
+pub(super) struct SculptCursor {
+    pub(super) target_index: usize,
+    pub(super) topology: PreparedSceneTopology,
+    pub(super) brush: SculptBrushUniform,
+    pub(super) tool: SculptToolUniform,
+}
 
 pub(super) struct LiveViewport {
     renderer: Renderer,
@@ -26,17 +36,19 @@ pub(super) struct LiveViewport {
     show_ghost: bool,
     prepared_scene: Option<PreparedScene>,
     selection_overlay: Option<PreparedScene>,
+    sculpt_cursor: Option<SculptCursor>,
 }
 
 impl LiveViewport {
     pub(super) fn from_render_state(
         render_state: &egui_wgpu::RenderState,
+        sample_count: u16,
     ) -> Result<SharedLiveViewport, RenderError> {
         let renderer = Renderer::with_shared_device_sample_count(
             Arc::new(render_state.device.clone()),
             Arc::new(render_state.queue.clone()),
             render_state.target_format,
-            u32::from(LIVE_VIEWPORT_SAMPLE_COUNT),
+            u32::from(sample_count),
         )?;
         let fallback_texture = GpuTexture::fallback(&renderer, renderer.device(), renderer.queue());
         let camera_bind_group = renderer.camera_bind_group();
@@ -55,7 +67,13 @@ impl LiveViewport {
             show_ghost: true,
             prepared_scene: None,
             selection_overlay: None,
+            sculpt_cursor: None,
         })))
+    }
+
+    /// Allow drawing to resume after the operator acknowledged a fault.
+    pub(super) fn clear_gpu_fault(&mut self) {
+        self.renderer.clear_gpu_fault();
     }
 
     /// Preference gate for the cut-away ghost pass (see `paint`).
@@ -69,6 +87,9 @@ impl LiveViewport {
         render_extent_px: [u16; 2],
         clip_plane: ClipPlane,
     ) {
+        if self.renderer.is_gpu_faulted() {
+            return;
+        }
         self.renderer.set_point_splat_viewport(
             u32::from(render_extent_px[0]),
             u32::from(render_extent_px[1]),
@@ -91,6 +112,9 @@ impl LiveViewport {
         sources: &[PreparedSceneSource<'_>],
         updates: &[PreparedSceneUpdate],
     ) -> bool {
+        if self.renderer.is_gpu_faulted() {
+            return false;
+        }
         let rebuild = self
             .prepared_scene
             .as_mut()
@@ -117,33 +141,66 @@ impl LiveViewport {
     /// [`PreparedScene::write_entry_vertices_sparse`]).
     pub(super) fn write_scene_vertices_sparse(
         &self,
-        topology: &occluview_render::PreparedSceneTopology,
+        topology: &PreparedSceneTopology,
         vertices: &[occluview_core::Vertex],
         touched: &[usize],
     ) -> bool {
-        self.prepared_scene.as_ref().is_some_and(|scene| {
-            scene.write_entry_vertices_sparse(&self.renderer, topology, vertices, touched)
-        })
+        !self.renderer.is_gpu_faulted()
+            && self.prepared_scene.as_ref().is_some_and(|scene| {
+                scene.write_entry_vertices_sparse(&self.renderer, topology, vertices, touched)
+            })
     }
 
     pub(super) fn write_scene_vertices(
         &self,
-        topology: &occluview_render::PreparedSceneTopology,
+        topology: &PreparedSceneTopology,
         vertices: &[occluview_core::Vertex],
     ) -> bool {
-        self.prepared_scene
-            .as_ref()
-            .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
+        !self.renderer.is_gpu_faulted()
+            && self
+                .prepared_scene
+                .as_ref()
+                .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
+    }
+
+    pub(super) fn has_prepared_scene(&self) -> bool {
+        self.prepared_scene.is_some()
     }
 
     pub(super) fn sync_selection_overlay(&mut self, sources: &[PreparedSceneSource<'_>]) {
+        if self.renderer.is_gpu_faulted() {
+            self.selection_overlay = None;
+            return;
+        }
         self.selection_overlay =
             (!sources.is_empty()).then(|| PreparedScene::prepare(&self.renderer, sources));
+    }
+
+    /// Replace the display-only Sculpt cursor and upload its uniforms before
+    /// the egui paint callback runs. Clearing it writes hidden no-op values so
+    /// a cursor cannot persist after a miss, window occlusion, or scene swap.
+    pub(super) fn set_sculpt_cursor(&mut self, cursor: Option<SculptCursor>) {
+        if self.renderer.is_gpu_faulted() {
+            self.sculpt_cursor = None;
+            return;
+        }
+        let brush = cursor.map_or(SculptBrushUniform::hidden(), |cursor| cursor.brush);
+        let tool = cursor.map_or(SculptToolUniform::hidden(), |cursor| cursor.tool);
+        self.renderer.set_sculpt_brush(&brush);
+        self.renderer.set_sculpt_tool(&tool);
+        self.sculpt_cursor = cursor;
     }
 
     pub(super) fn clear(&mut self) {
         self.prepared_scene = None;
         self.selection_overlay = None;
+        self.sculpt_cursor = None;
+        if self.renderer.is_gpu_faulted() {
+            return;
+        }
+        self.renderer
+            .set_sculpt_brush(&SculptBrushUniform::hidden());
+        self.renderer.set_sculpt_tool(&SculptToolUniform::hidden());
     }
 
     /// Take the most recent wgpu uncaptured error recorded by the device error
@@ -154,6 +211,9 @@ impl LiveViewport {
     }
 
     fn paint(&self, render_pass: &mut wgpu::RenderPass<'static>) {
+        if self.renderer.is_gpu_faulted() {
+            return;
+        }
         let Some(scene) = self.prepared_scene.as_ref() else {
             return;
         };
@@ -183,6 +243,25 @@ impl LiveViewport {
                 &self.fallback_texture.bind_group,
                 &self.clip_bind_group,
             );
+        }
+        if let Some(cursor) = self.sculpt_cursor {
+            let drawn = scene.draw_sculpt_surface_feedback(
+                render_pass,
+                SculptSurfaceFeedbackRequest::new(
+                    &self.renderer,
+                    &self.camera_bind_group,
+                    &self.clip_bind_group,
+                    cursor.target_index,
+                    &cursor.topology,
+                ),
+            );
+            if drawn {
+                self.renderer.draw_sculpt_tool(
+                    render_pass,
+                    &self.camera_bind_group,
+                    &self.clip_bind_group,
+                );
+            }
         }
     }
 }

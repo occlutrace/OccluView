@@ -72,6 +72,10 @@ pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
     visuals.selection.bg_fill = accent.gamma_multiply(0.28);
     visuals.selection.stroke = egui::Stroke::new(1.0_f32, accent);
     visuals.hyperlink_color = accent;
+    // Modal titles and plain labels must use the active chrome ink. The
+    // platform's default text override can remain white in the light theme
+    // even though the window surface has already switched to near-white.
+    visuals.override_text_color = Some(text());
 
     // Static text and disabled chrome.
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, text());

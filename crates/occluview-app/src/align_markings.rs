@@ -32,9 +32,10 @@ pub(crate) const MARKED_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
 pub(crate) const MARKED_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
 
 /// Which scan of the pair a marking belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AlignSide {
     /// The scan being placed.
+    #[default]
     Moving,
     /// The scan that stays put.
     Fixed,
@@ -43,6 +44,14 @@ pub(crate) enum AlignSide {
 impl AlignSide {
     /// Both sides, for the commands that mean "the mesh" rather than "this one".
     pub(crate) const BOTH: [Self; 2] = [Self::Moving, Self::Fixed];
+
+    /// The other member of the pair.
+    pub(crate) const fn opposite(self) -> Self {
+        match self {
+            Self::Moving => Self::Fixed,
+            Self::Fixed => Self::Moving,
+        }
+    }
 }
 
 /// One whole-mesh command from the Brush tool window.
@@ -66,40 +75,6 @@ impl MaskCommand {
         Self::InvertMarkings,
         Self::MarkAutomatic,
     ];
-
-    /// The label on the button, verbatim from the dental CAD software the
-    /// operator already works in.
-    #[cfg(test)]
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Fit everywhere",
-            Self::FitNowhere => "Fit nowhere",
-            Self::InvertMarkings => "Invert markings",
-            Self::MarkAutomatic => "Mark automatic",
-        }
-    }
-
-    /// What the button does, in one line.
-    #[cfg(test)]
-    pub(crate) fn hint(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Clear all existing markings",
-            Self::FitNowhere => "Mark the complete mesh — best-fit matching will have no effect",
-            Self::InvertMarkings => "Mark unmarked areas and vice versa",
-            Self::MarkAutomatic => "Match only on a small area around each arrow end",
-        }
-    }
-
-    /// What to tell the operator afterwards.
-    #[cfg(test)]
-    pub(crate) fn report(self) -> &'static str {
-        match self {
-            Self::FitEverywhere => "Markings cleared — matching on the whole scan",
-            Self::FitNowhere => "Whole mesh marked — best-fit matching will have no effect",
-            Self::InvertMarkings => "Markings inverted",
-            Self::MarkAutomatic => "Matching only around the arrow ends",
-        }
-    }
 
     /// Catalog key for the button label.
     pub(crate) fn label_key(self) -> &'static str {
@@ -255,6 +230,7 @@ impl AlignMarkings {
 
     /// What share of the two scans is marked, or nothing if neither carries a
     /// mask that fits its mesh. Free to call: the counts are maintained here.
+    #[allow(dead_code)]
     pub(crate) fn marked_fraction(&self, moving: MarkedOn, fixed: MarkedOn) -> Option<f32> {
         let mut marked = 0usize;
         let mut total = 0usize;

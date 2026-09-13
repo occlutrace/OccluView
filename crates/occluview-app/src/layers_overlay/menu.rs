@@ -12,7 +12,7 @@ const MENU_WIDTH: f32 = 244.0;
 /// Everything the layer context menu needs about one layer. Shared verbatim by
 /// the layers-overlay rows and the viewport right-click menu so both surface the
 /// identical action set through the same plumbing.
-// Four independent display/state flags, not a state machine — see SceneMesh.
+// Five independent display/state flags, not a state machine — see SceneMesh.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 pub(crate) struct LayerContextMenuTarget {
@@ -24,11 +24,21 @@ pub(crate) struct LayerContextMenuTarget {
     pub(crate) visible: bool,
     pub(crate) wireframe: bool,
     pub(crate) face_editable: bool,
+    /// Whether the layer has payload that can be written. Point clouds are
+    /// exportable as PLY/OBJ even though they are not face-editable.
+    pub(crate) can_export: bool,
     /// Whether this layer's scan colors/texture are currently shown (vs the
     /// flat neutral material).
     pub(crate) show_vertex_colors: bool,
     /// Whether an attached texture is currently sampled.
     pub(crate) show_texture: bool,
+    /// Whether this layer currently wears occlusal-contact marks.
+    pub(crate) contacts: bool,
+    /// Whether a contact reading can be opened on this layer at all: it needs a
+    /// visible triangle surface and a second visible surface to measure
+    /// against. A reading that needs two surfaces must not be an option that
+    /// can only explain why it did nothing.
+    pub(crate) can_read_contacts: bool,
     /// Whether the layer actually carries vertex colors or a texture — the
     /// toggle is a no-op (and stays disabled) on a plain uncolored scan.
     pub(crate) has_color_data: bool,
@@ -69,6 +79,8 @@ pub(crate) fn show_layer_context_menu(
     show_material_actions(ui, target, context_request, locale);
     ui.separator();
     show_mesh_edit_actions(ui, target, context_request, locale);
+    ui.separator();
+    show_contact_actions(ui, target, context_request, locale);
     ui.separator();
     show_layer_actions(ui, target, context_request, locale);
 }
@@ -213,12 +225,60 @@ fn show_mesh_edit_actions(
             AppIcon::Export,
             "Export layer...",
             "layer-menu-export",
-            target.face_editable,
+            target.can_export,
             LayerContextAction::ExportLayer,
         ),
         context_request,
         locale,
     );
+}
+
+/// The occlusal contact reading, offered before the destructive entries so a
+/// measurement sits with the other read-only actions rather than next to
+/// Remove.
+fn show_contact_actions(
+    ui: &mut egui::Ui,
+    target: &LayerContextMenuTarget,
+    context_request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
+) {
+    if target.contacts {
+        layer_menu_button(
+            ui,
+            target,
+            LayerMenuButton::new(
+                AppIcon::Contacts,
+                "Hide contacts",
+                "layer-menu-hide-contacts",
+                true,
+                LayerContextAction::HideContacts,
+            ),
+            context_request,
+            locale,
+        );
+        return;
+    }
+    // The entry is offered but disabled rather than hidden: an operator who
+    // right-clicks a lone scan is asking whether contacts exist here at all, and
+    // a greyed line that explains itself answers that better than a menu that
+    // silently loses an entry. `menu_item` paints no tooltip, so the reason goes
+    // on the row response.
+    let response = layer_menu_button(
+        ui,
+        target,
+        LayerMenuButton::new(
+            AppIcon::Contacts,
+            "Show contacts",
+            "layer-menu-contacts",
+            target.can_read_contacts,
+            LayerContextAction::Contacts,
+        ),
+        context_request,
+        locale,
+    );
+    if !target.can_read_contacts {
+        response.on_hover_text(locale.tr("layer-menu-contacts-unavailable"));
+    }
 }
 
 fn show_layer_actions(
@@ -302,8 +362,9 @@ fn layer_menu_button(
     button: LayerMenuButton<'_>,
     context_request: &mut Option<LayerContextRequest>,
     locale: &crate::i18n::LocaleManager,
-) {
-    if menu_item(ui, button.icon, &locale.tr(button.key), button.enabled).clicked() {
+) -> egui::Response {
+    let response = menu_item(ui, button.icon, &locale.tr(button.key), button.enabled);
+    if response.clicked() {
         *context_request = Some(LayerContextRequest {
             index: target.index,
             layer_id: target.layer_id,
@@ -311,6 +372,7 @@ fn layer_menu_button(
         });
         ui.close();
     }
+    response
 }
 
 /// One custom-rendered context-menu row: a vector glyph in a fixed left gutter,
@@ -566,6 +628,8 @@ mod tests {
             .split_once("\nmod tests {")
             .map_or(source.as_str(), |(source, _)| source);
         for label in [
+            "Show contacts",
+            "Hide contacts",
             "Next tint",
             "Mesh Editing",
             "Split bridge...",
@@ -589,6 +653,48 @@ mod tests {
                 "redundant visibility action should stay out of the compact context menu: {removed}"
             );
         }
+    }
+
+    /// A reading needs two surfaces. The entry is offered DISABLED rather than
+    /// hidden on a case holding one scan, because an operator who right-clicks a
+    /// lone scan is asking whether contacts exist here at all, and a menu that
+    /// silently loses an entry answers that worse than a greyed line does.
+    #[test]
+    fn the_contact_entry_is_disabled_where_a_reading_cannot_run() {
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
+        let production = source
+            .split_once("\nmod tests {")
+            .map_or(source.as_str(), |(source, _)| source);
+        assert!(
+            production.contains("target.can_read_contacts"),
+            "the contact entry must be gated on whether a reading can run at all"
+        );
+        assert!(
+            production.contains("target.contacts"),
+            "a layer already wearing marks offers to take them off instead"
+        );
+    }
+
+    #[test]
+    fn point_clouds_keep_export_without_getting_face_edit_actions() {
+        let source = crate::primary_ui_tests::production_source(include_str!("menu.rs"))
+            .replace("\r\n", "\n");
+        let production_source = source
+            .split_once("\nmod tests {")
+            .map_or(source.as_str(), |(source, _)| source);
+
+        assert!(
+            production_source.contains("target.can_export"),
+            "export availability must be independent from face-editability"
+        );
+        let layer_facade = crate::primary_ui_tests::production_source(include_str!("mod.rs"))
+            .replace("\r\n", "\n");
+        assert!(
+            layer_facade.contains("face_editable: !entry.mesh.is_point_cloud()")
+                && layer_facade.contains("can_export: !entry.mesh.vertices().is_empty()"),
+            "point-cloud and empty-layer capabilities must be derived separately"
+        );
     }
 
     #[test]

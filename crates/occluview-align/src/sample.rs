@@ -18,22 +18,44 @@ pub(crate) fn vertex_at(positions: &[f32], vertex: usize) -> Option<DVec3> {
 /// A stride rather than a random draw: the result must be identical between
 /// runs, and a stride over a scan's vertex order already spreads samples over
 /// the whole surface.
+///
+/// Contract relied on by the refine stages: the result is empty exactly when the
+/// soup has no usable vertex, so emptiness never depends on the budget. The
+/// stride comes from the usable count, so a level with no usable vertex returns
+/// nothing at every budget, and no budget can report evidence where another
+/// reports none. (The sampled *sets* do not nest, because each budget chooses
+/// its own stride alignment.) A refine that treated "the dense level returned
+/// nothing" as recoverable was guarding a state this property makes unreachable.
 #[must_use]
 pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
     let count = soup.vertex_count();
     if count == 0 || budget == 0 {
         return Vec::new();
     }
-    let stride = count.div_ceil(budget).max(1);
-    let mut out = Vec::with_capacity(count.div_ceil(stride));
-    let mut vertex = 0usize;
-    while vertex < count {
-        if !soup.is_excluded(vertex) && vertex_at(soup.positions, vertex).is_some() {
+    // Count usable vertices first. Computing the stride from the raw vertex
+    // count let a periodic exclusion mask alias every sampled index away,
+    // returning no evidence even while valid triangles remained between the
+    // stride positions. A second linear pass keeps the output bounded without
+    // allocating a temporary vector containing the whole mesh.
+    let usable = (0..count)
+        .filter(|&vertex| !soup.is_excluded(vertex) && vertex_at(soup.positions, vertex).is_some())
+        .count();
+    if usable == 0 {
+        return Vec::new();
+    }
+    let stride = usable.div_ceil(budget).max(1);
+    let mut out = Vec::with_capacity(usable.div_ceil(stride));
+    let mut usable_seen = 0usize;
+    for vertex in 0..count {
+        if soup.is_excluded(vertex) || vertex_at(soup.positions, vertex).is_none() {
+            continue;
+        }
+        if usable_seen.is_multiple_of(stride) {
             if let Ok(index) = u32::try_from(vertex) {
                 out.push(index);
             }
         }
-        vertex += stride;
+        usable_seen += 1;
     }
     out
 }
@@ -60,6 +82,10 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
                 usable = false;
                 break;
             }
+            if soup.is_excluded(vertex) {
+                usable = false;
+                break;
+            }
             corners[slot] = point;
             vertices[slot] = vertex;
         }
@@ -71,7 +97,9 @@ pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
             continue;
         }
         for vertex in vertices {
-            normals[vertex] += face;
+            if !soup.is_excluded(vertex) {
+                normals[vertex] += face;
+            }
         }
     }
     for normal in &mut normals {
@@ -91,10 +119,12 @@ pub fn bounds_of(soup: Soup<'_>) -> Option<(DVec3, f64)> {
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut seen = false;
     for vertex in 0..soup.vertex_count() {
-        if let Some(point) = vertex_at(soup.positions, vertex) {
-            min = min.min(point);
-            max = max.max(point);
-            seen = true;
+        if !soup.is_excluded(vertex) {
+            if let Some(point) = vertex_at(soup.positions, vertex) {
+                min = min.min(point);
+                max = max.max(point);
+                seen = true;
+            }
         }
     }
     seen.then(|| ((min + max) * 0.5, (max - min).length()))
@@ -150,6 +180,22 @@ mod tests {
     }
 
     #[test]
+    fn sampling_refills_after_a_stride_would_alias_the_mask() {
+        let positions = vec![0.0; 100 * 3];
+        let mut mask = vec![crate::EXCLUDED; 100];
+        mask[1] = crate::INCLUDED;
+        let soup = Soup {
+            positions: &positions,
+            indices: &[],
+            mask: Some(&mask),
+        };
+
+        let sampled = sample_vertices(soup, 8);
+
+        assert_eq!(sampled, vec![1]);
+    }
+
+    #[test]
     fn vertex_normals_face_the_winding_not_the_file() {
         let (positions, indices) = quad();
         let soup = Soup {
@@ -185,5 +231,88 @@ mod tests {
         };
         assert!(bounds_of(soup).is_none(), "an empty soup has no bounds");
         assert!(sample_vertices(soup, 8).is_empty());
+    }
+
+    #[test]
+    fn masked_geometry_does_not_influence_normals_or_bounds() {
+        let (positions, indices) = quad();
+        let mask = [1, 1, 0, 0];
+        let soup = Soup {
+            positions: &positions,
+            indices: &indices,
+            mask: Some(&mask),
+        };
+        let normals = vertex_normals(soup);
+        assert_eq!(normals[0], DVec3::ZERO);
+        assert_eq!(normals[1], DVec3::ZERO);
+        assert_eq!(
+            normals[2],
+            DVec3::ZERO,
+            "a face touching an excluded vertex is not usable geometry"
+        );
+        assert_eq!(
+            normals[3],
+            DVec3::ZERO,
+            "a face touching an excluded vertex is not usable geometry"
+        );
+        let Some((center, diagonal)) = bounds_of(soup) else {
+            panic!("the included vertices still have bounds");
+        };
+        assert_eq!(center, DVec3::new(0.5, 1.0, 0.0));
+        assert!((diagonal - 1.0).abs() < 1e-9);
+    }
+    /// The property the refine stages actually rely on: emptiness is a fact
+    /// about the soup, not about the budget. A level cannot report evidence
+    /// where another reports none, so "the dense level returned nothing" can
+    /// never mean "the coarse level had evidence the dense one lost".
+    ///
+    /// The sampled sets themselves do *not* nest - each budget aligns its own
+    /// stride - which is why this asserts emptiness rather than a subset.
+    #[test]
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // Fixture grid.
+    fn emptiness_never_depends_on_the_sampling_budget() {
+        let count = 250_000usize;
+        let positions: Vec<f32> = (0..count).flat_map(|i| [i as f32, 0.0, 0.0]).collect();
+        let indices: Vec<u32> = (0..count as u32).collect();
+        let usable = Soup {
+            positions: &positions,
+            indices: &indices,
+            mask: None,
+        };
+        for budget in [1usize, 7, 8_000, 40_000, 250_000] {
+            assert!(
+                !sample_vertices(usable, budget).is_empty(),
+                "a fully usable soup must sample something at budget {budget}"
+            );
+        }
+
+        let excluded = vec![1u8; count];
+        let masked = Soup {
+            positions: &positions,
+            indices: &indices,
+            mask: Some(&excluded),
+        };
+        for budget in [1usize, 8_000, 40_000] {
+            assert!(
+                sample_vertices(masked, budget).is_empty(),
+                "a fully excluded soup must stay empty at budget {budget}"
+            );
+        }
+    }
+
+    /// A soup with nothing usable returns nothing at every budget: empty is a
+    /// property of the input, never of the budget.
+    #[test]
+    fn an_unusable_soup_is_empty_at_every_budget() {
+        let positions: Vec<f32> = vec![f32::NAN; 300];
+        let indices: Vec<u32> = (0..300).collect();
+        let soup = Soup {
+            positions: &positions,
+            indices: &indices,
+            mask: None,
+        };
+        for budget in [8_000usize, 40_000] {
+            assert!(sample_vertices(soup, budget).is_empty());
+        }
     }
 }

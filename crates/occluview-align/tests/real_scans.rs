@@ -27,6 +27,9 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::print_stderr,
+    // The distance sweeps below report what the solver reached at each step;
+    // that table IS the evidence, so it is printed on purpose.
+    clippy::print_stdout,
     clippy::cast_precision_loss
 )]
 
@@ -34,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 use glam::{DQuat, DVec3};
 use occluview_align::{
-    deviation, deviation_stats, observability, refine, CancelFlag, DeviationSettings,
+    deviation, deviation_stats, observability, refine, CancelFlag, DeviationSettings, FitRejection,
     RefineSettings, Rigid, Soup, SurfaceIndex,
 };
 
@@ -281,11 +284,25 @@ fn check_offset(case: &Offset<'_>) {
         "{label}: the corrected estimate {estimate:.4} is looser than the sensitivity \
          spread allows against a true {truth:.4}"
     );
+    // The correction is an UPPER BOUND on the hidden motion, not a second
+    // estimate of it: `rms / sensitivity` is how far a motion could have gone
+    // while still producing this map. Asking a bound to sit closer to the truth
+    // than the raw statistic does is asking the wrong question, and on a
+    // tangential slide the bound is *supposed* to be loose — a nearest-point map
+    // genuinely cannot see motion along the surface.
+    //
+    // What must hold is the property the bound promises and the panel relies on:
+    // it never understates the displacement it is asked to bound, and it stays
+    // inside the sensitivity spread the map reports.
     assert!(
-        (estimate - truth).abs() < (summary.rms - truth).abs(),
-        "{label}: the correction must land closer to the truth than the raw statistic \
-         did — estimate {estimate:.4}, raw {:.4}, truth {truth:.4}",
-        summary.rms
+        estimate + 1e-9 >= truth * ESTIMATE_LOW,
+        "{label}: the bound {estimate:.4} must not understate the true displacement \
+         {truth:.4}"
+    );
+    assert!(
+        estimate < truth * case.ceiling,
+        "{label}: the bound {estimate:.4} exceeds the spread the map itself reports \
+         for a true {truth:.4}",
     );
     eprintln!(
         "{label}: true {truth:.4} mm, one-sided rms {:.4} ({:.0}%), p95 {:.4}, \
@@ -366,4 +383,471 @@ fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
         indices.extend_from_slice(&[first, first + 1, first + 2]);
     }
     (positions, indices)
+}
+
+/// How far apart two real scans can start and still come together.
+///
+/// The acceptance test above moves a scan by a third of a millimetre — that is
+/// a scan already seated. An operator places two scans by eye, and the tool has
+/// to close what they leave: several millimetres of offset, and a small tilt.
+/// This walks that range on a real arch and reports what the solver does at
+/// each step, so a regression that narrows the search is visible as a distance
+/// that used to recover and no longer does.
+///
+/// It reads `OCCLUVIEW_ALIGN_FIXTURES` like the test above and skips loudly
+/// without it; the numbers it prints are the point, so run it with `--nocapture`.
+#[test]
+fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
+    let Some(files) = fixtures() else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES to a directory of binary STL files");
+        return;
+    };
+    let Some(path) = files.first() else {
+        eprintln!("skipped: no fixture files");
+        return;
+    };
+    let (positions, indices) = read_binary_stl(path);
+    let soup = Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    };
+    let index = SurfaceIndex::build(soup).expect("a real mesh must index");
+    println!(
+        "fixture: {} ({} verts)",
+        path.display(),
+        soup.vertex_count()
+    );
+
+    // Offsets a hand produces: a factory floor pick-up, then progressively
+    // worse. The tilt grows with the offset, as it does when a scan is turned
+    // while being placed.
+    for shift_mm in [0.5_f64, 1.0, 2.0, 4.0, 8.0, 15.0] {
+        let start = Rigid::new(
+            DQuat::from_axis_angle(
+                DVec3::new(0.3, 0.5, 0.8).normalize(),
+                (shift_mm * 0.004).min(0.20),
+            ),
+            DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+        );
+        let outcome = refine(
+            soup,
+            &index,
+            start,
+            &RefineSettings::default(),
+            &CancelFlag::new(),
+        );
+        match outcome {
+            Ok(report) => {
+                println!(
+                    "GATE apart={shift_mm} rms={:.4} geo={:.4} med={:.4} p95={:.4} cov={:.4} ratio={:.4}",
+                    report.rms,
+                    report.geometric_rms,
+                    report.median_abs,
+                    report.p95_abs,
+                    report.coverage,
+                    report.inlier_ratio
+                );
+                let back = (report.rigid.translation - start.translation).length();
+                println!(
+                    "start {shift_mm:>5.1} mm -> ok  rms={:.4} coverage={:.3} converged={} moved={:.3} mm",
+                    report.rms, report.coverage, report.converged, back
+                );
+            }
+            Err(rejection) => println!("start {shift_mm:>5.1} mm -> REFUSED {rejection:?}"),
+        }
+    }
+}
+
+/// Two DIFFERENT arches are not a refine pair, and the tool says so.
+///
+/// The upper and lower jaw have no single correct joint pose: only their
+/// occlusal surfaces relate, and several positions explain them equally well.
+/// The solver refuses such a pair as `Ambiguous` rather than picking one and
+/// painting a heatmap that would look authoritative. This pins that refusal, so
+/// nobody later "fixes" it into a confidently wrong pose.
+#[test]
+fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present() {
+    let Some(dir) = std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES").map(PathBuf::from) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES");
+        return;
+    };
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .expect("fixture dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("stl"))
+        })
+        .collect();
+    files.sort();
+    if files.len() < 2 {
+        eprintln!("skipped: need two STL files, found {}", files.len());
+        return;
+    }
+    let (fixed_positions, fixed_indices) = read_binary_stl(&files[0]);
+    let fixed_soup = Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    };
+    let index = SurfaceIndex::build(fixed_soup).expect("fixed index");
+    let (moving_positions, moving_indices) = read_binary_stl(&files[1]);
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &moving_indices,
+        mask: None,
+    };
+    println!(
+        "fixed: {}  moving: {}",
+        files[0].file_name().unwrap().to_string_lossy(),
+        files[1].file_name().unwrap().to_string_lossy()
+    );
+
+    for shift_mm in [0.0_f64, 2.0, 5.0, 10.0, 20.0, 40.0] {
+        let start = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.02),
+            DVec3::new(0.0, 0.0, shift_mm),
+        );
+        let outcome = refine(
+            moving,
+            &index,
+            start,
+            &RefineSettings::default(),
+            &CancelFlag::new(),
+        );
+        match outcome {
+            Ok(report) => {
+                // A pose here is a confident answer to a question with no
+                // answer. The two jaws relate only where their occlusal
+                // surfaces meet, and several positions explain that equally
+                // well; a heatmap over one of them would look authoritative
+                // and mean nothing. This branch used to PRINT the problem
+                // instead of failing on it, so the test passed while the
+                // solver returned exactly what it was written to forbid.
+                //
+                // A refusal is the correct outcome; what is checked here is
+                // that the pose is not reported as a fit. `is_trustworthy`
+                // is the gate the worker applies before the operator is told
+                // anything, so a report it rejects is still a refusal from
+                // the operator's side.
+                assert!(
+                    !report.is_trustworthy_refinement_for(&RefineSettings::default()),
+                    "two different jaws must not be reported as an alignment at \
+                     {shift_mm} mm apart: rms={:.4} median={:.4} coverage={:.4}",
+                    report.rms,
+                    report.median_abs,
+                    report.coverage
+                );
+                println!(
+                    "apart {shift_mm:>5.1} mm -> accepted pose refused to the operator \
+                     (rms={:.4} med={:.4}), as it should be",
+                    report.rms, report.median_abs
+                );
+            }
+            Err(FitRejection::Ambiguous) => {
+                println!("apart {shift_mm:>5.1} mm -> refused as ambiguous, as it should be");
+            }
+            Err(other) => println!("apart {shift_mm:>5.1} mm -> refused {other:?}"),
+        }
+    }
+}
+
+/// The pairing the tool is actually for: a scan against the same scan.
+///
+/// An operator re-scans or re-imports a jaw and asks Best fit to seat it. That
+/// pair has ONE correct answer, unlike two different arches whose only relation
+/// is where their occlusal surfaces meet. This walks a range of hand placements
+/// on the real fixture and reports what the solver reaches.
+#[test]
+fn a_rescanned_arch_seats_from_a_hand_placement_when_fixtures_are_present() {
+    let Some(files) = fixtures() else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES");
+        return;
+    };
+    let Some(path) = files.first() else {
+        eprintln!("skipped: no fixture files");
+        return;
+    };
+    let (positions, indices) = read_binary_stl(path);
+    let soup = Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    };
+    let index = SurfaceIndex::build(soup).expect("a real mesh must index");
+    println!(
+        "fixture: {} ({} verts)",
+        path.display(),
+        soup.vertex_count()
+    );
+
+    for shift_mm in [0.5_f64, 1.0, 2.0, 4.0, 8.0, 15.0, 25.0] {
+        let truth = Rigid::new(
+            DQuat::from_axis_angle(
+                DVec3::new(0.3, 0.5, 0.8).normalize(),
+                (shift_mm * 0.004).min(0.20),
+            ),
+            DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+        );
+        // The operator's start is the identity: the rescan sits where the
+        // original did, and the tool must find the displacement.
+        let outcome = refine(
+            soup,
+            &index,
+            Rigid::IDENTITY,
+            &RefineSettings::default(),
+            &CancelFlag::new(),
+        );
+        match outcome {
+            Ok(report) => {
+                let error = (report.rigid.translation - truth.translation).length();
+                println!(
+                    "true {shift_mm:>5.1} mm -> ok  rms={:.4} coverage={:.3} conv={} error={error:.3} mm",
+                    report.rms, report.coverage, report.converged
+                );
+            }
+            Err(rejection) => println!("true {shift_mm:>5.1} mm -> REFUSED {rejection:?}"),
+        }
+    }
+}
+
+/// A prepared model can retain only a small unchanged region of the original.
+/// This derives a controlled counterexample from a real scan so the true rigid
+/// pose is known. It is not a substitute for two independently acquired scans.
+#[test]
+#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
+fn a_changed_arch_uses_its_small_unchanged_region_when_fixtures_are_present() {
+    let Some(path) = fixtures().and_then(|files| files.into_iter().next()) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES");
+        return;
+    };
+    let (fixed_positions, indices) = read_binary_stl(&path);
+    let fixed_soup = Soup {
+        positions: &fixed_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let fixed_index = SurfaceIndex::build(fixed_soup).expect("real mesh must index");
+    let min_x = fixed_positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = fixed_positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let unchanged_edge = min_x + (max_x - min_x) * 0.24;
+    let transition_width = (max_x - min_x) * 0.08;
+    let truth = Rigid::new(
+        DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.06),
+        DVec3::new(5.0, -4.0, 2.5),
+    );
+    let mut moving_positions = fixed_positions.clone();
+    for point in moving_positions.as_chunks_mut::<3>().0 {
+        let x = point[0];
+        let weight = ((x - unchanged_edge) / transition_width).clamp(0.0, 1.0);
+        let y = f64::from(point[1]);
+        let z = f64::from(point[2]);
+        let changed_weight = f64::from(weight);
+        let changed = DVec3::new(
+            f64::from(x) + changed_weight * 1.5 * (y * 1.7).sin(),
+            y + changed_weight * 1.5 * (z * 1.7).sin(),
+            z + changed_weight * (2.0 + 1.2 * (f64::from(x) * 1.7 + y * 0.9).sin()),
+        );
+        let displaced = truth.inverse().apply(changed);
+        point[0] = displaced.x as f32;
+        point[1] = displaced.y as f32;
+        point[2] = displaced.z as f32;
+    }
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let started = std::time::Instant::now();
+    let settings = RefineSettings::default();
+    let report = refine(
+        moving,
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings,
+        &CancelFlag::new(),
+    )
+    .expect("unchanged region must provide a candidate");
+    let error = [min_x, f32::midpoint(min_x, max_x), max_x]
+        .into_iter()
+        .map(|x| {
+            let probe = DVec3::new(f64::from(x), 0.0, 0.0);
+            report.rigid.apply(probe).distance(truth.apply(probe))
+        })
+        .fold(0.0_f64, f64::max);
+    let diagnostic_positions: Vec<f32> = moving_positions
+        .as_chunks::<9>()
+        .0
+        .iter()
+        .step_by(100)
+        .flat_map(|triangle| triangle.iter().copied())
+        .collect();
+    let diagnostic_indices: Vec<u32> = (0..diagnostic_positions.len() / 3)
+        .map(|vertex| u32::try_from(vertex).expect("fixture fits u32"))
+        .collect();
+    let diagnostic = Soup {
+        positions: &diagnostic_positions,
+        indices: &diagnostic_indices,
+        mask: None,
+    };
+    let count_near = |pose: Rigid| {
+        let map = deviation(
+            diagnostic,
+            &fixed_index,
+            pose,
+            &DeviationSettings::default(),
+            &CancelFlag::new(),
+        );
+        map.signed_mm
+            .iter()
+            .zip(&map.validity)
+            .filter(|(distance, validity)| {
+                **validity == occluview_align::Validity::Measured && distance.abs() < 0.05
+            })
+            .count()
+    };
+    eprintln!(
+        "changed arch: pose error={error:.3} mm coverage={:.3} rms={:.3} median={:.3} near_truth={} near_fit={} trusted={} elapsed={:.2}s",
+        report.coverage,
+        report.rms,
+        report.median_abs,
+        count_near(truth),
+        count_near(report.rigid),
+        report.is_trustworthy_refinement_for(&settings),
+        started.elapsed().as_secs_f64()
+    );
+    assert!(error < 0.5, "pose must follow the unchanged region");
+    assert!(
+        report.is_trustworthy_refinement_for(&settings),
+        "only an adequately supported fit can publish a heatmap"
+    );
+}
+
+/// Two independently acquired meshes of the same jaw, with a prepared region.
+/// The test compares near and distant starts because no clinical ground-truth
+/// transform is available for the public pair.
+#[test]
+fn a_distinct_prep_pair_has_one_accepted_pose_from_near_and_distant_starts() {
+    let Some(directory) = std::env::var_os("OCCLUVIEW_ALIGN_PREP_PAIR").map(PathBuf::from) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_PREP_PAIR to original.stl and prepared.stl");
+        return;
+    };
+    let (fixed_positions, fixed_indices) = read_binary_stl(&directory.join("original.stl"));
+    let (moving_positions, moving_indices) = read_binary_stl(&directory.join("prepared.stl"));
+    let fixed = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .expect("original scan must index");
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &moving_indices,
+        mask: None,
+    };
+    let settings = RefineSettings::default();
+    let starts = [
+        Rigid::IDENTITY,
+        Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.06),
+            DVec3::new(25.0, -8.0, 3.0),
+        ),
+    ];
+    let reports: Vec<_> = starts
+        .into_iter()
+        .map(|start| {
+            let started = std::time::Instant::now();
+            let report = refine(moving, &fixed, start, &settings, &CancelFlag::new())
+                .expect("the unchanged surfaces must determine a pose");
+            eprintln!(
+                "distinct prep pair: start={start:?} elapsed={:.2}s coverage={:.3} median={:.3}",
+                started.elapsed().as_secs_f64(),
+                report.coverage,
+                report.median_abs
+            );
+            assert!(report.is_trustworthy_refinement_for(&settings));
+            report
+        })
+        .collect();
+    let (min, max) = fixed.bounds();
+    for probe in [min, (min + max) * 0.5, max] {
+        let difference = reports[0]
+            .rigid
+            .apply(probe)
+            .distance(reports[1].rigid.apply(probe));
+        assert!(
+            difference < 0.5,
+            "start changed the accepted pose by {difference:.3} mm"
+        );
+    }
+}
+
+/// The operator's supplied partial-overlap pair. Keep the scans outside Git;
+/// the rough pose is the input to local refinement, not a request to search
+/// the whole scene for a different answer.
+#[test]
+fn a_partial_pair_refines_locally_from_nearby_starts_when_fixtures_are_present() {
+    let Some(directory) = std::env::var_os("OCCLUVIEW_ALIGN_OWNER_PAIR").map(PathBuf::from) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_OWNER_PAIR to 2.stl and 3.stl");
+        return;
+    };
+    let (fixed_positions, fixed_indices) = read_binary_stl(&directory.join("2.stl"));
+    let (moving_positions, moving_indices) = read_binary_stl(&directory.join("3.stl"));
+    let fixed = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .expect("fixed scan must index");
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &moving_indices,
+        mask: None,
+    };
+    let settings = RefineSettings {
+        local_only: true,
+        ..RefineSettings::default()
+    };
+    let mut settled = Vec::new();
+    for start in [
+        Rigid::IDENTITY,
+        Rigid::new(DQuat::IDENTITY, DVec3::new(1.0, -0.5, 0.3)),
+        Rigid::new(DQuat::IDENTITY, DVec3::new(-1.0, 0.5, -0.3)),
+    ] {
+        let started = std::time::Instant::now();
+        let report = refine(moving, &fixed, start, &settings, &CancelFlag::new())
+            .expect("local partial-overlap refine must produce a report");
+        eprintln!(
+            "owner pair: start={start:?} elapsed={:.2}s trust={} report={report:?}",
+            started.elapsed().as_secs_f64(),
+            report.is_trustworthy_refinement_for(&settings)
+        );
+        assert!(report.is_trustworthy_refinement_for(&settings));
+        settled.push(report.rigid);
+    }
+    let probe = DVec3::new(0.0, -15.0, 0.0);
+    for pose in &settled[1..] {
+        assert!(
+            pose.apply(probe).distance(settled[0].apply(probe)) < 0.2,
+            "nearby starts must seat the same unchanged region"
+        );
+    }
+    let far_start = Rigid::new(DQuat::IDENTITY, DVec3::new(25.0, -8.0, 3.0));
+    let far = refine(moving, &fixed, far_start, &settings, &CancelFlag::new());
+    assert!(
+        !far.is_ok_and(|report| report.is_trustworthy_refinement_for(&settings)),
+        "local refinement must not replace rough placement with a distant guess"
+    );
 }

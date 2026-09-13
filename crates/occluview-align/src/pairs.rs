@@ -112,6 +112,11 @@ pub enum FitRejection {
         /// Largest displacement a refine is allowed, in millimetres.
         allowed: f64,
     },
+    /// The surface had enough correspondences, but no trustworthy improvement
+    /// over the current placement could be accepted.
+    NoImprovement,
+    /// More than one coarse surface candidate was equally plausible.
+    Ambiguous,
     /// A supplied point or normal was not finite.
     NonFinite,
 }
@@ -192,6 +197,15 @@ pub fn fit_pairs(
     if moving.iter().chain(fixed).any(|point| !point.is_finite()) {
         return Err(FitRejection::NonFinite);
     }
+    if !bounds.moving_center.is_finite()
+        || !bounds.fixed_center.is_finite()
+        || !bounds.moving_extent.is_finite()
+        || bounds.moving_extent < 0.0
+        || !bounds.fixed_extent.is_finite()
+        || bounds.fixed_extent < 0.0
+    {
+        return Err(FitRejection::NonFinite);
+    }
 
     let unit_ratio = distance_ratio(moving, fixed);
     if !(UNIT_RATIO_LOW..=UNIT_RATIO_HIGH).contains(&unit_ratio) {
@@ -258,7 +272,11 @@ fn finish(
 ///
 /// Degeneracy is tested on both sides. Collinear clicks leave rotation about
 /// the line undetermined.
-fn horn_fit(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Result<Rigid, FitRejection> {
+pub(crate) fn horn_fit(
+    moving: &[DVec3],
+    fixed: &[DVec3],
+    keep: &[usize],
+) -> Result<Rigid, FitRejection> {
     let moving_centroid = centroid(moving, keep);
     let fixed_centroid = centroid(fixed, keep);
     if let Some(rejection) = line_degeneracy(moving, keep, moving_centroid) {
@@ -460,6 +478,13 @@ fn two_pair_frame(
         .any(|normal| !normal.is_finite())
     {
         return Err(FitRejection::NonFinite);
+    }
+    if moving_normals
+        .iter()
+        .chain(fixed_normals)
+        .any(|normal| normal.length_squared() <= f64::MIN_POSITIVE)
+    {
+        return Err(ALL_AXES_WEAK);
     }
     let moving_frame = frame_from(moving[0], moving[1], moving_normals[0])?;
     let fixed_frame = frame_from(fixed[0], fixed[1], fixed_normals[0])?;
