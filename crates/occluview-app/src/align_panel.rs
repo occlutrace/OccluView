@@ -3,9 +3,9 @@
 //! The window uses the mesh-editor controls and derives scan roles from the
 //! points selected in the viewport.
 //!
-//! Automatic alignment and manual movement are kept on separate tabs. The
-//! exclusion brush belongs to automatic matching because its mask is an input
-//! to the fit.
+//! The alignment tab presents the rough point fit and local refinement as one
+//! sequence. The second tab is an optional pose adjustment tool; its drag
+//! gesture cannot compete with point placement on the first tab.
 
 use eframe::egui;
 
@@ -24,13 +24,13 @@ pub(crate) const CHIP_HEIGHT: f32 = 26.0;
 /// Corner radius shared by every control in the window.
 pub(crate) const CHIP_ROUNDING: f32 = 5.0;
 
-/// Alignment modes exposed by the window.
+/// Pointer interactions exposed by the window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AlignTab {
-    /// Click matching points, then let the software fit them.
+    /// Place matching points, fit roughly, then refine locally.
     #[default]
     Automatically,
-    /// Drag the scan into place by hand.
+    /// Optionally adjust a scan's pose by hand.
     Manually,
 }
 
@@ -432,8 +432,8 @@ fn back(
     action
 }
 
-/// The two fits. Best fit matching is the primary action and is sized like one:
-/// the point fit only gets the mesh close, the surface fit is what seats it.
+/// One alignment sequence: points establish the rough pose; local surface
+/// matching then seats it. A scan already placed nearby may skip the first step.
 fn fits(
     ui: &mut egui::Ui,
     tool: &AlignTool,
@@ -445,28 +445,28 @@ fn fits(
     if fit_button(
         ui,
         width,
-        AppIcon::AlignRefine,
-        &locale.tr("align-fit-refine"),
-        tool.can_measure() && enabled,
-        true,
-    )
-    .on_hover_text(locale.tr("align-fit-refine-hint"))
-    .clicked()
-    {
-        action = Some(AlignPanelAction::Refine);
-    }
-    if fit_button(
-        ui,
-        width,
         AppIcon::AlignFit,
-        &locale.tr("align-fit-perform"),
+        &format!("1. {}", locale.tr("align-fit-perform")),
         tool.can_align() && enabled,
-        false,
+        true,
     )
     .on_hover_text(locale.tr("align-fit-perform-hint"))
     .clicked()
     {
         action = Some(AlignPanelAction::Align);
+    }
+    if fit_button(
+        ui,
+        width,
+        AppIcon::AlignRefine,
+        &format!("2. {}", locale.tr("align-fit-refine")),
+        tool.can_measure() && enabled,
+        false,
+    )
+    .on_hover_text(locale.tr("align-fit-refine-hint"))
+    .clicked()
+    {
+        action = Some(AlignPanelAction::Refine);
     }
     action
 }

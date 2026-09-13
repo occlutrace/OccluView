@@ -226,14 +226,10 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// Mesh Editor-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
-    /// Consumed only while the Sculpt tab owns the editor and no text field has
-    /// focus. Edit Mesh keeps digit keys available for its own context.
+    /// In Mesh Editor, `1` opens Sculpt with Add/Remove and `2` with Smooth.
+    /// Text fields retain digit keys.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
-        if self.tools.editor_tab != mesh_editor_overlay::EditorTab::Sculpt
-            || !self.document.edit_mode.has_active_session()
-            || ctx.egui_wants_keyboard_input()
-        {
+        if !self.document.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
             return false;
         }
         if ctx.input_mut(|input| {
@@ -609,10 +605,12 @@ impl OccluViewApp {
         let worker = self.tools.sculpt.worker.as_ref().filter(|worker| {
             worker.layer_id == layer_id && worker.topology_id == entry.mesh.topology_id()
         });
-        // Preparing a scan-sized brush BVH takes seconds; the cursor must not
-        // wait for it. The mesh's own pick tree answers meanwhile — the worker
-        // builds one for exactly this reason — so the ring is on the surface
-        // from the first hover instead of appearing once preparation lands.
+        // The preparation thread warms this shared tree before building the
+        // sculpt session. Never make the UI wait inside OnceLock on a cold
+        // scan-sized BVH; show the cursor as soon as that first stage is ready.
+        if worker.is_none() && !entry.mesh.bvh_is_ready() {
+            return None;
+        }
         let (triangle_index, local_point) =
             match worker.and_then(|worker| worker.pick_local_ray(local_origin, local_direction)) {
                 Some(hit) => hit,
@@ -663,7 +661,7 @@ impl OccluViewApp {
         // foreground editor window owns the pointer even when it sits inside
         // the viewport rectangle, and a preparing worker is not ready to
         // accept a dab yet.
-        if !viewport_response.contains_pointer() || self.tools.sculpt.worker.is_none() {
+        if !viewport_response.contains_pointer() {
             self.publish_sculpt_cursor(None);
             return;
         }
