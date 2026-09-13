@@ -142,9 +142,10 @@ impl DocumentState {
     /// The cost argument is the smaller half, and the numbers are smaller than
     /// they used to be. `SceneMesh::mesh` is an `Arc<Mesh>`, so `Arc::make_mut`
     /// on a shared scene copies the per-layer container and its metadata, not
-    /// the vertices, indices, or decoded texture. Measured on one 945k-vertex
-    /// layer: 5 ns for `make_mut` as sole handle against 71 ns with a second
-    /// handle alive, and cloning the scene outright is 39 ns. Those are per-frame
+    /// the vertices, indices, or decoded texture. On one layer of 945k vertices
+    /// (a synthetic arch, release build, Linux x86-64): 5 ns for `make_mut` as
+    /// sole handle against 71 ns with a second handle alive, and cloning the
+    /// scene outright is 39 ns. Those are per-frame
     /// costs worth not paying, not the tens of milliseconds a copied case would
     /// be, and they are recorded here as measurements rather than as a warning
     /// about a case-sized copy that no longer happens.

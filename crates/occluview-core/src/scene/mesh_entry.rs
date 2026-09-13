@@ -24,11 +24,12 @@ pub struct SceneMesh {
     /// reading the geometry.
     ///
     /// What is copied now is the container and this entry's metadata, not the
-    /// geometry. Measured on one 945k-vertex layer: cloning the scene is 39 ns,
-    /// and `Arc::make_mut` is 5 ns as sole handle against 71 ns with a second
-    /// handle alive. The numbers are small because the expensive half is shared;
-    /// they are not zero, so a second handle is still worth avoiding on a
-    /// per-frame path.
+    /// geometry. On a synthetic arch (release build, Linux x86-64): cloning the
+    /// scene is 39 ns, and `Arc::make_mut` is 5-6 ns as sole handle against
+    /// 47-67 ns with a second handle alive — the spread is the layer count, and
+    /// 945k vertices costs the same as 100, because the vertices are behind this
+    /// `Arc`. The numbers are small for that reason; they are not zero, so a
+    /// second handle is still worth avoiding on a per-frame path.
     ///
     /// `Mesh` is already an immutable value -- every mutation is a `with_*`
     /// constructor that mints fresh identity -- so sharing it costs no

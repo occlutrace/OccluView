@@ -7,12 +7,19 @@
 //! `commit_scene_draft` → `commit_structural_scene` — and then ask the export
 //! defaults what directory, filename, and format a layer would get.
 
-#![allow(clippy::expect_used)]
+#![allow(
+    clippy::expect_used,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 
+use super::app_layer_edits;
 use super::app_mesh_export::{
     default_layer_export_directory, default_layer_export_format, default_layer_export_stem,
 };
 use super::app_test_support::{named_scene, push_named_layer, scene_names, test_app};
+use super::layers_overlay::LayerOverlayChanges;
 use super::*;
 use crate::edit_mode::EditModeCommand;
 use occluview_core::{Mesh, SceneMesh, Vertex};
@@ -188,5 +195,189 @@ fn removing_a_layer_keeps_the_survivor_path_aligned() {
         default_layer_export_directory(&app.persistence.current_paths, 0, None),
         Some(cases),
         "and into its own folder"
+    );
+}
+
+/// Append a second grid mesh, so a part can be cut out of a part.
+fn append_cuttable_layer(scene: &mut Scene, name: &str, x_offset: f32) {
+    let mut other = cuttable_scene(name);
+    let mut entry = other.remove(0).expect("the grid scene holds one layer");
+    entry.transform = glam::Affine3A::from_translation(glam::Vec3::new(x_offset, 0.0, 0.0));
+    scene.add(entry);
+}
+
+/// A grid mesh whose faces can actually be cut, unlike `named_scene`'s single
+/// triangle (a whole-mesh selection is refused by design). Partial statements
+/// are skipped by the shared test config, so a cut is neither empty nor whole.
+fn cuttable_scene(name: &str) -> Scene {
+    let cols = 4;
+    let rows = 4;
+    let mut vertices = Vec::new();
+    for y in 0..=rows {
+        for x in 0..=cols {
+            vertices.push(Vertex::at(glam::Vec3::new(x as f32, y as f32, 0.0)));
+        }
+    }
+    let stride = cols + 1;
+    let mut indices = Vec::new();
+    for y in 0..rows {
+        for x in 0..cols {
+            let a = u32::try_from(y * stride + x).expect("grid index fits u32");
+            let b = a + 1;
+            let c = a + u32::try_from(stride).expect("stride fits u32");
+            let d = c + 1;
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    let mesh = Mesh::new(Some(name.to_string()), vertices, indices).expect("grid mesh");
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(mesh));
+    scene
+}
+
+/// Run the operator's Cut Selection to New Layer through the same executor the
+/// Layer menu and the Mesh Editor buttons use: arm face selection on `index`,
+/// mark one triangle, apply the action, commit the draft.
+fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
+    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let entry = scene.meshes()[index].clone();
+    let layer_id = entry.id();
+    let total = entry.mesh.triangle_count();
+    assert!(
+        total >= 8,
+        "a whole-mesh selection is refused by design, and the part must be \
+         large enough to cut again, so the source needs several triangles"
+    );
+    assert!(
+        app.document
+            .edit_mode
+            .begin_face_selection(&entry, scene.as_ref()),
+        "the edit session must open"
+    );
+    // Mark a quarter of the faces: not empty, and not the whole mesh.
+    let marked = total / 4;
+    for triangle_index in 0..marked {
+        assert!(
+            app.document.edit_mode.select_face_hit(
+                scene.as_ref(),
+                occluview_core::ScenePickHit {
+                    layer_index: index,
+                    layer_id,
+                    triangle_index,
+                    point: glam::Vec3::ZERO,
+                    distance: 1.0,
+                },
+            ),
+            "face {triangle_index} must be markable"
+        );
+    }
+    let mut draft = scene.as_ref().clone();
+    let apply = app_layer_edits::apply_visible_selected_face_mesh_edit_action(
+        &mut draft,
+        &mut app.document.edit_mode,
+        LayerContextAction::CutSelectionToNewLayer,
+    )
+    .expect("cut ok");
+    assert!(apply.scene_changed, "the cut must change the scene");
+    let ids_before: Vec<_> = scene.meshes().iter().map(SceneMesh::id).collect();
+    for id in draft
+        .meshes()
+        .iter()
+        .map(SceneMesh::id)
+        .filter(|id| !ids_before.contains(id))
+    {
+        app.document.mark_mesh_edits_unsaved(id);
+    }
+    let previous = app.document.scene.clone();
+    app.commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
+}
+
+/// Remove a layer through the real overlay commit path.
+fn remove_layer(app: &mut OccluViewApp, index: usize) {
+    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let layer_id = scene.meshes()[index].id();
+    let paths = app.persistence.current_paths.clone();
+    app.apply_layer_overlay_changes(
+        scene,
+        &paths,
+        LayerOverlayChanges {
+            context_request: Some(LayerContextRequest {
+                index,
+                layer_id,
+                action: LayerContextAction::Remove,
+            }),
+            layer_edits: Vec::new(),
+        },
+        &egui::Context::default(),
+    );
+}
+
+#[test]
+fn a_second_generation_part_keeps_its_ancestor_file() {
+    // Two unrelated scans are open. A part is cut out of the first scan, that
+    // scan is removed, a part is cut out of the part, and the part is removed.
+    // What is left still descends from lower.stl, so its export defaults must
+    // say so -- and must not fall through to the other case that happens to sit
+    // next to it in the scene.
+    let mut app = test_app("provenance-generations");
+    let cases = std::env::temp_dir().join(format!("occluview-gen-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&cases);
+    let lower_file = cases.join("lower.stl");
+    let bite_file = cases.join("bite.obj");
+    let mut scene = cuttable_scene("lower");
+    append_cuttable_layer(&mut scene, "bite", 20.0);
+    app.document.scene = Some(Arc::new(scene));
+    app.persistence.current_paths = vec![lower_file.clone(), bite_file.clone()];
+
+    // Generation 1: cut a part out of the imported scan.
+    cut_one_triangle(&mut app, 0);
+    assert_eq!(
+        scene_names(&app),
+        vec!["lower".to_string(), "lower".to_string(), "bite".to_string()],
+        "the cut inserts the part right after its source"
+    );
+    assert_eq!(
+        app.persistence.current_paths[1], lower_file,
+        "the first-generation part inherits its source file"
+    );
+
+    // The imported scan leaves; the part carries its file forward.
+    remove_layer(&mut app, 0);
+    assert_eq!(
+        app.persistence.current_paths,
+        vec![lower_file.clone(), bite_file.clone()],
+        "the part keeps the inherited path after its source is removed"
+    );
+
+    // Generation 2: cut a part out of the part. Its ancestor is no longer in
+    // the scene, which is where the provenance chain was being dropped.
+    cut_one_triangle(&mut app, 0);
+
+    // The intermediate part leaves too, so nothing left in the scene sits
+    // between generation 2 and the unrelated scan.
+    remove_layer(&mut app, 0);
+
+    let scene = app.document.scene.as_ref().expect("scene");
+    let paths = app.persistence.current_paths.clone();
+    assert_eq!(paths.len(), scene.meshes().len(), "paths stay aligned");
+    assert_eq!(
+        scene_names(&app),
+        vec!["lower".to_string(), "bite".to_string()],
+        "what remains is generation 2 and the unrelated scan"
+    );
+    assert_eq!(
+        default_layer_export_directory(&paths, 0, None),
+        Some(cases.clone()),
+        "a second-generation part must still be offered its ancestor's folder"
+    );
+    assert_eq!(
+        default_layer_export_stem(&paths, scene, 0, MeshWriteFormat::StlBinary),
+        "lower",
+        "and its ancestor's file name, not the neighbouring scan's"
+    );
+    assert_eq!(
+        default_layer_export_format(&paths, 0, MeshWriteFormat::Obj),
+        MeshWriteFormat::StlBinary,
+        "and its ancestor's format"
     );
 }

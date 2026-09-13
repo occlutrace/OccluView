@@ -7,20 +7,34 @@ pub(super) fn reconcile_scene_paths(
     new_scene: &Scene,
 ) -> Vec<PathBuf> {
     let mut paths_by_id = HashMap::with_capacity(old_scene.meshes().len());
+    // The file a lineage was imported from, keyed by the id of the layer that
+    // was imported. A derived layer records that original id as its source, and
+    // it keeps recording it after the original layer is deleted: a part cut out
+    // of a part still names the imported scan it descends from. That is the
+    // right answer for export, but it means the id in `paths_by_id` may already
+    // be gone by the time a later generation is cut. This map is what carries
+    // the file forward when it is.
+    let mut paths_by_origin = HashMap::with_capacity(old_scene.meshes().len());
     for (index, entry) in old_scene.meshes().iter().enumerate() {
-        paths_by_id.insert(
-            entry.id(),
-            old_paths.get(index).cloned().unwrap_or_default(),
-        );
+        let path = old_paths.get(index).cloned().unwrap_or_default();
+        paths_by_id.insert(entry.id(), path.clone());
+        if !path.as_os_str().is_empty() {
+            paths_by_origin
+                .entry(entry.export_source_layer_id())
+                .or_insert(path);
+        }
     }
 
     new_scene
         .meshes()
         .iter()
         .map(|entry| {
+            let origin = entry.export_source_layer_id();
             paths_by_id
                 .get(&entry.id())
-                .or_else(|| paths_by_id.get(&entry.export_source_layer_id()))
+                .filter(|path| !path.as_os_str().is_empty())
+                .or_else(|| paths_by_id.get(&origin))
+                .or_else(|| paths_by_origin.get(&origin))
                 .cloned()
                 .unwrap_or_default()
         })

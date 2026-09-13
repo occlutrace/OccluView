@@ -273,12 +273,12 @@ impl SculptTool {
         let worker_cancel = Arc::clone(&cancel);
 
         // The worker gets the one mesh it prepares, not the case it came from.
-        // An `Arc<Scene>` alive in a background thread makes every in-place
-        // scene edit on the UI thread copy the whole case for as long as the
-        // preparation runs -- seconds on a full arch, which is why it is
-        // off-thread at all. In that window an opacity slider, a tint, an align
-        // nudge or a ghost toggle each paid 45 ms, and a debug build tripped
-        // the assertion in `live_scene_mut`.
+        // An `Arc<Scene>` alive in a background thread would make every
+        // in-place scene edit on the UI thread find a second handle for as long
+        // as the preparation runs: the edit would land in a copy the worker
+        // never reads, and the container is copied per frame until the worker
+        // finishes. Taking the mesh keeps the worker on the geometry it
+        // actually needs, which is also why this can run off-thread.
         //
         // The mesh itself is shared, so this is a pointer: the worker warms the
         // very cell the scene will read, which is the point of warming it.

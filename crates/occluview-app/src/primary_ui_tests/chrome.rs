@@ -216,9 +216,9 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
     );
     // The early return is only half of it. The material-only path goes through
     // `Arc::make_mut`, which copies the scene container while a second handle
-    // is alive (measured: 71 ns against 5 ns for 945k-vertex layer), so the
-    // overlay must HAND OVER its handle rather than lend it and drop it before
-    // touching the live scene.
+    // is alive (one 945k-vertex layer, release build: 71 ns against 5 ns as
+    // sole owner), so the overlay must HAND OVER its handle rather than lend it
+    // and drop it before touching the live scene.
     assert!(
         viewport_source.contains("scene: Arc<Scene>,"),
         "the overlay handler must take ownership of the scene handle"
