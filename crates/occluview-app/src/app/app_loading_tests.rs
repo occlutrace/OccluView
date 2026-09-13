@@ -273,6 +273,7 @@ fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
         start: Affine3A::IDENTITY,
         centroid: glam::Vec3::ZERO,
         was_unsaved: false,
+        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -352,6 +353,7 @@ fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
         start,
         centroid: glam::Vec3::ZERO,
         was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        revision_after_own_mark: None,
     });
 
     // Out, then back along the same axis.
@@ -401,6 +403,7 @@ fn a_drag_that_returns_to_its_start_keeps_edits_that_were_already_unsaved() {
         start,
         centroid: glam::Vec3::ZERO,
         was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -436,6 +439,7 @@ fn a_drag_that_returns_to_its_start_keeps_another_layers_unsaved_edits() {
         start,
         centroid: glam::Vec3::ZERO,
         was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -469,6 +473,7 @@ fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
         start,
         centroid: glam::Vec3::ZERO,
         was_unsaved: false,
+        revision_after_own_mark: None,
     });
     app.nudge_align_layer(
         layer_id,
@@ -498,5 +503,55 @@ fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
         app.document.scene.as_ref().expect("scene").meshes()[0].transform,
         start,
         "one Ctrl+Z returns the whole gesture"
+    );
+}
+
+#[test]
+fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
+    // The drag is in flight and something else commits an edit to the same
+    // layer — a finished sculpt stroke, a landed fit. The pose then returns to
+    // where the drag began. The drag's own mark is withdrawn, but the work that
+    // landed mid-gesture is unsaved and must survive: clearing it would let the
+    // app close without asking about an edited scan.
+    let mut app = test_app("drag-round-trip-mid-gesture");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+        was_unsaved: false,
+        revision_after_own_mark: None,
+    });
+
+    // Drag out: the gesture marks the layer.
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)),
+    );
+    assert!(app.document.has_unsaved_mesh_edits());
+
+    // Something else commits to the same layer while the operator is still
+    // holding the button.
+    app.document.mark_mesh_edits_unsaved(layer_id);
+
+    // Drag back to the starting pose.
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0)),
+    );
+    assert_eq!(
+        app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+        start,
+        "fixture: the pose is back where it began"
+    );
+
+    app.finish_align_drag();
+
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "an edit that landed during the gesture must still be unsaved work"
     );
 }
