@@ -29,6 +29,17 @@ pub(crate) struct AlignDrag {
     /// that mark has to come off again — unless it was there before the drag,
     /// in which case the work it stands for is still unsaved and must survive.
     pub(super) was_unsaved: bool,
+    /// The content revision immediately after this gesture's own last mark.
+    ///
+    /// `was_unsaved` answers "was this layer already dirty", which is not enough
+    /// on its own: another subsystem can commit an edit to the same layer while
+    /// the gesture is in flight — a finished sculpt stroke, a landed fit — and a
+    /// drag back to its starting pose must not clear that work. Every such
+    /// commit bumps the content revision, so the gesture records the revision it
+    /// left behind after marking and withdraws its mark only while the revision
+    /// still matches: anything else that landed in between made the layer
+    /// unsaved for a reason this drag knows nothing about.
+    pub(super) revision_after_own_mark: Option<u64>,
 }
 
 impl OccluViewApp {
@@ -104,6 +115,7 @@ impl OccluViewApp {
                     .transform
                     .transform_point3(entry.mesh.bbox_cached().center()),
                 was_unsaved: self.document.unsaved_edit_layer_ids.contains(&hit.layer_id),
+                revision_after_own_mark: None,
             });
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
@@ -218,15 +230,24 @@ impl OccluViewApp {
         if Some(pose) != started_at {
             // A moved pose is unsaved work, whoever asked for the move.
             self.document.mark_mesh_edits_unsaved(layer);
+            if let Some(drag) = self.tools.align.drag.as_mut() {
+                drag.revision_after_own_mark = Some(self.document.content_revision);
+            }
             return;
         }
-        // The pose is back where the gesture found it. Only the gesture knows
-        // whether the layer was already unsaved before it started, so only the
-        // gesture may withdraw its own mark; anything else leaves the set alone.
-        if let Some(drag) = self.tools.align.drag {
-            if !drag.was_unsaved {
-                self.document.forget_unsaved_edits(&[layer]);
-            }
+        // The pose is back where the gesture found it. Withdraw the mark only
+        // when this gesture is the only thing that has touched the document:
+        // a layer that was already unsaved, or one that something else made
+        // unsaved mid-gesture, holds work the drag did not create. Leaving a
+        // mark in that case costs the operator a question at close; clearing
+        // it would cost them the work.
+        let Some(drag) = self.tools.align.drag else {
+            return;
+        };
+        let own_mark_stands_alone =
+            drag.revision_after_own_mark == Some(self.document.content_revision);
+        if !drag.was_unsaved && own_mark_stands_alone {
+            self.document.forget_unsaved_edits(&[layer]);
         }
     }
 
