@@ -10,7 +10,9 @@
 #![allow(clippy::expect_used)]
 
 use super::app_align_drag::AlignDrag;
-use super::app_test_support::{delivered_load, named_scene, scene_names, test_app};
+use super::app_test_support::{
+    delivered_load, named_scene, push_named_layer, scene_names, test_app,
+};
 use super::layers_overlay::LayerOverlayChanges;
 use super::*;
 use crate::edit_mode::{BusyFinish, EditModeCommand};
@@ -270,6 +272,7 @@ fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
         layer: layer_id,
         start: Affine3A::IDENTITY,
         centroid: glam::Vec3::ZERO,
+        was_unsaved: false,
     });
     app.nudge_align_layer(
         layer_id,
@@ -327,4 +330,173 @@ fn removing_the_last_layer_does_not_edit_the_scene_while_a_handle_is_alive() {
     assert!(app.document.scene.is_none(), "the last layer is gone");
     assert!(app.persistence.current_paths.is_empty());
     assert!(app.document.unsaved_edit_layer_ids.is_empty());
+}
+
+#[test]
+fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
+    // The operator grabs a scan, moves it, puts it back exactly where it was,
+    // and lets go. Nothing about the document changed, so nothing may be
+    // flagged and no history step may be recorded -- while the guard that
+    // watches an unreleased move still sees the pose during the gesture.
+    let mut app = test_app("drag-round-trip");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    assert!(
+        !app.document.has_unsaved_mesh_edits(),
+        "fixture starts clean"
+    );
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+        was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
+    });
+
+    // Out, then back along the same axis.
+    let out = Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0));
+    let back = Affine3A::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0));
+    app.nudge_align_layer(layer_id, out);
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "an unreleased move is work the operator can see: the load guard reads this"
+    );
+    app.nudge_align_layer(layer_id, back);
+
+    let acted = app.finish_align_drag();
+
+    assert!(!acted, "a drag that ended where it started is not an edit");
+    assert_eq!(
+        app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+        start,
+        "the pose is back where it began"
+    );
+    assert!(
+        !app.document.has_unsaved_mesh_edits(),
+        "nothing changed, so nothing may be reported as unsaved"
+    );
+    assert!(
+        app.document.edit_mode.undo_layer_id().is_none(),
+        "and no undo step may have been recorded"
+    );
+}
+
+#[test]
+fn a_drag_that_returns_to_its_start_keeps_edits_that_were_already_unsaved() {
+    // A layer that already carried unsaved edits keeps them. The round-trip
+    // drag must not clear work it did not create.
+    let mut app = test_app("drag-round-trip-prior-edits");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    app.document.mark_mesh_edits_unsaved(layer_id);
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "fixture starts dirty"
+    );
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+        was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)),
+    );
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0)),
+    );
+
+    app.finish_align_drag();
+
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "a drag that cancelled itself must not erase edits the layer already had"
+    );
+}
+
+#[test]
+fn a_drag_that_returns_to_its_start_keeps_another_layers_unsaved_edits() {
+    // The same, with the pre-existing edit on a different layer: the round-trip
+    // drag on a clean layer must not touch it.
+    let mut app = test_app("drag-round-trip-other-layer");
+    let mut scene = named_scene("scene-a", 0.0);
+    let other_id = push_named_layer(&mut scene, "scene-b", 20.0);
+    app.document.scene = Some(Arc::new(scene));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    app.document.mark_mesh_edits_unsaved(other_id);
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+        was_unsaved: app.document.unsaved_edit_layer_ids.contains(&layer_id),
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)),
+    );
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0)),
+    );
+
+    app.finish_align_drag();
+
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "the other layer's unsaved work must survive the round-trip drag"
+    );
+    assert_eq!(scene_names(&app).len(), 2);
+}
+
+#[test]
+fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
+    // The other half of the round-trip contract: a gesture that really moved
+    // the scan must still be marked unsaved and recorded as exactly one step.
+    let mut app = test_app("drag-real-move");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+        was_unsaved: false,
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)),
+    );
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(1.0, 0.0, 0.0)),
+    );
+    let ended = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    assert_ne!(ended, start, "fixture: the scan ended somewhere else");
+
+    assert!(app.finish_align_drag(), "a real move is a recorded edit");
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "a move the operator kept is unsaved work"
+    );
+    assert_eq!(
+        app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+        ended,
+        "the pose the operator released on is the one that stays"
+    );
+
+    app.apply_history_navigation_now(false, &egui::Context::default());
+
+    assert_eq!(
+        app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+        start,
+        "one Ctrl+Z returns the whole gesture"
+    );
 }
