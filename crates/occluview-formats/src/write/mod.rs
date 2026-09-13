@@ -598,11 +598,12 @@ mod tests {
     #[test]
     fn overwrite_semantics_truncate_existing_file() {
         let mesh = triangle_mesh();
-        let file = NamedTempFile::new().expect("temp file");
-        std::fs::write(file.path(), b"stale bytes").expect("seed file");
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.obj");
+        std::fs::write(&destination, b"stale bytes").expect("seed file");
 
         let report = write_mesh_overwrite(
-            file.path(),
+            &destination,
             &mesh,
             MeshWriteFormat::Obj,
             MeshWriteOptions::default(),
@@ -610,7 +611,7 @@ mod tests {
         .expect("overwrite");
 
         assert_eq!(report.format, MeshWriteFormat::Obj);
-        let bytes = std::fs::read(file.path()).expect("read back");
+        let bytes = std::fs::read(&destination).expect("read back");
         assert!(!bytes.starts_with(b"stale bytes"));
     }
 
@@ -932,14 +933,15 @@ mod tests {
 
     #[test]
     fn a_point_cloud_still_writes_where_the_format_supports_it() {
-        let file = NamedTempFile::new().expect("temp file");
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("cloud.ply");
         let cloud = Mesh::point_cloud(
             Some("cloud".to_string()),
             vec![Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0))],
         );
 
         let report = write_mesh_overwrite(
-            file.path(),
+            &destination,
             &cloud,
             MeshWriteFormat::PlyBinaryLittleEndian,
             MeshWriteOptions::default(),
@@ -947,7 +949,7 @@ mod tests {
         .expect("PLY carries point clouds");
 
         assert_eq!(report.format, MeshWriteFormat::PlyBinaryLittleEndian);
-        assert!(!std::fs::read(file.path()).expect("read back").is_empty());
+        assert!(!std::fs::read(&destination).expect("read back").is_empty());
     }
 
     #[test]
