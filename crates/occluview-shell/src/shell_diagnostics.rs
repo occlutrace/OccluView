@@ -69,7 +69,6 @@ impl ShellDiagnosticComponent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ShellDiagnosticStage {
     Activation,
-    Source,
     SceneLoad,
     Adapter,
     Render,
@@ -81,7 +80,6 @@ impl ShellDiagnosticStage {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Activation => "activation",
-            Self::Source => "source",
             Self::SceneLoad => "scene_load",
             Self::Adapter => "adapter",
             Self::Render => "render",
