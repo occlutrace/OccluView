@@ -12,7 +12,7 @@ use std::path::Path;
 
 /// How an interactive save-edited-layers pass ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SaveEditedLayersOutcome {
+pub(crate) enum SaveEditedLayersOutcome {
     /// Every layer with unsaved edits was exported.
     AllSaved,
     /// The operator cancelled a dialog or an export failed; unsaved edits
@@ -133,6 +133,13 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return SaveEditedLayersOutcome::NothingToSave;
         };
+        // The save flow runs while the guard is open, so a hand-drag can still
+        // be in flight: its pose is one of the things the operator is being
+        // asked about. Releasing it first turns it into the committed edit it
+        // already is on screen — one history step, one entry in the set — so
+        // the export below cannot report "nothing to save" about a scan the
+        // operator can see was moved.
+        self.finish_align_drag();
         let paths = self.persistence.current_paths.clone();
         let pending: Vec<(usize, occluview_core::SceneMeshId)> = scene
             .meshes()

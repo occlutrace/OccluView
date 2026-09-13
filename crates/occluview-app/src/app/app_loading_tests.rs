@@ -10,6 +10,7 @@
 #![allow(clippy::expect_used)]
 
 use super::app_align_drag::AlignDrag;
+use super::app_mesh_export::SaveEditedLayersOutcome;
 use super::app_test_support::{
     delivered_load, named_scene, push_named_layer, scene_names, test_app,
 };
@@ -694,5 +695,46 @@ fn clearing_the_scene_clears_an_open_drags_provisional_pose() {
     assert!(
         !app.document.has_unsaved_mesh_edits(),
         "a cleared scene has nothing unsaved, drag pose included"
+    );
+}
+
+#[test]
+fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
+    // The operator moves a scan, keeps the button down, and opens a file. The
+    // guard offers Save, and the save flow must not answer "nothing to save"
+    // about a scan the operator can see was moved. It is run through the real
+    // entry point; the export dialog is reached only when there is something to
+    // ask about, so a `NothingToSave` answer here is the defect.
+    let mut app = test_app("guard-save-mid-drag");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+    app.tools.align.drag = Some(AlignDrag {
+        layer: layer_id,
+        start,
+        centroid: glam::Vec3::ZERO,
+    });
+    app.nudge_align_layer(
+        layer_id,
+        Affine3A::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
+    );
+    assert!(
+        app.document.has_unsaved_mesh_edits(),
+        "fixture: work is held"
+    );
+
+    // No dialog can be answered in a test, so the flow is expected to stop at
+    // the export dialog and report Aborted. What it must not do is claim there
+    // was nothing to save, which is the answer that drops the held pose.
+    let outcome = app.save_edited_layers_flow();
+
+    assert_ne!(
+        std::mem::discriminant(&outcome),
+        std::mem::discriminant(&SaveEditedLayersOutcome::NothingToSave),
+        "a held drag is work: the save flow must offer it, not discard it"
+    );
+    assert!(
+        app.document.unsaved_edit_layer_ids.contains(&layer_id),
+        "and the move is now a committed edit, so a later save still has it"
     );
 }
