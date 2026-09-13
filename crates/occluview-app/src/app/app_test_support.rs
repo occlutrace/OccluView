@@ -9,6 +9,13 @@
 //! single-instance claim, reads the operator's state directory, and starts
 //! worker threads. [`test_app`] keeps the same types and skips all three, so a
 //! test never touches the machine it runs on.
+//!
+//! State directory: `OCCLUVIEW_TEST_STATE_DIR` redirects `app_state_dir` to one
+//! process-wide temporary directory. It is deliberately a single directory
+//! rather than one per test — the variable is process-global and tests run in
+//! parallel, so per-test values would race and a test could read another's
+//! path. Nothing here asserts on that directory's contents; the point is that
+//! an incidental write cannot reach the real one.
 
 #![allow(clippy::expect_used)]
 
@@ -18,17 +25,17 @@ use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 /// A real app with a headless egui context, no live viewport, no startup files,
 /// no single-instance claim, and a per-test temporary state directory.
 pub(super) fn test_app(name: &str) -> OccluViewApp {
-    let state_root =
-        std::env::temp_dir().join(format!("occluview-app-tests-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&state_root);
-    let _ = std::fs::create_dir_all(&state_root);
+    let _ = name;
     std::env::set_var("OCCLUVIEW_NO_UPDATE_CHECK", "1");
-    std::env::remove_var("XDG_STATE_HOME");
-    std::env::remove_var("APPDATA");
-    std::env::remove_var("LOCALAPPDATA");
-    std::env::set_var("OCCLUVIEW_TEST_STATE_DIR", &state_root);
-    let ctx = egui::Context::default();
-    OccluViewApp::new_for_tests(ctx)
+    std::env::set_var(crate::app_paths::TEST_STATE_DIR_ENV, test_state_dir());
+    OccluViewApp::new_for_tests(egui::Context::default())
+}
+
+/// The one temporary state directory every headless app test shares.
+fn test_state_dir() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("occluview-app-tests-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&root);
+    root
 }
 
 /// A scene whose single layer is named, so a test can tell two scenes apart
