@@ -363,19 +363,13 @@ $profileDir = switch ($Configuration) {
     "debug" { "debug" }
     "diagnostic" { "release-diagnostic-unwind" }
 }
-$shellProfileDir = switch ($Configuration) {
-    "release" { "release-unwind" }
-    "debug" { "debug" }
-    "diagnostic" { "release-diagnostic-unwind" }
-}
 $isDiagnosticPackage = $Configuration -eq "diagnostic"
 # A diagnostic MSI is intentionally a non-release artifact. When built from
 # the manual workflow it is downloadable to repository readers from that run,
 # never published as a GitHub Release asset; package only remapped PDBs and
 # safe JSONL helpers, never patient data.
 $buildDir = Join-Path $repoRoot (Join-Path "target\$Target" $profileDir)
-$shellBuildDir = Join-Path $repoRoot (Join-Path "target\$Target" $shellProfileDir)
-$shellDllSource = Join-Path $shellBuildDir "occluview_shell.dll"
+$shellDllDestination = Join-Path $buildDir "occluview_shell.dll"
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $repoRoot "dist"
 }
@@ -532,8 +526,8 @@ if (-not $SkipBuild) {
             if ($referenceShellFileVersion -notin @($Version, "$Version.0")) {
                 throw "Reference shell DLL version '$referenceShellFileVersion' does not match MSI version '$Version'."
             }
-            New-Item -ItemType Directory -Path $shellBuildDir -Force | Out-Null
-            Copy-Item -LiteralPath $referenceShellDll -Destination $shellDllSource -Force
+            New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+            Copy-Item -LiteralPath $referenceShellDll -Destination $shellDllDestination -Force
         } else {
             & cargo @shellCargoArgs
             if ($LASTEXITCODE -ne 0) {
@@ -565,15 +559,11 @@ if (-not $SkipBuild) {
     }
 }
 
-# The wxs harvests both artifacts from one BuildDir: stage the unwind-profile
-# DLL next to the exe so the existing -dBuildDir contract stays intact.
-# (-SkipBuild reuses a previously staged DLL, so the copy is conditional.)
-if (Test-Path $shellDllSource) {
-    Copy-Item $shellDllSource (Join-Path $buildDir "occluview_shell.dll") -Force
-}
+# The app and shell use the same profile, so WiX reads both from BuildDir.
+# SkipBuild reuses the artifacts already present there.
 $required = @(
     (Join-Path $buildDir "occluview.exe"),
-    (Join-Path $buildDir "occluview_shell.dll")
+    $shellDllDestination
 )
 foreach ($path in $required) {
     if (-not (Test-Path $path)) {
@@ -582,12 +572,7 @@ foreach ($path in $required) {
 }
 $diagnosticContents = @()
 if ($isDiagnosticPackage) {
-    $shellPdbSource = Join-Path $shellBuildDir "occluview_shell.pdb"
     $shellPdbDestination = Join-Path $buildDir "occluview_shell.pdb"
-    if (-not (Test-Path -LiteralPath $shellPdbSource -PathType Leaf)) {
-        throw "Required diagnostic shell PDB missing: $shellPdbSource"
-    }
-    Copy-Item -LiteralPath $shellPdbSource -Destination $shellPdbDestination -Force
 
     $diagnosticRequired = @(
         (Join-Path $buildDir "occluview.pdb"),
