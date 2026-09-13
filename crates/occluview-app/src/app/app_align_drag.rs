@@ -22,6 +22,13 @@ pub(crate) struct AlignDrag {
     pub(super) start: Affine3A,
     /// Its centre in world, the pivot a Ctrl-drag turns about.
     pub(super) centroid: Vec3,
+    /// Whether this layer already had unsaved edits when the gesture began.
+    ///
+    /// The drag marks the layer as it moves, so a scene replace cannot discard
+    /// a pose the operator can see. If they put the scan back before releasing,
+    /// that mark has to come off again — unless it was there before the drag,
+    /// in which case the work it stands for is still unsaved and must survive.
+    pub(super) was_unsaved: bool,
 }
 
 impl OccluViewApp {
@@ -96,6 +103,7 @@ impl OccluViewApp {
                 centroid: entry
                     .transform
                     .transform_point3(entry.mesh.bbox_cached().center()),
+                was_unsaved: self.document.unsaved_edit_layer_ids.contains(&hit.layer_id),
             });
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
@@ -196,11 +204,29 @@ impl OccluViewApp {
         // operator can see. Recording it here instead of only at release keeps
         // a scene replace from discarding a move that has not been released
         // yet: the load guard and the unsaved-close guard both read this, and
-        // on a mouse-move frame neither had heard of the drag. A drag that has
-        // returned to where it started is not a change, so it is not flagged.
-        if let Some(pose) = pose.filter(|pose| Some(*pose) != started_at) {
-            let _ = pose;
+        // on a mouse-move frame neither had heard of the drag.
+        //
+        // The drag owns this mark for as long as the gesture lasts, so it also
+        // takes it back. An operator who moves a scan and puts it back exactly
+        // where it was has changed nothing, and a drag that ended by itself
+        // must not leave the close guard asking about a pose identical to the
+        // one on disk. A layer that was already unsaved stays unsaved: that
+        // work was not this gesture's to withdraw.
+        let Some(pose) = pose else {
+            return;
+        };
+        if Some(pose) != started_at {
+            // A moved pose is unsaved work, whoever asked for the move.
             self.document.mark_mesh_edits_unsaved(layer);
+            return;
+        }
+        // The pose is back where the gesture found it. Only the gesture knows
+        // whether the layer was already unsaved before it started, so only the
+        // gesture may withdraw its own mark; anything else leaves the set alone.
+        if let Some(drag) = self.tools.align.drag {
+            if !drag.was_unsaved {
+                self.document.forget_unsaved_edits(&[layer]);
+            }
         }
     }
 

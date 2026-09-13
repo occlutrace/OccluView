@@ -11,6 +11,13 @@ remain in the Git history.
 - The heatmap opens at 0.05–0.20 mm. Its cool and hot limits are editable above and below the colour legend.
 - In Mesh Editing, keys 1 and 2 open the Sculpt tab with Add/Remove and Smooth respectively. The sculpt cursor appears as soon as the background picking tree is ready, before brush preparation finishes.
 - Modal text and Mesh Editing headings use readable ink in the light theme.
+- A scan moved by hand in Align Scans and put back before the mouse is released
+  is no longer reported as unsaved work, and does not leave a step behind. Work
+  that was already unsaved stays unsaved, and a drag that ended somewhere else
+  is still one undo step.
+- A layer cut out of another keeps the file it descends from when its source
+  layer is no longer in the scene. The export dialog opens in that file's
+  folder, under its name and format, instead of a neighbouring case's.
 
 ## 1.1.1 - 2026-09-03
 
