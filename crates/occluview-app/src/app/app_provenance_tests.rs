@@ -381,3 +381,106 @@ fn a_second_generation_part_keeps_its_ancestor_file() {
         "and its ancestor's format"
     );
 }
+
+/// Run any visible-selection action through the batch executor and commit.
+fn run_selection_action(app: &mut OccluViewApp, index: usize, action: LayerContextAction) {
+    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let entry = scene.meshes()[index].clone();
+    let total = entry.mesh.triangle_count();
+    assert!(total >= 8, "the source needs faces to cut");
+    assert!(
+        app.document
+            .edit_mode
+            .begin_face_selection(&entry, scene.as_ref()),
+        "the edit session must open"
+    );
+    for triangle_index in 0..(total / 4) {
+        assert!(
+            app.document.edit_mode.select_face_hit(
+                scene.as_ref(),
+                occluview_core::ScenePickHit {
+                    layer_index: index,
+                    layer_id: entry.id(),
+                    triangle_index,
+                    point: glam::Vec3::ZERO,
+                    distance: 1.0,
+                },
+            ),
+            "face {triangle_index} must be markable"
+        );
+    }
+    let mut draft = scene.as_ref().clone();
+    let apply = app_layer_edits::apply_visible_selected_face_mesh_edit_action(
+        &mut draft,
+        &mut app.document.edit_mode,
+        action,
+    )
+    .expect("action ok");
+    assert!(apply.scene_changed, "the action must change the scene");
+    let ids_before: Vec<_> = scene.meshes().iter().map(SceneMesh::id).collect();
+    for id in draft
+        .meshes()
+        .iter()
+        .map(SceneMesh::id)
+        .filter(|id| !ids_before.contains(id))
+    {
+        app.document.mark_mesh_edits_unsaved(id);
+    }
+    let previous = app.document.scene.clone();
+    app.commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
+}
+
+#[test]
+fn cut_and_separate_parts_inherit_their_source_file_everywhere() {
+    // Every structural op that spawns a layer must hand the new layer the
+    // source's file, so a save dialog opens beside the scan it came from. The
+    // executors are what the Layer menu and the Mesh Editor buttons run.
+    let cases = std::env::temp_dir().join(format!("occluview-inherit-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&cases);
+    let source_file = cases.join("scan.stl");
+
+    for action in [
+        LayerContextAction::CutSelectionToNewLayer,
+        LayerContextAction::SeparateSelectedComponents,
+    ] {
+        let mut app = test_app("provenance-inherit");
+        let mut scene = cuttable_scene("scan");
+        append_cuttable_layer(&mut scene, "other", 20.0);
+        app.document.scene = Some(Arc::new(scene));
+        app.persistence.current_paths = vec![source_file.clone(), cases.join("other.obj")];
+
+        run_selection_action(&mut app, 0, action);
+
+        let scene = app.document.scene.as_ref().expect("scene");
+        let paths = app.persistence.current_paths.clone();
+        assert!(
+            paths.len() > 2,
+            "{action:?} must have spawned at least one layer"
+        );
+        assert_eq!(paths.len(), scene.meshes().len(), "paths stay aligned");
+        // The layer marked "other" is an unrelated import and must keep its
+        // own file; every layer the action spawned inherits the source's.
+        let other_ids: Vec<_> = scene
+            .meshes()
+            .iter()
+            .filter(|entry| entry.mesh.name() != Some("scan"))
+            .map(SceneMesh::id)
+            .collect();
+        let mut checked = 0;
+        for index in 0..scene.meshes().len() {
+            if other_ids.contains(&scene.meshes()[index].id()) {
+                continue;
+            }
+            if index == 0 {
+                continue; // the source layer itself
+            }
+            assert_eq!(
+                default_layer_export_stem(&paths, scene, index, MeshWriteFormat::StlBinary),
+                "scan",
+                "layer {index} after {action:?} must inherit the source name"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "{action:?} must have spawned a layer to check");
+    }
+}
