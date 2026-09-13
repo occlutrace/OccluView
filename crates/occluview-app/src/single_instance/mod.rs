@@ -95,6 +95,12 @@ pub(crate) struct OpenRequestListener {
 }
 
 impl OpenRequestListener {
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        let (_sender, receiver) = mpsc::channel();
+        Self { receiver }
+    }
+
     pub(crate) fn spawn(repaint_ctx: egui::Context) -> Self {
         let (sender, receiver) = mpsc::channel();
         #[cfg(windows)]

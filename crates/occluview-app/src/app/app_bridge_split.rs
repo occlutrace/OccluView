@@ -62,11 +62,12 @@ impl OccluViewApp {
         // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
         // first hover/plant doesn't freeze the UI building it on a big scan.
         //
-        // The thread takes the one mesh it warms, not the case it came from:
-        // an `Arc<Scene>` held here made every scene edit on the UI thread copy
-        // the whole case for as long as the warm ran, which is most of a
-        // second on a full arch. The mesh is shared, so this costs a pointer
-        // and the thread warms the very cell the scene will read.
+        // The thread takes the one mesh it warms, not the case it came from: an
+        // `Arc<Scene>` held here would keep a second handle alive for as long as
+        // the warm ran, so an edit on the UI thread would copy the container
+        // instead of landing in the scene the operator sees. The mesh is shared,
+        // so this costs a pointer and the thread warms the very cell the scene
+        // will read.
         let target_mesh = self
             .document
             .scene

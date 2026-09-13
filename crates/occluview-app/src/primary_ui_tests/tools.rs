@@ -36,7 +36,13 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        "self.tools.align.drag = None;",
+        // A gesture is ended through `discard_align_drag`, which drops the drag
+        // and the provisional-pose term together. Asserting the raw field write
+        // would pass while the term stayed set and the close guard kept asking
+        // about a drag that no longer exists. This is the discard rather than
+        // the committing form because this path is revoking the scene state, not
+        // turning a gesture into an edit.
+        "self.discard_align_drag();",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
         "self.tools.align.geometry.clear();",
@@ -280,7 +286,8 @@ const IN_PLACE_SCENE_EDITS: &[&str] = &[
 /// A handle is alive from the `self.scene.clone()` that made it until the
 /// scan leaves the brace depth it was made at, or until an explicit `drop`.
 /// Anything in between that edits the scene in place will find a second
-/// handle, and `Arc::make_mut` will copy the whole case.
+/// handle: the edit lands in a copy the reader never sees, and the container is
+/// copied per frame.
 ///
 /// This is a structural property rather than a snapshot of the current
 /// wording: renaming a binding, reflowing an argument list or restructuring
@@ -325,10 +332,13 @@ fn scene_handles_alive_across_an_edit(source: &str) -> Vec<String> {
 
 #[test]
 fn nothing_holds_a_second_scene_handle_across_an_in_place_edit() {
-    // `live_scene_mut` asserts in debug that it holds the only Arc<Scene>; its
-    // doc has the per-frame cost of a second handle. That assertion is the
-    // detector, this is what stops the shape coming back, and it checks the
-    // property rather than the wording.
+    // `live_scene_mut` asserts in debug that it holds the only Arc<Scene>: a
+    // second handle means a reader that will not see the edit, and a container
+    // copied per frame. The assertion is the runtime detector; this analyzer is
+    // what stops the shape coming back in a module no test happens to drive,
+    // and it checks the property (a handle alive past its block) rather than
+    // the wording. A renamed binding or a reflowed argument list leaves it
+    // intact; moving a clone out of its block does not.
     for module in [
         "src/app/app_align_brush.rs",
         "src/app/app_align_display.rs",

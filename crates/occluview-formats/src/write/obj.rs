@@ -1,4 +1,4 @@
-use super::{fmt_f32, sanitize_obj_name, MeshWriteOptions, MeshWriteReport, MeshWriteWarning};
+use super::{sanitize_obj_name, FmtF32, MeshWriteOptions, MeshWriteReport, MeshWriteWarning};
 use crate::error::FormatError;
 use occluview_core::{Mesh, MeshKind};
 use std::io::Write;
@@ -30,9 +30,9 @@ pub(super) fn write_mesh<W: Write>(
             writeln!(
                 writer,
                 "v {} {} {} {} {} {}",
-                fmt_f32(vertex.position[0]),
-                fmt_f32(vertex.position[1]),
-                fmt_f32(vertex.position[2]),
+                FmtF32(vertex.position[0]),
+                FmtF32(vertex.position[1]),
+                FmtF32(vertex.position[2]),
                 vertex.color[0],
                 vertex.color[1],
                 vertex.color[2],
@@ -41,9 +41,9 @@ pub(super) fn write_mesh<W: Write>(
             writeln!(
                 writer,
                 "v {} {} {}",
-                fmt_f32(vertex.position[0]),
-                fmt_f32(vertex.position[1]),
-                fmt_f32(vertex.position[2]),
+                FmtF32(vertex.position[0]),
+                FmtF32(vertex.position[1]),
+                FmtF32(vertex.position[2]),
             )?;
         }
     }
@@ -53,8 +53,8 @@ pub(super) fn write_mesh<W: Write>(
             writeln!(
                 writer,
                 "vt {} {}",
-                fmt_f32(vertex.uv[0]),
-                fmt_f32(vertex.uv[1]),
+                FmtF32(vertex.uv[0]),
+                FmtF32(vertex.uv[1]),
             )?;
         }
     }
@@ -65,9 +65,9 @@ pub(super) fn write_mesh<W: Write>(
             writeln!(
                 writer,
                 "vn {} {} {}",
-                fmt_f32(vertex.normal[0]),
-                fmt_f32(vertex.normal[1]),
-                fmt_f32(vertex.normal[2]),
+                FmtF32(vertex.normal[0]),
+                FmtF32(vertex.normal[1]),
+                FmtF32(vertex.normal[2]),
             )?;
         }
     }
@@ -184,5 +184,38 @@ mod tests {
             mesh.vertices()[0].position
         );
         assert_eq!(round_trip.vertices()[0].color, [11, 22, 33, 255]);
+    }
+
+    /// The exact coordinate rendering is part of the file format.
+    ///
+    /// This pins the digits the writer produces, including negative zero and
+    /// the sixth-decimal rounding, so a performance change to the formatting
+    /// path cannot quietly alter what an operator's mill reads.
+    #[test]
+    fn coordinate_rendering_is_pinned() {
+        let mesh = Mesh::new(
+            Some("pin".to_string()),
+            vec![
+                Vertex::at(glam::Vec3::new(0.0, -0.0, 1.0 / 3.0)).with_uv([0.0, 1.0 / 7.0]),
+                Vertex::at(glam::Vec3::new(-1.0, 2.123_456_7, -1e-7)),
+                Vertex::at(glam::Vec3::new(12_345.679, f32::MIN_POSITIVE, 1.0)),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("pin mesh");
+        let mut bytes = Vec::new();
+        crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::Obj,
+            MeshWriteOptions::default(),
+        )
+        .expect("write obj");
+        let text = String::from_utf8(bytes).expect("utf-8");
+
+        assert!(text.contains("v 0.000000 -0.000000 0.333333"), "{text}");
+        assert!(text.contains("v -1.000000 2.123457 -0.000000"), "{text}");
+        assert!(text.contains("vt 0.000000 0.142857"), "{text}");
+        assert!(text.contains("v 12345.678711 0.000000 1.000000"), "{text}");
     }
 }

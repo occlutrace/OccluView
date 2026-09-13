@@ -141,9 +141,12 @@ impl ThumbnailRenderRequest {
 }
 /// Maximum stream size the shell thumbnail path will parse.
 pub const MAX_THUMBNAIL_INPUT_BYTES: usize = 192 * 1024 * 1024;
-/// Maximum local-file thumbnail input size. File-backed thumbnails use mmap,
-/// so this policy can be higher than the stream cap without duplicating the
-/// file into the COM surrogate's heap.
+/// Maximum local-file thumbnail input size.
+///
+/// The file path reads the whole file into an owned buffer before parsing, so
+/// the cap is what bounds the surrogate's heap; it is higher than the stream
+/// cap because a local file is a deliberate request rather than data arriving
+/// over a pipe.
 pub const MAX_THUMBNAIL_FILE_BYTES: usize = 512 * 1024 * 1024;
 
 static THUMBNAIL_INFLIGHT: OnceLock<
@@ -278,11 +281,12 @@ pub fn render_thumbnail_bytes(
     rendering::render_mesh_thumbnail(mesh, spec, RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT))
 }
 
-/// Load a local file via the shared mmap-backed reader and render a thumbnail.
+/// Load a local file through the shared reader and render a thumbnail.
 ///
 /// This path is preferred for Explorer `IInitializeWithFile` /
 /// `IInitializeWithItem` initialization because it keeps the extension hint
-/// for HPS and avoids an extra full-file copy for large STL/PLY/OBJ files.
+/// for HPS, which the byte-stream entry point cannot: the hint is what selects
+/// the container parser.
 ///
 /// # Errors
 /// Returns [`ThumbnailError::Format`] for unsupported/malformed inputs and

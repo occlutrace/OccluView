@@ -10,9 +10,15 @@ use occluview_formats::write::{
 use std::ffi::OsStr;
 use std::path::Path;
 
+/// The layers a guard Save… flow would export, with the scene they came from.
+pub(super) struct PendingLayerExports {
+    pub(super) scene: std::sync::Arc<Scene>,
+    pub(super) pending: Vec<(usize, occluview_core::SceneMeshId)>,
+}
+
 /// How an interactive save-edited-layers pass ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SaveEditedLayersOutcome {
+pub(crate) enum SaveEditedLayersOutcome {
     /// Every layer with unsaved edits was exported.
     AllSaved,
     /// The operator cancelled a dialog or an export failed; unsaved edits
@@ -129,11 +135,22 @@ impl OccluViewApp {
     /// Walk every layer with unsaved edits through the export dialog, one at
     /// a time. Stops at the first cancelled dialog or failed write so the
     /// operator is never told edits were saved when they were not.
-    pub(super) fn save_edited_layers_flow(&mut self) -> SaveEditedLayersOutcome {
-        let Some(scene) = self.document.scene.clone() else {
-            return SaveEditedLayersOutcome::NothingToSave;
-        };
-        let paths = self.persistence.current_paths.clone();
+    ///
+    /// The layers the guard's Save… flow would export, in scene order.
+    ///
+    /// Split from the dialog loop so the decision — including releasing a drag
+    /// that is still in flight — is one function that a test can drive without
+    /// opening a native file dialog. `None` means there was nothing to save.
+    pub(super) fn pending_layer_exports(&mut self) -> Option<PendingLayerExports> {
+        let scene = self.document.scene.clone()?;
+        // The save flow runs while the guard is open, so a hand-drag can still
+        // be in flight: its pose is one of the things the operator is being
+        // asked about. Releasing it first turns it into the committed edit it
+        // already is on screen — one history step, one entry in the set — so
+        // the export below cannot report "nothing to save" about a scan the
+        // operator can see was moved.
+        self.finish_align_drag();
+        let scene = self.document.scene.clone().unwrap_or(scene);
         let pending: Vec<(usize, occluview_core::SceneMeshId)> = scene
             .meshes()
             .iter()
@@ -145,8 +162,16 @@ impl OccluViewApp {
             // Edited layers may have been removed from the scene since; the
             // guard has nothing actionable left.
             self.document.clear_unsaved_mesh_edits();
-            return SaveEditedLayersOutcome::NothingToSave;
+            return None;
         }
+        Some(PendingLayerExports { scene, pending })
+    }
+
+    pub(super) fn save_edited_layers_flow(&mut self) -> SaveEditedLayersOutcome {
+        let Some(PendingLayerExports { scene, pending }) = self.pending_layer_exports() else {
+            return SaveEditedLayersOutcome::NothingToSave;
+        };
+        let paths = self.persistence.current_paths.clone();
         for (index, layer_id) in pending {
             let request = LayerContextRequest {
                 index,

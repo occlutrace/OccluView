@@ -57,8 +57,12 @@ pub(crate) mod app_layer_edits;
 mod app_layer_interaction;
 mod app_load_errors;
 mod app_loading;
+#[cfg(test)]
+mod app_loading_tests;
 mod app_mesh_editor;
 mod app_mesh_export;
+#[cfg(test)]
+mod app_provenance_tests;
 mod app_recent_popup;
 mod app_render;
 #[cfg(test)]
@@ -74,6 +78,8 @@ mod app_sculpt_characterization_tests;
 mod app_sculpt_worker;
 mod app_settings_panel;
 mod app_settings_window;
+#[cfg(test)]
+mod app_test_support;
 mod app_third_party;
 mod app_viewport;
 mod disc_frame;
