@@ -24,6 +24,7 @@ members = [
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
     "crates/occluview-align",
+    "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
     "crates/occluview-formats",
@@ -42,6 +43,7 @@ exclude = ["fuzz"]
 default-members = [
     "crates/occlu-mesh-edit",
     "crates/occluview-align",
+    "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
     "crates/occluview-formats",
@@ -54,7 +56,7 @@ default-members = [
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 rust-version = "1.98"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
@@ -71,6 +73,7 @@ occlu-geometry-math = { path = "crates/occlu-geometry-math" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-align   = { path = "crates/occluview-align" }
+occluview-contact = { path = "crates/occluview-contact" }
 occluview-core    = { path = "crates/occluview-core" }
 occluview-hps = { path = "crates/occluview-hps" }
 occluview-formats = { path = "crates/occluview-formats" }
@@ -189,7 +192,7 @@ must_use_candidate      = { level = "allow", priority = 1 }
 needless_pass_by_value  = { level = "allow", priority = 1 }
 
 [profile.release]
-# Strongly optimize the viewer and shell DLL.
+# Strongly optimize command-line tools and any local release builds.
 opt-level = 3
 lto = "thin"
 codegen-units = 1
@@ -197,21 +200,20 @@ strip = "symbols"
 debug = false
 panic = "abort"
 
-# The Explorer shell DLL builds with THIS profile: panic = "abort" in a cdylib
-# hosted by dllhost.exe turns any panic into an abort of the whole surrogate
-# process, blanking every thumbnail in the folder. Unwinding alone is not the
-# protection, though — Rust also aborts when a panic reaches an extern
-# "system" boundary (every COM vtable shim), so the real safety net is the
-# catch_unwind at each COM entry (`com_entry` in occluview-shell). This
-# profile is what makes those catches able to catch at all.
+# The shipped desktop app and Explorer shell use this profile. The viewer's
+# sculpt worker and the shell's COM boundaries both catch panics and turn them
+# into a typed failure/placeholder; that protection is unreachable in the
+# default abort profile. Unwinding alone is not the shell protection, though —
+# Rust also aborts when a panic reaches an extern "system" boundary, so the
+# shell still relies on catch_unwind at every COM entry (`com_entry`).
 [profile.release-unwind]
 inherits = "release"
 panic = "unwind"
 
 # Non-release diagnostic packages retain optimized code generation while
-# carrying PDBs. The app still aborts on panic; the Explorer-hosted shell DLL
-# gets the matching unwind profile below so its COM entry guards can contain a
-# panic.
+# carrying PDBs. The desktop diagnostic app and Explorer-hosted shell DLL both
+# use the matching unwind profile below so their boundary guards can contain a
+# panic and leave a report instead of terminating the host/process.
 [profile.release-diagnostic]
 inherits = "release"
 debug = 2

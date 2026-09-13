@@ -44,15 +44,6 @@ pub(crate) enum ViewportBackground {
 impl ViewportBackground {
     pub(crate) const OPTIONS: [Self; 3] = [Self::Gray, Self::White, Self::Dark];
 
-    #[cfg(test)]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Gray => "Gray",
-            Self::White => "White",
-            Self::Dark => "Dark",
-        }
-    }
-
     /// Whether the clear color reads as dark. Overlays painted directly on the
     /// render (scale bar) pick their ink by this — not by the chrome theme,
     /// which is an independent setting.
@@ -123,14 +114,6 @@ pub(crate) enum ThemePreference {
 
 impl ThemePreference {
     pub(crate) const OPTIONS: [Self; 2] = [Self::Light, Self::Dark];
-
-    #[cfg(test)]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-        }
-    }
 }
 
 fn deserialize_export_format<'de, D>(deserializer: D) -> Result<FallbackExportFormat, D::Error>
@@ -144,6 +127,14 @@ where
         _ => FallbackExportFormat::Ply,
     })
 }
+
+/// Entries the Open menu's recent list keeps.
+///
+/// Fixed rather than a preference: it changed how long a menu was, which has no
+/// clinical outcome, and it sat in a panel of choices that change what the
+/// operator sees on a scan. The field stays in the settings file so an existing
+/// document keeps loading, but nothing writes it any more.
+pub(crate) const RECENT_FILES_LIMIT: usize = 8;
 
 /// The durable choices exposed by the preferences panel. Many independent
 /// toggles is the shape of a preferences document; collapsing them into enums
@@ -199,7 +190,7 @@ impl Default for Settings {
             double_click_resets_camera: true,
             orbit_sensitivity: 1.0,
             zoom_sensitivity: 1.0,
-            recent_files_limit: 8,
+            recent_files_limit: RECENT_FILES_LIMIT,
             viewport_background: ViewportBackground::default(),
             show_cut_ghost: true,
             unit_display: UnitDisplay::default(),
@@ -219,10 +210,6 @@ impl Settings {
 
     pub(crate) fn zoom_sensitivity(&self) -> f32 {
         self.zoom_sensitivity.clamp(0.25, 4.0)
-    }
-
-    pub(crate) fn recent_files_limit(&self) -> usize {
-        self.recent_files_limit.clamp(4, 20)
     }
 
     pub(crate) fn ui_scale(&self) -> f32 {
@@ -354,22 +341,6 @@ impl SettingsPersistence {
 mod tests {
     use super::*;
 
-    /// The kept English enum labels render from the catalog verbatim.
-    #[test]
-    fn english_enum_labels_match_source_wording() {
-        #![allow(clippy::expect_used)]
-        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-        for (key, label) in [
-            ("settings-bg-gray", ViewportBackground::Gray.label()),
-            ("settings-bg-white", ViewportBackground::White.label()),
-            ("settings-bg-dark", ViewportBackground::Dark.label()),
-            ("settings-theme-light", ThemePreference::Light.label()),
-            ("settings-theme-dark", ThemePreference::Dark.label()),
-        ] {
-            assert_eq!(catalog.text(key).as_deref(), Some(label));
-        }
-    }
-
     #[test]
     fn failed_persistence_stays_pending_until_the_retry_deadline() {
         let now = Instant::now();
@@ -437,7 +408,8 @@ mod tests {
         // it is a live preference again, so a rewritten document keeps it.
         assert_eq!(
             rewritten["recent_files_limit"],
-            Settings::default().recent_files_limit
+            Settings::default().recent_files_limit,
+            "an existing document keeps a field nothing writes any more"
         );
         Ok(())
     }

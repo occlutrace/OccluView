@@ -2,10 +2,16 @@
 //!
 //! A `#[path]` child module of `align_worker.rs`, split out to hold the
 //! workspace's 800-line file budget.
-#![allow(clippy::expect_used, clippy::float_cmp, clippy::items_after_statements)]
+#![allow(
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::items_after_statements,
+    clippy::panic
+)]
 
 use super::{
-    color_map, AlignSettings, MeasureKey, SurfaceKey, CLINICAL_CEILING_MM, CLINICAL_RANGES,
+    color_map, matching_inputs_changed, AlignSettings, MeasureKey, SurfaceKey, WORKING_MAX_MM,
+    WORKING_MIN_MM, WORKING_SCALE_MIN_MM,
 };
 use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
@@ -38,6 +44,7 @@ fn colouring_in_parallel_matches_the_library() {
     for mode in [RampMode::Signed, RampMode::Magnitude] {
         for bands in [None, Some(6)] {
             let ramp = RampSettings {
+                min_mm: 0.0,
                 scale_mm: 0.5,
                 tolerance_mm: 0.2,
                 bands,
@@ -59,6 +66,7 @@ fn unmeasured_vertices_stay_grey() {
     let colors = color_map(
         &map(),
         &RampSettings {
+            min_mm: 0.0,
             scale_mm: 0.5,
             tolerance_mm: 0.2,
             bands: None,
@@ -116,21 +124,20 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
 /// the moment two meshes are roughly placed — which is how an operator ended up
 /// reading an arch in red and blue mosaic and calling it a thermal camera.
 ///
-/// The magnitude ramp is right here because of the nominal band: everything
-/// inside tolerance lands on one flat cold colour, which is the correct reading
-/// of "these agree", and what is left burning is what genuinely differs. That
-/// was not true before the band existed, and this test used to pin the opposite.
+/// The magnitude ramp is intentionally continuous across the whole working
+/// range. Tolerance is a measurement/statistics setting, not a hidden colour
+/// plateau, so small but real differences remain visible to the operator.
 #[test]
 fn the_window_opens_on_the_working_range() {
     let settings = AlignSettings::default();
-    let (max_mm, min_mm) = CLINICAL_RANGES[0];
     assert!(
-        (settings.scale_mm - max_mm).abs() < f64::EPSILON,
+        (settings.scale_mm - WORKING_MAX_MM).abs() < f64::EPSILON,
         "the display maximum must open at the tightest standard range, got {}",
         settings.scale_mm
     );
+    assert_eq!(settings.min_display_mm, 0.05);
     assert!(
-        (settings.tolerance_mm - min_mm).abs() < f64::EPSILON,
+        (settings.tolerance_mm - WORKING_MIN_MM).abs() < f64::EPSILON,
         "the nominal band must open at the one that goes with it, got {}",
         settings.tolerance_mm
     );
@@ -140,35 +147,69 @@ fn the_window_opens_on_the_working_range() {
     );
     assert_eq!(settings.ramp_mode, RampMode::Magnitude);
     assert!(
-        settings.scale_mm <= CLINICAL_CEILING_MM,
-        "the range must stay inside what a clinical instrument can mean"
+        settings.scale_mm <= WORKING_MAX_MM,
+        "the range must stay inside the working display maximum"
     );
 }
 
-/// The standard ranges are ordered tightest first and stay inside the ceiling.
-///
-/// The chip row and the range the tool opens on read the same table, so the
-/// order is what decides the default. It used to be two separate literals and
-/// they disagreed: the row highlighted one range while the map was painted at
-/// another.
 #[test]
-fn the_standard_ranges_run_tightest_first_and_carry_a_band_each() {
-    let mut previous = 0.0;
-    for (max_mm, min_mm) in CLINICAL_RANGES {
-        assert!(
-            max_mm > previous,
-            "the ranges must widen, got {max_mm} after {previous}"
-        );
-        assert!(
-            min_mm > 0.0 && min_mm < max_mm,
-            "the nominal band must sit inside its own range, got {min_mm} in {max_mm}"
-        );
-        assert!(
-            max_mm <= CLINICAL_CEILING_MM,
-            "a range past the ceiling is not a clinical instrument, got {max_mm}"
-        );
-        previous = max_mm;
-    }
+fn a_persisted_wide_range_is_clamped_before_colouring() {
+    let settings = AlignSettings {
+        scale_mm: 1.0,
+        ..AlignSettings::default()
+    };
+    assert_eq!(settings.ramp().scale_mm, WORKING_MAX_MM);
+}
+
+#[test]
+fn the_display_range_is_absolute_zero_to_one_tenth() {
+    let zero = AlignSettings {
+        scale_mm: -1.0,
+        ..AlignSettings::default()
+    };
+    assert_eq!(zero.ramp().scale_mm, WORKING_SCALE_MIN_MM);
+
+    let above = AlignSettings {
+        scale_mm: 1.0,
+        ..AlignSettings::default()
+    };
+    assert_eq!(above.ramp().scale_mm, WORKING_MAX_MM);
+}
+
+#[test]
+fn production_heatmap_ignores_legacy_banding_and_stays_continuous() {
+    let settings = AlignSettings {
+        bands: Some(5),
+        ..AlignSettings::default()
+    };
+
+    assert_eq!(
+        settings.ramp().bands,
+        None,
+        "the compact heatmap has no banded mode; old persisted bands must not quantize it"
+    );
+}
+
+#[test]
+fn optimizer_inputs_invalidate_a_refined_match_but_display_inputs_do_not() {
+    let base = AlignSettings::default();
+
+    let mut ratio = base;
+    ratio.matching_ratio = 0.7;
+    assert!(matching_inputs_changed(base, ratio));
+
+    let mut radius = base;
+    radius.influence_radius_mm = 4.0;
+    assert!(matching_inputs_changed(base, radius));
+
+    let mut orientation = base;
+    orientation.orientation = Orientation::Inverted;
+    assert!(matching_inputs_changed(base, orientation));
+
+    let mut display = base;
+    display.scale_mm = WORKING_MIN_MM;
+    display.show_deviation = false;
+    assert!(!matching_inputs_changed(base, display));
 }
 
 /// A 10 x 10 sheet on z = 0 with its outward normal along +Z: the surface a
@@ -270,6 +311,7 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     // band as wide as the deviation is a legitimate way to get two colours, and
     // this test is about the ramp BETWEEN them.
     let ramp = RampSettings {
+        min_mm: 0.0,
         scale_mm: suggested_scale_mm(&stats),
         tolerance_mm: 0.05,
         bands: None,
@@ -335,6 +377,23 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     }
 }
 
+#[test]
+fn worker_does_not_authorize_a_rank_deficient_refinement() {
+    let mut job = measure_job(0);
+    job.kind = super::AlignJobKind::Refine;
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let outcome = super::execute(&job, &cancel, &mut cache);
+
+    assert!(matches!(
+        outcome,
+        super::AlignOutcome::Failed {
+            rejection: super::AlignFailure::Fit(occluview_align::FitRejection::NoImprovement)
+        }
+    ));
+}
+
 /// One real measurement job, on geometry small enough to finish immediately.
 fn measure_job(generation: u64) -> super::AlignJob {
     use std::sync::Arc;
@@ -343,6 +402,7 @@ fn measure_job(generation: u64) -> super::AlignJob {
     let (moving_positions, moving_indices) = tilted_sheet(0.30);
     super::AlignJob {
         generation,
+        request_id: 0,
         kind: super::AlignJobKind::Measure,
         moving_positions: Arc::new(moving_positions),
         moving_indices: Arc::new(moving_indices),
@@ -359,6 +419,112 @@ fn measure_job(generation: u64) -> super::AlignJob {
         mask: None,
         fixed_mask: None,
         settings: AlignSettings::default(),
+    }
+}
+
+/// A shallow bumpy surface spans all six rigid modes while remaining inside
+/// the default two-millimetre correspondence radius. It is the positive
+/// control for the observability gate; the flat sheet above is its negative
+/// control.
+fn observable_measure_job(generation: u64) -> super::AlignJob {
+    use std::sync::Arc;
+
+    const STEPS: usize = 20;
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    for row in 0..=STEPS {
+        for column in 0..=STEPS {
+            #[allow(clippy::cast_precision_loss)]
+            let x = column as f32 / STEPS as f32 * 10.0;
+            #[allow(clippy::cast_precision_loss)]
+            let y = row as f32 / STEPS as f32 * 10.0;
+            let z = 0.35 * (x * 0.8).sin() + 0.25 * (y * 1.1).cos();
+            positions.extend_from_slice(&[x, y, z]);
+        }
+    }
+    let width = u32::try_from(STEPS + 1).unwrap_or(1);
+    for row in 0..u32::try_from(STEPS).unwrap_or(0) {
+        for column in 0..u32::try_from(STEPS).unwrap_or(0) {
+            let corner = row * width + column;
+            indices.extend_from_slice(&[corner, corner + 1, corner + width]);
+            indices.extend_from_slice(&[corner + 1, corner + width + 1, corner + width]);
+        }
+    }
+    let fixed_key = SurfaceKey {
+        geometry: 11,
+        pose: 12,
+        markings: 0,
+    };
+    super::AlignJob {
+        generation,
+        request_id: 0,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: Arc::new(positions.clone()),
+        moving_indices: Arc::new(indices.clone()),
+        fixed_world_positions: Arc::new(positions),
+        fixed_indices: Arc::new(indices),
+        fixed_key,
+        measure_key: MeasureKey {
+            moving: (13, 14),
+            fixed: fixed_key,
+            mask: 0,
+            influence_radius_bits: 2.0_f64.to_bits(),
+            orientation: Orientation::Match,
+        },
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings {
+            influence_radius_mm: 2.0,
+            ..AlignSettings::default()
+        },
+    }
+}
+
+/// A line has enough vertices to produce a distance summary, but its true
+/// rigid-motion metric is rank deficient. The worker must refuse its map
+/// instead of presenting a numerically tidy but geometrically unobservable
+/// result.
+fn line_measure_job(generation: u64) -> super::AlignJob {
+    use std::sync::Arc;
+
+    let mut positions = Vec::new();
+    for index in 0..100 {
+        #[allow(clippy::cast_precision_loss)]
+        let x = index as f32 / 99.0 * 10.0;
+        positions.extend_from_slice(&[x, 0.0, 0.0]);
+    }
+    let (fixed_positions, fixed_indices) = fixed_sheet();
+    let fixed_key = SurfaceKey {
+        geometry: 21,
+        pose: 22,
+        markings: 0,
+    };
+    super::AlignJob {
+        generation,
+        request_id: 0,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: Arc::new(positions),
+        moving_indices: Arc::new(Vec::new()),
+        fixed_world_positions: Arc::new(fixed_positions),
+        fixed_indices: Arc::new(fixed_indices),
+        fixed_key,
+        measure_key: MeasureKey {
+            moving: (23, 24),
+            fixed: fixed_key,
+            mask: 0,
+            influence_radius_bits: 2.0_f64.to_bits(),
+            orientation: Orientation::Match,
+        },
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings {
+            influence_radius_mm: 2.0,
+            ..AlignSettings::default()
+        },
     }
 }
 
@@ -393,7 +559,7 @@ fn harvest_quiet(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
 fn a_job_of_the_current_generation_comes_back() {
     let worker = super::AlignWorker::spawn();
     let generation = worker.generation();
-    worker.submit(measure_job(generation));
+    worker.submit(observable_measure_job(generation));
     let completions = harvest_one(&worker);
     assert_eq!(
         completions.len(),
@@ -404,6 +570,58 @@ fn a_job_of_the_current_generation_comes_back() {
         completions[0].outcome,
         super::AlignOutcome::Measured { .. }
     ));
+}
+
+#[test]
+fn a_line_measurement_with_a_summary_is_rejected_as_unobservable() {
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let outcome = super::execute(&line_measure_job(0), &cancel, &mut cache);
+
+    assert!(matches!(
+        outcome,
+        super::AlignOutcome::Failed {
+            rejection: super::AlignFailure::MeasurementUnobservable
+        }
+    ));
+}
+
+/// A poisoned queue must become an observable terminal failure instead of
+/// turning every later Align action into a silent no-op.
+#[test]
+fn a_worker_lock_failure_is_observable() {
+    let worker = super::AlignWorker::spawn();
+    let queue = std::sync::Arc::clone(&worker.queue);
+    let _ = std::thread::spawn(move || {
+        let _guard = queue.state.lock().expect("queue lock before poisoning");
+        panic!("poison the test queue");
+    })
+    .join();
+    worker.queue.wake.notify_one();
+
+    for _ in 0..60 {
+        if worker.has_failed() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        worker.has_failed(),
+        "a dead Align worker must be visible to the UI"
+    );
+}
+
+/// In an unwind/diagnostic build, a panic inside alignment must stop at the
+/// worker boundary and remain visible to the UI instead of becoming a dead
+/// button.
+#[test]
+fn worker_entry_converts_panics_to_a_visible_failure() {
+    let source = crate::primary_ui_tests::production_source(include_str!("align_worker.rs"));
+    assert!(
+        source.contains("catch_unwind") && source.contains("align worker panicked"),
+        "the worker entry must convert a panic into the observable failure latch"
+    );
 }
 
 /// A result the operator has overtaken never comes back.
@@ -459,5 +677,114 @@ fn a_second_job_of_the_same_kind_replaces_the_one_still_queued() {
         completions.len() <= 2,
         "five submissions produced {} results — the queue is not collapsing",
         completions.len()
+    );
+}
+
+/// A cancellation request can race with the last few instructions of a fast
+/// job. Generation alone cannot distinguish that completion from the newest
+/// job when both belong to the same scene. The request sequence is the
+/// latest-wins guard for that same-generation race.
+#[test]
+fn an_older_same_generation_completion_is_not_applied() {
+    let worker = super::AlignWorker::spawn();
+    let generation = worker.generation();
+    worker.submit(measure_job(generation));
+    worker.submit(measure_job(generation));
+
+    let completions = harvest_quiet(&worker);
+    assert_eq!(
+        completions.len(),
+        1,
+        "only the newest same-generation request may reach the UI"
+    );
+    assert_eq!(completions[0].request_id, 2);
+}
+
+/// A cylinder, the fixture the observability tests use to demonstrate a
+/// *non-`None`* blind mode: an axial screw that slides along the axis without
+/// changing any distance the map can see. It is full rank and every vertex has
+/// a nearest hit, so `observability()` returns `Some`.
+fn cylinder_positions(radius: f32, length: f32, around: usize, along: usize) -> Vec<f32> {
+    let mut positions = Vec::new();
+    for ring in 0..along {
+        #[allow(clippy::cast_precision_loss)]
+        let z = ring as f32 / (along - 1) as f32 * length - length * 0.5;
+        for step in 0..around {
+            #[allow(clippy::cast_precision_loss)]
+            let angle = step as f32 / around as f32 * std::f32::consts::TAU;
+            positions.extend_from_slice(&[radius * angle.cos(), radius * angle.sin(), z]);
+        }
+    }
+    positions
+}
+
+#[allow(clippy::cast_possible_truncation)] // Indices are bounded by the fixture grid.
+fn cylinder_indices(around: usize, along: usize) -> Vec<u32> {
+    let mut indices = Vec::new();
+    for ring in 0..along - 1 {
+        for step in 0..around {
+            let next = (step + 1) % around;
+            let a = (ring * around + step) as u32;
+            let b = (ring * around + next) as u32;
+            let c = ((ring + 1) * around + step) as u32;
+            let d = ((ring + 1) * around + next) as u32;
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    indices
+}
+
+/// A weakly observable surface must still produce a map.
+///
+/// A cylinder slides along its own axis with every measured distance unchanged,
+/// so its worst sensitivity is far below the threshold that marks an estimate
+/// doing real work. That is a *warning about the measurement*, not a reason to
+/// withhold it: the deviation map is still the operator's evidence, the
+/// observability estimate is what bounds its blind mode, and refusing here
+/// blocked legitimate full-arch alignments — the sensitivity a real arch scan is
+/// allowed in `real_scans.rs` reaches below the same threshold.
+#[test]
+fn a_weakly_observable_surface_still_produces_its_map() {
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let positions = cylinder_positions(5.0, 24.0, 96, 40);
+    let indices = cylinder_indices(96, 40);
+    let fixed_key = SurfaceKey {
+        geometry: 31,
+        pose: 32,
+        markings: 0,
+    };
+    let job = super::AlignJob {
+        generation: 0,
+        request_id: 0,
+        kind: super::AlignJobKind::Measure,
+        moving_positions: std::sync::Arc::new(positions.clone()),
+        moving_indices: std::sync::Arc::new(indices.clone()),
+        fixed_world_positions: std::sync::Arc::new(positions),
+        fixed_indices: std::sync::Arc::new(indices),
+        fixed_key,
+        measure_key: MeasureKey {
+            moving: (33, 34),
+            fixed: fixed_key,
+            mask: 0,
+            influence_radius_bits: 2.0_f64.to_bits(),
+            orientation: Orientation::Match,
+        },
+        pose: occluview_align::Rigid::default(),
+        pairs: Vec::new(),
+        mask: None,
+        fixed_mask: None,
+        settings: AlignSettings {
+            influence_radius_mm: 2.0,
+            ..AlignSettings::default()
+        },
+    };
+
+    let outcome = super::execute(&job, &cancel, &mut cache);
+
+    assert!(
+        matches!(outcome, super::AlignOutcome::Measured { .. }),
+        "a measurable surface must still be measured, however blind one of its modes is"
     );
 }

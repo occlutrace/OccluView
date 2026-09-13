@@ -45,8 +45,6 @@ error-open-body = Could not open { $path }.
 help-title = Keyboard and mouse controls
 help-subtitle = The reference below matches the controls currently available in OccluView.
 help-close = Close
-help-toggle = Help
-help-toggle-tooltip = Show keyboard and mouse controls
 
 help-section-navigation = Navigation
 help-section-tools = Tools
@@ -198,10 +196,10 @@ mesh-exported-aligned = Exported { $name } in its aligned position as { $format 
 mesh-exported-aligned-warnings = Exported { $name } in its aligned position as { $format } (warnings: { $warnings }): { $path }
 mesh-exported-unmoved = Exported { $name } (this scan has not been moved) as { $format }: { $path }
 mesh-exported-unmoved-warnings = Exported { $name } (this scan has not been moved) as { $format } (warnings: { $warnings }): { $path }
-mesh-warning-point-cloud = point cloud omitted from STL
 mesh-warning-vertex-colors = vertex colors not included
 mesh-warning-uvs = UVs not included
 mesh-warning-texture-image = texture image not included
+mesh-export-warnings = Export warnings: { $warnings }
 mesh-export-failed-title = Could not export layer
 mesh-export-failed-summary = Could not export layer: { $detail }
 
@@ -410,8 +408,8 @@ meshedit-session-done-hint = Apply the edits and close the editor
 ## Align Scans window.
 
 align-title = Align Scans
-align-tab-auto = Automatically
-align-tab-manual = Manually
+align-tab-auto = Align scans
+align-tab-manual = Adjust pose
 align-constraint-free = Move/rotate in all directions
 align-constraint-free-hint = Drag the scan in any direction
 align-constraint-z = Move in z-direction
@@ -437,9 +435,9 @@ align-clear-hint = Drop every arrow and pick two scans again — the scans stay 
 align-fit-perform = Perform alignment
 align-fit-perform-hint = Move the mesh onto the arrows — needs at least two arrows
 align-fit-refine = Best fit matching
-align-fit-refine-hint = Seat the surfaces against each other. Only for identically shaped meshes
+align-fit-refine-hint = Refine the current rough pose on nearby matching surfaces. Place roughly with points first, or skip that step if the scans are already close. Check the result before accepting it
 align-matching-parts = matching parts
-align-matching-parts-hint = The share of surface that exists on both meshes. 70-80% suits mesh pairs whose topology is largely the same
+align-matching-parts-hint = Maximum share of surface matches kept during refinement. Best fit can lower it when few areas are unchanged
 align-max-influence = max influence
 align-max-influence-hint = Only surface below this distance influences the matching. A large value can worsen the result
 align-orientation-title = Surfaces orientation shall match
@@ -458,34 +456,13 @@ align-commit-done-hint = Keep the alignment and close — export the scan to wri
 
 ## Deviation map. All clinical numbers arrive pre-formatted as strings.
 
-align-map-more = More settings
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Colour one scan by how far it sits from the other
-align-map-range-label = range
-align-map-preset-hint = Everything under { $min } mm reads as agreement, { $max } mm saturates
-align-map-min = min
+align-map-requires-refine = Run Best fit matching first
 align-map-max = max
-align-map-auto = auto
-align-map-auto-hint = Fit the range to the measurement again
-align-map-advice-far = These meshes are about { $mm } mm apart — align them before reading the map
-align-map-advice-saturated = Most of this is past { $mm } mm, so the colours are pinned to the ends — widen the range
-align-map-not-enough = Not enough surface to measure — { $measured } of { $total } vertices reached the other scan
-align-map-within = { $pct }% within { $tol } mm
-align-map-rms = rms { $rms }
-align-map-grey-tooltip = Grey is not a measurement. Surface with no counterpart within reach cannot be measured at all — a bridge or a tooth on one scan only is the usual reason, and it is not an error.
-align-map-grey-out = { $n } with no surface opposite
-align-map-grey-excluded = { $n } marked out
-align-map-grey-unusable = { $n } unusable in the file
-align-map-grey-total = { $total } vertices grey: { $parts }
+align-map-min = min
 align-map-not-measured = not measured
 align-map-not-measured-hint = No surface on the other scan within reach of these vertices. A tooth or a bridge that only one scan has is the usual reason, and it is not an error — there is nothing there to measure to.
-align-map-stepped = Stepped bands
-align-map-stepped-hint = Step the ramp instead of blending it
-align-map-colours = Colours
-align-map-ramp-distance = distance
-align-map-ramp-distance-hint = Cool where the scans agree, hot where they do not
-align-map-ramp-signed = signed
-align-map-ramp-signed-hint = Blue below the surface, green nominal, red above
 
 ## Align roles, brush, mask commands, align status lines.
 
@@ -497,20 +474,17 @@ align-pair-swap = Swap
 align-pair-swap-hint = Fit the other way round — the arrows move with it
 
 align-brush-title = Brush tool
-align-brush-subtitle = Paint the surface best-fit matching must ignore, on either mesh
-align-brush-hint-inverse = Drag clears · hold Shift to mark · Shift+wheel resizes
-align-brush-hint-mark = Drag marks · hold Shift to clear · Shift+wheel resizes
 align-brush-close-hint = Close the brush — the markings are kept
+align-brush-mesh-selection = Mesh selection
+align-brush-moving = Moving
+align-brush-fixed = Fixed
 align-brush-size = brush size
 align-brush-inverse = Brush inverse
 align-brush-inverse-hint = A plain drag clears instead of marks. Shift inverses it again
 align-brush-auto-radius = automatic radius
 align-brush-auto-radius-hint = The radius of the mesh area kept at each arrow end
-align-brush-all-marked = Everything is marked — best-fit matching will have no effect
-align-brush-nothing-marked = Nothing marked
-align-brush-percent-marked = { $pct }% marked out of the match
 align-brush-size-status = Brush { $size } mm
-align-status-no-summary = Nothing to measure at { $reach } mm reach — { $measured } of { $total } vertices found the other scan. Move the scans closer, or widen the reach under More settings.
+align-status-no-summary = No comparable surface
 
 align-mask-fit-everywhere = Fit everywhere
 align-mask-fit-everywhere-hint = Clear all existing markings
@@ -539,28 +513,20 @@ align-status-one-scan = One of the scans
 align-status-place-first = Place a point on each scan first
 align-status-scaled = That scan carries a scaled placement, which cannot be aligned
 align-status-pose-refused = The fit finished, but the scan it was for is no longer available
+align-status-worker-unavailable = Alignment worker stopped — restart the alignment tool
 align-status-measure-dropped = Measurement dropped — the marking brush owns the colours
+align-status-measure-unavailable = Measurement not applied — the scan changed; run Best fit matching again
 align-status-map-elsewhere = Distance map is on the Automatically tab — it comes back there
 align-status-aligned-points = Aligned on points
 
 ## Align result status lines. Clinical numbers arrive pre-formatted.
 
-align-status-aligned = Aligned — { $rms } mm on the points{ $dropped }. Refine to seat it.
-align-status-outlier = , pair { $pairs } ignored as an outlier
-align-status-refined = Refined — { $rms } mm over { $pct }% of { $surface }{ $settled }{ $weak }
-align-status-surface = the surface
-align-status-surface-unmarked = the unmarked surface
-align-status-settled-limit = , stopped at the iteration limit
-align-status-weak-slide =  — the fit can still slide along { $axes }
-align-status-weak-turn =  — the fit can still turn about { $axes }
-align-status-weak-both =  — the fit can still slide along { $sliding } and turn about { $spinning }
-align-status-measured = { $pct }% within { $tol } mm, { $n ->
-    [one] { $n } vertex had nothing to measure against{ $blind }
-   *[other] { $n } vertices had nothing to measure against{ $blind }
-}
-align-status-blind-free =  — these surfaces can slide freely, so a displacement of any size could be hiding behind this
-align-status-blind-hidden =  — a rigid mismatch of up to { $mm } mm could read as this
+align-status-aligned = Aligned on points — run Best fit matching to seat the surfaces.
+align-status-refined = Best fit ready
+align-status-measured = Heatmap updated
 align-status-remeasure = { $reason } — run Best fit matching to measure again
+align-status-settings-changed = Matching settings changed
+align-status-visibility-changed = Selected scan visibility changed
 align-brush-not-in-alignment = That mesh is not in this alignment
 align-drag-moving = Moving { $name } by hand
 align-drag-unrecorded = Moved by hand, but this step could not be added to the history — Ctrl+Z will not undo it
@@ -595,6 +561,7 @@ guard-replace-destructive = Discard and open
 guard-save = Save…
 guard-cancel = Cancel
 
+error-retry-graphics = Try again
 error-close = Close
 error-copy-details = Copy Details
 
@@ -681,14 +648,21 @@ sculpt-armed-smooth = Smooth: drag to relax, hold Shift to force it
 sculpt-off = Sculpt off
 sculpt-applied-undo = Sculpt applied (Ctrl+Z undoes)
 sculpt-applied-locked = Sculpt applied (not undoable: snapshot too large)
+sculpt-failed-title = Sculpt failed
 sculpt-failed = Cannot sculpt this layer: { $detail }
 sculpt-worker-stopped = Sculpt worker stopped: { $detail }
+sculpt-preparing = Preparing sculpt brush…
+sculpt-nonuniform-scale = Sculpting requires a uniformly scaled mesh
 sculpt-failure-worker-panicked = Sculpt worker panicked: { $detail }
 sculpt-failure-spawn = Could not start sculpt worker: { $detail }
 sculpt-failure-kernel-pool = Could not create sculpt kernel pool: { $detail }
 sculpt-failure-missing-undo-baseline = Sculpt stroke has no undo baseline
 sculpt-failure-shadow-poisoned = Sculpt shadow lock was poisoned
+sculpt-failure-shadow-shape = Sculpt display shadow no longer matches the live mesh
+sculpt-failure-invalid-vertex-index = Sculpt worker returned an invalid vertex index
+sculpt-failure-worker-state-poisoned = Sculpt worker state was corrupted — restart Sculpt
 sculpt-failure-vertex-count-changed = Sculpt result changed the vertex count
+sculpt-failure-topology-rebuild = Sculpt topology rebuild failed: { $detail }
 sculpt-worker-unavailable = Sculpt worker is unavailable
 sculpt-finishing = Finishing sculpt stroke…
 sculpt-finishing-history = Finishing sculpt before history change…
@@ -782,8 +756,6 @@ settings-orbit = Orbit speed
 settings-orbit-hint = How fast the view orbits while the right mouse button drags
 settings-zoom = Zoom speed
 settings-zoom-hint = How much each scroll notch zooms
-settings-recent = Recent scenes
-settings-recent-hint = Entries kept in the Open chevron
 settings-background = Background
 settings-bg-gray = Gray
 settings-bg-white = White
@@ -812,6 +784,7 @@ settings-update-skipped = Version skipped
 settings-update-failed = Couldn't check
 settings-save-error = Preferences could not be saved. Retrying…
 settings-save-error-hint = The settings file is currently unavailable
+settings-shortcuts = Keyboard shortcuts
 settings-about = About OccluView
 
 bridge-busy = Finish or cancel Bridge split first
@@ -843,6 +816,7 @@ lasso-dropped = Lasso outline dropped
 lasso-needs-points = Lasso needs at least 3 points
 loading-scene = Loading scene…
 gpu-failed-status = Graphics driver reported a problem
+gpu-retry-status = Retrying graphics — if the problem persists, save your work and restart OccluView
 gpu-failed-title = Graphics problem
 gpu-failed-summary = The graphics driver reported a problem while drawing. The view may be incomplete. Saving your work and restarting OccluView is recommended if it keeps happening.
 align-job-align = Aligning…
@@ -856,13 +830,86 @@ align-markings-dropped = Markings dropped — the scan's surface changed since t
 align-fail-no-surface-fixed = The fixed scan has no usable surface
 align-fail-no-surface-moving = The moving scan has no usable surface
 align-fail-recolor = The measurement was dropped before it could be coloured
-align-reject-toofew = Only { $a } of { $b } correspondences — place another arrow, or raise max influence if the meshes are still far apart
-align-reject-unpaired = { $a } points on one scan and { $b } on the other — a point has no partner
-align-reject-degenerate-plain = The clicked points do not determine a rotation — spread them out
-align-reject-degenerate-line = The clicked points lie on a line: rotation about { $a } is undetermined
-align-reject-unit = The two scans are { $a }x apart in size — they are probably in different units
-align-reject-apart = That fit leaves the two scans { $a } mm apart instead of on top of each other ({ $b } mm) — check that each arrow pair points at the same spot on both scans
-align-reject-runaway = Best fit wandered { $a } mm, further than the scan's own size ({ $b } mm) — place a few arrow pairs first, or lower max influence
-align-reject-nonfinite = A clicked point or surface normal was not a finite number
+align-fail-unobservable = The surface is not observable enough for a reliable heatmap
+align-reject-toofew = Place more matching arrows or move the scans closer
+align-reject-unpaired = Complete both sides of each matching arrow
+align-reject-degenerate-plain = Spread the matching points across the surface
+align-reject-unit = The scans use different units
+align-reject-apart = Check the matching arrows and move the scans closer
+align-reject-runaway = Move the scans closer and try Best fit matching again
+align-reject-no-improvement = Best fit could not confirm an improvement — move the scans closer and try again
+align-reject-ambiguous = Best fit found more than one equally plausible surface — mark the matching area or place the scans closer
+align-reject-nonfinite = The selected point or surface is invalid
 align-status-stepped = Stepped through history
 align-status-moving-hand = Moving by hand
+
+# ---------------------------------------------------------------------------
+# Occlusal contacts: right-click a scan and read where it meets the scan it
+# bites against. One reading is articulating paper (marks only, coloured by
+# depth); the other is the approach map (how close, everywhere). One slider
+# moves the depth the ramp calls fully loaded, and it re-colours a measurement
+# already in hand rather than re-measuring.
+# ---------------------------------------------------------------------------
+layer-menu-contacts = Show contacts
+layer-menu-hide-contacts = Hide contacts
+
+contact-title = Occlusal contacts
+contact-close-hint = Close the reading and take the marks off both scans
+contact-against = { $subject } against { $antagonist }
+contact-unknown-layer = a scan that is no longer open
+
+contact-mode-marks = Contacts
+contact-mode-marks-hint = Where the surfaces meet, coloured by how hard — the rest stays bare, as articulating paper leaves it
+contact-mode-approach = Approach
+contact-mode-approach-hint = How close the other scan is everywhere, load included
+
+contact-load-label = heavy at
+contact-load-suffix = mm
+contact-load-hint = The depth this ramp reads as fully loaded. Moving it recolours the map already measured — no re-measurement.
+contact-flatten = One colour per contact
+contact-flatten-hint = Flatten every contact patch to its deepest point. Off keeps the force distribution inside each mark.
+
+contact-legend-deepest = { $mm } mm into the bite
+
+contact-stats-area = Contact area
+contact-stats-contacts = Contacts
+contact-stats-deepest = Deepest
+
+contact-readout-gap = gap
+contact-readout-load = load
+
+contact-status-measuring = Measuring…
+contact-status-measuring-hint = Reading the two surfaces against each other
+contact-status-remeasuring = Re-measuring…
+contact-status-remeasuring-hint = A scan moved, so the distances changed. The map is being read again.
+contact-status-needs-second = A contact reading needs a second visible scan to measure against
+contact-status-needs-second-hint = Open the opposing scan, or show it again, and start the reading
+contact-status-subject-unusable = The scan this reading is about cannot be measured right now
+contact-status-subject-unusable-hint = Show it again, or leave it as a triangle mesh, and the reading resumes
+contact-status-antagonist-unusable = The scan this reading is measured against cannot be measured right now
+contact-status-antagonist-unusable-hint = Show it again, or leave it as a triangle mesh, and the reading resumes
+contact-status-no-overlap = The two scans are too far apart to read
+contact-status-no-overlap-hint = Nothing on either surface came within the reading's reach. Check that the scans are in occlusion.
+contact-status-no-surface = One of the two scans has no surface to measure
+contact-status-worker-failed = The measurement did not complete
+contact-status-failed-hint = Read again; if it keeps failing, the pair may need repairing first.
+contact-retry = Read again
+
+contact-opened = Reading contacts on { $label }
+contact-closed = Contact reading closed
+help-section-contacts = Occlusal Contacts
+help-hintline-contacts = Right-click a layer · Show contacts · drag Heavy at to repaint · Esc closes
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Read its occlusal contacts against the scan it bites against
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Read the contact depth under the cursor, on either arch
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Move the depth the ramp calls fully loaded
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Switch between marks only and the whole approach
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Close the reading and take the marks off both scans
+contact-legend-gap = gap up to { $mm } mm
+contact-stats-balance = Area each side
+contact-stats-balance-hint = Contact area either side of this scan's own mid-line. The split follows the scan's coordinates, so a rotated or mirrored case can swap the two numbers.
+layer-menu-contacts-unavailable = A contact reading needs two visible triangle meshes — show or open the opposing scan first
+
+contact-details = Details
+contact-details-hint = The numbers and the one colour per contact rule
+contact-details-close = Hide details
+settings-shortcuts-hint = Keyboard and mouse reference (F1)

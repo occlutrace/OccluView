@@ -1,16 +1,46 @@
 //! Whole-scene export with each visible layer's pose baked into its geometry.
 
 use super::app_mesh_export::{
-    default_layer_export_directory, default_layer_export_format, fallback_mesh_write_format,
-    layer_export_file_dialog, mesh_export_format_from_path, mesh_write_extension,
-    normalize_layer_export_path, sanitize_filename_stem,
+    append_mesh_export_warnings, default_layer_export_directory, default_layer_export_format,
+    default_layer_export_stem, fallback_mesh_write_format, layer_export_file_dialog,
+    mesh_export_format_from_path, mesh_export_warning_summary, mesh_write_extension,
+    normalize_layer_export_path,
 };
-use super::{AppErrorDialog, OccluViewApp, Scene};
+use super::{AppErrorAction, AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
-use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
+use occluview_formats::write::{
+    write_mesh_overwrite, write_mesh_to_new_file, MeshWriteFormat, MeshWriteOptions,
+    MeshWriteReport,
+};
 use std::collections::HashSet;
+use std::fmt;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SceneMergeError {
+    MixedGeometryKinds,
+    VertexCountOverflow,
+    InvalidGeometry,
+}
+
+impl fmt::Display for SceneMergeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MixedGeometryKinds => formatter.write_str(
+                "a scene export cannot combine triangle meshes and point clouds; export those layers separately",
+            ),
+            Self::VertexCountOverflow => {
+                formatter.write_str("the merged scene has too many vertices for one mesh")
+            }
+            Self::InvalidGeometry => {
+                formatter.write_str("the merged scene failed mesh validation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SceneMergeError {}
 
 impl OccluViewApp {
     /// Write every visible layer, in its current pose, as one file.
@@ -22,9 +52,27 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let Some(mesh) = merged_scene_mesh(scene.as_ref()) else {
-            self.ui.status_message = Some(self.ui.locale.tr("export-nothing-visible"));
-            return;
+        let mesh = match merged_scene_mesh(scene.as_ref()) {
+            Ok(Some(mesh)) => mesh,
+            Ok(None) => {
+                self.ui.status_message = Some(self.ui.locale.tr("export-nothing-visible"));
+                return;
+            }
+            Err(error) => {
+                let detail = error.to_string();
+                let summary = self.ui.locale.tr_with(
+                    "export-scene-failed-summary",
+                    &[("detail", detail.as_str())],
+                );
+                self.ui.status_message = Some(summary.clone());
+                self.ui.app_error = Some(AppErrorDialog {
+                    title: self.ui.locale.tr("export-scene-failed-title"),
+                    summary,
+                    details: format!("Scene export failed\n\nError:\n{detail}"),
+                    action: AppErrorAction::None,
+                });
+                return;
+            }
         };
         let dropped_texture = scene
             .meshes()
@@ -62,7 +110,7 @@ impl OccluViewApp {
             .map(SceneMesh::id)
             .collect();
         match write_mesh_overwrite(&path, &mesh, format, MeshWriteOptions::default()) {
-            Ok(_) => {
+            Ok(report) => {
                 let saved = if dropped_texture {
                     self.ui.locale.tr_with(
                         "export-scene-saved-unmerged",
@@ -74,9 +122,14 @@ impl OccluViewApp {
                         &[("path", &path.display().to_string())],
                     )
                 };
+                let warnings = mesh_export_warning_summary(&report.warnings, &self.ui.locale);
                 self.document.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
-                self.ui.status_message = Some(saved);
+                self.ui.status_message = Some(append_mesh_export_warnings(
+                    saved,
+                    warnings.as_deref(),
+                    &self.ui.locale,
+                ));
             }
             Err(error) => {
                 let summary = self.ui.locale.tr_with(
@@ -91,6 +144,7 @@ impl OccluViewApp {
                         "Scene export failed\n\nPath:\n{}\n\nError:\n{error:#}",
                         path.display()
                     ),
+                    action: AppErrorAction::None,
                 });
             }
         }
@@ -98,6 +152,9 @@ impl OccluViewApp {
 
     /// Write every visible layer to its own file in a chosen folder, each in
     /// its current pose.
+    // This is deliberately one batch transaction so partial successes,
+    // warnings, dirty-state reconciliation, and the final error dialog agree.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn save_each_layer_dialog(&mut self) {
         let Some(scene) = self.document.scene.clone() else {
             return;
@@ -129,9 +186,10 @@ impl OccluViewApp {
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
             .map(|(index, _entry)| {
+                let format = default_layer_export_format(&paths, *index, fallback);
                 (
-                    sanitize_filename_stem(&crate::layers_overlay::ascii_layer_stem(*index)),
-                    default_layer_export_format(&paths, *index, fallback),
+                    default_layer_export_stem(&paths, scene.as_ref(), *index, format),
+                    format,
                 )
             })
             .collect();
@@ -140,7 +198,7 @@ impl OccluViewApp {
         // something already in the folder. Saying so is the difference between
         // "your last export is still there" and an operator handing a mill the
         // file they exported an hour ago.
-        let renamed = destinations
+        let mut renamed = destinations
             .iter()
             .zip(&specs)
             .filter(|(path, (stem, _))| {
@@ -151,35 +209,39 @@ impl OccluViewApp {
             .count();
 
         let mut written = 0usize;
-        let mut failed = 0usize;
-        for ((_, entry), (path, (_, format))) in visible.iter().zip(destinations.iter().zip(&specs))
+        let mut successful_layers = Vec::with_capacity(visible.len());
+        let mut failures = Vec::new();
+        let mut warning_messages = Vec::new();
+        for ((_, entry), (path, (stem, format))) in
+            visible.iter().zip(destinations.iter().zip(&specs))
         {
-            match write_mesh_overwrite(
-                path,
-                &posed_mesh(entry),
-                *format,
-                MeshWriteOptions::default(),
-            ) {
-                Ok(_) => written += 1,
-                Err(_) => failed += 1,
+            match write_layer_export_new_with_retry(path, &directory, stem, *format, entry) {
+                Ok((actual_path, report)) => {
+                    written += 1;
+                    if actual_path != *path {
+                        renamed += 1;
+                    }
+                    if let Some(warnings) =
+                        mesh_export_warning_summary(&report.warnings, &self.ui.locale)
+                    {
+                        warning_messages.push(format!("{}: {warnings}", actual_path.display()));
+                    }
+                    successful_layers.push(entry.id());
+                }
+                Err(error) => failures.push(format!("{}: {error:#}", path.display())),
             }
         }
+        let failed = failures.len();
 
         if written > 0 {
             // Even a partial batch is a real destination choice worth
             // remembering for the next save dialog.
             self.persistence.last_export_dir = Some(directory.clone());
         }
-        if failed == 0 {
-            // Same rule as the whole-scene save: a hidden layer was not written,
-            // so its edits are still only in memory.
-            let written: Vec<SceneMeshId> = scene
-                .meshes()
-                .iter()
-                .filter(|entry| entry.visible)
-                .map(SceneMesh::id)
-                .collect();
-            self.document.forget_unsaved_edits(&written);
+        if !successful_layers.is_empty() {
+            // A partial batch is still precise: keep failed layers dirty, but
+            // do not make the operator export already-successful layers again.
+            self.document.forget_unsaved_edits(&successful_layers);
         }
         let dir_text = directory.display().to_string();
         let status = match (failed == 0, renamed == 0) {
@@ -208,11 +270,68 @@ impl OccluViewApp {
                 ],
             ),
         };
-        self.ui.status_message = Some(status);
+        let warning_text = (!warning_messages.is_empty()).then(|| warning_messages.join("; "));
+        self.ui.status_message = Some(append_mesh_export_warnings(
+            status,
+            warning_text.as_deref(),
+            &self.ui.locale,
+        ));
+        if !failures.is_empty() {
+            self.ui.app_error = Some(AppErrorDialog {
+                title: self.ui.locale.tr("mesh-export-failed-title"),
+                summary: self.ui.locale.tr_with(
+                    "mesh-export-failed-summary",
+                    &[("detail", &format!("{failed} layer export(s) failed"))],
+                ),
+                details: format!("Batch layer export failed\n\n{}", failures.join("\n")),
+                action: AppErrorAction::None,
+            });
+        }
     }
 }
 
-/// One destination per visible layer, guaranteed distinct.
+/// Write one batch layer without ever replacing an existing file.
+///
+/// The directory scan that creates the initial destination is only a friendly
+/// naming pass. Another process can create that name before this layer reaches
+/// the writer, so `create_new` remains the authority and a collision advances
+/// to the next numbered name.
+fn write_layer_export_new_with_retry(
+    initial_path: &Path,
+    directory: &Path,
+    stem: &str,
+    format: MeshWriteFormat,
+    entry: &SceneMesh,
+) -> Result<(PathBuf, MeshWriteReport), occluview_formats::FormatError> {
+    let posed = posed_mesh(entry);
+    let extension = mesh_write_extension(format);
+    let mut candidate = initial_path.to_path_buf();
+    let mut ordinal = 2_usize;
+    for _ in 0..1024 {
+        match write_mesh_to_new_file(&candidate, &posed, format, MeshWriteOptions::default()) {
+            Ok(report) => return Ok((candidate, report)),
+            Err(error) if export_path_already_exists(&error) => {
+                candidate = directory.join(format!("{stem} ({ordinal}).{extension}"));
+                ordinal = ordinal.saturating_add(1);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(occluview_formats::FormatError::Io(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "too many concurrent export name collisions",
+    )))
+}
+
+fn export_path_already_exists(error: &occluview_formats::FormatError) -> bool {
+    matches!(
+        error,
+        occluview_formats::FormatError::Io(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+    )
+}
+
+/// One destination per visible layer, initially guaranteed distinct.
 ///
 /// The stem comes from the layer label, which is the source file's name. Two
 /// layers opened from different folders under the same file name — the norm
@@ -224,8 +343,7 @@ impl OccluViewApp {
 ///
 /// Names already in the directory count as taken for the same reason. The
 /// operator chose a folder, not filenames, so nothing ever asks about
-/// overwriting, and the obvious folder to choose twice is the one the last
-/// export went to.
+/// overwriting, and the last export directory is likely to be chosen again.
 ///
 /// Comparison is case-insensitive because the platforms this ships on treat
 /// `Upper.stl` and `upper.stl` as the same file.
@@ -334,23 +452,50 @@ pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
 ///
 /// Returns `None` when nothing visible remains. Textures cannot be merged —
 /// one mesh carries one texture — so the caller says so before writing.
-fn merged_scene_mesh(scene: &Scene) -> Option<Mesh> {
+fn merged_scene_mesh(scene: &Scene) -> Result<Option<Mesh>, SceneMergeError> {
+    let visible: Vec<&SceneMesh> = scene
+        .meshes()
+        .iter()
+        .filter(|entry| entry.visible)
+        .collect();
+    if visible.is_empty() {
+        return Ok(None);
+    }
+    let has_triangle_mesh = visible
+        .iter()
+        .any(|entry| entry.mesh.kind() == occluview_core::MeshKind::TriangleMesh);
+    let has_point_cloud = visible
+        .iter()
+        .any(|entry| entry.mesh.kind() == occluview_core::MeshKind::PointCloud);
+    if has_triangle_mesh && has_point_cloud {
+        return Err(SceneMergeError::MixedGeometryKinds);
+    }
+
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    for entry in scene.meshes().iter().filter(|entry| entry.visible) {
+    for entry in visible {
         let posed = posed_mesh(entry);
-        let offset = u32::try_from(vertices.len()).ok()?;
-        indices.extend(posed.indices().iter().map(|index| index + offset));
+        let offset =
+            u32::try_from(vertices.len()).map_err(|_| SceneMergeError::VertexCountOverflow)?;
+        for index in posed.indices() {
+            indices.push(
+                index
+                    .checked_add(offset)
+                    .ok_or(SceneMergeError::VertexCountOverflow)?,
+            );
+        }
         vertices.extend_from_slice(posed.vertices());
     }
     if vertices.is_empty() {
-        return None;
+        return Ok(None);
     }
     let name = Some("scene".to_owned());
-    if indices.is_empty() {
-        return Some(Mesh::point_cloud(name, vertices));
+    if has_point_cloud {
+        return Ok(Some(Mesh::point_cloud(name, vertices)));
     }
-    Mesh::new(name, vertices, indices).ok()
+    Mesh::new(name, vertices, indices)
+        .map(Some)
+        .map_err(|_| SceneMergeError::InvalidGeometry)
 }
 
 /// Promote a single-precision affine to double precision.
@@ -379,12 +524,16 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::{merged_scene_mesh, posed_mesh, unique_layer_export_paths};
+    use super::{
+        merged_scene_mesh, posed_mesh, unique_layer_export_paths,
+        write_layer_export_new_with_retry, SceneMergeError,
+    };
     use anyhow::Result;
     use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
     use occluview_formats::write::MeshWriteFormat;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn v(x: f32, y: f32, z: f32) -> Vertex {
         Vertex::at(Vec3::new(x, y, z))
@@ -457,7 +606,9 @@ mod tests {
                 .with_transform(glam::Affine3A::from_translation(Vec3::new(100.0, 0.0, 0.0))),
         );
 
-        let merged = merged_scene_mesh(&scene).expect("two visible layers merge");
+        let merged = merged_scene_mesh(&scene)
+            .expect("scene merge")
+            .expect("two visible layers merge");
 
         assert_eq!(merged.vertices().len(), single * 2);
         assert_eq!(
@@ -474,13 +625,30 @@ mod tests {
     }
 
     #[test]
+    fn a_scene_export_rejects_mixed_triangle_and_point_cloud_layers() -> Result<()> {
+        let mut scene = exportable_scene()?;
+        scene.add(SceneMesh::new(Mesh::point_cloud(
+            Some("cloud".into()),
+            vec![v(4.0, 5.0, 6.0)],
+        )));
+
+        assert!(matches!(
+            merged_scene_mesh(&scene),
+            Err(SceneMergeError::MixedGeometryKinds)
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn merged_indices_are_offset_so_the_second_layer_keeps_its_own_triangles() -> Result<()> {
         let mut scene = exportable_scene()?;
         let copy = scene.meshes()[0].mesh.clone();
         let single = u32::try_from(scene.meshes()[0].mesh.vertices().len())?;
         scene.add(SceneMesh::new(copy));
 
-        let merged = merged_scene_mesh(&scene).expect("two visible layers merge");
+        let merged = merged_scene_mesh(&scene)
+            .expect("scene merge")
+            .expect("two visible layers merge");
 
         let tail = &merged.indices()[3..];
         assert!(
@@ -498,7 +666,9 @@ mod tests {
         scene.add(SceneMesh::new(copy));
         scene.meshes_mut()[1].visible = false;
 
-        let merged = merged_scene_mesh(&scene).expect("one visible layer still merges");
+        let merged = merged_scene_mesh(&scene)
+            .expect("scene merge")
+            .expect("one visible layer still merges");
 
         assert_eq!(merged.vertices().len(), single);
         Ok(())
@@ -508,8 +678,10 @@ mod tests {
     fn an_empty_or_all_hidden_scene_merges_to_nothing() -> Result<()> {
         let mut scene = exportable_scene()?;
         scene.meshes_mut()[0].visible = false;
-        assert!(merged_scene_mesh(&scene).is_none());
-        assert!(merged_scene_mesh(&Scene::new()).is_none());
+        assert!(merged_scene_mesh(&scene).expect("scene merge").is_none());
+        assert!(merged_scene_mesh(&Scene::new())
+            .expect("scene merge")
+            .is_none());
         Ok(())
     }
 
@@ -592,6 +764,34 @@ mod tests {
         assert_eq!(destinations[0], directory.join("lower (2).stl"));
 
         std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn a_batch_collision_retries_with_a_new_file_without_overwriting() -> Result<()> {
+        let directory = std::env::temp_dir().join(format!(
+            "occluview-batch-collision-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos())
+        ));
+        std::fs::create_dir(&directory)?;
+        let initial = directory.join("scan.stl");
+        std::fs::write(&initial, b"previous export")?;
+        let scene = exportable_scene()?;
+
+        let (written, _) = write_layer_export_new_with_retry(
+            &initial,
+            &directory,
+            "scan",
+            MeshWriteFormat::StlBinary,
+            &scene.meshes()[0],
+        )?;
+
+        assert_eq!(written, directory.join("scan (2).stl"));
+        assert_eq!(std::fs::read(&initial)?, b"previous export");
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
     }
 
     #[test]

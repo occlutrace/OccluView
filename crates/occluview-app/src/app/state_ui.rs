@@ -23,11 +23,24 @@ use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
 use std::time::Instant;
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub(super) enum AppErrorAction {
+    /// No recovery is offered; the dialog only reports.
+    #[default]
+    None,
+    /// The graphics fault latch may be cleared and drawing attempted again.
+    /// The driver may recover on its own (a device reset or an eGPU that came
+    /// back), and the alternative is asking the operator to restart the viewer
+    /// and lose the scene.
+    RetryGraphics,
+}
+
 #[derive(Clone)]
 pub(super) struct AppErrorDialog {
     pub(super) title: String,
     pub(super) summary: String,
     pub(super) details: String,
+    pub(super) action: AppErrorAction,
 }
 
 fn information_route_is_blocked(

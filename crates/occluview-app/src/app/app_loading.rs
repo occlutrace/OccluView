@@ -14,10 +14,12 @@
 
 use super::{
     combine_loaded_scene, egui, load_error_dialog, load_status_message, mpsc,
-    read_files_with_key_provider, single_instance, AppErrorDialog, Instant, LoadQueueCameraReset,
-    OccluViewApp, PathBuf, PendingReplaceOpen, PendingSceneLoad, Result, RuntimeHpsKeyProvider,
-    Scene, SceneLoadMode, SceneLoadRequest, TryRecvError, FOREGROUND_PULSE_DURATION,
+    read_files_with_key_provider, single_instance, AppErrorAction, AppErrorDialog, Instant,
+    LoadQueueCameraReset, OccluViewApp, PathBuf, PendingReplaceOpen, PendingSceneLoad, Result,
+    RuntimeHpsKeyProvider, Scene, SceneLoadMode, SceneLoadRequest, TryRecvError,
+    FOREGROUND_PULSE_DURATION,
 };
+use crate::scene_loading::{queue_request_while_active, replace_result_requires_guard};
 
 /// Load one or more mesh files into a scene.
 pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
@@ -98,6 +100,14 @@ impl OccluViewApp {
         if paths.is_empty() {
             return;
         }
+        if self.document.edit_mode.is_busy() {
+            self.ui.pending_replace_open = Some(PendingReplaceOpen {
+                paths: paths.to_vec(),
+                source,
+            });
+            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+            return;
+        }
         self.load_paths_with_mode(paths, source, SceneLoadMode::Replace);
     }
 
@@ -105,7 +115,9 @@ impl OccluViewApp {
     /// a live session carrying uncommitted edits, or any layer with edits not
     /// yet written to disk, would be lost by a blind scene replace.
     fn replace_open_needs_guard(&self) -> bool {
-        self.document.edit_mode.is_dirty() || self.document.has_unsaved_mesh_edits()
+        self.document.edit_mode.is_dirty()
+            || self.document.edit_mode.is_busy()
+            || self.document.has_unsaved_mesh_edits()
     }
 
     pub(super) fn append_paths(&mut self, paths: &[PathBuf], source: &'static str) {
@@ -125,36 +137,27 @@ impl OccluViewApp {
             paths: paths.to_vec(),
             source,
             mode,
+            content_revision_at_request: self.document.content_revision,
+            dirty_at_request: self.replace_open_needs_guard(),
         };
-        if self.document.active_load.is_some() {
+        if let Some(active) = self.document.active_load.as_mut() {
             if mode == SceneLoadMode::Replace {
-                // The evicted loader thread is abandoned, not cancelled. Its
-                // receiver is dropped, so its `send` fails and it exits -- but
-                // only after finishing the parse it was already doing. Open a
-                // large scan, realise it is the wrong one, open another: two
-                // full decodes run at once and both scenes exist in memory
-                // until the first is discarded. Repeat it four times on a slow
-                // share and the peak is a multiple of the largest scan, which
-                // presents as an OOM kill with no message.
-                //
-                // Cancelling properly means threading a flag through
-                // `read_files_with_key_provider`, which parses in parallel: a
-                // formats API change that would not help the common
-                // single-file case anyway, since the check can only sit
-                // between files. Left as it is. It takes sustained impatience
-                // to reach, and it clears itself.
-                self.document.queued_loads.clear();
-                self.document.active_load = None;
+                // Let the active parse finish, then discard its result. A
+                // newer Replace must not start a second large decode alongside
+                // it or allow the obsolete scene to appear for one frame.
                 self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
                 self.document.camera_modified_during_load = false;
-                self.start_scene_load(request);
-            } else {
-                self.document.queued_loads.push_back(request);
+            }
+            queue_request_while_active(active, &mut self.document.queued_loads, request);
+            if mode == SceneLoadMode::Append {
                 self.ui.status_message = Some(self.ui.locale.tr_plural(
                     "load-queued",
                     &[],
                     &[("count", paths.len())],
                 ));
+            } else {
+                self.ui.status_message =
+                    Some(load_status_message(mode, paths.len(), &self.ui.locale));
             }
             return;
         }
@@ -166,6 +169,8 @@ impl OccluViewApp {
             paths,
             source,
             mode,
+            content_revision_at_request,
+            dirty_at_request,
         } = request;
         let load_paths = paths.clone();
         let started_at = Instant::now();
@@ -193,6 +198,7 @@ impl OccluViewApp {
                 }),
                 summary: self.ui.locale.tr("load-loader-failed-summary"),
                 details: format!("Loader thread start failed\n\n{error:#}"),
+                action: AppErrorAction::None,
             });
             tracing::error!(?error, source, "scene loader thread spawn failed");
             return;
@@ -204,6 +210,9 @@ impl OccluViewApp {
             mode,
             started_at,
             receiver,
+            superseded: false,
+            content_revision_at_request,
+            dirty_at_request,
         });
     }
 
@@ -216,9 +225,14 @@ impl OccluViewApp {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
+                let superseded = active.superseded;
                 let source = active.source;
-                let startup_token = self.platform.pending_raise_token.take();
                 self.document.active_load = None;
+                if superseded {
+                    self.start_next_queued_load();
+                    return;
+                }
+                let startup_token = self.platform.pending_raise_token.take();
                 self.ui.status_message = Some(self.ui.locale.tr("load-open-failed-stopped"));
                 tracing::error!(source, "scene loader disconnected");
                 if source == "startup" || source == "single-instance" {
@@ -232,6 +246,10 @@ impl OccluViewApp {
         let Some(active) = self.document.active_load.take() else {
             return;
         };
+        if active.superseded {
+            self.start_next_queued_load();
+            return;
+        }
         let load_settled = self.document.queued_loads.is_empty();
         let raise_after_handoff = active.source == "single-instance" && load_settled;
         let raise_after_startup = active.source == "startup" && load_settled;
@@ -250,17 +268,41 @@ impl OccluViewApp {
     }
 
     fn start_next_queued_load(&mut self) {
-        if self.document.active_load.is_none() {
+        if self.document.active_load.is_none() && self.ui.pending_replace_open.is_none() {
             if let Some(request) = self.document.queued_loads.pop_front() {
                 self.start_scene_load(request);
             }
         }
     }
 
+    fn loaded_replace_needs_guard(&self, pending: &PendingSceneLoad) -> bool {
+        pending.mode == SceneLoadMode::Replace
+            && replace_result_requires_guard(
+                pending.content_revision_at_request,
+                self.document.content_revision,
+                pending.dirty_at_request,
+                self.replace_open_needs_guard(),
+                self.document.edit_mode.is_busy(),
+            )
+    }
+
+    fn park_loaded_replace_for_reconfirmation(&mut self, pending: PendingSceneLoad) {
+        // New edits outrank an older permission to replace the scene.
+        self.ui.pending_replace_open = Some(PendingReplaceOpen {
+            paths: pending.paths,
+            source: pending.source,
+        });
+        self.ui.status_message = None;
+    }
+
     fn apply_scene_load_result(&mut self, pending: PendingSceneLoad, result: Result<Scene>) {
         let append = pending.mode == SceneLoadMode::Append;
         match result {
             Ok(scene) => {
+                if self.loaded_replace_needs_guard(&pending) {
+                    self.park_loaded_replace_for_reconfirmation(pending);
+                    return;
+                }
                 let scene_ready_ms = pending.started_at.elapsed().as_millis();
                 let (scene, current_paths) = if append {
                     combine_loaded_scene(

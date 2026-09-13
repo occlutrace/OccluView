@@ -22,7 +22,7 @@ pub(super) struct LayerRowView<'a> {
     pub(super) active: bool,
 }
 
-// Four independent display/state flags, not a state machine — see SceneMesh.
+// Five independent display/state flags, not a state machine — see SceneMesh.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy)]
 pub(super) struct LayerRowState {
@@ -31,7 +31,12 @@ pub(super) struct LayerRowState {
     pub(super) tint: [f32; 4],
     pub(super) wireframe: bool,
     pub(super) face_editable: bool,
+    pub(super) can_export: bool,
     pub(super) show_vertex_colors: bool,
+    /// Whether this layer wears occlusal-contact marks right now.
+    pub(super) contacts: bool,
+    /// Whether a contact reading can be opened on this layer.
+    pub(super) can_read_contacts: bool,
     pub(super) show_texture: bool,
     pub(super) has_color_data: bool,
     pub(super) has_texture: bool,
@@ -97,10 +102,13 @@ pub(super) fn show_layer_row(
         visible,
         wireframe: state.wireframe,
         face_editable: state.face_editable,
+        can_export: state.can_export,
         show_vertex_colors: state.show_vertex_colors,
         show_texture: state.show_texture && state.show_vertex_colors,
         has_color_data: state.has_color_data,
         has_texture: state.has_texture,
+        contacts: state.contacts,
+        can_read_contacts: state.can_read_contacts,
     };
 
     // Click-sense catch-all under the controls: a right-click in the gaps
@@ -176,6 +184,10 @@ pub(super) fn show_layer_row(
             // Opacity scrub.
             let slider_response = ui
                 .add_enabled_ui(visible, |ui| {
+                    // egui's Slider reads spacing.slider_width, even when
+                    // add_sized supplies a narrower rectangle. Without this
+                    // the row widened the whole Layers frame past its rect.
+                    ui.spacing_mut().slider_width = LAYER_ROW_SLIDER_WIDTH_PX;
                     ui.add_sized(
                         [LAYER_ROW_SLIDER_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX],
                         egui::Slider::new(&mut opacity, 0.1..=1.0)

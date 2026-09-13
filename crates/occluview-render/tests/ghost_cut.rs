@@ -63,7 +63,7 @@ fn identity_uniform() -> GpuMeshUniform {
         show_vertex_colors: 1,
         show_texture: 1,
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     }
 }
 
@@ -154,6 +154,7 @@ fn prepared(offscreen: &Offscreen, mesh: &Mesh) -> PreparedScene {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }])
 }
 
@@ -163,6 +164,7 @@ fn prepared_textured(offscreen: &Offscreen, mesh: &Mesh) -> PreparedScene {
         uniform: textured_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }])
 }
 

@@ -48,23 +48,47 @@ pub(super) fn zoom_camera_from_wheel(
     false
 }
 
+/// The viewport commands one orbit-cursor lock state owes.
+///
+/// Locking has to lock *and* hide together: hiding the cursor without grabbing
+/// it strands the pointer outside the window, and grabbing without hiding it
+/// leaves the pointer jumping at the window edge during an orbit.
+#[must_use]
+fn orbit_cursor_commands(locked: bool) -> (egui::CursorGrab, bool) {
+    let grab = if locked {
+        egui::CursorGrab::Locked
+    } else {
+        egui::CursorGrab::None
+    };
+    (grab, !locked)
+}
+
 impl OccluViewApp {
     pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
         if self.ui.viewport_orbit_cursor_grabbed {
             return;
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
-        ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
-        self.ui.viewport_orbit_cursor_grabbed = true;
+        self.set_viewport_orbit_cursor(ctx, true);
     }
 
     pub(super) fn release_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
         if !self.ui.viewport_orbit_cursor_grabbed {
             return;
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::None));
-        ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-        self.ui.viewport_orbit_cursor_grabbed = false;
+        self.set_viewport_orbit_cursor(ctx, false);
+    }
+
+    /// Apply one lock state: the pointer command, the visibility command, and
+    /// the remembered state bit.
+    ///
+    /// The three belong to one decision and are written in one place, so no
+    /// branch can lock the pointer without the state bit that releases it, or
+    /// release one without showing the cursor again.
+    fn set_viewport_orbit_cursor(&mut self, ctx: &egui::Context, locked: bool) {
+        let (grab, visible) = orbit_cursor_commands(locked);
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(grab));
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(visible));
+        self.ui.viewport_orbit_cursor_grabbed = locked;
     }
 
     pub(super) fn release_viewport_orbit_cursor_if_inactive(&mut self, ctx: &egui::Context) {
@@ -351,6 +375,24 @@ mod tests {
     use super::zoom_camera_from_wheel;
     use eframe::egui;
     use occluview_core::Camera;
+
+    /// Locking the orbit has to grab the pointer and hide it as one decision,
+    /// and releasing has to give both back. Separate branches for the two
+    /// commands could be swapped without any test noticing, which strands the
+    /// pointer outside the window after an orbit.
+    #[test]
+    fn the_orbit_cursor_lock_and_release_are_one_decision() {
+        assert_eq!(
+            super::orbit_cursor_commands(true),
+            (egui::CursorGrab::Locked, false),
+            "a locked orbit hides the cursor while it owns it"
+        );
+        assert_eq!(
+            super::orbit_cursor_commands(false),
+            (egui::CursorGrab::None, true),
+            "releasing the orbit shows the cursor again"
+        );
+    }
 
     fn camera_after_wheel(delta_y: f32, pointer: egui::Pos2) -> (bool, f32) {
         let ctx = egui::Context::default();

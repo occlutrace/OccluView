@@ -464,6 +464,10 @@ fn package_workflow_builds_linux_deb_release_assets() {
     assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
     assert!(build_deb.contains("occluview-formats/private-hps-key"));
     assert!(build_deb.contains("Private HPS key embedding enabled for this build."));
+    assert!(build_deb.contains(".occluview-build-provenance"));
+    assert!(build_deb.contains("git diff --binary HEAD"));
+    assert!(build_deb.contains("validate_release_provenance"));
+    assert!(build_deb.contains("release binaries are stale or were built with different features"));
     assert!(build_deb.contains("-Zxz"));
 
     assert!(check_deb.contains("dpkg-deb --control"));

@@ -25,8 +25,7 @@ use eframe::egui;
 use glam::Mat4;
 use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
-    GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, PreparedSceneTopology,
-    PreparedSceneUpdate, ThumbnailSpec, ViewportSpec,
+    GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, ThumbnailSpec, ViewportSpec,
 };
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::Arc;
@@ -45,13 +44,16 @@ mod app_align_panel;
 mod app_align_results;
 mod app_align_session;
 mod app_bridge_split;
+mod app_contact;
+mod app_contact_bar;
+mod app_contact_hover;
 mod app_cut_measure;
 mod app_dialogs;
 mod app_empty_state;
 mod app_guard_dialog;
 mod app_help;
 mod app_input;
-mod app_layer_edits;
+pub(crate) mod app_layer_edits;
 mod app_layer_interaction;
 mod app_load_errors;
 mod app_loading;
@@ -61,6 +63,7 @@ mod app_recent_popup;
 mod app_render;
 #[cfg(test)]
 mod app_render_characterization_tests;
+mod app_render_contact;
 mod app_scale_bar;
 mod app_scene_commit;
 mod app_scene_export;
@@ -96,7 +99,7 @@ pub(crate) use state::OccluViewApp;
 use state_document::MeshSelectionDrag;
 pub(crate) use state_platform::StartupHandles;
 use state_render::RenderedFrame;
-use state_ui::{AppErrorDialog, PendingReplaceOpen};
+use state_ui::{AppErrorAction, AppErrorDialog, PendingReplaceOpen};
 
 #[cfg(test)]
 mod tests {

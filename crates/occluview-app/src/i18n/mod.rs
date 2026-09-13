@@ -367,7 +367,7 @@ mod tests {
         // Superseded in coverage by `pseudo_locale_covers_every_embedded_key`
         // in catalog.rs; kept as a readable spot check with exact rendering.
         let pseudo = Catalog::pseudo().expect("pseudo builds");
-        for key in ["app-title", "help-toggle", "about-tagline"] {
+        for key in ["app-title", "settings-shortcuts", "about-tagline"] {
             let rendered = pseudo.text(key).unwrap_or_else(|| key.to_owned());
             assert!(
                 rendered.starts_with('⟦'),

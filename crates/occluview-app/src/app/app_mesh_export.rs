@@ -1,11 +1,13 @@
 use super::app_scene_export::posed_mesh;
 use super::{
-    AppErrorDialog, LayerContextAction, LayerContextRequest, OccluViewApp, PathBuf, Scene,
+    AppErrorAction, AppErrorDialog, LayerContextAction, LayerContextRequest, OccluViewApp, PathBuf,
+    Scene,
 };
 use anyhow::{bail, Context, Result};
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
+use std::ffi::OsStr;
 use std::path::Path;
 
 /// How an interactive save-edited-layers pass ended.
@@ -104,6 +106,7 @@ impl OccluViewApp {
                         "Layer export failed\n\nPath:\n{}\n\nError:\n{error:#}",
                         path.display()
                     ),
+                    action: AppErrorAction::None,
                 });
                 false
             }
@@ -362,14 +365,101 @@ pub(super) fn mesh_write_extension(format: MeshWriteFormat) -> &'static str {
     }
 }
 
+pub(super) fn default_layer_export_stem(
+    paths: &[PathBuf],
+    scene: &Scene,
+    index: usize,
+    format: MeshWriteFormat,
+) -> String {
+    // Deliberately prefer an ASCII-safe source/file stem, then the mesh name,
+    // then a numbered fallback. This name is used by both single-layer and
+    // batch exports, so they cannot drift into different naming rules.
+    let source_stem = source_path_for_export_defaults(paths, index)
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str());
+    let raw = source_stem.or_else(|| {
+        scene
+            .meshes()
+            .get(index)
+            .and_then(|entry| entry.mesh.name())
+    });
+    let stem = raw
+        .map(sanitize_filename_stem)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| crate::layers_overlay::ascii_layer_stem(index));
+    strip_repeated_export_suffix(stem, format)
+}
+
+/// Remove a source extension that would otherwise be emitted twice when the
+/// selected export format is the same (`upper.stl` -> `upper`, then `upper.stl`).
+fn strip_repeated_export_suffix(mut stem: String, format: MeshWriteFormat) -> String {
+    let extension = mesh_write_extension(format);
+    while let Some((prefix, suffix)) = stem.rsplit_once('.') {
+        if !suffix.eq_ignore_ascii_case(extension) {
+            break;
+        }
+        stem = prefix.to_owned();
+    }
+    stem
+}
 pub(super) fn normalize_layer_export_path(
     path: PathBuf,
     fallback_format: MeshWriteFormat,
 ) -> PathBuf {
-    if path.extension().is_none() {
+    let path = if path.extension().is_none() {
         path.with_extension(mesh_write_extension(fallback_format))
     } else {
         path
+    };
+    collapse_repeated_terminal_extension(path)
+}
+
+/// Native save dialogs may append the active filter extension even when the
+/// editable name already contains it (`scan.stl` -> `scan.stl.stl`). Collapse
+/// only adjacent copies of the actual final extension. A name such as
+/// `scan.stl.obj` remains intentional and continues to select OBJ.
+fn collapse_repeated_terminal_extension(path: PathBuf) -> PathBuf {
+    let Some(extension) = path.extension().map(OsStr::to_os_string) else {
+        return path;
+    };
+    if extension.is_empty() {
+        return path;
+    }
+    let Some(mut base) = path.file_stem().map(OsStr::to_os_string) else {
+        return path;
+    };
+
+    let mut repeated = false;
+    while let Some(nested_extension) = Path::new(base.as_os_str()).extension() {
+        if !os_str_ascii_case_equal(nested_extension, extension.as_os_str()) {
+            break;
+        }
+        let Some(nested_stem) = Path::new(base.as_os_str()).file_stem() else {
+            break;
+        };
+        base = nested_stem.to_os_string();
+        repeated = true;
+    }
+    if !repeated {
+        return path;
+    }
+
+    let mut file_name = base;
+    file_name.push(".");
+    file_name.push(extension);
+    path.with_file_name(file_name)
+}
+
+fn os_str_ascii_case_equal(left: &OsStr, right: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        left.as_bytes().eq_ignore_ascii_case(right.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
     }
 }
 
@@ -379,33 +469,32 @@ fn default_layer_export_name(
     index: usize,
     format: MeshWriteFormat,
 ) -> String {
-    let stem = exact_layer_source_path(paths, index)
-        .and_then(|path| path.file_stem())
-        .and_then(|stem| stem.to_str())
-        .or_else(|| {
-            scene
-                .meshes()
-                .get(index)
-                .and_then(|entry| entry.mesh.name())
-        })
-        .map(sanitize_filename_stem)
-        .filter(|stem| !stem.is_empty())
-        // Deliberately ASCII: a default filename stem must survive any
-        // filesystem locale (the localized name shows in the status line
-        // via the mesh-exported-* keys).
-        .unwrap_or_else(|| crate::layers_overlay::ascii_layer_stem(index));
+    let stem = default_layer_export_stem(paths, scene, index, format);
 
     format!("{stem}-edited.{}", mesh_write_extension(format))
 }
 
-fn mesh_export_warning_summary(
+pub(super) fn append_mesh_export_warnings(
+    mut status: String,
+    warnings: Option<&str>,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let Some(warnings) = warnings else {
+        return status;
+    };
+    let suffix = locale.tr_with("mesh-export-warnings", &[("warnings", warnings)]);
+    status.push_str(" · ");
+    status.push_str(&suffix);
+    status
+}
+
+pub(super) fn mesh_export_warning_summary(
     warnings: &[MeshWriteWarning],
     locale: &crate::i18n::LocaleManager,
 ) -> Option<String> {
     let labels: Vec<String> = warnings
         .iter()
         .map(|warning| match warning {
-            MeshWriteWarning::PointCloudRejectedForStl => locale.tr("mesh-warning-point-cloud"),
             MeshWriteWarning::VertexColorsNotWritten => locale.tr("mesh-warning-vertex-colors"),
             MeshWriteWarning::UvsNotWritten => locale.tr("mesh-warning-uvs"),
             MeshWriteWarning::TextureImageNotWritten => locale.tr("mesh-warning-texture-image"),
@@ -415,7 +504,8 @@ fn mesh_export_warning_summary(
 }
 
 pub(super) fn sanitize_filename_stem(raw: &str) -> String {
-    raw.trim()
+    let cleaned = raw
+        .trim()
         .chars()
         .map(|character| match character {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
@@ -424,7 +514,41 @@ pub(super) fn sanitize_filename_stem(raw: &str) -> String {
         })
         .collect::<String>()
         .trim_matches(['.', ' '])
-        .to_string()
+        .to_string();
+    if is_windows_device_stem(&cleaned) {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    }
+}
+
+fn is_windows_device_stem(stem: &str) -> bool {
+    let base = stem.split('.').next().unwrap_or_default();
+    matches!(
+        base.to_ascii_lowercase().as_str(),
+        "con"
+            | "prn"
+            | "aux"
+            | "nul"
+            | "com1"
+            | "com2"
+            | "com3"
+            | "com4"
+            | "com5"
+            | "com6"
+            | "com7"
+            | "com8"
+            | "com9"
+            | "lpt1"
+            | "lpt2"
+            | "lpt3"
+            | "lpt4"
+            | "lpt5"
+            | "lpt6"
+            | "lpt7"
+            | "lpt8"
+            | "lpt9"
+    )
 }
 
 #[cfg(test)]
@@ -495,6 +619,53 @@ mod tests {
 
         assert_eq!(name, "very-long-scan-name-edited.stl");
         Ok(())
+    }
+
+    #[test]
+    fn batch_export_stem_prefers_the_source_name_and_removes_its_format_suffix() -> Result<()> {
+        let scene = exportable_scene()?;
+        let paths = vec![PathBuf::from("upper.stl")];
+        assert_eq!(
+            default_layer_export_stem(&paths, &scene, 0, MeshWriteFormat::StlBinary),
+            "upper"
+        );
+        let repeated = vec![PathBuf::from("upper.stl.stl")];
+        assert_eq!(
+            default_layer_export_stem(&repeated, &scene, 0, MeshWriteFormat::StlBinary),
+            "upper"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn derived_layer_stem_uses_the_nearest_source_when_it_has_no_path() -> Result<()> {
+        let scene = exportable_scene()?;
+        let paths = vec![PathBuf::new(), PathBuf::from("/case/upper.obj")];
+        assert_eq!(
+            default_layer_export_stem(&paths, &scene, 0, MeshWriteFormat::Obj),
+            "upper"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_stems_avoid_windows_device_names() {
+        assert_eq!(sanitize_filename_stem("CON"), "_CON");
+        assert_eq!(sanitize_filename_stem("lpt1.final"), "_lpt1.final");
+        assert_eq!(sanitize_filename_stem("COM10"), "COM10");
+    }
+
+    #[test]
+    fn export_status_can_carry_writer_warnings_without_dropping_the_success() {
+        let locale = crate::i18n::LocaleManager::for_tests();
+        let rendered = append_mesh_export_warnings(
+            "Scene saved".to_owned(),
+            Some("UVs not included"),
+            &locale,
+        );
+
+        assert!(rendered.starts_with("Scene saved"));
+        assert!(rendered.contains("UVs not included"));
     }
 
     #[test]
@@ -603,6 +774,51 @@ mod tests {
             normalize_layer_export_path(PathBuf::from("edited.obj"), MeshWriteFormat::StlBinary),
             PathBuf::from("edited.obj")
         );
+    }
+
+    #[test]
+    fn export_dialog_does_not_persist_repeated_terminal_extensions() {
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("edited.stl.stl"),
+                MeshWriteFormat::StlBinary
+            ),
+            PathBuf::from("edited.stl")
+        );
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("edited.STL.StL"),
+                MeshWriteFormat::StlBinary
+            ),
+            PathBuf::from("edited.StL")
+        );
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("case/edited.ply.ply.ply"),
+                MeshWriteFormat::PlyBinaryLittleEndian,
+            ),
+            PathBuf::from("case/edited.ply")
+        );
+        assert_eq!(
+            normalize_layer_export_path(
+                PathBuf::from("edited.stl.obj"),
+                MeshWriteFormat::StlBinary
+            ),
+            PathBuf::from("edited.stl.obj"),
+            "a different final format is an intentional filename, not a duplicate"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_dialog_collapses_repeated_extension_for_non_utf8_names() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(b"edited\xff.stl.stl".to_vec()));
+        let normalized = normalize_layer_export_path(path, MeshWriteFormat::StlBinary);
+
+        assert_eq!(normalized.as_os_str().as_bytes(), b"edited\xff.stl");
     }
 
     #[test]

@@ -29,6 +29,9 @@ pub(crate) struct AlignState {
     pub(crate) settings: AlignSettings,
     pub(crate) status: Option<String>,
     pub(crate) stats: Option<DeviationStats>,
+    /// Set only after a Best fit matching result has landed on the current
+    /// scene. Naming two roles is not enough to authorize a deviation map.
+    pub(crate) refined_match_ready: bool,
     pub(crate) rejected: Vec<u32>,
     /// Per-layer overlay colours currently on screen.
     pub(crate) overlay_colors: Vec<(SceneMeshId, Arc<Vec<[u8; 4]>>)>,

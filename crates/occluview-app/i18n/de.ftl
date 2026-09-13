@@ -42,8 +42,6 @@ error-open-body = { $path } konnte nicht geöffnet werden.
 help-title = Tastatur- und Maussteuerung
 help-subtitle = Die Referenz entspricht den derzeit in OccluView verfügbaren Steuerelementen.
 help-close = Schließen
-help-toggle = Hilfe
-help-toggle-tooltip = Tastatur- und Maussteuerung anzeigen
 
 help-section-navigation = Navigation
 help-section-tools = Werkzeuge
@@ -195,10 +193,10 @@ mesh-exported-aligned = { $name } in ausgerichteter Position als { $format } exp
 mesh-exported-aligned-warnings = { $name } in ausgerichteter Position als { $format } exportiert (Warnungen: { $warnings }): { $path }
 mesh-exported-unmoved = { $name } exportiert (Scan wurde nicht bewegt) als { $format }: { $path }
 mesh-exported-unmoved-warnings = { $name } exportiert (Scan wurde nicht bewegt) als { $format } (Warnungen: { $warnings }): { $path }
-mesh-warning-point-cloud = Punktwolke für STL ausgelassen
 mesh-warning-vertex-colors = Vertexfarben nicht geschrieben
 mesh-warning-uvs = UVs nicht geschrieben
 mesh-warning-texture-image = Texturbild nicht geschrieben
+mesh-export-warnings = Exportwarnungen: { $warnings }
 mesh-export-failed-title = Ebene konnte nicht exportiert werden
 mesh-export-failed-summary = Ebene konnte nicht exportiert werden: { $detail }
 
@@ -406,8 +404,8 @@ meshedit-session-done-hint = Änderungen übernehmen und Editor schließen
 ## Align Scans window — DRAFT.
 
 align-title = Scans ausrichten
-align-tab-auto = Automatisch
-align-tab-manual = Manuell
+align-tab-auto = Ausrichten
+align-tab-manual = Position anpassen
 align-constraint-free = In alle Richtungen bewegen/drehen
 align-constraint-free-hint = Scan in beliebige Richtung ziehen
 align-constraint-z = In z-Richtung bewegen
@@ -433,9 +431,9 @@ align-clear-hint = Alle Pfeile verwerfen und zwei Scans neu wählen — Scans bl
 align-fit-perform = Ausrichtung durchführen
 align-fit-perform-hint = Netz auf die Pfeile bewegen — braucht mindestens zwei Pfeile
 align-fit-refine = Best-Fit-Matching
-align-fit-refine-hint = Oberflächen aufeinander setzen. Nur für gleich geformte Netze
+align-fit-refine-hint = Unveränderte Bereiche des präparierten Scans am Originalmodell ausrichten. Ergebnis vor dem Bestätigen prüfen
 align-matching-parts = passende Teile
-align-matching-parts-hint = Flächenanteil auf beiden Netzen. 70–80% passt für Paare mit ähnlicher Topologie
+align-matching-parts-hint = Maximaler Anteil der Treffer für die Verfeinerung. Best Fit senkt ihn bei wenigen unveränderten Bereichen automatisch
 align-max-influence = max. Einfluss
 align-max-influence-hint = Nur Oberfläche unterhalb dieser Distanz beeinflusst das Matching. Großer Wert kann verschlechtern
 align-orientation-title = Flächenorientierung muss übereinstimmen
@@ -454,34 +452,13 @@ align-commit-done-hint = Ausrichtung behalten und schließen — Scan exportiere
 
 ## Deviation map — DRAFT.
 
-align-map-more = Weitere Einstellungen
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Einen Scan nach Abstand zum anderen einfärben
-align-map-range-label = Bereich
-align-map-preset-hint = Alles unter { $min } mm gilt als Übereinstimmung, { $max } mm sättigt
-align-map-min = min
+align-map-requires-refine = Zuerst „Best fit matching“ ausführen
 align-map-max = max
-align-map-auto = auto
-align-map-auto-hint = Bereich erneut an die Messung anpassen
-align-map-advice-far = Netze liegen etwa { $mm } mm auseinander — erst ausrichten, dann Karte lesen
-align-map-advice-saturated = Das meiste liegt jenseits { $mm } mm, Farben kleben an den Enden — Bereich weiten
-align-map-not-enough = Zu wenig Fläche zum Messen — { $measured } von { $total } Vertices erreichen den anderen Scan
-align-map-within = { $pct }% innerhalb { $tol } mm
-align-map-rms = RMS { $rms }
-align-map-grey-tooltip = Grau ist keine Messung. Oberfläche ohne Gegenstück in Reichweite ist nicht messbar — Brücke oder Zahn nur auf einem Scan ist der übliche Grund, kein Fehler.
-align-map-grey-out = { $n } ohne gegenüberliegende Fläche
-align-map-grey-excluded = { $n } ausgeschlossen
-align-map-grey-unusable = { $n } in der Datei unbrauchbar
-align-map-grey-total = { $total } graue Vertices: { $parts }
+align-map-min = min
 align-map-not-measured = nicht gemessen
 align-map-not-measured-hint = Keine Oberfläche des anderen Scans in Reichweite dieser Vertices. Zahn oder Brücke nur auf einem Scan ist der übliche Grund, kein Fehler — dort gibt es nichts zu messen.
-align-map-stepped = Gestufte Bänder
-align-map-stepped-hint = Rampe stufen statt blenden
-align-map-colours = Farben
-align-map-ramp-distance = Abstand
-align-map-ramp-distance-hint = Kalt wo Scans übereinstimmen, heiß wo nicht
-align-map-ramp-signed = vorzeichenbehaftet
-align-map-ramp-signed-hint = Blau unter der Fläche, grün nominal, rot darüber
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -493,20 +470,17 @@ align-pair-swap = Tauschen
 align-pair-swap-hint = Andersherum fitten — Pfeile wandern mit
 
 align-brush-title = Pinsel
-align-brush-subtitle = Fläche malen, die das Matching ignorieren muss, auf beiden Netzen
-align-brush-hint-inverse = Ziehen löscht · Shift markiert · Shift+Rad skaliert
-align-brush-hint-mark = Ziehen markiert · Shift löscht · Shift+Rad skaliert
 align-brush-close-hint = Pinsel schließen — Markierungen bleiben
+align-brush-mesh-selection = Mesh-Auswahl
+align-brush-moving = Beweglich
+align-brush-fixed = Fest
 align-brush-size = Pinselgröße
 align-brush-inverse = Pinsel invertieren
 align-brush-inverse-hint = Einfaches Ziehen löscht statt zu markieren. Shift kehrt wieder um
 align-brush-auto-radius = Automatischer Radius
 align-brush-auto-radius-hint = Radius des Netzbereichs an jedem Pfeilende
-align-brush-all-marked = Alles markiert — Matching ohne Wirkung
-align-brush-nothing-marked = Nichts markiert
-align-brush-percent-marked = { $pct }% aus dem Match markiert
 align-brush-size-status = Pinsel { $size } mm
-align-status-no-summary = Bei { $reach } mm Reichweite gibt es nichts zu messen — { $measured } von { $total } Vertices fanden den anderen Scan. Bewegen Sie die Scans näher zusammen oder erhöhen Sie die Reichweite unter „Weitere Einstellungen“.
+align-status-no-summary = Keine vergleichbare Oberfläche
 
 align-mask-fit-everywhere = Überall fitten
 align-mask-fit-everywhere-hint = Alle Markierungen löschen
@@ -535,28 +509,20 @@ align-status-one-scan = Einer der Scans
 align-status-place-first = Erst je einen Punkt pro Scan setzen
 align-status-scaled = Dieser Scan trägt eine skalierte Platzierung, nicht ausrichtbar
 align-status-pose-refused = Fit fertig, aber der Scan dafür ist nicht mehr verfügbar
+align-status-worker-unavailable = Align-Worker angehalten — Alignment-Tool neu starten
 align-status-measure-dropped = Messung verworfen — Pinsel besitzt die Farben
+align-status-measure-unavailable = Messung nicht angewendet — Scan geändert; Best fit matching erneut ausführen
 align-status-map-elsewhere = Distanzkarte liegt auf dem Automatik-Tab — dort kommt sie zurück
 align-status-aligned-points = Auf Punkten ausgerichtet
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Ausgerichtet — { $rms } mm auf den Punkten{ $dropped }. Per Feinabgleich festziehen.
-align-status-outlier = , Paar { $pairs } als Ausreißer ignoriert
-align-status-refined = Verfeinert — { $rms } mm über { $pct }% { $surface }{ $settled }{ $weak }
-align-status-surface = der Oberfläche
-align-status-surface-unmarked = der unmarkierten Oberfläche
-align-status-settled-limit = , am Iterationslimit gestoppt
-align-status-weak-slide =  — der Fit kann noch entlang { $axes } gleiten
-align-status-weak-turn =  — der Fit kann noch um { $axes } drehen
-align-status-weak-both =  — der Fit kann noch entlang { $sliding } gleiten und um { $spinning } drehen
-align-status-measured = { $pct }% innerhalb { $tol } mm, { $n ->
-    [one] { $n } Vertex ohne Messgegenüber{ $blind }
-   *[other] { $n } Vertices ohne Messgegenüber{ $blind }
-}
-align-status-blind-free =  — diese Flächen gleiten frei, dahinter kann sich eine beliebig große Verschiebung verbergen
-align-status-blind-hidden =  — eine starre Abweichung bis { $mm } mm kann sich so lesen
+align-status-aligned = Nach Punkten ausgerichtet — zuerst „Best fit matching“ ausführen.
+align-status-refined = Best fit bereit
+align-status-measured = Heatmap aktualisiert
 align-status-remeasure = { $reason } — Best-Fit-Matching erneut laufen lassen
+align-status-settings-changed = Matching-Einstellungen geändert
+align-status-visibility-changed = Sichtbarkeit eines ausgewählten Scans geändert
 align-brush-not-in-alignment = Dieser Scan gehört nicht zu dieser Ausrichtung
 align-drag-moving = { $name } wird von Hand bewegt
 align-drag-unrecorded = Von Hand bewegt, aber dieser Schritt landete nicht in der Historie — Strg+Z macht ihn nicht rückgängig
@@ -591,6 +557,7 @@ guard-replace-destructive = Verwerfen und öffnen
 guard-save = Speichern…
 guard-cancel = Abbrechen
 
+error-retry-graphics = Erneut versuchen
 error-close = Schließen
 error-copy-details = Details kopieren
 
@@ -677,14 +644,21 @@ sculpt-armed-smooth = Glätten: ziehen zum Entspannen, Shift forciert
 sculpt-off = Sculpting aus
 sculpt-applied-undo = Sculpting angewendet (Strg+Z macht rückgängig)
 sculpt-applied-locked = Sculpting angewendet (nicht rückgängig: Snapshot zu groß)
+sculpt-failed-title = Sculpt fehlgeschlagen
 sculpt-failed = Diese Ebene lässt sich nicht sculpten: { $detail }
 sculpt-worker-stopped = Sculpt-Worker angehalten: { $detail }
+sculpt-preparing = Sculpting wird vorbereitet…
+sculpt-nonuniform-scale = Sculpting benötigt eine gleichmäßig skalierte Mesh
 sculpt-failure-worker-panicked = Sculpt-Worker abgestürzt: { $detail }
 sculpt-failure-spawn = Sculpt-Worker konnte nicht gestartet werden: { $detail }
 sculpt-failure-kernel-pool = Sculpt-Kernel-Pool konnte nicht erstellt werden: { $detail }
 sculpt-failure-missing-undo-baseline = Für den Sculpt-Strich gibt es keine Undo-Basis
 sculpt-failure-shadow-poisoned = Sculpt-Shadow-Sperre ist vergiftet
+sculpt-failure-shadow-shape = Sculpt-Shadow entspricht nicht mehr dem Live-Mesh
+sculpt-failure-invalid-vertex-index = Sculpt-Worker lieferte einen ungültigen Vertex-Index
+sculpt-failure-worker-state-poisoned = Sculpt-Workerstatus beschädigt — Sculpt neu starten
 sculpt-failure-vertex-count-changed = Das Sculpt-Ergebnis hat die Vertex-Anzahl verändert
+sculpt-failure-topology-rebuild = Wiederherstellung der Sculpt-Topologie fehlgeschlagen: { $detail }
 sculpt-worker-unavailable = Sculpt-Worker nicht verfügbar
 sculpt-finishing = Stroke wird fertiggestellt…
 sculpt-finishing-history = Sculpting vor Historienwechsel fertigstellen…
@@ -733,14 +707,16 @@ cut-footer-thickness = Ziehen = Schwenken · Klick Kontur = Wandstärke · Recht
 align-fail-no-surface-fixed = Fixer Scan ohne brauchbare Oberfläche
 align-fail-no-surface-moving = Bewegter Scan ohne brauchbare Oberfläche
 align-fail-recolor = Messung vor dem Einfärben verworfen
-align-reject-toofew = Nur { $a } von { $b } Korrespondenzen — weiteren Pfeil setzen oder max. Einfluss erhöhen
-align-reject-unpaired = { $a } Punkte auf einem Scan, { $b } auf dem anderen — Punkt ohne Partner
-align-reject-degenerate-plain = Geklickte Punkte bestimmen keine Rotation — weiter streuen
-align-reject-degenerate-line = Geklickte Punkte liegen auf einer Geraden: Rotation um { $a } unbestimmt
-align-reject-unit = Scans unterscheiden sich um Faktor { $a } — wohl verschiedene Einheiten
-align-reject-apart = Fit lässt Scans { $a } mm auseinander statt aufeinander ({ $b } mm) — Pfeilpaare prüfen
-align-reject-runaway = Best-Fit wanderte { $a } mm, weiter als Scangröße ({ $b } mm) — erst Pfeilpaare setzen oder Einfluss senken
-align-reject-nonfinite = Geklickter Punkt oder Normale keine endliche Zahl
+align-fail-unobservable = Die Oberfläche reicht für eine verlässliche Abweichungskarte nicht aus
+align-reject-toofew = Weitere Pfeilpaare setzen oder Scans näher platzieren
+align-reject-unpaired = Beide Seiten jedes Pfeilpaares vervollständigen
+align-reject-degenerate-plain = Matching-Punkte über die Fläche verteilen
+align-reject-unit = Scans verwenden unterschiedliche Einheiten
+align-reject-apart = Pfeilpaare prüfen und Scans näher platzieren
+align-reject-runaway = Scans näher platzieren und Best-Fit-Matching erneut ausführen
+align-reject-no-improvement = Best-Fit konnte keine Verbesserung bestätigen — Scans näher platzieren und erneut versuchen
+align-reject-ambiguous = Best-Fit fand mehrere gleich plausible Flächen — passende Bereiche markieren oder Scans näher platzieren
+align-reject-nonfinite = Ausgewählter Punkt oder Oberfläche ist ungültig
 align-status-stepped = Durch Historie gegangen
 align-status-moving-hand = Von Hand bewegt
 
@@ -794,8 +770,6 @@ settings-orbit = Orbitgeschwindigkeit
 settings-orbit-hint = Wie schnell die Ansicht bei gedrückter rechter Maustaste kreist
 settings-zoom = Zoomgeschwindigkeit
 settings-zoom-hint = Wie stark jede Raststufe zoomt
-settings-recent = Letzte Szenen
-settings-recent-hint = Einträge im Öffnen-Menü
 settings-background = Hintergrund
 settings-bg-gray = Grau
 settings-bg-white = Weiß
@@ -824,6 +798,7 @@ settings-update-skipped = Version übersprungen
 settings-update-failed = Konnte nicht prüfen
 settings-save-error = Einstellungen konnten nicht gespeichert werden. Neuer Versuch…
 settings-save-error-hint = Einstellungsdatei derzeit nicht verfügbar
+settings-shortcuts = Tastenkürzel
 settings-about = Über OccluView
 
 bridge-busy = Brückentrennung erst beenden oder abbrechen
@@ -855,9 +830,79 @@ lasso-dropped = Lassokontur verworfen
 lasso-needs-points = Lasso braucht mindestens 3 Punkte
 loading-scene = Szene lädt…
 gpu-failed-status = Grafiktreiber meldet ein Problem
+gpu-retry-status = Grafik wird erneut versucht — bleibt das Problem, Arbeit speichern und OccluView neu starten
 gpu-failed-title = Grafikproblem
 gpu-failed-summary = Der Grafiktreiber meldet ein Problem beim Zeichnen. Die Ansicht kann unvollständig sein. Arbeit speichern und OccluView neu starten, falls es wiederkehrt.
 align-job-align = Richte aus…
 align-job-refine = Verfeinere…
 align-job-measure = Messe…
 align-markings-dropped = Markierungen verworfen — Scanoberfläche hat sich seitdem geändert
+
+## Okklusalkontakte: Rechtsklick auf einen Scan und lesen, wo er den Gegenscan
+## berührt. Die eine Lesart ist Artikulationspapier (nur Marken, nach Tiefe
+## gefärbt), die andere die Annäherungskarte (wie nah, überall). Ein Regler
+## verschiebt die Tiefe, ab der die Skala als voll belastet gilt, und färbt eine
+## bereits gemessene Karte neu, statt neu zu messen.
+layer-menu-contacts = Kontakte anzeigen
+layer-menu-hide-contacts = Kontakte ausblenden
+
+contact-title = Okklusalkontakte
+contact-close-hint = Lesung schließen und die Marken von beiden Scans nehmen
+contact-against = { $subject } gegen { $antagonist }
+contact-unknown-layer = ein Scan, der nicht mehr geöffnet ist
+
+contact-mode-marks = Kontakte
+contact-mode-marks-hint = Wo die Flächen sich berühren, nach Stärke gefärbt — der Rest bleibt frei, wie Artikulationspapier ihn lässt
+contact-mode-approach = Annäherung
+contact-mode-approach-hint = Wie nah der Gegenscan überall ist, Belastung eingeschlossen
+
+contact-load-label = belastet ab
+contact-load-suffix = mm
+contact-load-hint = Die Tiefe, ab der diese Skala als voll belastet gilt. Verschieben färbt die bereits gemessene Karte neu — ohne neue Messung.
+contact-flatten = Eine Farbe je Kontakt
+contact-flatten-hint = Jede Kontaktfläche auf ihren tiefsten Punkt reduzieren. Aus behält die Kraftverteilung innerhalb jeder Marke.
+
+contact-legend-deepest = { $mm } mm in den Biss
+
+contact-stats-area = Kontaktfläche
+contact-stats-contacts = Kontakte
+contact-stats-deepest = Am tiefsten
+
+contact-readout-gap = Abstand
+contact-readout-load = Belastung
+
+contact-status-measuring = Messung…
+contact-status-measuring-hint = Die beiden Flächen werden gegeneinander gelesen
+contact-status-remeasuring = Erneute Messung…
+contact-status-remeasuring-hint = Ein Scan hat sich bewegt, die Abstände haben sich geändert. Die Karte wird neu gelesen.
+contact-status-needs-second = Eine Kontaktlesung braucht einen zweiten sichtbaren Scan zum Messen
+contact-status-no-surface = Einer der beiden Scans hat keine Fläche zum Messen
+contact-status-worker-failed = Die Messung wurde nicht abgeschlossen
+
+contact-opened = Kontakte auf { $label } werden gelesen
+contact-closed = Kontaktlesung geschlossen
+help-section-contacts = Okklusalkontakte
+help-hintline-contacts = Rechtsklick auf eine Ebene · Kontakte anzeigen · Regler „belastet ab“ färbt neu · Esc schließt
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Die Okklusalkontakte gegen den Gegenscan lesen
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Die Kontakttiefe unter dem Zeiger lesen, auf beiden Zahnbögen
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Die Tiefe verschieben, ab der die Skala voll belastet heißt
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Zwischen nur Marken und der ganzen Annäherung wechseln
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Die Lesung schließen und die Marken von beiden Scans nehmen
+contact-retry = Erneut lesen
+contact-status-subject-unusable = Der Scan, um den es in dieser Lesung geht, lässt sich gerade nicht messen
+contact-status-subject-unusable-hint = Wieder einblenden oder als Dreiecksnetz belassen — die Lesung läuft weiter
+contact-status-antagonist-unusable = Der Scan, gegen den gemessen wird, lässt sich gerade nicht messen
+contact-status-antagonist-unusable-hint = Wieder einblenden oder als Dreiecksnetz belassen — die Lesung läuft weiter
+contact-status-no-overlap = Die Scans liegen zu weit auseinander
+contact-status-no-overlap-hint = Nichts auf beiden Flächen lag in Reichweite der Lesung. Prüfen, ob die Scans in Okklusion stehen.
+contact-status-failed-hint = Erneut lesen; scheitert es weiter, muss das Paar eventuell zuerst repariert werden.
+contact-status-needs-second-hint = Den Gegenscan öffnen oder wieder einblenden und die Lesung starten
+contact-legend-gap = Abstand bis { $mm } mm
+contact-stats-balance = Fläche je Seite
+contact-stats-balance-hint = Kontaktfläche beiderseits der eigenen Mittellinie des Scans. Die Teilung folgt den Koordinaten des Scans; bei gedrehtem oder gespiegeltem Fall können die Zahlen tauschen.
+layer-menu-contacts-unavailable = Eine Kontaktlesung braucht zwei sichtbare Dreiecksnetze — zuerst den Gegenscan einblenden oder öffnen
+
+contact-details = Details
+contact-details-hint = Die Zahlen und die Regel „eine Farbe pro Kontakt“
+contact-details-close = Details ausblenden
+settings-shortcuts-hint = Tastatur- und Mausreferenz (F1)

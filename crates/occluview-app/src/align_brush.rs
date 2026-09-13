@@ -29,14 +29,17 @@ const DEFAULT_AUTO_RADIUS_MM: f32 = 3.0;
 /// How much one wheel notch changes the radius.
 const WHEEL_STEP_MM: f32 = 0.25;
 
-/// Brush state: whether its window is open, how big it is, and which way a
-/// stroke goes.
+use crate::align_markings::AlignSide;
+
+/// Brush state: whether its window is open, how big it is, and which member
+/// of the alignment pair is selected for painting.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AlignBrush {
     armed: bool,
     inverse: bool,
     radius_mm: f32,
     auto_radius_mm: f32,
+    target_side: AlignSide,
 }
 
 impl Default for AlignBrush {
@@ -46,6 +49,7 @@ impl Default for AlignBrush {
             inverse: false,
             radius_mm: DEFAULT_RADIUS_MM,
             auto_radius_mm: DEFAULT_AUTO_RADIUS_MM,
+            target_side: AlignSide::Moving,
         }
     }
 }
@@ -59,6 +63,26 @@ impl AlignBrush {
     /// Open or close the brush.
     pub(crate) fn set_armed(&mut self, armed: bool) {
         self.armed = armed;
+    }
+
+    /// The mesh selected by the Brush tool's explicit Mesh selection control.
+    pub(crate) fn target_side(self) -> AlignSide {
+        self.target_side
+    }
+
+    /// Select which member of the aligned pair receives strokes and commands.
+    pub(crate) fn set_target_side(&mut self, side: AlignSide) {
+        self.target_side = side;
+    }
+
+    /// Keep the physical mesh selected when the user swaps moving and fixed.
+    pub(crate) fn swap_target_side(&mut self) {
+        self.target_side = self.target_side.opposite();
+    }
+
+    /// Forget a selection that referred to a scene that was cleared.
+    pub(crate) fn reset_target_side(&mut self) {
+        self.target_side = AlignSide::Moving;
     }
 
     /// Whether a plain stroke clears instead of marks.
@@ -125,6 +149,7 @@ mod tests {
     use super::{
         AlignBrush, DEFAULT_AUTO_RADIUS_MM, DEFAULT_RADIUS_MM, MAX_RADIUS_MM, MIN_RADIUS_MM,
     };
+    use crate::align_markings::AlignSide;
 
     #[test]
     fn a_new_brush_is_closed_at_a_usable_size() {
@@ -133,6 +158,7 @@ mod tests {
         assert!(!brush.is_inverse());
         assert!((brush.radius_mm() - DEFAULT_RADIUS_MM).abs() < f32::EPSILON);
         assert!((brush.auto_radius_mm() - DEFAULT_AUTO_RADIUS_MM).abs() < f32::EPSILON);
+        assert_eq!(brush.target_side(), AlignSide::Moving);
     }
 
     #[test]
@@ -184,5 +210,16 @@ mod tests {
         assert!((brush.radius_mm() - MAX_RADIUS_MM).abs() < f32::EPSILON);
         brush.nudge_radius(f32::NAN);
         assert!(brush.radius_mm().is_finite());
+    }
+
+    #[test]
+    fn mesh_selection_is_explicit_and_survives_role_swaps_by_physical_mesh() {
+        let mut brush = AlignBrush::default();
+        brush.set_target_side(AlignSide::Fixed);
+        assert_eq!(brush.target_side(), AlignSide::Fixed);
+        brush.swap_target_side();
+        assert_eq!(brush.target_side(), AlignSide::Moving);
+        brush.reset_target_side();
+        assert_eq!(brush.target_side(), AlignSide::Moving);
     }
 }

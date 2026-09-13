@@ -1,6 +1,7 @@
 //! GPU texture upload: decodes a CPU-side [`MeshTexture`] into a `wgpu::Texture`
 //! + view + sampler + bind group, ready to bind at group 2.
 
+use crate::contact_texture::{inert_field_texture, white_base};
 use crate::pipeline::Renderer;
 use occluview_core::MeshTexture;
 
@@ -66,11 +67,29 @@ pub struct GpuTexture {
     /// Kept alive so the bind group's sampler binding remains valid.
     #[allow(dead_code)]
     pub(crate) sampler: wgpu::Sampler,
-    /// Bind group (group 2): binding 0 = view, binding 1 = sampler.
+    /// Kept alive so the bind group's *field* binding remains valid (the inert
+    /// 1×1 sentinel; a textured scan paints no contacts).
+    #[allow(dead_code)]
+    pub(crate) contact_field: wgpu::Texture,
+    #[allow(dead_code)]
+    pub(crate) contact_field_view: wgpu::TextureView,
+    /// Bind group (group 2): binding 0 = view, binding 1 = sampler, binding 2 =
+    /// the packed contact field.
     pub bind_group: wgpu::BindGroup,
 }
 
 impl GpuTexture {
+    /// The GPU view, so a sibling group-2 material can bind this scan's own
+    /// texture alongside its own field.
+    pub(crate) fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    /// The sampler that belongs with [`Self::view`].
+    pub(crate) fn sampler(&self) -> &wgpu::Sampler {
+        &self.sampler
+    }
+
     /// Build a 1x1 white texture used when a mesh has no material texture.
     ///
     /// The mesh shader still requires a bound group-2 texture/sampler even
@@ -79,46 +98,8 @@ impl GpuTexture {
     /// white one in `offscreen::helpers::make_fallback_texture_bind_group`.
     #[must_use]
     pub fn fallback(renderer: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("occluview fallback white texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[255, 255, 255, 255],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("occluview fallback sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let (texture, view, sampler) = white_base(device, queue);
+        let (contact_field, contact_field_view) = inert_field_texture(device, queue);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("occluview fallback texture bind group"),
             layout: renderer.texture_layout(),
@@ -131,12 +112,18 @@ impl GpuTexture {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&contact_field_view),
+                },
             ],
         });
         Self {
             texture,
             view,
             sampler,
+            contact_field,
+            contact_field_view,
             bind_group,
         }
     }
@@ -218,6 +205,11 @@ impl GpuTexture {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+        // A textured scan paints no contacts, but the group-2 layout has three
+        // bindings and wgpu requires all of them, so the field binding carries
+        // the inert sentinel texel. A layer that *does* paint contacts is bound
+        // through `GpuContactMaterial` instead, which owns a real field.
+        let (contact_field, contact_field_view) = inert_field_texture(device, queue);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("occluview mesh texture bind group"),
             layout: renderer.texture_layout(),
@@ -230,12 +222,18 @@ impl GpuTexture {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&contact_field_view),
+                },
             ],
         });
         Self {
             texture,
             view,
             sampler,
+            contact_field,
+            contact_field_view,
             bind_group,
         }
     }

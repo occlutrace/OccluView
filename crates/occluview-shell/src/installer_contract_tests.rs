@@ -490,6 +490,37 @@ fn candidate_package_builds_are_lockfile_strict() {
 }
 
 #[test]
+fn shipped_desktop_profiles_can_contain_a_sculpt_worker_panic() {
+    let cargo = include_str!("../../../Cargo.toml");
+    let msi_build = include_str!("../../../install/build-msi.ps1");
+    let windows_build = include_str!("../../../scripts/build-windows-msvc.sh");
+    let deb_build = include_str!("../../../install/linux/build-deb.sh");
+    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+
+    assert!(cargo.contains("[profile.release-unwind]"));
+    assert!(cargo.contains("[profile.release-diagnostic-unwind]"));
+    assert!(cargo.contains("panic = \"unwind\""));
+    assert!(msi_build.contains("\"release\" { \"release-unwind\" }"));
+    assert!(msi_build.contains("$cargoArgs += @(\"--profile\", \"release-unwind\")"));
+    assert!(msi_build.contains("$cargoArgs += @(\"--profile\", \"release-diagnostic-unwind\")"));
+    assert!(windows_build.contains("app_profile_args=(--profile release-unwind)"));
+    assert!(windows_build.contains("app_profile_args=(--profile release-diagnostic-unwind)"));
+    assert!(deb_build.contains("release_profile_dir=\"release-unwind\""));
+    assert!(deb_build.contains("cargo build --locked --profile release-unwind"));
+    assert!(workflow.contains("target\\$target\\release-unwind"));
+}
+
+#[test]
+fn wix_default_build_directory_matches_the_shipped_unwind_profile() {
+    let wxs = include_str!("../../../install/occluview.wxs");
+
+    assert!(
+        wxs.contains("<?define BuildDir = \"target\\x86_64-pc-windows-msvc\\release-unwind\" ?>"),
+        "a direct WiX invocation must use the same shipped app profile as build-msi.ps1"
+    );
+}
+
+#[test]
 fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     // The viewer stays on the current dependency graph, but Explorer loads a
     // separate COM DLL. Its release payload must therefore come from the
@@ -658,6 +689,14 @@ fn windows_package_lifecycle_allows_only_monotonic_major_upgrades() {
     assert!(
         lifecycle.contains("Stop-ActivePreviewHost"),
         "the preview-holder process must be cleaned up after the upgrade probe"
+    );
+    assert!(
+        lifecycle.contains("function Assert-InstalledExecutableStarts")
+            && lifecycle
+                .matches("Assert-InstalledExecutableStarts")
+                .count()
+                >= 3,
+        "Windows lifecycle must start the installed EXE after install and upgrade"
     );
     assert!(
         lifecycle.contains("\"-HoldOpenSeconds\", \"90\""),

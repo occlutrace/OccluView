@@ -31,13 +31,15 @@ impl OccluViewApp {
     ///
     /// The upload is left to the viewport sync, which runs once per frame and
     /// knows whether the prepared scene it would write into still exists.
-    pub(super) fn apply_deviation_colors(&mut self, colors: Vec<[u8; 4]>) {
+    pub(super) fn apply_deviation_colors(&mut self, colors: Vec<[u8; 4]>) -> bool {
         let Some(layer) = self.align_mapped_layer() else {
-            return;
+            return false;
         };
-        if self.attach_overlay_colors(layer, colors, AlignOverlay::Map) {
-            self.ghost_other_layer();
+        if !self.attach_overlay_colors(layer, colors, AlignOverlay::Map) {
+            return false;
         }
+        self.ghost_other_layer();
+        true
     }
 
     /// Put per-vertex colours on one layer and record what they mean.
@@ -110,6 +112,16 @@ impl OccluViewApp {
         if touched.len() != patched.len() {
             return false;
         }
+        // The renderer coalesces sorted contiguous runs. Reject malformed
+        // input before mutating the scratch buffer, so a partial preview can
+        // never be mistaken for a successful brush stroke.
+        if !touched.windows(2).all(|pair| pair[0] < pair[1])
+            || touched
+                .iter()
+                .any(|index| usize::try_from(*index).map_or(true, |at| at >= count))
+        {
+            return false;
+        }
         let colors = Arc::make_mut(&mut slot.1);
         for (index, colour) in touched.iter().zip(patched) {
             if let Some(entry) = colors.get_mut(*index as usize) {
@@ -139,11 +151,15 @@ impl OccluViewApp {
             }
         }
 
-        if let Some(painted) = painted {
-            let indices: Vec<usize> = touched.iter().map(|index| *index as usize).collect();
-            if let Ok(viewport) = live_viewport.lock() {
-                viewport.write_scene_vertices_sparse(&topology, &painted, &indices);
-            }
+        let Some(painted) = painted else {
+            return false;
+        };
+        let indices: Vec<usize> = touched.iter().map(|index| *index as usize).collect();
+        let Ok(viewport) = live_viewport.lock() else {
+            return false;
+        };
+        if !viewport.write_scene_vertices_sparse(&topology, &painted, &indices) {
+            return false;
         }
         self.render.invalidation.overlay_tools_changed();
         true
@@ -178,12 +194,15 @@ impl OccluViewApp {
             return false;
         };
         if self.tools.align.overlay_colors.is_empty() {
-            return false;
+            // clear_deviation_overlay already restored the live viewport. A
+            // queued no-op lets its caller retire the pending flag cleanly.
+            return true;
         }
         let pending = self.tools.align.overlay_colors.clone();
         let mut wrote = true;
         for (layer, colors) in pending {
             let Some(entry) = layer_of(&scene, layer) else {
+                wrote = false;
                 continue;
             };
             let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
@@ -206,14 +225,14 @@ impl OccluViewApp {
         self.tools.align.overlay = AlignOverlay::Nothing;
         // Restore the other layer even when no colour array remains.
         self.unghost_layers();
-        if self.tools.align.overlay_colors.is_empty() {
-            return;
-        }
+        self.tools.align.stats = None;
+        let had_overlay = !self.tools.align.overlay_colors.is_empty();
         self.tools.align.overlay_colors.clear();
-        // A push still standing would chase colours that no longer exist.
-        self.tools.align.deviation_push_pending = false;
+        // The live path restores immediately; the offscreen path needs one
+        // queued write because its prepared scene is intentionally retained.
         self.tools.align.painted.clear();
         let Some(live) = self.document.live_scene_mut() else {
+            self.tools.align.deviation_push_pending = had_overlay;
             return;
         };
         let overlaid: Vec<SceneMeshId> = live
@@ -225,9 +244,12 @@ impl OccluViewApp {
                 entry.id()
             })
             .collect();
+        self.tools.align.deviation_push_pending = had_overlay || !overlaid.is_empty();
+        if overlaid.is_empty() {
+            return;
+        }
         self.mark_scene_materials_changed();
         self.restore_layer_colors(&overlaid);
-        self.tools.align.stats = None;
         self.render.invalidation.overlay_tools_changed();
     }
 
@@ -410,6 +432,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_rejected_sparse_overlay_upload_is_not_reported_as_success() {
+        let patch = production()
+            .split_once("fn patch_overlay_colors(")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("\n    /// Remember one layer"))
+            .map(|(body, _)| body)
+            .expect("a sparse patch path");
+        assert!(
+            patch.contains(".any(|index|")
+                && patch.contains("write_scene_vertices_sparse")
+                && patch.contains("if !viewport.write_scene_vertices_sparse"),
+            "the brush preview must validate IDs and propagate sparse GPU rejection"
+        );
+    }
+
     /// Two things want the one colour channel. Attaching either without
     /// recording which it was is what let a stale-map drop wipe the brush's own
     /// preview out from under the operator's hand.
@@ -432,5 +470,16 @@ mod tests {
             clear.contains("self.tools.align.overlay = AlignOverlay::Nothing"),
             "dropping colours must clear what they meant"
         );
+    }
+
+    #[test]
+    fn clearing_an_overlay_also_repairs_stale_display_bookkeeping() {
+        let clear = production()
+            .split_once("fn clear_deviation_overlay(")
+            .map(|(_, rest)| rest)
+            .expect("one overlay teardown");
+        assert!(clear.contains("let had_overlay = !self.tools.align.overlay_colors.is_empty()"));
+        assert!(clear.contains("entry.deviation_colors().is_some()"));
+        assert!(clear.contains("had_overlay || !overlaid.is_empty()"));
     }
 }

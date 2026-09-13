@@ -1,8 +1,23 @@
 //! Tests for the refine stage, split out of `icp.rs` to hold the workspace's
 //! file budget.
 
-use crate::icp::{refine, Orientation, RefineSettings};
-use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+// Fixture builders place grid indices into `f32` millimetres and turn small
+// millimetre offsets back into indices. Every cast is bounded by the fixture's
+// own size, which the pedantic cast lints cannot express.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+// A test that cannot seat a scan has to say WHICH placement and WHICH refusal,
+// and a settled pair has to be read out of the report. Both are the point of
+// the test rather than an accident, so the workspace's production-code lints
+// are turned off here the same way the sibling test modules do it.
+#![allow(clippy::panic, clippy::expect_used)]
+
+use crate::icp::{refine, IcpReport, Orientation, RefineSettings};
+use crate::{CancelFlag, FitRejection, Rigid, Soup, SurfaceIndex};
 use glam::{DQuat, DVec3};
 
 /// A shallow dome with quasi-random surface texture on top.
@@ -22,9 +37,46 @@ fn dome(n: usize, step: f32) -> (Vec<f32>, Vec<u32>) {
             #[allow(clippy::cast_precision_loss)]
             let y = j as f32 * step;
             let (dx, dy) = (x - centre, y - centre);
+            let texture = 0.25 * (0.7 * x).sin() * (0.53 * y).cos() + 0.12 * (0.31 * x * y).sin();
+            let landmark = 1.5 * (-((x - 33.0).powi(2) + (y - 33.0).powi(2)) / 3.0).exp();
+            positions.extend_from_slice(&[
+                x,
+                y,
+                0.05 * dx * dx + 0.04 * dy * dy + texture + landmark,
+            ]);
+        }
+    }
+    (positions, grid_indices(n))
+}
+
+/// A local patch cut from a much larger connected surface. Its vertex frame is
+/// local, but its shape is sampled at `origin`, so the correct rigid answer is
+/// the translation that puts the patch back over that window. This is the
+/// case a component-centre seed cannot solve on its own.
+#[allow(clippy::cast_possible_truncation)] // Fixture coordinates are small integers.
+fn dome_patch(n: usize, step: f32, origin: DVec3) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);
+    #[allow(clippy::cast_precision_loss)]
+    let centre = 20.0_f32;
+    for j in 0..=n {
+        for i in 0..=n {
             #[allow(clippy::cast_precision_loss)]
-            let texture = ((i * 5 + j * 3) % 7) as f32 * 0.02;
-            positions.extend_from_slice(&[x, y, 0.05 * dx * dx + 0.04 * dy * dy + texture]);
+            let x = i as f32 * step;
+            #[allow(clippy::cast_precision_loss)]
+            let y = j as f32 * step;
+            let global_x = x + origin.x as f32;
+            let global_y = y + origin.y as f32;
+            let dx = global_x - centre;
+            let dy = global_y - centre;
+            let texture = 0.25 * (0.7 * global_x).sin() * (0.53 * global_y).cos()
+                + 0.12 * (0.31 * global_x * global_y).sin();
+            let landmark =
+                1.5 * (-((global_x - 33.0).powi(2) + (global_y - 33.0).powi(2)) / 3.0).exp();
+            positions.extend_from_slice(&[
+                x,
+                y,
+                0.05 * dx * dx + 0.04 * dy * dy + texture + landmark,
+            ]);
         }
     }
     (positions, grid_indices(n))
@@ -56,13 +108,197 @@ fn grid_indices(n: usize) -> Vec<u32> {
     indices
 }
 
+/// Append a translated copy of a component without welding it to the first
+/// one. This models an arch made of separate teeth: a global fixed bounding box
+/// has a centre in the gap, while the matching component is still local.
+#[allow(clippy::cast_possible_truncation)]
+fn append_component(
+    positions: &mut Vec<f32>,
+    indices: &mut Vec<u32>,
+    component_positions: &[f32],
+    component_indices: &[u32],
+    offset: DVec3,
+) {
+    let base = u32::try_from(positions.len() / 3).unwrap();
+    positions.extend(
+        component_positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|point| {
+                [
+                    (f64::from(point[0]) + offset.x) as f32,
+                    (f64::from(point[1]) + offset.y) as f32,
+                    (f64::from(point[2]) + offset.z) as f32,
+                ]
+            }),
+    );
+    indices.extend(component_indices.iter().map(|index| base + *index));
+}
+
 fn settings() -> RefineSettings {
     RefineSettings {
+        local_only: false,
         influence_radius_mm: 2.0,
         matching_ratio: 0.8,
         orientation: Orientation::Match,
         max_iterations: 40,
     }
+}
+
+fn trustworthy_report() -> IcpReport {
+    IcpReport {
+        rigid: Rigid::IDENTITY,
+        iterations: 4,
+        converged: true,
+        inliers: 800,
+        inlier_ratio: 0.8,
+        coverage: 0.8,
+        rms: 0.02,
+        geometric_rms: 0.02,
+        median_abs: 0.01,
+        p95_abs: 0.05,
+        weak_rot_axes: [false; 3],
+        weak_trans_axes: [false; 3],
+    }
+}
+
+/// Two different jaws must not be authorized as an alignment.
+///
+/// The numbers are measured, not invented. Running `refine` on a real upper
+/// and a real lower arch (the fixtures in `real_scans.rs`, `calmcase` pair)
+/// produces this report at every starting distance from touching to 40 mm
+/// apart: 34.5 % of the moving surface finds a point on the other jaw within
+/// the 2 mm search radius, so coverage and the geometric-RMS ceiling both pass
+/// while the pose is meaningless — the two jaws have no single correct joint
+/// position, they only meet where the occlusal surfaces touch.
+///
+/// The median is what separates this from a real alignment: 0.42 mm here,
+/// against a discretisation error for an arch seated on a displaced copy of
+/// itself. This test pins the gate that rejects it, so nobody later relaxes
+/// the median and lets a confidently wrong pose paint a heatmap.
+/// The median limit holds at both ends of the radius slider.
+///
+/// It is a fraction of the operator's search radius, and the radius is
+/// adjustable from 0.2 mm to 10 mm. Unclamped, that fraction fails in opposite
+/// directions at the two ends, and both failures matter:
+///
+/// - at 0.2 mm the limit lands at 0.02 mm, below the noise of a real scanner,
+///   so a CORRECT seating is refused;
+/// - at 10 mm it lands at 1 mm, wide enough to authorize two different jaws,
+///   so a meaningless pose is accepted with a heatmap over it.
+///
+/// The floor and ceiling are what keep the gate meaningful across the range.
+#[test]
+fn the_median_limit_holds_at_both_ends_of_the_radius_slider() {
+    // Scanner noise: a correct seating on two independent scans of one arch.
+    let noisy_seating = IcpReport {
+        geometric_rms: 0.03,
+        median_abs: 0.03,
+        p95_abs: 0.08,
+        ..trustworthy_report()
+    };
+
+    // The measured two-jaw seating, which must never be authorized.
+    let two_jaws = IcpReport {
+        geometric_rms: 0.5777,
+        median_abs: 0.4203,
+        p95_abs: 1.0643,
+        coverage: 0.3454,
+        inlier_ratio: 0.2763,
+        ..trustworthy_report()
+    };
+
+    for radius in [0.2_f64, 0.5, 1.0, 2.0, 5.0, 10.0] {
+        let narrow = RefineSettings {
+            influence_radius_mm: radius,
+            ..settings()
+        };
+        assert!(
+            noisy_seating.is_trustworthy_refinement_for(&narrow),
+            "a real seating must survive the gate at radius {radius}: the limit \
+             must not fall below scanner noise"
+        );
+        assert!(
+            !two_jaws.is_trustworthy_refinement_for(&narrow),
+            "two different jaws must not be authorized at radius {radius}: the \
+             limit must not rise to meet a meaningless seating"
+        );
+    }
+}
+
+#[test]
+fn two_different_jaws_are_not_authorized_as_an_alignment() {
+    let two_jaws = IcpReport {
+        geometric_rms: 0.5777,
+        median_abs: 0.4203,
+        p95_abs: 1.0643,
+        coverage: 0.3454,
+        inlier_ratio: 0.2763,
+        ..trustworthy_report()
+    };
+    assert!(
+        !two_jaws.is_trustworthy_refinement_for(&settings()),
+        "a pose that only touches the other jaw's occlusal surface must not be \
+         authorized: {two_jaws:?}"
+    );
+
+    // The same gate still accepts a real seating, and the difference is the
+    // median rather than any of the coarse measures.
+    let seated = IcpReport {
+        geometric_rms: 0.02,
+        median_abs: 0.01,
+        p95_abs: 0.05,
+        ..trustworthy_report()
+    };
+    assert!(
+        seated.is_trustworthy_refinement_for(&settings()),
+        "a seated pair must still be authorized: {seated:?}"
+    );
+}
+
+#[test]
+fn only_converged_full_rank_coverage_can_authorize_refinement() {
+    assert!(trustworthy_report().is_trustworthy_refinement());
+    assert!(trustworthy_report().is_trustworthy_refinement_for(&settings()));
+
+    let mut stalled = trustworthy_report();
+    stalled.converged = false;
+    assert!(!stalled.is_trustworthy_refinement());
+
+    let mut local_patch = trustworthy_report();
+    local_patch.coverage = 0.01;
+    assert!(!local_patch.is_trustworthy_refinement());
+
+    let mut rank_deficient = trustworthy_report();
+    rank_deficient.weak_trans_axes[0] = true;
+    assert!(!rank_deficient.is_trustworthy_refinement());
+}
+
+#[test]
+fn a_stationary_apart_patch_cannot_authorize_refinement() {
+    let mut apart = trustworthy_report();
+    apart.geometric_rms = 1.01;
+
+    assert!(
+        !apart.is_trustworthy_refinement_for(&settings()),
+        "a 1.01 mm geometric residual must fail the 1.0 mm radius-derived quality gate"
+    );
+    apart.geometric_rms = 0.99;
+    assert!(
+        apart.is_trustworthy_refinement_for(&settings()),
+        "a residual below the configured quality limit remains eligible"
+    );
+
+    let narrow = RefineSettings {
+        influence_radius_mm: 0.2,
+        ..settings()
+    };
+    apart.geometric_rms = 0.11;
+    assert!(
+        !apart.is_trustworthy_refinement_for(&narrow),
+        "the quality limit must follow the operator's search radius"
+    );
 }
 
 fn soup<'a>(positions: &'a [f32], indices: &'a [u32]) -> Soup<'a> {
@@ -134,29 +370,21 @@ fn refine_leaves_an_already_seated_pose_alone() {
 }
 
 #[test]
-fn refine_reports_a_weak_axis_on_a_flat_sheet() {
+fn refine_rejects_a_flat_sheet_as_ambiguous() {
     let (positions, indices) = flat(16, 1.0);
     let mesh = soup(&positions, &indices);
     let index = SurfaceIndex::build(mesh).unwrap();
 
-    let report = refine(
-        mesh,
-        &index,
-        Rigid::IDENTITY,
-        &settings(),
-        &CancelFlag::new(),
-    )
-    .unwrap();
-
-    assert!(
-        report.weak_trans_axes[0] || report.weak_trans_axes[1],
-        "a flat sheet slides in plane and must say so: {:?}",
-        report.weak_trans_axes
-    );
-    assert!(
-        !report.weak_trans_axes[2],
-        "the sheet normal direction is well determined"
-    );
+    assert!(matches!(
+        refine(
+            mesh,
+            &index,
+            Rigid::IDENTITY,
+            &settings(),
+            &CancelFlag::new(),
+        ),
+        Err(FitRejection::Ambiguous)
+    ));
 }
 
 #[test]
@@ -171,6 +399,24 @@ fn refine_stops_when_already_cancelled() {
 
     assert_eq!(report.iterations, 0);
     assert!(!report.converged);
+}
+
+#[test]
+fn refine_rejects_a_nonfinite_start_before_cancellation_can_hide_it() {
+    let (positions, indices) = dome(12, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let cancel = CancelFlag::new();
+    cancel.cancel();
+    let broken = Rigid {
+        rotation: DQuat::IDENTITY,
+        translation: DVec3::new(f64::NAN, 0.0, 0.0),
+    };
+
+    assert_eq!(
+        refine(mesh, &index, broken, &settings(), &cancel),
+        Err(FitRejection::NonFinite)
+    );
 }
 
 #[test]
@@ -234,10 +480,12 @@ fn the_mask_removes_vertices_from_the_fit() {
     let (positions, indices) = dome(16, 0.5);
     let plain = soup(&positions, &indices);
     let mut mask = vec![0u8; plain.vertex_count()];
-    for (vertex, slot) in mask.iter_mut().enumerate() {
-        if vertex % 2 == 0 {
-            *slot = 1;
-        }
+    // Exclude one local patch while leaving most triangles usable. Masking
+    // every other grid vertex would remove every face from this alternating
+    // triangulation: a masked face has no valid normal by contract, so the
+    // test would accidentally ask ICP to fit an empty moving surface.
+    for vertex in [0usize, 1, 17, 18] {
+        mask[vertex] = 1;
     }
     let masked = Soup {
         positions: &positions,
@@ -267,9 +515,12 @@ fn a_start_with_no_surface_in_reach_is_refused() {
 
     let outcome = refine(mesh, &index, start, &settings(), &CancelFlag::new());
 
+    // The variant matters: an unreachable start is not an ambiguous one, and
+    // the operator's next step differs. `is_err()` accepted every rejection
+    // this crate can produce, which is how a swapped variant would pass.
     assert!(
-        outcome.is_err(),
-        "a hopeless start must be refused, not guessed at"
+        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
+        "a hopeless start must be refused as unreachable, got {outcome:?}"
     );
 }
 
@@ -286,8 +537,8 @@ fn an_inverted_orientation_setting_rejects_matching_normals() {
     let outcome = refine(mesh, &index, Rigid::IDENTITY, &inverted, &CancelFlag::new());
 
     assert!(
-        outcome.is_err(),
-        "every normal agrees, so an inverted-only match has nothing to work with"
+        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
+        "every normal agrees, so an inverted-only match has nothing to work with, got {outcome:?}"
     );
 }
 
@@ -309,7 +560,10 @@ fn an_empty_moving_mesh_is_refused() {
         &CancelFlag::new(),
     );
 
-    assert!(outcome.is_err());
+    assert!(
+        matches!(outcome, Err(FitRejection::TooFewPairs { have: 0, .. })),
+        "an empty moving mesh has no correspondences at all, got {outcome:?}"
+    );
 }
 
 #[test]
@@ -384,4 +638,486 @@ fn where_the_file_puts_its_zero_does_not_change_the_refine() {
         "expected the translation column to swing wider than the scan moved, \
          got {bookkeeping} against {travelled}"
     );
+}
+
+#[test]
+fn best_fit_recovers_from_a_one_mm_lateral_start() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(1.0, 0.0, 0.0));
+
+    let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "a rough lateral start settled sideways at {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_recovers_from_a_side_by_side_partial_overlap() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    for shift in [4.0, 6.0, 8.0, 10.0, 12.0] {
+        let start = Rigid::new(DQuat::IDENTITY, DVec3::new(shift, 0.0, 0.0));
+        let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+
+        assert!(
+            report.rigid.translation.length() < 0.05,
+            "a side-by-side partial overlap at {shift} mm settled sideways at {:?}",
+            report.rigid.translation
+        );
+    }
+}
+
+#[test]
+fn best_fit_recovers_from_a_quarter_turn_start() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let rotation = DQuat::from_axis_angle(DVec3::Z, std::f64::consts::FRAC_PI_2);
+    let centre = DVec3::splat(6.0);
+    let start = Rigid::new(rotation, centre - rotation * centre);
+
+    let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+    let remaining_rotation = report.rigid.rotation.to_scaled_axis().length();
+
+    assert!(
+        remaining_rotation < 0.05,
+        "a rough quarter-turn start stayed sideways: {:?}",
+        report.rigid
+    );
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "a rough quarter-turn start did not return to the source pose: {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_prefers_the_nearby_component_over_an_adjacent_distractor() {
+    let (component, component_indices) = dome(24, 0.5);
+    let mut fixed = component.clone();
+    let mut fixed_indices = component_indices.clone();
+    append_component(
+        &mut fixed,
+        &mut fixed_indices,
+        &component,
+        &component_indices,
+        DVec3::new(14.0, 0.0, 0.0),
+    );
+    let moving = soup(&component, &component_indices);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+    assert_eq!(fixed_index.component_bounds().len(), 2);
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(1.0, 0.0, 0.0));
+
+    let report = refine(moving, &fixed_index, start, &settings(), &CancelFlag::new()).unwrap();
+
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "the adjacent component stole the fit: {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_refuses_equally_plausible_disconnected_components() {
+    let (component, component_indices) = dome(24, 0.5);
+    let mut fixed = component.clone();
+    let mut fixed_indices = component_indices.clone();
+    append_component(
+        &mut fixed,
+        &mut fixed_indices,
+        &component,
+        &component_indices,
+        DVec3::new(14.0, 0.0, 0.0),
+    );
+    let moving = soup(&component, &component_indices);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+    // The moving centre is 6 mm from either fixed component after this start.
+    // Geometry alone cannot tell which identical component the operator meant.
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(7.0, 0.0, 0.0));
+
+    let outcome = refine(moving, &fixed_index, start, &settings(), &CancelFlag::new());
+
+    assert_eq!(outcome, Err(FitRejection::Ambiguous));
+}
+
+#[test]
+fn best_fit_recovers_when_the_initial_gap_is_outside_the_search_radius() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let start = Rigid::new(DQuat::IDENTITY, DVec3::new(0.0, 0.0, 8.0));
+
+    let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+
+    assert!(
+        report.rigid.translation.length() < 0.05,
+        "the bounded center hypothesis did not recover the nearby mesh: {:?}",
+        report.rigid.translation
+    );
+}
+
+#[test]
+fn best_fit_finds_a_partial_patch_inside_a_large_connected_scan() {
+    let (fixed, fixed_indices) = dome(80, 0.5);
+    let patch_origin = DVec3::new(27.0, 27.0, 0.0);
+    let (moving, moving_indices) = dome_patch(24, 0.5, patch_origin);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+    let start = Rigid::IDENTITY;
+
+    let outcome = refine(
+        soup(&moving, &moving_indices),
+        &fixed_index,
+        start,
+        &settings(),
+        &CancelFlag::new(),
+    );
+    let report = outcome.unwrap_or_else(|rejection| {
+        unreachable!("Best fit should find the matching internal patch: {rejection:?}")
+    });
+
+    assert!(
+        (report.rigid.translation - patch_origin).length() < 0.1,
+        "partial patch was not returned to its source window: {:?}",
+        report.rigid
+    );
+}
+
+#[test]
+fn best_fit_recovers_a_small_patch_when_a_center_seed_has_false_coverage() {
+    // Keep the fixed surface small enough that the center hypothesis can see a
+    // neighbouring window through the 2 mm influence radius. The moving mesh
+    // is an exact 8 x 8 crop from the fixed surface, re-quoted at its own
+    // origin, so the only correct answer is the crop translation.
+    let fixed_side = 24usize;
+    let step = 0.5_f32;
+    let (fixed, fixed_indices) = dome(fixed_side, step);
+    let patch_side = 8usize;
+    let patch_origin = DVec3::new(5.0, 5.0, 0.0);
+    let mut moving = Vec::with_capacity((patch_side + 1) * (patch_side + 1) * 3);
+    let fixed_stride = fixed_side + 1;
+    for j in 0..=patch_side {
+        for i in 0..=patch_side {
+            let fixed_i = i + (patch_origin.x / f64::from(step)) as usize;
+            let fixed_j = j + (patch_origin.y / f64::from(step)) as usize;
+            let fixed_vertex = (fixed_j * fixed_stride + fixed_i) * 3;
+            moving.extend_from_slice(&[i as f32 * step, j as f32 * step, fixed[fixed_vertex + 2]]);
+        }
+    }
+    let moving_indices = grid_indices(patch_side);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+
+    let report = refine(
+        soup(&moving, &moving_indices),
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings(),
+        &CancelFlag::new(),
+    )
+    .unwrap_or_else(|rejection| {
+        unreachable!("Best fit should recover the exact moving crop: {rejection:?}")
+    });
+
+    assert!(
+        (report.rigid.translation - patch_origin).length() < 0.1,
+        "the false center coverage kept the crop sideways: {:?}",
+        report.rigid.translation
+    );
+    assert!(
+        report.is_trustworthy_refinement(),
+        "the recovered crop must be eligible for the refined result: {report:?}"
+    );
+}
+
+#[test]
+fn a_dense_level_refusal_cannot_fall_back_to_a_coarse_report() {
+    // Deliberately create a sampling alias: the coarse budget's stride is 201,
+    // while the dense budget's stride is 41. The only usable moving vertices
+    // sit at multiples of 201, so the coarse level sees the whole surface but
+    // the dense level sees less than the one-percent coverage floor. A prior
+    // implementation swallowed that dense refusal and returned the apparently
+    // perfect coarse report as a refined match.
+    let total_vertices = 1_600_001usize;
+    let (fixed, fixed_indices) = dome(88, 0.5);
+    let mut moving = vec![1_000.0_f32; total_vertices * 3];
+    for (index, point) in fixed.as_chunks::<3>().0.iter().enumerate() {
+        let vertex = index * 201;
+        let offset = vertex * 3;
+        moving[offset..offset + 3].copy_from_slice(point);
+    }
+    let moving_indices: Vec<u32> = fixed_indices.iter().map(|&index| index * 201).collect();
+    let moving_soup = soup(&moving, &moving_indices);
+    let fixed_index = SurfaceIndex::build(soup(&fixed, &fixed_indices)).unwrap();
+
+    let outcome = refine(
+        moving_soup,
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings(),
+        &CancelFlag::new(),
+    );
+
+    assert!(
+        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
+        "a dense coverage refusal must remain a refusal: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_fit_that_runs_out_of_iterations_never_authorizes_a_map() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let limited = RefineSettings {
+        max_iterations: 1,
+        ..settings()
+    };
+    let start = Rigid::new(
+        DQuat::from_axis_angle(DVec3::Z, 1.0),
+        DVec3::new(1.5, -0.18, 0.12),
+    );
+
+    // One accepted step is a result, not a refusal: the trust gate is what
+    // stops it becoming a heatmap. (`refine` reports `NoImprovement` only when
+    // no correspondence set was ever usable; a level that ran out of budget or
+    // could not improve still returns the best pose it measured.)
+    let report =
+        refine(mesh, &index, start, &limited, &CancelFlag::new()).unwrap_or_else(|rejection| {
+            unreachable!("a step was accepted, so the solve returns a report: {rejection:?}")
+        });
+
+    assert!(
+        !report.converged,
+        "the fixture has to stop short of convergence for this to mean anything"
+    );
+    assert!(
+        !report.is_trustworthy_refinement(),
+        "a fit that ran out of its iteration budget must not authorize a map: {report:?}"
+    );
+}
+
+#[test]
+fn a_single_accepted_step_is_the_pose_that_refine_returns() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let start = Rigid::new(DQuat::from_axis_angle(DVec3::Z, 0.08), DVec3::ZERO);
+    let one_step = RefineSettings {
+        max_iterations: 1,
+        ..settings()
+    };
+
+    let report = refine(mesh, &index, start, &one_step, &CancelFlag::new()).unwrap();
+    let rotation_change = (report.rigid.rotation * start.rotation.inverse())
+        .to_scaled_axis()
+        .length();
+
+    assert!(
+        rotation_change > 1e-5,
+        "the accepted first step was discarded before returning the report: {:?}",
+        report.rigid
+    );
+}
+
+/// A hand placement of one scan must seat it back onto the surface it came from.
+///
+/// The older fixtures in this file fit a mesh against an index built from THAT
+/// SAME mesh with the identity start, so they only ever exercise a pair that is
+/// already seated and a zero-residual answer is reachable. That is not the
+/// operator's case: they place one scan near another and ask the tool to close
+/// the gap, and the pose it must find is a real displacement.
+///
+/// Here the layer starts at a known hand placement — a few millimetres out and
+/// a few degrees turned — and the correct answer is known by construction: the
+/// identity, which puts the scan back where it was. The distances walk what a
+/// hand actually produces, from nearly seated to more than a centimetre out.
+///
+/// This pins the old refusal: the loop returned `Err(NoImprovement)` from
+/// inside instead of the best pose it had already measured, so a pair the
+/// solver could seat came back to the operator as "could not confirm an
+/// improvement".
+#[test]
+fn a_scan_moved_by_a_known_transform_seats_back_onto_its_source() {
+    let (positions, indices) = dome(24, 0.5);
+    let fixed = soup(&positions, &indices);
+    let index = SurfaceIndex::build(fixed).unwrap();
+
+    for (shift_mm, turn_deg) in [(2.0_f64, 1.0_f64), (5.0, 3.0), (12.0, 7.0)] {
+        // The hand placement, expressed as the pose the layer is carrying. The
+        // moving soup holds the same LOCAL vertices as the fixture, so the
+        // correct answer is the identity: put the scan back where it was.
+        let placement = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), turn_deg.to_radians()),
+            DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+        );
+        let moving = soup(&positions, &indices);
+
+        let report = refine(moving, &index, placement, &settings(), &CancelFlag::new())
+            .unwrap_or_else(|rejection| {
+                panic!(
+                    "a {shift_mm} mm / {turn_deg} deg hand placement must be seated, not refused: \
+                 {rejection:?}"
+                )
+            });
+
+        // Measure how far the surface is left from the source, at the vertices,
+        // not on the translation column: a rotation about the centre moves that
+        // column even when the geometry has already landed.
+        let mut worst = 0.0_f64;
+        for vertex in positions.as_chunks::<3>().0 {
+            let point = DVec3::new(
+                f64::from(vertex[0]),
+                f64::from(vertex[1]),
+                f64::from(vertex[2]),
+            );
+            worst = worst.max((report.rigid.apply(point) - point).length());
+        }
+        assert!(
+            worst < 0.05,
+            "a {shift_mm} mm placement was left {worst:.4} mm from its source: {:?}",
+            report.rigid
+        );
+        assert!(
+            report.coverage > 0.05,
+            "the seating must explain a real part of the surface: {report:?}"
+        );
+    }
+}
+
+/// One unproductive iteration must not throw away what the level measured.
+///
+/// A rank-deficient normal matrix is a stop. Returning `Err` there discarded
+/// every correspondence the level had found, which is what the operator saw as
+/// "Best fit could not confirm an improvement" on a pair the solver had in fact
+/// already seated.
+/// An unproductive iteration must return what the level measured, not refuse.
+///
+/// When the solve cannot produce a step — a rank-deficient normal matrix, which
+/// is what a surface with one undetermined direction gives — the loop stops.
+/// It used to return `Err(NoImprovement)` instead, which discarded the
+/// correspondences the level had already measured and surfaced to the operator
+/// as "Best fit could not confirm an improvement" on a pair that had in fact
+/// been seated. Stopping and refusing are different answers and the operator
+/// only sees one of them.
+///
+/// The fixture curves along X and is a straight line along Y, so rotation about
+/// the in-plane axis is undetermined: the solve stays rank deficient, and the
+/// coarse stage still has a single answer because the shape is not symmetric.
+/// An unproductive iteration must return what the level measured, not refuse.
+///
+/// When the solve cannot produce a step — a rank-deficient normal matrix, which
+/// is what a surface with one undetermined direction gives — the loop stops.
+/// It used to return `Err(NoImprovement)` instead, discarding the
+/// correspondences the level had already measured, and the operator saw "Best
+/// fit could not confirm an improvement" on a pair the solver had in fact
+/// seated. Stopping and refusing are different answers and the panel only shows
+/// one of them.
+///
+/// The fixture curves along X and is dead straight along Y, so rotation about
+/// the in-plane axis is undetermined. It is tilted as well, which is what puts
+/// a real residual in front of the guard: with the sheets coincident the
+/// residual is zero, the old `> 1e-6` test was false, and the bug hid. This is
+/// the shape of a scan placed by hand — a small tilt and a real gap.
+#[test]
+fn an_unproductive_iteration_returns_the_best_pose_instead_of_refusing() {
+    let n = 24usize;
+    let mut positions = Vec::new();
+    for j in 0..=n {
+        for i in 0..=n {
+            let x = i as f32 * 0.5;
+            let y = j as f32 * 0.5;
+            // Form in BOTH directions, deliberately. A surface curved only
+            // across x is a cylinder: sliding it along y changes nothing, so
+            // every position along that axis explains the data equally well and
+            // `Ambiguous` is the correct answer. That fixture would test the
+            // ambiguity guard rather than the one this test is about.
+            let bend = 0.05 * (x - 6.0) * (x - 6.0) + 0.045 * (y - 6.0) * (y - 6.0);
+            positions.extend_from_slice(&[x, y, bend]);
+        }
+    }
+    let mut indices = Vec::new();
+    let stride = 25_u32;
+    for j in 0..24_u32 {
+        for i in 0..24_u32 {
+            let a = j * stride + i;
+            indices.extend_from_slice(&[a, a + 1, a + stride]);
+            indices.extend_from_slice(&[a + 1, a + stride + 1, a + stride]);
+        }
+    }
+    let fixed = soup(&positions, &indices);
+    let index = SurfaceIndex::build(fixed).unwrap();
+    let moving = soup(&positions, &indices);
+
+    for angle in [0.02_f64, 0.05, 0.1] {
+        let start = Rigid::new(
+            DQuat::from_axis_angle(DVec3::Z, angle),
+            DVec3::new(0.0, 0.0, 0.3),
+        );
+        let report = refine(moving, &index, start, &settings(), &CancelFlag::new()).unwrap_or_else(
+            |rejection| {
+                panic!(
+                    "a level that measured a real overlap must report it, not refuse \
+                     (tilt {angle}): {rejection:?}"
+                )
+            },
+        );
+        assert!(
+            report.geometric_rms > 0.0,
+            "the guard only means anything when the residual is real: {report:?}"
+        );
+        assert!(
+            report.coverage > 0.0,
+            "the reported pose must carry the measured overlap: {report:?}"
+        );
+    }
+}
+
+/// A seated scan must also pass the trust gate, not just the solver.
+///
+/// This is the piece the two halves of the bug met in. The solver could reach
+/// a correct pose while reporting `converged = false`, and the worker refuses
+/// anything `is_trustworthy_refinement_for` rejects — so a pair the tool had
+/// already seated came back to the operator as "Best fit could not confirm an
+/// improvement". Testing either half alone would have missed it: the pose was
+/// right and the report was wrong.
+#[test]
+fn a_seated_scan_is_trustworthy_at_every_hand_placement() {
+    let (positions, indices) = dome(24, 0.5);
+    let fixed = soup(&positions, &indices);
+    let index = SurfaceIndex::build(fixed).unwrap();
+
+    for (shift_mm, turn_deg) in [(2.0_f64, 1.0_f64), (5.0, 3.0), (12.0, 7.0)] {
+        let placement = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), turn_deg.to_radians()),
+            DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+        );
+        let report = refine(
+            soup(&positions, &indices),
+            &index,
+            placement,
+            &settings(),
+            &CancelFlag::new(),
+        )
+        .unwrap_or_else(|rejection| {
+            panic!(
+                "a {shift_mm} mm / {turn_deg} deg placement must be seated, not refused: \
+                 {rejection:?}"
+            )
+        });
+
+        assert!(
+            report.converged,
+            "the solver settled on the source surface but did not say so: {report:?}"
+        );
+        assert!(
+            report.is_trustworthy_refinement_for(&settings()),
+            "a pose that seats the scan was rejected by the trust gate, which is what \
+             the operator sees as 'could not confirm an improvement': {report:?}"
+        );
+    }
 }

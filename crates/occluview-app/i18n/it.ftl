@@ -42,8 +42,6 @@ error-open-body = Impossibile aprire { $path }.
 help-title = Controlli da tastiera e mouse
 help-subtitle = Il riferimento corrisponde ai controlli di OccluView.
 help-close = Chiudi
-help-toggle = Aiuto
-help-toggle-tooltip = Mostra i controlli da tastiera e mouse
 
 help-section-navigation = Navigazione
 help-section-tools = Strumenti
@@ -195,10 +193,10 @@ mesh-exported-aligned = { $name } esportato in posizione allineata come { $forma
 mesh-exported-aligned-warnings = { $name } esportato in posizione allineata come { $format } (avvisi: { $warnings }): { $path }
 mesh-exported-unmoved = { $name } esportato (non spostato) come { $format }: { $path }
 mesh-exported-unmoved-warnings = { $name } esportato (non spostato) come { $format } (avvisi: { $warnings }): { $path }
-mesh-warning-point-cloud = nuvola di punti omessa per STL
 mesh-warning-vertex-colors = colori dei vertici non inclusi
 mesh-warning-uvs = UV non inclusi
 mesh-warning-texture-image = immagine texture non inclusa
+mesh-export-warnings = Avvisi di esportazione: { $warnings }
 mesh-export-failed-title = Export livello fallito
 mesh-export-failed-summary = Export livello fallito: { $detail }
 
@@ -406,8 +404,8 @@ meshedit-session-done-hint = Applica e chiudi l’editor
 ## Align Scans window — DRAFT.
 
 align-title = Allinea le scansioni
-align-tab-auto = Automatico
-align-tab-manual = Manuale
+align-tab-auto = Allinea
+align-tab-manual = Regola posizione
 align-constraint-free = Muovi/ruota in ogni direzione
 align-constraint-free-hint = Trascina la scansione ovunque
 align-constraint-z = Muovi in z
@@ -433,9 +431,9 @@ align-clear-hint = Butta le frecce e riscegli due scansioni — restano dove son
 align-fit-perform = Esegui allineamento
 align-fit-perform-hint = Porta la mesh sulle frecce — almeno due frecce
 align-fit-refine = Matching preciso
-align-fit-refine-hint = Appoggia le superfici. Solo mesh identiche
+align-fit-refine-hint = Allinea le zone invariate della scansione preparata al modello originale. Controlla il risultato prima di accettarlo
 align-matching-parts = parti coincidenti
-align-matching-parts-hint = Quota di superficie su entrambe le mesh. 70-80% se le topologie si assomigliano
+align-matching-parts-hint = Quota massima delle corrispondenze usate nel raffinamento. Best Fit la riduce se restano poche zone invariate
 align-max-influence = influenza max
 align-max-influence-hint = Influisce solo la superficie sotto questa distanza. Valori alti peggiorano
 align-orientation-title = L’orientamento deve coincidere
@@ -454,34 +452,13 @@ align-commit-done-hint = Tieni l’allineamento e chiudi — esporta per scriver
 
 ## Deviation map — DRAFT.
 
-align-map-more = Altre impostazioni
 align-map-heatmap = Mappa di calore
 align-map-heatmap-hint = Colora una scansione per distanza dall’altra
-align-map-range-label = intervallo
-align-map-preset-hint = Sotto { $min } mm è accordo, { $max } mm satura
-align-map-min = min
+align-map-requires-refine = Esegui prima Best fit matching
 align-map-max = max
-align-map-auto = auto
-align-map-auto-hint = Riadatta l’intervallo alla misura
-align-map-advice-far = Mesh a { $mm } mm — allinea prima di leggere la mappa
-align-map-advice-saturated = Quasi tutto oltre { $mm } mm, colori agli estremi — allarga l’intervallo
-align-map-not-enough = Poca superficie — { $measured } vertici su { $total } raggiungono l’altra scansione
-align-map-within = { $pct }% entro { $tol } mm
-align-map-rms = rms { $rms }
-align-map-grey-tooltip = Grigio non è misura. Senza controparte a portata non si misura — un bridge o un dente su una sola scansione è normale, non un errore.
-align-map-grey-out = { $n } senza superficie opposta
-align-map-grey-excluded = { $n } esclusi
-align-map-grey-unusable = { $n } inutilizzabili nel file
-align-map-grey-total = { $total } vertici grigi: { $parts }
+align-map-min = min
 align-map-not-measured = non misurato
 align-map-not-measured-hint = Nessuna superficie dell’altra scansione a portata di questi vertici. Dente o bridge su una sola scansione: normale, non un errore — niente da misurare.
-align-map-stepped = Bande a gradini
-align-map-stepped-hint = Gradini invece di sfumatura
-align-map-colours = Colori
-align-map-ramp-distance = distanza
-align-map-ramp-distance-hint = Freddo dove concordano, caldo dove no
-align-map-ramp-signed = con segno
-align-map-ramp-signed-hint = Blu sotto la superficie, verde nominale, rosso sopra
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -493,20 +470,17 @@ align-pair-swap = Scambia
 align-pair-swap-hint = Adatta al contrario — le frecce seguono
 
 align-brush-title = Pennello
-align-brush-subtitle = Dipingi la superficie da ignorare, su entrambe le mesh
-align-brush-hint-inverse = Trascina cancella · Shift marca · Shift+rotella ridimensiona
-align-brush-hint-mark = Trascina marca · Shift cancella · Shift+rotella ridimensiona
 align-brush-close-hint = Chiudi il pennello — i segni restano
+align-brush-mesh-selection = Selezione mesh
+align-brush-moving = Mobile
+align-brush-fixed = Fissa
 align-brush-size = misura del pennello
 align-brush-inverse = Pennello inverso
 align-brush-inverse-hint = Un trascinamento cancella invece di marcare. Shift inverte di nuovo
 align-brush-auto-radius = raggio automatico
 align-brush-auto-radius-hint = Raggio tenuto a ogni capo freccia
-align-brush-all-marked = Tutto marcato — matching senza effetto
-align-brush-nothing-marked = Niente marcato
-align-brush-percent-marked = { $pct }% marcato fuori matching
 align-brush-size-status = Pennello { $size } mm
-align-status-no-summary = Niente da misurare con una portata di { $reach } mm — { $measured } vertici su { $total } hanno trovato l'altra scansione. Avvicina le scansioni o aumenta la portata in Altre impostazioni.
+align-status-no-summary = Nessuna superficie comparabile
 
 align-mask-fit-everywhere = Adatta ovunque
 align-mask-fit-everywhere-hint = Pulisci ogni marcatura
@@ -535,28 +509,20 @@ align-status-place-first = Prima un punto per scansione
 align-status-one-scan = Una delle scansioni
 align-status-scaled = Questa scansione ha un placement scalato, non allineabile
 align-status-pose-refused = Fit finito, ma la sua scansione non c’è più
+align-status-worker-unavailable = Il worker di allineamento si è fermato — riavvia lo strumento
 align-status-measure-dropped = Misura scartata — il pennello ha i colori
+align-status-measure-unavailable = Misura non applicata — la scansione è cambiata; esegui di nuovo Best fit matching
 align-status-map-elsewhere = La mappa è nel tab Automatico — torna lì
 align-status-aligned-points = Allineato sui punti
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Allineato — { $rms } mm sui punti{ $dropped }. Rifinisci per appoggiare.
-align-status-outlier = , coppia { $pairs } ignorata come outlier
-align-status-refined = Rifinito — { $rms } mm sul { $pct }% di { $surface }{ $settled }{ $weak }
-align-status-surface = la superficie
-align-status-surface-unmarked = la superficie non marcata
-align-status-settled-limit = , fermo al limite di iterazioni
-align-status-weak-slide =  — il fit può ancora scorrere lungo { $axes }
-align-status-weak-turn =  — il fit può ancora ruotare attorno a { $axes }
-align-status-weak-both =  — il fit può ancora scorrere lungo { $sliding } e ruotare attorno a { $spinning }
-align-status-measured = { $pct }% entro { $tol } mm, { $n ->
-    [one] { $n } vertice senza controparte{ $blind }
-   *[other] { $n } vertici senza controparte{ $blind }
-}
-align-status-blind-free =  — queste superfici scorrono libere, dietro può nascondersi qualsiasi spostamento
-align-status-blind-hidden =  — un disallineamento rigido fino a { $mm } mm potrebbe leggersi uguale
+align-status-aligned = Allineato sui punti — esegui Best fit matching per posare le superfici.
+align-status-refined = Best fit pronto
+align-status-measured = Mappa di calore aggiornata
 align-status-remeasure = { $reason } — rilancia il matching per misurare
+align-status-settings-changed = Impostazioni di matching cambiate
+align-status-visibility-changed = Visibilità di una scansione selezionata modificata
 align-brush-not-in-alignment = Questa scansione non fa parte di questo allineamento
 align-drag-moving = Spostamento di { $name } a mano
 align-drag-unrecorded = Spostato a mano, ma questo passo non è entrato nella cronologia — Ctrl+Z non lo annullerà
@@ -591,6 +557,7 @@ guard-replace-destructive = Scarta e apri
 guard-save = Salva…
 guard-cancel = Annulla
 
+error-retry-graphics = Riprova
 error-close = Chiudi
 error-copy-details = Copia dettagli
 
@@ -677,14 +644,21 @@ sculpt-armed-smooth = Leviga: trascina per rilassare, Shift forza
 sculpt-off = Scultura off
 sculpt-applied-undo = Scultura applicata (Ctrl+Z annulla)
 sculpt-applied-locked = Scultura applicata (non annullabile: snapshot enorme)
+sculpt-failed-title = Scultura non riuscita
 sculpt-failed = Questo livello non si scolpisce: { $detail }
 sculpt-worker-stopped = Worker di scultura fermo: { $detail }
+sculpt-preparing = Preparazione della scultura…
+sculpt-nonuniform-scale = La scultura richiede una mesh con scala uniforme
 sculpt-failure-worker-panicked = Worker di scultura in crash: { $detail }
 sculpt-failure-spawn = Impossibile avviare il worker di scultura: { $detail }
 sculpt-failure-kernel-pool = Impossibile creare il pool di kernel di scultura: { $detail }
 sculpt-failure-missing-undo-baseline = Il tratto di scultura non ha una base di annullamento
 sculpt-failure-shadow-poisoned = Il lock dell'ombra di scultura è avvelenato
+sculpt-failure-shadow-shape = L’ombra della scultura non corrisponde più alla mesh attiva
+sculpt-failure-invalid-vertex-index = Il worker di scultura ha restituito un indice di vertice non valido
+sculpt-failure-worker-state-poisoned = Lo stato del worker di scultura è corrotto — riavvia Sculpt
 sculpt-failure-vertex-count-changed = Il risultato di scultura ha modificato il numero di vertici
+sculpt-failure-topology-rebuild = Ricostruzione della topologia di scultura non riuscita: { $detail }
 sculpt-worker-unavailable = Scultura non disponibile
 sculpt-finishing = Finitura del tratto…
 sculpt-finishing-history = Finitura scultura prima della storia…
@@ -779,8 +753,6 @@ settings-orbit = Velocità orbitale
 settings-orbit-hint = Quanto orbita trascinando col destro
 settings-zoom = Velocità di zoom
 settings-zoom-hint = Quanto avvicina ogni scatto di rotella
-settings-recent = Scene recenti
-settings-recent-hint = Voci nel menu Apri
 settings-background = Sfondo
 settings-bg-gray = Grigio
 settings-bg-white = Bianco
@@ -809,6 +781,7 @@ settings-update-skipped = Versione saltata
 settings-update-failed = Controllo fallito
 settings-save-error = Preferenze non salvate. Riprovo…
 settings-save-error-hint = File delle preferenze non disponibile
+settings-shortcuts = Scorciatoie da tastiera
 settings-about = Su OccluView
 
 bridge-busy = Finisci o annulla prima la divisione
@@ -841,6 +814,7 @@ lasso-dropped = Lazo mollato
 lasso-needs-points = Il lazo vuole almeno 3 punti
 loading-scene = Caricamento scena…
 gpu-failed-status = Il driver segnala un problema
+gpu-retry-status = Nuovo tentativo grafico — se il problema persiste, salvare il lavoro e riavviare OccluView
 gpu-failed-title = Problema grafico
 gpu-failed-summary = Il driver ha toppato il disegno. La vista può essere incompleta. Salva e riavvia se ricapita.
 align-job-align = Allineo…
@@ -853,13 +827,84 @@ align-markings-dropped = Marcature mollate — la superficie è cambiata dopo
 align-fail-no-surface-fixed = La scansione fissa non ha superficie utile
 align-fail-no-surface-moving = La scansione mobile non ha superficie utile
 align-fail-recolor = Misura scartata prima di colorare
-align-reject-toofew = Solo { $a } su { $b } corrispondenze — un’altra freccia, o alza influenza
-align-reject-unpaired = { $a } punti su una scansione e { $b } sull’altra — senza partner
-align-reject-degenerate-plain = I punti non fissano una rotazione — allargali
-align-reject-degenerate-line = Punti in linea: rotazione attorno a { $a } indeterminata
-align-reject-unit = Le scansioni differiscono di { $a }x in misura — unità diverse
-align-reject-apart = Il fit lascia { $a } mm invece di sovrapporre ({ $b } mm) — ricontrolla le coppie
-align-reject-runaway = Il fit ha vagato di { $a } mm, più della scansione ({ $b } mm) — frecce o meno influenza
-align-reject-nonfinite = Un punto o una normale non è un numero finito
+align-fail-unobservable = La superficie non consente una mappa degli scostamenti affidabile
+align-reject-toofew = Aggiungi frecce o avvicina le scansioni
+align-reject-unpaired = Completa entrambi i lati di ogni freccia
+align-reject-degenerate-plain = Distribuisci i punti sulla superficie
+align-reject-unit = Le scansioni usano unità diverse
+align-reject-apart = Controlla le frecce e avvicina le scansioni
+align-reject-runaway = Avvicina le scansioni e riprova Best fit matching
+align-reject-no-improvement = Nessun miglioramento confermato — avvicina le scansioni e riprova
+align-reject-ambiguous = Trovate più superfici ugualmente plausibili — marca la zona corretta o avvicina le scansioni
+align-reject-nonfinite = Il punto o la superficie selezionati non sono validi
 align-status-stepped = Passi nella storia
 align-status-moving-hand = Muovo a mano
+
+## Contatti occlusali: clic destro su una scansione e vedere dove incontra la
+## scansione antagonista. Una lettura è la carta di articolazione (solo segni,
+## colorati per profondità), l'altra la mappa di avvicinamento (quanto vicino,
+## ovunque). Un cursore sposta la profondità che la scala legge come carico
+## pieno, e ricolora una misura già presa invece di rimisurare.
+layer-menu-contacts = Mostra i contatti
+layer-menu-hide-contacts = Nascondi i contatti
+
+contact-title = Contatti occlusali
+contact-close-hint = Chiudere la lettura e togliere i segni da entrambe le scansioni
+contact-against = { $subject } contro { $antagonist }
+contact-unknown-layer = una scansione non più aperta
+
+contact-mode-marks = Contatti
+contact-mode-marks-hint = Dove le superfici si incontrano, colorato per intensità — il resto resta pulito, come lo lascia la carta di articolazione
+contact-mode-approach = Avvicinamento
+contact-mode-approach-hint = Quanto è vicina l'altra scansione ovunque, carico compreso
+
+contact-load-label = carico a
+contact-load-suffix = mm
+contact-load-hint = La profondità a cui questa scala si legge come carico pieno. Spostarla ricolora la mappa già misurata, senza rimisurare.
+contact-flatten = Un colore per contatto
+contact-flatten-hint = Ridurre ogni area di contatto al suo punto più profondo. Disattivato conserva la distribuzione della forza dentro ogni segno.
+
+contact-legend-deepest = { $mm } mm nell'occlusione
+
+contact-stats-area = Area di contatto
+contact-stats-contacts = Contatti
+contact-stats-deepest = Più profondo
+
+contact-readout-gap = gioco
+contact-readout-load = carico
+
+contact-status-measuring = Misurazione…
+contact-status-measuring-hint = Le due superfici vengono lette una contro l'altra
+contact-status-remeasuring = Nuova misurazione…
+contact-status-remeasuring-hint = Una scansione si è spostata, quindi le distanze sono cambiate. La mappa viene riletta.
+contact-status-needs-second = Una lettura dei contatti richiede una seconda scansione visibile con cui misurare
+contact-status-no-surface = Una delle due scansioni non ha superficie da misurare
+contact-status-worker-failed = La misurazione non è stata completata
+
+contact-opened = Lettura dei contatti su { $label }
+contact-closed = Lettura dei contatti chiusa
+help-section-contacts = Contatti occlusali
+help-hintline-contacts = Clic destro su un livello · Mostra i contatti · il cursore «carico a» ricolora · Esc chiude
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Leggere i contatti occlusali contro la scansione antagonista
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Leggere la profondità del contatto sotto il puntatore, su entrambe le arcate
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Spostare la profondità che la scala legge come carico pieno
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Passare tra soli segni e tutto l'avvicinamento
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Chiudere la lettura e togliere i segni da entrambe le scansioni
+contact-retry = Leggi di nuovo
+contact-status-subject-unusable = La scansione di cui parla questa lettura non è misurabile al momento
+contact-status-subject-unusable-hint = Mostrala di nuovo o lasciala come mesh triangolare: la lettura riprende
+contact-status-antagonist-unusable = La scansione con cui si misura non è misurabile al momento
+contact-status-antagonist-unusable-hint = Mostrala di nuovo o lasciala come mesh triangolare: la lettura riprende
+contact-status-no-overlap = Le scansioni sono troppo distanti
+contact-status-no-overlap-hint = Nulla su nessuna delle due superfici era a portata della lettura. Verificate che siano in occlusione.
+contact-status-failed-hint = Rileggi; se continua a fallire, la coppia potrebbe dover essere riparata prima.
+contact-status-needs-second-hint = Aprite la scansione antagonista o mostratela di nuovo, poi avviate la lettura
+contact-legend-gap = gioco fino a { $mm } mm
+contact-stats-balance = Area per lato
+contact-stats-balance-hint = Area di contatto ai due lati della linea mediana della scansione. La divisione segue le coordinate della scansione, quindi un caso ruotato o specchiato può scambiare i numeri.
+layer-menu-contacts-unavailable = Una lettura dei contatti richiede due mesh triangolari visibili: mostrate o aprite prima la scansione antagonista
+
+contact-details = Dettagli
+contact-details-hint = I numeri e la regola un colore per contatto
+contact-details-close = Nascondi dettagli
+settings-shortcuts-hint = Riferimento tastiera e mouse (F1)

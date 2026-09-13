@@ -161,12 +161,10 @@ const LEGEND_STEPS: usize = 64;
 
 /// The deviation, in millimetres, the legend bar carries at `step` of `steps`.
 ///
-/// The magnitude ramp has **no negative side**: `ramp_color` takes the absolute
-/// value, so sweeping its bar from `-scale` mirrors it — the hot end is drawn
-/// at *both* ends and the ramp's zero colour lands in the middle, where every
-/// metrology legend puts nominal. An operator reading that bar is told blue
-/// means nominal, when on the surface blue means zero. The signed ramp really
-/// does run `-scale` to `+scale`, and only it is swept that way.
+/// The magnitude ramp has **no negative side**: it runs from its exact zero
+/// colour at the left to the selected absolute maximum at the right. The
+/// signed ramp is the diagnostic variant and genuinely runs `-scale` to
+/// `+scale`, so only it is swept across both signs.
 pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_mm: f64) -> f64 {
     #[allow(clippy::cast_precision_loss)]
     let fraction = step as f64 / (steps.max(2) - 1) as f64;
@@ -179,9 +177,64 @@ pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_m
 /// The number written under each end of the legend bar, in millimetres.
 fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
     match mode {
-        RampMode::Magnitude => ("0.00 mm".to_owned(), format!("{scale_mm:.2} mm")),
+        // A zero maximum still has a hot side: everything past exact zero. The
+        // right label says so instead of repeating "0.00 mm", which would
+        // claim the bar has no range at all.
+        RampMode::Magnitude if scale_mm <= 0.0 => ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
+        // The ramp clamps every value at the upper stop, so the hot end also
+        // represents all deviations above that stop. Showing the inequality
+        // prevents an operator from reading a saturated red patch as exactly
+        // the endpoint.
+        RampMode::Magnitude => ("0.00 mm".to_owned(), format!("≥ {scale_mm:.2} mm")),
         RampMode::Signed => (format!("−{scale_mm:.2} mm"), format!("+{scale_mm:.2} mm")),
     }
+}
+
+/// The colour the legend bar carries at `step` of `steps`.
+///
+/// A zero display maximum is a real state of the operator's range control, and
+/// `ramp_color` answers it without dividing by the scale: exact zero keeps its
+/// own stop and every non-zero deviation is past the range. Sweeping a zero
+/// scale linearly would paint the whole bar as exact zero while the measured
+/// surface reads beyond it, so the two stops are painted directly here. The
+/// signed ramp has the same zero argument, with the sign choosing the stop. Any
+/// other scale is the honest linear sweep of the values the bar labels.
+pub(crate) fn legend_color_at(
+    step: usize,
+    steps: usize,
+    ramp: &occluview_align::RampSettings,
+) -> [u8; 4] {
+    if ramp.scale_mm <= 0.0 {
+        let value = match ramp.mode {
+            RampMode::Magnitude => {
+                if step == 0 {
+                    0.0
+                } else {
+                    f64::INFINITY
+                }
+            }
+            // The signed bar runs cold to hot through nominal zero; with no
+            // range at all, the nominal stop keeps the exact-zero centre and
+            // the ends carry the two saturated sides.
+            RampMode::Signed => {
+                let centre = steps / 2;
+                match step.cmp(&centre) {
+                    std::cmp::Ordering::Less => f64::NEG_INFINITY,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => f64::INFINITY,
+                }
+            }
+        };
+        return occluview_align::ramp_color(value, ramp);
+    }
+    let baseline = legend_value_mm(step, steps, ramp.mode, ramp.scale_mm);
+    let value = match ramp.mode {
+        RampMode::Magnitude => {
+            ramp.min_mm + baseline / ramp.scale_mm * (ramp.scale_mm - ramp.min_mm)
+        }
+        RampMode::Signed => baseline,
+    };
+    occluview_align::ramp_color(value, ramp)
 }
 
 /// Paint the deviation legend: the colour ramp with the numeric bounds of the
@@ -198,16 +251,17 @@ pub(crate) fn paint_legend(
 
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, HEIGHT), egui::Sense::hover());
     let painter = ui.painter();
+    let ramp = occluview_align::RampSettings {
+        min_mm: settings.min_display_mm,
+        scale_mm: settings.scale_mm,
+        tolerance_mm: settings.tolerance_mm,
+        // The production Align Meshes legend is continuous too; old
+        // persisted band counts must not disagree with the map.
+        bands: None,
+        mode: settings.ramp_mode,
+    };
     for step in 0..STEPS {
-        let color = occluview_align::ramp_color(
-            legend_value_mm(step, STEPS, settings.ramp_mode, settings.scale_mm),
-            &occluview_align::RampSettings {
-                scale_mm: settings.scale_mm,
-                tolerance_mm: settings.tolerance_mm,
-                bands: settings.bands,
-                mode: settings.ramp_mode,
-            },
-        );
+        let color = legend_color_at(step, STEPS, &ramp);
         #[allow(clippy::cast_precision_loss)]
         let x0 = rect.left() + rect.width() * (step as f32 / STEPS as f32);
         #[allow(clippy::cast_precision_loss)]
@@ -230,7 +284,10 @@ pub(crate) fn paint_legend(
                     .color(ui_theme::text_muted()),
             );
         };
-        let (low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm);
+        let (mut low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm);
+        if settings.ramp_mode == RampMode::Magnitude {
+            low = format!("≤ {:.2} mm", settings.min_display_mm);
+        }
         label(ui, low);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             label(ui, high);
@@ -268,26 +325,131 @@ fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
 
 #[cfg(test)]
 mod tests {
-    use super::{legend_bounds, legend_value_mm, LEGEND_STEPS};
+    use super::{legend_bounds, legend_color_at, legend_value_mm, LEGEND_STEPS};
     use occluview_align::{ramp_color, RampMode, RampSettings};
 
-    fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {
-        let ramp = RampSettings {
+    fn ramp(mode: RampMode, scale_mm: f64) -> RampSettings {
+        RampSettings {
+            min_mm: 0.0,
             scale_mm,
             tolerance_mm: 0.2,
             bands: None,
             mode,
+        }
+    }
+
+    #[test]
+    fn configured_legend_limits_match_the_colors_painted_on_the_scan() {
+        let ramp = RampSettings {
+            min_mm: 0.05,
+            scale_mm: 0.20,
+            ..ramp(RampMode::Magnitude, 0.20)
         };
+        assert_eq!(
+            legend_color_at(0, LEGEND_STEPS, &ramp),
+            ramp_color(0.05, &ramp)
+        );
+        assert_eq!(
+            legend_color_at(LEGEND_STEPS - 1, LEGEND_STEPS, &ramp),
+            ramp_color(0.20, &ramp)
+        );
+        assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.05, &ramp));
+    }
+
+    fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {
+        let ramp = ramp(mode, scale_mm);
         (0..LEGEND_STEPS)
-            .map(|step| ramp_color(legend_value_mm(step, LEGEND_STEPS, mode, scale_mm), &ramp))
+            .map(|step| legend_color_at(step, LEGEND_STEPS, &ramp))
             .collect()
     }
 
-    /// The bug this test exists for: the bar used to sweep `-scale` to
-    /// `+scale` in every mode, and `ramp_color` takes the absolute value in
-    /// magnitude mode. The bar came out red-blue-red — mirrored, with the
-    /// ramp's ZERO colour in the middle where a legend puts nominal, and half
-    /// of it labelled with a negative magnitude that cannot exist.
+    /// The operator's range control accepts 0.00 mm, and the surface then reads
+    /// hot for every non-zero deviation. The bar has to agree with that instead
+    /// of painting sixty-four cold swatches under a red surface, and its right
+    /// label has to name the open end.
+    #[test]
+    fn a_zero_maximum_legend_still_shows_its_hot_side() {
+        let bar = bar(RampMode::Magnitude, 0.0);
+        let cold = ramp_color(0.0, &ramp(RampMode::Magnitude, 0.0));
+        let hot = ramp_color(0.05, &ramp(RampMode::Magnitude, 0.0));
+        assert_ne!(cold, hot, "the fixture needs two distinct stops");
+
+        assert_eq!(
+            bar[0], cold,
+            "exact zero has to stay the cold stop at a zero maximum"
+        );
+        assert!(
+            bar[1..].iter().all(|swatch| *swatch == hot),
+            "every non-zero deviation is past a zero maximum and must read hot"
+        );
+        assert_eq!(
+            legend_bounds(RampMode::Magnitude, 0.0),
+            ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
+            "the open end has to be labelled as such"
+        );
+    }
+
+    /// The signed ramp has the same zero-maximum state, and it needs the input
+    /// the mapping would receive: the nominal stop at exact zero and the two
+    /// saturated sides for the signed ends. A magnitude-only special case left
+    /// it as a solid nominal green bar under a red/blue surface.
+    #[test]
+    fn a_zero_maximum_signed_legend_still_spans_both_sides() {
+        let signed = ramp(RampMode::Signed, 0.0);
+        let bar = bar(RampMode::Signed, 0.0);
+        let cold = ramp_color(f64::NEG_INFINITY, &signed);
+        let nominal = ramp_color(0.0, &signed);
+        let hot = ramp_color(f64::INFINITY, &signed);
+
+        assert_ne!(cold, nominal, "the fixture needs a cold side");
+        assert_ne!(nominal, hot, "the fixture needs a hot side");
+        assert_eq!(bar[0], cold, "the bar must start cold");
+        assert_eq!(
+            bar[LEGEND_STEPS / 2],
+            nominal,
+            "exact zero keeps its nominal stop in the middle"
+        );
+        assert_eq!(bar[LEGEND_STEPS - 1], hot, "the bar must end hot");
+    }
+
+    /// A bar that disagrees with the surface is worse than no legend. For every
+    /// scale the control allows above the degenerate zero maximum, the swatch
+    /// nearest a measured value must carry that value's colour.
+    #[test]
+    fn every_legend_swatch_carries_the_colour_of_the_value_it_stands_for() {
+        for scale_mm in [0.01, 0.05, 0.10] {
+            let ramp = ramp(RampMode::Magnitude, scale_mm);
+            for value_mm in [0.0, 0.005, 0.02, 0.08] {
+                let painted = ramp_color(value_mm, &ramp);
+                let mut nearest = (f64::INFINITY, painted);
+                for step in 0..LEGEND_STEPS {
+                    let at = legend_value_mm(step, LEGEND_STEPS, ramp.mode, ramp.scale_mm);
+                    let distance = (at - value_mm).abs();
+                    if distance < nearest.0 {
+                        nearest = (distance, legend_color_at(step, LEGEND_STEPS, &ramp));
+                    }
+                }
+                let (distance, nearest) = nearest;
+                assert!(
+                    distance.is_finite(),
+                    "a distance is needed to report a mismatch"
+                );
+                for channel in 0..3 {
+                    let surface = i32::from(painted[channel]);
+                    let bar = i32::from(nearest[channel]);
+                    assert!(
+                        (surface - bar).abs() <= 24,
+                        "at scale {scale_mm} the bar shows {nearest:?} for a surface reading \
+                         {painted:?} at {value_mm} mm"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The magnitude bar must sweep its non-negative domain. A negative half
+    /// would mirror the absolute ramp, put zero in the middle, and label a
+    /// distance that cannot be negative.
     #[test]
     fn the_magnitude_legend_runs_cold_to_hot_and_never_mirrors() {
         let bar = bar(RampMode::Magnitude, 0.5);
@@ -337,7 +499,7 @@ mod tests {
     fn the_bounds_name_the_scale_the_bar_was_drawn_over() {
         assert_eq!(
             legend_bounds(RampMode::Magnitude, 0.5),
-            ("0.00 mm".to_owned(), "0.50 mm".to_owned()),
+            ("0.00 mm".to_owned(), "≥ 0.50 mm".to_owned()),
             "a magnitude bar starts at nothing, never at a negative distance"
         );
         assert_eq!(

@@ -3,9 +3,112 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.1.2 - 2026-09-12
+
+### Viewer
+
+- Align Scans presents rough point alignment before nearby surface refinement. Refinement now stays within the selected correspondence radius instead of launching a global feature search from an already placed scan.
+- The heatmap opens at 0.05–0.20 mm. Its cool and hot limits are editable above and below the colour legend.
+- In Mesh Editing, keys 1 and 2 open the Sculpt tab with Add/Remove and Smooth respectively. The sculpt cursor appears as soon as the background picking tree is ready, before brush preparation finishes.
+- Modal text and Mesh Editing headings use readable ink in the light theme.
+
 ## 1.1.1 - 2026-09-03
 
 ### Viewer
+
+- Best fit matching seats two scans again. A refusal that used to fire on a
+  successful fit — "could not confirm an improvement" — is gone: the solver
+  decided whether to keep a pose by the size of the residual it had reached,
+  and two real scans never reach a nanometre, so a pair it had already seated
+  came back as a failure with nothing moved and no map. It now returns the best
+  pose it measured, and the search radius starts at the number the operator
+  set instead of a quarter of it.
+- Two different jaws are still refused, and for the reason that distinguishes
+  them from an alignment: they have no single correct joint position, they only
+  meet where their occlusal surfaces touch. That case reaches a fifth of one
+  surface on the other, so it satisfied every coarse measure the tool had; the
+  median distance of a matched point is what separates it from a real seating.
+- A contact mark takes the light the scan around it takes. The ramp used to be
+  mixed over the finished surface, which no mark can take a highlight from, so
+  it read as a flat sticker and arrived darker than the legend it is read
+  against — the blue stop's 216 was reaching the screen as 173. It is painted
+  into the base colour now and the diffuse light is divided back out, so the
+  law's colour arrives at the law's value and the mark carries a highlight.
+
+- Align heatmaps now appear only after a current confirmed match, with a compact
+  absolute millimetre legend and saturated display colours. A sculpt stroke,
+  a hand drag, a role swap made by the first matching click, or a change to the
+  matching inputs withdraws the map and the match it measured; the legend stays
+  readable at the 0.00 mm end of the range control, including its saturated end.
+  A measurement the sampled surface cannot support at all — too little overlap,
+  or samples that do not span every direction — is refused instead of drawn;
+  a surface that is merely weak in one direction is still measured, because that
+  is what the deviation map is for.
+- Sculpt worker topology changes, cancellation, and repeated strokes preserve
+  ordered geometry and undo boundaries. A stroke that cannot finish now reports
+  the reason in a dialog and stands the brush down instead of leaving it armed
+  over a revoked worker.
+- Sculpt brush sliders fill the panel again: the rail itself uses the full
+  width, not just the row that contains it.
+- The renderer's stencil cap passes keep their geometry-precise depth again,
+  which is what makes a filled cross-section possible. The viewer itself still
+  draws the hollow preview (`show_hollow`), so the cap is exercised by the
+  renderer's golden-image tests rather than by the main window.
+
+### Reliability
+
+- Weak Linux graphics adapters receive adapter-aware wgpu limits and a
+  single-sample compatibility profile; startup failures now produce a visible
+  diagnostic signal and a non-zero exit status. `OCCLUVIEW_LIVE_MSAA=1` starts
+  without multisampling when a driver rejects it, and a fatal startup is
+  offered to the desktop through the notification service the system provides.
+  Adapter selection and the fallback path are deterministic across launches.
+- Added `occluview --diagnostics` and installed-package graphics smoke checks;
+  the report now names the chosen live sample count and each adapter's
+  multisample support.
+- After a graphics fault the viewer stops submitting frames and reports the
+  fault once instead of retrying a broken device in a loop.
+- Exporting over a file that is a symbolic link updates the file it points at
+  instead of replacing the link, and "Export each layer" keeps working in
+  folders on removable media or network shares that cannot hard-link, which
+  also restores its collision retry on Windows.
+- Added an occlusal contact reading. Right-click a scan and choose Show
+  contacts: the scan is measured against the scan it bites against — the
+  nearest visible surface — and BOTH arches are painted where they meet. The
+  panel offers two readings of the same bite and one slider. Contacts marks
+  only where the surfaces actually meet and colours each mark by how deep the
+  bite is there, the way articulating paper leaves the rest of the tooth bare;
+  Approach paints how close the other scan is everywhere, load included, for
+  judging a jaw relationship rather than the contacts themselves. Heavy at
+  moves the depth the ramp calls fully loaded, and it recolours the
+  measurement already in hand instead of re-measuring: the field is what the
+  surfaces do, and the ramp is only what the colours say about it. One colour
+  per contact flattens every patch to its deepest point for a case whose
+  marks are better read as areas than as distributions.
+- The contact map carries a pointer readout: point at the surface and the
+  value under the cursor is shown in micrometres below a millimetre, beside a
+  swatch of the exact colour the surface wears there. A vertex with no
+  opposing surface inside the search radius reports nothing at all rather than
+  a plausible zero.
+- Three properties of such a map decide whether it can be read, and each is
+  enforced rather than assumed. Red sits on the load side, because red at the
+  far end puts a ring around every mark — a tooth curves away from a contact
+  within half a millimetre, so the geometry guarantees the ring. Almost
+  nothing is painted, because painting the whole approach turns a case with a
+  handful of real contacts into a field of colour with the marks lost inside
+  it. And the paint ends by weight rather than by fading toward white, which
+  reads as a lighting artefact instead of as data. Colour mixing runs in
+  Oklab, so the ramp has no neon band or hue overshoot between its stops.
+- The measurement is a Rust kernel (`occluview-contact`) that runs on its own
+  background thread beside the alignment worker, so a million-vertex pair
+  never freezes the window. It is deliberately independent of the align
+  session: a reading runs over its own pair, takes its roles as arguments, and
+  does not inherit the exclusion brush — those marks are indexed by the align
+  session's roles, and applying them to a different pair would paint out an
+  arbitrary region of a scan with nothing on screen to say why.
+- The painted band reaches the screen through a stop table in the per-mesh
+  uniform, evaluated in the fragment shader, so moving the slider is a uniform
+  write and never a re-upload or a bind-group rebuild.
 
 - Added a compact Help reference for the complete keyboard and mouse controls,
   with a contextual reminder in the viewport.

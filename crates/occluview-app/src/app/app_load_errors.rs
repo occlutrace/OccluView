@@ -1,4 +1,4 @@
-use super::{AppErrorDialog, Error, PathBuf};
+use super::{AppErrorAction, AppErrorDialog, Error, PathBuf};
 
 pub(super) fn load_error_dialog(
     locale: &crate::i18n::LocaleManager,
@@ -32,5 +32,6 @@ pub(super) fn load_error_dialog(
         summary,
         // Support payload stays verbatim (see `AppErrorDialog.details`).
         details: format!("{action} failed\n\nFiles:\n{files}\n\nError:\n{error:#}"),
+        action: AppErrorAction::None,
     }
 }

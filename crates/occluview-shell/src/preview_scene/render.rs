@@ -108,7 +108,7 @@ fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         show_vertex_colors: u32::from(entry.show_vertex_colors),
         show_texture: u32::from(entry.show_texture),
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     }
 }
 
@@ -121,6 +121,8 @@ pub(super) fn prepared_scene_sources(scene: &Scene) -> Vec<PreparedSceneSource<'
             uniform: scene_mesh_uniform(entry),
             visible: entry.visible,
             wireframe: entry.wireframe,
+            // The Explorer preview shows a scan, never a measurement.
+            contact: None,
         })
         .collect()
 }

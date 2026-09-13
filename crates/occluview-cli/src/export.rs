@@ -4,8 +4,11 @@ use anyhow::{bail, Context, Result};
 use occluview_core::{fill_holes_in_mesh, MeshEditOptions, MeshEditReport};
 use occluview_formats::dispatch::read_file_with_key_provider;
 use occluview_formats::hps::RuntimeHpsKeyProvider;
-use occluview_formats::write::{write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions};
-use std::path::Path;
+use occluview_formats::write::{
+    write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
+};
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 /// Generous edge ceiling for whole-mesh Close Holes, mirroring the app button
 /// (`app_layer_edits::whole_mesh`): the mm perimeter slider does the real
@@ -23,7 +26,7 @@ pub(crate) fn close_holes_file(
     input: &Path,
     output: &Path,
     limit_mm: Option<f32>,
-) -> Result<MeshEditReport> {
+) -> Result<(MeshEditReport, MeshWriteReport)> {
     let mesh = read_file_with_key_provider(input, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", input.display()))?;
     let format = ExportFormat::from_output_path(output)?;
@@ -41,14 +44,14 @@ pub(crate) fn close_holes_file(
     let result =
         fill_holes_in_mesh(&mesh, None, options).with_context(|| "closing holes".to_string())?;
 
-    write_mesh_overwrite(
+    let write_report = write_mesh_overwrite(
         output,
         &result.mesh,
         format.mesh_write_format(),
         MeshWriteOptions::default(),
     )
     .with_context(|| format!("writing {}", output.display()))?;
-    Ok(result.report)
+    Ok((result.report, write_report))
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -84,18 +87,83 @@ impl ExportFormat {
     }
 }
 
-pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<ExportFormat> {
+pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<(ExportFormat, MeshWriteReport)> {
     let mesh = read_file_with_key_provider(input, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", input.display()))?;
     let format = ExportFormat::from_output_path(output)?;
-    let _report = write_mesh_overwrite(
+    let report = write_mesh_overwrite(
         output,
         &mesh,
         format.mesh_write_format(),
         MeshWriteOptions::default(),
     )
     .with_context(|| format!("writing {}", output.display()))?;
-    Ok(format)
+    Ok((format, report))
+}
+
+/// Collapse only adjacent copies of the final extension. Native save dialogs
+/// and shell integrations can append their selected filter to an already
+/// suffixed name (`scan.stl` -> `scan.stl.stl`). Keeping this normalization
+/// next to the CLI's format mapping makes every headless writer use the same
+/// output-path contract without changing intentional names such as
+/// `scan.stl.obj`.
+pub(crate) fn normalize_output_path(path: PathBuf) -> PathBuf {
+    let Some(extension) = path.extension().map(OsStr::to_os_string) else {
+        return path;
+    };
+    if extension.is_empty() {
+        return path;
+    }
+    let Some(mut base) = path.file_stem().map(OsStr::to_os_string) else {
+        return path;
+    };
+
+    let mut repeated = false;
+    while let Some(nested_extension) = Path::new(base.as_os_str()).extension() {
+        if !os_str_ascii_case_equal(nested_extension, extension.as_os_str()) {
+            break;
+        }
+        let Some(nested_stem) = Path::new(base.as_os_str()).file_stem() else {
+            break;
+        };
+        base = nested_stem.to_os_string();
+        repeated = true;
+    }
+    if repeated {
+        let mut file_name = base;
+        file_name.push(".");
+        file_name.push(extension);
+        path.with_file_name(file_name)
+    } else {
+        path
+    }
+}
+
+fn os_str_ascii_case_equal(left: &OsStr, right: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        left.as_bytes().eq_ignore_ascii_case(right.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+}
+
+/// Keep lossy writer conversions visible to CLI operators without polluting
+/// stdout, whose machine-readable output is already part of the command
+/// contract.
+pub(crate) fn print_write_warnings(report: &MeshWriteReport) {
+    for warning in &report.warnings {
+        let message = match warning {
+            MeshWriteWarning::VertexColorsNotWritten => "vertex colors not included",
+            MeshWriteWarning::UvsNotWritten => "UVs not included",
+            MeshWriteWarning::TextureImageNotWritten => "texture image not included",
+        };
+        eprintln!("Warning: {message}");
+    }
 }
 
 #[cfg(test)]
@@ -146,8 +214,9 @@ mod tests {
         )
         .expect("seed input obj");
 
-        let format = convert_file(&input, &output).expect("convert");
+        let (format, report) = convert_file(&input, &output).expect("convert");
         assert_eq!(format, ExportFormat::Ply);
+        assert!(report.warnings.contains(&MeshWriteWarning::UvsNotWritten));
         assert!(output.exists());
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -174,6 +243,34 @@ mod tests {
         .expect_err("point cloud to stl");
         assert!(error.to_string().contains("triangle mesh"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn repeated_terminal_output_extension_is_collapsed_before_writing() {
+        assert_eq!(
+            normalize_output_path(PathBuf::from("case/scan.stl.stl")),
+            PathBuf::from("case/scan.stl")
+        );
+        assert_eq!(
+            normalize_output_path(PathBuf::from("case/scan.STL.StL")),
+            PathBuf::from("case/scan.StL")
+        );
+        assert_eq!(
+            normalize_output_path(PathBuf::from("case/scan.stl.obj")),
+            PathBuf::from("case/scan.stl.obj")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repeated_terminal_extension_is_collapsed_for_non_utf8_names() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(b"scan\xff.stl.stl".to_vec()));
+        let normalized = normalize_output_path(path);
+
+        assert_eq!(normalized.as_os_str().as_bytes(), b"scan\xff.stl");
     }
 
     fn temp_file(extension: &str) -> PathBuf {

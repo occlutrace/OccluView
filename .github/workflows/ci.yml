@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
   schedule:
     - cron: "0 2 * * 1"
 
@@ -52,8 +53,11 @@ jobs:
           toolchain: "1.98.0"
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: clippy --workspace --all-targets
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy --workspace --all-targets --all-features
+        # The release graph includes optional robust-CSG and diagnostic
+        # surfaces; linting the default feature set alone leaves those Rust
+        # paths outside the strict warning gate.
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   cross-compile:
     name: cross-compile (windows-gnu)
@@ -71,9 +75,14 @@ jobs:
       - name: Install mingw
         run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - name: cargo check (cross-platform crates)
+        # `--all-targets` matters here: a test or helper guarded by
+        # `cfg(not(windows))` while its caller is not (or the reverse) only
+        # fails once test targets are compiled for this target, and the fast
+        # Linux lane is where that should surface rather than the Windows
+        # runner.
         run: |
-          cargo check -p occluview-core -p occluview-formats -p occluview-render \
-            --locked --target x86_64-pc-windows-gnu
+          cargo clippy -p occluview-core -p occluview-formats -p occluview-render \
+            --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 
   windows-only:
     name: build (windows integration)
@@ -164,8 +173,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          arguments: --workspace --all-features
 
   third-party-notices:
     name: third-party notices (generated file current)

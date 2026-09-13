@@ -3,16 +3,20 @@
 //! re-upload-free stroke commit, wheel resize/re-intensify, and the brush
 //! cursor. The geometry kernel lives in `occlu-mesh-edit`.
 
-use super::{egui, mesh_editor_overlay, OccluViewApp};
+use super::{egui, live_viewport, mesh_editor_overlay, OccluViewApp};
 use crate::sculpt_tool::{
-    SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME,
-    SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
-    SCULPT_WHEEL_STEP,
+    uniform_scene_scale, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
+    MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
+    SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
 };
 use crate::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
-use glam::Vec3;
+use glam::{Mat4, Quat, Vec3};
 use occluview_core::{BrushMode, BrushStroke, SceneMeshId, ScenePickHit};
+use occluview_render::{
+    sculpt_surface_light_intensity, sculpt_tool_length, PreparedSceneTopology, SculptBrushUniform,
+    SculptToolShape, SculptToolUniform,
+};
 use std::sync::Arc;
 
 /// What the pointer/keyboard said this frame, resolved once so the dab loop
@@ -162,7 +166,9 @@ impl OccluViewApp {
         // dab), instead of dying in a cleared queue with no undo entry.
         // Context switches away from sculpt (tabs, lasso) still abort via
         // their own paths: the worker they drop cannot outlive the context.
-        self.commit_sculpt_stroke(ctx);
+        if !self.commit_sculpt_stroke(ctx) {
+            return;
+        }
         self.tools.sculpt.toggle(kind);
         if self.tools.sculpt.armed.is_some() {
             // Arming a brush means the Sculpt tab: show it and drop selection.
@@ -172,15 +178,26 @@ impl OccluViewApp {
             // intentionally preserved; sculpt owns LMB while armed and must
             // not silently turn Lasso into Marquee.
             self.prepare_armed_sculpt_session();
-        } else {
+        } else if !self.tools.sculpt.worker_has_pending_work() {
+            // `commit_sculpt_stroke` may have just queued Finish. Dropping the
+            // worker here would clear that command and lose the last stroke;
+            // poll_sculpt_worker owns the completion before a later teardown.
             self.tools.sculpt.disarm();
         }
         self.ui.status_message = Some(match self.tools.sculpt.armed {
-            Some(SculptToolKind::AddRemove) => self.ui.locale.tr("sculpt-armed-addremove"),
-            Some(SculptToolKind::Smooth) => self.ui.locale.tr("sculpt-armed-smooth"),
+            Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => {
+                self.ui.locale.tr("sculpt-armed-addremove")
+            }
+            Some(SculptToolKind::Smooth) if self.tools.sculpt.worker.is_some() => {
+                self.ui.locale.tr("sculpt-armed-smooth")
+            }
+            Some(_) => self.ui.locale.tr("sculpt-preparing"),
             None => self.ui.locale.tr("sculpt-off"),
         });
-        self.render.invalidation.overlay_tools_changed();
+        // Sculpt hides the selection overlay while its display-only shadow is
+        // ahead of the committed document mesh. Rebuild it when the mode
+        // changes so it cannot remain stale after the stroke is committed.
+        self.render.invalidation.selection_changed();
         ctx.request_repaint();
     }
 
@@ -205,12 +222,12 @@ impl OccluViewApp {
             }
             EditorTab::Sculpt => {}
         }
-        self.render.invalidation.overlay_tools_changed();
+        self.render.invalidation.selection_changed();
         ctx.request_repaint();
     }
 
-    /// Edit-Mesh-only sculpt hotkeys: `1` arms Add/Remove, `2` arms Smooth.
-    /// Consumed only while a session is open and no text field has focus.
+    /// In Mesh Editor, `1` opens Sculpt with Add/Remove and `2` with Smooth.
+    /// Text fields retain digit keys.
     pub(super) fn handle_sculpt_hotkeys(&mut self, ctx: &egui::Context) -> bool {
         if !self.document.edit_mode.has_active_session() || ctx.egui_wants_keyboard_input() {
             return false;
@@ -251,6 +268,7 @@ impl OccluViewApp {
         response: &egui::Response,
         pan_drag_active: bool,
     ) -> bool {
+        self.tools.sculpt.clear_cursor_hit();
         self.poll_sculpt_preparation(ctx);
         if !self.document.edit_mode.has_active_session() {
             if self.tools.sculpt.armed.is_some() || self.tools.sculpt.stroke.is_some() {
@@ -264,7 +282,9 @@ impl OccluViewApp {
         };
         if pan_drag_active {
             // LMB+RMB pan takes the primary away; end the drag cleanly.
-            self.commit_sculpt_stroke(ctx);
+            if !self.commit_sculpt_stroke(ctx) {
+                return true;
+            }
             return false;
         }
 
@@ -282,13 +302,15 @@ impl OccluViewApp {
         // egui frame. The edge is authoritative: finalize any stale previous
         // stroke before creating the next one, otherwise its old anchor and
         // hold timer can make the second drag look dead.
-        if pressed && self.tools.sculpt.stroke.is_some() {
-            self.commit_sculpt_stroke(ctx);
+        if pressed && self.tools.sculpt.stroke.is_some() && !self.commit_sculpt_stroke(ctx) {
+            return true;
         }
 
         if !down {
             if self.tools.sculpt.stroke.is_some() {
-                self.commit_sculpt_stroke(ctx);
+                if !self.commit_sculpt_stroke(ctx) {
+                    return true;
+                }
                 return true;
             }
             return false;
@@ -299,11 +321,23 @@ impl OccluViewApp {
         let Some(pointer) = pointer else {
             return true;
         };
-        if self.tools.sculpt.stroke.is_none() && !response.contains_pointer() {
+        if !response.contains_pointer() {
+            // The viewport response becomes false both outside its rect and
+            // when the Mesh Editor window is above it. A live drag may pause
+            // and resume on re-entry, but it must never turn an out-of-window
+            // pointer into a ray and sculpt an extrapolated surface.
+            if self.tools.sculpt.stroke.is_some() {
+                ctx.request_repaint();
+                return true;
+            }
             return false;
         }
-        if self.tools.sculpt.stroke.is_none() {
-            let _ = self.ensure_sculpt_session_for_target();
+        if self.tools.sculpt.stroke.is_none()
+            && !self.ensure_sculpt_session_for_target()
+            && self.tools.sculpt.worker.is_none()
+        {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            ctx.request_repaint();
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
             // Keep owning this held gesture while the background BVH/brush
@@ -312,6 +346,9 @@ impl OccluViewApp {
             ctx.request_repaint();
             return true;
         };
+        self.tools
+            .sculpt
+            .set_cursor_hit([pointer.x, pointer.y], hit);
         self.paint_sculpt_dabs(ctx, &hit, DabInput { kind, shift, dt });
         true
     }
@@ -364,6 +401,7 @@ impl OccluViewApp {
             dt: input.dt,
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
             return;
         };
         let queued = {
@@ -418,6 +456,10 @@ impl OccluViewApp {
         if entry.id() != layer_id {
             return false;
         }
+        if uniform_scene_scale(&entry.transform).is_none() {
+            self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+            return false;
+        }
         if self
             .tools
             .sculpt
@@ -455,7 +497,21 @@ impl OccluViewApp {
                 first.filter(|_| sculptable.next().is_none())
             });
         if let Some(index) = target {
-            let _ = self.tools.sculpt.queue_preparation(scene, index);
+            if self
+                .tools
+                .sculpt
+                .queue_preparation(Arc::clone(&scene), index)
+            {
+                self.ui.status_message = None;
+            } else if scene
+                .meshes()
+                .get(index)
+                .is_some_and(|entry| uniform_scene_scale(&entry.transform).is_none())
+            {
+                self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+            } else {
+                self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            }
         }
     }
 
@@ -496,7 +552,8 @@ impl OccluViewApp {
     /// geometry reverts to the committed scene.
     pub(super) fn abort_sculpt_stroke(&mut self) {
         let had_stroke = self.tools.sculpt.stroke.take().is_some();
-        if had_stroke {
+        let had_pending = self.tools.sculpt.worker_has_pending_work();
+        if had_stroke || had_pending {
             self.invalidate_sculpt_session_silent();
         }
     }
@@ -541,14 +598,38 @@ impl OccluViewApp {
         let scene = self.document.scene.as_ref()?;
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
-        // The preparation worker warms this exact layer. Never allow a cold
-        // scan-sized BVH to build on the egui thread, and do not wait on
-        // unrelated visible layers.
-        if !entry.mesh.bvh_is_ready() {
+        let (origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
+        let inverse = entry.transform.inverse();
+        let local_origin = inverse.transform_point3(origin);
+        let local_direction = inverse.transform_vector3(direction);
+        let worker = self.tools.sculpt.worker.as_ref().filter(|worker| {
+            worker.layer_id == layer_id && worker.topology_id == entry.mesh.topology_id()
+        });
+        // The preparation thread warms this shared tree before building the
+        // sculpt session. Never make the UI wait inside OnceLock on a cold
+        // scan-sized BVH; show the cursor as soon as that first stage is ready.
+        if worker.is_none() && !entry.mesh.bvh_is_ready() {
             return None;
         }
-        let (origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
-        scene.pick_layer_ray_hit(origin, direction, layer_id)
+        let (triangle_index, local_point) =
+            match worker.and_then(|worker| worker.pick_local_ray(local_origin, local_direction)) {
+                Some(hit) => hit,
+                None => entry
+                    .mesh
+                    .pick_ray_local(local_origin, local_direction, |_| true)?,
+            };
+        let point = entry.transform.transform_point3(local_point);
+        let distance = (point - origin).dot(direction.normalize_or_zero());
+        distance.is_finite().then_some(ScenePickHit {
+            layer_index: scene
+                .meshes()
+                .iter()
+                .position(|candidate| candidate.id() == layer_id)?,
+            layer_id,
+            triangle_index,
+            point,
+            distance,
+        })
     }
 
     fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
@@ -556,26 +637,82 @@ impl OccluViewApp {
             .map(|(_, layer_id)| layer_id)
     }
 
-    /// The brush cursor is deliberately screen-space: a surface-projected ring
-    /// required a second BVH pick plus 48 projected points and six filled glow
-    /// polygons on every repaint. A quiet ring communicates brush size without
-    /// competing with the model or introducing hover latency.
-    pub(super) fn paint_sculpt_cursor_impl(&self, ui: &egui::Ui, viewport_rect: egui::Rect) {
+    /// Paint the cursor after viewport input has had a chance to cache its
+    /// authoritative hit. Hovering performs one guarded BVH pick; a held drag
+    /// reuses the exact hit that scheduled the dabs, so the surface light never
+    /// adds a second scan-sized traversal to the hot path.
+    // The cursor is one authoritative presentation path: hit validation,
+    // surface feedback, and the screen-space ring must share the same sample.
+    #[expect(clippy::too_many_lines)]
+    pub(super) fn paint_sculpt_cursor_impl(
+        &self,
+        ui: &egui::Ui,
+        viewport_response: &egui::Response,
+    ) {
         let Some(kind) = self.tools.sculpt.armed else {
+            self.publish_sculpt_cursor(None);
             return;
         };
         if !self.document.edit_mode.has_active_session() {
+            self.publish_sculpt_cursor(None);
             return;
         }
+        // The cursor must follow the same ownership boundary as the drag: a
+        // foreground editor window owns the pointer even when it sits inside
+        // the viewport rectangle, and a preparing worker is not ready to
+        // accept a dab yet.
+        if !viewport_response.contains_pointer() {
+            self.publish_sculpt_cursor(None);
+            return;
+        }
+        let viewport_rect = viewport_response.rect;
         let Some(camera) = self.render.camera.as_ref() else {
+            self.publish_sculpt_cursor(None);
             return;
         };
         let Some(pointer) = ui.ctx().pointer_hover_pos() else {
+            self.publish_sculpt_cursor(None);
             return;
         };
         if !viewport_rect.contains(pointer) {
+            self.publish_sculpt_cursor(None);
             return;
         }
+        let pointer_key = [pointer.x, pointer.y];
+        let hit = self
+            .tools
+            .sculpt
+            .cursor_hit_for(pointer_key)
+            .or_else(|| self.sculpt_surface_hit(viewport_rect, pointer));
+        let Some(hit) = hit else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
+        let Some(scene) = self.document.scene.as_ref() else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
+        let Some(entry) = scene.meshes().get(hit.layer_index) else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
+        if entry.id() != hit.layer_id {
+            self.publish_sculpt_cursor(None);
+            return;
+        }
+        let live_normal = self
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .filter(|worker| {
+                worker.layer_id == hit.layer_id && worker.topology_id == entry.mesh.topology_id()
+            })
+            .and_then(|worker| worker.local_triangle_normal(hit.triangle_index));
+        let Some(normal) = sculpt_face_normal(scene, &hit, camera, live_normal) else {
+            self.publish_sculpt_cursor(None);
+            return;
+        };
         let shift = ui.ctx().input(|input| input.modifiers.shift);
         // The ring shows the footprint a dab would actually cover, so the
         // Shift-widened Smooth reads on screen before the first stroke lands.
@@ -583,12 +720,49 @@ impl OccluViewApp {
             kind.dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ui.ctx()), shift);
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
         let color = sculpt_cursor_color(kind, shift);
+        let strength = kind.dab_strength(intensity01, shift);
+        let shape = match kind {
+            SculptToolKind::AddRemove => SculptToolShape::Cone,
+            SculptToolKind::Smooth => SculptToolShape::Cylinder,
+        };
+        let color_rgba = color.to_array().map(|channel| f32::from(channel) / 255.0);
+        let tool_length = sculpt_tool_length(strength);
+        let tool_rotation = Quat::from_rotation_arc(Vec3::Z, normal);
+        let tool_model = Mat4::from_scale_rotation_translation(
+            Vec3::new(radius_world, radius_world, tool_length),
+            tool_rotation,
+            hit.point + normal * 0.02,
+        );
+        self.publish_sculpt_cursor(Some(live_viewport::SculptCursor {
+            target_index: hit.layer_index,
+            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
+            brush: SculptBrushUniform {
+                center: hit.point.to_array(),
+                radius: radius_world,
+                normal: normal.to_array(),
+                intensity: sculpt_surface_light_intensity(strength),
+                color: color_rgba,
+                tip: shape as u32,
+                visible: 1,
+                padding: [0; 2],
+            },
+            tool: SculptToolUniform {
+                model: tool_model.to_cols_array(),
+                color: color_rgba,
+                opacity: 0.20 + 0.12 * strength,
+                shape: shape as u32,
+                visible: 1,
+                padding: 0,
+            },
+        }));
 
         let ortho_height = camera.orthographic_height.max(f32::EPSILON);
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
         if radius_px.is_finite() && radius_px >= 2.0 {
             let canvas = ui.painter();
-            let intensity = intensity01.clamp(0.0, 1.0);
+            // The ring must preview the force the dab will actually use:
+            // Shift+Smooth is a full-strength pass, not a dim 50% cursor.
+            let intensity = strength;
             canvas.circle_filled(
                 pointer,
                 radius_px,
@@ -606,6 +780,69 @@ impl OccluViewApp {
             );
             canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
         }
+    }
+
+    fn publish_sculpt_cursor(&self, cursor: Option<live_viewport::SculptCursor>) {
+        let Some(viewport) = self.render.live_viewport.as_ref() else {
+            return;
+        };
+        if let Ok(mut viewport) = viewport.lock() {
+            viewport.set_sculpt_cursor(cursor);
+        }
+    }
+}
+
+fn sculpt_face_normal(
+    scene: &occluview_core::Scene,
+    hit: &ScenePickHit,
+    camera: &occluview_core::Camera,
+    live_local_normal: Option<Vec3>,
+) -> Option<Vec3> {
+    let entry = scene.meshes().get(hit.layer_index)?;
+    if entry.id() != hit.layer_id {
+        return None;
+    }
+    let local = live_local_normal.unwrap_or_else(|| {
+        let base = hit.triangle_index.saturating_mul(3);
+        let Some(indices) = entry.mesh.indices().get(base..base.saturating_add(3)) else {
+            return Vec3::ZERO;
+        };
+        let vertex = |index: u32| {
+            entry
+                .mesh
+                .vertices()
+                .get(usize::try_from(index).ok()?)
+                .map(|vertex| Vec3::from_array(vertex.position))
+        };
+        let (Some(a), Some(b), Some(c)) =
+            (vertex(indices[0]), vertex(indices[1]), vertex(indices[2]))
+        else {
+            return Vec3::ZERO;
+        };
+        (b - a).cross(c - a).normalize_or_zero()
+    });
+    if !local.is_finite() || local.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let determinant = entry.transform.matrix3.determinant();
+    if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+        return None;
+    }
+    let normal = entry
+        .transform
+        .matrix3
+        .inverse()
+        .transpose()
+        .mul_vec3(local)
+        .normalize_or_zero();
+    if !normal.is_finite() || normal.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let toward_camera = (camera.eye() - hit.point).normalize_or_zero();
+    if toward_camera.length_squared() > f32::EPSILON && normal.dot(toward_camera) < 0.0 {
+        Some(-normal)
+    } else {
+        Some(normal)
     }
 }
 
@@ -639,152 +876,12 @@ fn sculpt_target(
 /// do not introduce the saturated blue accent used by the old editor chrome.
 fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
     match (kind, shift) {
-        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(118, 151, 132),
-        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(164, 116, 108),
-        (SculptToolKind::Smooth, false) => egui::Color32::from_rgb(142, 146, 154),
-        (SculptToolKind::Smooth, true) => egui::Color32::from_rgb(172, 166, 151),
+        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(255, 145, 58),
+        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(74, 177, 255),
+        (SculptToolKind::Smooth, _) => egui::Color32::from_rgb(178, 126, 255),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
-    #![allow(clippy::expect_used, reason = "source-contract pins must say what is missing")]
-    use super::{plan_dab_centers, sculpt_target};
-    use crate::sculpt_tool::{HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME};
-    use glam::Vec3;
-    use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
-
-    #[test]
-    fn a_cold_mesh_can_be_resolved_for_background_preparation() -> anyhow::Result<()> {
-        let mesh = Mesh::new(
-            None,
-            vec![
-                Vertex::at(Vec3::ZERO),
-                Vertex::at(Vec3::X),
-                Vertex::at(Vec3::Y),
-            ],
-            vec![0, 1, 2],
-        )?;
-        assert!(!mesh.bvh_is_ready());
-        let mut scene = Scene::new();
-        let index = scene.add(SceneMesh::new(mesh));
-        let layer_id = scene.meshes()[index].id();
-
-        assert_eq!(
-            sculpt_target(&scene, Some(layer_id)),
-            Some((index, layer_id))
-        );
-        assert!(!scene.meshes()[index].mesh.bvh_is_ready());
-        Ok(())
-    }
-
-    #[test]
-    fn first_dab_lands_at_the_cursor_and_arms_the_path() {
-        let (centers, last, hold) =
-            plan_dab_centers(None, Vec3::new(2.0, 0.0, 0.0), 1.0, 0.0, 0.016);
-        assert_eq!(centers, vec![Vec3::new(2.0, 0.0, 0.0)]);
-        assert_eq!(last, Some(Vec3::new(2.0, 0.0, 0.0)));
-        assert_eq!(hold, 0.0);
-    }
-
-    #[test]
-    fn a_straight_move_spaces_dabs_evenly_by_arc_length() {
-        // Move exactly 3 spacings along +X: three dabs at 1,2,3, last at 3.
-        let (centers, last, hold) =
-            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(3.0, 0.0, 0.0), 1.0, 0.0, 0.016);
-        assert_eq!(
-            centers,
-            vec![
-                Vec3::new(1.0, 0.0, 0.0),
-                Vec3::new(2.0, 0.0, 0.0),
-                Vec3::new(3.0, 0.0, 0.0),
-            ]
-        );
-        assert_eq!(last, Some(Vec3::new(3.0, 0.0, 0.0)));
-        assert_eq!(hold, 0.0);
-    }
-
-    #[test]
-    fn a_huge_single_frame_jump_is_capped_without_backlog() {
-        // A jump far beyond MAX_DABS_PER_FRAME spacings is sampled evenly, but
-        // the anchor advances to the current cursor. The next frame must not
-        // replay an invisible queue of old dabs.
-        let far = (MAX_DABS_PER_FRAME + 50) as f32;
-        let (centers, last, _) =
-            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(far, 0.0, 0.0), 1.0, 0.0, 0.016);
-        assert_eq!(centers.len(), MAX_DABS_PER_FRAME);
-        assert_eq!(last, Some(Vec3::new(far, 0.0, 0.0)));
-        assert_eq!(centers.last(), Some(&Vec3::new(far, 0.0, 0.0)));
-    }
-
-    #[test]
-    fn a_stationary_hold_fires_dabs_on_the_time_cadence() {
-        // Cursor barely moves (< spacing): the hold accumulator fires a dab
-        // every HOLD_DAB_INTERVAL_SEC, at the cursor, leaving `last` put.
-        let last_dab = Some(Vec3::ZERO);
-        let dt = HOLD_DAB_INTERVAL_SEC * 2.5;
-        let (centers, last, hold) =
-            plan_dab_centers(last_dab, Vec3::new(0.001, 0.0, 0.0), 1.0, 0.0, dt);
-        assert_eq!(centers.len(), 2, "2.5 intervals of hold => 2 dabs");
-        assert!(centers.iter().all(|c| *c == Vec3::new(0.001, 0.0, 0.0)));
-        assert_eq!(
-            last, last_dab,
-            "a hold does not advance the arc-length anchor"
-        );
-        assert!(hold > 0.0 && hold < HOLD_DAB_INTERVAL_SEC);
-    }
-
-    #[test]
-    fn a_stalled_frame_cannot_dump_a_huge_hold_backlog() {
-        // A multi-second stall (dt) must be clamped so it doesn't fire dozens of
-        // hold dabs at once when input resumes.
-        let (centers, _, _) =
-            plan_dab_centers(Some(Vec3::ZERO), Vec3::new(0.001, 0.0, 0.0), 1.0, 0.0, 5.0);
-        assert!(
-            centers.len() <= MAX_DABS_PER_FRAME,
-            "hold backlog must stay bounded, got {}",
-            centers.len()
-        );
-        assert!(
-            centers.len() <= 5,
-            "clamped dt should keep the backlog small"
-        );
-    }
-
-    /// A held Shift must not swallow a brush-mode switch: with only
-    /// `Modifiers::NONE` accepted, `Shift+2` is silently ignored, the operator
-    /// believes Smooth is armed while `AddRemove` (+Shift = Remove) still is,
-    /// and the next dab carves where it should smooth.
-    #[test]
-    fn brush_hotkeys_survive_a_held_shift() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-        for key in ["egui::Key::Num1", "egui::Key::Num2"] {
-            assert!(
-                source.contains(&format!("egui::Modifiers::SHIFT, {key}")),
-                "the {key} brush hotkey must also fire with Shift held"
-            );
-        }
-    }
-
-    /// A brush-mode switch keeps the layer context, so a live stroke must be
-    /// finished into one undoable edit — not aborted with its queue cleared
-    /// and no undo entry. (Switches away from sculpt — tabs, lasso — still
-    /// abort through their own paths.)
-    #[test]
-    fn mode_switch_finishes_a_live_stroke_instead_of_aborting_it() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-        let start = source
-            .find("pub(super) fn toggle_sculpt_tool")
-            .expect("the brush-mode switch must exist");
-        let body = &source[start..(start + 2000).min(source.len())];
-        assert!(
-            body.contains("self.commit_sculpt_stroke(ctx)"),
-            "switching brush modes must finish a live stroke first"
-        );
-        assert!(
-            !body.contains("abort_sculpt_stroke"),
-            "switching brush modes must not abort the live stroke"
-        );
-    }
-}
+#[path = "app_sculpt_tests.rs"]
+mod tests;

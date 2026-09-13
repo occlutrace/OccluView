@@ -8,6 +8,7 @@
 use glam::Vec3;
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::brush_csr::Csr;
 use super::brush_index::VertexGrid;
@@ -90,6 +91,19 @@ pub struct BrushStroke {
     pub view_dir: [f32; 3],
 }
 
+/// The two values that distinguish Add from Remove after the dab has already
+/// been sampled. Keeping them together makes the clay kernel's contract
+/// explicit without growing its argument list every time cancellation or a
+/// safety guard is added.
+#[derive(Copy, Clone)]
+struct ClayDab {
+    stroke: BrushStroke,
+    sign: f32,
+}
+
+type WeightedVertices = Vec<(usize, f32)>;
+type WeightedCandidates = Option<(WeightedVertices, f32)>;
+
 /// Which sculpting operation a dab performs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BrushMode {
@@ -110,6 +124,16 @@ pub enum BrushMode {
 pub struct BrushStrokeOutcome {
     /// Touched vertex ids, unique, in first-touched order.
     pub touched_vertices: Vec<usize>,
+    /// Vertex ids whose normals were recomputed from the affected faces,
+    /// unique, in scope order. This is separate from `touched_vertices`:
+    /// smoothing changes a moved vertex's one-ring normals even when those
+    /// neighbours did not move. Interactive callers must upload this list as
+    /// well or the live GPU shadow and the committed mesh retain stale shading.
+    pub normal_vertices: Vec<usize>,
+    /// Triangle ids whose positions or normals may have changed. An
+    /// interactive picker can test this small dirty set against the live
+    /// shadow while retaining the original mesh BVH for all other triangles.
+    pub dirty_triangles: Vec<usize>,
     /// Vertices APPENDED by densification during this dab. New ids are always
     /// contiguous and end the array, so they occupy
     /// `vertex_count() - added_vertices .. vertex_count()`. Existing ids never
@@ -126,6 +150,10 @@ impl BrushStrokeOutcome {
     pub fn topology_changed(&self) -> bool {
         self.added_vertices > 0
     }
+}
+
+fn cancellation_requested(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
 }
 
 /// A prepared freeform-sculpting session over one mesh. See the module docs
@@ -328,44 +356,102 @@ impl BrushSession {
     /// Returns exactly the touched vertex ids for a partial GPU update; empty
     /// when the dab has no effect (zero strength/radius, or no vertex in reach).
     pub fn apply_stroke(&mut self, stroke: BrushStroke, mode: BrushMode) -> BrushStrokeOutcome {
+        self.apply_stroke_inner(stroke, mode, None)
+            .unwrap_or_default()
+    }
+
+    /// Apply one dab while allowing the owning worker to cancel between the
+    /// bounded kernel phases. `None` means the dab stopped before publishing a
+    /// result; the caller must discard the session rather than expose a
+    /// partially mutated shadow.
+    pub fn apply_stroke_cancellable(
+        &mut self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        cancel: &AtomicBool,
+    ) -> Option<BrushStrokeOutcome> {
+        self.apply_stroke_inner(stroke, mode, Some(cancel))
+    }
+
+    fn apply_stroke_inner(
+        &mut self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<BrushStrokeOutcome> {
+        if cancellation_requested(cancel) {
+            return None;
+        }
         // Densify FIRST, so the relaxer has vertices to move where the surface
         // is coarser than the brush. Splitting is a pure topology change — it
         // leaves the surface exactly where it was — so it never competes with
         // the displacement guards that run below.
-        let added_vertices =
-            if self.densify && mode == BrushMode::Smooth && stroke.strength.clamp(0.0, 1.0) > 0.0 {
-                self.refine_dab(Vec3::from_array(stroke.center), stroke.radius_mm)
-            } else {
-                0
-            };
-        let Some((weighted, strength)) = self.weighted_candidates(stroke) else {
-            return BrushStrokeOutcome {
-                touched_vertices: Vec::new(),
-                added_vertices,
-            };
+        let added_vertices = if self.densify
+            && mode == BrushMode::Smooth
+            && stroke.strength.clamp(0.0, 1.0) > 0.0
+        {
+            self.refine_dab_cancellable(Vec3::from_array(stroke.center), stroke.radius_mm, cancel)?
+        } else {
+            0
         };
+        if cancellation_requested(cancel) {
+            return None;
+        }
+        let Some(candidates) = self.weighted_candidates(stroke, cancel)? else {
+            return Some(BrushStrokeOutcome {
+                touched_vertices: Vec::new(),
+                normal_vertices: Vec::new(),
+                dirty_triangles: Vec::new(),
+                added_vertices,
+            });
+        };
+        let (weighted, strength) = candidates;
         // Snapshot the region so grid maintenance runs once at dab end.
-        self.snapshot_grid_region(&weighted);
+        if !self.snapshot_grid_region(&weighted, cancel) {
+            return None;
+        }
         let mut touched: Vec<usize> = Vec::new();
-        match mode {
-            BrushMode::Smooth => self.apply_smooth(&weighted, strength, &mut touched),
-            BrushMode::Add => self.apply_clay(&weighted, stroke, 1.0, &mut touched),
-            BrushMode::Remove => self.apply_clay(&weighted, stroke, -1.0, &mut touched),
+        let applied = match mode {
+            BrushMode::Smooth => self.apply_smooth(&weighted, strength, &mut touched, cancel),
+            BrushMode::Add => self.apply_clay(
+                &weighted,
+                ClayDab { stroke, sign: 1.0 },
+                &mut touched,
+                cancel,
+            ),
+            BrushMode::Remove => self.apply_clay(
+                &weighted,
+                ClayDab { stroke, sign: -1.0 },
+                &mut touched,
+                cancel,
+            ),
+        };
+        if !applied {
+            return None;
+        }
+        if cancellation_requested(cancel) {
+            return None;
         }
         // The edge budget is a heuristic; reject any flipped triangle now.
-        self.rollback_inversions();
+        if !self.rollback_inversions(cancel) {
+            return None;
+        }
         // Fold the net motion back into the grid once, keeping the next query exact.
-        self.apply_grid_maintenance();
+        if !self.apply_grid_maintenance(cancel) {
+            return None;
+        }
         // Do not report a dab that ended with no net motion.
         touched.retain(|&vertex_id| {
             (self.positions[vertex_id] - self.pre_position[vertex_id]).length_squared()
                 > f32::EPSILON
         });
         if touched.is_empty() {
-            return BrushStrokeOutcome {
+            return Some(BrushStrokeOutcome {
                 touched_vertices: Vec::new(),
+                normal_vertices: Vec::new(),
+                dirty_triangles: Vec::new(),
                 added_vertices,
-            };
+            });
         }
         // Dedup via a stamp (no sort): `touched` has duplicates (displacement +
         // auto-smooth + soup siblings), and sorting tens of thousands of ids per
@@ -385,18 +471,58 @@ impl BrushSession {
             self.vertices[vertex_id].position = self.positions[vertex_id].to_array();
         }
         self.touched_total.extend(unique.iter().copied());
-        refresh_step_budget(
-            &unique,
-            &self.positions,
-            &self.adjacency,
-            &self.position_siblings,
-            &mut self.max_step,
-        );
-        self.recompute_normals_near(&unique);
-        BrushStrokeOutcome {
-            touched_vertices: unique,
-            added_vertices,
+        let mut step_budget = super::brush_math::StepBudgetInputs {
+            positions: &self.positions,
+            adjacency: &self.adjacency,
+            siblings: &self.position_siblings,
+            max_step: &mut self.max_step,
+            cancel,
+        };
+        if !refresh_step_budget(&unique, &mut step_budget) {
+            return None;
         }
+        let normal_vertices = self.recompute_normals_near(&unique, cancel)?;
+        let dirty_triangles = self.triangles_touching_vertices_cancellable(&unique, cancel)?;
+        Some(BrushStrokeOutcome {
+            touched_vertices: unique,
+            normal_vertices,
+            dirty_triangles,
+            added_vertices,
+        })
+    }
+
+    /// Return the unique incident triangles for a changed vertex set. The
+    /// order is normalized so callers can retain one bounded deterministic
+    /// dirty list across several dabs.
+    pub fn triangles_touching_vertices(&mut self, vertices: &[usize]) -> Vec<usize> {
+        self.triangles_touching_vertices_cancellable(vertices, None)
+            .unwrap_or_default()
+    }
+
+    fn triangles_touching_vertices_cancellable(
+        &mut self,
+        vertices: &[usize],
+        cancel: Option<&AtomicBool>,
+    ) -> Option<Vec<usize>> {
+        let generation = self.next_triangle_stamp();
+        let mut triangles = Vec::new();
+        for &vertex in vertices {
+            if cancellation_requested(cancel) {
+                return None;
+            }
+            for &triangle in self.incident_triangles.row(vertex) {
+                if cancellation_requested(cancel) {
+                    return None;
+                }
+                let triangle = triangle as usize;
+                if self.triangle_stamp[triangle] != generation {
+                    self.triangle_stamp[triangle] = generation;
+                    triangles.push(triangle);
+                }
+            }
+        }
+        triangles.sort_unstable();
+        Some(triangles)
     }
 
     /// Falloff-weighted vertices within the dab's disc (the grid query is a
@@ -404,16 +530,25 @@ impl BrushSession {
     /// Weights are raw spatial falloff (0..1); clamped strength is returned
     /// separately so Smooth turns it into a pass count, not a magnitude.
     /// `None` for a no-effect dab.
-    fn weighted_candidates(&mut self, stroke: BrushStroke) -> Option<(Vec<(usize, f32)>, f32)> {
-        let strength = stroke.strength.clamp(0.0, 1.0);
-        if strength <= 0.0 || !stroke.radius_mm.is_finite() || stroke.radius_mm <= 0.0 {
+    fn weighted_candidates(
+        &mut self,
+        stroke: BrushStroke,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<WeightedCandidates> {
+        if cancellation_requested(cancel) {
             return None;
         }
-        self.sync_grid(stroke.radius_mm);
+        let strength = stroke.strength.clamp(0.0, 1.0);
+        if strength <= 0.0 || !stroke.radius_mm.is_finite() || stroke.radius_mm <= 0.0 {
+            return Some(None);
+        }
+        if !self.sync_grid(stroke.radius_mm, cancel) {
+            return None;
+        }
         let center = Vec3::from_array(stroke.center);
         let candidates = self.grid.query_radius(center, stroke.radius_mm);
         if candidates.is_empty() {
-            return None;
+            return Some(None);
         }
         // Parallel across candidates — a big brush has tens of thousands, and
         // this dominates a dab's per-vertex work. `par_iter().collect()` keeps
@@ -426,14 +561,17 @@ impl BrushSession {
                 (weight > 0.0).then_some((vertex_id, weight))
             })
             .collect();
+        if cancellation_requested(cancel) {
+            return None;
+        }
         // A single-surface scan (the common case) has no other component to
         // drag along, so skip the per-dab flood fill entirely.
         let weighted = if self.single_component {
             weighted
         } else {
-            self.restrict_to_component(weighted, center)
+            self.restrict_to_component(weighted, center, cancel)?
         };
-        (!weighted.is_empty()).then_some((weighted, strength))
+        Some((!weighted.is_empty()).then_some((weighted, strength)))
     }
 
     /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the brushed
@@ -443,13 +581,16 @@ impl BrushSession {
     fn apply_clay(
         &mut self,
         weighted: &[(usize, f32)],
-        stroke: BrushStroke,
-        sign: f32,
+        dab: ClayDab,
         touched: &mut Vec<usize>,
-    ) {
-        let strength = stroke.strength.clamp(0.0, 1.0);
-        let normal = self.brush_normal(weighted, Vec3::from_array(stroke.view_dir));
-        let amplitude = (stroke.radius_mm * ADD_REMOVE_GAIN * strength).max(0.0);
+        cancel: Option<&AtomicBool>,
+    ) -> bool {
+        if cancellation_requested(cancel) {
+            return false;
+        }
+        let strength = dab.stroke.strength.clamp(0.0, 1.0);
+        let normal = self.brush_normal(weighted, Vec3::from_array(dab.stroke.view_dir));
+        let amplitude = (dab.stroke.radius_mm * ADD_REMOVE_GAIN * strength).max(0.0);
         // Only weld representatives (a real ring) displace independently; their
         // soup duplicates follow via sibling propagation in `commit_moves`. A
         // duplicate displacing on its own would re-apply the dab against its
@@ -458,35 +599,58 @@ impl BrushSession {
             .par_iter()
             .filter(|&&(vertex_id, _)| !self.adjacency.is_empty_row(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
+                if cancellation_requested(cancel) {
+                    return None;
+                }
                 let here = self.position(vertex_id);
-                let target = here + normal * (sign * weight * amplitude);
+                let target = here + normal * (dab.sign * weight * amplitude);
                 (target != here).then_some((vertex_id, target))
             })
             .collect();
-        self.commit_moves(displacement.into_iter(), touched);
+        if cancellation_requested(cancel)
+            || !self.commit_moves(displacement.into_iter(), touched, cancel)
+        {
+            return false;
+        }
+        if cancellation_requested(cancel) {
+            return false;
+        }
 
         // De-noise the whole dab, not just its peak: the displacement's t²
         // falloff is too concentrated to clean the mid-radius (where the uneven
         // anti-inversion clamp leaves grain), so auto-smooth uses a plateau
         // weight — near-uniform across the interior, tapered to zero at the rim.
         // Taubin (shrink+inflate) cleans the grain without collapsing the dome.
-        let smooth_weights: Vec<(usize, f32)> = weighted
-            .iter()
-            .map(|&(vertex_id, weight)| {
-                let t = weight.sqrt(); // t = 1 - distance/radius
-                (vertex_id, smoothstep(AUTOSMOOTH_RIM_TAPER, t))
-            })
-            .collect();
-        self.taubin_smooth(&smooth_weights, CLAY_AUTOSMOOTH_PASSES, touched);
+        let mut smooth_weights = Vec::with_capacity(weighted.len());
+        for &(vertex_id, weight) in weighted {
+            if cancellation_requested(cancel) {
+                return false;
+            }
+            let t = weight.sqrt(); // t = 1 - distance/radius
+            smooth_weights.push((vertex_id, smoothstep(AUTOSMOOTH_RIM_TAPER, t)));
+        }
+        self.taubin_smooth(&smooth_weights, CLAY_AUTOSMOOTH_PASSES, touched, cancel)
     }
 
     /// Smooth: aggressive uniform-Laplacian relaxation, pass count from
     /// `strength` (Shift forces the max) — cardinal flattening. Boundary and
     /// needle-tip vertices are left alone.
-    fn apply_smooth(&mut self, weighted: &[(usize, f32)], strength: f32, touched: &mut Vec<usize>) {
+    fn apply_smooth(
+        &mut self,
+        weighted: &[(usize, f32)],
+        strength: f32,
+        touched: &mut Vec<usize>,
+        cancel: Option<&AtomicBool>,
+    ) -> bool {
         for _ in 0..smooth_pass_count(strength) {
-            self.relax_pass(weighted, SMOOTH_LAMBDA, touched);
+            if cancellation_requested(cancel) {
+                return false;
+            }
+            if !self.relax_pass(weighted, SMOOTH_LAMBDA, touched, cancel) {
+                return false;
+            }
         }
+        true
     }
 
     /// One Laplacian pass: move each relaxable candidate a `factor`-and-falloff
@@ -494,11 +658,20 @@ impl BrushSession {
     /// AWAY from the centroid — the inflate half of a Taubin pair. Reads pre-pass
     /// positions (computed in parallel) so the pass is order-independent; skips
     /// boundary and low-valence vertices.
-    fn relax_pass(&mut self, weighted: &[(usize, f32)], factor: f32, touched: &mut Vec<usize>) {
+    fn relax_pass(
+        &mut self,
+        weighted: &[(usize, f32)],
+        factor: f32,
+        touched: &mut Vec<usize>,
+        cancel: Option<&AtomicBool>,
+    ) -> bool {
         let proposals: Vec<(usize, Vec3)> = weighted
             .par_iter()
             .filter(|&&(vertex_id, _)| self.is_relaxable(vertex_id))
             .filter_map(|&(vertex_id, weight)| {
+                if cancellation_requested(cancel) {
+                    return None;
+                }
                 let here = self.position(vertex_id);
                 let centroid = self.ring_centroid(vertex_id)?;
                 let target = here.lerp(centroid, (factor * weight).clamp(-1.0, 1.0));
@@ -506,16 +679,36 @@ impl BrushSession {
                 (clamped != here).then_some((vertex_id, clamped))
             })
             .collect();
-        self.commit_moves(proposals.into_iter(), touched);
+        if cancellation_requested(cancel) {
+            return false;
+        }
+        self.commit_moves(proposals.into_iter(), touched, cancel)
     }
 
     /// `pairs` Taubin iterations: each a shrink pass (λ) then an inflate pass
     /// (μ), removing surface noise while preserving volume and features.
-    fn taubin_smooth(&mut self, weighted: &[(usize, f32)], pairs: usize, touched: &mut Vec<usize>) {
+    fn taubin_smooth(
+        &mut self,
+        weighted: &[(usize, f32)],
+        pairs: usize,
+        touched: &mut Vec<usize>,
+        cancel: Option<&AtomicBool>,
+    ) -> bool {
         for _ in 0..pairs {
-            self.relax_pass(weighted, TAUBIN_LAMBDA, touched);
-            self.relax_pass(weighted, TAUBIN_MU, touched);
+            if cancellation_requested(cancel) {
+                return false;
+            }
+            if !self.relax_pass(weighted, TAUBIN_LAMBDA, touched, cancel) {
+                return false;
+            }
+            if cancellation_requested(cancel) {
+                return false;
+            }
+            if !self.relax_pass(weighted, TAUBIN_MU, touched, cancel) {
+                return false;
+            }
         }
+        true
     }
 
     /// Whether a vertex may be relaxed/smoothed: interior (not an open-boundary
@@ -591,17 +784,25 @@ impl BrushSession {
         &mut self,
         moves: impl Iterator<Item = (usize, Vec3)>,
         touched: &mut Vec<usize>,
-    ) {
+        cancel: Option<&AtomicBool>,
+    ) -> bool {
         for (vertex_id, target) in moves {
+            if cancellation_requested(cancel) {
+                return false;
+            }
             self.set_position(vertex_id, target);
             touched.push(vertex_id);
             let sibling_count = self.position_siblings.row_len(vertex_id);
             for sibling_index in 0..sibling_count {
+                if cancellation_requested(cancel) {
+                    return false;
+                }
                 let sibling = self.position_siblings.row(vertex_id)[sibling_index] as usize;
                 self.set_position(sibling, target);
                 touched.push(sibling);
             }
         }
+        true
     }
 
     /// Clamp a step to [`MAX_STEP_FRACTION_OF_EDGE`] of the shortest incident

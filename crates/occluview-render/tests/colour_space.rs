@@ -107,7 +107,7 @@ fn render_uniform_textured(texture: &MeshTexture) -> Vec<u8> {
         show_vertex_colors: 1,
         show_texture: 1,
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     };
     let entries = [occluview_render::SceneDrawEntry {
         mesh: &mesh,
@@ -206,7 +206,7 @@ fn render_uniform_vertex_colored(rgba: [u8; 4]) -> Vec<u8> {
         show_vertex_colors: 1,
         show_texture: 0,
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     };
     let entries = [occluview_render::SceneDrawEntry {
         mesh: &mesh,
@@ -313,7 +313,7 @@ fn render_tinted_white(tint: [f32; 4]) -> Vec<u8> {
         show_vertex_colors: 1,
         show_texture: 0,
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     };
     let entries = [occluview_render::SceneDrawEntry {
         mesh: &mesh,

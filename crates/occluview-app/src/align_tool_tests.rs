@@ -279,6 +279,28 @@ fn a_guess_the_operator_agrees_with_is_left_alone() {
     tool.click(point(a, Vec3::ZERO));
     assert_eq!(tool.moving_layer(), Some(a));
     assert_eq!(tool.fixed_layer(), Some(b));
+    assert!(
+        !tool.take_role_swap(),
+        "an agreed guess is not a role change and owes no invalidation"
+    );
+}
+
+/// A click that contradicts the guess turns the pair around, and the
+/// application has to hear about it exactly once: the map measures the pair in
+/// one direction, so it cannot outlive the direction being reversed.
+#[test]
+fn a_click_that_turns_the_pair_around_reports_the_swap_once() {
+    let [a, b, _] = ids();
+    let mut tool = armed();
+    tool.imply_pair(&[a, b]);
+
+    assert!(!tool.take_role_swap(), "nothing has been swapped yet");
+    tool.click(point(b, Vec3::ZERO));
+    assert!(tool.take_role_swap(), "the click contradicted the guess");
+    assert!(
+        !tool.take_role_swap(),
+        "the role swap is reported exactly once"
+    );
 }
 
 /// A second click never re-decides. The roles are settled by the first point,

@@ -14,32 +14,118 @@
 use super::selection_overlay::selection_overlay_for_scene;
 use super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, live_viewport,
-    paint_axis_gizmo, paint_scale_bar, AppErrorDialog, Arc, AxisGizmoInput, Context, CutTool,
-    GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen, PreparedSceneSource,
-    PreparedSceneTopology, PreparedSceneUpdate, RenderedFrame, Result, Scene, SceneMesh,
-    ThumbnailSpec, ViewportSpec,
+    paint_axis_gizmo, paint_scale_bar, AppErrorAction, AppErrorDialog, Arc, AxisGizmoInput,
+    Context, CutTool, GpuCamera, GpuMeshUniform, Instant, Mat4, OccluViewApp, Offscreen,
+    RenderedFrame, Result, Scene, SceneMesh, ThumbnailSpec, ViewportSpec,
 };
+use anyhow::Error;
+use occluview_core::Aabb;
 use occluview_render::{
-    AdapterPolicy, PreparedSceneClipRequest, PreparedViewportClipRequest, PreparedViewportRequest,
-    RenderDeadline,
+    AdapterPolicy, PreparedSceneClipRequest, PreparedSceneTopology, PreparedViewportClipRequest,
+    PreparedViewportRequest, RenderDeadline, RenderError,
 };
 use std::time::Duration;
 
 const APP_OFFSCREEN_RENDER_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long to wait before asking a healthy-looking stack for another frame
+/// after it missed a readback deadline.
+const OFFSCREEN_RETRY_DELAY: Duration = Duration::from_millis(750);
 const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Whether an offscreen failure means the graphics stack itself is unusable.
+///
+/// A readback deadline is not that: it measures how long this process was
+/// willing to wait, and the deadline is a liveness bound rather than a device
+/// verdict. The application's own timeout doc says as much. Treating it as
+/// terminal latched the whole offscreen path off for the rest of the session —
+/// the section panel kept showing the previous plane and, with no live
+/// viewport, the viewport stopped repainting entirely — on a machine whose GPU
+/// was fine, with no dialog or control that could clear it.
+fn terminal_offscreen_render_error(error: &RenderError) -> bool {
+    matches!(error, RenderError::Surface(_) | RenderError::NoAdapter)
+}
+
+/// Whether this failure can be retried at all. Only a healthy stack retried
+/// after a deadline is worth another attempt; the caller backs off so a retry
+/// cannot become a repaint storm.
+fn retryable_offscreen_render_error(error: &RenderError) -> bool {
+    matches!(error, RenderError::ReadbackTimeout { .. })
+}
+
 impl OccluViewApp {
+    /// Whether a selection overlay may be drawn over the current scene.
+    ///
+    /// Sculpt streams a display-only worker shadow into the prepared scene
+    /// while the document remains at its last committed mesh. The selection
+    /// overlay has its own GPU geometry and cannot safely follow that shadow
+    /// sparsely, so hiding it during Sculpt is safer than showing stale faces.
+    /// The mode transition and the sculpt commit invalidate it for a rebuild.
+    fn selection_overlay_visible(&self) -> bool {
+        self.tools.sculpt.armed.is_none() && self.tools.sculpt.stroke.is_none()
+    }
+
+    /// Bounds for the pixels currently shown by the renderer.
+    ///
+    /// During an active Sculpt stroke the prepared GPU scene contains the
+    /// worker shadow, while `Scene::bbox()` still describes the committed
+    /// mesh. Replacing only the worker layer's local bounds keeps Cut View,
+    /// clipping and camera framing from lagging behind a large displacement.
+    fn effective_scene_bbox(&self, scene: &Scene) -> Aabb {
+        let Some(worker) = self.tools.sculpt.worker.as_ref() else {
+            return scene.bbox();
+        };
+        let shadow_handle = worker.shadow();
+        let Some(shadow) = shadow_handle.try_read().ok() else {
+            return scene.bbox();
+        };
+        let sculpted_local = Aabb::enclose_points(
+            shadow
+                .iter()
+                .map(|vertex| glam::Vec3::from_array(vertex.position)),
+        );
+        if sculpted_local.is_empty()
+            || !sculpted_local.min.is_finite()
+            || !sculpted_local.max.is_finite()
+        {
+            return scene.bbox();
+        }
+        scene
+            .meshes()
+            .iter()
+            .filter(|entry| entry.visible)
+            .map(|entry| {
+                let local = if entry.id() == worker.layer_id {
+                    sculpted_local
+                } else {
+                    entry.mesh.bbox_cached()
+                };
+                transformed_bbox(local, entry.transform)
+            })
+            .fold(Aabb::EMPTY, Aabb::enclose_box)
+    }
+
     pub(super) fn render_now(&mut self, ctx: &egui::Context) {
         let render_started_at = Instant::now();
         let (spec, pixels) = match self.render_scene_pixels() {
             Ok(frame) => frame,
             Err(e) => {
                 tracing::error!(error = ?e, "offscreen render failed");
-                self.ui.app_error = Some(AppErrorDialog {
-                    title: self.ui.locale.tr("render-failed-title"),
-                    summary: self.ui.locale.tr("render-failed-summary"),
-                    details: format!("Render failed\n\n{e:#}"),
-                });
+                self.note_offscreen_failure_anyhow(&e);
+                let terminal = self.render.offscreen_failed;
+                // A retryable failure is transient by definition: report it in
+                // the status line and keep the reason where the operator can
+                // find it, but do not raise the modal. On a machine that misses
+                // the deadline repeatedly, one dialog per attempt would bury the
+                // viewport and offer no way out; the terminal case keeps the
+                // dialog because the path really is off until restart.
+                if terminal {
+                    self.ui.app_error = Some(AppErrorDialog {
+                        title: self.ui.locale.tr("render-failed-title"),
+                        summary: self.ui.locale.tr("render-failed-summary"),
+                        details: format!("Render failed\n\n{e:#}"),
+                        action: AppErrorAction::None,
+                    });
+                }
                 self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
                 return;
             }
@@ -86,7 +172,7 @@ impl OccluViewApp {
             self.tools.cut_view.disable();
             return;
         };
-        let bbox = scene.bbox();
+        let bbox = self.effective_scene_bbox(&scene);
         let Some(cut) = self.tools.cut_view.cut_view_spec(bbox) else {
             return;
         };
@@ -113,7 +199,7 @@ impl OccluViewApp {
         let Some(frame) = self.tools.bridge_split_section.frame() else {
             return;
         };
-        let bbox = scene.bbox();
+        let bbox = self.effective_scene_bbox(&scene);
         let plane = occluview_render::ClipPlane::new(
             frame.normal().to_array(),
             frame.normal().dot(frame.pose().center),
@@ -139,24 +225,36 @@ impl OccluViewApp {
         half_extent: f32,
         basis: crate::cut_ruler::SliceBasis,
     ) -> Option<(egui::ColorImage, crate::cut_ruler::SliceCam)> {
-        let bbox = scene.bbox();
+        let bbox = self.effective_scene_bbox(scene);
+        let restore_deviation = self.align_overlay_is_up();
         if let Err(e) = self.ensure_offscreen() {
             tracing::error!(error = ?e, "section-view offscreen init failed");
+            self.note_offscreen_failure_anyhow(&e);
             return None;
         }
         let offscreen = self.render.offscreen.as_ref()?;
+        let mut scene_rebuilt = false;
         if self.render.invalidation.offscreen_scene_stale() {
-            let updates = prepared_scene_updates(scene);
+            let updates = self.prepared_scene_updates(scene);
             let rebuild = self
                 .render
                 .prepared_scene
                 .as_mut()
                 .is_none_or(|prepared| !prepared.update(offscreen.renderer(), &updates));
             if rebuild {
-                let sources = prepared_scene_sources(scene);
+                let sources = self.prepared_scene_sources(scene);
                 self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
+                scene_rebuilt = true;
             }
             self.render.invalidation.consume_offscreen_scene();
+        }
+        if scene_rebuilt && self.push_sculpt_shadow_offscreen() != Some(true) {
+            if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                worker.request_full_sync();
+            }
+        }
+        if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
+            self.tools.align.deviation_push_pending = !self.push_deviation_colors_offscreen();
         }
         let pixels = {
             let offscreen = self.render.offscreen.as_ref()?;
@@ -184,6 +282,7 @@ impl OccluViewApp {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(error = ?e, "section-view render failed");
+                    self.note_offscreen_failure(&e);
                     return None;
                 }
             }
@@ -199,10 +298,7 @@ impl OccluViewApp {
         Some((color_image, slice_cam))
     }
 
-    fn active_viewport_clip_plane(
-        &self,
-        bbox: occluview_core::Aabb,
-    ) -> occluview_render::ClipPlane {
+    fn active_viewport_clip_plane(&self, bbox: Aabb) -> occluview_render::ClipPlane {
         if self.tools.bridge_split_active() {
             return self.tools.bridge_split_section.frame().map_or_else(
                 occluview_render::ClipPlane::disabled,
@@ -234,6 +330,22 @@ impl OccluViewApp {
     }
 
     pub(super) fn ensure_offscreen(&mut self) -> Result<()> {
+        if !self.offscreen_available() {
+            // Typed, because the caller classifies the failure by its cause. A
+            // bare string would fall through to the conservative "cannot
+            // classify" branch and latch the path off permanently — turning the
+            // deferral into exactly the state it exists to avoid, on the first
+            // frame that arrives inside the wait.
+            return Err(Error::new(RenderError::ReadbackTimeout {
+                timeout: OFFSCREEN_RETRY_DELAY,
+            })
+            .context("offscreen rendering is waiting out a retry delay"));
+        }
+        if self.render.offscreen_failed {
+            return Err(Error::new(RenderError::Surface(
+                "offscreen rendering is disabled after a previous GPU failure".to_owned(),
+            )));
+        }
         if self.render.offscreen.is_none() {
             self.render.offscreen = Some(
                 pollster::block_on(Offscreen::new_with_adapter_policy(
@@ -246,13 +358,17 @@ impl OccluViewApp {
         Ok(())
     }
 
+    // Scene preparation, overlay restoration, and readback share one frame
+    // boundary; extracting them independently risks returning a mixed frame.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn render_scene_pixels(&mut self) -> Result<(ViewportSpec, Vec<u8>)> {
         if self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
         let scene = self.document.scene.clone().context("no scene loaded")?;
+        let bbox = self.effective_scene_bbox(&scene);
         let mut cam = self.render.camera.context("camera unavailable")?;
-        cam.fit_clip_planes_to_bbox(scene.bbox());
+        cam.fit_clip_planes_to_bbox(bbox);
         self.ensure_offscreen()?;
 
         let [width_px, height_px] = self.render.render_extent_px;
@@ -270,8 +386,10 @@ impl OccluViewApp {
             .offscreen
             .as_ref()
             .context("offscreen unavailable")?;
+        let restore_deviation = self.align_overlay_is_up();
+        let mut scene_rebuilt = false;
         if self.render.invalidation.offscreen_scene_stale() {
-            let updates = prepared_scene_updates(&scene);
+            let updates = self.prepared_scene_updates(&scene);
             let rebuild = self
                 .render
                 .prepared_scene
@@ -279,12 +397,13 @@ impl OccluViewApp {
                 .is_none_or(|prepared| !prepared.update(offscreen.renderer(), &updates));
             if rebuild {
                 let prepare_started_at = Instant::now();
-                let sources = prepared_scene_sources(&scene);
+                let sources = self.prepared_scene_sources(&scene);
                 let vertex_count: usize = sources
                     .iter()
                     .map(|source| source.mesh.vertices().len())
                     .sum();
                 self.render.prepared_scene = Some(offscreen.prepare_scene(&sources));
+                scene_rebuilt = true;
                 tracing::info!(
                     mesh_count = sources.len(),
                     vertex_count,
@@ -293,6 +412,14 @@ impl OccluViewApp {
                 );
             }
             self.render.invalidation.consume_offscreen_scene();
+        }
+        if scene_rebuilt && self.push_sculpt_shadow_offscreen() != Some(true) {
+            if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                worker.request_full_sync();
+            }
+        }
+        if (scene_rebuilt && restore_deviation) || self.tools.align.deviation_push_pending {
+            self.tools.align.deviation_push_pending = !self.push_deviation_colors_offscreen();
         }
         if self.render.invalidation.offscreen_overlay_stale() {
             let overlay = selection_overlay_for_scene(&scene, &self.document.edit_mode);
@@ -307,8 +434,12 @@ impl OccluViewApp {
             .prepared_scene
             .as_ref()
             .context("prepared scene unavailable")?;
-        let selection_overlay = self.render.prepared_selection_overlay.as_ref();
-        let clip_plane = self.active_viewport_clip_plane(scene.bbox());
+        let selection_overlay = self
+            .render
+            .prepared_selection_overlay
+            .as_ref()
+            .filter(|_| self.selection_overlay_visible());
+        let clip_plane = self.active_viewport_clip_plane(bbox);
         let pixels = if clip_plane.enabled != 0 {
             pollster::block_on(
                 offscreen.render_prepared_viewport_with_clip_and_overlay_with_deadline(
@@ -340,6 +471,107 @@ impl OccluViewApp {
         Ok((spec, pixels))
     }
 
+    /// Consume the redraw that triggered a failed fallback render and decide
+    /// what the path owes next.
+    ///
+    /// Keeping the request pending would make egui call the same failed submit
+    /// forever, hiding the original cause behind a repaint storm and burning a
+    /// CPU core, so a failure always consumes the redraw. What differs is what
+    /// happens after: a broken graphics stack latches the path off until the
+    /// operator restarts, while a missed readback deadline only defers the next
+    /// attempt. Latching a deadline off for the session left the section panel
+    /// showing a previous plane and, with no live viewport, stopped the viewport
+    /// repainting at all — on hardware that was never shown to be broken.
+    fn note_offscreen_failure_anyhow(&mut self, error: &Error) {
+        if let Some(render_error) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<RenderError>())
+        {
+            self.note_offscreen_failure(render_error);
+            return;
+        }
+        // An error with no typed render cause is not something this path can
+        // classify; keep the conservative behaviour.
+        self.render.invalidation.consume_redraw();
+        self.render.offscreen_failed = true;
+        self.render.offscreen_retry_after = None;
+    }
+
+    /// Whether the offscreen path is allowed to run right now.
+    ///
+    /// A terminal failure keeps it off; a deferred retry waits out its delay so
+    /// a loaded machine cannot be asked to fail on every repaint.
+    fn offscreen_available(&self) -> bool {
+        if self.render.offscreen_failed {
+            return false;
+        }
+        match self.render.offscreen_retry_after {
+            Some(deadline) => Instant::now() >= deadline,
+            None => true,
+        }
+    }
+
+    fn note_offscreen_failure(&mut self, error: &RenderError) {
+        self.render.invalidation.consume_redraw();
+        if terminal_offscreen_render_error(error) {
+            self.render.offscreen_failed = true;
+            self.render.offscreen_retry_after = None;
+            return;
+        }
+        if retryable_offscreen_render_error(error) {
+            self.render.offscreen_retry_after = Some(Instant::now() + OFFSCREEN_RETRY_DELAY);
+        }
+    }
+
+    /// Replay the display-only deviation colours into the prepared offscreen
+    /// vertex buffer. The live viewport has an equivalent sparse/full upload
+    /// path, but the fallback renderer keeps its own prepared scene and would
+    /// otherwise upload the scan's original colours whenever it rebuilt.
+    ///
+    /// The CPU mesh remains untouched: only the cached GPU vertices are
+    /// rewritten, and clearing a map writes the original vertices back once.
+    fn push_deviation_colors_offscreen(&self) -> bool {
+        let (Some(scene), Some(offscreen), Some(prepared)) = (
+            self.document.scene.clone(),
+            self.render.offscreen.as_ref(),
+            self.render.prepared_scene.as_ref(),
+        ) else {
+            return false;
+        };
+        let pending = self.tools.align.overlay_colors.clone();
+        if pending.is_empty() {
+            let mut wrote = true;
+            for entry in scene.meshes() {
+                let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
+                wrote &= prepared.write_entry_vertices(
+                    offscreen.renderer(),
+                    &topology,
+                    entry.mesh.vertices(),
+                );
+            }
+            return wrote;
+        }
+
+        let mut wrote = true;
+        for (layer, colors) in pending {
+            let Some(entry) = super::app_align::layer_of(&scene, layer) else {
+                wrote = false;
+                continue;
+            };
+            if colors.len() != entry.mesh.vertices().len() {
+                wrote = false;
+                continue;
+            }
+            let mut vertices = entry.mesh.vertices().to_vec();
+            for (vertex, color) in vertices.iter_mut().zip(colors.iter()) {
+                vertex.color = *color;
+            }
+            let topology = PreparedSceneTopology::from_mesh(&entry.mesh);
+            wrote &= prepared.write_entry_vertices(offscreen.renderer(), &topology, &vertices);
+        }
+        wrote
+    }
+
     pub(super) fn sync_live_viewport(&mut self) {
         // A rebuild uploads the scan's own colours, so a live deviation map
         // has to be pushed again or it silently vanishes on the next scene
@@ -356,26 +588,28 @@ impl OccluViewApp {
             self.render.invalidation.consume_redraw();
             return;
         };
+        let bbox = self.effective_scene_bbox(scene);
         let Some(mut cam) = self.render.camera else {
             return;
         };
-        cam.fit_clip_planes_to_bbox(scene.bbox());
+        cam.fit_clip_planes_to_bbox(bbox);
 
         let [width_px, height_px] = self.render.render_extent_px;
         let aspect = f32::from(width_px) / f32::from(height_px.max(1));
         let view = build_view_matrix(&cam);
         let proj = build_proj_matrix(&cam, aspect);
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
-        let clip_plane = self.active_viewport_clip_plane(scene.bbox());
+        let clip_plane = self.active_viewport_clip_plane(bbox);
+        let selection_overlay_visible = self.selection_overlay_visible();
 
-        let repush = match live_viewport.lock() {
+        let (repush_deviation, scene_rebuilt) = match live_viewport.lock() {
             Ok(mut viewport) => {
                 viewport.set_show_ghost(self.persistence.settings.show_cut_ghost);
                 viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
                 let mut rebuilt = false;
                 if self.render.invalidation.live_scene_stale() {
-                    let sources = prepared_scene_sources(scene);
-                    let updates = prepared_scene_updates(scene);
+                    let sources = self.prepared_scene_sources(scene);
+                    let updates = self.prepared_scene_updates(scene);
                     // Only a real rebuild re-uploads the scan's own colours. A
                     // uniform-only reconcile leaves the map on the GPU exactly
                     // where it was, so pushing it again would move thirty-four
@@ -386,23 +620,39 @@ impl OccluViewApp {
                 let repush_deviation =
                     (rebuilt && restore_deviation) || self.tools.align.deviation_push_pending;
                 if self.render.invalidation.live_overlay_stale() {
-                    let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
-                    let sources = overlay.as_ref().map_or_else(
-                        Vec::new,
-                        super::selection_overlay::SelectionOverlayScene::prepared_sources,
-                    );
-                    viewport.sync_selection_overlay(&sources);
+                    if selection_overlay_visible {
+                        let overlay = selection_overlay_for_scene(scene, &self.document.edit_mode);
+                        let sources = overlay.as_ref().map_or_else(
+                            Vec::new,
+                            super::selection_overlay::SelectionOverlayScene::prepared_sources,
+                        );
+                        viewport.sync_selection_overlay(&sources);
+                    } else {
+                        viewport.sync_selection_overlay(&[]);
+                    }
                     self.render.invalidation.consume_live_overlay();
                 }
                 self.render.invalidation.consume_redraw();
-                repush_deviation
+                (repush_deviation, rebuilt)
             }
             Err(e) => {
                 tracing::warn!(error = ?e, "live viewport lock failed");
-                false
+                (false, false)
             }
         };
-        if repush {
+        if scene_rebuilt
+            && self
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .is_some_and(|_| self.push_sculpt_shadow_live() != Some(true))
+        {
+            if let Some(worker) = self.tools.sculpt.worker.as_ref() {
+                worker.request_full_sync();
+            }
+        }
+        if repush_deviation {
             // A push before the viewport has a prepared scene writes nowhere.
             // Keep the request standing until one exists, or the very first
             // measurement would come out in the scan's own colours.
@@ -419,24 +669,51 @@ impl OccluViewApp {
         }
     }
 
+    /// Clear a latched graphics fault and try to draw again.
+    ///
+    /// Offered from the fault dialog. The flag exists so an unacknowledged
+    /// fault stops the frame loop from feeding a broken device; it is not a
+    /// verdict that the device is gone. A driver reset, a recovered eGPU, or a
+    /// rebuilt offscreen device can all leave this latch set on a working
+    /// renderer, and until now the only documented recovery was to close the
+    /// viewer and lose the scene.
+    ///
+    /// Nothing is repaired here: the next frame either paints or raises the
+    /// fault again, and a new message re-arms the dialog.
+    pub(super) fn retry_gpu_after_fault(&mut self, ctx: &egui::Context) {
+        let Some(live_viewport) = self.render.live_viewport.as_ref() else {
+            return;
+        };
+        match live_viewport.lock() {
+            Ok(mut viewport) => viewport.clear_gpu_fault(),
+            Err(error) => {
+                tracing::warn!(?error, "live viewport lock failed while retrying graphics");
+                return;
+            }
+        }
+        tracing::info!("operator asked to resume drawing after a graphics fault");
+        self.ui.status_message = Some(self.ui.locale.tr("gpu-retry-status"));
+        ctx.request_repaint();
+    }
+
     /// Poll the live viewport's GPU error latch once per frame. wgpu reports
     /// draw/submit validation faults and device-lost events through the handler
     /// we installed instead of panicking; surface any message honestly (status
     /// line always, copyable dialog only when no other error is showing, so a
     /// GPU that faults every frame cannot spam modal dialogs).
-    pub(super) fn poll_gpu_errors(&mut self) {
+    pub(super) fn poll_gpu_errors(&mut self) -> bool {
         let Some(live_viewport) = self.render.live_viewport.as_ref() else {
-            return;
+            return false;
         };
         let error = match live_viewport.lock() {
             Ok(viewport) => viewport.take_gpu_error(),
             Err(e) => {
                 tracing::warn!(error = ?e, "live viewport lock failed while polling GPU errors");
-                return;
+                return false;
             }
         };
         let Some(error) = error else {
-            return;
+            return false;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
         self.ui.status_message = Some(self.ui.locale.tr("gpu-failed-status"));
@@ -445,11 +722,14 @@ impl OccluViewApp {
                 title: self.ui.locale.tr("gpu-failed-title"),
                 summary: self.ui.locale.tr("gpu-failed-summary"),
                 details: format!("wgpu uncaptured error\n\n{error}"),
+                action: AppErrorAction::RetryGraphics,
             });
         }
+        true
     }
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
+        self.document.content_revision = self.document.content_revision.wrapping_add(1);
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
@@ -523,6 +803,16 @@ impl OccluViewApp {
     }
 
     pub(super) fn clear_scene(&mut self) {
+        self.document.content_revision = self.document.content_revision.wrapping_add(1);
+        // The last layer can disappear while Align Meshes is armed. Revoke its
+        // pose, overlay, mask, and worker generation before a new scene may
+        // reuse one of the old layer ids.
+        self.reset_align_state_for_scene_clear();
+        // A clear has no replacement scene to validate against. Revoke the
+        // persistent Sculpt worker before dropping the scene so a background
+        // completion cannot outlive this generation and be mistaken for the
+        // next file's layer.
+        self.tools.sculpt.invalidate_session();
         self.document.clear_unsaved_mesh_edits();
         self.document.hidden_layer_stack.clear();
         self.document.translucent_layer_restore.clear();
@@ -645,13 +935,20 @@ impl OccluViewApp {
         self.show_layers_overlay(ui, response.rect, ctx);
         self.show_mesh_editor_overlay(response.rect, ctx);
         self.paint_mesh_selection_drag_overlay_impl(ui);
-        self.paint_sculpt_cursor_impl(ui, response.rect);
         self.show_status_overlay(ui, response.rect);
         let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
         let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
         // A click the axis gizmo snapped on never doubles as a measure anchor.
         let align_ui_consumed =
             self.show_align_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        // The contact reading runs whether or not the Align tool is armed, and
+        // its readout is painted after the panels so the chip sits above them.
+        self.drain_contacts_worker(ctx);
+        self.sync_contacts_with_scene(ctx);
+        self.handle_contact_escape(ctx);
+        let contact_ui_consumed = self.show_contact_bar(ui, response.rect, ctx);
+        self.show_contact_hover(ui, response, ctx);
+        let contact_ui_consumed = contact_ui_consumed && !align_ui_consumed;
         let measure_ui_consumed =
             self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
         if let Some(axis) = axis_snap {
@@ -661,21 +958,63 @@ impl OccluViewApp {
                 ctx.request_repaint();
             }
         }
-        if !bridge_ui_consumed && !cut_ui_consumed && !measure_ui_consumed && !align_ui_consumed {
+        if !bridge_ui_consumed
+            && !cut_ui_consumed
+            && !measure_ui_consumed
+            && !align_ui_consumed
+            && !contact_ui_consumed
+        {
             self.handle_viewport_input(ctx, response, response.rect, axis_snap.is_some());
         }
+        // Input resolves and caches the authoritative sculpt hit first. The
+        // visual cursor then reuses it for held drags and publishes its GPU
+        // uniforms before the callback's render pass executes.
+        self.paint_sculpt_cursor_impl(ui, response);
     }
 
     pub(super) fn render_pending_frame(&mut self, ctx: &egui::Context) {
         if self.render.invalidation.redraw_pending() {
             if self.render.live_viewport.is_some() {
                 self.sync_live_viewport();
+            } else if !self.offscreen_available() {
+                self.render.invalidation.consume_redraw();
+                // Wake up when the wait is over. Without this the retry waits
+                // for the operator's next input, and on a machine with no live
+                // viewport - exactly the machine this path serves - a still
+                // window would never try again.
+                if let Some(deadline) = self.render.offscreen_retry_after {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    ctx.request_repaint_after(remaining);
+                }
             } else {
                 self.render_now(ctx);
             }
-            ctx.request_repaint();
+            if self.render.live_viewport.is_some() || self.offscreen_available() {
+                ctx.request_repaint();
+            }
         }
     }
+}
+
+/// Transform a local AABB conservatively for camera and section framing.
+fn transformed_bbox(local: Aabb, transform: glam::Affine3A) -> Aabb {
+    if local.is_empty() {
+        return Aabb::EMPTY;
+    }
+    let corners = [
+        local.min,
+        glam::Vec3::new(local.min.x, local.min.y, local.max.z),
+        glam::Vec3::new(local.min.x, local.max.y, local.min.z),
+        glam::Vec3::new(local.min.x, local.max.y, local.max.z),
+        glam::Vec3::new(local.max.x, local.min.y, local.min.z),
+        glam::Vec3::new(local.max.x, local.min.y, local.max.z),
+        glam::Vec3::new(local.max.x, local.max.y, local.min.z),
+        local.max,
+    ];
+    corners
+        .into_iter()
+        .map(|corner| transform.transform_point3(corner))
+        .fold(Aabb::EMPTY, Aabb::enclose_point)
 }
 
 pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
@@ -692,104 +1031,10 @@ pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         show_vertex_colors: u32::from(entry.show_vertex_colors || deviation),
         show_texture: u32::from(entry.show_texture && !deviation),
         measured_map: u32::from(deviation),
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     }
-}
-
-pub(super) fn prepared_scene_sources(scene: &Scene) -> Vec<PreparedSceneSource<'_>> {
-    scene
-        .meshes()
-        .iter()
-        .map(|entry| PreparedSceneSource {
-            mesh: &entry.mesh,
-            uniform: scene_mesh_uniform(entry),
-            visible: entry.visible,
-            wireframe: entry.wireframe,
-        })
-        .collect()
-}
-
-pub(super) fn prepared_scene_updates(scene: &Scene) -> Vec<PreparedSceneUpdate> {
-    scene
-        .meshes()
-        .iter()
-        .map(|entry| PreparedSceneUpdate {
-            topology: PreparedSceneTopology::from_mesh(&entry.mesh),
-            uniform: scene_mesh_uniform(entry),
-            visible: entry.visible,
-            wireframe: entry.wireframe,
-        })
-        .collect()
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
-
-    /// Source contract for the destroyed-texture submit crash. The per-frame
-    /// render paths must update ONE persistent egui texture id in place
-    /// (`TextureHandle::set` / `CutTool::store_slice`), never allocate a fresh id
-    /// per render — a dropped predecessor emits a texture-`free` that egui-wgpu
-    /// 0.29 turns into `wgpu::Texture::destroy` *before* `queue.submit`, killing a
-    /// texture the same frame painted. The viewport render's `load_texture` is
-    /// the first-time-only fallback in the `None` arm.
-    #[test]
-    fn per_frame_render_paths_reuse_persistent_texture_ids() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"))
-            .replace("\r\n", "\n");
-        assert!(
-            source.contains("frame.texture.set(color_image, egui::TextureOptions::LINEAR)"),
-            "render_now must update the viewport texture in place, not reallocate it"
-        );
-        assert!(
-            source.contains("self.tools.cut_view.store_slice(ctx, color_image, slice_cam)"),
-            "render_cut_now must route the slice through CutTool::store_slice"
-        );
-        assert!(
-            !source.contains("load_texture(\"occluview-cut\""),
-            "the cut slice must not allocate a fresh egui texture id per render"
-        );
-    }
-
-    /// A deviation map is a measurement. It must reach the screen unlit and in
-    /// its own colors whatever the layer's display toggles happen to say,
-    /// because a lit or texture-sampled heat map is not the map that was
-    /// measured.
-    #[test]
-    fn a_deviation_overlay_forces_unlit_vertex_colors() {
-        use glam::Vec3;
-        use occluview_core::scene::SceneMesh;
-        use occluview_core::{Mesh, Vertex};
-
-        let mesh = Mesh::new(
-            None,
-            vec![
-                Vertex::at(Vec3::ZERO),
-                Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
-                Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2],
-        )
-        .expect("valid mesh");
-
-        let mut entry = SceneMesh::new(mesh);
-        entry.show_vertex_colors = false;
-        entry.show_texture = true;
-
-        let plain = super::scene_mesh_uniform(&entry);
-        assert_eq!(plain.measured_map, 0);
-        assert_eq!(plain.show_vertex_colors, 0);
-
-        let colors = std::sync::Arc::new(vec![[0u8, 0, 0, 255]; 3]);
-        let mapped = super::scene_mesh_uniform(&entry.with_deviation(Some(colors)));
-        assert_eq!(mapped.measured_map, 1, "a deviation map must draw unlit");
-        assert_eq!(
-            mapped.show_vertex_colors, 1,
-            "a deviation map must show its own colors"
-        );
-        assert_eq!(
-            mapped.show_texture, 0,
-            "a texture must not be sampled over a measurement"
-        );
-    }
-}
+#[path = "app_render_tests.rs"]
+mod tests;

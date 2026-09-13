@@ -20,11 +20,7 @@
 //! v1 open surfaces intentionally expose only implemented, product-approved
 //! readers: STL, PLY, OBJ, GLB, and HPS.
 
-// `deny(unsafe_code)` (not `forbid`): the mmap streaming path
-// (dispatch::read_file) needs one `unsafe` block for memmap2::Mmap::map,
-// which is the audited kernel-FFI for memory-mapping, and on Windows one more
-// for the drive-type query that decides whether mapping is safe at all
-// (`mappable`). All format PARSERS remain safe.
+// File input and all format parsers use owned bytes and safe Rust.
 #![deny(unsafe_code)]
 // Test-only relaxation of strict lints; production parser code stays stricter.
 #![cfg_attr(
@@ -48,7 +44,6 @@ pub mod gltf;
 pub mod hps;
 #[cfg(test)]
 mod load_perf_tests;
-mod mappable;
 pub mod obj;
 pub mod off;
 pub mod ply;

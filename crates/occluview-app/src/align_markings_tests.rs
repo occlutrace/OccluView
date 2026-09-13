@@ -454,27 +454,13 @@ fn an_erase_reports_the_vertices_it_cleared() {
 }
 
 #[test]
-fn the_commands_carry_the_labels_operators_already_know() {
-    // An operator who knows that dialog must not have to work out which of our
-    // words means which of theirs.
-    for (command, label) in [
-        (MaskCommand::FitEverywhere, "Fit everywhere"),
-        (MaskCommand::FitNowhere, "Fit nowhere"),
-        (MaskCommand::InvertMarkings, "Invert markings"),
-        (MaskCommand::MarkAutomatic, "Mark automatic"),
-    ] {
-        assert_eq!(command.label(), label);
-        assert!(!command.hint().is_empty());
-        assert!(!command.report().is_empty());
-    }
-}
-
-#[test]
 fn every_command_is_reachable_from_the_brush_window() {
     // The window builds its buttons from `ALL`. A command added to the enum and
     // forgotten there is a feature nobody can press.
     assert_eq!(MaskCommand::ALL.len(), 4);
     for command in MaskCommand::ALL {
-        assert!(!command.label().is_empty());
+        assert!(!command.label_key().is_empty());
+        assert!(!command.hint_key().is_empty());
+        assert!(!command.report_key().is_empty());
     }
 }

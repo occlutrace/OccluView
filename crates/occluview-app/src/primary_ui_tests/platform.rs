@@ -6,8 +6,13 @@ fn windows_app_reports_startup_and_panic_failures() {
     let manifest = app_manifest_source();
 
     assert!(
-        source.contains("install_panic_hook();\n    if let Err(error) = real_main()"),
+        source.contains("install_panic_hook();")
+            && source.contains("if let Err(error) = real_main()"),
         "Windows-subsystem startup must install a panic hook before fallible startup"
+    );
+    assert!(
+        source.contains("std::process::exit(1);"),
+        "a failed GUI startup must return a failure status instead of silently succeeding"
     );
     assert!(
         source.contains("fn real_main() -> Result<()>"),

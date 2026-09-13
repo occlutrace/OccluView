@@ -109,7 +109,7 @@ fn identity_uniform() -> GpuMeshUniform {
         show_vertex_colors: 1,
         show_texture: 1,
         measured_map: 0,
-        padding: [0; 2],
+        ..GpuMeshUniform::identity()
     }
 }
 
@@ -143,6 +143,7 @@ fn prepared_scene_rejects_same_length_different_mesh_topology() {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }]);
 
     let updated = prepared.update(
@@ -152,12 +153,43 @@ fn prepared_scene_rejects_same_length_different_mesh_topology() {
             uniform: identity_uniform(),
             visible: true,
             wireframe: false,
+            contact: None,
         }],
     );
 
     assert!(
         !updated,
         "same layer count is not enough: changed mesh topology must rebuild GPU buffers"
+    );
+}
+
+#[test]
+fn prepared_scene_rejects_invalid_sparse_vertex_ids() {
+    let _gpu = gpu_test_lock();
+    let mesh = triangle_mesh();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
+        mesh: &mesh,
+        uniform: identity_uniform(),
+        visible: true,
+        wireframe: false,
+        contact: None,
+    }]);
+    let topology = PreparedSceneTopology::from_mesh(&mesh);
+    let vertices = mesh.vertices().to_vec();
+
+    assert!(
+        !prepared.write_entry_vertices_sparse(
+            offscreen.renderer(),
+            &topology,
+            &vertices,
+            &[vertices.len()],
+        ),
+        "a sparse upload must fail closed when any touched id is outside the vertex array"
+    );
+    assert!(
+        !prepared.write_entry_vertices_sparse(offscreen.renderer(), &topology, &vertices, &[2, 0],),
+        "a sparse upload must reject unsorted ids instead of relying on a debug-only assertion"
     );
 }
 
@@ -172,6 +204,7 @@ fn prepared_scene_draws_into_existing_render_pass() {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }]);
     let renderer = offscreen.renderer();
     let device = renderer.device();
@@ -468,6 +501,7 @@ fn shared_device_renderer_submits_and_reads_back_a_prepared_scene() {
             uniform: identity_uniform(),
             visible: true,
             wireframe: false,
+            contact: None,
         }],
     );
     let readback = submit_shared_prepared_scene(&renderer, &prepared, &camera_looking_at_origin());
@@ -495,6 +529,7 @@ fn prepared_viewport_can_draw_selection_overlay_after_base_scene() {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }]);
     let overlay_scene = offscreen.prepare_scene(&[PreparedSceneSource {
         mesh: &overlay,
@@ -505,6 +540,7 @@ fn prepared_viewport_can_draw_selection_overlay_after_base_scene() {
         },
         visible: true,
         wireframe: true,
+        contact: None,
     }]);
     let spec = ViewportSpec {
         size_px: [96, 64],
@@ -546,6 +582,7 @@ fn studio_material_lights_opposite_normals_evenly() {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }]);
     let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &prepared,
@@ -583,6 +620,7 @@ fn studio_material_draws_reversed_winding_meshes() {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }]);
     let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &prepared,
@@ -613,6 +651,7 @@ fn prepared_scene_point_cloud_uses_readable_splats() {
         uniform: identity_uniform(),
         visible: true,
         wireframe: false,
+        contact: None,
     }]);
     let pixels = pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
         &prepared,

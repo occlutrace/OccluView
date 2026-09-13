@@ -57,6 +57,10 @@ mod app_paths;
 mod app_settings;
 mod bridge_split;
 mod bridge_split_overlay;
+mod contact;
+#[cfg(test)]
+mod contact_render_tests;
+mod contact_worker;
 mod cut_geometry;
 mod cut_manipulator;
 mod cut_overlay;
@@ -99,10 +103,11 @@ pub use app_bootstrap::main_entry;
 pub(crate) const APP_USER_MODEL_ID: &str = "OccluTrace.OccluView";
 #[cfg(target_os = "linux")]
 const LINUX_DESKTOP_APP_ID: &str = "ai.occlutrace.OccluView";
-pub(crate) const LIVE_VIEWPORT_SAMPLE_COUNT: u16 = 4;
 
 #[cfg(test)]
 mod cut_manipulator_hostile_tests;
+#[cfg(test)]
+mod panel_shots;
 #[cfg(test)]
 mod perf_harness;
 #[cfg(test)]

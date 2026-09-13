@@ -45,17 +45,21 @@ pub(super) enum SettingsAction {
     SetDoubleClickFocus(bool),
     SetOrbitSensitivity(f32),
     SetZoomSensitivity(f32),
-    SetRecentFilesLimit(usize),
     SetViewportBackground(ViewportBackground),
     SetShowCutGhost(bool),
     SetUnitDisplay(UnitDisplay),
     SetTheme(ThemePreference),
-    SetUiScale { value: f32, commit: bool },
+    SetUiScale {
+        value: f32,
+        commit: bool,
+    },
     SetRememberSculptBrush(bool),
     SetExplicitLanguage(&'static str),
     UseSystemLanguage,
     CheckForUpdates,
     OpenAbout,
+    /// Open the keyboard and mouse reference.
+    OpenShortcuts,
 }
 
 /// Scrollable Settings popup with fixed width and screen-bounded height.
@@ -150,16 +154,6 @@ pub(super) fn show_settings_popup(
                             }
                         },
                     );
-                    slider_usize_row(
-                        ui,
-                        &locale.tr("settings-recent"),
-                        settings.recent_files_limit,
-                        4..=20,
-                        &locale.tr("settings-recent-hint"),
-                        &mut action,
-                        SettingsAction::SetRecentFilesLimit,
-                    );
-
                     section_break(ui);
                     section_label(ui, &locale.tr("settings-section-scene"));
                     segmented_row(
@@ -298,6 +292,21 @@ pub(super) fn show_settings_popup(
             ui.add_space(4.0);
             ui.separator();
             ui.add_space(3.0);
+            // The keyboard and mouse reference lives here now that it is off
+            // the toolbar: Settings is where an operator looks for a list, and
+            // the width it frees belongs to the tools. The shortcut is shown on
+            // the row so the operator learns the faster way in from the slower
+            // one.
+            // The key is named in the hover hint rather than on a second line:
+            // the panel has a fixed height it must fit, and naming the key is
+            // what a hover is for.
+            if ui
+                .add(egui::Button::new(locale.tr("settings-shortcuts")).frame(false))
+                .on_hover_text(locale.tr("settings-shortcuts-hint"))
+                .clicked()
+            {
+                action = Some(SettingsAction::OpenShortcuts);
+            }
             if ui
                 .add(egui::Button::new(locale.tr("settings-about")).frame(false))
                 .clicked()
@@ -483,56 +492,6 @@ fn slider_f32_row_inner(
     );
 }
 
-/// Whole-number slider row.
-#[allow(clippy::too_many_arguments)]
-fn slider_usize_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: usize,
-    range: std::ops::RangeInclusive<usize>,
-    tooltip: &str,
-    action: &mut Option<SettingsAction>,
-    make: fn(usize) -> SettingsAction,
-) {
-    let row_width = ui.available_width();
-    ui.allocate_ui_with_layout(
-        egui::vec2(row_width, ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let spacing = ui.spacing().item_spacing.x;
-            let label_response = ui.add_sized(
-                [NUMERIC_LABEL_WIDTH, 20.0],
-                egui::Label::new(egui::RichText::new(label).size(11.5)).truncate(),
-            );
-            label_response.on_hover_text(tooltip);
-
-            let mut edit = value;
-            let slider_response = ui.add_sized(
-                [numeric_slider_width(row_width, spacing), 20.0],
-                egui::Slider::new(&mut edit, range)
-                    .show_value(false)
-                    .trailing_fill(true),
-            );
-            let changed = slider_response.changed();
-            slider_response.on_hover_text(tooltip);
-            if changed {
-                *action = Some(make(edit));
-            }
-
-            ui.add_sized(
-                [NUMERIC_VALUE_WIDTH, 20.0],
-                egui::Label::new(
-                    egui::RichText::new(edit.to_string())
-                        .size(11.0)
-                        .color(ui_theme::text_muted()),
-                )
-                .halign(egui::Align::RIGHT),
-            );
-        },
-    );
-}
-
-/// Catalog key for a viewport background option.
 fn background_key(option: ViewportBackground) -> &'static str {
     match option {
         ViewportBackground::Gray => "settings-bg-gray",

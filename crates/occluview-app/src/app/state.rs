@@ -208,7 +208,12 @@ impl eframe::App for OccluViewApp {
         // uses the current frame's pose.
         self.render_pending_frame(&ctx);
         // Surface GPU faults before drawing the error dialog.
-        self.poll_gpu_errors();
+        if self.poll_gpu_errors() {
+            // The fault was recorded by the previous submit. Request another
+            // frame so the fail-closed callback and the operator-facing dialog
+            // are both visible even when the normal repaint loop is idle.
+            ctx.request_repaint();
+        }
         self.show_error_dialog(&ctx);
         self.show_information_dialog(&ctx);
         self.ui.repair_report.ui(&ctx, &self.ui.locale);

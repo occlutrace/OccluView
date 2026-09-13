@@ -322,6 +322,24 @@ fn two_pairs_whose_normal_lies_along_the_segment_are_refused() {
 }
 
 #[test]
+fn two_pairs_with_a_zero_second_normal_are_refused() {
+    let moving = vec![DVec3::ZERO, DVec3::new(6.0, 0.0, 0.0)];
+    let fixed = posed(&moving);
+    let moving_normals = vec![DVec3::Z, DVec3::ZERO];
+    let fixed_normals = vec![pose().apply_normal(DVec3::Z), DVec3::ZERO];
+    let outcome = fit(
+        &moving,
+        &fixed,
+        Some((&moving_normals, &fixed_normals)),
+        40.0,
+    );
+    assert!(
+        matches!(outcome, Err(FitRejection::Degenerate { .. })),
+        "a zero second normal cannot validate the two-pair frame: {outcome:?}"
+    );
+}
+
+#[test]
 fn non_finite_input_is_refused() {
     let moving = vec![
         DVec3::new(f64::NAN, 0.0, 0.0),
@@ -334,6 +352,22 @@ fn non_finite_input_is_refused() {
         matches!(outcome, Err(FitRejection::NonFinite)),
         "expected NonFinite, got {outcome:?}"
     );
+}
+
+#[test]
+fn non_finite_bounds_are_refused_before_overlap_can_be_claimed() {
+    let moving = spread();
+    let fixed = posed(&moving);
+    let bounds = FitBounds {
+        moving_center: DVec3::new(f64::NAN, 0.0, 0.0),
+        moving_extent: 40.0,
+        fixed_center: centre(&fixed),
+        fixed_extent: 40.0,
+    };
+
+    let outcome = fit_pairs(&moving, &fixed, None, &bounds);
+
+    assert_eq!(outcome, Err(FitRejection::NonFinite));
 }
 
 #[test]

@@ -42,8 +42,6 @@ error-open-body = Не удалось открыть { $path }.
 help-title = Управление с клавиатуры и мыши
 help-subtitle = Справка соответствует элементам управления, доступным в OccluView.
 help-close = Закрыть
-help-toggle = Справка
-help-toggle-tooltip = Показать управление с клавиатуры и мыши
 
 help-section-navigation = Навигация
 help-section-tools = Инструменты
@@ -217,10 +215,10 @@ mesh-exported-aligned = { $name } экспортирован в выровнен
 mesh-exported-aligned-warnings = { $name } экспортирован в выровненной позиции как { $format } (предупреждения: { $warnings }): { $path }
 mesh-exported-unmoved = { $name } экспортирован (скан не сдвигался) как { $format }: { $path }
 mesh-exported-unmoved-warnings = { $name } экспортирован (скан не сдвигался) как { $format } (предупреждения: { $warnings }): { $path }
-mesh-warning-point-cloud = облако точек пропущено для STL
 mesh-warning-vertex-colors = цвета вершин не записаны
 mesh-warning-uvs = UV не записаны
 mesh-warning-texture-image = изображение текстуры не записано
+mesh-export-warnings = Предупреждения экспорта: { $warnings }
 mesh-export-failed-title = Не удалось экспортировать слой
 mesh-export-failed-summary = Не удалось экспортировать слой: { $detail }
 
@@ -478,8 +476,8 @@ meshedit-session-done-hint = Применить правки и закрыть �
 ## Align Scans window — DRAFT.
 
 align-title = Сопоставление сканов
-align-tab-auto = Автоматически
-align-tab-manual = Вручную
+align-tab-auto = Совмещение
+align-tab-manual = Подвинуть
 align-constraint-free = Движение и поворот во всех направлениях
 align-constraint-free-hint = Перетаскивайте скан в любом направлении
 align-constraint-z = Движение по оси z
@@ -507,9 +505,9 @@ align-clear-hint = Убрать все стрелки и выбрать два �
 align-fit-perform = Выполнить сопоставление
 align-fit-perform-hint = Двигать сетку на стрелки — нужно не меньше двух стрелок
 align-fit-refine = Точное совмещение
-align-fit-refine-hint = Посадить поверхности друг на друга. Только для одинаковых по форме сеток
+align-fit-refine-hint = Уточнить текущую грубую посадку по близким совпадающим участкам. Сначала совместите по точкам или пропустите этот шаг, если сканы уже рядом. Проверьте результат перед подтверждением
 align-matching-parts = совпадающие части
-align-matching-parts-hint = Доля поверхности, существующей на обеих сетках. 70–80% подходит парам с похожей топологией
+align-matching-parts-hint = Максимальная доля соответствий для уточнения. Если неизменённых участков мало, Best Fit уменьшит её автоматически
 align-max-influence = макс. влияние
 align-max-influence-hint = Влияет только поверхность ближе этой дистанции. Большое значение может ухудшить результат
 align-orientation-title = Ориентация поверхностей должна совпадать
@@ -528,34 +526,13 @@ align-commit-done-hint = Сохранить сопоставление и зак
 
 ## Deviation map — DRAFT.
 
-align-map-more = Дополнительные настройки
 align-map-heatmap = Теплокарта
 align-map-heatmap-hint = Окрасить один скан по расстоянию до другого
-align-map-range-label = диапазон
-align-map-preset-hint = Всё ближе { $min } мм считается совпадением, { $max } мм насыщает
-align-map-min = мин
+align-map-requires-refine = Сначала выполните точное совмещение
 align-map-max = макс
-align-map-auto = авто
-align-map-auto-hint = Подогнать диапазон под измерение заново
-align-map-advice-far = Сетки примерно в { $mm } мм друг от друга — сопоставьте их прежде чем читать карту
-align-map-advice-saturated = Большая часть дальше { $mm } мм, цвета прижаты к краям — расширьте диапазон
-align-map-not-enough = Мало поверхности для измерения — { $measured } из { $total } вершин достигли другого скана
-align-map-within = { $pct }% в пределах { $tol } мм
-align-map-rms = ско { $rms }
-align-map-grey-tooltip = Серый — не измерение. Поверхность без пары в досягаемости измерить нельзя — мост или зуб только на одном скане обычная причина, и это не ошибка.
-align-map-grey-out = { $n } без поверхности напротив
-align-map-grey-excluded = { $n } исключено
-align-map-grey-unusable = { $n } непригодно в файле
-align-map-grey-total = Серых вершин { $total }: { $parts }
+align-map-min = мин
 align-map-not-measured = не измерено
 align-map-not-measured-hint = На другом скане нет поверхности в досягаемости этих вершин. Зуб или мост только на одном скане — обычная причина, и это не ошибка: измерять там нечего.
-align-map-stepped = Ступенчатые полосы
-align-map-stepped-hint = Ступенчатая шкала вместо плавной
-align-map-colours = Цвета
-align-map-ramp-distance = расстояние
-align-map-ramp-distance-hint = Холодное где сканы совпадают, горячее где нет
-align-map-ramp-signed = со знаком
-align-map-ramp-signed-hint = Синее ниже поверхности, зелёное норма, красное выше
 
 ## Align roles, brush, mask commands, align status lines — DRAFT.
 
@@ -567,20 +544,17 @@ align-pair-swap = Поменять
 align-pair-swap-hint = Совместить наоборот — стрелки двигаются вместе
 
 align-brush-title = Кисть
-align-brush-subtitle = Закрасьте поверхность, которую совмещение должно игнорировать, на любой сетке
-align-brush-hint-inverse = Перетаскивание стирает · Shift помечает · Shift+колесо меняет размер
-align-brush-hint-mark = Перетаскивание помечает · Shift стирает · Shift+колесо меняет размер
 align-brush-close-hint = Закрыть кисть — пометки сохранятся
+align-brush-mesh-selection = Выбор сетки
+align-brush-moving = Подвижная
+align-brush-fixed = Неподвижная
 align-brush-size = размер кисти
 align-brush-inverse = Инверсия кисти
 align-brush-inverse-hint = Простое перетаскивание стирает вместо пометки. Shift инвертирует снова
 align-brush-auto-radius = авторадиус
 align-brush-auto-radius-hint = Радиус области сетки у каждого конца стрелки
-align-brush-all-marked = Всё помечено — совмещение не даст эффекта
-align-brush-nothing-marked = Ничего не помечено
-align-brush-percent-marked = Помечено { $pct }% совпадения
 align-brush-size-status = Кисть { $size } мм
-align-status-no-summary = Нечего измерять при радиусе { $reach } мм — { $measured } из { $total } вершин нашли второе сканирование. Сблизьте сканирования или увеличьте радиус в дополнительных настройках.
+align-status-no-summary = Нет сопоставимой поверхности
 
 align-mask-fit-everywhere = Совмещать везде
 align-mask-fit-everywhere-hint = Снять все пометки
@@ -609,30 +583,20 @@ align-status-one-scan = Один из сканов
 align-status-place-first = Сначала поставьте по точке на каждом скане
 align-status-scaled = Этот скан несёт масштабированное размещение, его нельзя сопоставить
 align-status-pose-refused = Подгонка завершена, но скан, для которого она была, уже недоступен
+align-status-worker-unavailable = Обработчик совмещения остановился — перезапустите инструмент совмещения
 align-status-measure-dropped = Измерение сброшено — цветами владеет кисть пометок
+align-status-measure-unavailable = Измерение не применено — скан изменился; снова выполните точное совмещение
 align-status-map-elsewhere = Карта расстояний на вкладке «Автоматически» — она вернётся туда
 align-status-aligned-points = Совмещено по точкам
 
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Совмещено — { $rms } мм по точкам{ $dropped }. Дожмите точным совмещением.
-align-status-outlier = , пара { $pairs } отброшена как выброс
-align-status-refined = Уточнено — { $rms } мм на { $pct }% { $surface }{ $settled }{ $weak }
-align-status-surface = поверхности
-align-status-surface-unmarked = непомеченной поверхности
-align-status-settled-limit = , остановлено на пределе итераций
-align-status-weak-slide =  — подгонка ещё может скользить вдоль { $axes }
-align-status-weak-turn =  — подгонка ещё может вращаться вокруг { $axes }
-align-status-weak-both =  — подгонка ещё может скользить вдоль { $sliding } и вращаться вокруг { $spinning }
-align-status-measured = { $pct }% в пределах { $tol } мм, { $n ->
-    [one] { $n } вершина ни с чем не сопоставлена{ $blind }
-    [few] { $n } вершины ни с чем не сопоставлены{ $blind }
-    [many] { $n } вершин ни с чем не сопоставлено{ $blind }
-   *[other] { $n } вершин ни с чем не сопоставлено{ $blind }
-}
-align-status-blind-free =  — эти поверхности свободно скользят, за этим может скрываться смещение любого размера
-align-status-blind-hidden =  — жёсткое несоответствие до { $mm } мм может читаться так же
+align-status-aligned = Совмещено по точкам — выполните точное совмещение для посадки поверхностей.
+align-status-refined = Точное совмещение готово
+align-status-measured = Теплокарта обновлена
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
+align-status-settings-changed = Настройки сопоставления изменены
+align-status-visibility-changed = Видимость выбранного скана изменена
 align-brush-not-in-alignment = Этот скан не входит в текущее совмещение
 align-drag-moving = Перемещение { $name } вручную
 align-drag-unrecorded = Перемещено вручную, но шаг не попал в историю — Ctrl+Z не отменит его
@@ -669,6 +633,7 @@ guard-replace-destructive = Отбросить и открыть
 guard-save = Сохранить…
 guard-cancel = Отмена
 
+error-retry-graphics = Попробовать снова
 error-close = Закрыть
 error-copy-details = Копировать детали
 
@@ -771,14 +736,21 @@ sculpt-armed-smooth = Сгладить: перетаскивайте для ра
 sculpt-off = Скульптинг выкл
 sculpt-applied-undo = Скульптинг применён (Ctrl+Z отменяет)
 sculpt-applied-locked = Скульптинг применён (без отмены: снимок слишком велик)
+sculpt-failed-title = Скульптинг не выполнен
 sculpt-failed = Скульптинг недоступен для этого слоя: { $detail }
 sculpt-worker-stopped = Воркер скульптинга остановлен: { $detail }
+sculpt-preparing = Подготовка скульптинга…
+sculpt-nonuniform-scale = Скульптинг требует равномерного масштаба сетки
 sculpt-failure-worker-panicked = Воркер скульптинга аварийно завершён: { $detail }
 sculpt-failure-spawn = Не удалось запустить воркер скульптинга: { $detail }
 sculpt-failure-kernel-pool = Не удалось создать пул ядер скульптинга: { $detail }
 sculpt-failure-missing-undo-baseline = У штриха скульптинга нет базы для отмены
 sculpt-failure-shadow-poisoned = Блокировка тени скульптинга отравлена
+sculpt-failure-shadow-shape = Тень скульптинга больше не соответствует рабочей сетке
+sculpt-failure-invalid-vertex-index = Воркер скульптинга вернул недопустимый индекс вершины
+sculpt-failure-worker-state-poisoned = Состояние воркера скульптинга повреждено — перезапустите Sculpt
 sculpt-failure-vertex-count-changed = Результат скульптинга изменил число вершин
+sculpt-failure-topology-rebuild = Не удалось восстановить топологию скульптинга: { $detail }
 sculpt-worker-unavailable = Воркер скульптинга недоступен
 sculpt-finishing = Завершение штриха скульптинга…
 sculpt-finishing-history = Завершение скульптинга перед изменением истории…
@@ -827,14 +799,16 @@ cut-footer-thickness = Перетаскивание = панорама · кли
 align-fail-no-surface-fixed = У неподвижного скана нет пригодной поверхности
 align-fail-no-surface-moving = У подвижного скана нет пригодной поверхности
 align-fail-recolor = Измерение сброшено до окраски
-align-reject-toofew = Всего { $a } из { $b } соответствий — поставьте ещё стрелку или поднимите макс. влияние, если сетки ещё далеко
-align-reject-unpaired = Точек { $a } на одном скане и { $b } на другом — у точки нет пары
-align-reject-degenerate-plain = Кликнутые точки не задают вращение — разнесите их
-align-reject-degenerate-line = Кликнутые точки лежат на прямой: вращение вокруг { $a } не определено
-align-reject-unit = Сканы различаются по размеру в { $a } раз — вероятно, разные единицы
-align-reject-apart = Подгонка оставила сканы в { $a } мм друг от друга вместо совмещения ({ $b } мм) — проверьте, что пары стрелок смотрят в одну точку на обоих сканах
-align-reject-runaway = Точное совмещение ушло на { $a } мм, дальше размера скана ({ $b } мм) — сначала поставьте пары стрелок или понизьте макс. влияние
-align-reject-nonfinite = Кликнутая точка или нормаль не конечное число
+align-fail-unobservable = Поверхность недостаточно наблюдаема для надёжной теплокарты
+align-reject-toofew = Поставьте больше пар стрелок или приблизьте сканы
+align-reject-unpaired = Завершите обе стороны каждой пары стрелок
+align-reject-degenerate-plain = Разнесите точки сопоставления по поверхности
+align-reject-unit = Сканы используют разные единицы измерения
+align-reject-apart = Проверьте пары стрелок и приблизьте сканы
+align-reject-runaway = Приблизьте сканы и повторите точное совмещение
+align-reject-no-improvement = Улучшение не подтверждено — приблизьте сканы и повторите
+align-reject-ambiguous = Найдено несколько одинаково вероятных поверхностей — отметьте нужную область или приблизьте сканы
+align-reject-nonfinite = Выбранная точка или поверхность недействительны
 align-status-stepped = Прошлись по истории
 align-status-moving-hand = Двигаем вручную
 
@@ -888,8 +862,6 @@ settings-orbit = Скорость вращения
 settings-orbit-hint = Как быстро вид вращается при перетаскивании правой кнопкой
 settings-zoom = Скорость масштаба
 settings-zoom-hint = Насколько каждое деление колеса приближает
-settings-recent = Недавние сцены
-settings-recent-hint = Записей в меню «Открыть»
 settings-background = Фон
 settings-bg-gray = Серый
 settings-bg-white = Белый
@@ -918,6 +890,7 @@ settings-update-skipped = Версия пропущена
 settings-update-failed = Не удалось проверить
 settings-save-error = Не удалось сохранить настройки. Повторная попытка…
 settings-save-error-hint = Файл настроек сейчас недоступен
+settings-shortcuts = Горячие клавиши
 settings-about = Об OccluView
 
 bridge-busy = Сначала завершите или отмените разделение моста
@@ -949,9 +922,79 @@ lasso-dropped = Контур лассо сброшен
 lasso-needs-points = Лассо нужно минимум 3 точки
 loading-scene = Загрузка сцены…
 gpu-failed-status = Драйвер видеокарты сообщил о проблеме
+gpu-retry-status = Повтор графики — если проблема остаётся, сохраните работу и перезапустите OccluView
 gpu-failed-title = Проблема графики
 gpu-failed-summary = Драйвер видеокарты сообщил о проблеме при отрисовке. Вид может быть неполным. Сохраните работу и перезапустите OccluView, если повторится.
 align-job-align = Сопоставление…
 align-job-refine = Уточнение…
 align-job-measure = Измерение…
 align-markings-dropped = Пометки сброшены — поверхность скана изменилась после закраски
+
+## Окклюзионные контакты: правый клик по скану — и видно, где он смыкается со
+## встречным сканом. Одно чтение — артикуляционная бумага (только отпечатки,
+## окрашенные по глубине), другое — карта сближения (насколько близко, везде).
+## Один ползунок задаёт глубину, которую шкала считает полной нагрузкой, и он
+## перекрашивает уже измеренное поле, а не измеряет заново.
+layer-menu-contacts = Показать контакты
+layer-menu-hide-contacts = Скрыть контакты
+
+contact-title = Окклюзионные контакты
+contact-close-hint = Закрыть чтение и снять отметки с обоих сканов
+contact-against = { $subject } относительно { $antagonist }
+contact-unknown-layer = скан, который больше не открыт
+
+contact-mode-marks = Контакты
+contact-mode-marks-hint = Где поверхности смыкаются, с цветом по силе — остальное остаётся чистым, как после артикуляционной бумаги
+contact-mode-approach = Сближение
+contact-mode-approach-hint = Насколько близко встречный скан везде, включая нагрузку
+
+contact-load-label = нагрузка при
+contact-load-suffix = мм
+contact-load-hint = Глубина, при которой шкала читается как полная нагрузка. Сдвиг перекрашивает уже измеренную карту — без повторного измерения.
+contact-flatten = Один цвет на контакт
+contact-flatten-hint = Свести каждый отпечаток контакта к его самой глубокой точке. Выключено — сохраняется распределение силы внутри отпечатка.
+
+contact-legend-deepest = { $mm } мм в смыкание
+
+contact-stats-area = Площадь контакта
+contact-stats-contacts = Контакты
+contact-stats-deepest = Самая глубокая
+
+contact-readout-gap = зазор
+contact-readout-load = нагрузка
+
+contact-status-measuring = Измерение…
+contact-status-measuring-hint = Поверхности читаются одна относительно другой
+contact-status-remeasuring = Повторное измерение…
+contact-status-remeasuring-hint = Скан переместился, расстояния изменились. Карта читается заново.
+contact-status-needs-second = Для чтения контактов нужен второй видимый скан
+contact-status-no-surface = У одного из сканов нет поверхности для измерения
+contact-status-worker-failed = Измерение не завершилось
+
+contact-opened = Чтение контактов на { $label }
+contact-closed = Чтение контактов закрыто
+help-section-contacts = Окклюзионные контакты
+help-hintline-contacts = Правый клик по слою · Показать контакты · ползунок «нагрузка при» перекрашивает карту · Esc закрывает
+help-hint-contacts-read-its-occlusal-contacts-against-the-scan-it-bites = Прочитать окклюзионные контакты относительно встречного скана
+help-hint-contacts-read-the-contact-depth-under-the-cursor = Прочитать глубину контакта под курсором, на любой из челюстей
+help-hint-contacts-move-the-depth-the-ramp-calls-fully-loaded = Сдвинуть глубину, которую шкала считает полной нагрузкой
+help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Переключить между только отпечатками и всей зоной сближения
+help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Закрыть чтение и снять отметки с обоих сканов
+contact-retry = Прочитать заново
+contact-status-subject-unusable = Скан, о котором идёт чтение, сейчас нельзя измерить
+contact-status-subject-unusable-hint = Покажите его снова или оставьте полигональной сеткой — чтение возобновится
+contact-status-antagonist-unusable = Встречный скан, относительно которого идёт измерение, сейчас нельзя измерить
+contact-status-antagonist-unusable-hint = Покажите его снова или оставьте полигональной сеткой — чтение возобновится
+contact-status-no-overlap = Сканы слишком далеко друг от друга
+contact-status-no-overlap-hint = Ни одна из поверхностей не попала в зону чтения. Проверьте, что сканы стоят в окклюзии.
+contact-status-failed-hint = Прочитать заново; если снова не удаётся, пару, возможно, нужно сначала отремонтировать.
+contact-status-needs-second-hint = Откройте встречный скан или покажите его снова и начните чтение
+contact-legend-gap = зазор до { $mm } мм
+contact-stats-balance = Площадь по сторонам
+contact-stats-balance-hint = Площадь контакта по обе стороны от собственной средней линии скана. Деление идёт по координатам скана, поэтому при повороте или зеркале числа могут поменяться местами.
+layer-menu-contacts-unavailable = Для чтения контактов нужны два видимых полигональных скана — сначала покажите или откройте встречный
+
+contact-details = Подробности
+contact-details-hint = Числа и правило «один цвет на контакт»
+contact-details-close = Скрыть подробности
+settings-shortcuts-hint = Справка по клавиатуре и мыши (F1)

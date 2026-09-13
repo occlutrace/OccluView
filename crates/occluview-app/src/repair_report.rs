@@ -19,11 +19,6 @@ use crate::icons::AppIcon;
 use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
 
-/// Headline shown when Repair ran but found nothing to fix. English source
-/// wording (pinned by tests); rendering goes through `repair-clean-headline`.
-#[cfg(test)]
-pub(crate) const CLEAN_HEADLINE: &str = "Nothing to repair — mesh is clean";
-
 /// The small glyph painted in a report line's gutter. Removals borrow the
 /// editor's trash glyph, closed pinholes borrow the close-holes glyph, and
 /// pure topology fixes get a neutral accent check ("done").
@@ -592,16 +587,6 @@ mod tests {
     #[test]
     fn a_clean_report_produces_no_lines() {
         assert!(report_lines(&RepairReport::default(), &english()).is_empty());
-    }
-
-    #[test]
-    fn english_clean_headline_matches_source_wording() {
-        // Keeps CLEAN_HEADLINE live and locks the catalog rendering to it.
-        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-        assert_eq!(
-            catalog.text("repair-clean-headline").as_deref(),
-            Some(CLEAN_HEADLINE)
-        );
     }
 
     #[test]

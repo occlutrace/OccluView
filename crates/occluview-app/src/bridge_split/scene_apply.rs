@@ -62,6 +62,7 @@ pub(crate) fn apply_preview_to_scene(
 
 fn layer_like(source: &SceneMesh, mesh: occluview_core::Mesh) -> SceneMesh {
     let mut layer = SceneMesh::new(mesh)
+        .with_source_layer_id(source.export_source_layer_id())
         .with_transform(source.transform)
         .with_tint(source.tint)
         .with_opacity(source.opacity)

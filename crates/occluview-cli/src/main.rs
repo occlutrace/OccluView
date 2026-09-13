@@ -20,7 +20,13 @@ use occluview_formats::dispatch::{
     read_file_loaded_with_key_provider, read_files_with_key_provider,
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
+use std::ffi::{OsStr, OsString};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const MAX_CLI_THUMBNAIL_SIZE: u16 = 4096;
 
 fn main() {
     install_tracing();
@@ -50,28 +56,32 @@ fn install_tracing() {
 }
 
 fn run() -> Result<()> {
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args_os().skip(1);
     let subcommand = args.next().unwrap_or_else(|| {
         print_usage_with_error();
-        "help".to_string()
+        OsString::from("help")
     });
 
-    match subcommand.as_str() {
-        "thumbnail" => cmd_thumbnail(&mut args),
-        "convert" => cmd_convert(&mut args),
-        "close-holes" => cmd_close_holes(&mut args),
-        "info" => cmd_info(&mut args),
-        "help" | "--help" | "-h" => {
+    match subcommand.to_str() {
+        Some("thumbnail") => cmd_thumbnail(&mut args),
+        Some("convert") => cmd_convert(&mut args),
+        Some("close-holes") => cmd_close_holes(&mut args),
+        Some("info") => cmd_info(&mut args),
+        Some("help" | "--help" | "-h") => {
             print_usage();
             Ok(())
         }
-        "--version" | "-V" => {
+        Some("--version" | "-V") => {
             println!("occluview-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        other => {
+        Some(other) => {
             print_usage_with_error();
             Err(anyhow!("unknown subcommand: {other}"))
+        }
+        None => {
+            print_usage_with_error();
+            Err(anyhow!("subcommand is not valid UTF-8"))
         }
     }
 }
@@ -87,23 +97,73 @@ enum FileArgument {
 /// Parse the leading file argument without accepting a flag as a path.
 /// Files whose names begin with `-` remain addressable through `./name`.
 fn take_file_argument(
-    args: &mut impl Iterator<Item = String>,
+    args: &mut impl Iterator<Item = OsString>,
     subcommand: &str,
 ) -> Result<FileArgument> {
     let first = args
         .next()
         .ok_or_else(|| anyhow!("{subcommand}: missing <file> argument"))?;
-    match first.as_str() {
-        "-h" | "--help" => Ok(FileArgument::Help),
-        flag if flag.starts_with('-') => Err(anyhow!(
+    match first.to_str() {
+        Some("-h" | "--help") => Ok(FileArgument::Help),
+        Some(flag) if flag.starts_with('-') => Err(anyhow!(
             "{subcommand}: expected a file path, got the flag {flag}; the file comes first"
         )),
-        _ => Ok(FileArgument::Path(PathBuf::from(first))),
+        Some(_) | None => Ok(FileArgument::Path(PathBuf::from(first))),
     }
 }
 
+fn take_path_argument(args: &mut impl Iterator<Item = OsString>, option: &str) -> Result<PathBuf> {
+    args.next()
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("{option} requires a path"))
+}
+
+fn take_utf8_argument(args: &mut impl Iterator<Item = OsString>, option: &str) -> Result<String> {
+    let value = args
+        .next()
+        .ok_or_else(|| anyhow!("{option} requires a value"))?;
+    value
+        .into_string()
+        .map_err(|_| anyhow!("{option} value is not valid UTF-8"))
+}
+
+fn format_cli_flag(arg: &OsStr) -> String {
+    arg.to_string_lossy().into_owned()
+}
+
+fn validate_thumbnail_size(raw: &str) -> Result<u16> {
+    let size: u32 = raw.parse().context("--size must be a number")?;
+    if !(1..=u32::from(MAX_CLI_THUMBNAIL_SIZE)).contains(&size) {
+        return Err(anyhow!(
+            "--size must be between 1 and {MAX_CLI_THUMBNAIL_SIZE} pixels"
+        ));
+    }
+    u16::try_from(size).map_err(|_| anyhow!("--size exceeds the supported range"))
+}
+
+fn parse_limit_mm(raw: &str) -> Result<f32> {
+    let limit: f32 = raw.parse().context("--limit-mm must be a number")?;
+    if !limit.is_finite() || limit < 0.0 {
+        return Err(anyhow!("--limit-mm must be a finite non-negative number"));
+    }
+    Ok(limit)
+}
+
+fn normalize_thumbnail_output_path(path: PathBuf) -> Result<PathBuf> {
+    let path = export::normalize_output_path(path);
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return Err(anyhow!("thumbnail output must end in .png"));
+    };
+    if !extension.eq_ignore_ascii_case("png") {
+        return Err(anyhow!(
+            "thumbnail output must end in .png; got .{extension}"
+        ));
+    }
+    Ok(path)
+}
+
 /// `thumbnail <file> [-o out.png] [--size N]`
-fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
+fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     let file: PathBuf = match take_file_argument(args, "thumbnail")? {
         FileArgument::Help => {
             print_usage();
@@ -114,28 +174,23 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
     let mut output: Option<PathBuf> = None;
     let mut size: u16 = 256;
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or_else(|| anyhow!("-o requires a path"))?,
-                ));
+        match arg.to_str() {
+            Some("-o" | "--output") => {
+                output = Some(take_path_argument(args, "-o")?);
             }
-            "--size" => {
-                size = args
-                    .next()
-                    .ok_or_else(|| anyhow!("--size requires a number"))?
-                    .parse()
-                    .context("--size must be a number")?;
+            Some("--size") => {
+                size = validate_thumbnail_size(&take_utf8_argument(args, "--size")?)?;
             }
-            other => return Err(anyhow!("unknown flag: {other}")),
+            Some(other) => return Err(anyhow!("unknown flag: {other}")),
+            None => return Err(anyhow!("unknown non-UTF-8 flag")),
         }
     }
 
-    let out_path = output.unwrap_or_else(|| {
+    let out_path = normalize_thumbnail_output_path(output.unwrap_or_else(|| {
         let mut p = file.clone();
         p.set_extension("png");
         p
-    });
+    }))?;
 
     eprintln!("Rendering {size}x{size} thumbnail...");
     let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
@@ -149,15 +204,101 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = String>) -> Result<()> {
     eprintln!("Writing {}...", out_path.display());
     let img = image::RgbaImage::from_raw(u32::from(size), u32::from(size), pixels)
         .ok_or_else(|| anyhow!("failed to create image buffer"))?;
-    img.save(&out_path)
+    write_thumbnail_atomically(&out_path, &img)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
     eprintln!("Done: {}", out_path.display());
     std::process::exit(0);
 }
 
+static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("thumbnail.png"));
+    let (temporary, file) = reserve_thumbnail_temp(parent, file_name)?;
+    let result = (|| -> Result<()> {
+        let mut writer = BufWriter::new(file);
+        image.write_to(&mut writer, image::ImageFormat::Png)?;
+        writer.flush()?;
+        writer
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?
+            .sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = replace_thumbnail_file(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn reserve_thumbnail_temp(parent: &Path, file_name: &OsStr) -> Result<(PathBuf, File)> {
+    for _ in 0..16 {
+        let id = NEXT_THUMBNAIL_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let mut temporary_name = OsString::from(".");
+        temporary_name.push(file_name);
+        temporary_name.push(format!(".occluview-{id}.tmp.png"));
+        let temporary = parent.join(temporary_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(anyhow!("could not reserve a temporary thumbnail path"))
+}
+
+#[cfg(not(windows))]
+fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(temporary, destination)
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary: Vec<u16> = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(temporary.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
 /// `convert <file> -o output.{stl|ply|obj}`
-fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
+fn cmd_convert(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     let input: PathBuf = match take_file_argument(args, "convert")? {
         FileArgument::Help => {
             print_usage();
@@ -167,18 +308,20 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
     };
     let mut output: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or_else(|| anyhow!("-o requires a path"))?,
-                ));
+        match arg.to_str() {
+            Some("-o" | "--output") => {
+                output = Some(take_path_argument(args, "-o")?);
             }
-            other => return Err(anyhow!("unknown flag: {other}")),
+            Some(other) => return Err(anyhow!("unknown flag: {other}")),
+            None => return Err(anyhow!("unknown non-UTF-8 flag")),
         }
     }
 
-    let output = output.ok_or_else(|| anyhow!("convert: missing -o <output-path>"))?;
-    let format = export::convert_file(&input, &output)?;
+    let output = export::normalize_output_path(
+        output.ok_or_else(|| anyhow!("convert: missing -o <output-path>"))?,
+    );
+    let (format, report) = export::convert_file(&input, &output)?;
+    export::print_write_warnings(&report);
     eprintln!(
         "Converted {} -> {} ({format:?})",
         input.display(),
@@ -189,7 +332,7 @@ fn cmd_convert(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// `close-holes <file> -o out.stl [--limit-mm N]` - run Close Holes headlessly
 /// and print the resulting edit report.
-fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
+fn cmd_close_holes(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     let input: PathBuf = match take_file_argument(args, "close-holes")? {
         FileArgument::Help => {
             print_usage();
@@ -200,26 +343,23 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
     let mut output: Option<PathBuf> = None;
     let mut limit_mm: Option<f32> = None;
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or_else(|| anyhow!("-o requires a path"))?,
-                ));
+        match arg.to_str() {
+            Some("-o" | "--output") => {
+                output = Some(take_path_argument(args, "-o")?);
             }
-            "--limit-mm" => {
-                limit_mm = Some(
-                    args.next()
-                        .ok_or_else(|| anyhow!("--limit-mm requires a number"))?
-                        .parse()
-                        .context("--limit-mm must be a number")?,
-                );
+            Some("--limit-mm") => {
+                limit_mm = Some(parse_limit_mm(&take_utf8_argument(args, "--limit-mm")?)?);
             }
-            other => return Err(anyhow!("unknown flag: {other}")),
+            Some(other) => return Err(anyhow!("unknown flag: {other}")),
+            None => return Err(anyhow!("unknown non-UTF-8 flag")),
         }
     }
-    let output = output.ok_or_else(|| anyhow!("close-holes: missing -o <output-path>"))?;
+    let output = export::normalize_output_path(
+        output.ok_or_else(|| anyhow!("close-holes: missing -o <output-path>"))?,
+    );
 
-    let report = export::close_holes_file(&input, &output, limit_mm)?;
+    let (report, write_report) = export::close_holes_file(&input, &output, limit_mm)?;
+    export::print_write_warnings(&write_report);
     println!("File:              {}", input.display());
     println!(
         "Input:             verts={} tris={}",
@@ -240,15 +380,22 @@ fn cmd_close_holes(args: &mut impl Iterator<Item = String>) -> Result<()> {
 
 /// `info <file> [file...]` - print mesh statistics. When multiple files are
 /// given, prints per-file stats plus an aggregate scene bbox.
-fn cmd_info(args: &mut impl Iterator<Item = String>) -> Result<()> {
-    let raw: Vec<String> = args.collect();
-    if raw.iter().any(|arg| arg == "-h" || arg == "--help") {
+fn cmd_info(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
+    let raw: Vec<OsString> = args.collect();
+    if raw
+        .iter()
+        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
+    {
         print_usage();
         return Ok(());
     }
-    if let Some(flag) = raw.iter().find(|arg| arg.starts_with('-')) {
+    if let Some(flag) = raw
+        .iter()
+        .find(|arg| arg.to_str().is_some_and(|value| value.starts_with('-')))
+    {
         return Err(anyhow!(
-            "info: expected file paths, got the flag {flag}; the files come first"
+            "info: expected file paths, got the flag {}; the files come first",
+            format_cli_flag(flag)
         ));
     }
     let files: Vec<PathBuf> = raw.into_iter().map(PathBuf::from).collect();
@@ -400,12 +547,16 @@ mod tests {
             .map_or(source, |(production, _)| production)
     }
 
-    use super::{take_file_argument, FileArgument};
+    use super::{
+        normalize_thumbnail_output_path, parse_limit_mm, take_file_argument,
+        validate_thumbnail_size, write_thumbnail_atomically, FileArgument,
+    };
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
     #[test]
     fn a_flag_where_the_file_belongs_is_refused_instead_of_opened() {
-        let mut args = ["-o", "out.png"].into_iter().map(String::from);
+        let mut args = ["-o", "out.png"].into_iter().map(OsString::from);
         let error = take_file_argument(&mut args, "thumbnail")
             .expect_err("a flag must not be accepted as the file to render");
         let message = error.to_string();
@@ -416,7 +567,7 @@ mod tests {
     #[test]
     fn asking_a_subcommand_for_help_prints_help_and_renders_nothing() {
         for flag in ["-h", "--help"] {
-            let mut args = std::iter::once(flag.to_string());
+            let mut args = std::iter::once(OsString::from(flag));
             let taken =
                 take_file_argument(&mut args, "thumbnail").expect("--help must not be an error");
             assert!(
@@ -428,7 +579,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_path_is_still_taken_verbatim() {
-        let mut args = std::iter::once("scan.stl".to_string());
+        let mut args = std::iter::once(OsString::from("scan.stl"));
         match take_file_argument(&mut args, "info").expect("a plain path is valid") {
             FileArgument::Path(path) => assert_eq!(path, PathBuf::from("scan.stl")),
             FileArgument::Help => panic!("a plain path is not a help request"),
@@ -492,13 +643,65 @@ mod tests {
             !thumbnail.contains("use_software_renderer_only"),
             "CLI rendering uses the same per-request verified adapter policy as Explorer"
         );
+        assert!(
+            thumbnail.contains("write_thumbnail_atomically"),
+            "thumbnail output must be published only after the complete PNG is encoded"
+        );
     }
 
     #[test]
     fn convert_cli_routes_through_export_module() {
         let source = production_source();
-        assert!(source.contains("\"convert\" => cmd_convert(&mut args)"));
+        assert!(source.contains("Some(\"convert\") => cmd_convert(&mut args)"));
         assert!(source.contains("export::convert_file(&input, &output)?;"));
         assert!(source.contains("output.{stl|ply|obj}"));
+    }
+
+    #[test]
+    fn thumbnail_size_has_a_bounded_allocation_contract() {
+        assert_eq!(validate_thumbnail_size("1").expect("minimum"), 1);
+        assert_eq!(validate_thumbnail_size("4096").expect("maximum"), 4096);
+        assert!(validate_thumbnail_size("0").is_err());
+        assert!(validate_thumbnail_size("4097").is_err());
+        assert!(validate_thumbnail_size("65535").is_err());
+    }
+
+    #[test]
+    fn close_holes_limit_rejects_non_finite_and_negative_values() {
+        assert!(
+            (parse_limit_mm("0").expect("zero is a valid hard limit") - 0.0).abs() <= f32::EPSILON
+        );
+        assert!((parse_limit_mm("15.5").expect("finite limit") - 15.5).abs() <= f32::EPSILON);
+        assert!(parse_limit_mm("-1").is_err());
+        assert!(parse_limit_mm("NaN").is_err());
+        assert!(parse_limit_mm("inf").is_err());
+    }
+
+    #[test]
+    fn thumbnail_output_is_png_and_does_not_duplicate_its_extension() {
+        assert_eq!(
+            normalize_thumbnail_output_path(PathBuf::from("scan.png.png")).expect("png"),
+            PathBuf::from("scan.png")
+        );
+        assert!(normalize_thumbnail_output_path(PathBuf::from("scan.jpg")).is_err());
+        assert!(normalize_thumbnail_output_path(PathBuf::from("scan")).is_err());
+    }
+
+    #[test]
+    fn thumbnail_overwrite_publishes_a_complete_png_without_a_temp_sibling() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = directory.path().join("scan.png");
+        std::fs::write(&destination, b"previous thumbnail").expect("seed thumbnail");
+        let image = image::RgbaImage::from_pixel(3, 2, image::Rgba([12, 34, 56, 255]));
+
+        write_thumbnail_atomically(&destination, &image).expect("publish thumbnail");
+
+        let decoded = image::open(&destination).expect("decode published thumbnail");
+        assert_eq!(decoded.width(), 3);
+        assert_eq!(decoded.height(), 2);
+        assert!(std::fs::read_dir(directory.path())
+            .expect("read directory")
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".occluview-")));
     }
 }

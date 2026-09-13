@@ -19,13 +19,6 @@ pub const NO_DATA_COLOR: [u8; 4] = [128, 128, 128, 255];
 /// the deviation would be arbitrary.
 const MIN_NORMAL_LENGTH: f64 = 1e-9;
 
-/// Largest share of the display range the nominal band may occupy.
-///
-/// The band is the tolerance, and an operator can set a tolerance wider than
-/// the range they are looking at. Left alone that paints the entire scan
-/// nominal, which answers every question with "fine".
-const NOMINAL_BAND_CEILING: f64 = 0.8;
-
 /// Why a vertex does or does not carry a measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validity {
@@ -145,28 +138,23 @@ pub struct DeviationSummary {
 /// Which colour scheme the map uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RampMode {
-    /// Blue below, green at nominal, red above: the metrology convention, and
-    /// the one lab software shows.
-    ///
-    /// The default, because it puts "the surfaces agree" in the MIDDLE of the
-    /// ramp. A registration that worked lands near zero, and on a magnitude
-    /// ramp that is the dead end of the scale — every good result comes out one
-    /// flat blue, which reads as a broken tool rather than a clean fit.
+    /// Blue at zero, red at the display scale: absolute deviation, the primary
+    /// Align Meshes reading.
     #[default]
-    Signed,
-    /// Blue at nothing, red at the display scale: magnitude only, for when
-    /// which side a surface sits on is not the question.
     Magnitude,
+    /// Blue below, green at zero, red above: signed deviation for diagnostics.
+    Signed,
 }
 
 /// How to turn measurements into colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RampSettings {
+    /// Absolute deviation at the cool end of the displayed ramp, in mm.
+    pub min_mm: f64,
     /// Deviation mapped to the ramp ends, in millimetres.
     pub scale_mm: f64,
-    /// Tolerance band, in millimetres. Everything inside it is painted the
-    /// ramp's nominal colour and the ramp only starts moving outside it — see
-    /// [`ramp_color`]. It is also the band the statistics report.
+    /// Tolerance band, in millimetres. It is used by statistics only; it must
+    /// not flatten the displayed deviation ramp.
     pub tolerance_mm: f64,
     /// Steps per side for a banded ramp; `None` is continuous. A stepped map
     /// shows where a boundary falls far more sharply than a smooth one.
@@ -208,10 +196,11 @@ pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
 impl Default for RampSettings {
     fn default() -> Self {
         Self {
-            scale_mm: 0.5,
-            tolerance_mm: 0.2,
+            min_mm: 0.0,
+            scale_mm: 0.10,
+            tolerance_mm: 0.01,
             bands: None,
-            mode: RampMode::Signed,
+            mode: RampMode::Magnitude,
         }
     }
 }
@@ -417,32 +406,26 @@ pub fn deviation_colors(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]>
 
 /// The colour for one measured deviation.
 ///
-/// The tolerance is a **flat nominal band**, not just a number in the summary.
-/// Everything inside it lands on the ramp's nominal colour and the ramp only
-/// starts moving outside it.
-///
-/// This is the difference between a heat map and a thermal camera. Without the
-/// band every value gets its own hue, so scan noise at twenty microns paints a
-/// full rainbow and a pair of arches that agree everywhere comes out as
-/// speckle — the operator cannot tell "these match" from "these are all over
-/// the place". With it, everything that is within tolerance is one colour, and
-/// what is left burning is the part that genuinely differs.
+/// The tolerance is deliberately not part of this mapping. It is a statistics
+/// threshold, while the working heatmap is a continuous absolute-distance
+/// scale from zero to the selected maximum.
 #[must_use]
 pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
-    let scale = if ramp.scale_mm.is_finite() && ramp.scale_mm > 0.0 {
-        ramp.scale_mm
+    let magnitude = value_mm.abs();
+    let beyond = if !value_mm.is_finite() {
+        // A non-finite measured value should never be painted as a harmless
+        // origin colour if a caller bypasses the validity guard.
+        1.0
+    } else if ramp.scale_mm.is_finite() && ramp.scale_mm > 0.0 {
+        let low = ramp.min_mm.max(0.0).min(ramp.scale_mm);
+        ((magnitude - low) / (ramp.scale_mm - low).max(f64::EPSILON)).clamp(0.0, 1.0)
+    } else if magnitude == 0.0 {
+        // A zero display range is intentional: exact zero stays blue, while
+        // every non-zero deviation is beyond that range and reads hot red.
+        0.0
     } else {
         1.0
     };
-    // Capped below the scale: a band as wide as the display range would paint
-    // the whole scan nominal and answer every question with "fine".
-    let band = if ramp.tolerance_mm.is_finite() && ramp.tolerance_mm > 0.0 {
-        ramp.tolerance_mm.min(scale * NOMINAL_BAND_CEILING)
-    } else {
-        0.0
-    };
-    let span = (scale - band).max(f64::MIN_POSITIVE);
-    let beyond = ((value_mm.abs() - band) / span).clamp(0.0, 1.0);
     let (ramp_stops, mut position) = match ramp.mode {
         RampMode::Magnitude => (&MAGNITUDE_RAMP, beyond),
         RampMode::Signed => (&SIGNED_RAMP, beyond.copysign(value_mm)),

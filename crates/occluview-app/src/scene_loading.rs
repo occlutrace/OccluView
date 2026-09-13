@@ -20,6 +20,9 @@ pub(crate) struct SceneLoadRequest {
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) source: &'static str,
     pub(crate) mode: SceneLoadMode,
+    /// State at the authorization boundary, before this may wait in a queue.
+    pub(crate) content_revision_at_request: u64,
+    pub(crate) dirty_at_request: bool,
 }
 
 pub(crate) struct PendingSceneLoad {
@@ -28,6 +31,39 @@ pub(crate) struct PendingSceneLoad {
     pub(crate) mode: SceneLoadMode,
     pub(crate) started_at: Instant,
     pub(crate) receiver: Receiver<Result<Scene>>,
+    /// A newer Replace is queued. This decoder still owns the only live load
+    /// slot, but its result must not be applied when it finishes.
+    pub(crate) superseded: bool,
+    /// Authorization state carried through the queue and decoder.
+    pub(crate) content_revision_at_request: u64,
+    pub(crate) dirty_at_request: bool,
+}
+
+/// A Replace authorization cannot cover edits made while queued or decoding.
+/// Reconfirm only when those edits are still at risk of being discarded.
+pub(crate) fn replace_result_requires_guard(
+    authorized_revision: u64,
+    current_revision: u64,
+    dirty_at_authorization: bool,
+    dirty_now: bool,
+    edit_busy_now: bool,
+) -> bool {
+    edit_busy_now
+        || (dirty_now && (authorized_revision != current_revision || !dirty_at_authorization))
+}
+
+/// Keep one decoder alive at a time. A new Replace supersedes its result and
+/// every pending request; Append follows the current request in arrival order.
+pub(crate) fn queue_request_while_active(
+    active: &mut PendingSceneLoad,
+    queued: &mut std::collections::VecDeque<SceneLoadRequest>,
+    request: SceneLoadRequest,
+) {
+    if request.mode == SceneLoadMode::Replace {
+        active.superseded = true;
+        queued.clear();
+    }
+    queued.push_back(request);
 }
 
 pub(crate) fn combine_loaded_scene(
@@ -65,6 +101,56 @@ pub(crate) fn load_status_message(
 mod tests {
     use super::*;
     use occluview_core::{Mesh, SceneMesh};
+    use std::path::Path;
+
+    #[test]
+    fn repeated_replace_keeps_one_active_decoder_and_only_the_latest_request() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut active = PendingSceneLoad {
+            paths: vec![PathBuf::from("first.stl")],
+            source: "test",
+            mode: SceneLoadMode::Replace,
+            started_at: Instant::now(),
+            receiver,
+            superseded: false,
+            content_revision_at_request: 0,
+            dirty_at_request: false,
+        };
+        let mut queued = std::collections::VecDeque::new();
+        for path in ["second.stl", "third.stl"] {
+            queue_request_while_active(
+                &mut active,
+                &mut queued,
+                SceneLoadRequest {
+                    paths: vec![PathBuf::from(path)],
+                    source: "test",
+                    mode: SceneLoadMode::Replace,
+                    content_revision_at_request: 0,
+                    dirty_at_request: false,
+                },
+            );
+        }
+        assert!(active.superseded);
+        assert_eq!(queued.len(), 1);
+        assert_eq!(
+            queued.front().map(|request| request.paths[0].as_path()),
+            Some(Path::new("third.stl"))
+        );
+        assert!(sender.send(Ok(Scene::new())).is_ok());
+        assert!(active.receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn replace_must_reconfirm_edits_made_after_authorization() {
+        assert!(!replace_result_requires_guard(4, 4, false, false, false));
+        assert!(replace_result_requires_guard(4, 5, false, true, false));
+        assert!(!replace_result_requires_guard(4, 4, true, true, false));
+        assert!(replace_result_requires_guard(4, 5, true, true, false));
+        assert!(!replace_result_requires_guard(4, 5, true, false, false));
+        // An in-flight sculpt job may finish after the load starts without
+        // having advanced the content revision yet.
+        assert!(replace_result_requires_guard(4, 4, false, false, true));
+    }
 
     #[test]
     fn combine_loaded_scene_appends_layers_and_paths() {

@@ -83,12 +83,17 @@ impl OccluViewApp {
 
         let paths = self.persistence.current_paths.clone();
         let active_layer_id = self.document.edit_mode.selected_layer_id();
+        let (marked, readable) = self.contact_rows(scene.as_ref());
         let changes = layers_overlay::show(
             ui,
             viewport_rect,
             scene.as_ref(),
             &paths,
             active_layer_id,
+            layers_overlay::LayerContactRows {
+                marked: &marked,
+                readable: &readable,
+            },
             &self.ui.locale,
         );
         // Ownership is handed over, not borrowed: the material-only path
@@ -118,6 +123,7 @@ impl OccluViewApp {
         let mut draft = scene.as_ref().clone();
         let mut scene_changed = false;
         let mut structural_scene_change = false;
+        let mut visibility_changed = Vec::new();
         if let Some(request) = changes.context_request {
             let apply =
                 super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
@@ -127,6 +133,9 @@ impl OccluViewApp {
         if !structural_scene_change {
             for edit in changes.layer_edits {
                 if let Some(entry) = draft.meshes_mut().get_mut(edit.index) {
+                    if entry.visible != edit.visible {
+                        visibility_changed.push(entry.id());
+                    }
                     entry.visible = edit.visible;
                     entry.opacity = edit.opacity;
                     crate::layer_actions::apply_picked_tint(entry, edit.tint, edit.tint_clicked);
@@ -144,6 +153,7 @@ impl OccluViewApp {
                     self.clear_scene();
                 } else {
                     self.update_scene_materials(draft);
+                    self.invalidate_alignment_for_visibility_changes(&visibility_changed);
                 }
                 ctx.request_repaint();
             }
@@ -161,11 +171,15 @@ impl OccluViewApp {
             return;
         };
         let mut hidden: Vec<occluview_core::SceneMeshId> = Vec::new();
+        let mut visibility_changed = Vec::new();
         let mut changed = false;
         for edit in edits {
             let Some(entry) = live.meshes_mut().get_mut(edit.index) else {
                 continue;
             };
+            if entry.visible != edit.visible {
+                visibility_changed.push(entry.id());
+            }
             if entry.visible && !edit.visible {
                 hidden.push(entry.id());
             }
@@ -182,6 +196,7 @@ impl OccluViewApp {
             self.document.hidden_layer_stack.push(layer);
         }
         self.mark_scene_materials_changed();
+        self.invalidate_alignment_for_visibility_changes(&visibility_changed);
         ctx.request_repaint();
     }
 
@@ -244,11 +259,45 @@ impl OccluViewApp {
             visible: entry.visible,
             wireframe: entry.wireframe,
             face_editable: !entry.mesh.is_point_cloud(),
+            can_export: !entry.mesh.vertices().is_empty(),
             show_vertex_colors: entry.show_vertex_colors,
             show_texture: entry.show_texture && entry.show_vertex_colors,
             has_color_data: entry.mesh.carries_color_data(),
             has_texture: entry.mesh.texture().is_some(),
+            contacts: self
+                .tools
+                .contacts
+                .pair()
+                .is_some_and(|pair| pair.subject == hit.layer_id),
+            can_read_contacts: crate::contact::can_read_contacts(scene, hit.layer_id),
         })
+    }
+
+    /// Which layer wears contact marks, and which layers a reading can be opened
+    /// on — the two facts the layer rows and the viewport menu need.
+    ///
+    /// Computed once per frame from the live scene rather than stored beside the
+    /// reading: readability depends on the OTHER layers (a reading needs a
+    /// second visible surface), so a stored copy would go stale the moment a
+    /// scan was hidden or removed.
+    pub(super) fn contact_rows(&self, scene: &Scene) -> (Vec<bool>, Vec<bool>) {
+        // Which layers the menu offers to CLOSE on. A reading paints BOTH arches,
+        // so either participant can take the marks down — `HideContacts` closes
+        // the pair whichever row raised it.
+        let pair = self.tools.contacts.pair();
+        let marked = scene
+            .meshes()
+            .iter()
+            .map(|entry| {
+                pair.is_some_and(|pair| entry.id() == pair.subject || entry.id() == pair.antagonist)
+            })
+            .collect();
+        let readable = scene
+            .meshes()
+            .iter()
+            .map(|entry| crate::contact::can_read_contacts(scene, entry.id()))
+            .collect();
+        (marked, readable)
     }
 
     /// Native right-click on a mesh (a stationary secondary click, so RMB-drag
@@ -385,6 +434,7 @@ impl OccluViewApp {
         self.ui.status_message = Some(self.ui.locale.tr_with("layer-hidden", &[("label", &label)]));
         self.remember_visibility_changes(&scene, &draft);
         self.update_scene_materials(draft);
+        self.invalidate_alignment_for_visibility_changes(&[hit.layer_id]);
         ctx.request_repaint();
     }
 
@@ -491,6 +541,7 @@ impl OccluViewApp {
                     .tr_with("layer-restored", &[("label", &label)]),
             );
             self.update_scene_materials(draft);
+            self.invalidate_alignment_for_visibility_changes(&[layer_id]);
             ctx.request_repaint();
             return;
         }
@@ -502,6 +553,35 @@ impl OccluViewApp {
 #[cfg(test)]
 mod tests {
     use super::{discard_lasso_outline, egui, MeshSelectionDrag};
+
+    /// Both arches of a reading must offer to close it.
+    ///
+    /// A reading paints both participants, so a row that wears marks must say
+    /// so or its menu offers to open a *second* reading on the same two scans
+    /// while the first is still up. The rows are built from the pair, not from
+    /// its subject: this pins the shape that makes that possible — a flag per
+    /// layer, since one "marked index" can only ever name one of the two.
+    #[test]
+    fn a_reading_marks_both_of_its_arches() {
+        let source =
+            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
+        let body = crate::primary_ui_tests::method_body(source, "pub(super) fn contact_rows");
+        assert!(!body.is_empty(), "contact_rows must exist");
+        assert!(
+            body.contains("pair.antagonist"),
+            "the antagonist must be marked too, or its own menu offers a second reading"
+        );
+        assert!(
+            body.contains("entry.id() == pair.subject"),
+            "the subject is still one of the two"
+        );
+        let overlay =
+            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
+        assert!(
+            !overlay.contains("marked_index"),
+            "a single index cannot mark both arches; the rows are per layer"
+        );
+    }
 
     #[test]
     fn context_menu_drops_only_an_in_progress_lasso() {

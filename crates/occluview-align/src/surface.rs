@@ -5,11 +5,19 @@
 //! including tie-breaking. Normals come from triangle winding rather than
 //! imported vertex data so deviation signs use the indexed geometry.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use glam::DVec3;
 
 use crate::Soup;
+
+#[path = "surface_geometry.rs"]
+mod surface_geometry;
+pub(super) use surface_geometry::closest_point_on_triangle;
+#[path = "surface_helpers.rs"]
+mod surface_helpers;
+use surface_helpers::{canonical_bits, cell_count, grid_dims, longest_edge, read_triangle};
 
 /// Triangles whose doubled area falls below this are dropped at build time:
 /// they have no usable normal and no interior to project onto.
@@ -94,6 +102,44 @@ pub struct SurfaceHit {
     pub triangle: u32,
 }
 
+/// A deterministic representative of one indexed triangle for bounded
+/// fixed-to-moving overlap checks.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SurfaceSample {
+    /// Triangle centroid in the index's own frame.
+    pub(crate) point: DVec3,
+    /// The triangle's geometric normal.
+    pub(crate) normal: DVec3,
+    /// Connected component containing this triangle.
+    pub(crate) component: usize,
+}
+
+/// One roughly uniform surface representative for global shape matching.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeaturePoint {
+    pub(crate) position: DVec3,
+    pub(crate) normal: DVec3,
+}
+
+pub(crate) const FEATURE_VOXEL_MM: f64 = 0.7;
+
+/// Bounded voxel coordinates keep the feature grid meaningful and prevent
+/// overflow in the local neighbourhood walk.
+#[allow(clippy::cast_possible_truncation)]
+pub(crate) fn feature_voxel_key(point: DVec3) -> Option<(i32, i32, i32)> {
+    let coordinate = |value: f64| {
+        let scaled = (value / FEATURE_VOXEL_MM).floor();
+        (scaled.is_finite() && scaled.abs() < 1_000_000.0).then_some(scaled as i32)
+    };
+    Some((
+        coordinate(point.x)?,
+        coordinate(point.y)?,
+        coordinate(point.z)?,
+    ))
+}
+
+type ComponentData = (Vec<(DVec3, DVec3)>, Vec<usize>);
+
 /// A spatial index answering "what is the closest surface point to this?".
 #[derive(Clone, Debug)]
 pub struct SurfaceIndex {
@@ -108,6 +154,8 @@ pub struct SurfaceIndex {
     items: Vec<u32>,
     blocks: [i64; 3],
     gaps: Vec<u8>,
+    components: Vec<(DVec3, DVec3)>,
+    triangle_components: Vec<usize>,
 }
 
 impl SurfaceIndex {
@@ -128,6 +176,12 @@ impl SurfaceIndex {
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
         let mut edge_total = 0.0f64;
+        let mut parent: Vec<usize> = (0..vertex_count).collect();
+        let mut welded_positions: BTreeMap<[u64; 3], usize> = BTreeMap::new();
+        // One vertex anchor per retained triangle is enough to recover its
+        // component after all unions have been completed. Keeping all three
+        // ids here needlessly triples temporary memory on a dense scan.
+        let mut triangle_anchors = Vec::new();
 
         for (triangle, slice) in soup.indices.as_chunks::<3>().0.iter().enumerate() {
             // Any masked corner takes the whole triangle out. A triangle with
@@ -148,6 +202,31 @@ impl SurfaceIndex {
                 min = min.min(corner);
                 max = max.max(corner);
             }
+            let [a, b, c] = *slice;
+            let (Ok(a), Ok(b), Ok(c)) =
+                (usize::try_from(a), usize::try_from(b), usize::try_from(c))
+            else {
+                continue;
+            };
+            // STL and a few preview loaders duplicate every facet corner. The
+            // index still keeps those corners separate for exact nearest-hit
+            // behaviour, but component discovery must weld equal positions or
+            // every triangle becomes a false one-triangle component.
+            for (vertex, point) in [a, b, c].into_iter().zip(vertices) {
+                let key = [
+                    canonical_bits(point.x),
+                    canonical_bits(point.y),
+                    canonical_bits(point.z),
+                ];
+                if let Some(&other) = welded_positions.get(&key) {
+                    union(&mut parent, other, vertex);
+                } else {
+                    welded_positions.insert(key, vertex);
+                }
+            }
+            union(&mut parent, a, b);
+            union(&mut parent, b, c);
+            triangle_anchors.push(a);
             edge_total += longest_edge(&vertices);
             corners.push(vertices);
             normals.push(normal / length);
@@ -156,6 +235,20 @@ impl SurfaceIndex {
 
         if corners.is_empty() {
             return None;
+        }
+
+        let mut component_bounds: BTreeMap<usize, (DVec3, DVec3)> = BTreeMap::new();
+        for (vertices, &anchor) in corners.iter().zip(&triangle_anchors) {
+            let root = find(&mut parent, anchor);
+            let triangle_min = vertices[0].min(vertices[1]).min(vertices[2]);
+            let triangle_max = vertices[0].max(vertices[1]).max(vertices[2]);
+            component_bounds
+                .entry(root)
+                .and_modify(|(low, high)| {
+                    *low = low.min(triangle_min);
+                    *high = high.max(triangle_max);
+                })
+                .or_insert((triangle_min, triangle_max));
         }
 
         let extent = max - min;
@@ -167,6 +260,9 @@ impl SurfaceIndex {
             cell *= 2.0;
             dims = grid_dims(extent, cell);
         }
+
+        let (components, triangle_components) =
+            component_data(&mut parent, &triangle_anchors, component_bounds)?;
 
         let index = Self {
             corners,
@@ -180,6 +276,8 @@ impl SurfaceIndex {
             items: Vec::new(),
             blocks: [1; 3],
             gaps: Vec::new(),
+            components,
+            triangle_components,
         };
         Some(index.in_cell_order().with_buckets().with_gaps())
     }
@@ -195,6 +293,151 @@ impl SurfaceIndex {
     #[must_use]
     pub fn triangle_count(&self) -> usize {
         self.corners.len()
+    }
+
+    /// The axis-aligned bounds of the indexed surface in its own frame.
+    #[must_use]
+    pub fn bounds(&self) -> (DVec3, DVec3) {
+        (self.min, self.max)
+    }
+
+    /// Bounds for each connected component, in deterministic source order.
+    ///
+    /// Alignment uses these as bounded coarse hypotheses. A disconnected fixed
+    /// scan (for example an arch with separate teeth) must not have its global
+    /// bounding-box centre pull a moving tooth onto an adjacent component.
+    #[must_use]
+    pub fn component_bounds(&self) -> &[(DVec3, DVec3)] {
+        &self.components
+    }
+
+    /// Deterministically sample surface area and aggregate it into 0.7 mm
+    /// voxels. The source mesh's triangle count and order must not decide how
+    /// much matching evidence a physical patch contributes.
+    #[allow(clippy::cast_precision_loss)]
+    pub(crate) fn feature_cloud(&self) -> Vec<FeaturePoint> {
+        const SAMPLE_COUNT: usize = 30_000;
+        if self.corners.len() < 10_000 {
+            return Vec::new();
+        }
+        let areas: Vec<f64> = self
+            .corners
+            .iter()
+            .map(|triangle| {
+                (triangle[1] - triangle[0])
+                    .cross(triangle[2] - triangle[0])
+                    .length()
+                    * 0.5
+            })
+            .collect();
+        let total: f64 = areas.iter().sum();
+        if !total.is_finite() || total <= 0.0 {
+            return Vec::new();
+        }
+        let mut cells: BTreeMap<(i32, i32, i32), (DVec3, DVec3, u32)> = BTreeMap::new();
+        let mut triangle_slot = 0;
+        let mut preceding_area = 0.0;
+        for sample_slot in 0..SAMPLE_COUNT {
+            let target = (sample_slot as f64 + 0.5) * total / SAMPLE_COUNT as f64;
+            while triangle_slot + 1 < areas.len() && preceding_area + areas[triangle_slot] < target
+            {
+                preceding_area += areas[triangle_slot];
+                triangle_slot += 1;
+            }
+            let triangle = self.corners[triangle_slot];
+            let bary_u = radical_inverse(sample_slot + 1, 2).sqrt();
+            let bary_v = radical_inverse(sample_slot + 1, 3);
+            let point = triangle[0] * (1.0 - bary_u)
+                + triangle[1] * (bary_u * (1.0 - bary_v))
+                + triangle[2] * (bary_u * bary_v);
+            let Some(key) = feature_voxel_key(point) else {
+                return Vec::new();
+            };
+            let entry = cells.entry(key).or_insert((DVec3::ZERO, DVec3::ZERO, 0));
+            entry.0 += point;
+            entry.1 += self.normals[triangle_slot];
+            entry.2 += 1;
+        }
+        cells
+            .into_values()
+            .filter_map(|(point, normal, count)| {
+                let normal = normal.normalize_or_zero();
+                (count > 0 && normal.length_squared() > 0.0).then_some(FeaturePoint {
+                    position: point / f64::from(count),
+                    normal,
+                })
+            })
+            .collect()
+    }
+
+    /// Return at most `budget` deterministic triangle representatives.
+    ///
+    /// The samples are used only as an independent overlap signal; nearest
+    /// queries and deviation maps still use the complete indexed surface.
+    #[must_use]
+    pub(crate) fn representative_samples(&self, budget: usize) -> Vec<SurfaceSample> {
+        if budget == 0 || self.corners.is_empty() {
+            return Vec::new();
+        }
+        let target = budget.min(self.corners.len());
+        let mut selected = vec![false; self.corners.len()];
+        let mut slots = Vec::with_capacity(target);
+
+        // The index is laid out by occupied spatial cell, not by source file
+        // order. A plain `step_by` can therefore spend the whole reciprocal
+        // budget in one dense component and miss a small adjacent tooth. Give
+        // each component a deterministic representative first, then fill the
+        // rest with an even walk through the spatially ordered triangles.
+        let component_slots = target.min(self.components.len());
+        let mut first_component_slots = vec![None; self.components.len()];
+        for (slot, &component) in self.triangle_components.iter().enumerate() {
+            if let Some(first) = first_component_slots.get_mut(component) {
+                *first = (*first).or(Some(slot));
+            }
+        }
+        for rank in 0..component_slots {
+            let component = rank * self.components.len() / component_slots;
+            if let Some(Some(slot)) = first_component_slots.get(component).copied() {
+                selected[slot] = true;
+                slots.push(slot);
+            }
+        }
+
+        let stride = self.corners.len().div_ceil(target).max(1);
+        for slot in (0..self.corners.len()).step_by(stride) {
+            if slots.len() == target {
+                break;
+            }
+            if !selected[slot] {
+                selected[slot] = true;
+                slots.push(slot);
+            }
+        }
+        if slots.len() < target {
+            for (slot, is_selected) in selected.iter_mut().enumerate() {
+                if slots.len() == target {
+                    break;
+                }
+                if !*is_selected {
+                    *is_selected = true;
+                    slots.push(slot);
+                }
+            }
+        }
+        slots.sort_unstable();
+        slots
+            .into_iter()
+            .filter_map(|slot| {
+                let corners = self.corners.get(slot)?;
+                let normal = *self.normals.get(slot)?;
+                let component = *self.triangle_components.get(slot)?;
+                Some(SurfaceSample {
+                    point: (corners[0] + corners[1] + corners[2]) / 3.0,
+                    normal,
+                    component,
+                })
+            })
+            .collect()
     }
 
     /// The closest surface point to `point` within `radius`, or `None` when
@@ -436,6 +679,7 @@ impl SurfaceIndex {
         self.corners = gather(&self.corners, &order);
         self.normals = gather(&self.normals, &order);
         self.sources = gather(&self.sources, &order);
+        self.triangle_components = gather(&self.triangle_components, &order);
         self
     }
 
@@ -570,6 +814,37 @@ impl SurfaceIndex {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
+fn radical_inverse(mut index: usize, base: usize) -> f64 {
+    let mut result = 0.0;
+    let mut scale = 1.0 / base as f64;
+    while index > 0 {
+        result += (index % base) as f64 * scale;
+        index /= base;
+        scale /= base as f64;
+    }
+    result
+}
+
+/// Resolve each retained triangle to the deterministic component order used
+/// by the coarse alignment hypotheses.
+fn component_data(
+    parent: &mut [usize],
+    triangle_anchors: &[usize],
+    component_bounds: BTreeMap<usize, (DVec3, DVec3)>,
+) -> Option<ComponentData> {
+    let component_roots: Vec<usize> = component_bounds.keys().copied().collect();
+    let components: Vec<(DVec3, DVec3)> = component_bounds.into_values().collect();
+    let triangle_components = triangle_anchors
+        .iter()
+        .map(|&anchor| {
+            let root = find(parent, anchor);
+            component_roots.binary_search(&root).ok()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((components, triangle_components))
+}
+
 /// Pick `values` out in the order `order` names them.
 fn gather<T: Copy>(values: &[T], order: &[u32]) -> Vec<T> {
     order
@@ -640,105 +915,23 @@ fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
     }
 }
 
-/// Read one triangle's vertices, rejecting out-of-range or non-finite input.
-fn read_triangle(positions: &[f32], vertex_count: usize, slice: &[u32]) -> Option<[DVec3; 3]> {
-    let mut out = [DVec3::ZERO; 3];
-    for (slot, &raw) in slice.iter().enumerate() {
-        let vertex = usize::try_from(raw).ok()?;
-        if vertex >= vertex_count {
-            return None;
-        }
-        let xyz = positions.get(vertex * 3..vertex * 3 + 3)?;
-        let point = DVec3::new(f64::from(xyz[0]), f64::from(xyz[1]), f64::from(xyz[2]));
-        if !point.is_finite() {
-            return None;
-        }
-        out[slot] = point;
+/// Find a connected-component root with path compression.
+fn find(parent: &mut [usize], node: usize) -> usize {
+    if parent[node] == node {
+        return node;
     }
-    Some(out)
+    let root = find(parent, parent[node]);
+    parent[node] = root;
+    root
 }
 
-/// Length of a triangle's longest edge.
-fn longest_edge(corners: &[DVec3; 3]) -> f64 {
-    let a = (corners[1] - corners[0]).length();
-    let b = (corners[2] - corners[1]).length();
-    let c = (corners[0] - corners[2]).length();
-    a.max(b).max(c)
-}
-
-/// Grid dimensions covering `extent` at `cell`, at least one cell per axis.
-#[allow(clippy::cast_possible_truncation)]
-fn grid_dims(extent: DVec3, cell: f64) -> [i64; 3] {
-    let mut dims = [1i64; 3];
-    for (dim, raw) in dims.iter_mut().zip(extent.to_array()) {
-        let span = if raw.is_finite() { raw.max(0.0) } else { 0.0 };
-        *dim = ((span / cell).floor() as i64 + 1).max(1);
+/// Join two indexed vertices into one surface component.
+fn union(parent: &mut [usize], left: usize, right: usize) {
+    let left_root = find(parent, left);
+    let right_root = find(parent, right);
+    if left_root != right_root {
+        parent[right_root] = left_root;
     }
-    dims
-}
-
-/// Total cell count, saturating instead of overflowing on absurd dimensions.
-fn cell_count(dims: [i64; 3]) -> usize {
-    let product = dims[0]
-        .saturating_mul(dims[1])
-        .saturating_mul(dims[2])
-        .max(1);
-    usize::try_from(product).unwrap_or(usize::MAX)
-}
-
-/// Closest point on a triangle to `point` — Ericson's region test, which
-/// handles the face, the three edges, and the three corners without branching
-/// on a projection that may fall outside.
-fn closest_point_on_triangle(point: DVec3, a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
-    let ab = b - a;
-    let ac = c - a;
-    let ap = point - a;
-    let d1 = ab.dot(ap);
-    let d2 = ac.dot(ap);
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = point - b;
-    let d3 = ab.dot(bp);
-    let d4 = ac.dot(bp);
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        let denominator = d1 - d3;
-        if denominator.abs() > f64::EPSILON {
-            return a + ab * (d1 / denominator);
-        }
-        return a;
-    }
-    let cp = point - c;
-    let d5 = ab.dot(cp);
-    let d6 = ac.dot(cp);
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        let denominator = d2 - d6;
-        if denominator.abs() > f64::EPSILON {
-            return a + ac * (d2 / denominator);
-        }
-        return a;
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        let denominator = (d4 - d3) + (d5 - d6);
-        if denominator.abs() > f64::EPSILON {
-            return b + (c - b) * ((d4 - d3) / denominator);
-        }
-        return b;
-    }
-    let total = va + vb + vc;
-    if total.abs() <= f64::EPSILON {
-        return a;
-    }
-    a + ab * (vb / total) + ac * (vc / total)
 }
 
 #[cfg(test)]

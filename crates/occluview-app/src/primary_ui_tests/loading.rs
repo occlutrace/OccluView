@@ -307,29 +307,6 @@ fn single_instance_load_raises_window_after_scene_is_ready() {
 }
 
 #[test]
-fn replace_open_is_guarded_when_a_session_is_dirty_or_unsaved() {
-    let loading = app_loading_source();
-
-    assert!(
-        loading.contains("fn replace_open_needs_guard(&self) -> bool")
-            && loading.contains(
-                "self.document.edit_mode.is_dirty() || self.document.has_unsaved_mesh_edits()"
-            ),
-        "a replace open must be gated on a live dirty session OR unsaved edits, \
-         not proceed straight to a scene-destroying load"
-    );
-    assert!(
-        loading.contains("self.ui.pending_replace_open = Some(PendingReplaceOpen {"),
-        "a guarded replace open must be parked, not silently dropped or applied"
-    );
-    assert!(
-        loading.contains("fn replace_paths_confirmed(")
-            && loading.contains("SceneLoadMode::Replace"),
-        "the confirmed path must be able to start the replace once the operator answers"
-    );
-}
-
-#[test]
 fn replace_guard_dialog_offers_save_discard_and_cancel() {
     // Guard content lives in the sibling file under the same per-file line
     // budget; both files carry the dialog.

@@ -6,7 +6,7 @@ pub(super) const LAYER_OVERLAY_HEADER_HEIGHT_PX: f32 = 32.0;
 pub(super) const LAYER_ROW_GAP_PX: f32 = 8.0;
 pub(super) const LAYER_ROW_CONTROL_HEIGHT_PX: f32 = 18.0;
 pub(super) const LAYER_ROW_EYE_WIDTH_PX: f32 = 18.0;
-pub(super) const LAYER_ROW_SLIDER_WIDTH_PX: f32 = 54.0;
+pub(super) const LAYER_ROW_SLIDER_WIDTH_PX: f32 = 96.0;
 pub(super) const LAYER_ROW_TINT_WIDTH_PX: f32 = 18.0;
 pub(super) const LAYER_ROW_REMOVE_WIDTH_PX: f32 = 18.0;
 // The destructive remove control gets a wider gap than the ordinary columns.
@@ -46,7 +46,7 @@ pub(crate) fn layer_overlay_desired_height(layer_count: usize) -> f32 {
 pub(crate) fn layer_overlay_rect(viewport_rect: egui::Rect, layer_count: usize) -> egui::Rect {
     let max_width = (viewport_rect.width() - 28.0).max(180.0);
     let width = (viewport_rect.width() * 0.22)
-        .clamp(236.0, 320.0)
+        .clamp(280.0, 320.0)
         .min(max_width)
         // The floors above are aspirations; on a tiny window the viewport wins
         // so the panel never pokes past the window edge.
@@ -92,6 +92,17 @@ mod tests {
         assert!(rect.width() <= 300.0);
         assert!(rect.height() <= 420.0);
         assert!(viewport.contains_rect(rect));
+    }
+
+    #[test]
+    fn layer_overlay_reserves_room_for_the_opacity_control_and_readable_name() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
+        let rect = layer_overlay_rect(viewport, 2);
+        let inner = rect.width() - 20.0;
+        assert!(
+            layer_name_width(inner) >= 80.0,
+            "the row must fit its controls and a readable name: {rect:?}"
+        );
     }
 
     #[test]
@@ -161,12 +172,12 @@ mod tests {
             let expected = (row_width - LAYER_ROW_CONTROL_WIDTH_PX).max(0.0);
             assert_near(name, expected);
         }
-        // The panel is never narrower than the 236 px floor in
-        // `layer_overlay_rect`, less its 20 px of frame. The controls have to
-        // leave a readable name column at that width.
-        let narrowest_row = 236.0 - 20.0;
+        // Check the actual narrow viewport after the panel's responsive width
+        // calculation, including its 20 px of frame.
+        let narrow_viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 720.0));
+        let narrowest_row = layer_overlay_rect(narrow_viewport, 2).width() - 20.0;
         assert!(
-            layer_name_width(narrowest_row) >= 60.0,
+            layer_name_width(narrowest_row) >= 80.0,
             "the controls take {LAYER_ROW_CONTROL_WIDTH_PX} px and leave \
              {} px for the layer name in the narrowest panel",
             layer_name_width(narrowest_row)

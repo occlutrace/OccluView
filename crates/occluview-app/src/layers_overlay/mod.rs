@@ -28,6 +28,27 @@ pub(crate) struct LayerOverlayChanges {
     pub(crate) layer_edits: Vec<LayerRowChange>,
 }
 
+/// What the layer rows and the viewport menu need to offer the contact reading.
+///
+/// Passed in rather than read from the scene: whether a reading can be opened on
+/// a layer depends on the other layers (it needs a second visible surface), and
+/// that rule lives with the contact feature, not with the overlay that draws the
+/// rows.
+pub(crate) struct LayerContactRows<'a> {
+    /// Whether each layer is currently wearing contact marks, one entry per
+    /// scene layer.
+    ///
+    /// A reading paints BOTH arches of its pair, so both rows offer to close it;
+    /// a single "the" marked index could only ever name one of them and left the
+    /// other offering to open a second reading on the same scans.
+    ///
+    /// Shorter than the layer list means "not marked".
+    pub(crate) marked: &'a [bool],
+    /// Whether a contact reading can be opened, one entry per scene layer.
+    /// Shorter than the layer list means "not readable".
+    pub(crate) readable: &'a [bool],
+}
+
 // Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn show(
@@ -36,6 +57,7 @@ pub(crate) fn show(
     scene: &Scene,
     paths: &[PathBuf],
     active_layer_id: Option<SceneMeshId>,
+    contacts: LayerContactRows<'_>,
     locale: &crate::i18n::LocaleManager,
 ) -> LayerOverlayChanges {
     let layer_count = scene.meshes().len();
@@ -72,10 +94,17 @@ pub(crate) fn show(
                                 tint: entry.tint,
                                 wireframe: entry.wireframe,
                                 face_editable: !entry.mesh.is_point_cloud(),
+                                can_export: !entry.mesh.vertices().is_empty(),
                                 show_vertex_colors: entry.show_vertex_colors,
                                 show_texture: entry.show_texture && entry.show_vertex_colors,
                                 has_color_data: entry.mesh.carries_color_data(),
                                 has_texture: entry.mesh.texture().is_some(),
+                                contacts: contacts.marked.get(index).copied().unwrap_or(false),
+                                can_read_contacts: contacts
+                                    .readable
+                                    .get(index)
+                                    .copied()
+                                    .unwrap_or(false),
                             },
                             LayerRowView {
                                 index,

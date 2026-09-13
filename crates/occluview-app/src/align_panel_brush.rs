@@ -11,24 +11,15 @@
 use eframe::egui;
 
 use crate::align_brush::AlignBrush;
-use crate::align_markings::MaskCommand;
+use crate::align_markings::{AlignSide, MaskCommand};
 use crate::align_panel::chip;
+use crate::align_panel_roles::AlignRoles;
 use crate::icons::AppIcon;
 use crate::ui_theme;
 
 /// Fixed window width. Narrower than the main window: it holds one slider's
 /// worth of content and floats over the mesh being painted.
 const WINDOW_WIDTH: f32 = 236.0;
-
-/// Ink for the line that says the whole mesh has been marked out.
-///
-/// Derived from the colour the marked surface itself is painted, not copied from
-/// it: the two were separate literals in separate files, each with a comment
-/// claiming they agreed.
-const MARKED_OUT_INK: egui::Color32 = {
-    let ink = crate::align_markings::MARKED_OUT_COLOR;
-    egui::Color32::from_rgb(ink[0], ink[1], ink[2])
-};
 
 /// What the Brush tool window asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,25 +30,26 @@ pub(crate) enum BrushPanelAction {
     Close,
 }
 
+/// Inputs for the compact Brush window. Grouping these values keeps the
+/// caller's UI transaction readable without hiding which state is mutable.
+pub(crate) struct BrushPanelView<'a> {
+    pub(crate) viewport_rect: egui::Rect,
+    pub(crate) brush: &'a mut AlignBrush,
+    pub(crate) roles: Option<&'a AlignRoles>,
+    pub(crate) enabled: bool,
+    pub(crate) locale: &'a crate::i18n::LocaleManager,
+}
+
 /// Show the Brush tool window; returns what the operator asked for.
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
-#[expect(clippy::too_many_arguments)]
-pub(crate) fn show(
-    ctx: &egui::Context,
-    viewport_rect: egui::Rect,
-    brush: &mut AlignBrush,
-    marked: Option<f32>,
-    enabled: bool,
-    locale: &crate::i18n::LocaleManager,
-) -> Option<BrushPanelAction> {
+pub(crate) fn show(ctx: &egui::Context, view: BrushPanelView<'_>) -> Option<BrushPanelAction> {
     // Opens to the LEFT of the main window's default corner, so the two do not
     // land on top of each other the first time the checkbox is ticked.
-    let default_pos = viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
+    let default_pos = view.viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
     let mut action = None;
-    egui::Window::new("Brush tool")
+    egui::Window::new(view.locale.tr("align-brush-title"))
         .id(egui::Id::new("occluview_align_brush_window"))
         .default_pos(default_pos)
-        .constrain_to(viewport_rect)
+        .constrain_to(view.viewport_rect)
         .resizable(false)
         .collapsible(false)
         .title_bar(false)
@@ -66,7 +58,7 @@ pub(crate) fn show(
             ui.set_width(WINDOW_WIDTH - 24.0);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.style_mut().animation_time = 0.05;
-            action = body(ui, brush, marked, enabled, locale);
+            action = body(ui, view.brush, view.roles, view.enabled, view.locale);
         });
     action
 }
@@ -75,34 +67,60 @@ pub(crate) fn show(
 fn body(
     ui: &mut egui::Ui,
     brush: &mut AlignBrush,
-    marked: Option<f32>,
+    roles: Option<&AlignRoles>,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<BrushPanelAction> {
     let mut action = header(ui, locale);
     ui.add_space(2.0);
-    ui.label(
-        egui::RichText::new(locale.tr("align-brush-subtitle"))
-            .size(11.0)
-            .color(ui_theme::text()),
-    );
-    ui.label(
-        egui::RichText::new(if brush.is_inverse() {
-            locale.tr("align-brush-hint-inverse")
-        } else {
-            locale.tr("align-brush-hint-mark")
-        })
-        .size(11.0)
-        .color(ui_theme::text_muted()),
-    );
-    ui.add_space(4.0);
-
+    if let Some(roles) = roles {
+        mesh_selection(ui, brush, roles, enabled, locale);
+        ui.add_space(2.0);
+    }
     action = action.or(commands(ui, enabled, locale));
     ui.add_space(2.0);
     size(ui, brush, enabled, locale);
     automatic(ui, brush, enabled, locale);
-    coverage(ui, marked, locale);
     action
+}
+
+/// Select the physical mesh the brush edits.
+///
+/// The two scans overlap by design, so nearest-surface picking is not a safe
+/// substitute: it can paint the other scan. Exocad exposes this as an
+/// explicit Mesh selection, and keeping it visible in the Brush window makes
+/// the target unambiguous while the operator works.
+fn mesh_selection(
+    ui: &mut egui::Ui,
+    brush: &mut AlignBrush,
+    roles: &AlignRoles,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) {
+    ui.label(
+        egui::RichText::new(locale.tr("align-brush-mesh-selection"))
+            .size(11.0)
+            .color(ui_theme::text_muted()),
+    );
+    for side in AlignSide::BOTH {
+        let role_key = match side {
+            AlignSide::Moving => "align-brush-moving",
+            AlignSide::Fixed => "align-brush-fixed",
+        };
+        let label = format!("{} · {}", locale.tr(role_key), roles.side_name(side));
+        if chip(
+            ui,
+            ui.available_width(),
+            None,
+            &label,
+            enabled,
+            brush.target_side() == side,
+        )
+        .clicked()
+        {
+            brush.set_target_side(side);
+        }
+    }
 }
 
 /// The title strip, with the only way out of the window that is not the
@@ -132,6 +150,21 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
                     ui_theme::text_weak()
                 },
             );
+            if close_response.has_focus() {
+                ui.painter().rect_stroke(
+                    close_rect,
+                    4.0,
+                    egui::Stroke::new(1.2_f32, ui_theme::accent()),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            close_response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    true,
+                    locale.tr("align-brush-close-hint"),
+                )
+            });
             if close_response
                 .on_hover_text(locale.tr("align-brush-close-hint"))
                 .clicked()
@@ -234,36 +267,6 @@ fn automatic(
     }
 }
 
-/// How much of the two meshes is currently marked.
-///
-/// The one number that says whether the brush did what the operator meant.
-/// "Fit nowhere" and a slip of the hand look identical on a shaded surface at a
-/// glance, and both make best-fit matching do nothing.
-fn coverage(ui: &mut egui::Ui, marked: Option<f32>, locale: &crate::i18n::LocaleManager) {
-    let Some(marked) = marked else {
-        return;
-    };
-    let percent = (marked * 100.0).clamp(0.0, 100.0);
-    let (text, ink) = if marked >= 1.0 {
-        (locale.tr("align-brush-all-marked"), MARKED_OUT_INK)
-    } else if marked <= 0.0 {
-        (
-            locale.tr("align-brush-nothing-marked"),
-            ui_theme::text_muted(),
-        )
-    } else {
-        (
-            locale.tr_with(
-                "align-brush-percent-marked",
-                &[("pct", &format!("{percent:.0}"))],
-            ),
-            ui_theme::text_muted(),
-        )
-    };
-    ui.add_space(2.0);
-    ui.label(egui::RichText::new(text).size(10.5).color(ink));
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -285,8 +288,8 @@ mod tests {
     #[test]
     fn the_brush_is_its_own_movable_window() {
         let source = production();
-        assert!(source.contains("egui::Window::new(\"Brush tool\")"));
-        assert!(source.contains(".constrain_to(viewport_rect)"));
+        assert!(source.contains("egui::Window::new(view.locale.tr(\"align-brush-title\"))"));
+        assert!(source.contains(".constrain_to(view.viewport_rect)"));
         assert!(
             !source.contains(".anchor("),
             "an anchored window cannot be moved off the mesh being painted"
@@ -310,6 +313,7 @@ mod tests {
         // Control captions resolve through the catalog; the keys are
         // what the window must reference.
         for control in [
+            "align-brush-mesh-selection",
             "align-brush-size",
             "align-brush-inverse",
             "align-brush-auto-radius",
@@ -318,12 +322,34 @@ mod tests {
         }
     }
 
-    /// "Fit nowhere" and a slip of the hand look identical on a shaded surface,
-    /// and both make best-fit matching silently do nothing.
     #[test]
-    fn the_window_says_how_much_of_the_mesh_is_marked() {
+    fn the_working_brush_window_has_no_dynamic_coverage_line() {
         let source = production();
-        assert!(source.contains("align-brush-all-marked"));
-        assert!(source.contains("align-brush-percent-marked"));
+        assert!(
+            !source.contains("coverage("),
+            "brush coverage is diagnostic clutter in the working window"
+        );
+        assert!(
+            !source.contains("align-brush-percent-marked"),
+            "brush must not show a marked percentage"
+        );
+        assert!(
+            source.contains("brush.target_side() == side")
+                && source.contains("brush.set_target_side(side)"),
+            "the brush needs an explicit mesh selection"
+        );
+    }
+
+    #[test]
+    fn the_brush_close_control_shows_keyboard_focus() {
+        let source = production();
+        let header = source
+            .split_once("fn header(")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        assert!(
+            header.contains("close_response.has_focus()"),
+            "the brush close control needs a visible keyboard focus state"
+        );
     }
 }

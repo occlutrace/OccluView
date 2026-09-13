@@ -54,6 +54,7 @@ impl Offscreen {
         spec: ThumbnailSpec,
         deadline: RenderDeadline,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let size = u32::from(spec.size_px);
         let device = self.renderer.device();
         let queue = self.renderer.queue();
@@ -164,6 +165,7 @@ impl Offscreen {
         &self,
         request: PreparedSceneClipRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let PreparedSceneClipRequest {
             scene,
             camera,
@@ -297,6 +299,7 @@ impl Offscreen {
         &self,
         request: PreparedViewportRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let PreparedViewportRequest {
             scene,
             overlay,
@@ -412,6 +415,7 @@ impl Offscreen {
         &self,
         request: PreparedViewportClipRequest<'_>,
     ) -> Result<Vec<u8>, RenderError> {
+        self.ensure_gpu_ready()?;
         let PreparedViewportClipRequest {
             scene,
             overlay,

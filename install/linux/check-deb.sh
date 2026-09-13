@@ -71,6 +71,10 @@ for deb in "$@"; do
   grep -F "Architecture:" "$control/control" >/dev/null
   grep -F "Version:" "$control/control" >/dev/null
   grep -F "Depends:" "$control/control" >/dev/null
+  grep -F "libegl1" "$control/control" >/dev/null
+  grep -F "libstdc++6" "$control/control" >/dev/null
+  grep -F "libxkbcommon-x11-0" "$control/control" >/dev/null
+  grep -F "Recommends: xdg-desktop-portal, libnotify-bin" "$control/control" >/dev/null
 
   sh -n "$control/postinst"
   sh -n "$control/postrm"
@@ -146,6 +150,20 @@ for deb in "$@"; do
 
   check_ldd "$root/usr/bin/occluview" "$tmp/occluview.ldd"
   check_ldd "$root/usr/bin/occluview-cli" "$tmp/occluview-cli.ldd"
+
+  # ldd cannot see wgpu/winit libraries loaded with dlopen. Exercise the
+  # installed binary's no-window diagnostics path so loader/device failures
+  # are captured in a report instead of looking like an unexplained exit. This
+  # is an entry smoke, not a GUI surface test: no adapter is required and the
+  # command may report an empty adapter list on a headless CI host.
+  runtime_state="$tmp/runtime-state"
+  mkdir -p "$runtime_state"
+  if ! env XDG_STATE_HOME="$runtime_state" "$root/usr/bin/occluview" --diagnostics \
+    >"$tmp/diagnostics.stdout" 2>"$tmp/diagnostics.stderr"; then
+    cat "$tmp/diagnostics.stderr" >&2
+    echo "installed graphics diagnostics failed for $deb" >&2
+    exit 1
+  fi
 
   if command -v lintian >/dev/null 2>&1; then
     lintian --fail-on error \

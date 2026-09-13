@@ -28,6 +28,8 @@ use std::sync::Arc;
 
 pub(super) struct DocumentState {
     pub(super) scene: Option<Arc<Scene>>,
+    /// Bumped when committed scene content or unsaved mesh edits change.
+    pub(super) content_revision: u64,
     pub(super) edit_mode: EditModeController,
     /// Layers carrying unsaved edits: the in-scene mesh differs from what was
     /// loaded from disk. Written by every applied mesh-edit and its undo/redo,
@@ -108,6 +110,7 @@ impl DocumentState {
     pub(super) fn new() -> Self {
         Self {
             scene: None,
+            content_revision: 0,
             edit_mode: EditModeController::default(),
             unsaved_edit_layer_ids: std::collections::BTreeSet::new(),
             hidden_layer_stack: Vec::new(),
@@ -149,6 +152,7 @@ impl DocumentState {
     /// Every mesh-edit success path (including undo/redo) routes through here
     /// so the save flow knows exactly which layers to offer for export.
     pub(super) fn mark_mesh_edits_unsaved(&mut self, layer_id: SceneMeshId) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         self.unsaved_edit_layer_ids.insert(layer_id);
     }
 
