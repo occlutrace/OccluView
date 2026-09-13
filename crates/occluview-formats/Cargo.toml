@@ -32,8 +32,8 @@ serde_json     = { workspace = true }
 # PNG + JPEG decode for glTF texture images (GLB embeds them in bufferViews).
 image          = { workspace = true }
 
-# `GetDriveTypeW`, to refuse memory-mapping a network share or removable drive
-# whose disappearance would raise EXCEPTION_IN_PAGE_ERROR instead of an error.
+# `MoveFileExW`, so replacing an existing export is published through one
+# rename and reports its collision codes as themselves.
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = ["Win32_Storage_FileSystem"]

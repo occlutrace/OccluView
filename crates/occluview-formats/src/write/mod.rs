@@ -568,14 +568,17 @@ pub(super) fn sanitize_obj_name(name: &str) -> String {
 /// This used to be `format!("{value:.6}")`, which allocates a `String` for
 /// every coordinate written. OBJ writes up to twelve of them per vertex, so a
 /// half-million-triangle export made roughly eighteen million short-lived
-/// allocations and spent a quarter of its time inside the allocator before any
-/// byte reached the writer. Formatting straight into the writer keeps the one
-/// definition of the precision — the output is byte-identical.
+/// allocations before any byte reached the writer. Formatting straight into the
+/// writer keeps the one definition of the precision, and `FmtF32` renders the
+/// same digits as the `format!` it replaced — `coordinate_rendering_is_pinned`
+/// in `write/obj.rs` fixes them.
 ///
-/// Formatting is still the dominant cost of an OBJ export: measured at
-/// ~990 ms for 500k triangles, of which the write itself is ~90 ms. A faster
-/// path would mean changing how the digits are produced, which is a change to
-/// the file format's output, so it is not made here.
+/// Formatting is still the dominant cost of an OBJ export. On a synthetic
+/// 500k-triangle arch (release build, Linux x86-64), formatting is ~990 ms
+/// end to end of which the file write is ~90 ms; the allocation removal above
+/// cut the formatting pass from 485 ms to 370 ms at 200k triangles on the same
+/// fixture. A faster path would mean changing how the digits are produced,
+/// which changes the exported file, so it is not made here.
 pub(super) struct FmtF32(pub(super) f32);
 
 impl std::fmt::Display for FmtF32 {

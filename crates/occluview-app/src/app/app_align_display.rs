@@ -385,7 +385,8 @@ mod tests {
         assert!(
             !source.contains("Arc::make_mut(scene)"),
             "in-place scene edits go through live_scene_mut, which asserts the \
-             handle is sole; bypassing it reintroduces a silent full copy"
+             handle is sole; bypassing it lets an edit land in a copy another \
+             holder never sees"
         );
     }
 
