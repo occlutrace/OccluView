@@ -2,6 +2,7 @@ use super::*;
 use crate::mesh::{Mesh, MeshTexture, Vertex};
 use glam::{Affine3A, Vec3};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// A source file of this crate, read for a contract assertion.
 ///
@@ -428,14 +429,14 @@ fn a_layer_carries_an_optional_deviation_overlay() {
         "a plain layer has no overlay"
     );
 
-    let colors = std::sync::Arc::new(vec![[1u8, 2, 3, 255]; 3]);
+    let colors = Arc::new(vec![[1u8, 2, 3, 255]; 3]);
     let entry = entry.with_deviation(Some(colors));
     assert_eq!(entry.deviation_colors().map(|colors| colors.len()), Some(3));
 }
 
 #[test]
 fn replacing_the_geometry_drops_a_stale_deviation_overlay() {
-    let colors = std::sync::Arc::new(vec![[9u8, 9, 9, 255]; 3]);
+    let colors = Arc::new(vec![[9u8, 9, 9, 255]; 3]);
     let entry = SceneMesh::new(tri()).with_deviation(Some(colors));
 
     let rebuilt = entry.with_mesh(tri());
@@ -443,5 +444,52 @@ fn replacing_the_geometry_drops_a_stale_deviation_overlay() {
     assert!(
         rebuilt.deviation_colors().is_none(),
         "an overlay indexed by the old vertices must not survive new geometry"
+    );
+}
+
+/// A clone of a scene shares the geometry it does not change.
+///
+/// `SceneMesh.mesh` is an `Arc<Mesh>`, so cloning a scene copies the
+/// per-layer container and metadata but not vertices, indices, or decoded
+/// texture. This is the property the in-place-edit paths rest on: without
+/// it, `Arc::make_mut(Scene)` on a second handle would move the whole case.
+#[test]
+fn cloning_a_scene_shares_layer_geometry() {
+    let mut scene = Scene::new();
+    let entry = SceneMesh::new(tri());
+    let mesh = Arc::clone(&entry.mesh);
+    scene.add(entry);
+
+    let cloned = scene.clone();
+
+    assert!(
+        Arc::ptr_eq(&mesh, &scene.meshes()[0].mesh),
+        "the original entry must still hold the same geometry"
+    );
+    assert!(
+        Arc::ptr_eq(&scene.meshes()[0].mesh, &cloned.meshes()[0].mesh),
+        "a cloned scene must share the geometry, not copy it"
+    );
+    assert_eq!(Arc::strong_count(&mesh), 3, "one handle per owner");
+}
+
+/// The container is copied, and its metadata is independently mutable.
+#[test]
+fn cloning_a_scene_copies_metadata_independently() {
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(tri()));
+    scene.meshes_mut()[0].transform = Affine3A::from_translation(Vec3::new(4.0, 0.0, 0.0));
+
+    let mut cloned = scene.clone();
+    cloned.meshes_mut()[0].transform = Affine3A::IDENTITY;
+
+    assert_ne!(
+        scene.meshes()[0].transform,
+        cloned.meshes()[0].transform,
+        "editing the clone's pose must not move the original"
+    );
+    assert!(
+        Arc::ptr_eq(&scene.meshes()[0].mesh, &cloned.meshes()[0].mesh),
+        "and must not have copied the geometry to do it"
     );
 }

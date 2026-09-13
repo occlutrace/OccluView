@@ -100,7 +100,7 @@ impl OccluViewApp {
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
             // deviation overlay, and a second handle alive there copies the
-            // whole case. It survives today only because of an early return
+            // container. It survives today only because of an early return
             // three modules away, which is not a guarantee this function makes.
             drop(scene);
             // The map describes the pose the scan is leaving. Dropped once, at
@@ -173,9 +173,10 @@ impl OccluViewApp {
     /// pose change is four rows of numbers; routing it through `set_scene` per
     /// mouse-move frame cancelled the bridge-split session, invalidated the
     /// sculpt session, and wiped every ruler measurement on screen — mid-drag.
-    /// It goes in PLACE, too. The app holds the only reference to the scene, so
-    /// copying it per mouse-move frame moved forty megabytes of mesh on a full
-    /// arch to change sixteen floats that live in the layer's uniform.
+    /// It goes in PLACE, too. A pose is a transform, and the commit path that
+    /// would carry it also rebuilds bookkeeping the drag would then have to
+    /// undo each frame; going in place keeps a mouse-move frame to the fields
+    /// it actually changes.
     pub(super) fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
         let started_at = self.tools.align.drag.map(|drag| drag.start);
         let Some(live) = self.document.live_scene_mut() else {

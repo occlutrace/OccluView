@@ -5,9 +5,9 @@
 //!
 //! - `scene` is the single authoritative content handle; in-place edits go
 //!   through [`DocumentState::live_scene_mut`] (borrowed scene) or
-//!   [`taken_scene_mut`] (take-edit-restore in the sculpt worker) so a
-//!   second live handle fails a test instead of silently deep-copying the
-//!   case every frame.
+//!   [`taken_scene_mut`] (take-edit-restore in the sculpt worker), so a second
+//!   live handle — a reader that would not see the edit — fails a test instead
+//!   of passing silently.
 //! - `unsaved_edit_layer_ids` names exactly the layers whose in-scene mesh
 //!   differs from disk; every applied mesh edit and its undo/redo routes
 //!   through [`DocumentState::mark_mesh_edits_unsaved`].
@@ -88,17 +88,22 @@ fn report_shared_scene_edit(handles: usize) {
     }
     tracing::warn!(
         handles,
-        "scene edited in place while another handle was alive; this copies the \
-         whole case and will keep doing so until the handle is released"
+        "scene edited in place while another handle was alive; that reader \
+         will not observe the edit, and the scene container is copied until \
+         the handle is released"
     );
 }
 
+/// The take-edit-restore path: the scene handle is out of the document for the
+/// duration of the edit, so the same single-owner invariant applies. See
+/// [`DocumentState::live_scene_mut`] for what a second handle means and costs.
 pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
     let handles = Arc::strong_count(scene);
     debug_assert_eq!(
         handles, 1,
-        "in-place scene edit while another Arc<Scene> is alive: this \
-         silently deep-copies every vertex, index and texture of the case"
+        "in-place scene edit while another Arc<Scene> is alive: the edit would \
+         be invisible to that reader, and the scene container plus its \
+         per-layer metadata are copied in the meantime"
     );
     if handles != 1 {
         report_shared_scene_edit(handles);
@@ -126,21 +131,31 @@ impl DocumentState {
     /// The live scene, mutable in place (the borrowed-handle path; the
     /// take-edit-restore path is [`taken_scene_mut`]).
     ///
-    /// `Arc::make_mut` copies the whole scene whenever a second handle exists,
-    /// and the callers below all run per frame: a slider drag, a brush dab, a
-    /// nudge of an aligned layer. On two 945k-vertex arches that is 40 ns as
-    /// sole handle against 45.75 ms otherwise -- the entire case copied every
-    /// frame to change a few numbers.
+    /// Every in-place scene edit comes through here, and the invariant is that
+    /// the document owns the only handle while one runs: a second handle means
+    /// the caller is holding a scene it intends to read afterwards, so the edit
+    /// it is about to make is invisible to it. That is a correctness problem
+    /// first -- the alignment overlay cleanup in `clear_scene` reached this
+    /// function with the document still owning the scene and tripped it on the
+    /// real "remove the last layer" path.
     ///
-    /// Every in-place scene edit comes through here, so a caller that keeps a
-    /// handle alive across the edit fails a test instead of costing frames.
+    /// The cost argument is the smaller half, and the numbers are smaller than
+    /// they used to be. `SceneMesh::mesh` is an `Arc<Mesh>`, so `Arc::make_mut`
+    /// on a shared scene copies the per-layer container and its metadata, not
+    /// the vertices, indices, or decoded texture. Measured on one 945k-vertex
+    /// layer: 5 ns for `make_mut` as sole handle against 71 ns with a second
+    /// handle alive, and cloning the scene outright is 39 ns. Those are per-frame
+    /// costs worth not paying, not the tens of milliseconds a copied case would
+    /// be, and they are recorded here as measurements rather than as a warning
+    /// about a case-sized copy that no longer happens.
     pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
         let scene = self.scene.as_mut()?;
         let handles = Arc::strong_count(scene);
         debug_assert_eq!(
             handles, 1,
-            "in-place scene edit while another Arc<Scene> is alive: this \
-             silently deep-copies every vertex, index and texture of the case"
+            "in-place scene edit while another Arc<Scene> is alive: the edit \
+             would be invisible to that reader, and the scene container plus \
+             its per-layer metadata are copied in the meantime"
         );
         if handles != 1 {
             report_shared_scene_edit(handles);
