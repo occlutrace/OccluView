@@ -422,6 +422,8 @@ fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+    use super::Rigid;
+
     /// Source before the test module.
     fn production() -> &'static str {
         let source =
@@ -539,24 +541,40 @@ mod tests {
         }
     }
 
-    /// A committed pose must enter undo history and mark the layer unsaved.
+    /// A committed pose moves the scan, is undoable, and is unsaved work.
+    ///
+    /// This used to assert that the two history calls were present in the
+    /// source and that `mark_mesh_edits_unsaved` was called, which passes while
+    /// the pose is applied to the wrong layer, or written to the draft only, or
+    /// undone by the next frame. It now runs the commit and reads the scene and
+    /// the guards an operator would actually meet.
     #[test]
-    fn a_committed_pose_is_both_undoable_and_unsaved_work() {
-        let commit = production()
-            .split_once("fn commit_align_pose(")
-            .map(|(_, rest)| rest)
-            .and_then(|rest| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
+    fn a_committed_pose_is_applied_undoable_and_unsaved_work() {
+        use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+        use glam::Affine3A;
+
+        let mut app = test_app("commit-align-pose");
+        let mut scene = named_scene("lower", 0.0);
+        let moving_id = push_named_layer(&mut scene, "upper", 5.0);
+        app.document.scene = Some(std::sync::Arc::new(scene));
+        app.tools.align.tool.arm();
+        app.tools.align.tool.imply_pair(&[moving_id, moving_id]);
+
+        let pose = Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::new(1.5, -2.0, 0.25));
+        assert!(app.commit_align_pose(pose), "a fit on a live scene commits");
+
+        let moved = app.document.scene.as_ref().expect("scene").meshes()[1].transform;
+        assert_eq!(moved, pose.to_affine(), "the pose reaches the live scene");
         assert!(
-            commit.contains("begin_scene_edit(&next, moving_id, EditModeCommand::MoveLayer)")
-                && commit.contains("finish_scene_edit_success(token, &next)"),
-            "a fit that cannot be undone is not an edit, it is an accident"
+            app.document.has_unsaved_mesh_edits(),
+            "the close guard must see the alignment, or it is lost without asking"
         );
-        assert!(
-            commit.contains("self.document.mark_mesh_edits_unsaved(moving_id)"),
-            "an aligned scan that the close guard cannot see is an alignment the \
-             operator loses without being asked"
+
+        app.apply_history_navigation_now(false, &egui::Context::default());
+        assert_eq!(
+            app.document.scene.as_ref().expect("scene").meshes()[1].transform,
+            Affine3A::IDENTITY,
+            "Ctrl+Z returns the scan to where it was"
         );
     }
 
