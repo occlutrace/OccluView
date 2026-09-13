@@ -94,7 +94,7 @@ impl OccluViewApp {
         }
         // Everything that reads the scene happens inside this block, so the
         // handle it clones is gone before the dab is drawn into the scene
-        // below. `Arc::make_mut` copies the whole case while a second handle
+        // below. `Arc::make_mut` copies this path while a second handle
         // is alive, and this is a per-frame path.
         let (layer_id, painting, changed) = {
             let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {

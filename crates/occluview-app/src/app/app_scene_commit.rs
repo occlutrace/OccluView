@@ -7,20 +7,47 @@ pub(super) fn reconcile_scene_paths(
     new_scene: &Scene,
 ) -> Vec<PathBuf> {
     let mut paths_by_id = HashMap::with_capacity(old_scene.meshes().len());
+    // The file a lineage was imported from, keyed by the id of the layer that
+    // was imported. A derived layer records that original id as its source, and
+    // it keeps recording it after the original layer is deleted: a part cut out
+    // of a part still names the imported scan it descends from. That is the
+    // right answer for export, but it means the id in `paths_by_id` may already
+    // be gone by the time a later generation is cut. This map is what carries
+    // the file forward when it is.
+    let mut paths_by_origin = HashMap::with_capacity(old_scene.meshes().len());
     for (index, entry) in old_scene.meshes().iter().enumerate() {
-        paths_by_id.insert(
-            entry.id(),
-            old_paths.get(index).cloned().unwrap_or_default(),
-        );
+        let path = old_paths.get(index).cloned().unwrap_or_default();
+        paths_by_id.insert(entry.id(), path.clone());
+        if !path.as_os_str().is_empty() {
+            paths_by_origin
+                .entry(entry.export_source_layer_id())
+                .or_insert(path);
+        }
     }
 
     new_scene
         .meshes()
         .iter()
         .map(|entry| {
-            paths_by_id
-                .get(&entry.id())
-                .or_else(|| paths_by_id.get(&entry.export_source_layer_id()))
+            let origin = entry.export_source_layer_id();
+            // Every candidate is filtered the same way. An empty path means
+            // "no file", and a chain that only filters some of its arms stops
+            // at the first empty match instead of reaching the arm that has the
+            // file — which is the case this fallback exists for.
+            [entry.id(), origin]
+                .into_iter()
+                .find_map(|id| {
+                    paths_by_id
+                        .get(&id)
+                        .filter(|path| !path.as_os_str().is_empty())
+                })
+                .or_else(|| {
+                    [entry.id(), origin].into_iter().find_map(|id| {
+                        paths_by_origin
+                            .get(&id)
+                            .filter(|path| !path.as_os_str().is_empty())
+                    })
+                })
                 .cloned()
                 .unwrap_or_default()
         })
@@ -74,14 +101,21 @@ mod tests {
         Vertex::at(Vec3::new(x, y, z))
     }
 
-    fn named_layer(name: &str) -> Option<SceneMesh> {
+    /// A layer fixture that fails loudly.
+    ///
+    /// It used to return `Option<SceneMesh>` and every test opened with
+    /// `let Some(..) else { return; }`. A fixture that cannot build its mesh
+    /// made those tests pass without asserting anything, which is the one
+    /// failure mode a test must not have. The mesh is a fixed triangle list, so
+    /// construction either always succeeds or the fixture itself is broken.
+    fn named_layer(name: &str) -> SceneMesh {
         let mesh = Mesh::new(
             Some(name.to_string()),
             vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
             vec![0, 1, 2],
         )
-        .ok()?;
-        Some(SceneMesh::new(mesh))
+        .expect("the fixture's fixed triangle list is a valid mesh");
+        SceneMesh::new(mesh)
     }
 
     fn scene_with_layers(layers: impl IntoIterator<Item = SceneMesh>) -> Scene {
@@ -94,18 +128,10 @@ mod tests {
 
     #[test]
     fn inserting_part_in_middle_preserves_retained_ids_and_gives_new_id_empty_path() {
-        let Some(lower) = named_layer("Lower") else {
-            return;
-        };
-        let Some(upper) = named_layer("Upper") else {
-            return;
-        };
-        let Some(prep) = named_layer("Prep") else {
-            return;
-        };
-        let Some(part_b) = named_layer("Part B") else {
-            return;
-        };
+        let lower = named_layer("Lower");
+        let upper = named_layer("Upper");
+        let prep = named_layer("Prep");
+        let part_b = named_layer("Part B");
         let old_scene = scene_with_layers([lower.clone(), upper.clone(), prep.clone()]);
         let new_scene = scene_with_layers([lower, part_b, upper, prep]);
         let old_paths = vec![
@@ -129,15 +155,9 @@ mod tests {
 
     #[test]
     fn removing_and_reordering_layers_maps_paths_by_stable_id() {
-        let Some(lower) = named_layer("Lower") else {
-            return;
-        };
-        let Some(upper) = named_layer("Upper") else {
-            return;
-        };
-        let Some(prep) = named_layer("Prep") else {
-            return;
-        };
+        let lower = named_layer("Lower");
+        let upper = named_layer("Upper");
+        let prep = named_layer("Prep");
         let old_scene = scene_with_layers([lower.clone(), upper, prep.clone()]);
         let new_scene = scene_with_layers([prep, lower]);
         let old_paths = vec![
@@ -159,12 +179,8 @@ mod tests {
 
     #[test]
     fn structural_undo_and_redo_share_the_same_reconciliation_helper() {
-        let Some(lower) = named_layer("Lower") else {
-            return;
-        };
-        let Some(split_part) = named_layer("Split Part") else {
-            return;
-        };
+        let lower = named_layer("Lower");
+        let split_part = named_layer("Split Part");
         let baseline = scene_with_layers([lower.clone()]);
         let split = scene_with_layers([lower, split_part]);
         let baseline_paths = vec![PathBuf::from("/cases/lower.stl")];
@@ -183,12 +199,8 @@ mod tests {
 
     #[test]
     fn derived_layer_keeps_the_source_export_path() {
-        let Some(source) = named_layer("Source") else {
-            return;
-        };
-        let derived = named_layer("Source part")
-            .expect("test mesh")
-            .with_source_layer_id(source.id());
+        let source = named_layer("Source");
+        let derived = named_layer("Source part").with_source_layer_id(source.id());
         let old_scene = scene_with_layers([source.clone()]);
         let new_scene = scene_with_layers([source, derived]);
         let old_paths = vec![PathBuf::from("/cases/source.stl")];
@@ -219,6 +231,43 @@ mod tests {
         assert!(
             !layer_edits.contains("current_paths.remove("),
             "manual index-based path mutation should be gone"
+        );
+    }
+
+    /// An empty path on a live layer must not shadow the lineage fallback.
+    ///
+    /// A derived layer can be in the scene while its own slot is empty — the
+    /// case that made the fallback necessary. If the chain stops at the first
+    /// match regardless of whether it holds a file, the layer keeps no path and
+    /// the export dialog falls through to an unrelated neighbour.
+    #[test]
+    fn an_empty_slot_falls_through_to_the_lineage_root() {
+        let source = named_layer("Source");
+        let derived = named_layer("Source part").with_source_layer_id(source.id());
+        let old_scene = scene_with_layers([source]);
+        let new_scene = scene_with_layers([derived]);
+        // The only live entry has no file of its own, and its origin is a layer
+        // that is not in the scene any more.
+        let old_paths = vec![PathBuf::from("/cases/source.stl")];
+
+        assert_eq!(
+            reconcile_scene_paths(&old_scene, &old_paths, &new_scene),
+            vec![PathBuf::from("/cases/source.stl")],
+            "the part must reach its ancestor's file through the origin map"
+        );
+    }
+
+    /// A layer that never had a file keeps an empty path: no invented source.
+    #[test]
+    fn a_layer_without_any_lineage_file_stays_empty() {
+        let generated = named_layer("Generated");
+        let old_scene = scene_with_layers([]);
+        let new_scene = scene_with_layers([generated]);
+
+        assert_eq!(
+            reconcile_scene_paths(&old_scene, &[], &new_scene),
+            vec![PathBuf::new()],
+            "a layer that came from nowhere must not borrow someone else's file"
         );
     }
 }

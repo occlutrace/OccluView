@@ -124,6 +124,24 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
+    /// A real app for a headless document-transition test.
+    ///
+    /// The production bootstrap acquires a process-wide single-instance claim,
+    /// starts listener threads, and reads the operator's state directory. Tests
+    /// that drive real transitions need the same types without those side
+    /// effects; `app_test_support::test_app` sets the redirect and calls this.
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(repaint_ctx: egui::Context) -> Self {
+        Self {
+            ui: UiState::new(repaint_ctx.clone(), crate::i18n::LocaleManager::for_tests()),
+            render: RenderState::new(None),
+            document: DocumentState::new(),
+            persistence: PersistenceState::for_tests(),
+            tools: ToolState::new(),
+            platform: PlatformState::for_tests(repaint_ctx),
+        }
+    }
+
     pub(super) fn can_render_cut_view(&self) -> bool {
         self.document
             .scene

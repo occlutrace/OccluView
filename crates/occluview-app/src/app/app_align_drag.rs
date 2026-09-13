@@ -25,6 +25,28 @@ pub(crate) struct AlignDrag {
 }
 
 impl OccluViewApp {
+    /// Abandon an open gesture without recording it as an edit.
+    ///
+    /// Clearing `tools.align.drag` is not enough: the gesture also owns the
+    /// provisional-pose term that the load and close guards read, and leaving it
+    /// set would make them ask about a drag that no longer exists. Callers that
+    /// drop a drag from outside the release path (a tab switch, a scene clear, a
+    /// cancelled session) go through here so there is one place that ends a
+    /// gesture.
+    pub(super) fn abandon_align_drag(&mut self) {
+        self.finish_align_drag();
+    }
+
+    /// Drop an open gesture without recording it, for the callers that are
+    /// removing the scene it described. A Replace or a Close destroys the pose
+    /// with the scene, so there is nothing left to record; an Append keeps the
+    /// layers, so it goes through [`Self::abandon_align_drag`] instead and the
+    /// move is committed.
+    pub(super) fn discard_align_drag(&mut self) {
+        self.tools.align.drag = None;
+        self.document.unsaved_drag_pose = false;
+    }
+
     /// Begin, continue, or finish a hand drag. Returns whether the drag owns
     /// this frame's pointer.
     ///
@@ -100,7 +122,7 @@ impl OccluViewApp {
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
             // deviation overlay, and a second handle alive there copies the
-            // whole case. It survives today only because of an early return
+            // container. It survives today only because of an early return
             // three modules away, which is not a guarantee this function makes.
             drop(scene);
             // The map describes the pose the scan is leaving. Dropped once, at
@@ -173,25 +195,47 @@ impl OccluViewApp {
     /// pose change is four rows of numbers; routing it through `set_scene` per
     /// mouse-move frame cancelled the bridge-split session, invalidated the
     /// sculpt session, and wiped every ruler measurement on screen — mid-drag.
-    /// It goes in PLACE, too. The app holds the only reference to the scene, so
-    /// copying it per mouse-move frame moved forty megabytes of mesh on a full
-    /// arch to change sixteen floats that live in the layer's uniform.
-    fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
+    /// It goes in PLACE, too. A pose is a transform, and the commit path that
+    /// would carry it also rebuilds bookkeeping the drag would then have to
+    /// undo each frame; going in place keeps a mouse-move frame to the fields
+    /// it actually changes.
+    pub(super) fn nudge_align_layer(&mut self, layer: SceneMeshId, step: Affine3A) {
+        let started_at = self.tools.align.drag.map(|drag| drag.start);
         let Some(live) = self.document.live_scene_mut() else {
             return;
         };
+        let mut pose = None;
         if let Some(entry) = live
             .meshes_mut()
             .iter_mut()
             .find(|entry| entry.id() == layer)
         {
             entry.transform = step * entry.transform;
+            pose = Some(entry.transform);
         }
         self.mark_scene_materials_changed();
+        // The pose is already in the live scene, so it is already work the
+        // operator can see, and a scene replace landing right now would discard
+        // it. The guards read that through `has_unsaved_mesh_edits`, which asks
+        // this term as well as the committed-edit set.
+        //
+        // It is a separate term on purpose. The set holds committed edits, and a
+        // set cannot tell two marks on one layer apart: writing this pose there
+        // made it impossible to withdraw the gesture's mark when the operator
+        // put the scan back without also withdrawing real work that landed
+        // mid-drag. As its own term, a round trip simply recomputes to `false`,
+        // and nothing the drag did not create is ever touched.
+        let Some(pose) = pose else {
+            return;
+        };
+        self.document.unsaved_drag_pose = Some(pose) != started_at;
     }
 
     /// Close an open drag, recording the whole gesture as one undo step.
     pub(super) fn finish_align_drag(&mut self) -> bool {
+        // The gesture is over: whatever survives becomes a committed edit below,
+        // and the provisional-pose term is no longer a separate reason to warn.
+        self.document.unsaved_drag_pose = false;
         let Some(drag) = self.tools.align.drag.take() else {
             return false;
         };

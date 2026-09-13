@@ -12,7 +12,7 @@ impl OccluViewApp {
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
         // Drop an active drag before restoring session poses so Cancel cannot
         // record the discarded gesture as an undo step.
-        self.tools.align.drag = None;
+        self.abandon_align_drag();
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.ui.status_message = Some(if restored {

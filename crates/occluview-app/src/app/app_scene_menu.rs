@@ -41,7 +41,7 @@ impl OccluViewApp {
     }
 
     /// Return every layer to the identity pose, as one undo step.
-    fn reset_layer_positions(&mut self, ctx: &egui::Context) {
+    pub(super) fn reset_layer_positions(&mut self, ctx: &egui::Context) {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
@@ -87,18 +87,52 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
-    /// Resetting positions must go through the scene history, or Ctrl+Z would
-    /// silently do nothing after the operator wiped an alignment.
+    #![allow(clippy::expect_used)]
+
+    use super::super::app_test_support::{named_scene, push_named_layer, test_app};
+    use super::*;
+    use glam::Vec3;
+    use std::sync::Arc;
+
+    /// Reset Positions is one undo step that returns every moved layer to the
+    /// identity pose.
+    ///
+    /// This used to read its own source text and assert that the calls opening
+    /// and closing a history step were present. That passes while the step is
+    /// recorded with the wrong content, or while the poses are not actually
+    /// reset — the two things an operator would notice.
     #[test]
-    fn resetting_positions_is_recorded_as_one_undoable_scene_edit() {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_scene_menu.rs"));
+    fn resetting_positions_is_one_undoable_step() {
+        let mut app = test_app("reset-positions");
+        let mut scene = named_scene("lower", 0.0);
+        push_named_layer(&mut scene, "upper", 5.0);
+        scene.meshes_mut()[0].transform = Affine3A::from_translation(Vec3::new(2.0, 1.0, 0.0));
+        scene.meshes_mut()[1].transform = Affine3A::from_translation(Vec3::new(-3.0, 0.5, 1.0));
+        let moved = [scene.meshes()[0].transform, scene.meshes()[1].transform];
+        assert_ne!(moved[0], Affine3A::IDENTITY, "fixture: layer 0 is moved");
+        assert_ne!(moved[1], Affine3A::IDENTITY, "fixture: layer 1 is moved");
+        app.document.scene = Some(Arc::new(scene));
+
+        app.reset_layer_positions(&egui::Context::default());
+
+        let scene = app.document.scene.as_ref().expect("scene");
         assert!(
-            source.contains("begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)"),
-            "a reset must open a scene history step"
+            scene
+                .meshes()
+                .iter()
+                .all(|entry| entry.transform == Affine3A::IDENTITY),
+            "every layer returns to the identity pose"
         );
         assert!(
-            source.contains("finish_scene_edit_success(token, &next)"),
-            "a reset must close the scene history step it opened"
+            app.document.has_unsaved_mesh_edits(),
+            "a reset is unsaved work: the viewer has no project file"
         );
+
+        // One step back restores both poses, not just the focused layer's.
+        app.apply_history_navigation_now(false, &egui::Context::default());
+
+        let restored = app.document.scene.as_ref().expect("scene");
+        assert_eq!(restored.meshes()[0].transform, moved[0]);
+        assert_eq!(restored.meshes()[1].transform, moved[1]);
     }
 }

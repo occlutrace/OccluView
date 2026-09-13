@@ -5,12 +5,17 @@
 //!
 //! - `scene` is the single authoritative content handle; in-place edits go
 //!   through [`DocumentState::live_scene_mut`] (borrowed scene) or
-//!   [`taken_scene_mut`] (take-edit-restore in the sculpt worker) so a
-//!   second live handle fails a test instead of silently deep-copying the
-//!   case every frame.
+//!   [`taken_scene_mut`] (take-edit-restore in the sculpt worker), so a second
+//!   live handle — a reader that would not see the edit — fails a test instead
+//!   of passing silently.
 //! - `unsaved_edit_layer_ids` names exactly the layers whose in-scene mesh
 //!   differs from disk; every applied mesh edit and its undo/redo routes
 //!   through [`DocumentState::mark_mesh_edits_unsaved`].
+//! - `unsaved_drag_pose` is the one provisional exception: an open Align
+//!   hand-drag has moved a layer, and the operator can still put it back. It is
+//!   kept out of the set because a set cannot tell the gesture's mark from a
+//!   committed edit on the same layer, and only [`DocumentState::has_unsaved_mesh_edits`]
+//!   reads it.
 //! - `edit_mode` owns selection and undo/redo; structural swaps re-sync it.
 //! - `active_load` / `queued_loads` mutate only the document; the camera
 //!   reset decision and the modified-during-load flag live here with them.
@@ -48,6 +53,10 @@ pub(super) struct DocumentState {
     pub(super) queued_loads: std::collections::VecDeque<SceneLoadRequest>,
     pub(super) load_queue_camera_reset: LoadQueueCameraReset,
     pub(super) camera_modified_during_load: bool,
+    /// Whether an open Align hand-drag has moved its layer away from the pose
+    /// the gesture started at. Set by the drag each frame, cleared when the
+    /// gesture ends. Kept out of [`Self::unsaved_edit_layer_ids`] on purpose.
+    pub(super) unsaved_drag_pose: bool,
 }
 
 /// In-progress mesh selection drag. Rectangle drags (default) track an origin
@@ -88,17 +97,22 @@ fn report_shared_scene_edit(handles: usize) {
     }
     tracing::warn!(
         handles,
-        "scene edited in place while another handle was alive; this copies the \
-         whole case and will keep doing so until the handle is released"
+        "scene edited in place while another handle was alive; that reader \
+         will not observe the edit, and the scene container is copied until \
+         the handle is released"
     );
 }
 
+/// The take-edit-restore path: the scene handle is out of the document for the
+/// duration of the edit, so the same single-owner invariant applies. See
+/// [`DocumentState::live_scene_mut`] for what a second handle means and costs.
 pub(super) fn taken_scene_mut(scene: &mut Arc<Scene>) -> &mut Scene {
     let handles = Arc::strong_count(scene);
     debug_assert_eq!(
         handles, 1,
-        "in-place scene edit while another Arc<Scene> is alive: this \
-         silently deep-copies every vertex, index and texture of the case"
+        "in-place scene edit while another Arc<Scene> is alive: the edit would \
+         be invisible to that reader, and the scene container plus its \
+         per-layer metadata are copied in the meantime"
     );
     if handles != 1 {
         report_shared_scene_edit(handles);
@@ -120,27 +134,39 @@ impl DocumentState {
             queued_loads: std::collections::VecDeque::new(),
             load_queue_camera_reset: LoadQueueCameraReset::Idle,
             camera_modified_during_load: false,
+            unsaved_drag_pose: false,
         }
     }
 
     /// The live scene, mutable in place (the borrowed-handle path; the
     /// take-edit-restore path is [`taken_scene_mut`]).
     ///
-    /// `Arc::make_mut` copies the whole scene whenever a second handle exists,
-    /// and the callers below all run per frame: a slider drag, a brush dab, a
-    /// nudge of an aligned layer. On two 945k-vertex arches that is 40 ns as
-    /// sole handle against 45.75 ms otherwise -- the entire case copied every
-    /// frame to change a few numbers.
+    /// Every in-place scene edit comes through here, and the invariant is that
+    /// the document owns the only handle while one runs: a second handle means
+    /// the caller is holding a scene it intends to read afterwards, so the edit
+    /// it is about to make is invisible to it. That is a correctness problem
+    /// first -- the alignment overlay cleanup in `clear_scene` reached this
+    /// function with the document still owning the scene and tripped it on the
+    /// real "remove the last layer" path.
     ///
-    /// Every in-place scene edit comes through here, so a caller that keeps a
-    /// handle alive across the edit fails a test instead of costing frames.
+    /// The cost argument is the smaller half, and the numbers are smaller than
+    /// they used to be. `SceneMesh::mesh` is an `Arc<Mesh>`, so `Arc::make_mut`
+    /// on a shared scene copies the per-layer container and its metadata, not
+    /// the vertices, indices, or decoded texture. On one layer of 945k vertices
+    /// (a synthetic arch, release build, Linux x86-64): 5 ns for `make_mut` as
+    /// sole handle against 71 ns with a second handle alive, and cloning the
+    /// scene outright is 39 ns. Those are per-frame
+    /// costs worth not paying, not the tens of milliseconds a copied case would
+    /// be, and they are recorded here as measurements rather than as a warning
+    /// about a case-sized copy that no longer happens.
     pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
         let scene = self.scene.as_mut()?;
         let handles = Arc::strong_count(scene);
         debug_assert_eq!(
             handles, 1,
-            "in-place scene edit while another Arc<Scene> is alive: this \
-             silently deep-copies every vertex, index and texture of the case"
+            "in-place scene edit while another Arc<Scene> is alive: the edit \
+             would be invisible to that reader, and the scene container plus \
+             its per-layer metadata are copied in the meantime"
         );
         if handles != 1 {
             report_shared_scene_edit(handles);
@@ -158,9 +184,14 @@ impl DocumentState {
 
     /// Whether anything in the scene differs from what is on disk.
     ///
-    /// Derived from the set of layers with pending edits.
+    /// Derived from the set of layers with pending edits and, when a hand-drag
+    /// is open, whether that gesture has moved its layer away from where it
+    /// started. The drag pose is not an entry in the set: a set cannot tell the
+    /// gesture's mark from a committed edit on the same layer, and the operator
+    /// can still put the pose back. It is still work while it is held, which is
+    /// what the load guard and the close guard are asking about.
     pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
-        !self.unsaved_edit_layer_ids.is_empty()
+        !self.unsaved_edit_layer_ids.is_empty() || self.unsaved_drag_pose
     }
 
     /// Forget the unsaved-edit tracking for the layers just written to disk.

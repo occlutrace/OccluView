@@ -97,8 +97,9 @@ impl OccluViewApp {
             &self.ui.locale,
         );
         // Ownership is handed over, not borrowed: the material-only path
-        // mutates the live scene through `Arc::make_mut`, which deep-copies for
-        // as long as any other handle exists -- and this one would be it.
+        // mutates the live scene through `Arc::make_mut`, which copies the
+        // container for as long as any other handle exists -- and this one
+        // would be it.
         self.apply_layer_overlay_changes(scene, &paths, changes, ctx);
     }
 
@@ -163,9 +164,10 @@ impl OccluViewApp {
     /// Apply material-only layer edits to the live scene without copying it.
     ///
     /// "Without copying" is a property of the caller, not of this function:
-    /// `Arc::make_mut` clones whenever another handle to the scene is alive.
-    /// The assertion below makes a future caller that holds one fail a test
-    /// rather than silently cost tens of milliseconds a frame.
+    /// `Arc::make_mut` copies the scene container whenever another handle is
+    /// alive, and an edit made through the new handle is invisible to the
+    /// holder. The assertion below makes a future caller that holds one fail a
+    /// test rather than silently diverge from what it thinks it is editing.
     fn apply_layer_material_edits(&mut self, edits: &[LayerRowChange], ctx: &egui::Context) {
         let Some(live) = self.document.live_scene_mut() else {
             return;
