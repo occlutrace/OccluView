@@ -44,6 +44,7 @@ fn colouring_in_parallel_matches_the_library() {
     for mode in [RampMode::Signed, RampMode::Magnitude] {
         for bands in [None, Some(6)] {
             let ramp = RampSettings {
+                min_mm: 0.0,
                 scale_mm: 0.5,
                 tolerance_mm: 0.2,
                 bands,
@@ -65,6 +66,7 @@ fn unmeasured_vertices_stay_grey() {
     let colors = color_map(
         &map(),
         &RampSettings {
+            min_mm: 0.0,
             scale_mm: 0.5,
             tolerance_mm: 0.2,
             bands: None,
@@ -133,6 +135,7 @@ fn the_window_opens_on_the_working_range() {
         "the display maximum must open at the tightest standard range, got {}",
         settings.scale_mm
     );
+    assert_eq!(settings.min_display_mm, 0.05);
     assert!(
         (settings.tolerance_mm - WORKING_MIN_MM).abs() < f64::EPSILON,
         "the nominal band must open at the one that goes with it, got {}",
@@ -308,6 +311,7 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     // band as wide as the deviation is a legitimate way to get two colours, and
     // this test is about the ramp BETWEEN them.
     let ramp = RampSettings {
+        min_mm: 0.0,
         scale_mm: suggested_scale_mm(&stats),
         tolerance_mm: 0.05,
         bands: None,

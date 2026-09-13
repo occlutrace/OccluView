@@ -103,16 +103,14 @@ fn brush_hotkeys_survive_a_held_shift() {
 }
 
 #[test]
-fn sculpt_hotkeys_are_scoped_to_the_sculpt_tab() {
+fn sculpt_hotkeys_switch_to_sculpt_from_edit_mesh() {
     let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
     let start = source
         .find("pub(super) fn handle_sculpt_hotkeys")
         .expect("the sculpt hotkey handler must exist");
     let body = &source[start..(start + 900).min(source.len())];
-    assert!(
-        body.contains("self.tools.editor_tab != mesh_editor_overlay::EditorTab::Sculpt"),
-        "digits must not change mode while Edit Mesh owns the editor"
-    );
+    assert!(!body.contains("self.tools.editor_tab != mesh_editor_overlay::EditorTab::Sculpt"));
+    assert!(body.contains("self.arm_sculpt_tool"));
 }
 
 #[test]
@@ -147,17 +145,15 @@ fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
 }
 
 #[test]
-fn sculpt_cursor_follows_pointer_ownership_and_worker_readiness() {
+fn sculpt_cursor_follows_pointer_ownership_and_warm_pick_readiness() {
     let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
     let start = source
         .find("pub(super) fn paint_sculpt_cursor_impl")
         .expect("the sculpt cursor painter must exist");
     let body = &source[start..(start + 1600).min(source.len())];
-    assert!(
-        body.contains("viewport_response.contains_pointer()")
-            && body.contains("self.tools.sculpt.worker.is_none()"),
-        "the cursor must disappear under editor UI and before preparation completes"
-    );
+    assert!(body.contains("viewport_response.contains_pointer()"));
+    assert!(!body.contains("self.tools.sculpt.worker.is_none()"));
+    assert!(source.contains("entry.mesh.bvh_is_ready()"));
 }
 
 #[test]

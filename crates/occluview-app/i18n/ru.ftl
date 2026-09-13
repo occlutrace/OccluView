@@ -476,8 +476,8 @@ meshedit-session-done-hint = Применить правки и закрыть �
 ## Align Scans window — DRAFT.
 
 align-title = Сопоставление сканов
-align-tab-auto = Автоматически
-align-tab-manual = Вручную
+align-tab-auto = Совмещение
+align-tab-manual = Подвинуть
 align-constraint-free = Движение и поворот во всех направлениях
 align-constraint-free-hint = Перетаскивайте скан в любом направлении
 align-constraint-z = Движение по оси z
@@ -505,7 +505,7 @@ align-clear-hint = Убрать все стрелки и выбрать два �
 align-fit-perform = Выполнить сопоставление
 align-fit-perform-hint = Двигать сетку на стрелки — нужно не меньше двух стрелок
 align-fit-refine = Точное совмещение
-align-fit-refine-hint = Совместить неизменённые участки модели после препарирования с исходной. Проверьте результат перед подтверждением
+align-fit-refine-hint = Уточнить текущую грубую посадку по близким совпадающим участкам. Сначала совместите по точкам или пропустите этот шаг, если сканы уже рядом. Проверьте результат перед подтверждением
 align-matching-parts = совпадающие части
 align-matching-parts-hint = Максимальная доля соответствий для уточнения. Если неизменённых участков мало, Best Fit уменьшит её автоматически
 align-max-influence = макс. влияние
@@ -530,6 +530,7 @@ align-map-heatmap = Теплокарта
 align-map-heatmap-hint = Окрасить один скан по расстоянию до другого
 align-map-requires-refine = Сначала выполните точное совмещение
 align-map-max = макс
+align-map-min = мин
 align-map-not-measured = не измерено
 align-map-not-measured-hint = На другом скане нет поверхности в досягаемости этих вершин. Зуб или мост только на одном скане — обычная причина, и это не ошибка: измерять там нечего.
 

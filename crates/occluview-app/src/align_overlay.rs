@@ -227,7 +227,14 @@ pub(crate) fn legend_color_at(
         };
         return occluview_align::ramp_color(value, ramp);
     }
-    occluview_align::ramp_color(legend_value_mm(step, steps, ramp.mode, ramp.scale_mm), ramp)
+    let baseline = legend_value_mm(step, steps, ramp.mode, ramp.scale_mm);
+    let value = match ramp.mode {
+        RampMode::Magnitude => {
+            ramp.min_mm + baseline / ramp.scale_mm * (ramp.scale_mm - ramp.min_mm)
+        }
+        RampMode::Signed => baseline,
+    };
+    occluview_align::ramp_color(value, ramp)
 }
 
 /// Paint the deviation legend: the colour ramp with the numeric bounds of the
@@ -245,6 +252,7 @@ pub(crate) fn paint_legend(
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, HEIGHT), egui::Sense::hover());
     let painter = ui.painter();
     let ramp = occluview_align::RampSettings {
+        min_mm: settings.min_display_mm,
         scale_mm: settings.scale_mm,
         tolerance_mm: settings.tolerance_mm,
         // The production Align Meshes legend is continuous too; old
@@ -276,7 +284,10 @@ pub(crate) fn paint_legend(
                     .color(ui_theme::text_muted()),
             );
         };
-        let (low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm);
+        let (mut low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm);
+        if settings.ramp_mode == RampMode::Magnitude {
+            low = format!("≤ {:.2} mm", settings.min_display_mm);
+        }
         label(ui, low);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             label(ui, high);
@@ -319,11 +330,30 @@ mod tests {
 
     fn ramp(mode: RampMode, scale_mm: f64) -> RampSettings {
         RampSettings {
+            min_mm: 0.0,
             scale_mm,
             tolerance_mm: 0.2,
             bands: None,
             mode,
         }
+    }
+
+    #[test]
+    fn configured_legend_limits_match_the_colors_painted_on_the_scan() {
+        let ramp = RampSettings {
+            min_mm: 0.05,
+            scale_mm: 0.20,
+            ..ramp(RampMode::Magnitude, 0.20)
+        };
+        assert_eq!(
+            legend_color_at(0, LEGEND_STEPS, &ramp),
+            ramp_color(0.05, &ramp)
+        );
+        assert_eq!(
+            legend_color_at(LEGEND_STEPS - 1, LEGEND_STEPS, &ramp),
+            ramp_color(0.20, &ramp)
+        );
+        assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.05, &ramp));
     }
 
     fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {

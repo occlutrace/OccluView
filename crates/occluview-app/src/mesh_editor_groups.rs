@@ -569,7 +569,12 @@ pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
         crate::icons::paint(ui.painter(), rect, icon, ui_theme::accent());
-        ui.label(egui::RichText::new(title).strong().size(14.0));
+        ui.label(
+            egui::RichText::new(title)
+                .strong()
+                .size(14.0)
+                .color(ui_theme::text()),
+        );
     });
     ui.add_space(2.0);
 }

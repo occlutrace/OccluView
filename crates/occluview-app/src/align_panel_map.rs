@@ -34,10 +34,7 @@ pub(crate) fn show(
         return action;
     }
 
-    settings.scale_mm = settings
-        .scale_mm
-        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
-    align_overlay::paint_legend(ui, *settings, locale);
+    settings.scale_mm = settings.scale_mm.clamp(0.001, WORKING_MAX_MM);
     action = action.or(range(ui, settings, enabled, locale));
     action
 }
@@ -89,37 +86,45 @@ fn toggle(
     action
 }
 
-/// Set the maximum absolute deviation shown by the heatmap.
-///
-/// Zero is always the blue origin. The upper stop is intentionally bounded at
-/// 0.10 mm, so values beyond the selected range are hot red instead of opening
-/// an unbounded clinical-scale control that hides small discrepancies.
+/// Set the cool and hot absolute-deviation limits of the same colour bar.
 fn range(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    settings.scale_mm = settings
-        .scale_mm
-        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
+    settings.scale_mm = settings.scale_mm.clamp(0.001, WORKING_MAX_MM);
     settings.auto_scale = false;
-    let response = ui.add_enabled(
-        enabled,
-        egui::Slider::new(
-            &mut settings.scale_mm,
-            WORKING_SCALE_MIN_MM..=WORKING_MAX_MM,
-        )
-        .suffix(" mm")
-        .fixed_decimals(2)
-        .text(locale.tr("align-map-max").as_str()),
-    );
-    // Keep a drag cheap until the operator releases it, but do not leave a
-    // keyboard edit visually stale: egui reports arrow-key changes without a
-    // drag lifecycle. The cached deviation map makes the resulting action a
-    // recolour, not another distance search.
-    (response.drag_stopped() || (response.changed() && !response.dragged()))
-        .then_some(AlignPanelAction::Measure)
+    settings.min_display_mm = settings
+        .min_display_mm
+        .clamp(WORKING_SCALE_MIN_MM, settings.scale_mm - 0.001);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(locale.tr("align-map-min"));
+        let minimum = ui.add_enabled(
+            enabled,
+            egui::DragValue::new(&mut settings.min_display_mm)
+                .range(WORKING_SCALE_MIN_MM..=settings.scale_mm - 0.001)
+                .speed(0.005)
+                .fixed_decimals(3)
+                .suffix(" mm"),
+        );
+        changed |= minimum.changed();
+    });
+    align_overlay::paint_legend(ui, *settings, locale);
+    ui.horizontal(|ui| {
+        ui.label(locale.tr("align-map-max"));
+        let maximum = ui.add_enabled(
+            enabled,
+            egui::DragValue::new(&mut settings.scale_mm)
+                .range(settings.min_display_mm + 0.001..=WORKING_MAX_MM)
+                .speed(0.005)
+                .fixed_decimals(3)
+                .suffix(" mm"),
+        );
+        changed |= maximum.changed();
+    });
+    changed.then_some(AlignPanelAction::Measure)
 }
 
 #[cfg(test)]
@@ -165,31 +170,24 @@ mod tests {
     }
 
     #[test]
-    fn the_working_panel_has_one_bounded_absolute_range() {
+    fn the_working_panel_has_editable_cool_and_hot_limits() {
         let source = production();
         assert!(source.contains("range(ui, settings, enabled, locale)"));
-        assert!(source.contains("WORKING_SCALE_MIN_MM..=WORKING_MAX_MM"));
-        assert!(source.contains(".clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM)"));
+        assert!(source.contains("align-map-min"));
+        assert!(source.contains("align-map-max"));
+        assert!(source.contains("egui::DragValue::new(&mut settings.min_display_mm)"));
+        assert!(source.contains("egui::DragValue::new(&mut settings.scale_mm)"));
         assert!(
             !source.contains("CLINICAL_CEILING_MM")
                 && !source.contains("CLINICAL_RANGES")
-                && !source.contains("align-map-min")
                 && !source.contains("align-map-auto")
         );
     }
 
     #[test]
-    fn keyboard_range_edits_recolour_without_remeasuring_during_a_drag() {
+    fn numeric_range_edits_recolour_the_cached_map() {
         let source = production();
-        assert!(
-            source
-                .contains("response.drag_stopped() || (response.changed() && !response.dragged())"),
-            "keyboard edits must repaint the existing map"
-        );
-        assert!(
-            source.contains("let response = ui.add_enabled("),
-            "the slider response must be inspected instead of dropping keyboard changes"
-        );
+        assert!(source.contains("changed.then_some(AlignPanelAction::Measure)"));
     }
 
     #[test]

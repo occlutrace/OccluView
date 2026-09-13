@@ -3,6 +3,15 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.1.2 - 2026-09-12
+
+### Viewer
+
+- Align Scans presents rough point alignment before nearby surface refinement. Refinement now stays within the selected correspondence radius instead of launching a global feature search from an already placed scan.
+- The heatmap opens at 0.05–0.20 mm. Its cool and hot limits are editable above and below the colour legend.
+- In Mesh Editing, keys 1 and 2 open the Sculpt tab with Add/Remove and Smooth respectively. The sculpt cursor appears as soon as the background picking tree is ready, before brush preparation finishes.
+- Modal text and Mesh Editing headings use readable ink in the light theme.
+
 ## 1.1.1 - 2026-09-03
 
 ### Viewer

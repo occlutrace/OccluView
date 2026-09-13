@@ -404,8 +404,8 @@ meshedit-session-done-hint = Änderungen übernehmen und Editor schließen
 ## Align Scans window — DRAFT.
 
 align-title = Scans ausrichten
-align-tab-auto = Automatisch
-align-tab-manual = Manuell
+align-tab-auto = Ausrichten
+align-tab-manual = Position anpassen
 align-constraint-free = In alle Richtungen bewegen/drehen
 align-constraint-free-hint = Scan in beliebige Richtung ziehen
 align-constraint-z = In z-Richtung bewegen
@@ -456,6 +456,7 @@ align-map-heatmap = Heatmap
 align-map-heatmap-hint = Einen Scan nach Abstand zum anderen einfärben
 align-map-requires-refine = Zuerst „Best fit matching“ ausführen
 align-map-max = max
+align-map-min = min
 align-map-not-measured = nicht gemessen
 align-map-not-measured-hint = Keine Oberfläche des anderen Scans in Reichweite dieser Vertices. Zahn oder Brücke nur auf einem Scan ist der übliche Grund, kein Fehler — dort gibt es nichts zu messen.
 

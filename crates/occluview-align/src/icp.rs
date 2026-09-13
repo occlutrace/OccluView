@@ -151,6 +151,9 @@ pub struct RefineSettings {
     pub orientation: Orientation,
     /// Iteration ceiling per level.
     pub max_iterations: u32,
+    /// Keep refinement around the pose supplied by the operator's coarse fit.
+    /// Global feature recovery is only for callers explicitly seeking it.
+    pub local_only: bool,
 }
 
 impl Default for RefineSettings {
@@ -160,6 +163,7 @@ impl Default for RefineSettings {
             matching_ratio: 0.8,
             orientation: Orientation::Match,
             max_iterations: 40,
+            local_only: false,
         }
     }
 }
@@ -394,6 +398,16 @@ fn select_initial_pose(
     level: &Level<'_>,
     center: DVec3,
 ) -> Result<(StartPose, RefineSettings, Option<feature_seed::FeatureSeed>), FitRejection> {
+    if level.settings.local_only {
+        return Ok((
+            StartPose {
+                rigid: level.start,
+                coarse_shift: 0.0,
+            },
+            *level.settings,
+            None,
+        ));
+    }
     // An already seated scan needs no global search. Keep the cheap local
     // path when almost the entire surface is within scanner tolerance.
     let feature_seed = if near_surface_fraction(
@@ -1235,7 +1249,13 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut best_rms = f64::INFINITY;
     // Keep the pose associated with the best residual.
     let mut best: Option<(Rigid, Summary)> = None;
-    let radii = influence_radius_ladder(level.settings.influence_radius_mm);
+    let radii = if level.settings.local_only {
+        // The operator has already brought the scans together. Respect the
+        // requested physical reach instead of silently looking 4x farther.
+        vec![level.settings.influence_radius_mm]
+    } else {
+        influence_radius_ladder(level.settings.influence_radius_mm)
+    };
     let Some(mut radius_slot) = (!radii.is_empty()).then_some(0usize) else {
         return Err(FitRejection::TooFewPairs {
             have: 0,

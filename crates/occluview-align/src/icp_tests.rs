@@ -138,6 +138,7 @@ fn append_component(
 
 fn settings() -> RefineSettings {
     RefineSettings {
+        local_only: false,
         influence_radius_mm: 2.0,
         matching_ratio: 0.8,
         orientation: Orientation::Match,

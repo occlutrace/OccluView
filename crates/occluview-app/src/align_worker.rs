@@ -23,7 +23,9 @@ use occluview_align::{
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 /// Initial display maximum, in millimetres.
-pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+pub(crate) const WORKING_MAX_MM: f64 = 0.20;
+/// Initial cool end of the displayed heatmap range.
+pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.05;
 /// Absolute zero of the operator-controlled deviation display range.
 pub(crate) const WORKING_SCALE_MIN_MM: f64 = 0.0;
 /// Initial nominal tolerance band, in millimetres.
@@ -40,6 +42,8 @@ pub(crate) struct AlignSettings {
     pub(crate) orientation: Orientation,
     /// Deviation mapped to the ends of the colour ramp, in millimetres.
     pub(crate) scale_mm: f64,
+    /// Cool end of the displayed deviation range, in millimetres.
+    pub(crate) min_display_mm: f64,
     /// Tolerance band the statistics report, in millimetres.
     pub(crate) tolerance_mm: f64,
     /// Steps per side for a banded ramp; `None` is continuous.
@@ -62,6 +66,7 @@ impl Default for AlignSettings {
             // Start at the tightest standard range; manual changes remain
             // stable until the operator selects another range.
             scale_mm: WORKING_MAX_MM,
+            min_display_mm: WORKING_MIN_DISPLAY_MM,
             tolerance_mm: WORKING_MIN_MM,
             bands: None,
             // Magnitude is the default display mode; signed values are an
@@ -80,6 +85,7 @@ impl AlignSettings {
             influence_radius_mm: self.influence_radius_mm,
             matching_ratio: self.matching_ratio,
             orientation: self.orientation,
+            local_only: true,
             ..RefineSettings::default()
         }
     }
@@ -93,6 +99,10 @@ impl AlignSettings {
 
     fn ramp(self) -> RampSettings {
         RampSettings {
+            min_mm: self.min_display_mm.clamp(
+                WORKING_SCALE_MIN_MM,
+                self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
+            ),
             scale_mm: self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
             tolerance_mm: self.tolerance_mm,
             // The operator-facing Align Meshes map is one continuous absolute

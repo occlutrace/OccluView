@@ -404,8 +404,8 @@ meshedit-session-done-hint = Applica e chiudi l’editor
 ## Align Scans window — DRAFT.
 
 align-title = Allinea le scansioni
-align-tab-auto = Automatico
-align-tab-manual = Manuale
+align-tab-auto = Allinea
+align-tab-manual = Regola posizione
 align-constraint-free = Muovi/ruota in ogni direzione
 align-constraint-free-hint = Trascina la scansione ovunque
 align-constraint-z = Muovi in z
@@ -456,6 +456,7 @@ align-map-heatmap = Mappa di calore
 align-map-heatmap-hint = Colora una scansione per distanza dall’altra
 align-map-requires-refine = Esegui prima Best fit matching
 align-map-max = max
+align-map-min = min
 align-map-not-measured = non misurato
 align-map-not-measured-hint = Nessuna superficie dell’altra scansione a portata di questi vertici. Dente o bridge su una sola scansione: normale, non un errore — niente da misurare.
 

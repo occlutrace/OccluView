@@ -793,3 +793,61 @@ fn a_distinct_prep_pair_has_one_accepted_pose_from_near_and_distant_starts() {
         );
     }
 }
+
+/// The operator's supplied partial-overlap pair. Keep the scans outside Git;
+/// the rough pose is the input to local refinement, not a request to search
+/// the whole scene for a different answer.
+#[test]
+fn a_partial_pair_refines_locally_from_nearby_starts_when_fixtures_are_present() {
+    let Some(directory) = std::env::var_os("OCCLUVIEW_ALIGN_OWNER_PAIR").map(PathBuf::from) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_OWNER_PAIR to 2.stl and 3.stl");
+        return;
+    };
+    let (fixed_positions, fixed_indices) = read_binary_stl(&directory.join("2.stl"));
+    let (moving_positions, moving_indices) = read_binary_stl(&directory.join("3.stl"));
+    let fixed = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .expect("fixed scan must index");
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &moving_indices,
+        mask: None,
+    };
+    let settings = RefineSettings {
+        local_only: true,
+        ..RefineSettings::default()
+    };
+    let mut settled = Vec::new();
+    for start in [
+        Rigid::IDENTITY,
+        Rigid::new(DQuat::IDENTITY, DVec3::new(1.0, -0.5, 0.3)),
+        Rigid::new(DQuat::IDENTITY, DVec3::new(-1.0, 0.5, -0.3)),
+    ] {
+        let started = std::time::Instant::now();
+        let report = refine(moving, &fixed, start, &settings, &CancelFlag::new())
+            .expect("local partial-overlap refine must produce a report");
+        eprintln!(
+            "owner pair: start={start:?} elapsed={:.2}s trust={} report={report:?}",
+            started.elapsed().as_secs_f64(),
+            report.is_trustworthy_refinement_for(&settings)
+        );
+        assert!(report.is_trustworthy_refinement_for(&settings));
+        settled.push(report.rigid);
+    }
+    let probe = DVec3::new(0.0, -15.0, 0.0);
+    for pose in &settled[1..] {
+        assert!(
+            pose.apply(probe).distance(settled[0].apply(probe)) < 0.2,
+            "nearby starts must seat the same unchanged region"
+        );
+    }
+    let far_start = Rigid::new(DQuat::IDENTITY, DVec3::new(25.0, -8.0, 3.0));
+    let far = refine(moving, &fixed, far_start, &settings, &CancelFlag::new());
+    assert!(
+        !far.is_ok_and(|report| report.is_trustworthy_refinement_for(&settings)),
+        "local refinement must not replace rough placement with a distant guess"
+    );
+}

@@ -408,8 +408,8 @@ meshedit-session-done-hint = Apply the edits and close the editor
 ## Align Scans window.
 
 align-title = Align Scans
-align-tab-auto = Automatically
-align-tab-manual = Manually
+align-tab-auto = Align scans
+align-tab-manual = Adjust pose
 align-constraint-free = Move/rotate in all directions
 align-constraint-free-hint = Drag the scan in any direction
 align-constraint-z = Move in z-direction
@@ -435,7 +435,7 @@ align-clear-hint = Drop every arrow and pick two scans again — the scans stay 
 align-fit-perform = Perform alignment
 align-fit-perform-hint = Move the mesh onto the arrows — needs at least two arrows
 align-fit-refine = Best fit matching
-align-fit-refine-hint = Match unchanged areas of a prepared scan to the original model. Check the result before accepting it
+align-fit-refine-hint = Refine the current rough pose on nearby matching surfaces. Place roughly with points first, or skip that step if the scans are already close. Check the result before accepting it
 align-matching-parts = matching parts
 align-matching-parts-hint = Maximum share of surface matches kept during refinement. Best fit can lower it when few areas are unchanged
 align-max-influence = max influence
@@ -460,6 +460,7 @@ align-map-heatmap = Heatmap
 align-map-heatmap-hint = Colour one scan by how far it sits from the other
 align-map-requires-refine = Run Best fit matching first
 align-map-max = max
+align-map-min = min
 align-map-not-measured = not measured
 align-map-not-measured-hint = No surface on the other scan within reach of these vertices. A tooth or a bridge that only one scan has is the usual reason, and it is not an error — there is nothing there to measure to.
 

@@ -149,6 +149,8 @@ pub enum RampMode {
 /// How to turn measurements into colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RampSettings {
+    /// Absolute deviation at the cool end of the displayed ramp, in mm.
+    pub min_mm: f64,
     /// Deviation mapped to the ramp ends, in millimetres.
     pub scale_mm: f64,
     /// Tolerance band, in millimetres. It is used by statistics only; it must
@@ -194,6 +196,7 @@ pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
 impl Default for RampSettings {
     fn default() -> Self {
         Self {
+            min_mm: 0.0,
             scale_mm: 0.10,
             tolerance_mm: 0.01,
             bands: None,
@@ -414,7 +417,8 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         // origin colour if a caller bypasses the validity guard.
         1.0
     } else if ramp.scale_mm.is_finite() && ramp.scale_mm > 0.0 {
-        (magnitude / ramp.scale_mm).clamp(0.0, 1.0)
+        let low = ramp.min_mm.max(0.0).min(ramp.scale_mm);
+        ((magnitude - low) / (ramp.scale_mm - low).max(f64::EPSILON)).clamp(0.0, 1.0)
     } else if magnitude == 0.0 {
         // A zero display range is intentional: exact zero stays blue, while
         // every non-zero deviation is beyond that range and reads hot red.

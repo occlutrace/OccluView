@@ -404,8 +404,8 @@ meshedit-session-done-hint = Aplicar las ediciones y cerrar el editor
 ## Align Scans window — DRAFT.
 
 align-title = Alinear escaneos
-align-tab-auto = Automático
-align-tab-manual = Manual
+align-tab-auto = Alinear
+align-tab-manual = Ajustar posición
 align-constraint-free = Mover/rotar en todas direcciones
 align-constraint-free-hint = Arrastra el escaneo en cualquier dirección
 align-constraint-z = Mover en dirección z
@@ -456,6 +456,7 @@ align-map-heatmap = Mapa de calor
 align-map-heatmap-hint = Colorear un escaneo por su distancia al otro
 align-map-requires-refine = Ejecuta primero Best fit matching
 align-map-max = máx
+align-map-min = mín
 align-map-not-measured = no medido
 align-map-not-measured-hint = Ninguna superficie del otro escaneo al alcance de estos vértices. Un diente o puente en un solo escaneo es lo normal, no un error — no hay nada que medir.
 
