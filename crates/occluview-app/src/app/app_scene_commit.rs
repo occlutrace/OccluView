@@ -30,11 +30,24 @@ pub(super) fn reconcile_scene_paths(
         .iter()
         .map(|entry| {
             let origin = entry.export_source_layer_id();
-            paths_by_id
-                .get(&entry.id())
-                .filter(|path| !path.as_os_str().is_empty())
-                .or_else(|| paths_by_id.get(&origin))
-                .or_else(|| paths_by_origin.get(&origin))
+            // Every candidate is filtered the same way. An empty path means
+            // "no file", and a chain that only filters some of its arms stops
+            // at the first empty match instead of reaching the arm that has the
+            // file — which is the case this fallback exists for.
+            [entry.id(), origin]
+                .into_iter()
+                .find_map(|id| {
+                    paths_by_id
+                        .get(&id)
+                        .filter(|path| !path.as_os_str().is_empty())
+                })
+                .or_else(|| {
+                    [entry.id(), origin].into_iter().find_map(|id| {
+                        paths_by_origin
+                            .get(&id)
+                            .filter(|path| !path.as_os_str().is_empty())
+                    })
+                })
                 .cloned()
                 .unwrap_or_default()
         })
@@ -218,6 +231,43 @@ mod tests {
         assert!(
             !layer_edits.contains("current_paths.remove("),
             "manual index-based path mutation should be gone"
+        );
+    }
+
+    /// An empty path on a live layer must not shadow the lineage fallback.
+    ///
+    /// A derived layer can be in the scene while its own slot is empty — the
+    /// case that made the fallback necessary. If the chain stops at the first
+    /// match regardless of whether it holds a file, the layer keeps no path and
+    /// the export dialog falls through to an unrelated neighbour.
+    #[test]
+    fn an_empty_slot_falls_through_to_the_lineage_root() {
+        let source = named_layer("Source");
+        let derived = named_layer("Source part").with_source_layer_id(source.id());
+        let old_scene = scene_with_layers([source]);
+        let new_scene = scene_with_layers([derived]);
+        // The only live entry has no file of its own, and its origin is a layer
+        // that is not in the scene any more.
+        let old_paths = vec![PathBuf::from("/cases/source.stl")];
+
+        assert_eq!(
+            reconcile_scene_paths(&old_scene, &old_paths, &new_scene),
+            vec![PathBuf::from("/cases/source.stl")],
+            "the part must reach its ancestor's file through the origin map"
+        );
+    }
+
+    /// A layer that never had a file keeps an empty path: no invented source.
+    #[test]
+    fn a_layer_without_any_lineage_file_stays_empty() {
+        let generated = named_layer("Generated");
+        let old_scene = scene_with_layers([]);
+        let new_scene = scene_with_layers([generated]);
+
+        assert_eq!(
+            reconcile_scene_paths(&old_scene, &[], &new_scene),
+            vec![PathBuf::new()],
+            "a layer that came from nowhere must not borrow someone else's file"
         );
     }
 }
