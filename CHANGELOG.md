@@ -7,6 +7,11 @@ remain in the Git history.
 
 ### Viewer
 
+- Abandoning a Smooth stroke that had already densified the surface left the
+  denser mesh in the case. The stroke recorded no history step while it was
+  open, so Ctrl+Z could not name that geometry and the save prompt did not count
+  it. Aborting or failing a stroke now returns the layer to the geometry the
+  stroke started from, keeping whatever earlier finished strokes had produced.
 - A contact reading could show the numbers of the reading it replaced, and a
   scan nudged and put back could leave the reading waiting on a measurement it
   had already discarded. A finished reading now has to name the measurement it

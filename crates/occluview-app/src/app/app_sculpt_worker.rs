@@ -182,7 +182,7 @@ impl OccluViewApp {
         let Some(mut scene_arc) = self.document.scene.take() else {
             return false;
         };
-        {
+        let replaced = {
             let scene = super::state_document::taken_scene_mut(&mut scene_arc);
             let Some(entry) = scene
                 .meshes_mut()
@@ -196,8 +196,16 @@ impl OccluViewApp {
                 self.document.scene = Some(scene_arc);
                 return false;
             }
+            let replaced = Arc::clone(&entry.mesh);
             entry.mesh = Arc::clone(&rebuilt_mesh);
-        }
+            replaced
+        };
+        // The document now holds a mid-stroke preview. Remember what it
+        // replaced so an abort or a failure can put it back: the stroke is still
+        // open, so this geometry has no undo entry and nothing marks it unsaved.
+        self.tools
+            .sculpt
+            .note_preview_install(layer_id, new_topology_id, replaced);
         self.document.edit_mode.sync_to_scene(&scene_arc);
         self.document.scene = Some(scene_arc);
         if let Some(worker) = self.tools.sculpt.worker.as_mut() {
@@ -224,7 +232,7 @@ impl OccluViewApp {
     /// lock reports through `take_error`), and that exit used to raise nothing
     /// but the expiring status line while the brush stayed armed over a worker
     /// that no longer existed.
-    fn fail_sculpt_session(&mut self, failure: &SculptFailure, ctx: &egui::Context) {
+    pub(super) fn fail_sculpt_session(&mut self, failure: &SculptFailure, ctx: &egui::Context) {
         let dialog = sculpt_failure_dialog(&self.ui.locale, failure);
         self.ui.status_message = Some(dialog.summary.clone());
         self.ui.app_error = Some(dialog);
@@ -404,6 +412,9 @@ impl OccluViewApp {
         };
         drop(scene);
         if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
+            // The stroke's geometry is the layer's geometry now, so the preview
+            // record has nothing left to restore.
+            self.tools.sculpt.clear_preview_baseline();
             let _ = self.document.edit_mode.finish_layer_edit_success(token);
             self.document.mark_mesh_edits_unsaved(layer_id);
             // Only promise the undo that exists. `begin_layer_edit_with_snapshot`

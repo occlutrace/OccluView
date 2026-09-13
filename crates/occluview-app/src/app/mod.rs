@@ -76,6 +76,8 @@ mod app_scene_export;
 mod app_scene_menu;
 mod app_sculpt;
 #[cfg(test)]
+mod app_sculpt_abort_tests;
+#[cfg(test)]
 mod app_sculpt_characterization_tests;
 mod app_sculpt_worker;
 mod app_settings_panel;
