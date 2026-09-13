@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use super::OccluViewApp;
 use crate::contact::{
-    can_read_contacts, contact_job_keys, ContactLayerField, ContactPair, ContactState,
-    ContactStatus, CONTACT_FIELD_TEXTURE_WIDTH,
+    can_read_contacts, contact_job_keys, ContactLayerField, ContactPair, ContactRequest,
+    ContactState, ContactStatus, CONTACT_FIELD_TEXTURE_WIDTH,
 };
 use crate::contact_worker::{ContactFailure, ContactJob, ContactOutcome};
 
@@ -270,8 +270,9 @@ impl OccluViewApp {
         };
         let worker = self.tools.contacts.worker_mut();
         let generation = worker.generation();
-        worker.submit(ContactJob {
+        let submitted = worker.submit(ContactJob {
             generation,
+            request_id: 0,
             keys,
             subject_positions,
             subject_indices,
@@ -282,7 +283,37 @@ impl OccluViewApp {
                 flatten_patches: flatten,
             },
         });
-        self.tools.contacts.mark_submitted(keys, status);
+        let Some(id) = submitted else {
+            // No thread, or a queue the worker cannot use. The reading records a
+            // refusal keyed on the same inputs a real one would have used, so it
+            // shows Failed once and the frame loop does not re-queue a job that
+            // cannot run.
+            tracing::warn!("contact reading could not be submitted to its worker");
+            self.tools.contacts.mark_unavailable(keys);
+            return;
+        };
+        self.tools
+            .contacts
+            .mark_submitted(ContactRequest { id, keys, pair }, status);
+    }
+
+    /// Whether a finished measurement still describes the scene on screen.
+    ///
+    /// The request identity says which submission an answer belongs to. It does
+    /// not say the surfaces have not moved since: a hand drag rewrites a pose
+    /// every frame, and the reading stays submitted across it. The keys are
+    /// recomputed from the live scene here, before any field, statistic, or
+    /// status is touched, so an answer measured against a pose that is no longer
+    /// on screen is dropped rather than painted.
+    ///
+    /// `false` when the pair or the scenes it names cannot be resolved: an
+    /// answer about a layer that has left the scene describes nothing on screen.
+    fn completion_still_describes_the_scene(&self, request: &ContactRequest) -> bool {
+        let Some(scene) = self.document.scene.as_ref() else {
+            return false;
+        };
+        let flatten = request.keys.flatten_patches;
+        contact_job_keys(scene, request.pair, flatten).is_some_and(|live| live == request.keys)
     }
 
     /// Take finished measurements and put them on the scans.
@@ -296,6 +327,25 @@ impl OccluViewApp {
         }
         let mut accepted = false;
         for completion in completions {
+            let Some(request) = self
+                .tools
+                .contacts
+                .matching_request(completion.request_id, completion.keys)
+            else {
+                // The answer to a measurement the operator moved past: it may
+                // not touch the fields, the statistics, the status, or the
+                // in-flight record.
+                continue;
+            };
+            // The identity says which submission this answers. It does not say
+            // the scene still looks the way that submission was built from: a
+            // drag rewrites a pose every frame while the reading is held, and
+            // the request stays in flight through all of it. The keys of the
+            // scene as it is now are the second half of the question, and they
+            // are asked before anything is stored.
+            if !self.completion_still_describes_the_scene(&request) {
+                continue;
+            }
             match completion.outcome {
                 ContactOutcome::Measured {
                     subject_signed_mm,
@@ -312,25 +362,28 @@ impl OccluViewApp {
                         contacts = stats.contacts,
                         "contact field applied"
                     );
-                    let Some(pair) = self.tools.contacts.pair() else {
-                        continue;
-                    };
                     let Some((subject_field, antagonist_field)) = pack_fields(
                         &mut self.tools.contacts,
-                        pair,
+                        request.pair,
                         subject_signed_mm,
                         antagonist_signed_mm,
                     ) else {
-                        self.tools
-                            .contacts
-                            .mark_failed(completion.keys, ContactFailure::Worker);
+                        self.tools.contacts.mark_failed(
+                            request.id,
+                            request.keys,
+                            ContactFailure::Worker,
+                        );
+                        accepted = true;
                         continue;
                     };
-                    self.tools.contacts.store_field(pair.subject, subject_field);
-                    self.tools
-                        .contacts
-                        .store_field(pair.antagonist, antagonist_field);
-                    self.tools.contacts.mark_measured(completion.keys, stats);
+                    if !self.tools.contacts.store_measured(
+                        request,
+                        subject_field,
+                        antagonist_field,
+                        stats,
+                    ) {
+                        continue;
+                    }
                     accepted = true;
                     // The pair is further apart than the reading reaches only
                     // when NOTHING was measured. An empty contact AREA is a
@@ -345,8 +398,10 @@ impl OccluViewApp {
                     }
                 }
                 ContactOutcome::Failed(failure) => {
-                    self.tools.contacts.mark_failed(completion.keys, failure);
-                    accepted = true;
+                    accepted |= self
+                        .tools
+                        .contacts
+                        .mark_failed(request.id, request.keys, failure);
                 }
             }
         }

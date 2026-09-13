@@ -47,6 +47,8 @@ mod app_bridge_split;
 mod app_contact;
 mod app_contact_bar;
 mod app_contact_hover;
+#[cfg(test)]
+mod app_contact_tests;
 mod app_cut_measure;
 mod app_dialogs;
 mod app_empty_state;

@@ -93,6 +93,23 @@ pub(crate) struct ContactPair {
     pub(crate) antagonist: SceneMeshId,
 }
 
+/// The one measurement the reading is waiting for.
+///
+/// Identity is the pair of what the job measures and which submission asked for
+/// it, not the scene generation alone: the operator can ask again without
+/// changing anything about the scene, and both submissions share a generation.
+/// A completion that does not answer the record here is an answer to a question
+/// nobody is asking any more, and the reading must not take it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ContactRequest {
+    /// The identity the worker assigned when the job was queued.
+    pub(crate) id: u64,
+    /// What the measurement describes.
+    pub(crate) keys: ContactJobKeys,
+    /// The pair whose two layers the resulting fields belong to.
+    pub(crate) pair: ContactPair,
+}
+
 /// What the panel is currently saying. Typed, so the copy lives in the catalog
 /// and the worker never renders a sentence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,8 +189,8 @@ pub(crate) struct ContactState {
     fields: Vec<ContactLayerField>,
     /// The keys the on-screen fields were measured from.
     measured: Option<ContactJobKeys>,
-    /// The keys a job is currently in flight for.
-    in_flight: Option<ContactJobKeys>,
+    /// The measurement a job is currently in flight for.
+    in_flight: Option<ContactRequest>,
     /// The keys the last attempt FAILED on.
     ///
     /// A refusal is a property of the input, so retrying it on the next frame
@@ -352,9 +369,37 @@ impl ContactState {
     }
 
     /// Record a submitted job.
-    pub(crate) fn mark_submitted(&mut self, keys: ContactJobKeys, status: ContactStatus) {
-        self.in_flight = Some(keys);
+    pub(crate) fn mark_submitted(&mut self, request: ContactRequest, status: ContactStatus) {
+        self.in_flight = Some(request);
         self.status = Some(status);
+    }
+
+    /// The submission the reading is waiting for, if any.
+    ///
+    /// Read by the delivery tests, which have to name the request an answer is
+    /// published for; production reaches the same record through
+    /// [`Self::matching_request`].
+    #[cfg(test)]
+    pub(crate) fn pending_request(&self) -> Option<ContactRequest> {
+        self.in_flight
+    }
+
+    /// The in-flight request a completion answers, or `None` when it answers a
+    /// measurement the operator has moved past.
+    ///
+    /// This is the gate a finished job passes before it may touch the fields,
+    /// the statistics, the status, or the in-flight record. It is deliberately
+    /// keyed on the request identity *and* on what that request measured: two
+    /// submissions of the same pair at the same pose are still two different
+    /// measurements, and the older one's answer carries numbers from the moment
+    /// it was queued.
+    pub(crate) fn matching_request(
+        &self,
+        request_id: u64,
+        keys: ContactJobKeys,
+    ) -> Option<ContactRequest> {
+        self.in_flight
+            .filter(|request| request.id == request_id && request.keys == keys)
     }
 
     /// Whether `keys` still has to be measured.
@@ -366,35 +411,71 @@ impl ContactState {
     pub(crate) fn needs_measurement(&self, keys: ContactJobKeys) -> bool {
         !self.held
             && self.measured != Some(keys)
-            && self.in_flight != Some(keys)
+            && self.in_flight.is_none_or(|request| request.keys != keys)
             && self.failed != Some(keys)
     }
 
-    /// Store a finished field for `layer`, packed and ready for the GPU.
-    pub(crate) fn store_field(&mut self, layer: SceneMeshId, field: ContactLayerField) {
-        self.fields.retain(|existing| existing.layer != layer);
-        self.fields.push(field);
-    }
-
-    /// Note that the measurement for `keys` landed.
-    pub(crate) fn mark_measured(&mut self, keys: ContactJobKeys, stats: ContactStats) {
-        self.measured = Some(keys);
+    /// Put a finished measurement on screen, if it still answers the current
+    /// request.
+    ///
+    /// One entry point for the whole application of a result, so no call site
+    /// can store the fields first and check the identity afterwards. Returns
+    /// whether the reading took it.
+    pub(crate) fn store_measured(
+        &mut self,
+        request: ContactRequest,
+        subject_field: ContactLayerField,
+        antagonist_field: ContactLayerField,
+        stats: ContactStats,
+    ) -> bool {
+        if self.matching_request(request.id, request.keys).is_none() {
+            return false;
+        }
+        self.fields.clear();
+        self.fields.push(subject_field);
+        self.fields.push(antagonist_field);
+        self.measured = Some(request.keys);
         self.in_flight = None;
         self.failed = None;
         self.stats = Some(stats);
         self.status = None;
+        true
     }
 
-    /// Note that the measurement for `keys` failed.
-    pub(crate) fn mark_failed(&mut self, keys: ContactJobKeys, failure: ContactFailure) {
-        if self.in_flight == Some(keys) {
-            self.in_flight = None;
+    /// Note that the measurement for the in-flight request failed, if it still
+    /// is the in-flight request. Returns whether the reading took it.
+    pub(crate) fn mark_failed(
+        &mut self,
+        request_id: u64,
+        keys: ContactJobKeys,
+        failure: ContactFailure,
+    ) -> bool {
+        if self.matching_request(request_id, keys).is_none() {
+            return false;
         }
+        self.in_flight = None;
         self.fields.clear();
         self.measured = None;
         self.failed = Some(keys);
         self.stats = None;
         self.status = Some(ContactStatus::Failed(failure));
+        true
+    }
+
+    /// Record that no completion is coming for `keys`, because the worker could
+    /// not run the job at all.
+    ///
+    /// Distinct from a refusal the compute produced in what it means to the
+    /// frame loop: the keys land in `failed`, so the reading is not re-queued on
+    /// every frame against a worker that cannot execute it. Without this the
+    /// panel would sit on "Measuring…" with no executor behind it.
+    pub(crate) fn mark_unavailable(&mut self, keys: ContactJobKeys) {
+        self.in_flight = None;
+        self.fields.clear();
+        self.measured = None;
+        self.failed = Some(keys);
+        self.stats = None;
+        self.status = Some(ContactStatus::Failed(ContactFailure::Worker));
     }
 
     /// Take the next field revision number.
@@ -434,6 +515,12 @@ impl ContactState {
     /// The worker, started on first use.
     pub(crate) fn worker_mut(&mut self) -> &mut ContactWorker {
         self.worker.get_or_insert_with(ContactWorker::spawn)
+    }
+
+    /// Replace the worker, for tests that need to decide how it behaves.
+    #[cfg(test)]
+    pub(crate) fn install_worker_for_tests(&mut self, worker: ContactWorker) {
+        self.worker = Some(worker);
     }
 
     /// The worker, if one has been started.
