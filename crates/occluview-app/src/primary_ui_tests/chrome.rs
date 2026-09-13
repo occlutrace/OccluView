@@ -215,9 +215,10 @@ fn layer_overlay_does_not_clone_full_scene_each_repaint() {
         "layer overlay must return before deep-cloning mesh payloads on repaint-only frames"
     );
     // The early return is only half of it. The material-only path goes through
-    // `Arc::make_mut`, 45.75 ms per frame against 40 ns when the scene has a
-    // single owner, so the overlay must HAND OVER its handle rather than lend
-    // it and drop it before touching the live scene.
+    // `Arc::make_mut`, which copies the scene container while a second handle
+    // is alive (measured: 71 ns against 5 ns for 945k-vertex layer), so the
+    // overlay must HAND OVER its handle rather than lend it and drop it before
+    // touching the live scene.
     assert!(
         viewport_source.contains("scene: Arc<Scene>,"),
         "the overlay handler must take ownership of the scene handle"
