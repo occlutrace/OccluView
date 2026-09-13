@@ -9,21 +9,13 @@ use crate::probe::FormatKind;
 use crate::units::{policy_for, UnitInterpretation};
 use occluview_core::{Mesh, Scene, SceneMesh};
 use rayon::prelude::*;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
-enum FileBytesStorage {
-    Mapped(memmap2::Mmap),
-    Owned(Vec<u8>),
-}
-
-/// File bytes loaded from disk with best-effort memory mapping.
-///
-/// Callers borrow the bytes via [`FileBytes::as_slice`] without needing to
-/// care whether they came from an `mmap` or an owned fallback buffer.
+/// Owned file bytes. Parsing must not depend on a file that another process
+/// may replace or truncate while the import is in progress.
 pub struct FileBytes {
     extension: String,
-    storage: FileBytesStorage,
+    bytes: Vec<u8>,
 }
 
 impl FileBytes {
@@ -36,10 +28,7 @@ impl FileBytes {
     /// Borrow the file contents as a byte slice.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        match &self.storage {
-            FileBytesStorage::Mapped(mmap) => mmap,
-            FileBytesStorage::Owned(bytes) => bytes,
-        }
+        &self.bytes
     }
 
     /// Dispatch the loaded bytes through the canonical format readers.
@@ -242,67 +231,28 @@ fn normalized_extension(path: &Path) -> Result<String, FormatError> {
         })
 }
 
-#[allow(unsafe_code)] // see lib.rs: lone mmap kernel-FFI, behind this helper.
-fn read_file_bytes_storage(
-    mut file: std::fs::File,
-    path: &Path,
-) -> Result<FileBytesStorage, FormatError> {
-    // mmap is best-effort in two ways: the storage has to be safe to map at
-    // all, and the call itself may still fail.
-    //
-    // SAFETY: memmap2 requires that the mapped file not be modified or
-    // truncated while the mapping lives; violating that raises
-    // EXCEPTION_IN_PAGE_ERROR or SIGBUS, neither of which unwinds, so no
-    // `catch_unwind` above this point can turn it back into an error. The
-    // guarantee is obtained by refusing to map anything that can be withdrawn
-    // mid-parse -- see `crate::mappable` -- which leaves local, non-removable
-    // storage, where a concurrent writer is the only remaining hazard and is
-    // out of scope for a read-only viewer.
-    if crate::mappable::is_mappable_storage(path) {
-        if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
-            return Ok(FileBytesStorage::Mapped(mmap));
-        }
-    }
-
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(FormatError::Io)?;
-    Ok(FileBytesStorage::Owned(bytes))
-}
-
-/// Read a file from disk into a byte carrier backed by `mmap` when possible.
-///
-/// The returned [`FileBytes`] owns either the memory mapping or the fallback
-/// byte buffer, so callers can safely inspect the contents without touching
-/// `unsafe` or deciding which storage strategy succeeded.
+/// Read a file into owned bytes. A concurrent truncation during the read may
+/// yield a parse error, but a later truncation cannot invalidate this buffer.
 ///
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or read.
 /// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
 pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
     let extension = normalized_extension(path)?;
-    let file = std::fs::File::open(path).map_err(FormatError::Io)?;
-    let storage = read_file_bytes_storage(file, path)?;
-    Ok(FileBytes { extension, storage })
+    let bytes = std::fs::read(path).map_err(FormatError::Io)?;
+    Ok(FileBytes { extension, bytes })
 }
 
-/// Read a file from disk via memory-mapping, then dispatch by extension.
-///
-/// Memory-mapping avoids a full-file `read_to_end` copy for large dental
-/// scans (the corpus has 50 MB+ STLs). The mmap is held for the duration of
-/// the parse; the returned `Mesh` owns its own vertex/index buffers
-/// (decoupled from the mapping), so the file can be closed afterwards.
-///
-/// Falls back to a regular `read` if mmap fails (e.g. on a pipe or a
-/// zero-length file).
+/// Read owned file bytes, then dispatch by extension.
 ///
 /// # Errors
-/// - [`FormatError::Io`] if the file cannot be opened or mapped.
+/// - [`FormatError::Io`] if the file cannot be read.
 /// - See [`dispatch_by_extension`] for parse errors.
 pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
     read_file_with_key_provider(path, &crate::hps::NoHpsKeyProvider)
 }
 
-/// Read a file from disk via memory-mapping with an HPS key provider.
+/// Read a file with an HPS key provider.
 ///
 /// # Errors
 /// See [`read_file`].
@@ -572,14 +522,34 @@ mod tests {
     }
 
     #[test]
-    fn read_file_mmaps_and_parses() {
-        // Write a minimal binary STL to a temp file and read it back via mmap.
+    fn read_file_parses_owned_bytes() {
+        // Write a minimal binary STL and parse the owned snapshot.
         let bytes = one_triangle_binary_stl();
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("tri.stl");
         std::fs::write(&path, &bytes).expect("write");
-        let mesh = read_file(&path).expect("read_file should mmap + parse");
+        let mesh = read_file(&path).expect("read_file should parse");
         assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn file_bytes_remain_readable_after_source_is_truncated() {
+        let bytes = one_triangle_binary_stl();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tri.stl");
+        std::fs::write(&path, &bytes).expect("write source");
+
+        let snapshot = read_file_bytes(&path).expect("read source");
+        std::fs::write(&path, []).expect("truncate source");
+
+        assert_eq!(snapshot.as_slice(), bytes.as_slice());
+        assert_eq!(
+            snapshot
+                .dispatch()
+                .expect("parse snapshot")
+                .triangle_count(),
+            1
+        );
     }
 
     #[test]

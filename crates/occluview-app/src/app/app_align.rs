@@ -491,6 +491,15 @@ impl OccluViewApp {
             self.tools.align.status = Some(self.ui.locale.tr("align-status-worker-unavailable"));
             return;
         }
+        if kind != AlignJobKind::Measure {
+            // The previous heatmap belongs to the previous fit. Keep the
+            // current geometry while the new job runs, but do not display an
+            // old map beside a new refusal or let the toggle claim it is live.
+            self.tools.align.refined_match_ready = false;
+            self.tools.align.settings.show_deviation = false;
+            self.tools.align.stats = None;
+            self.clear_deviation_overlay();
+        }
         if stale {
             self.tools.align.status = Some(self.ui.locale.tr("align-markings-dropped"));
             return;

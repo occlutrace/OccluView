@@ -612,3 +612,184 @@ fn a_rescanned_arch_seats_from_a_hand_placement_when_fixtures_are_present() {
         }
     }
 }
+
+/// A prepared model can retain only a small unchanged region of the original.
+/// This derives a controlled counterexample from a real scan so the true rigid
+/// pose is known. It is not a substitute for two independently acquired scans.
+#[test]
+#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
+fn a_changed_arch_uses_its_small_unchanged_region_when_fixtures_are_present() {
+    let Some(path) = fixtures().and_then(|files| files.into_iter().next()) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES");
+        return;
+    };
+    let (fixed_positions, indices) = read_binary_stl(&path);
+    let fixed_soup = Soup {
+        positions: &fixed_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let fixed_index = SurfaceIndex::build(fixed_soup).expect("real mesh must index");
+    let min_x = fixed_positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = fixed_positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let unchanged_edge = min_x + (max_x - min_x) * 0.24;
+    let transition_width = (max_x - min_x) * 0.08;
+    let truth = Rigid::new(
+        DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.06),
+        DVec3::new(5.0, -4.0, 2.5),
+    );
+    let mut moving_positions = fixed_positions.clone();
+    for point in moving_positions.as_chunks_mut::<3>().0 {
+        let x = point[0];
+        let weight = ((x - unchanged_edge) / transition_width).clamp(0.0, 1.0);
+        let y = f64::from(point[1]);
+        let z = f64::from(point[2]);
+        let changed_weight = f64::from(weight);
+        let changed = DVec3::new(
+            f64::from(x) + changed_weight * 1.5 * (y * 1.7).sin(),
+            y + changed_weight * 1.5 * (z * 1.7).sin(),
+            z + changed_weight * (2.0 + 1.2 * (f64::from(x) * 1.7 + y * 0.9).sin()),
+        );
+        let displaced = truth.inverse().apply(changed);
+        point[0] = displaced.x as f32;
+        point[1] = displaced.y as f32;
+        point[2] = displaced.z as f32;
+    }
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let started = std::time::Instant::now();
+    let settings = RefineSettings::default();
+    let report = refine(
+        moving,
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings,
+        &CancelFlag::new(),
+    )
+    .expect("unchanged region must provide a candidate");
+    let error = [min_x, f32::midpoint(min_x, max_x), max_x]
+        .into_iter()
+        .map(|x| {
+            let probe = DVec3::new(f64::from(x), 0.0, 0.0);
+            report.rigid.apply(probe).distance(truth.apply(probe))
+        })
+        .fold(0.0_f64, f64::max);
+    let diagnostic_positions: Vec<f32> = moving_positions
+        .as_chunks::<9>()
+        .0
+        .iter()
+        .step_by(100)
+        .flat_map(|triangle| triangle.iter().copied())
+        .collect();
+    let diagnostic_indices: Vec<u32> = (0..diagnostic_positions.len() / 3)
+        .map(|vertex| u32::try_from(vertex).expect("fixture fits u32"))
+        .collect();
+    let diagnostic = Soup {
+        positions: &diagnostic_positions,
+        indices: &diagnostic_indices,
+        mask: None,
+    };
+    let count_near = |pose: Rigid| {
+        let map = deviation(
+            diagnostic,
+            &fixed_index,
+            pose,
+            &DeviationSettings::default(),
+            &CancelFlag::new(),
+        );
+        map.signed_mm
+            .iter()
+            .zip(&map.validity)
+            .filter(|(distance, validity)| {
+                **validity == occluview_align::Validity::Measured && distance.abs() < 0.05
+            })
+            .count()
+    };
+    eprintln!(
+        "changed arch: pose error={error:.3} mm coverage={:.3} rms={:.3} median={:.3} near_truth={} near_fit={} trusted={} elapsed={:.2}s",
+        report.coverage,
+        report.rms,
+        report.median_abs,
+        count_near(truth),
+        count_near(report.rigid),
+        report.is_trustworthy_refinement_for(&settings),
+        started.elapsed().as_secs_f64()
+    );
+    assert!(error < 0.5, "pose must follow the unchanged region");
+    assert!(
+        report.is_trustworthy_refinement_for(&settings),
+        "only an adequately supported fit can publish a heatmap"
+    );
+}
+
+/// Two independently acquired meshes of the same jaw, with a prepared region.
+/// The test compares near and distant starts because no clinical ground-truth
+/// transform is available for the public pair.
+#[test]
+fn a_distinct_prep_pair_has_one_accepted_pose_from_near_and_distant_starts() {
+    let Some(directory) = std::env::var_os("OCCLUVIEW_ALIGN_PREP_PAIR").map(PathBuf::from) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_PREP_PAIR to original.stl and prepared.stl");
+        return;
+    };
+    let (fixed_positions, fixed_indices) = read_binary_stl(&directory.join("original.stl"));
+    let (moving_positions, moving_indices) = read_binary_stl(&directory.join("prepared.stl"));
+    let fixed = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .expect("original scan must index");
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &moving_indices,
+        mask: None,
+    };
+    let settings = RefineSettings::default();
+    let starts = [
+        Rigid::IDENTITY,
+        Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.06),
+            DVec3::new(25.0, -8.0, 3.0),
+        ),
+    ];
+    let reports: Vec<_> = starts
+        .into_iter()
+        .map(|start| {
+            let started = std::time::Instant::now();
+            let report = refine(moving, &fixed, start, &settings, &CancelFlag::new())
+                .expect("the unchanged surfaces must determine a pose");
+            eprintln!(
+                "distinct prep pair: start={start:?} elapsed={:.2}s coverage={:.3} median={:.3}",
+                started.elapsed().as_secs_f64(),
+                report.coverage,
+                report.median_abs
+            );
+            assert!(report.is_trustworthy_refinement_for(&settings));
+            report
+        })
+        .collect();
+    let (min, max) = fixed.bounds();
+    for probe in [min, (min + max) * 0.5, max] {
+        let difference = reports[0]
+            .rigid
+            .apply(probe)
+            .distance(reports[1].rigid.apply(probe));
+        assert!(
+            difference < 0.5,
+            "start changed the accepted pose by {difference:.3} mm"
+        );
+    }
+}

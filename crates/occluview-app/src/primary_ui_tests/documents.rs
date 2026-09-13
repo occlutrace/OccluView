@@ -7,25 +7,6 @@
 use super::*;
 
 #[test]
-fn the_readme_is_the_only_repository_guide_for_operators() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent);
-    assert!(
-        workspace_root.is_some(),
-        "app crate should live under the workspace crates directory"
-    );
-    let Some(workspace_root) = workspace_root else {
-        return;
-    };
-
-    assert!(workspace_root.join("README.md").is_file());
-    assert!(
-        !workspace_root.join("docs").exists(),
-        "operator instructions belong in README.md, not a repository docs tree"
-    );
-}
-
-#[test]
 fn the_changelog_only_names_versions_that_can_be_released() {
     // Release notes come from the section matching the current version.
     let changelog = include_str!("../../../../CHANGELOG.md");

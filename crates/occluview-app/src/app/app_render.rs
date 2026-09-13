@@ -729,6 +729,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
+        self.document.content_revision = self.document.content_revision.wrapping_add(1);
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
@@ -802,6 +803,7 @@ impl OccluViewApp {
     }
 
     pub(super) fn clear_scene(&mut self) {
+        self.document.content_revision = self.document.content_revision.wrapping_add(1);
         // The last layer can disappear while Align Meshes is armed. Revoke its
         // pose, overlay, mask, and worker generation before a new scene may
         // reuse one of the old layer ids.

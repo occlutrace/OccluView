@@ -546,6 +546,11 @@ impl OccluViewApp {
                 &[("count", &edited_count.to_string())],
             )
         };
+        let busy_note = self
+            .document
+            .edit_mode
+            .is_busy()
+            .then(|| self.ui.locale.tr("edit-session-busy"));
         let response = show_guard_dialog(
             ctx,
             &self.ui.locale,
@@ -553,7 +558,7 @@ impl OccluViewApp {
                 id: "edit-in-progress-guard",
                 title: &self.ui.locale.tr("guard-replace-title"),
                 headline: &headline,
-                note: None,
+                note: busy_note.as_deref(),
                 detail: &self.ui.locale.tr("guard-replace-detail"),
                 destructive_label: &self.ui.locale.tr("guard-replace-destructive"),
             },
@@ -568,6 +573,10 @@ impl OccluViewApp {
         if do_cancel {
             // Drop the parked open; keep the current scene and session.
             self.ui.pending_replace_open = None;
+            return;
+        }
+        if self.document.edit_mode.is_busy() && (do_discard || do_save) {
+            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
             return;
         }
         if do_discard {

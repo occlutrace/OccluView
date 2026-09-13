@@ -91,6 +91,11 @@ impl OccluViewApp {
             viewport_rect,
             crate::align_panel::AlignPanelView {
                 tool: &self.tools.align.tool,
+                layer_count: self
+                    .document
+                    .scene
+                    .as_ref()
+                    .map_or(0, |scene| scene.meshes().len()),
                 settings: &mut settings,
                 status: self.tools.align.status.as_deref(),
                 refined_match_ready: heatmap_is_authorized(
