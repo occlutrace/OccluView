@@ -218,3 +218,60 @@ fn a_reading_with_no_executor_reports_a_failure_instead_of_measuring_forever() {
         "a worker that cannot run must not be retried every frame"
     );
 }
+
+/// A dropped answer must not leave the reading waiting for one that will never
+/// come.
+///
+/// The pose of a hand drag can come back to exactly where the measurement was
+/// taken: the operator nudges a scan and puts it back. The answer that was
+/// dropped describes those very keys, and if the reading still recorded it as
+/// in flight, `needs_measurement` would answer false for it forever — the panel
+/// sits on "re-measuring" with no job running and nothing left to submit one.
+#[test]
+fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
+    let mut app = test_app("contact-dropped-answer-resubmits");
+    let ctx = app.ui.repaint_ctx.clone();
+    let (scene, first, _second, _third) = three_layer_scene();
+    app.document.scene = Some(Arc::new(scene));
+
+    assert!(open_contacts_on(&mut app, first));
+    let request = pending(&app);
+    let keys = request.keys;
+
+    // The scan moves under the held reading, and the answer that was already
+    // computed for the old pose arrives.
+    app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
+        glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
+    app.tools.contacts.hold_for_drag();
+    deliver_answer(&app, request, ContactFailure::NoSurface);
+    app.drain_contacts_worker(&ctx);
+
+    // The answer is gone and the request went with it: there is no measurement
+    // left to wait for, so the reading is willing to measure this scene again.
+    assert!(
+        app.tools.contacts.pending_request().is_none(),
+        "a dropped answer must release the request it belonged to"
+    );
+
+    // The operator puts the scan back exactly where it was and lets go. Every
+    // distance in the reading is what the dropped answer measured.
+    app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
+        glam::Affine3A::IDENTITY;
+    app.tools.contacts.resume_after_drag();
+    assert!(
+        app.tools.contacts.needs_measurement(keys),
+        "with the drag over, the dropped answer must not be treated as still          pending: nothing is running and nothing would ever submit one"
+    );
+    app.sync_contacts_with_scene(&ctx);
+
+    let resubmitted = pending(&app);
+    assert_eq!(
+        resubmitted.keys, keys,
+        "the scene is back to the keys the answer described, so those are what \
+         the reading asks for"
+    );
+    assert_ne!(
+        resubmitted.id, request.id,
+        "and it is a NEW measurement, not the request whose answer was dropped"
+    );
+}
