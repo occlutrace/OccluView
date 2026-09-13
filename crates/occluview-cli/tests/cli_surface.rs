@@ -140,7 +140,11 @@ fn convert_collapses_a_repeated_terminal_extension_before_writing() {
     );
     assert!(directory.join("exports/upper.stl").is_file());
     assert!(!directory.join("exports/upper.stl.stl").exists());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("exports/upper.stl"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.replace('\\', "/").contains("exports/upper.stl"),
+        "conversion should report the normalized destination: {stderr}"
+    );
 
     std::fs::remove_dir_all(&directory).ok();
 }
