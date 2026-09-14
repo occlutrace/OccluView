@@ -33,8 +33,6 @@ fn job(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactJob {
     let (antagonist_positions, antagonist_indices) = plate(z_gap, 1.0);
     ContactJob {
         generation: worker.generation(),
-        // Filled in by `submit`, which is the only thing that assigns an
-        // identity.
         request_id: 0,
         keys: keys(offset, false),
         subject_positions,
@@ -48,7 +46,6 @@ fn job(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactJob {
     }
 }
 
-/// A measured completion carrying the identity of the request it answers.
 fn completion_for(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactCompletion {
     let (subject_positions, subject_indices) = plate(0.0, 1.0);
     let (antagonist_positions, antagonist_indices) = plate(z_gap, 1.0);
@@ -165,15 +162,6 @@ fn a_layer_with_no_surface_is_refused() {
     ));
 }
 
-/// Superseding a job retires its identity, so a completion the previous job
-/// managed to publish before the cancel landed can never be mistaken for the
-/// answer to the job the operator is waiting for.
-///
-/// The race this covers is the one cancellation cannot: the compute finishes,
-/// checks its flag before `submit` sets it, and pushes a completion for the
-/// *old* keys. The generation does not catch that — the operator never asked
-/// for a new generation, only for a new measurement — so the identity of the
-/// newest request has to.
 #[test]
 fn a_superseded_request_cannot_answer_the_latest_one() {
     let worker = ContactWorker::spawn();
@@ -188,20 +176,13 @@ fn a_superseded_request_cannot_answer_the_latest_one() {
     );
 }
 
-/// A completion published for a superseded request is filtered at the worker
-/// boundary, not only at the panel: whatever the application does downstream, an
-/// answer to a question nobody is asking any more is not delivered.
 #[test]
 fn a_completion_for_a_superseded_request_is_not_drained() {
     let worker = ContactWorker::spawn();
-    // The stale completion the cancel could not prevent: it was published for
-    // request 1 before the second submission arrived.
     let first_id = worker.submit(job(&worker, 1, -0.1)).expect("queued");
     let mut stale = completion_for(&worker, 1, 0.05);
     stale.request_id = first_id;
     worker.publish_for_tests(stale);
-    // The operator asks again. Nothing about the scene changed, so this is the
-    // same generation.
     let second_id = worker.submit(job(&worker, 2, -0.1)).expect("queued");
     assert_ne!(first_id, second_id);
     let drained = worker.drain();
@@ -216,8 +197,6 @@ fn a_completion_for_a_superseded_request_is_not_drained() {
     assert_eq!(second.request_id, second_id);
 }
 
-/// A worker that never got a thread says so instead of accepting jobs that will
-/// never produce a completion.
 #[test]
 fn a_worker_without_a_thread_refuses_to_accept_work() {
     let worker = ContactWorker::spawn_failing();

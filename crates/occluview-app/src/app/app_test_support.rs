@@ -1,29 +1,8 @@
-//! Test-only construction of a real [`OccluViewApp`].
-//!
-//! Document-transition tests drive real methods (`apply_scene_load_result`,
-//! `apply_history_navigation_now`, `apply_layer_overlay_changes`) against a real
-//! app, because the interesting failures happen in the combination of the
-//! history, the document, and the load pipeline — not in any one predicate.
-//!
-//! The production bootstrap cannot be reused: it acquires a process-wide
-//! single-instance claim, reads the operator's state directory, and starts
-//! worker threads. [`test_app`] keeps the same types and skips all three, so a
-//! test never touches the machine it runs on.
-//!
-//! State directory: `OCCLUVIEW_TEST_STATE_DIR` redirects `app_state_dir` to one
-//! process-wide temporary directory. It is deliberately a single directory
-//! rather than one per test — the variable is process-global and tests run in
-//! parallel, so per-test values would race and a test could read another's
-//! path. Nothing here asserts on that directory's contents; the point is that
-//! an incidental write cannot reach the real one.
-
 #![allow(clippy::expect_used)]
 
 use super::*;
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 
-/// A real app with a headless egui context, no live viewport, no startup files,
-/// no single-instance claim, and a per-test temporary state directory.
 pub(super) fn test_app(name: &str) -> OccluViewApp {
     let _ = name;
     std::env::set_var("OCCLUVIEW_NO_UPDATE_CHECK", "1");
@@ -31,15 +10,12 @@ pub(super) fn test_app(name: &str) -> OccluViewApp {
     OccluViewApp::new_for_tests(egui::Context::default())
 }
 
-/// The one temporary state directory every headless app test shares.
 fn test_state_dir() -> PathBuf {
     let root = std::env::temp_dir().join(format!("occluview-app-tests-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&root);
     root
 }
 
-/// A scene whose single layer is named, so a test can tell two scenes apart
-/// without reading geometry.
 pub(super) fn named_scene(name: &str, x_offset: f32) -> Scene {
     let mesh = Mesh::new(
         Some(name.to_string()),
@@ -56,7 +32,6 @@ pub(super) fn named_scene(name: &str, x_offset: f32) -> Scene {
     scene
 }
 
-/// Add a second named layer to a scene, for structural history tests.
 pub(super) fn push_named_layer(scene: &mut Scene, name: &str, x_offset: f32) -> SceneMeshId {
     let mesh = Mesh::new(
         Some(name.to_string()),
@@ -88,7 +63,6 @@ pub(super) fn scene_names(app: &OccluViewApp) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A finished decode as `process_scene_loads` sees it once the channel yields.
 pub(super) fn delivered_load(
     app: &OccluViewApp,
     scene: Scene,

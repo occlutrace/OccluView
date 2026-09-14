@@ -447,12 +447,7 @@ fn replacing_the_geometry_drops_a_stale_deviation_overlay() {
     );
 }
 
-/// A clone of a scene shares the geometry it does not change.
-///
-/// `SceneMesh.mesh` is an `Arc<Mesh>`, so cloning a scene copies the
-/// per-layer container and metadata but not vertices, indices, or decoded
-/// texture. This is the property the in-place-edit paths rest on: without
-/// it, `Arc::make_mut(Scene)` on a second handle would move the whole case.
+/// Cloning a scene shares the mesh buffers but copies layer metadata.
 #[test]
 fn cloning_a_scene_shares_layer_geometry() {
     let mut scene = Scene::new();

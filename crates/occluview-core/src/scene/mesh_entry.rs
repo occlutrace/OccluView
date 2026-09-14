@@ -15,26 +15,8 @@ pub struct SceneMesh {
     id: SceneMeshId,
     /// The geometry this entry places.
     ///
-    /// Shared rather than owned. A `Mesh` holds its vertices, indices and
-    /// decoded texture inline, so an owned one made `Scene: Clone` a copy of
-    /// the whole case, and every in-place scene edit goes through
-    /// `Arc::make_mut`, which copies whenever a second handle is alive. Those
-    /// paths run per frame -- an opacity slider, a tint, a nudge -- and behind
-    /// an `Arc` they touch only this entry's own fields, whoever else is
-    /// reading the geometry.
-    ///
-    /// What is copied now is the container and this entry's metadata, not the
-    /// geometry. On a synthetic arch (release build, Linux x86-64): cloning the
-    /// scene is 39 ns, and `Arc::make_mut` is 5-6 ns as sole handle against
-    /// 47-67 ns with a second handle alive — the spread is the layer count, and
-    /// 945k vertices costs the same as 100, because the vertices are behind this
-    /// `Arc`. The numbers are small for that reason; they are not zero, so a
-    /// second handle is still worth avoiding on a per-frame path.
-    ///
-    /// `Mesh` is already an immutable value -- every mutation is a `with_*`
-    /// constructor that mints fresh identity -- so sharing it costs no
-    /// discipline. A background worker can hold exactly the mesh it needs
-    /// instead of the case it came from.
+    /// Geometry is shared across scene copies and background readers; cloning
+    /// a scene copies layer metadata, not vertex or texture buffers.
     pub mesh: Arc<Mesh>,
     /// Per-instance transform (placement of this mesh in the scene).
     pub transform: Affine3A,
@@ -133,14 +115,8 @@ impl SceneMesh {
 
     /// Attach or clear the deviation color overlay in place.
     ///
-    /// [`Self::with_deviation`] is a builder: it takes `self` by value, so
-    /// using it on a live layer copies the entry (its metadata, and the `Arc`
-    /// handles for geometry and colours) to change one `Option`. The geometry
-    /// itself is not copied -- `mesh` is shared -- but the rebuild is still the
-    /// wrong shape on a path the operator drives continuously: the deviation
-    /// map is re-coloured every time they nudge the scale slider. Measured on
-    /// one 945k-vertex layer: 9 ns for this setter against 72 ns for the
-    /// builder chain, with both leaving the vertex buffer untouched.
+    /// Use this setter for repeated color-scale changes to avoid cloning the
+    /// layer metadata through [`Self::with_deviation`].
     #[inline]
     pub fn set_deviation(&mut self, deviation: Option<Arc<Vec<[u8; 4]>>>) {
         self.deviation = deviation;

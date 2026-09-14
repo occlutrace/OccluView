@@ -730,12 +730,7 @@ impl OccluViewApp {
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
-        // An open hand-drag has already written its pose into the live scene,
-        // and the scene arriving here carries whatever layers it did not
-        // replace. Recording the move first means the operator's gesture becomes
-        // the committed edit it already was on screen, and the close guard can
-        // name it. `clear_scene` is the opposite case: it destroys the scene, so
-        // there it drops the gesture instead.
+        // Record a drag before replacing the scene when its layer survives.
         self.abandon_align_drag();
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
@@ -744,9 +739,6 @@ impl OccluViewApp {
         // A structural scene swap (load, delete, another mesh edit, undo/redo)
         // reverts the geometry the persistent sculpt session was prepared over,
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
-        // it), so drop the session here and re-prepare on the next stroke. The
-        // stroke it was holding dies with the scene, so the "a stroke is live"
-        // marker goes too: this scene never contained one.
         self.tools.sculpt.invalidate_session();
         self.document.unsaved_sculpt_stroke = false;
         self.document.scene = Some(Arc::new(scene));
@@ -814,13 +806,7 @@ impl OccluViewApp {
 
     pub(super) fn clear_scene(&mut self) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
-        // Detach the scene first. Revoking the alignment state below runs the
-        // overlay's own cleanup, and that cleanup edits the live scene in
-        // place (`clear_deviation_overlay` reaches `live_scene_mut`). With the
-        // scene still owned by `self.document`, that edit found a second handle
-        // alive -- this one -- and tripped the in-place-edit assertion in debug
-        // builds. Removing the last layer is a real path into here, so dropping
-        // the handle is the fix, not relaxing the assertion.
+        // Overlay cleanup may edit the scene; detach this handle first.
         let scene = self.document.scene.take();
         // The last layer can disappear while Align Meshes is armed. Revoke its
         // pose, overlay, mask, and worker generation before a new scene may

@@ -66,9 +66,7 @@ impl PersistenceState {
         }
     }
 
-    /// A persistence state for a headless test: no preferences read from disk,
-    /// no recent-file write, no update check. Mirrors `DocumentState::new` for
-    /// the domains a loading test does not exercise.
+    /// Construct persistence state without reading user preferences for tests.
     #[cfg(test)]
     pub(super) fn for_tests() -> Self {
         Self {
