@@ -744,8 +744,11 @@ impl OccluViewApp {
         // A structural scene swap (load, delete, another mesh edit, undo/redo)
         // reverts the geometry the persistent sculpt session was prepared over,
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
-        // it), so drop the session here and re-prepare on the next stroke.
+        // it), so drop the session here and re-prepare on the next stroke. The
+        // stroke it was holding dies with the scene, so the "a stroke is live"
+        // marker goes too: this scene never contained one.
         self.tools.sculpt.invalidate_session();
+        self.document.unsaved_sculpt_stroke = false;
         self.document.scene = Some(Arc::new(scene));
         self.clear_live_viewport();
         self.render.prepared_scene = None;
@@ -829,6 +832,7 @@ impl OccluViewApp {
         // completion cannot outlive this generation and be mistaken for the
         // next file's layer.
         self.tools.sculpt.invalidate_session();
+        self.document.unsaved_sculpt_stroke = false;
         self.document.clear_unsaved_mesh_edits();
         self.document.hidden_layer_stack.clear();
         self.document.translucent_layer_restore.clear();
