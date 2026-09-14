@@ -1,22 +1,22 @@
-<table align="center">
-  <tr>
-    <td valign="middle"><img src="assets/occluview-logo.png" width="64" height="64" alt="OccluView logo"></td>
-    <td valign="middle">
-      <h1>OccluView</h1>
-      <p><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
-      <p>
-        <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.1.1">Latest published release: v1.1.1</a>
-        &nbsp;·&nbsp;
-        <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml">Build status</a>
-      </p>
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <img src="assets/occluview-logo.png" width="96" height="96" alt="OccluView logo">
+
+  <h1>OccluView</h1>
+
+  <p><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
+
+  <p>
+    <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/latest%20release-v1.2.0-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.0"></a>
+    <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/occlutrace/OccluView/ci.yml?branch=main&style=for-the-badge&label=build" alt="Build status"></a>
+  </p>
+</div>
 
 OccluView is a native desktop dental CAD workspace for inspecting, aligning,
 editing, repairing, and exporting scan meshes. It is designed for the work
 that starts after a scan opens: compare two surfaces, find the deviation,
 repair unsafe topology, edit and align 3D scans.
+
+<hr>
 
 ## The workflow at a glance
 
