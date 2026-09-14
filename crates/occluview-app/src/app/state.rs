@@ -195,6 +195,9 @@ impl eframe::App for OccluViewApp {
         self.process_scene_loads(ctx);
         self.poll_sculpt_preparation(ctx);
         self.poll_sculpt_worker(ctx);
+        // After the poll, and independently of it: a session can end without a
+        // worker to poll, and the marker has to follow it either way.
+        self.settle_sculpt_work_marker();
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);
         self.persistence.update_notice.poll(ctx);
