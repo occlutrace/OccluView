@@ -546,10 +546,7 @@ impl OccluViewApp {
                 &[("count", &edited_count.to_string())],
             )
         };
-        let busy_note = self
-            .document
-            .edit_mode
-            .is_busy()
+        let busy_note = (self.document.edit_mode.is_busy() || self.sculpt_has_live_work())
             .then(|| self.ui.locale.tr("edit-session-busy"));
         let response = show_guard_dialog(
             ctx,
@@ -575,8 +572,17 @@ impl OccluViewApp {
             self.ui.pending_replace_open = None;
             return;
         }
-        if self.document.edit_mode.is_busy() && (do_discard || do_save) {
-            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+        // A live Sculpt stroke is an edit session in flight by another name: its
+        // dabs are already on screen and a densification has already replaced
+        // the layer's mesh, while the release that makes it an undoable edit has
+        // not happened yet. Neither answer can be honoured against it — Save has
+        // nothing finished to write, and Discard would drop geometry the dialog
+        // never counted — so the open waits, exactly as it does for a busy edit
+        // session.
+        if self.document.edit_mode.is_busy() || self.sculpt_has_live_work() {
+            if do_discard || do_save {
+                self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+            }
             return;
         }
         if do_discard {

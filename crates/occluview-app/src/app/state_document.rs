@@ -16,6 +16,12 @@
 //!   kept out of the set because a set cannot tell the gesture's mark from a
 //!   committed edit on the same layer, and only [`DocumentState::has_unsaved_mesh_edits`]
 //!   reads it.
+//! - `unsaved_sculpt_stroke` is the same kind of exception for a live Sculpt
+//!   stroke: dabs are already changing the layer on screen and a densifying dab
+//!   has already replaced its mesh in the scene, but the stroke only becomes an
+//!   edit when it is released. Also read only through
+//!   [`DocumentState::has_unsaved_mesh_edits`], so a Replace, a Close, and the
+//!   guard's Save ask one question rather than three.
 //! - `edit_mode` owns selection and undo/redo; structural swaps re-sync it.
 //! - `active_load` / `queued_loads` mutate only the document; the camera
 //!   reset decision and the modified-during-load flag live here with them.
@@ -57,6 +63,14 @@ pub(super) struct DocumentState {
     /// the gesture started at. Set by the drag each frame, cleared when the
     /// gesture ends. Kept out of [`Self::unsaved_edit_layer_ids`] on purpose.
     pub(super) unsaved_drag_pose: bool,
+    /// Whether a Sculpt stroke is open on a layer. Its dabs and any mid-stroke
+    /// densification are already on screen, but the stroke records no undo entry
+    /// and marks no layer unsaved until it is released — so without this the
+    /// load guard, the close guard, and the guard's Save would all decide
+    /// against a scene the operator is in the middle of changing. Kept out of
+    /// [`Self::unsaved_edit_layer_ids`] for the same reason as the drag pose:
+    /// the gesture may end with nothing to keep.
+    pub(super) unsaved_sculpt_stroke: bool,
 }
 
 /// In-progress mesh selection drag. Rectangle drags (default) track an origin
@@ -135,6 +149,7 @@ impl DocumentState {
             load_queue_camera_reset: LoadQueueCameraReset::Idle,
             camera_modified_during_load: false,
             unsaved_drag_pose: false,
+            unsaved_sculpt_stroke: false,
         }
     }
 
@@ -191,7 +206,9 @@ impl DocumentState {
     /// can still put the pose back. It is still work while it is held, which is
     /// what the load guard and the close guard are asking about.
     pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
-        !self.unsaved_edit_layer_ids.is_empty() || self.unsaved_drag_pose
+        !self.unsaved_edit_layer_ids.is_empty()
+            || self.unsaved_drag_pose
+            || self.unsaved_sculpt_stroke
     }
 
     /// Forget the unsaved-edit tracking for the layers just written to disk.

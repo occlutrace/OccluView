@@ -162,6 +162,34 @@ impl OccluViewApp {
         self.complete_pending_history_navigation(ctx);
     }
 
+    /// Withdraw the "a stroke is changing the scene" marker once the gesture has
+    /// settled.
+    ///
+    /// The marker is what makes the load guard, the close guard, and the guard's
+    /// Save ask about a stroke that is on screen but not yet a committed edit.
+    /// It is set when the stroke opens and has to be withdrawn when the stroke
+    /// is over: released and committed by the poll, released and found empty, or
+    /// dropped with the session. A stroke that produced no geometry publishes no
+    /// completion at all, so this is decided from the worker's own state rather
+    /// than from a result arriving.
+    ///
+    /// Called from the frame logic, not from the poll.
+    /// [`Self::poll_sculpt_worker`] returns early when there is no worker, and a
+    /// session can end without one — toggling the brush off after a stroke that
+    /// published nothing drops the worker directly. Withdrawing the marker only
+    /// inside the poll left it set for the rest of the session on that path,
+    /// and every Replace and Close then asked about a stroke that no longer
+    /// existed.
+    pub(super) fn settle_sculpt_work_marker(&mut self) {
+        if !self.document.unsaved_sculpt_stroke {
+            return;
+        }
+        if self.tools.sculpt.is_busy() {
+            return;
+        }
+        self.document.unsaved_sculpt_stroke = false;
+    }
+
     /// Install a whole-layer rebuild produced mid-stroke by densification.
     ///
     /// This is the ONE sculpt path that changes a layer's `topology_id`: the

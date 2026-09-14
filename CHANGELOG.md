@@ -7,6 +7,10 @@ remain in the Git history.
 
 ### Viewer
 
+- Opening or closing a case while a Sculpt stroke was still held used to destroy
+  the layer being sculpted without asking. A live stroke is now treated as work
+  in progress by the open, close, and save guards, so the operator is asked
+  before the scene it is changing goes away.
 - Abandoning a Smooth stroke that had already densified the surface left the
   denser mesh in the case. The stroke recorded no history step while it was
   open, so Ctrl+Z could not name that geometry and the save prompt did not count
