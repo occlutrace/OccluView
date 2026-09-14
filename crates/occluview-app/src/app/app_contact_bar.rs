@@ -1,19 +1,4 @@
-//! The contact bar: one compact strip inside the viewport.
-//!
-//! It replaces the floating window this feature used to open. The window was
-//! the shape of an inspector — a title bar, a pair name, a statistics block —
-//! for a reading whose whole control set is two readings and one slider, and it
-//! sat over the scan the operator was trying to look at.
-//!
-//! The bar keeps the three things that must stay reachable while a reading is
-//! up: which reading is shown, where heavy starts, and how the colours read.
-//! Everything else — the pair name, the numbers, the patch rule — is either
-//! already on screen or belongs in the legend, so it moves to a popover that
-//! opens from the bar itself.
-//!
-//! Nothing here measures. The law switches which field paints, the slider
-//! rewrites the stop table in the per-mesh uniform, and the patch rule is the
-//! one control that asks the worker for a new field.
+//! Horizontal controls and legend for an open contact reading.
 
 use eframe::egui;
 use occluview_contact::{ContactScale, ContactStats, LOAD_MAX_MM, LOAD_MIN_MM};
@@ -103,9 +88,7 @@ impl OccluViewApp {
         let rect = contact_bar_rect(viewport_rect, layer_count);
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                // The frame's own margins are inside the rect, so the strip is
-                // laid out against what is LEFT of it. Sizing against the outer
-                // rect pushed the last controls past the right edge.
+                // Account for frame padding when laying out the strip.
                 let inner = rect.shrink2(egui::vec2(FRAME_PADDING_X, 0.0));
                 ui.set_width(inner.width());
                 ui.set_height(rect.height());
@@ -134,9 +117,7 @@ impl OccluViewApp {
 
         self.apply_contact_bar_request(ctx, request, load_mm, flatten);
 
-        // A reading is a tool the operator is in the middle of: while the bar is
-        // up, the pointer belongs to it, so a click on a button never falls
-        // through to the camera underneath.
+        // Consume pointer input while the bar is visible.
         let hovered = response.hovered();
 
         if self.tools.contacts.details_open() {
@@ -167,8 +148,7 @@ impl OccluViewApp {
         if request.open_details {
             self.tools.contacts.toggle_details();
         }
-        // Recolouring never re-measures: the law picks which field paints and
-        // the slider rewrites the stop table.
+        // Display-only changes update materials without re-measuring.
         let mode_changed = request
             .mode
             .is_some_and(|mode| self.tools.contacts.set_mode(mode));
@@ -178,8 +158,7 @@ impl OccluViewApp {
         if mode_changed || load_changed {
             self.mark_scene_materials_changed();
         }
-        // The patch rule IS an input to the measurement, so this one really does
-        // re-run the worker.
+        // Changing the patch rule requires a new measurement.
         if let Some(next) = request.flatten {
             if next != flatten && self.tools.contacts.set_flatten_patches(next) {
                 self.tools.contacts.drop_fields();
@@ -233,8 +212,7 @@ mod layout_tests {
     }
 }
 
-/// What the strip reads from the reading, gathered once so the painter takes
-/// one argument instead of eight.
+/// Values needed to paint the strip.
 struct StripView<'a> {
     locale: &'a crate::i18n::LocaleManager,
     /// What the reading is called: which scan, against which.
@@ -263,9 +241,7 @@ fn paint_strip(
         paint_mode_pair(ui, locale, view.mode, request);
         ui_theme::vertical_divider(ui, CHIP_HEIGHT - 8.0);
 
-        // The legend is what makes the colours readable, so it is the last
-        // thing to go: it takes whatever the controls leave, and only
-        // disappears once that is genuinely too narrow to read a ramp.
+        // Keep the legend when the remaining width can show a usable ramp.
         let reserved = MODE_BUTTON_WIDTH * 2.0 + SLIDER_WIDTH + DETAILS_BUTTON_WIDTH + 78.0 + 24.0;
         let bar_width = rect.width() - FRAME_PADDING_X * 2.0;
         let legend_width = (bar_width - reserved).clamp(0.0, LEGEND_MAX_WIDTH);
@@ -274,11 +250,7 @@ fn paint_strip(
             ui.add_space(2.0);
         }
 
-        // Everything from here to the right edge belongs to the action group.
-        // Its width is MEASURED from the controls it holds rather than
-        // predicted from constants: a prediction goes stale the moment a
-        // divider or a button changes size, and the failure is silent — the row
-        // simply overflows and the close button lands off the strip.
+        // Reserve the action group at the right edge.
         let actions_width = DETAILS_BUTTON_WIDTH
             + CLOSE_BUTTON_WIDTH
             + ui.spacing().item_spacing.x * 2.0
@@ -295,9 +267,7 @@ fn paint_strip(
         if view.busy {
             ui.add(egui::Spinner::new().size(14.0));
         }
-        // A reading that cannot run says why on the bar itself. Behind the
-        // Details button, "show the opposing scan first" only reached an
-        // operator who had already decided to look for it.
+        // Show actionable status on the bar.
         if let Some(status) = view.status.filter(|status| {
             !matches!(
                 status,
@@ -312,10 +282,7 @@ fn paint_strip(
             .on_hover_text(locale.tr(status_hint_key(status)));
         }
 
-        // The actions are pinned to the RIGHT EDGE of the bar rather than
-        // appended to the row. A row that runs out of width silently drops what
-        // does not fit, and the control it dropped was the ✕ that closes the
-        // reading — the one control that must never be unreachable.
+        // Pin actions to the right so the close control remains available.
         let actions_rect = egui::Rect::from_min_size(
             egui::pos2(
                 rect.right() - FRAME_PADDING_X - actions_width,
@@ -480,13 +447,7 @@ fn paint_details_toggle(
     }
 }
 
-/// The ramp as a bar, with the numbers that make it readable.
-///
-/// Drawn from the scale itself rather than from a copy of its colours, so a
-/// legend can never describe a ramp the surface is not wearing. The bar is
-/// painted over the strip's fill because the far end of the ramp is barely there
-/// at all — the paint ends by alpha, so a swatch drawn over the viewport would
-/// show the scan behind it rather than the colour the ramp gives.
+/// Draw the current color scale as a horizontal ramp.
 fn paint_legend(ui: &mut egui::Ui, scale: ContactScale, width: f32) {
     let law = scale.law();
     let far = law.paint_far_mm;
@@ -619,9 +580,7 @@ struct DetailsContent {
 fn status_hint_key(status: ContactStatus) -> &'static str {
     match status {
         ContactStatus::Measuring => "contact-status-measuring-hint",
-        // `Remeasuring` is the held state: a drag is rewriting a pose every
-        // frame, so the reading waits for it to end. Saying "reading the two
-        // surfaces" here described work that is deliberately not happening.
+        // A held drag defers measurement until the pose is stable.
         ContactStatus::Remeasuring => "contact-status-remeasuring-hint",
         ContactStatus::NeedsSecond => "contact-status-needs-second-hint",
         ContactStatus::SubjectUnusable => "contact-status-subject-unusable-hint",

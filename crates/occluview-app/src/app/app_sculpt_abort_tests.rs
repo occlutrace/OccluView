@@ -1,19 +1,3 @@
-//! Abort and commit boundary tests for Sculpt.
-//!
-//! `sculpt_worker_tests.rs` covers the kernel and the worker's ordering. These
-//! tests drive the application: a stroke is started, a densifying dab lands —
-//! which swaps the layer's whole mesh into the document before the stroke is
-//! over — and then the stroke is aborted. The question is what the document, the
-//! topology identity, the undo history, and the unsaved-work markers say
-//! afterwards.
-//!
-//! The densify-then-abort scenario is why this file exists. Installing a rebuild
-//! is the one place a stroke changes the document mid-gesture, and it does so
-//! without an undo entry by design: the stroke is still open and the commit is
-//! what records it. Aborting therefore has to take that back too, or the
-//! document keeps a vertex array and a triangle list that no history step
-//! describes and no save prompt names.
-
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -35,10 +19,6 @@ use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-/// A 5x3 lattice at 4 mm spacing folded along a sharp ridge — far coarser than
-/// the 3.5 mm brush, so a Smooth dab has to densify before it can relax
-/// anything. The same fixture the worker tests use, so a failure here is about
-/// the application boundary and not about a different mesh.
 fn coarse_ridge_mesh() -> Mesh {
     let mut vertices = Vec::new();
     for j in 0..3usize {
@@ -60,7 +40,6 @@ fn coarse_ridge_mesh() -> Mesh {
     Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
 }
 
-/// A dab wide enough that the coarse lattice has to subdivide under Smooth.
 fn densifying_stroke() -> BrushStroke {
     BrushStroke {
         center: [0.0, 0.0, 4.0],
@@ -70,7 +49,6 @@ fn densifying_stroke() -> BrushStroke {
     }
 }
 
-/// An Add dab that does not densify: the shape of a finished first stroke.
 fn additive_stroke() -> BrushStroke {
     BrushStroke {
         center: [0.0, 0.0, 4.0],
@@ -80,7 +58,6 @@ fn additive_stroke() -> BrushStroke {
     }
 }
 
-/// A worker over `mesh`, as `poll_sculpt_preparation` would have created it.
 fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
     mesh.warm_bvh();
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
@@ -98,11 +75,6 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
     })
 }
 
-/// An app with one layer in an open edit session, as the Sculpt tab reaches it.
-///
-/// Opened through `begin_face_selection`, which is what the Mesh Editor calls
-/// when it opens a session on a layer: it records the session's target layer,
-/// and sculpt's own target resolution reads that.
 fn app_sculpting(name: &str, mesh: Mesh) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
     let mut scene = Scene::new();
@@ -121,13 +93,6 @@ fn app_sculpting(name: &str, mesh: Mesh) -> (OccluViewApp, SceneMeshId) {
     (app, layer_id)
 }
 
-/// Run the application's own sculpt poll until the worker has published
-/// everything this stroke produced.
-///
-/// The loop drives `poll_sculpt_worker` — the frame loop's entry point — rather
-/// than draining the worker directly, so everything under test is the
-/// application's real handling of a rebuild or a completion. Quiescence is the
-/// worker's own answer, not a fixed delay.
 fn pump_until_quiescent(app: &mut OccluViewApp) {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -148,8 +113,6 @@ fn pump_until_quiescent(app: &mut OccluViewApp) {
     }
 }
 
-/// Lay one dab on a fresh worker, release the stroke, and let the frame loop
-/// commit it. This is the shape of a finished stroke.
 fn lay_and_release_one_dab(
     app: &mut OccluViewApp,
     base: &Mesh,
@@ -165,9 +128,6 @@ fn lay_and_release_one_dab(
     pump_until_quiescent(app);
 }
 
-/// Start a gesture on a fresh worker over `base`, as the viewport's first press
-/// on that layer does. The stroke stays open: nothing is released, so the
-/// document geometry the worker publishes is a preview, not a committed edit.
 fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
     let layer_id = layer_id_of(app);
     app.tools.sculpt.worker = Some(worker_for(base, layer_id));
@@ -178,9 +138,6 @@ fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
     });
 }
 
-/// Lay one dab into the open stroke and run the frame loop until the worker's
-/// output for it has been handled. For a densifying dab that means the rebuild
-/// is now the document's geometry while the stroke is still open.
 fn lay_dab_mid_stroke(app: &mut OccluViewApp, stroke: BrushStroke, mode: BrushMode) {
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
@@ -189,7 +146,6 @@ fn lay_dab_mid_stroke(app: &mut OccluViewApp, stroke: BrushStroke, mode: BrushMo
     pump_until_quiescent(app);
 }
 
-/// The scene's mesh Arc for `layer`, or a panic naming what is missing.
 fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
     app.document
         .scene
@@ -210,13 +166,6 @@ fn layer_id_of(app: &OccluViewApp) -> SceneMeshId {
         .expect("the session names its layer")
 }
 
-/// DENSIFY, THEN ABORT.
-///
-/// Installing a rebuild swaps the layer's whole mesh into the document while the
-/// stroke is still open. Aborting the stroke must put the document back to what
-/// the last finished stroke left, because the aborted stroke recorded no undo
-/// entry and marked nothing unsaved: the operator otherwise keeps a mesh they
-/// never agreed to, and Ctrl+Z cannot name it.
 #[test]
 fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
     let (mut app, layer_id) = app_sculpting("sculpt-abort-after-densify", coarse_ridge_mesh());
@@ -244,8 +193,6 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
         "the densified mesh carries a fresh topology identity"
     );
 
-    // The operator abandons the stroke: they switch tools, or the edit session
-    // is dropped underneath them.
     app.abort_sculpt_stroke();
 
     let after = layer_mesh(&app, layer_id);
@@ -275,13 +222,10 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
     );
 }
 
-/// A densified, aborted second stroke must not take the first, finished stroke
-/// with it.
 #[test]
 fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
     let (mut app, layer_id) = app_sculpting("sculpt-abort-keeps-first", coarse_ridge_mesh());
 
-    // Stroke 1: a plain Add dab, released and committed by the frame loop.
     let first_base = layer_mesh(&app, layer_id);
     lay_and_release_one_dab(&mut app, &first_base, additive_stroke(), BrushMode::Add);
     let first_mesh = layer_mesh(&app, layer_id);
@@ -304,7 +248,6 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
         "and it is one history step"
     );
 
-    // Stroke 2: densifying, then abandoned.
     let second_base = Arc::new(layer_mesh(&app, layer_id).as_ref().clone());
     start_stroke(&mut app, &second_base);
     lay_dab_mid_stroke(&mut app, densifying_stroke(), BrushMode::Smooth);
@@ -337,8 +280,6 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
     );
 }
 
-/// A densifying stroke that commits keeps its result: the abort baseline is the
-/// stroke's business, not a permanent cap on the layer.
 #[test]
 fn a_committed_densifying_stroke_keeps_its_geometry() {
     let (mut app, layer_id) = app_sculpting("sculpt-commit-after-densify", coarse_ridge_mesh());
@@ -356,7 +297,6 @@ fn a_committed_densifying_stroke_keeps_its_geometry() {
         "a committed stroke is unsaved work"
     );
 
-    // A later abort of an unrelated drag must not reach back and undo it.
     app.abort_sculpt_stroke();
 
     assert_eq!(
@@ -371,12 +311,6 @@ fn a_committed_densifying_stroke_keeps_its_geometry() {
     );
 }
 
-/// A committed densifying stroke is undoable and redoable as one step.
-///
-/// The densification changes the document mid-stroke, so the interesting
-/// question is which mesh the history step restores: the coarse one the stroke
-/// started from (correct — the stroke is one edit) or the dense intermediate the
-/// rebuild installed (wrong — it would make Ctrl+Z a no-op partway through).
 #[test]
 fn undo_and_redo_a_committed_densifying_stroke() {
     let (mut app, layer_id) = app_sculpting("sculpt-undo-densify", coarse_ridge_mesh());
@@ -417,9 +351,6 @@ fn undo_and_redo_a_committed_densifying_stroke() {
     let _ = base_topology;
 }
 
-/// A stroke that densified and then hit a worker failure leaves no partial
-/// geometry behind: the failure path drops the session, which restores the
-/// preview the same way an abort does.
 #[test]
 fn a_worker_failure_after_densification_leaves_no_partial_geometry() {
     use crate::sculpt_worker::SculptFailure;

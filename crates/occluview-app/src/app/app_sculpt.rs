@@ -1,7 +1,4 @@
-//! Viewport input for the sculpt brushes: the persistent per-layer kernel
-//! session, the arc-length dab scheduler, sparse live vertex writes, the
-//! re-upload-free stroke commit, wheel resize/re-intensify, and the brush
-//! cursor. The geometry kernel lives in `occlu-mesh-edit`.
+//! Viewport input and rendering integration for the sculpt brushes.
 
 use super::{egui, live_viewport, mesh_editor_overlay, OccluViewApp};
 use crate::sculpt_tool::{
@@ -46,9 +43,7 @@ pub(super) fn apply_sculpt_wheel_settings(ctx: &egui::Context) -> bool {
             input.modifiers.ctrl || input.modifiers.command,
         )
     });
-    // Holding Shift makes many window managers deliver the wheel as
-    // HORIZONTAL scroll, so read whichever axis actually moved — otherwise
-    // Shift+wheel silently did nothing (only `.y` was read).
+    // Shift+wheel may arrive on either scroll axis.
     let scroll = if raw_scroll.y.abs() >= raw_scroll.x.abs() {
         raw_scroll.y
     } else {
@@ -160,12 +155,8 @@ fn plan_dab_centers(
 impl OccluViewApp {
     /// Arm/disarm a sculpt tool (toggling the armed one disarms).
     pub(super) fn toggle_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
-        // A brush-mode switch keeps the layer context, so a live stroke is
-        // finished — not aborted: its dabs still become one undoable edit on
-        // the shared worker queue (Finish runs before the new mode's first
-        // dab), instead of dying in a cleared queue with no undo entry.
-        // Context switches away from sculpt (tabs, lasso) still abort via
-        // their own paths: the worker they drop cannot outlive the context.
+        // Finish a live stroke before switching brush modes. Other context
+        // switches use their existing abort paths.
         if !self.commit_sculpt_stroke(ctx) {
             return;
         }
@@ -174,14 +165,11 @@ impl OccluViewApp {
             // Arming a brush means the Sculpt tab: show it and drop selection.
             self.tools.editor_tab = mesh_editor_overlay::EditorTab::Sculpt;
             self.document.mesh_selection_drag = None;
-            // Prepare the target off the UI thread. Selection gesture state is
-            // intentionally preserved; sculpt owns LMB while armed and must
-            // not silently turn Lasso into Marquee.
+            // Prepare the target off the UI thread. Sculpt remains the owner of
+            // the primary button while armed.
             self.prepare_armed_sculpt_session();
         } else if !self.tools.sculpt.worker_has_pending_work() {
-            // `commit_sculpt_stroke` may have just queued Finish. Dropping the
-            // worker here would clear that command and lose the last stroke;
-            // poll_sculpt_worker owns the completion before a later teardown.
+            // The worker owns a queued Finish until the next poll.
             self.tools.sculpt.disarm();
         }
         self.ui.status_message = Some(match self.tools.sculpt.armed {
@@ -194,9 +182,7 @@ impl OccluViewApp {
             Some(_) => self.ui.locale.tr("sculpt-preparing"),
             None => self.ui.locale.tr("sculpt-off"),
         });
-        // Sculpt hides the selection overlay while its display-only shadow is
-        // ahead of the committed document mesh. Rebuild it when the mode
-        // changes so it cannot remain stale after the stroke is committed.
+        // Rebuild selection display data when Sculpt changes the visible mesh.
         self.render.invalidation.selection_changed();
         ctx.request_repaint();
     }
@@ -234,9 +220,7 @@ impl OccluViewApp {
         }
         if ctx.input_mut(|input| {
             input.consume_key(egui::Modifiers::NONE, egui::Key::Num1)
-                // A held Shift must not swallow the switch: otherwise the
-                // operator believes Smooth is armed while AddRemove (+Shift
-                // = Remove) still is, and the next dab carves.
+                // Do not let Shift change the meaning of the mode switch.
                 || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Num1)
         }) {
             self.arm_sculpt_tool(SculptToolKind::AddRemove, ctx);
@@ -298,10 +282,8 @@ impl OccluViewApp {
         });
         let dt = ctx.input(|input| input.stable_dt);
 
-        // A fast release followed by a new press can be coalesced into one
-        // egui frame. The edge is authoritative: finalize any stale previous
-        // stroke before creating the next one, otherwise its old anchor and
-        // hold timer can make the second drag look dead.
+        // Finalize a stale stroke before starting a new one when both edges
+        // arrive in the same frame.
         if pressed && self.tools.sculpt.stroke.is_some() && !self.commit_sculpt_stroke(ctx) {
             return true;
         }
@@ -316,16 +298,13 @@ impl OccluViewApp {
             return false;
         }
 
-        // Primary is held. Own the gesture; only lay dabs where there is a
-        // surface under the cursor on the stroke's layer.
+        // Sculpt owns the held primary gesture and only accepts hits on its
+        // active layer.
         let Some(pointer) = pointer else {
             return true;
         };
         if !response.contains_pointer() {
-            // The viewport response becomes false both outside its rect and
-            // when the Mesh Editor window is above it. A live drag may pause
-            // and resume on re-entry, but it must never turn an out-of-window
-            // pointer into a ray and sculpt an extrapolated surface.
+            // Pause a drag when the viewport no longer owns the pointer.
             if self.tools.sculpt.stroke.is_some() {
                 ctx.request_repaint();
                 return true;
@@ -340,9 +319,7 @@ impl OccluViewApp {
             ctx.request_repaint();
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
-            // Keep owning this held gesture while the background BVH/brush
-            // preparation finishes. The next frame retries the current point,
-            // so the first press is never silently lost.
+            // Retry the current point after background preparation finishes.
             ctx.request_repaint();
             return true;
         };
@@ -381,11 +358,6 @@ impl OccluViewApp {
                     last_dab_local: None,
                     hold_seconds: 0.0,
                 });
-                // A live stroke is work in flight even before its first dab
-                // lands, and every dab after that is already on screen. The
-                // load guard, the close guard, and the guard's Save all ask
-                // `has_unsaved_mesh_edits`, so this is where they learn about
-                // it; the release path clears it when the stroke is committed.
                 self.document.unsaved_sculpt_stroke = true;
             }
         }
@@ -553,17 +525,6 @@ impl OccluViewApp {
         }
     }
 
-    /// Whether a Sculpt stroke is changing the layer on screen without being an
-    /// edit yet.
-    ///
-    /// A held stroke has dabs in the worker's shadow and, after a densifying
-    /// dab, a replaced mesh in the document — but no undo entry and no layer in
-    /// the unsaved set until it is released and its completion is committed.
-    /// This is the gesture half of
-    /// [`DocumentState::has_unsaved_mesh_edits`](super::state_document::DocumentState::has_unsaved_mesh_edits),
-    /// which is what the load guard and the close guard ask. The guard's own Save
-    /// asks it separately, because releasing the stroke is asynchronous and
-    /// there is nothing written until the completion lands.
     pub(super) fn sculpt_has_live_work(&self) -> bool {
         self.document.unsaved_sculpt_stroke
     }
@@ -579,17 +540,6 @@ impl OccluViewApp {
         }
     }
 
-    /// End a sculpt session: cancel the worker and take any mid-stroke preview
-    /// back out of the document.
-    ///
-    /// Installing a densifying rebuild swaps the layer's whole mesh into the
-    /// document while the stroke is still open, and records no undo entry — the
-    /// commit at the end of the stroke is what adopts it. A session that ends
-    /// any other way (abort, worker failure, a cancelled edit session, a scene
-    /// transition) has to restore the mesh that stroke started from, or the
-    /// document keeps geometry and a triangle list that no history step
-    /// describes. A previous stroke's committed result is what goes back,
-    /// because that is what the layer held before this stroke began.
     pub(super) fn invalidate_sculpt_session_silent(&mut self) {
         self.restore_sculpt_preview_baseline();
         self.document.unsaved_sculpt_stroke = false;
@@ -600,13 +550,6 @@ impl OccluViewApp {
         self.render.invalidation.sculpt_topology_changed();
     }
 
-    /// Put the committed mesh back for a layer whose document geometry is only
-    /// a mid-stroke preview.
-    ///
-    /// Does nothing when there is no preview, and nothing when the layer is no
-    /// longer there or no longer holds the preview's topology: both mean some
-    /// other transition already owns that geometry, and restoring would
-    /// overwrite a scene the operator is looking at.
     fn restore_sculpt_preview_baseline(&mut self) -> bool {
         let Some(baseline) = self.tools.sculpt.preview_baseline().cloned() else {
             return false;
@@ -636,8 +579,6 @@ impl OccluViewApp {
         if let Some(scene) = self.document.scene.as_ref() {
             self.document.edit_mode.sync_to_scene(scene);
         }
-        // Every consumer of the layer's geometry is stale: the mesh that was
-        // on screen was bigger, and the prepared scene holds its buffers.
         self.render.invalidation.scene_geometry_changed();
         if self.can_render_cut_view() {
             self.tools.cut_view.mark_dirty();
@@ -685,9 +626,7 @@ impl OccluViewApp {
         let worker = self.tools.sculpt.worker.as_ref().filter(|worker| {
             worker.layer_id == layer_id && worker.topology_id == entry.mesh.topology_id()
         });
-        // The preparation thread warms this shared tree before building the
-        // sculpt session. Never make the UI wait inside OnceLock on a cold
-        // scan-sized BVH; show the cursor as soon as that first stage is ready.
+        // Preparation warms the shared tree off the UI thread.
         if worker.is_none() && !entry.mesh.bvh_is_ready() {
             return None;
         }
@@ -717,12 +656,7 @@ impl OccluViewApp {
             .map(|(_, layer_id)| layer_id)
     }
 
-    /// Paint the cursor after viewport input has had a chance to cache its
-    /// authoritative hit. Hovering performs one guarded BVH pick; a held drag
-    /// reuses the exact hit that scheduled the dabs, so the surface light never
-    /// adds a second scan-sized traversal to the hot path.
-    // The cursor is one authoritative presentation path: hit validation,
-    // surface feedback, and the screen-space ring must share the same sample.
+    /// Paint the cursor using the hit cached by the viewport input pass.
     #[expect(clippy::too_many_lines)]
     pub(super) fn paint_sculpt_cursor_impl(
         &self,
@@ -737,10 +671,7 @@ impl OccluViewApp {
             self.publish_sculpt_cursor(None);
             return;
         }
-        // The cursor must follow the same ownership boundary as the drag: a
-        // foreground editor window owns the pointer even when it sits inside
-        // the viewport rectangle, and a preparing worker is not ready to
-        // accept a dab yet.
+        // Match cursor ownership to the drag and wait for preparation to finish.
         if !viewport_response.contains_pointer() {
             self.publish_sculpt_cursor(None);
             return;
@@ -794,8 +725,7 @@ impl OccluViewApp {
             return;
         };
         let shift = ui.ctx().input(|input| input.modifiers.shift);
-        // The ring shows the footprint a dab would actually cover, so the
-        // Shift-widened Smooth reads on screen before the first stroke lands.
+        // Show the effective footprint, including Shift+Smooth widening.
         let radius_world =
             kind.dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ui.ctx()), shift);
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
@@ -840,8 +770,7 @@ impl OccluViewApp {
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
         if radius_px.is_finite() && radius_px >= 2.0 {
             let canvas = ui.painter();
-            // The ring must preview the force the dab will actually use:
-            // Shift+Smooth is a full-strength pass, not a dim 50% cursor.
+            // Preview the effective strength used by the dab.
             let intensity = strength;
             canvas.circle_filled(
                 pointer,

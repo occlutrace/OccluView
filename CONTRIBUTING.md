@@ -19,6 +19,21 @@ The render tests use a software rasteriser (Lavapipe on Linux, WARP on
 Windows), so `cargo test` needs no GPU. They are slower than the rest; that is
 expected.
 
+## Repository hygiene
+
+Keep process material outside the repository. Do not commit prompts, exported
+agent sessions, handoffs, audit dumps, scratch plans, generated process
+documents, agent instruction files such as `AGENTS.md`, or files whose only
+purpose is to direct an AI worker. Add a file only when it is product
+documentation or an explicit build, release, security, or contribution
+contract.
+
+Comments and doc comments describe current behaviour: an invariant, ownership
+rule, format contract, or reproducible measurement. Do not use them as a work
+diary or to preserve review history, speculation, obsolete behaviour, or
+unverified performance claims. The pull request diff must be checked for these
+artifacts; formatting, tests, and CI do not enforce this rule.
+
 ## Tests
 
 For behaviour changes, add or update tests. Prefer behavioural assertions over

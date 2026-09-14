@@ -311,11 +311,8 @@ impl OccluViewApp {
             }
             return;
         }
-        // The arrows go too. A hand nudge moves the scan out from under every
-        // point that was placed on it, so they would come back describing a fit
-        // that no longer holds — and the operator asked for a clean slate here by
-        // name. The pair itself stays: they chose those two scans and did not
-        // un-choose them.
+        // A hand nudge invalidates all points tied to the previous fit. Keep the
+        // selected pair, but clear its derived points.
         let dropped_arrows = self.tools.align.tool.clear_points();
         if dropped_arrows {
             self.tools.align.rejected.clear();
@@ -541,13 +538,7 @@ mod tests {
         }
     }
 
-    /// A committed pose moves the scan, is undoable, and is unsaved work.
-    ///
-    /// This used to assert that the two history calls were present in the
-    /// source and that `mark_mesh_edits_unsaved` was called, which passes while
-    /// the pose is applied to the wrong layer, or written to the draft only, or
-    /// undone by the next frame. It now runs the commit and reads the scene and
-    /// the guards an operator would actually meet.
+    /// A committed pose must be visible, undoable, and marked unsaved.
     #[test]
     fn a_committed_pose_is_applied_undoable_and_unsaved_work() {
         use crate::app::app_test_support::{named_scene, push_named_layer, test_app};

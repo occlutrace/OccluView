@@ -1,19 +1,3 @@
-//! Delivery-boundary tests for the contact reading.
-//!
-//! `contact_tests.rs` unit-tests the state's rules. These tests drive the
-//! application's own entry points — `begin_contacts_from_layer`,
-//! `submit_contacts_job`, `drain_contacts_worker` — because what has to be
-//! proved here is a *sequence*: a measurement finishes for one reading and its
-//! answer is delivered after the operator has moved past it, either to another
-//! pair or by moving a scan under a held reading. The numbers in that answer
-//! describe surfaces that are not on screen, so a panel that takes them reports
-//! a reading nobody asked for.
-//!
-//! No sleeps. The answer is placed in the worker's publication slot with
-//! `ContactWorker::publish_for_tests`, which is the same slot a real compute
-//! fills, so the delivery is observed exactly where a race would be resolved
-//! rather than after a guessed delay.
-
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use super::*;
@@ -24,7 +8,6 @@ use glam::Vec3;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use std::sync::Arc;
 
-/// A smallest readable surface: one triangle, non-empty bounding box.
 fn slab(x: f32, z: f32) -> Mesh {
     Mesh::new(
         None,
@@ -38,8 +21,6 @@ fn slab(x: f32, z: f32) -> Mesh {
     .expect("a triangle is a mesh")
 }
 
-/// Three surfaces: two close enough to read against each other, and a third
-/// far enough that it is never the nearest candidate.
 fn three_layer_scene() -> (Scene, SceneMeshId, SceneMeshId, SceneMeshId) {
     let mut scene = Scene::new();
     let first = scene.add(SceneMesh::new(slab(0.0, 0.0)));
@@ -49,19 +30,12 @@ fn three_layer_scene() -> (Scene, SceneMeshId, SceneMeshId, SceneMeshId) {
     (scene, ids[first], ids[second], ids[third])
 }
 
-/// Open a reading on `layer`.
-///
-/// Opening a reading also clears the align heatmap, and that restore path owns a
-/// separate contract with its own test. Leaving the heatmap armed here would
-/// make this file fail on that contract instead of the one it is about, so it is
-/// turned off first.
 fn open_contacts_on(app: &mut OccluViewApp, layer: SceneMeshId) -> bool {
     app.tools.align.settings.show_deviation = false;
     let scene = app.document.scene.clone().expect("scene");
     app.begin_contacts_from_layer(&scene, layer)
 }
 
-/// The request the reading is currently waiting for.
 fn pending(app: &OccluViewApp) -> ContactRequest {
     app.tools
         .contacts
@@ -69,12 +43,6 @@ fn pending(app: &OccluViewApp) -> ContactRequest {
         .expect("a submitted reading waits for its answer")
 }
 
-/// Deliver an answer for `request`, exactly where the worker thread places one.
-///
-/// The outcome is a refusal rather than a measurement because what is under test
-/// is the delivery decision, not the packing of a field: a refusal is the form
-/// that changes the panel most visibly — it clears the map and writes a sentence
-/// — so a path that mishandles delivery fails here loudly.
 fn deliver_answer(app: &OccluViewApp, request: ContactRequest, failure: ContactFailure) {
     let worker = app.tools.contacts.worker().expect("a worker");
     worker.publish_for_tests(ContactCompletion {
@@ -85,12 +53,6 @@ fn deliver_answer(app: &OccluViewApp, request: ContactRequest, failure: ContactF
     });
 }
 
-/// The defect this file is about: a reading is opened on one pair, the operator
-/// changes their mind and opens a reading on another, and the first
-/// measurement's answer is delivered afterwards.
-///
-/// It describes other layers, so it may not be recorded, painted, or reported as
-/// this pair's reading.
 #[test]
 fn an_answer_for_a_superseded_reading_is_not_applied_to_the_current_one() {
     let mut app = test_app("contact-superseded-reading");
@@ -101,7 +63,6 @@ fn an_answer_for_a_superseded_reading_is_not_applied_to_the_current_one() {
     assert!(open_contacts_on(&mut app, first));
     let superseded = pending(&app);
 
-    // The operator asks about a different layer before the answer is collected.
     assert!(open_contacts_on(&mut app, third));
     let current = pending(&app);
     assert_ne!(superseded.id, current.id, "asking again is a new request");
@@ -130,14 +91,6 @@ fn an_answer_for_a_superseded_reading_is_not_applied_to_the_current_one() {
     );
 }
 
-/// The same rule under a hand drag, and the half the request identity cannot
-/// catch.
-///
-/// A drag rewrites a pose every frame while the reading is held, and the reading
-/// keeps the same request in flight across all of it. So an answer can carry the
-/// identity of the request that is still pending and still describe a pose that
-/// is no longer on screen. Identity answers "which submission", not "which
-/// scene", and the live scene has to be asked separately.
 #[test]
 fn an_answer_measured_before_the_scan_moved_is_not_applied() {
     let mut app = test_app("contact-moved-under-hold");
@@ -148,9 +101,6 @@ fn an_answer_measured_before_the_scan_moved_is_not_applied() {
     assert!(open_contacts_on(&mut app, first));
     let request = pending(&app);
 
-    // The operator starts dragging the scan. This is the frame-by-frame state of
-    // that gesture: the pose has moved, the reading is held, and the request the
-    // worker is still computing was built from where the scan used to be.
     app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
         glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
     app.tools.contacts.hold_for_drag();
@@ -175,8 +125,6 @@ fn an_answer_measured_before_the_scan_moved_is_not_applied() {
     assert!(app.tools.contacts.fields().is_empty());
 }
 
-/// A worker with no thread must not leave the reading waiting for an answer that
-/// cannot come.
 #[test]
 fn a_reading_with_no_executor_reports_a_failure_instead_of_measuring_forever() {
     let mut app = test_app("contact-no-executor");
@@ -208,8 +156,6 @@ fn a_reading_with_no_executor_reports_a_failure_instead_of_measuring_forever() {
         "the operator is offered the retry a refusal earns"
     );
 
-    // The frame loop's question: the same inputs must not be queued every frame
-    // against a worker that cannot run them.
     let scene = app.document.scene.clone().expect("scene");
     let pair = app.tools.contacts.pair().expect("an open reading");
     let keys = crate::contact::contact_job_keys(&scene, pair, false).expect("a pair");
@@ -219,14 +165,6 @@ fn a_reading_with_no_executor_reports_a_failure_instead_of_measuring_forever() {
     );
 }
 
-/// A dropped answer must not leave the reading waiting for one that will never
-/// come.
-///
-/// The pose of a hand drag can come back to exactly where the measurement was
-/// taken: the operator nudges a scan and puts it back. The answer that was
-/// dropped describes those very keys, and if the reading still recorded it as
-/// in flight, `needs_measurement` would answer false for it forever — the panel
-/// sits on "re-measuring" with no job running and nothing left to submit one.
 #[test]
 fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     let mut app = test_app("contact-dropped-answer-resubmits");
@@ -238,23 +176,17 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     let request = pending(&app);
     let keys = request.keys;
 
-    // The scan moves under the held reading, and the answer that was already
-    // computed for the old pose arrives.
     app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
         glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
     app.tools.contacts.hold_for_drag();
     deliver_answer(&app, request, ContactFailure::NoSurface);
     app.drain_contacts_worker(&ctx);
 
-    // The answer is gone and the request went with it: there is no measurement
-    // left to wait for, so the reading is willing to measure this scene again.
     assert!(
         app.tools.contacts.pending_request().is_none(),
         "a dropped answer must release the request it belonged to"
     );
 
-    // The operator puts the scan back exactly where it was and lets go. Every
-    // distance in the reading is what the dropped answer measured.
     app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
         glam::Affine3A::IDENTITY;
     app.tools.contacts.resume_after_drag();

@@ -94,13 +94,7 @@ mod tests {
     use glam::Vec3;
     use std::sync::Arc;
 
-    /// Reset Positions is one undo step that returns every moved layer to the
-    /// identity pose.
-    ///
-    /// This used to read its own source text and assert that the calls opening
-    /// and closing a history step were present. That passes while the step is
-    /// recorded with the wrong content, or while the poses are not actually
-    /// reset — the two things an operator would notice.
+    /// Reset Positions restores all poses and creates one undo step.
     #[test]
     fn resetting_positions_is_one_undoable_step() {
         let mut app = test_app("reset-positions");
