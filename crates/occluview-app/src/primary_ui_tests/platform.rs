@@ -293,9 +293,10 @@ fn the_release_page_quotes_the_changelog_and_attests_the_sboms() {
     let package = package_workflow_source();
 
     assert!(
-        !package.contains(r#"awk -v ver="$version""#)
-            && package.contains("grep -q \"^## $version \" CHANGELOG.md"),
-        "release notes should stay short while checking the changelog section exists"
+        package.contains(r#"awk -v version="$version""#)
+            && package.contains(r#"changelog_section="$(mktemp)""#)
+            && package.contains(r#"CHANGELOG.md > "$changelog_section""#),
+        "release notes should be built from the matching changelog section"
     );
     assert!(
         package.contains("dist/sbom-*.json"),
