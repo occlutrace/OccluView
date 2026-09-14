@@ -10,10 +10,23 @@ use occluview_formats::write::{
 use std::ffi::OsStr;
 use std::path::Path;
 
-/// The layers a guard Save… flow would export, with the scene they came from.
-pub(super) struct PendingLayerExports {
-    pub(super) scene: std::sync::Arc<Scene>,
-    pub(super) pending: Vec<(usize, occluview_core::SceneMeshId)>,
+/// What the guard's Save… flow has to write.
+///
+/// Three answers, not two: "nothing carried edits" and "a stroke is still
+/// landing" both have no layer list, and collapsing them lets a caller read the
+/// second as permission to close or replace the scene.
+pub(super) enum PendingLayerExports {
+    /// The layers to export, with the scene they came from.
+    Ready {
+        scene: std::sync::Arc<Scene>,
+        pending: Vec<(usize, occluview_core::SceneMeshId)>,
+    },
+    /// Nothing carried unsaved edits.
+    Nothing,
+    /// A Sculpt stroke is still changing a layer on screen. Releasing it is
+    /// asynchronous, so there is nothing written yet and "nothing to save"
+    /// would be false about geometry the operator can see.
+    StrokeInFlight,
 }
 
 /// How an interactive save-edited-layers pass ended.
@@ -139,10 +152,12 @@ impl OccluViewApp {
     /// The layers the guard's Save… flow would export, in scene order.
     ///
     /// Split from the dialog loop so the decision — including releasing a drag
-    /// that is still in flight — is one function that a test can drive without
-    /// opening a native file dialog. `None` means there was nothing to save.
-    pub(super) fn pending_layer_exports(&mut self) -> Option<PendingLayerExports> {
-        let scene = self.document.scene.clone()?;
+    /// that is still in flight, and reporting a stroke that has not landed — is
+    /// one function a test can drive without opening a native file dialog.
+    pub(super) fn pending_layer_exports(&mut self) -> PendingLayerExports {
+        let Some(scene) = self.document.scene.clone() else {
+            return PendingLayerExports::Nothing;
+        };
         // The save flow runs while the guard is open, so a hand-drag can still
         // be in flight: its pose is one of the things the operator is being
         // asked about. Releasing it first turns it into the committed edit it
@@ -150,18 +165,17 @@ impl OccluViewApp {
         // the export below cannot report "nothing to save" about a scan the
         // operator can see was moved.
         self.finish_align_drag();
-        // A live Sculpt stroke is the same shape of problem with one difference:
-        // releasing it is asynchronous, so there is nothing to write yet. Saying
-        // "nothing to save" would be false about a layer whose geometry is
-        // already changing on screen, and the caller would close or replace the
-        // scene on the strength of it. Releasing the stroke starts the commit;
-        // the flow reports that it could not finish yet, which keeps the guard
-        // open until the completion lands and a second Save names the layer.
+        // A live Sculpt stroke cannot be resolved here the same way: releasing it
+        // is asynchronous, and until the worker's completion lands the layer has
+        // no entry in the unsaved set to export. Reporting `Nothing` would be
+        // false — and the callers read `Nothing` as "the scene is clean", so the
+        // close guard would exit and drop the stroke. Releasing it first and
+        // saying so keeps the guard open until a second Save can name the layer.
         if self.document.unsaved_sculpt_stroke {
             let ctx = self.ui.repaint_ctx.clone();
             let _ = self.commit_sculpt_stroke(&ctx);
             self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
-            return None;
+            return PendingLayerExports::StrokeInFlight;
         }
         let scene = self.document.scene.clone().unwrap_or(scene);
         let pending: Vec<(usize, occluview_core::SceneMeshId)> = scene
@@ -175,14 +189,20 @@ impl OccluViewApp {
             // Edited layers may have been removed from the scene since; the
             // guard has nothing actionable left.
             self.document.clear_unsaved_mesh_edits();
-            return None;
+            return PendingLayerExports::Nothing;
         }
-        Some(PendingLayerExports { scene, pending })
+        PendingLayerExports::Ready { scene, pending }
     }
 
     pub(super) fn save_edited_layers_flow(&mut self) -> SaveEditedLayersOutcome {
-        let Some(PendingLayerExports { scene, pending }) = self.pending_layer_exports() else {
-            return SaveEditedLayersOutcome::NothingToSave;
+        let (scene, pending) = match self.pending_layer_exports() {
+            PendingLayerExports::Ready { scene, pending } => (scene, pending),
+            PendingLayerExports::Nothing => return SaveEditedLayersOutcome::NothingToSave,
+            // A stroke is mid-flight. `Aborted` is the answer every caller
+            // already treats as "keep the app open and the open parked": there
+            // is nothing written yet, and the next Save can name the layer once
+            // the completion has landed.
+            PendingLayerExports::StrokeInFlight => return SaveEditedLayersOutcome::Aborted,
         };
         let paths = self.persistence.current_paths.clone();
         for (index, layer_id) in pending {

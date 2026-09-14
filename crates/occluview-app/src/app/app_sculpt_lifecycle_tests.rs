@@ -18,6 +18,7 @@
     clippy::unwrap_used
 )]
 
+use super::app_mesh_export::PendingLayerExports;
 use super::*;
 use crate::app::app_test_support::{delivered_load, test_app};
 use crate::scene_loading::SceneLoadMode;
@@ -240,9 +241,10 @@ fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
     let pending = app.pending_layer_exports();
 
     assert!(
-        pending.is_none(),
+        matches!(pending, PendingLayerExports::StrokeInFlight),
         "a Save must not report nothing to write while a stroke is changing \
-         the layer the operator can see"
+         the layer the operator can see — and must not report the plain \
+         `Nothing` a caller reads as \"the scene is clean\""
     );
     assert_eq!(
         app.ui.status_message,
@@ -271,10 +273,14 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
     // The operator releases without a dab ever having landed.
     let ctx = app.ui.repaint_ctx.clone();
     assert!(app.commit_sculpt_stroke(&ctx));
-    // The worker settles and the frame loop withdraws the marker.
+    // The worker settles and the frame loop withdraws the marker. The two calls
+    // are the frame's own order (`state.rs`: `poll_sculpt_worker` then
+    // `settle_sculpt_work_marker`), and the settle half is deliberately outside
+    // the poll so a session that ends without a worker still clears it.
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         app.poll_sculpt_worker(&ctx);
+        app.settle_sculpt_work_marker();
         if !app.sculpt_has_live_work() {
             break;
         }
@@ -289,4 +295,30 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
         !app.document.has_unsaved_mesh_edits(),
         "an empty stroke is not work the operator has to save"
     );
+}
+
+/// A stroke whose session ends without a worker must not leave the guards
+/// latched.
+///
+/// A stroke that publishes nothing (the operator pressed and released without
+/// touching the surface) has no completion to arrive, and toggling the brush off
+/// drops the worker directly. Withdrawing the marker only from inside the worker
+/// poll misses that: the poll returns early with no worker, so the marker stayed
+/// set for the rest of the session and every Replace and Close then asked about
+/// a stroke that no longer existed.
+#[test]
+fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
+    let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-marker-no-worker");
+    // The stroke is opened, but it never lays a dab and its session goes away
+    // without publishing anything.
+    app.tools.sculpt.disarm();
+    app.tools.sculpt.worker = None;
+
+    app.settle_sculpt_work_marker();
+
+    assert!(
+        !app.document.has_unsaved_mesh_edits(),
+        "a stroke that ended is not work the guards have to ask about"
+    );
+    assert!(!app.sculpt_has_live_work());
 }

@@ -7,9 +7,10 @@
 //! decode goes through — and read the document, the parked-open slot, and the
 //! edit session rather than a predicate.
 
-#![allow(clippy::expect_used)]
+#![allow(clippy::expect_used, clippy::panic)]
 
 use super::app_align_drag::AlignDrag;
+use super::app_mesh_export::PendingLayerExports;
 use super::app_test_support::{
     delivered_load, named_scene, push_named_layer, scene_names, test_app,
 };
@@ -728,15 +729,20 @@ fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
     // gesture, then build the work list — is the one under test.
     let listed = app.pending_layer_exports();
 
-    assert!(
-        listed.is_some(),
-        "a held drag is work: the save flow must offer it, not answer \
-         NothingToSave and drop it"
-    );
-    let Some(listed) = listed else {
-        return;
+    let pending = match listed {
+        PendingLayerExports::Ready { pending, .. } => pending,
+        // A held drag is work: the save flow must offer it, not answer
+        // NothingToSave and drop it. No Sculpt stroke is live in this test, so
+        // StrokeInFlight would be the wrong answer as well.
+        PendingLayerExports::Nothing => panic!(
+            "a held drag is work: the flow must build the work list, not answer \
+             that there is nothing to save"
+        ),
+        PendingLayerExports::StrokeInFlight => panic!(
+            "no Sculpt stroke is live here, so the flow must not report one as \
+             still landing"
+        ),
     };
-    let pending = listed.pending;
     assert_eq!(
         pending.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
         vec![layer_id],
