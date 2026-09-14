@@ -123,9 +123,15 @@ pub(crate) struct SculptTool {
     /// Queue pressure rejected a stroke boundary. Retry it from the worker
     /// poll once older Apply commands have drained.
     pub(crate) finish_retry: bool,
+    /// A prepared kernel session over one layer, transferred into the worker.
+    /// Pool of dabs the frame loop may still be holding: see `MAX_PENDING_TOUCHES`.
     /// Undo/redo waits for an asynchronous sculpt completion before swapping
     /// an older scene over the worker's current shadow.
     pub(crate) pending_history: Option<bool>,
+    /// The committed mesh a mid-stroke densification replaced, while the stroke
+    /// that densified is still open. Aborting or failing the stroke restores it;
+    /// committing clears it, because the commit is what adopts the preview.
+    pub(crate) preview_baseline: Option<SculptPreviewBaseline>,
     /// The last surface hit acquired by the viewport input pass. The cursor
     /// painter runs after that pass and reuses it for held drags, avoiding a
     /// second BVH traversal on every repaint.
@@ -179,6 +185,8 @@ impl SculptTool {
     /// sculpt commit is undone WITHOUT changing the id, so the id alone cannot
     /// tell the geometry reverted; the session must be re-prepared from
     /// the fresh scene on the next stroke.
+    ///
+    /// Drop the session and everything that describes a live gesture.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
         self.clear_cursor_hit();
@@ -186,6 +194,12 @@ impl SculptTool {
         self.finish_requested = false;
         self.finish_retry = false;
         self.pending_history = None;
+        // The preview record belongs to the session that created it. Callers
+        // that can still reach the document restore it first
+        // (`OccluViewApp::invalidate_sculpt_session_silent`); one that cannot is
+        // discarding the scene the preview described, so there is nothing left
+        // to put back.
+        self.preview_baseline = None;
         self.cancel_pending_preparation();
     }
 
@@ -221,6 +235,45 @@ impl SculptTool {
         self.worker
             .as_ref()
             .is_some_and(|worker| !worker.is_quiescent())
+    }
+
+    /// The committed mesh a mid-stroke densification replaced, if one is still
+    /// only a preview in the document.
+    pub(crate) fn preview_baseline(&self) -> Option<&SculptPreviewBaseline> {
+        self.preview_baseline.as_ref()
+    }
+
+    /// Record that the document now holds `mesh` as a preview for this stroke,
+    /// replacing what `layer_id` held before.
+    ///
+    /// The first densification of a stroke is the one that records the
+    /// baseline. A later one in the same stroke replaces a preview with another
+    /// preview, and the mesh to restore is still the one the stroke started
+    /// from — not the geometry a previous, already-superseded preview held.
+    pub(crate) fn note_preview_install(
+        &mut self,
+        layer_id: SceneMeshId,
+        preview_topology_id: u64,
+        replaced: Arc<Mesh>,
+    ) {
+        match self.preview_baseline.as_mut() {
+            Some(baseline) if baseline.layer_id == layer_id => {
+                baseline.preview_topology_id = preview_topology_id;
+            }
+            _ => {
+                self.preview_baseline = Some(SculptPreviewBaseline {
+                    layer_id,
+                    preview_topology_id,
+                    mesh: replaced,
+                });
+            }
+        }
+    }
+
+    /// Forget the preview baseline, because the stroke it belonged to has been
+    /// adopted by a commit or discarded with the session.
+    pub(crate) fn clear_preview_baseline(&mut self) {
+        self.preview_baseline = None;
     }
 
     /// Whether a mesh edit must wait for Sculpt to settle. `worker` can exist
@@ -436,6 +489,27 @@ pub(crate) struct SculptRebuild {
     pub(crate) mesh: Mesh,
     /// Its GPU topology token, which the worker adopts for later sparse writes.
     pub(crate) topology: PreparedSceneTopology,
+}
+
+/// The committed mesh a mid-stroke densification replaced.
+///
+/// Installing a rebuild is the only sculpt path that changes the document while
+/// a gesture is still open, and it deliberately records no undo entry: the
+/// commit at the end of the stroke is what makes the geometry the operator's.
+/// Until then the document holds a preview, so a stroke that is abandoned or
+/// fails has to put this mesh back. Without it the layer keeps a vertex array,
+/// a triangle list, and a topology identity that no history step describes and
+/// no save prompt names.
+#[derive(Clone)]
+pub(crate) struct SculptPreviewBaseline {
+    /// The layer whose mesh is currently a preview.
+    pub(crate) layer_id: SceneMeshId,
+    /// The topology the document holds for that layer as a preview, so a
+    /// restore happens only while the preview is still what is there. A scene
+    /// that was replaced underneath has its own geometry and must keep it.
+    pub(crate) preview_topology_id: u64,
+    /// What the layer held before this stroke began.
+    pub(crate) mesh: Arc<Mesh>,
 }
 
 /// Read-mostly surface state used by the interactive Sculpt raycast. The

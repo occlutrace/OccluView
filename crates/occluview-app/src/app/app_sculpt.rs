@@ -558,12 +558,70 @@ impl OccluViewApp {
         }
     }
 
+    /// End a sculpt session: cancel the worker and take any mid-stroke preview
+    /// back out of the document.
+    ///
+    /// Installing a densifying rebuild swaps the layer's whole mesh into the
+    /// document while the stroke is still open, and records no undo entry — the
+    /// commit at the end of the stroke is what adopts it. A session that ends
+    /// any other way (abort, worker failure, a cancelled edit session, a scene
+    /// transition) has to restore the mesh that stroke started from, or the
+    /// document keeps geometry and a triangle list that no history step
+    /// describes. A previous stroke's committed result is what goes back,
+    /// because that is what the layer held before this stroke began.
     pub(super) fn invalidate_sculpt_session_silent(&mut self) {
+        self.restore_sculpt_preview_baseline();
         // Cancel any worker prepared from the pre-edit scene as well as the
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
         self.tools.sculpt.invalidate_session();
         self.render.invalidation.sculpt_topology_changed();
+    }
+
+    /// Put the committed mesh back for a layer whose document geometry is only
+    /// a mid-stroke preview.
+    ///
+    /// Does nothing when there is no preview, and nothing when the layer is no
+    /// longer there or no longer holds the preview's topology: both mean some
+    /// other transition already owns that geometry, and restoring would
+    /// overwrite a scene the operator is looking at.
+    fn restore_sculpt_preview_baseline(&mut self) -> bool {
+        let Some(baseline) = self.tools.sculpt.preview_baseline().cloned() else {
+            return false;
+        };
+        self.tools.sculpt.clear_preview_baseline();
+        let Some(mut scene_arc) = self.document.scene.take() else {
+            return false;
+        };
+        let restored = {
+            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
+            match scene
+                .meshes_mut()
+                .iter_mut()
+                .find(|entry| entry.id() == baseline.layer_id)
+            {
+                Some(entry) if entry.mesh.topology_id() == baseline.preview_topology_id => {
+                    entry.mesh = Arc::clone(&baseline.mesh);
+                    true
+                }
+                _ => false,
+            }
+        };
+        self.document.scene = Some(scene_arc);
+        if !restored {
+            return false;
+        }
+        if let Some(scene) = self.document.scene.as_ref() {
+            self.document.edit_mode.sync_to_scene(scene);
+        }
+        // Every consumer of the layer's geometry is stale: the mesh that was
+        // on screen was bigger, and the prepared scene holds its buffers.
+        self.render.invalidation.scene_geometry_changed();
+        if self.can_render_cut_view() {
+            self.tools.cut_view.mark_dirty();
+        }
+        self.ui.repaint_ctx.request_repaint();
+        true
     }
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
