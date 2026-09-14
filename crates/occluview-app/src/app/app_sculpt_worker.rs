@@ -160,6 +160,27 @@ impl OccluViewApp {
         self.retry_pending_sculpt_finish(ctx);
         self.complete_pending_mesh_edit_session(ctx);
         self.complete_pending_history_navigation(ctx);
+        self.settle_sculpt_work_marker();
+    }
+
+    /// Withdraw the "a stroke is changing the scene" marker once the gesture has
+    /// settled.
+    ///
+    /// The marker is what makes the load guard, the close guard, and the guard's
+    /// Save ask about a stroke that is on screen but not yet a committed edit.
+    /// It is set when the stroke opens and has to be withdrawn when the stroke
+    /// is over: released and committed by this poll, released and found empty, or
+    /// dropped with the session. A stroke that produced no geometry publishes no
+    /// completion at all, so this is decided from the worker rather than from a
+    /// result arriving.
+    fn settle_sculpt_work_marker(&mut self) {
+        if !self.document.unsaved_sculpt_stroke {
+            return;
+        }
+        if self.tools.sculpt.stroke.is_some() || self.tools.sculpt.worker_has_pending_work() {
+            return;
+        }
+        self.document.unsaved_sculpt_stroke = false;
     }
 
     /// Install a whole-layer rebuild produced mid-stroke by densification.
