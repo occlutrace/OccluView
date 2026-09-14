@@ -479,34 +479,27 @@ jobs:
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Write release notes
         run: |
-          cat > dist/release-notes.md <<NOTES
-          OccluView $RELEASE_TAG
-
-          ## Download for Windows
-
-          - **OccluView-Windows-Setup.msi** — recommended. Installs the viewer,
-            Explorer previews, thumbnails, and file associations.
-          - **OccluView-Windows-Portable.zip** — runs without installation; no
-            Explorer integration.
-
-          ## What's new
-
-          - First Glance now shows the complete workflow: open, align, inspect,
-            edit, sculpt, repair, and export.
-          - Help lists the real mouse and keyboard controls in plain language.
-          - Navigation is more natural: right-drag orbits and the wheel zooms
-            toward the pointer.
-          - Cut View keeps the small section window clear; the axis gizmo hides
-            instead of jumping above it.
-
-          The verification archive is for technical checks; regular users do
-          not need it.
-          NOTES
           version="${RELEASE_TAG#v}"
-          if ! grep -q "^## $version " CHANGELOG.md; then
+          changelog_section="$(mktemp)"
+          awk -v version="$version" '
+            index($0, "## " version " ") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$changelog_section"
+          if [[ ! -s "$changelog_section" ]]; then
             echo "CHANGELOG.md has no '## $version' section." >&2
+            rm -f "$changelog_section"
             exit 1
           fi
+          {
+            printf 'OccluView %s\n\n' "$RELEASE_TAG"
+            printf '%s\n\n' '## Download for Windows'
+            printf '%s\n' '- **OccluView-Windows-Setup.msi** — recommended. Installs the viewer, Explorer previews, thumbnails, and file associations.'
+            printf '%s\n\n' '- **OccluView-Windows-Portable.zip** — runs without installation; no Explorer integration.'
+            cat "$changelog_section"
+            printf '\nThe verification archive is for technical checks; regular users do not need it.\n'
+          } > dist/release-notes.md
+          rm -f "$changelog_section"
       - name: Sign update artifacts and write latest.json
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}

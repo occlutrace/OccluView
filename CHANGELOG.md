@@ -3,7 +3,7 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
-## 1.1.2 - 2026-09-12
+## 1.2.0 - 2026-09-14
 
 ### Viewer
 

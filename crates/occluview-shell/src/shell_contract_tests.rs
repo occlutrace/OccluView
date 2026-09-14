@@ -555,8 +555,10 @@ fn package_pipeline_can_sign_windows_artifacts_when_certificate_is_configured() 
 fn release_notes_put_the_recommended_installer_before_technical_verification() {
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
     let notes = workflow
-        .split_once("OccluView $RELEASE_TAG")
-        .and_then(|(_, rest)| rest.split_once("NOTES"))
+        .split_once("- name: Write release notes")
+        .and_then(|(_, rest)| {
+            rest.split_once("- name: Sign update artifacts and write latest.json")
+        })
         .map(|(notes, _)| notes)
         .expect("release-notes template");
 
@@ -569,6 +571,8 @@ fn release_notes_put_the_recommended_installer_before_technical_verification() {
     let portable = notes
         .find("**OccluView-Windows-Portable.zip**")
         .expect("release notes must explain the portable Windows package");
+    assert!(notes.contains("awk -v version=\"$version\""));
+    assert!(notes.contains("CHANGELOG.md > \"$changelog_section\""));
     assert!(download < installer && installer < portable);
     assert!(!notes.contains("OccluView-Linux.deb"));
     assert!(!notes.contains("<details>"));
@@ -626,19 +630,19 @@ fn public_release_groups_technical_verification_material_into_one_download() {
 }
 
 #[test]
-fn release_note_markdown_is_not_executed_by_the_shell_heredoc() {
+fn release_note_markdown_is_written_as_data() {
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
     let (_, write_notes) = workflow
         .split_once("- name: Write release notes")
         .expect("release workflow must write customer-facing notes");
-    let note_body = write_notes
-        .split("<<NOTES")
-        .nth(1)
-        .and_then(|body| body.split("NOTES").next())
-        .expect("release workflow must close the notes heredoc");
+    let (write_notes, _) = write_notes
+        .split_once("- name: Sign update artifacts and write latest.json")
+        .expect("release workflow must finish writing notes before signing");
 
-    assert!(note_body.contains("**OccluView-Windows-Setup.msi**"));
-    assert!(note_body.contains("**OccluView-Windows-Portable.zip**"));
+    assert!(write_notes.contains("cat \"$changelog_section\""));
+    assert!(write_notes.contains("> dist/release-notes.md"));
+    assert!(!write_notes.contains("<<NOTES"));
+    assert!(!write_notes.contains("eval "));
 }
 
 #[test]
