@@ -79,6 +79,8 @@ mod app_sculpt;
 mod app_sculpt_abort_tests;
 #[cfg(test)]
 mod app_sculpt_characterization_tests;
+#[cfg(test)]
+mod app_sculpt_lifecycle_tests;
 mod app_sculpt_worker;
 mod app_settings_panel;
 mod app_settings_window;
