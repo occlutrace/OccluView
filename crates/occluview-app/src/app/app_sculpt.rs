@@ -381,6 +381,12 @@ impl OccluViewApp {
                     last_dab_local: None,
                     hold_seconds: 0.0,
                 });
+                // A live stroke is work in flight even before its first dab
+                // lands, and every dab after that is already on screen. The
+                // load guard, the close guard, and the guard's Save all ask
+                // `has_unsaved_mesh_edits`, so this is where they learn about
+                // it; the release path clears it when the stroke is committed.
+                self.document.unsaved_sculpt_stroke = true;
             }
         }
 
@@ -547,6 +553,21 @@ impl OccluViewApp {
         }
     }
 
+    /// Whether a Sculpt stroke is changing the layer on screen without being an
+    /// edit yet.
+    ///
+    /// A held stroke has dabs in the worker's shadow and, after a densifying
+    /// dab, a replaced mesh in the document — but no undo entry and no layer in
+    /// the unsaved set until it is released and its completion is committed.
+    /// This is the gesture half of
+    /// [`DocumentState::has_unsaved_mesh_edits`](super::state_document::DocumentState::has_unsaved_mesh_edits),
+    /// which is what the load guard and the close guard ask. The guard's own Save
+    /// asks it separately, because releasing the stroke is asynchronous and
+    /// there is nothing written until the completion lands.
+    pub(super) fn sculpt_has_live_work(&self) -> bool {
+        self.document.unsaved_sculpt_stroke
+    }
+
     /// Drop any in-flight stroke. If it had uncommitted dabs on the GPU, drop
     /// the persistent session too and force a full re-sync so the on-screen
     /// geometry reverts to the committed scene.
@@ -571,6 +592,7 @@ impl OccluViewApp {
     /// because that is what the layer held before this stroke began.
     pub(super) fn invalidate_sculpt_session_silent(&mut self) {
         self.restore_sculpt_preview_baseline();
+        self.document.unsaved_sculpt_stroke = false;
         // Cancel any worker prepared from the pre-edit scene as well as the
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.

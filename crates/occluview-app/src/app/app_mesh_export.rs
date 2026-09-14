@@ -150,6 +150,19 @@ impl OccluViewApp {
         // the export below cannot report "nothing to save" about a scan the
         // operator can see was moved.
         self.finish_align_drag();
+        // A live Sculpt stroke is the same shape of problem with one difference:
+        // releasing it is asynchronous, so there is nothing to write yet. Saying
+        // "nothing to save" would be false about a layer whose geometry is
+        // already changing on screen, and the caller would close or replace the
+        // scene on the strength of it. Releasing the stroke starts the commit;
+        // the flow reports that it could not finish yet, which keeps the guard
+        // open until the completion lands and a second Save names the layer.
+        if self.document.unsaved_sculpt_stroke {
+            let ctx = self.ui.repaint_ctx.clone();
+            let _ = self.commit_sculpt_stroke(&ctx);
+            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+            return None;
+        }
         let scene = self.document.scene.clone().unwrap_or(scene);
         let pending: Vec<(usize, occluview_core::SceneMeshId)> = scene
             .meshes()
