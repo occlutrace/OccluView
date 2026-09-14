@@ -442,6 +442,28 @@ impl ContactState {
         true
     }
 
+    /// Note that a finished answer was discarded because the surfaces it
+    /// describes are no longer the ones on screen.
+    ///
+    /// The request is over either way, and clearing the in-flight record is what
+    /// lets the frame loop measure again for the scene as it is now. Leaving it
+    /// would hold [`Self::needs_measurement`] false for as long as the live keys
+    /// happened to equal the request's again — which an exact round trip of a
+    /// hand drag produces — and the panel would sit on "re-measuring" with no
+    /// job running and nothing left to submit it.
+    ///
+    /// A refusal the panel is already showing is left alone: it has a remedy of
+    /// its own, and this is not what produced it.
+    pub(crate) fn mark_answer_dropped(&mut self, request_id: u64, keys: ContactJobKeys) {
+        if self.matching_request(request_id, keys).is_none() {
+            return;
+        }
+        self.in_flight = None;
+        if !matches!(self.status, Some(ContactStatus::Failed(_))) {
+            self.status = Some(ContactStatus::Remeasuring);
+        }
+    }
+
     /// Note that the measurement for the in-flight request failed, if it still
     /// is the in-flight request. Returns whether the reading took it.
     pub(crate) fn mark_failed(
