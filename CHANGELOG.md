@@ -7,6 +7,12 @@ remain in the Git history.
 
 ### Viewer
 
+- A contact reading could show the numbers of the reading it replaced. Changing
+  the pair before the first measurement was collected recorded that measurement
+  under the new pair, so the panel described a bite between layers that had
+  never been measured. A finished reading now has to name the measurement it
+  answers, and is applied only against those surfaces as they stand now.
+
 - Align Scans presents rough point alignment before nearby surface refinement. Refinement now stays within the selected correspondence radius instead of launching a global feature search from an already placed scan.
 - The heatmap opens at 0.05–0.20 mm. Its cool and hot limits are editable above and below the colour legend.
 - In Mesh Editing, keys 1 and 2 open the Sculpt tab with Add/Remove and Smooth respectively. The sculpt cursor appears as soon as the background picking tree is ready, before brush preparation finishes.
