@@ -1,16 +1,3 @@
-//! Document-lifecycle tests against a live Sculpt stroke.
-//!
-//! Sculpt is the one edit that keeps geometry in the worker and in the document
-//! at the same time: dabs stream into the worker's shadow and into the
-//! prepared GPU buffers while the stroke is open, and a densification swaps the
-//! layer's whole mesh into the document. The stroke only becomes an edit when it
-//! is released and the worker's completion is committed — on release the edit
-//! session is still open and no layer is marked unsaved yet.
-//!
-//! A Replace, a Close, or a Save decided from the unsaved-work set therefore has
-//! to ask about the live gesture as well, or it decides against a scene it is
-//! about to destroy while the operator is still holding the brush.
-
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -33,8 +20,6 @@ use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-/// The coarse lattice the densifying brush needs, so a stroke can change the
-/// document while it is still open.
 fn coarse_ridge_mesh() -> Mesh {
     let mut vertices = Vec::new();
     for j in 0..3usize {
@@ -82,11 +67,6 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
     })
 }
 
-/// An app with one layer, an open edit session, and a live stroke on it.
-///
-/// "Live" is the state a held mouse button leaves behind: `stroke` is set, the
-/// worker exists, and no release has happened, so nothing has been committed and
-/// no layer is marked unsaved.
 fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
     let mesh = coarse_ridge_mesh();
@@ -109,7 +89,6 @@ fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
         last_dab_local: None,
         hold_seconds: 0.0,
     });
-    // What the viewport's press path sets when it opens the stroke.
     app.document.unsaved_sculpt_stroke = true;
     (app, layer_id)
 }
@@ -127,8 +106,6 @@ fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
         .clone()
 }
 
-/// Lay one densifying dab into the open stroke and run the frame loop's poll
-/// until the worker's output has been handled.
 fn lay_densifying_dab(app: &mut OccluViewApp) {
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
@@ -156,14 +133,6 @@ fn lay_densifying_dab(app: &mut OccluViewApp) {
     }
 }
 
-/// THE DEFECT: a Replace delivered while a stroke is visibly changing the layer
-/// is applied on the strength of an authorization that never saw the stroke.
-///
-/// On release the stroke becomes an edit, but while it is held nothing is marked
-/// unsaved and no history step exists. The Replace guard asks
-/// `has_unsaved_mesh_edits` and `edit_mode.is_busy`, so it sees nothing at risk
-/// and drops the scene the operator is actively sculpting, along with the
-/// visible densified geometry.
 #[test]
 fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-vs-replace");
@@ -174,7 +143,6 @@ fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
         "the stroke has visibly densified the layer"
     );
 
-    // An Open of another case arrives, authorized before the stroke started.
     let pending = delivered_load(
         &app,
         {
@@ -221,13 +189,6 @@ fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
     );
 }
 
-/// The guard's Save must not answer "nothing to save" about a layer whose
-/// geometry is already changing on screen.
-///
-/// `pending_layer_exports` is the step that decides; it built its list from
-/// `unsaved_edit_layer_ids` alone, which a live stroke never enters until it is
-/// released. The flow then reported `NothingToSave`, and both the close guard
-/// and the replace guard read that as "the scene is clean" and proceeded.
 #[test]
 fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-vs-save");
@@ -253,15 +214,6 @@ fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
     );
 }
 
-/// A stroke that produced no geometry at all must not leave the app refusing to
-/// open anything.
-///
-/// The marker is set when the stroke opens, before a single dab has landed. An
-/// empty stroke — the operator pressed and released without touching the
-/// surface, or the press never found one — publishes no completion, so nothing
-/// arrives to withdraw the marker unless the poll does it from the worker's own
-/// state. A marker left behind here would put the load guard, the close guard,
-/// and the guard's Save in front of every action for the rest of the session.
 #[test]
 fn an_empty_stroke_does_not_leave_the_guards_latched() {
     let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-empty-stroke");
@@ -270,13 +222,8 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
         "opening a stroke is already work in progress"
     );
 
-    // The operator releases without a dab ever having landed.
     let ctx = app.ui.repaint_ctx.clone();
     assert!(app.commit_sculpt_stroke(&ctx));
-    // The worker settles and the frame loop withdraws the marker. The two calls
-    // are the frame's own order (`state.rs`: `poll_sculpt_worker` then
-    // `settle_sculpt_work_marker`), and the settle half is deliberately outside
-    // the poll so a session that ends without a worker still clears it.
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         app.poll_sculpt_worker(&ctx);
@@ -297,20 +244,9 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
     );
 }
 
-/// A stroke whose session ends without a worker must not leave the guards
-/// latched.
-///
-/// A stroke that publishes nothing (the operator pressed and released without
-/// touching the surface) has no completion to arrive, and toggling the brush off
-/// drops the worker directly. Withdrawing the marker only from inside the worker
-/// poll misses that: the poll returns early with no worker, so the marker stayed
-/// set for the rest of the session and every Replace and Close then asked about
-/// a stroke that no longer existed.
 #[test]
 fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
     let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-marker-no-worker");
-    // The stroke is opened, but it never lays a dab and its session goes away
-    // without publishing anything.
     app.tools.sculpt.disarm();
     app.tools.sculpt.worker = None;
 

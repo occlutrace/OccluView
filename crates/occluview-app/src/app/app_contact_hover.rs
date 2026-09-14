@@ -1,21 +1,4 @@
-//! The pointer readout: the contact value on the surface under the cursor.
-//!
-//! A ray hit, not a projection trick. This viewer already picks the nearest
-//! triangle under the pointer through the mesh's own BVH, and the field is a
-//! per-vertex value on that triangle, so the number the readout prints is the
-//! number the surface carries where the operator is pointing. A vertex with no
-//! opposing surface inside the search radius answers nothing at all, which is
-//! why the readout simply does not appear over a hollow of the arch that nothing
-//! opposes.
-//!
-//! BOTH ARCHES ANSWER. The reading paints both surfaces because the operator
-//! reads the bite from whichever side is facing them, so a readout that worked
-//! on only one of the two painted arches would be dead over half of what the
-//! feature draws — and which half is "the" arch is an implementation fact
-//! (whichever was right-clicked) that nothing on screen shows. Each layer is
-//! asked for its own field: the antagonist's field is that same surface measured
-//! against the subject, so pointing at either side prints the value that side
-//! carries.
+//! Pointer readout for values on the current contact fields.
 
 use eframe::egui;
 use occluview_contact::{format_contact_value, ContactReading, ContactReadingKind};
@@ -28,18 +11,7 @@ use crate::ui_theme;
 const READOUT_OFFSET_PX: f32 = 14.0;
 
 impl OccluViewApp {
-    // ------------------------------------------------------------------- hover
-
-    /// The readout under the cursor: the contact value at the point on the
-    /// subject surface the pointer is over.
-    ///
-    /// A ray hit, not a projection trick. This viewer already picks the nearest
-    /// triangle under the pointer through the mesh's own BVH, and the field is a
-    /// per-vertex value on that triangle, so the number the operator reads is
-    /// the number the surface carries where they are pointing. A vertex with no
-    /// opposing surface inside the search radius answers nothing at all, which
-    /// is why the readout simply does not appear over a hollow of the arch
-    /// nothing opposes.
+    /// Show the measured contact value under the pointer.
     pub(super) fn show_contact_hover(
         &mut self,
         ui: &mut egui::Ui,
@@ -58,17 +30,15 @@ impl OccluViewApp {
         else {
             return;
         };
-        // A pointer that is orbiting, panning or dragging is not asking for a
-        // number; a readout that follows a drag is noise.
+        // Do not show a readout during another pointer gesture.
         if ctx.input(|input| input.pointer.any_down()) {
             return;
         }
         let (Some(camera), Some(scene)) = (self.render.camera, self.document.scene.as_ref()) else {
             return;
         };
-        // The subject first, then the surface it is measured against: a click on
-        // either painted arch reports that arch's own reading. Each pick is
-        // layer-scoped, so the nearer of the two never answers for the other.
+        // Pick each measured layer independently so either side can provide a
+        // readout.
         let mut read = None;
         for layer in [pair.subject, pair.antagonist] {
             let (Some(entry), Some(field)) = (
@@ -97,11 +67,7 @@ impl OccluViewApp {
             ContactReadingKind::Gap => reading.magnitude_mm,
             ContactReadingKind::Penetration => -reading.magnitude_mm,
         };
-        // The swatch is the colour the surface wears at this reading, so it is
-        // read through the ONE predicate the paint path uses. Outside the
-        // painted band the surface shows nothing there, and a swatch drawn from
-        // `color_at` would be a solid black chip claiming a colour that is not
-        // on the scan at all.
+        // Show a swatch only when the value is inside the painted range.
         let accent = scale.is_painted(signed).then(|| {
             let [channel_r, channel_g, channel_b, _] = scale.color_at(signed);
             egui::Color32::from_rgb(channel_r, channel_g, channel_b)
@@ -119,13 +85,7 @@ impl OccluViewApp {
     }
 }
 
-/// The pointer readout: a chip carrying the value, its unit, and a swatch of the
-/// exact colour the surface wears there.
-///
-/// The swatch and the number come from the same scale evaluation, so the readout
-/// can never describe a colour the surface is not painting.
-/// Everything the chip says, gathered so the painter takes one value rather than
-/// a growing argument list.
+/// Data needed to paint the pointer readout.
 struct Readout<'a> {
     /// Where the pointer is; the chip sits beside it.
     pointer: egui::Pos2,
@@ -199,7 +159,7 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
             painter.rect_filled(swatch, 1.5, accent);
             chip.left() + padding.x + swatch_width + swatch_gap
         }
-        // Not painted here: no swatch, because there is no colour to show.
+        // No swatch is shown outside the painted range.
         None => chip.left() + padding.x,
     };
     painter.galley(

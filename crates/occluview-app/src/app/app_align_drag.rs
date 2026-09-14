@@ -25,23 +25,12 @@ pub(crate) struct AlignDrag {
 }
 
 impl OccluViewApp {
-    /// Abandon an open gesture without recording it as an edit.
-    ///
-    /// Clearing `tools.align.drag` is not enough: the gesture also owns the
-    /// provisional-pose term that the load and close guards read, and leaving it
-    /// set would make them ask about a drag that no longer exists. Callers that
-    /// drop a drag from outside the release path (a tab switch, a scene clear, a
-    /// cancelled session) go through here so there is one place that ends a
-    /// gesture.
+    /// Commit an open drag before a scene transition that keeps its layer.
     pub(super) fn abandon_align_drag(&mut self) {
         self.finish_align_drag();
     }
 
-    /// Drop an open gesture without recording it, for the callers that are
-    /// removing the scene it described. A Replace or a Close destroys the pose
-    /// with the scene, so there is nothing left to record; an Append keeps the
-    /// layers, so it goes through [`Self::abandon_align_drag`] instead and the
-    /// move is committed.
+    /// Discard a drag when its scene is replaced or cleared.
     pub(super) fn discard_align_drag(&mut self) {
         self.tools.align.drag = None;
         self.document.unsaved_drag_pose = false;
@@ -214,17 +203,8 @@ impl OccluViewApp {
             pose = Some(entry.transform);
         }
         self.mark_scene_materials_changed();
-        // The pose is already in the live scene, so it is already work the
-        // operator can see, and a scene replace landing right now would discard
-        // it. The guards read that through `has_unsaved_mesh_edits`, which asks
-        // this term as well as the committed-edit set.
-        //
-        // It is a separate term on purpose. The set holds committed edits, and a
-        // set cannot tell two marks on one layer apart: writing this pose there
-        // made it impossible to withdraw the gesture's mark when the operator
-        // put the scan back without also withdrawing real work that landed
-        // mid-drag. As its own term, a round trip simply recomputes to `false`,
-        // and nothing the drag did not create is ever touched.
+        // Track the open drag separately so returning to its start does not
+        // clear an older committed edit on the same layer.
         let Some(pose) = pose else {
             return;
         };
@@ -233,8 +213,6 @@ impl OccluViewApp {
 
     /// Close an open drag, recording the whole gesture as one undo step.
     pub(super) fn finish_align_drag(&mut self) -> bool {
-        // The gesture is over: whatever survives becomes a committed edit below,
-        // and the provisional-pose term is no longer a separate reason to warn.
         self.document.unsaved_drag_pose = false;
         let Some(drag) = self.tools.align.drag.take() else {
             return false;

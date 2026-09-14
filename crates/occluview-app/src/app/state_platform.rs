@@ -29,8 +29,7 @@ pub(crate) struct StartupHandles {
 }
 
 pub(super) struct PlatformState {
-    /// The process-wide primary claim. `None` in a headless test, which must
-    /// not take the operator's lock file.
+    /// The process-wide primary claim; absent in headless tests.
     pub(super) _single_instance: Option<single_instance::SingleInstance>,
     pub(super) incoming_open_requests: single_instance::OpenRequestListener,
     /// Raises the window on an open-file handoff through the native compositor
@@ -51,9 +50,7 @@ impl PlatformState {
         }
     }
 
-    /// A platform state for a headless test: no process-wide single-instance
-    /// claim, no listener thread, no activation target. The open-request side is
-    /// only read through `take_open_requests`, which stays empty.
+    /// Construct platform state without listeners or a primary claim for tests.
     #[cfg(test)]
     pub(super) fn for_tests(repaint_ctx: egui::Context) -> Self {
         let _ = repaint_ctx;
