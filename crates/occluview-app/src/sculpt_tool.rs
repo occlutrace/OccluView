@@ -1,11 +1,4 @@
-//! Interactive sculpt-brush state: dental-CAD-style freeforming (an
-//! Add/Remove clay knife and a Smooth relaxer) dragged directly on a scan
-//! surface inside the Mesh Editor. This module owns the pure state and
-//! math — which tool is armed, the size/intensity sliders and their unit
-//! conversions, the persistent per-layer kernel session, and the per-drag
-//! dab scheduler — while the
-//! egui/viewport glue lives in `app::app_sculpt` and the geometry kernel is
-//! [`occluview_core::BrushSession`].
+//! State and scheduling for the interactive sculpt brushes.
 
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
@@ -18,9 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 
-/// Brush-size slider bounds/default, in abstract 0..100 units (not mm — the
-/// operator asked for a feel slider, not a measurement). Mapped to a mm radius
-/// by [`size_to_radius_mm`].
+/// Brush-size slider bounds and default, mapped to a millimetre radius by
+/// [`size_to_radius_mm`].
 pub(crate) const SCULPT_SIZE_DEFAULT: f32 = 40.0;
 pub(crate) const SCULPT_SIZE_MIN: f32 = 1.0;
 pub(crate) const SCULPT_SIZE_MAX: f32 = 100.0;
@@ -32,12 +24,8 @@ pub(crate) const SCULPT_INTENSITY_MAX: f32 = 100.0;
 /// Mm radius the size slider maps to at its ends.
 const SCULPT_RADIUS_MIN_MM: f32 = 0.4;
 const SCULPT_RADIUS_MAX_MM: f32 = 12.0;
-/// How much Shift widens the Smooth footprint. Per-dab force cannot climb
-/// past the kernel's pass ceiling — a dab converges toward the relaxed patch
-/// its own boundary pins — so the honest way to smooth harder is to push that
-/// boundary outward and iron a wider patch per dab. Wider dabs also space
-/// further apart along the drag, so a Shift stroke queues fewer, larger jobs
-/// instead of flooding the worker's bounded apply queue.
+/// Radius multiplier for Shift+Smooth. The kernel caps per-dab strength, so
+/// the modified tool widens the affected footprint instead.
 pub(crate) const SHIFT_SMOOTH_RADIUS_BOOST: f32 = 1.75;
 /// One notch of the mouse wheel changes a slider by this many units.
 pub(crate) const SCULPT_WHEEL_STEP: f32 = 6.0;
@@ -61,9 +49,7 @@ pub(crate) fn size_to_radius_mm(size: f32) -> f32 {
     SCULPT_RADIUS_MIN_MM + t * (SCULPT_RADIUS_MAX_MM - SCULPT_RADIUS_MIN_MM)
 }
 
-/// Which sculpt tool button is armed. Only two, per the operator's request:
-/// one Add/Remove clay knife (Shift carves instead of builds) and one Smooth
-/// relaxer (Shift forces maximum smoothing).
+/// The available sculpt tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SculptToolKind {
     /// Clay knife: build material, or carve it away with Shift held.
@@ -82,11 +68,7 @@ impl SculptToolKind {
         }
     }
 
-    /// The kernel per-dab strength for this tool: the intensity slider for
-    /// Add/Remove and Smooth; Shift forces Smooth straight to maximum, the
-    /// forced mode the kernel documents. Doubling the slider instead sounded
-    /// gentler but saturated: at 50% it was already near the pass ceiling and
-    /// at 100% it changed nothing.
+    /// Return the kernel strength for one dab.
     pub(crate) fn dab_strength(self, intensity01: f32, shift: bool) -> f32 {
         match self {
             Self::Smooth if shift => 1.0,
@@ -94,10 +76,7 @@ impl SculptToolKind {
         }
     }
 
-    /// The world-space dab radius for this tool: the size slider's mm value,
-    /// widened for a Shift-forced Smooth. [`SHIFT_SMOOTH_RADIUS_BOOST`]
-    /// explains why the footprint is the lever that actually strengthens
-    /// smoothing.
+    /// Return the world-space radius for one dab.
     pub(crate) fn dab_radius_mm(self, base_mm: f32, shift: bool) -> f32 {
         match self {
             Self::Smooth if shift => base_mm * SHIFT_SMOOTH_RADIUS_BOOST,
@@ -123,14 +102,9 @@ pub(crate) struct SculptTool {
     /// Queue pressure rejected a stroke boundary. Retry it from the worker
     /// poll once older Apply commands have drained.
     pub(crate) finish_retry: bool,
-    /// A prepared kernel session over one layer, transferred into the worker.
-    /// Pool of dabs the frame loop may still be holding: see `MAX_PENDING_TOUCHES`.
     /// Undo/redo waits for an asynchronous sculpt completion before swapping
     /// an older scene over the worker's current shadow.
     pub(crate) pending_history: Option<bool>,
-    /// The committed mesh a mid-stroke densification replaced, while the stroke
-    /// that densified is still open. Aborting or failing the stroke restores it;
-    /// committing clears it, because the commit is what adopts the preview.
     pub(crate) preview_baseline: Option<SculptPreviewBaseline>,
     /// The last surface hit acquired by the viewport input pass. The cursor
     /// painter runs after that pass and reuses it for held drags, avoiding a
@@ -154,10 +128,8 @@ struct PendingSculptPreparation {
 }
 
 impl SculptTool {
-    /// Toggle `kind`: arming it takes over from any other tool; clicking the
-    /// armed tool again disarms sculpting. Never drops the prepared session
-    /// (same layer, so the next stroke stays instant) but does end any live
-    /// drag so a half-applied stroke does not leak between tools.
+    /// Toggle a tool. A mode switch ends the current drag but keeps the
+    /// prepared session for the active layer.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
         self.clear_cursor_hit();
@@ -179,14 +151,8 @@ impl SculptTool {
         self.cancel_pending_preparation();
     }
 
-    /// Drop the prepared session and any live stroke while KEEPING the armed
-    /// tool. Called whenever the scene geometry changes underneath us (a load,
-    /// a delete, another mesh edit, or an undo/redo) — a preserved-`topology_id`
-    /// sculpt commit is undone WITHOUT changing the id, so the id alone cannot
-    /// tell the geometry reverted; the session must be re-prepared from
-    /// the fresh scene on the next stroke.
-    ///
-    /// Drop the session and everything that describes a live gesture.
+    /// Drop the prepared session and live stroke while keeping the tool armed.
+    /// Re-prepare after a scene change even when the topology id is unchanged.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
         self.clear_cursor_hit();
@@ -194,11 +160,6 @@ impl SculptTool {
         self.finish_requested = false;
         self.finish_retry = false;
         self.pending_history = None;
-        // The preview record belongs to the session that created it. Callers
-        // that can still reach the document restore it first
-        // (`OccluViewApp::invalidate_sculpt_session_silent`); one that cannot is
-        // discarding the scene the preview described, so there is nothing left
-        // to put back.
         self.preview_baseline = None;
         self.cancel_pending_preparation();
     }
@@ -237,19 +198,10 @@ impl SculptTool {
             .is_some_and(|worker| !worker.is_quiescent())
     }
 
-    /// The committed mesh a mid-stroke densification replaced, if one is still
-    /// only a preview in the document.
     pub(crate) fn preview_baseline(&self) -> Option<&SculptPreviewBaseline> {
         self.preview_baseline.as_ref()
     }
 
-    /// Record that the document now holds `mesh` as a preview for this stroke,
-    /// replacing what `layer_id` held before.
-    ///
-    /// The first densification of a stroke is the one that records the
-    /// baseline. A later one in the same stroke replaces a preview with another
-    /// preview, and the mesh to restore is still the one the stroke started
-    /// from — not the geometry a previous, already-superseded preview held.
     pub(crate) fn note_preview_install(
         &mut self,
         layer_id: SceneMeshId,
@@ -270,8 +222,6 @@ impl SculptTool {
         }
     }
 
-    /// Forget the preview baseline, because the stroke it belonged to has been
-    /// adopted by a commit or discarded with the session.
     pub(crate) fn clear_preview_baseline(&mut self) {
         self.preview_baseline = None;
     }
@@ -298,10 +248,8 @@ impl SculptTool {
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
             return false;
         }
-        // A single averaged scale is only mathematically valid for a rigid or
-        // uniformly scaled transform. Refuse shear/non-uniform placement here
-        // instead of applying a direction-dependent brush radius as if it were
-        // isotropic.
+        // A scalar brush radius is valid only for a rigid or uniform-scale
+        // transform.
         if uniform_scene_scale(&entry.transform).is_none() {
             return false;
         }
@@ -314,10 +262,8 @@ impl SculptTool {
         }
 
         self.cancel_pending_preparation();
-        // A previous cancellation may still be inside the O(n) BVH/kernel
-        // preparation. Do not launch a second scan-sized worker on a
-        // resource-constrained machine; wait for the owned worker to finish
-        // and retry next frame.
+        // Do not overlap scan-sized preparations while a cancelled worker is
+        // still finishing its non-cancellable phase.
         if !self.retired_preparations.is_empty() {
             return false;
         }
@@ -325,16 +271,8 @@ impl SculptTool {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
 
-        // The worker gets the one mesh it prepares, not the case it came from.
-        // An `Arc<Scene>` alive in a background thread would make every
-        // in-place scene edit on the UI thread find a second handle for as long
-        // as the preparation runs: the edit would land in a copy the worker
-        // never reads, and the container is copied per frame until the worker
-        // finishes. Taking the mesh keeps the worker on the geometry it
-        // actually needs, which is also why this can run off-thread.
-        //
-        // The mesh itself is shared, so this is a pointer: the worker warms the
-        // very cell the scene will read, which is the point of warming it.
+        // Pass only the target mesh to the preparation worker. Keeping an
+        // `Arc<Scene>` there would conflict with in-place scene edits.
         let mesh = entry.mesh.clone();
         let transform = entry.transform;
         drop(scene);
@@ -345,14 +283,9 @@ impl SculptTool {
                 if worker_cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                // Warming the picking tree is an O(n) build inside an
-                // `OnceLock`, so it cannot be interrupted once it starts. Skip
-                // it when nobody is waiting for this preparation any more: a
-                // cancel that lands during the build would otherwise keep the
-                // worker (and the layer's memory) alive for the whole build,
-                // which is exactly the delay `cancel_pending_preparation`
-                // exists to avoid. The build still happens on demand at the
-                // first pick of a live session.
+                // The BVH build cannot be interrupted once started. Check
+                // cancellation before entering it and let picking build it on
+                // demand when preparation is no longer needed.
                 if !worker_cancel.load(Ordering::Relaxed) {
                     mesh.warm_bvh();
                 }
@@ -469,21 +402,13 @@ pub(crate) struct SculptSession {
     /// Mesh-local mm per world mm (1 / uniform scale), to convert the world
     /// brush radius into the kernel's local units.
     pub(crate) local_per_world: f32,
-    /// Whether any dab in the CURRENT stroke actually moved geometry — a stroke
-    /// that never touched the surface must not create an undo entry.
+    /// Whether the current stroke changed geometry.
     pub(crate) dirty_stroke: bool,
-    /// The layer mesh as it stood before the current stroke — the undo
-    /// baseline, built off the UI thread. It is a whole MESH, not just
-    /// positions: a densifying stroke changes the triangle list too, and undo
-    /// has to put the coarse topology back, not just the old coordinates.
+    /// The complete pre-stroke mesh used by Undo, including topology.
     pub(crate) stroke_start_mesh: Option<Arc<Mesh>>,
 }
 
-/// A mid-stroke topology change: Smooth densified the surface, so the layer's
-/// whole geometry has to be replaced and the GPU scene re-prepared. The mesh
-/// carries a FRESH `topology_id`, which is what makes the renderer drop its
-/// exactly-sized buffers instead of streaming into buffers that are now too
-/// small.
+/// A replacement mesh produced when a stroke changes topology.
 pub(crate) struct SculptRebuild {
     /// The layer's new geometry, ready to swap into the scene.
     pub(crate) mesh: Mesh,
@@ -491,24 +416,10 @@ pub(crate) struct SculptRebuild {
     pub(crate) topology: PreparedSceneTopology,
 }
 
-/// The committed mesh a mid-stroke densification replaced.
-///
-/// Installing a rebuild is the only sculpt path that changes the document while
-/// a gesture is still open, and it deliberately records no undo entry: the
-/// commit at the end of the stroke is what makes the geometry the operator's.
-/// Until then the document holds a preview, so a stroke that is abandoned or
-/// fails has to put this mesh back. Without it the layer keeps a vertex array,
-/// a triangle list, and a topology identity that no history step describes and
-/// no save prompt names.
 #[derive(Clone)]
 pub(crate) struct SculptPreviewBaseline {
-    /// The layer whose mesh is currently a preview.
     pub(crate) layer_id: SceneMeshId,
-    /// The topology the document holds for that layer as a preview, so a
-    /// restore happens only while the preview is still what is there. A scene
-    /// that was replaced underneath has its own geometry and must keep it.
     pub(crate) preview_topology_id: u64,
-    /// What the layer held before this stroke began.
     pub(crate) mesh: Arc<Mesh>,
 }
 
@@ -703,21 +614,9 @@ impl SculptSession {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Ok(None);
         }
-        // Pick-ready before it ships. This mesh replaces the layer in the
-        // scene, and the viewport lays a dab only where the cursor HITS the
-        // surface — a hit test that refuses to build a scan-sized BVH on the
-        // egui thread, by design. Preparation was the only thing that ever
-        // warmed one, and a rebuilt layer never re-prepares (the session still
-        // matches — that is the point of the rebuild). Shipped cold, the layer
-        // was unhittable, so after the first densifying stroke the brush went
-        // dead for good. This runs on the worker thread, where an O(n) rebuild
-        // has already been paid; a clone shares the warmed tree, so the commit
-        // path's refit keeps it alive from here on.
-        //
-        // The same cancellation rule as preparation applies: this build cannot
-        // be interrupted, so do not start it for a stroke the operator has
-        // already abandoned. The pick path warms the tree itself when it needs
-        // one.
+        // Rebuilt meshes must carry a warm picking tree because the session is
+        // reused after the topology change. The build is non-cancellable, so
+        // check the flag before and after it.
         if !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             mesh.warm_bvh();
         }

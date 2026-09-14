@@ -186,11 +186,7 @@ mod tests {
         assert_eq!(round_trip.vertices()[0].color, [11, 22, 33, 255]);
     }
 
-    /// The exact coordinate rendering is part of the file format.
-    ///
-    /// This pins the digits the writer produces, including negative zero and
-    /// the sixth-decimal rounding, so a performance change to the formatting
-    /// path cannot quietly alter what an operator's mill reads.
+    /// Coordinate formatting must preserve rounding and negative zero.
     #[test]
     fn coordinate_rendering_is_pinned() {
         let mesh = Mesh::new(

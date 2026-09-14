@@ -10,22 +10,12 @@ use occluview_formats::write::{
 use std::ffi::OsStr;
 use std::path::Path;
 
-/// What the guard's Save… flow has to write.
-///
-/// Three answers, not two: "nothing carried edits" and "a stroke is still
-/// landing" both have no layer list, and collapsing them lets a caller read the
-/// second as permission to close or replace the scene.
 pub(super) enum PendingLayerExports {
-    /// The layers to export, with the scene they came from.
     Ready {
         scene: std::sync::Arc<Scene>,
         pending: Vec<(usize, occluview_core::SceneMeshId)>,
     },
-    /// Nothing carried unsaved edits.
     Nothing,
-    /// A Sculpt stroke is still changing a layer on screen. Releasing it is
-    /// asynchronous, so there is nothing written yet and "nothing to save"
-    /// would be false about geometry the operator can see.
     StrokeInFlight,
 }
 
@@ -145,32 +135,15 @@ impl OccluViewApp {
         }
     }
 
-    /// Walk every layer with unsaved edits through the export dialog, one at
-    /// a time. Stops at the first cancelled dialog or failed write so the
-    /// operator is never told edits were saved when they were not.
-    ///
-    /// The layers the guard's Save… flow would export, in scene order.
-    ///
-    /// Split from the dialog loop so the decision — including releasing a drag
-    /// that is still in flight, and reporting a stroke that has not landed — is
-    /// one function a test can drive without opening a native file dialog.
+    /// Collect edited layers for Save, committing a held Align drag first.
+    /// Returns `Nothing` when no edited layer remains.
     pub(super) fn pending_layer_exports(&mut self) -> PendingLayerExports {
         let Some(scene) = self.document.scene.clone() else {
             return PendingLayerExports::Nothing;
         };
-        // The save flow runs while the guard is open, so a hand-drag can still
-        // be in flight: its pose is one of the things the operator is being
-        // asked about. Releasing it first turns it into the committed edit it
-        // already is on screen — one history step, one entry in the set — so
-        // the export below cannot report "nothing to save" about a scan the
-        // operator can see was moved.
+        // Commit a held drag before collecting the edited layers.
         self.finish_align_drag();
-        // A live Sculpt stroke cannot be resolved here the same way: releasing it
-        // is asynchronous, and until the worker's completion lands the layer has
-        // no entry in the unsaved set to export. Reporting `Nothing` would be
-        // false — and the callers read `Nothing` as "the scene is clean", so the
-        // close guard would exit and drop the stroke. Releasing it first and
-        // saying so keeps the guard open until a second Save can name the layer.
+        // A live Sculpt stroke must finish before its layer can be exported.
         if self.document.unsaved_sculpt_stroke {
             let ctx = self.ui.repaint_ctx.clone();
             let _ = self.commit_sculpt_stroke(&ctx);
@@ -198,10 +171,7 @@ impl OccluViewApp {
         let (scene, pending) = match self.pending_layer_exports() {
             PendingLayerExports::Ready { scene, pending } => (scene, pending),
             PendingLayerExports::Nothing => return SaveEditedLayersOutcome::NothingToSave,
-            // A stroke is mid-flight. `Aborted` is the answer every caller
-            // already treats as "keep the app open and the open parked": there
-            // is nothing written yet, and the next Save can name the layer once
-            // the completion has landed.
+            // The caller keeps the guard open until the stroke has landed.
             PendingLayerExports::StrokeInFlight => return SaveEditedLayersOutcome::Aborted,
         };
         let paths = self.persistence.current_paths.clone();
@@ -959,15 +929,7 @@ mod tests {
         Ok(())
     }
 
-    /// The whole chain, end to end: a pose put on a layer the way a hand drag
-    /// puts it there, exported, then READ BACK OFF DISK and checked.
-    ///
-    /// A manual move did not survive an export. Every
-    /// step of this chain used to be covered only in pieces — the bake had a
-    /// test, the writer had a test, the reader had a test — and none of them
-    /// answered "does the file on disk hold the scan where the operator sees it".
-    /// This one does, for all three formats, because the answer must not depend
-    /// on which one they picked.
+    /// Export a transformed layer and verify the geometry after re-reading it.
     #[test]
     fn an_exported_layer_lands_on_disk_in_the_pose_the_operator_sees() -> Result<()> {
         for extension in ["ply", "stl", "obj"] {

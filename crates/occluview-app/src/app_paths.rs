@@ -2,12 +2,7 @@ use std::path::PathBuf;
 
 const APP_STATE_DIR_NAME: &str = "OccluView";
 
-/// Environment override used only by tests.
-///
-/// A test that constructs a real app would otherwise read and write the
-/// operator's `settings.json`, recent files, and language sidecar. Set before
-/// construction, this redirects the whole state directory to a temporary path
-/// on every platform, so a test cannot depend on — or damage — real state.
+/// Redirect the application state directory in tests.
 #[cfg(test)]
 pub(crate) const TEST_STATE_DIR_ENV: &str = "OCCLUVIEW_TEST_STATE_DIR";
 

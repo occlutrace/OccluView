@@ -36,12 +36,6 @@ fn closing_the_align_tool_leaves_no_setting_behind() {
 
     for reset in [
         "self.finish_align_drag();",
-        // A gesture is ended through `discard_align_drag`, which drops the drag
-        // and the provisional-pose term together. Asserting the raw field write
-        // would pass while the term stayed set and the close guard kept asking
-        // about a drag that no longer exists. This is the discard rather than
-        // the committing form because this path is revoking the scene state, not
-        // turning a gesture into an edit.
         "self.discard_align_drag();",
         "self.clear_deviation_overlay();",
         "self.clear_align_mask();",
@@ -281,17 +275,7 @@ const IN_PLACE_SCENE_EDITS: &[&str] = &[
     "self.repaint_region_preview(",
 ];
 
-/// Every place a scene handle is still alive when an in-place edit runs.
-///
-/// A handle is alive from the `self.scene.clone()` that made it until the
-/// scan leaves the brace depth it was made at, or until an explicit `drop`.
-/// Anything in between that edits the scene in place will find a second
-/// handle: the edit lands in a copy the reader never sees, and the container is
-/// copied per frame.
-///
-/// This is a structural property rather than a snapshot of the current
-/// wording: renaming a binding, reflowing an argument list or restructuring
-/// a loop leaves it intact, and moving a clone out of its block does not.
+/// Find scene handles held across in-place edits.
 fn scene_handles_alive_across_an_edit(source: &str) -> Vec<String> {
     let bytes: Vec<char> = source.chars().collect();
     let mut depth_at = vec![0i32; bytes.len() + 1];

@@ -34,12 +34,10 @@ fn slab(z: f32, x: f32) -> Mesh {
     .expect("valid mesh")
 }
 
-/// A submitted request for `keys`, as the frame loop records one.
 fn request(id: u64, keys: ContactJobKeys, pair: ContactPair) -> ContactRequest {
     ContactRequest { id, keys, pair }
 }
 
-/// One packed layer field, small enough for a state test.
 fn field(layer: SceneMeshId, value: f32) -> ContactLayerField {
     ContactLayerField {
         layer,
@@ -510,11 +508,7 @@ fn both_painted_arches_carry_their_own_reading() {
     );
 }
 
-/// A hand drag moves a scan every frame, so the measurement's keys change every
-/// frame. Holding the reading back is what keeps a full surface-index build from
-/// being restarted per frame and thrown away — and it takes the marks down,
-/// because a map measured against where the scan used to be is not the map the
-/// operator is looking at.
+/// A hand drag defers measurement and clears fields until the pose is stable.
 #[test]
 fn a_hand_drag_holds_the_reading_back_and_takes_the_marks_down() {
     let scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0)]);
@@ -603,7 +597,7 @@ fn a_large_field_widens_its_rows_instead_of_overflowing_the_texture_limit() {
     // A tiny field is one short row rather than a wide padded one.
     assert_eq!(contact_field_width(300, limit), Some(300));
 
-    // The case that used to overflow: rows must fit inside the limit.
+    // Rows must fit inside the device limit.
     let huge = usize::try_from(limit).expect("limit fits usize") * 1024 + 1;
     let width = contact_field_width(huge, limit).expect("still packable");
     let rows = u32::try_from(huge).expect("fits").div_ceil(width);

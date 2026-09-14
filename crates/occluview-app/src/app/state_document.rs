@@ -11,17 +11,10 @@
 //! - `unsaved_edit_layer_ids` names exactly the layers whose in-scene mesh
 //!   differs from disk; every applied mesh edit and its undo/redo routes
 //!   through [`DocumentState::mark_mesh_edits_unsaved`].
-//! - `unsaved_drag_pose` is the one provisional exception: an open Align
-//!   hand-drag has moved a layer, and the operator can still put it back. It is
-//!   kept out of the set because a set cannot tell the gesture's mark from a
-//!   committed edit on the same layer, and only [`DocumentState::has_unsaved_mesh_edits`]
-//!   reads it.
-//! - `unsaved_sculpt_stroke` is the same kind of exception for a live Sculpt
-//!   stroke: dabs are already changing the layer on screen and a densifying dab
-//!   has already replaced its mesh in the scene, but the stroke only becomes an
-//!   edit when it is released. Also read only through
-//!   [`DocumentState::has_unsaved_mesh_edits`], so a Replace, a Close, and the
-//!   guard's Save ask one question rather than three.
+//! - `unsaved_drag_pose` tracks an open Align drag separately from committed
+//!   edits, so returning to the starting pose cannot clear earlier work.
+//! - `unsaved_sculpt_stroke` tracks a live Sculpt stroke until its result is
+//!   committed or discarded.
 //! - `edit_mode` owns selection and undo/redo; structural swaps re-sync it.
 //! - `active_load` / `queued_loads` mutate only the document; the camera
 //!   reset decision and the modified-during-load flag live here with them.
@@ -59,17 +52,8 @@ pub(super) struct DocumentState {
     pub(super) queued_loads: std::collections::VecDeque<SceneLoadRequest>,
     pub(super) load_queue_camera_reset: LoadQueueCameraReset,
     pub(super) camera_modified_during_load: bool,
-    /// Whether an open Align hand-drag has moved its layer away from the pose
-    /// the gesture started at. Set by the drag each frame, cleared when the
-    /// gesture ends. Kept out of [`Self::unsaved_edit_layer_ids`] on purpose.
+    /// Whether an open Align drag differs from its starting pose.
     pub(super) unsaved_drag_pose: bool,
-    /// Whether a Sculpt stroke is open on a layer. Its dabs and any mid-stroke
-    /// densification are already on screen, but the stroke records no undo entry
-    /// and marks no layer unsaved until it is released — so without this the
-    /// load guard, the close guard, and the guard's Save would all decide
-    /// against a scene the operator is in the middle of changing. Kept out of
-    /// [`Self::unsaved_edit_layer_ids`] for the same reason as the drag pose:
-    /// the gesture may end with nothing to keep.
     pub(super) unsaved_sculpt_stroke: bool,
 }
 
@@ -153,27 +137,9 @@ impl DocumentState {
         }
     }
 
-    /// The live scene, mutable in place (the borrowed-handle path; the
-    /// take-edit-restore path is [`taken_scene_mut`]).
-    ///
-    /// Every in-place scene edit comes through here, and the invariant is that
-    /// the document owns the only handle while one runs: a second handle means
-    /// the caller is holding a scene it intends to read afterwards, so the edit
-    /// it is about to make is invisible to it. That is a correctness problem
-    /// first -- the alignment overlay cleanup in `clear_scene` reached this
-    /// function with the document still owning the scene and tripped it on the
-    /// real "remove the last layer" path.
-    ///
-    /// The cost argument is the smaller half, and the numbers are smaller than
-    /// they used to be. `SceneMesh::mesh` is an `Arc<Mesh>`, so `Arc::make_mut`
-    /// on a shared scene copies the per-layer container and its metadata, not
-    /// the vertices, indices, or decoded texture. On one layer of 945k vertices
-    /// (a synthetic arch, release build, Linux x86-64): 5 ns for `make_mut` as
-    /// sole handle against 71 ns with a second handle alive, and cloning the
-    /// scene outright is 39 ns. Those are per-frame
-    /// costs worth not paying, not the tens of milliseconds a copied case would
-    /// be, and they are recorded here as measurements rather than as a warning
-    /// about a case-sized copy that no longer happens.
+    /// Mutate the document's scene while it holds the only scene handle.
+    /// A second handle would read an outdated scene after `Arc::make_mut`.
+    /// Mesh geometry remains shared through `Arc<Mesh>`.
     pub(super) fn live_scene_mut(&mut self) -> Option<&mut Scene> {
         let scene = self.scene.as_mut()?;
         let handles = Arc::strong_count(scene);
@@ -197,14 +163,7 @@ impl DocumentState {
         self.unsaved_edit_layer_ids.insert(layer_id);
     }
 
-    /// Whether anything in the scene differs from what is on disk.
-    ///
-    /// Derived from the set of layers with pending edits and, when a hand-drag
-    /// is open, whether that gesture has moved its layer away from where it
-    /// started. The drag pose is not an entry in the set: a set cannot tell the
-    /// gesture's mark from a committed edit on the same layer, and the operator
-    /// can still put the pose back. It is still work while it is held, which is
-    /// what the load guard and the close guard are asking about.
+    /// Whether committed edits or an open Align drag need saving.
     pub(super) fn has_unsaved_mesh_edits(&self) -> bool {
         !self.unsaved_edit_layer_ids.is_empty()
             || self.unsaved_drag_pose

@@ -124,12 +124,7 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    /// A real app for a headless document-transition test.
-    ///
-    /// The production bootstrap acquires a process-wide single-instance claim,
-    /// starts listener threads, and reads the operator's state directory. Tests
-    /// that drive real transitions need the same types without those side
-    /// effects; `app_test_support::test_app` sets the redirect and calls this.
+    /// Construct an app without process-wide startup side effects for tests.
     #[cfg(test)]
     pub(crate) fn new_for_tests(repaint_ctx: egui::Context) -> Self {
         Self {
@@ -195,8 +190,6 @@ impl eframe::App for OccluViewApp {
         self.process_scene_loads(ctx);
         self.poll_sculpt_preparation(ctx);
         self.poll_sculpt_worker(ctx);
-        // After the poll, and independently of it: a session can end without a
-        // worker to poll, and the marker has to follow it either way.
         self.settle_sculpt_work_marker();
         self.handle_open_requests(ctx);
         self.finish_foreground_pulse_if_due(ctx);

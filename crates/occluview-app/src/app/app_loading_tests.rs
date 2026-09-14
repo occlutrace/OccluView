@@ -1,12 +1,3 @@
-//! Delivery-path tests for the Replace load guard.
-//!
-//! `scene_loading.rs` unit-tests the queue predicates; those tests cannot show
-//! what the app does when a decode that was authorized while the session was
-//! idle finally arrives after the operator started working. These tests drive
-//! [`OccluViewApp::apply_scene_load_result`] — the one function every completed
-//! decode goes through — and read the document, the parked-open slot, and the
-//! edit session rather than a predicate.
-
 #![allow(clippy::expect_used, clippy::panic)]
 
 use super::app_align_drag::AlignDrag;
@@ -21,10 +12,6 @@ use glam::Affine3A;
 
 #[test]
 fn late_replace_arriving_during_a_busy_edit_is_parked_not_applied() {
-    // Open B was authorized while the scene was idle. The operator then started
-    // working (a live edit session) before the decode finished. Applying B would
-    // discard that work and clear the session holding it, so the result must be
-    // parked for the guard dialog instead.
     let mut app = test_app("late-replace-busy");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -61,9 +48,6 @@ fn late_replace_arriving_during_a_busy_edit_is_parked_not_applied() {
 
 #[test]
 fn late_replace_after_a_committed_edit_is_parked() {
-    // The edit started and committed before the decode arrived, so the scene
-    // revision moved and the authorization from Open time no longer covers what
-    // is on screen.
     let mut app = test_app("late-replace-committed");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -98,8 +82,6 @@ fn late_replace_after_a_committed_edit_is_parked() {
 
 #[test]
 fn replace_delivered_into_an_idle_clean_session_is_applied() {
-    // The other half of the contract: with nothing to lose, Open must not
-    // invent a dialog.
     let mut app = test_app("replace-idle-clean");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let pending = delivered_load(
@@ -123,8 +105,6 @@ fn replace_delivered_into_an_idle_clean_session_is_applied() {
 
 #[test]
 fn append_result_lands_while_an_edit_session_is_open() {
-    // Append adds to the scene and destroys nothing, so an edit in progress
-    // must not park it.
     let mut app = test_app("append-mid-edit");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     app.persistence.current_paths = vec![PathBuf::from("/cases/a.stl")];
@@ -181,8 +161,6 @@ fn failed_replace_leaves_the_scene_and_its_edits_untouched() {
 
 #[test]
 fn superseded_replace_result_is_dropped_and_the_newer_request_runs() {
-    // The queue keeps exactly one decoder and marks it superseded when a newer
-    // Replace arrives: the stale scene must never appear, not even for a frame.
     let mut app = test_app("replace-superseded");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let mut active = delivered_load(
@@ -225,9 +203,6 @@ fn superseded_replace_result_is_dropped_and_the_newer_request_runs() {
 
 #[test]
 fn parked_replace_keeps_the_request_it_was_authorized_for() {
-    // Answering the guard must deliver the exact parked request: the paths and
-    // their provenance travel together, so a subsequent confirmation cannot
-    // open a different file than the one the operator saw.
     let mut app = test_app("parked-request");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let pending = delivered_load(
@@ -253,11 +228,6 @@ fn parked_replace_keeps_the_request_it_was_authorized_for() {
 
 #[test]
 fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
-    // The operator authorized Open B, then grabbed a scan and moved it. The
-    // pose lives in the live scene from the first mouse-move frame, but the
-    // history step and the unsaved mark are only written at release. A decode
-    // that lands in that window must not silently revert work the operator can
-    // see on screen.
     let mut app = test_app("replace-mid-align-drag");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -268,7 +238,6 @@ fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
         "/cases/b.stl",
     );
 
-    // One drag frame through the real path, with no history step yet.
     app.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start: Affine3A::IDENTITY,
@@ -303,11 +272,6 @@ fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
 }
 #[test]
 fn removing_the_last_layer_does_not_edit_the_scene_while_a_handle_is_alive() {
-    // Removing the final layer commits an empty draft, which routes through
-    // `clear_scene`. That path revokes the alignment overlay, and the overlay
-    // cleanup edits the live scene in place. With the scene still owned by the
-    // document, that found a second handle alive and tripped the in-place-edit
-    // assertion on a real operator action (Layer menu -> Remove, last layer).
     let mut app = test_app("remove-last-layer");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     app.persistence.current_paths = vec![PathBuf::from("/cases/a.stl")];
@@ -334,10 +298,6 @@ fn removing_the_last_layer_does_not_edit_the_scene_while_a_handle_is_alive() {
 
 #[test]
 fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
-    // The operator grabs a scan, moves it, puts it back exactly where it was,
-    // and lets go. Nothing about the document changed, so nothing may be
-    // flagged and no history step may be recorded -- while the guard that
-    // watches an unreleased move still sees the pose during the gesture.
     let mut app = test_app("drag-round-trip");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -353,7 +313,6 @@ fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
         centroid: glam::Vec3::ZERO,
     });
 
-    // Out, then back along the same axis.
     let out = Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0));
     let back = Affine3A::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0));
     app.nudge_align_layer(layer_id, out);
@@ -383,8 +342,6 @@ fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
 
 #[test]
 fn a_drag_that_returns_to_its_start_keeps_edits_that_were_already_unsaved() {
-    // A layer that already carried unsaved edits keeps them. The round-trip
-    // drag must not clear work it did not create.
     let mut app = test_app("drag-round-trip-prior-edits");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -419,8 +376,6 @@ fn a_drag_that_returns_to_its_start_keeps_edits_that_were_already_unsaved() {
 
 #[test]
 fn a_drag_that_returns_to_its_start_keeps_another_layers_unsaved_edits() {
-    // The same, with the pre-existing edit on a different layer: the round-trip
-    // drag on a clean layer must not touch it.
     let mut app = test_app("drag-round-trip-other-layer");
     let mut scene = named_scene("scene-a", 0.0);
     let other_id = push_named_layer(&mut scene, "scene-b", 20.0);
@@ -454,8 +409,6 @@ fn a_drag_that_returns_to_its_start_keeps_another_layers_unsaved_edits() {
 
 #[test]
 fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
-    // The other half of the round-trip contract: a gesture that really moved
-    // the scan must still be marked unsaved and recorded as exactly one step.
     let mut app = test_app("drag-real-move");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -499,11 +452,6 @@ fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
 
 #[test]
 fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
-    // The drag is in flight and something else commits an edit to the same
-    // layer — a finished sculpt stroke, a landed fit. The pose then returns to
-    // where the drag began. The drag's own mark is withdrawn, but the work that
-    // landed mid-gesture is unsaved and must survive: clearing it would let the
-    // app close without asking about an edited scan.
     let mut app = test_app("drag-round-trip-mid-gesture");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -515,18 +463,14 @@ fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
         centroid: glam::Vec3::ZERO,
     });
 
-    // Drag out: the gesture marks the layer.
     app.nudge_align_layer(
         layer_id,
         Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)),
     );
     assert!(app.document.has_unsaved_mesh_edits());
 
-    // Something else commits to the same layer while the operator is still
-    // holding the button.
     app.document.mark_mesh_edits_unsaved(layer_id);
 
-    // Drag back to the starting pose.
     app.nudge_align_layer(
         layer_id,
         Affine3A::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0)),
@@ -547,10 +491,6 @@ fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
 
 #[test]
 fn a_second_nudge_does_not_forget_a_mid_gesture_commit() {
-    // Same as above, but the operator keeps dragging after the other commit
-    // lands. The drag's own mark is re-stamped on every move, so a witness that
-    // only remembers the latest revision loses track of what happened before
-    // it — and the trip back would then clear an edit the drag never made.
     let mut app = test_app("drag-round-trip-refreshed-witness");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -564,11 +504,8 @@ fn a_second_nudge_does_not_forget_a_mid_gesture_commit() {
 
     let out = Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0));
     app.nudge_align_layer(layer_id, out);
-    // Another subsystem commits to this layer while the button is still down.
     app.document.mark_mesh_edits_unsaved(layer_id);
-    // The operator keeps dragging, so the drag marks again.
     app.nudge_align_layer(layer_id, out);
-    // Then returns to where it started.
     app.nudge_align_layer(
         layer_id,
         Affine3A::from_translation(glam::Vec3::new(-6.0, 0.0, 0.0)),
@@ -589,10 +526,6 @@ fn a_second_nudge_does_not_forget_a_mid_gesture_commit() {
 
 #[test]
 fn an_unreleased_drag_does_not_enter_the_committed_edit_set() {
-    // The provisional pose is a second term, not an entry: entering the set would
-    // make the gesture's mark indistinguishable from a commit, which is what
-    // forced the earlier, flawed withdrawal. This pins the separation itself, so
-    // a future change that "simplifies" it back into the set fails here.
     let mut app = test_app("drag-provisional-separation");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -628,10 +561,6 @@ fn an_unreleased_drag_does_not_enter_the_committed_edit_set() {
 
 #[test]
 fn a_scene_replace_clears_an_open_drags_provisional_pose() {
-    // The old scene is gone after a replace, so the drag's provisional pose —
-    // which described a layer in that scene — is gone with it. Leaving the term
-    // set makes the close guard ask about work that no longer exists, and the
-    // operator cannot answer it away because the drag it belonged to is gone.
     let mut app = test_app("replace-clears-drag-pose");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -650,8 +579,6 @@ fn a_scene_replace_clears_an_open_drags_provisional_pose() {
         "fixture: the open drag is holding a moved pose"
     );
 
-    // The operator answers the guard with Discard, so the request was made with
-    // the dirty state recorded and is not parked a second time.
     let mut pending = delivered_load(
         &app,
         named_scene("scene-b", 10.0),
@@ -700,11 +627,6 @@ fn clearing_the_scene_clears_an_open_drags_provisional_pose() {
 
 #[test]
 fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
-    // The operator moves a scan, keeps the button down, and opens a file. The
-    // guard offers Save, and the save flow must not answer "nothing to save"
-    // about a scan the operator can see was moved. It is run through the real
-    // entry point; the export dialog is reached only when there is something to
-    // ask about, so a `NothingToSave` answer here is the defect.
     let mut app = test_app("guard-save-mid-drag");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
@@ -723,17 +645,10 @@ fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
         "fixture: work is held"
     );
 
-    // The dialog loop opens a native file dialog, which a test must never do:
-    // the first version of this test called it and hung the Windows CI job on a
-    // modal nothing could answer. The step before any dialog — release the
-    // gesture, then build the work list — is the one under test.
     let listed = app.pending_layer_exports();
 
     let pending = match listed {
         PendingLayerExports::Ready { pending, .. } => pending,
-        // A held drag is work: the save flow must offer it, not answer
-        // NothingToSave and drop it. No Sculpt stroke is live in this test, so
-        // StrokeInFlight would be the wrong answer as well.
         PendingLayerExports::Nothing => panic!(
             "a held drag is work: the flow must build the work list, not answer \
              that there is nothing to save"
@@ -756,11 +671,6 @@ fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
 
 #[test]
 fn an_append_does_not_discard_a_held_drag_pose_it_carries_forward() {
-    // An append keeps the existing layers, poses included, so the drag's moved
-    // layer survives into the combined scene. The gesture is over (the append
-    // commits through `set_scene`), but the pose it made is still there and is
-    // still work. Dropping the term without committing the move leaves a moved
-    // scan that no history step describes and no save prompt names.
     let mut app = test_app("append-carries-held-pose");
     app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
     app.persistence.current_paths = vec![PathBuf::from("/cases/a.stl")];
@@ -787,7 +697,6 @@ fn an_append_does_not_discard_a_held_drag_pose_it_carries_forward() {
         Ok(named_scene("scene-b", 20.0)),
     );
 
-    // The moved layer is still in the scene with the pose the operator gave it.
     let scene = app.document.scene.as_ref().expect("scene");
     assert_eq!(scene.meshes().len(), 2, "fixture: the append landed");
     assert_eq!(

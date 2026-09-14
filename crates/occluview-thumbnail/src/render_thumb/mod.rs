@@ -141,12 +141,7 @@ impl ThumbnailRenderRequest {
 }
 /// Maximum stream size the shell thumbnail path will parse.
 pub const MAX_THUMBNAIL_INPUT_BYTES: usize = 192 * 1024 * 1024;
-/// Maximum local-file thumbnail input size.
-///
-/// The file path reads the whole file into an owned buffer before parsing, so
-/// the cap is what bounds the surrogate's heap; it is higher than the stream
-/// cap because a local file is a deliberate request rather than data arriving
-/// over a pipe.
+/// Maximum local-file thumbnail input size, bounding the owned read buffer.
 pub const MAX_THUMBNAIL_FILE_BYTES: usize = 512 * 1024 * 1024;
 
 static THUMBNAIL_INFLIGHT: OnceLock<
@@ -219,11 +214,8 @@ pub struct ThumbnailJobReservation {
     permit: ThumbnailJobPermit,
     /// When the request that took this reservation must be finished.
     ///
-    /// Fixed at reservation time, so that the wait for a slot, the shell's
-    /// copy of the stream and the render itself all spend one budget. They
-    /// used to take a budget each: eight seconds for the slot, an unbounded
-    /// copy, then a fresh six for the render -- and under Apartment hosting
-    /// the whole folder queues behind that.
+    /// Fixed at reservation time so slot wait, stream copy, and rendering share
+    /// one request budget.
     request: ThumbnailRenderRequest,
 }
 

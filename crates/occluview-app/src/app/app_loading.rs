@@ -275,13 +275,7 @@ impl OccluViewApp {
         }
     }
 
-    /// Drop the state that described the scene a Replace just replaced.
-    ///
-    /// The old scene and any unsaved edits on it are gone. A hand-drag is part
-    /// of that: its layer is being replaced, so the gesture is dropped rather
-    /// than committed into a scene it does not belong to. An Append is the
-    /// other case — it keeps the layer, so it commits the gesture instead; see
-    /// `set_scene`.
+    /// Clear state belonging to the scene replaced by a completed load.
     fn forget_replaced_scene_state(&mut self) {
         self.document.edit_mode.clear();
         self.discard_align_drag();
