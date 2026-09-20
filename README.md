@@ -1,20 +1,19 @@
-<div align="center">
-  <img src="assets/occluview-logo.png" width="96" height="96" alt="OccluView logo">
+<p align="center">
+  <img src="assets/occluview-github-header.png" width="1280" alt="OccluView dental 3D viewer showing scan alignment with a deviation heatmap">
+</p>
 
-  <h1>OccluView</h1>
+<p align="center">
+  <strong>A desktop dental 3D viewer for inspecting, aligning, editing, repairing, and exporting scan meshes.</strong>
+</p>
 
-  <p><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
+<p align="center">
+  <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/latest%20release-v1.2.0-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.0"></a>
+  <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/occlutrace/OccluView/ci.yml?branch=main&style=for-the-badge&label=build" alt="Build status"></a>
+</p>
 
-  <p>
-    <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/latest%20release-v1.2.0-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.0"></a>
-    <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/occlutrace/OccluView/ci.yml?branch=main&style=for-the-badge&label=build" alt="Build status"></a>
-  </p>
-</div>
-
-OccluView is a native desktop dental CAD workspace for inspecting, aligning,
-editing, repairing, and exporting scan meshes. It is designed for the work
-that starts after a scan opens: compare two surfaces, find the deviation,
-repair unsafe topology, edit and align 3D scans.
+OccluView is a native desktop dental 3D viewer for the work that starts
+after a scan opens: compare two surfaces, find the deviation, repair unsafe
+topology, edit and align 3D scans, and export the result.
 
 <hr>
 
