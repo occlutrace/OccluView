@@ -32,6 +32,18 @@ impl<'a> TexturePlan<'a> {
         let candidate = mesh
             .texture()
             .filter(|_| options.include_texture && options.include_uvs)
+            // A texture whose dimensions and pixel buffer disagree makes the
+            // PNG encoder assert, and an abort would take the whole viewer down
+            // with the export. The GLB writer rejects the same shape; here the
+            // image is simply not written, and the caller warns.
+            .filter(|texture| {
+                texture.width > 0
+                    && texture.height > 0
+                    && texture.rgba.len()
+                        == (texture.width as usize)
+                            .saturating_mul(texture.height as usize)
+                            .saturating_mul(4)
+            })
             // An image needs face rows to carry its coordinates: without them
             // the file would hold an atlas nothing can sample and lose the UVs
             // with no warning. The per-vertex path survives an empty face list.

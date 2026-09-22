@@ -308,6 +308,21 @@ fn validate_mesh(mesh: &Mesh) -> Result<&MeshTexture, FormatError> {
 }
 
 pub(crate) fn encode_png(texture: &MeshTexture) -> Result<Vec<u8>, FormatError> {
+    // The PNG encoder asserts on a buffer that does not match its dimensions,
+    // and this crate is built with panic = "abort": an export would take the
+    // viewer with it. Every caller gets an error instead.
+    let expected = (texture.width as usize)
+        .saturating_mul(texture.height as usize)
+        .saturating_mul(4);
+    if texture.width == 0 || texture.height == 0 || texture.rgba.len() != expected {
+        return Err(malformed(format!(
+            "texture is {}x{} with {} bytes, not the {} an RGBA image needs",
+            texture.width,
+            texture.height,
+            texture.rgba.len(),
+            expected
+        )));
+    }
     let mut png = Vec::new();
     PngEncoder::new_with_quality(&mut png, CompressionType::Best, FilterType::Paeth)
         .write_image(

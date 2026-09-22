@@ -28,7 +28,7 @@ const MAX_MATERIAL_LIBRARY_BYTES: u64 = 1 << 20;
 ///
 /// The decoder bounds the *decoded* surface; this bounds the read, so a file
 /// that claims to be an atlas cannot pull gigabytes through the import.
-const MAX_COMPANION_IMAGE_BYTES: u64 = 64 << 20;
+pub(crate) const MAX_COMPANION_IMAGE_BYTES: u64 = 64 << 20;
 
 /// Image extensions tried when a mesh names no image but sits beside one.
 ///

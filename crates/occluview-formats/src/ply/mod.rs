@@ -143,6 +143,16 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     Ok(mesh)
 }
 
+/// The most base64 this reader will decode from a header comment.
+///
+/// Four thirds of the companion-image cap: the same picture budget, applied
+/// before the pixels exist, so a header cannot make the reader allocate from
+/// input length alone while the file buffer is still held.
+fn max_encoded_chars() -> usize {
+    let bytes = usize::try_from(crate::companions::MAX_COMPANION_IMAGE_BYTES).unwrap_or(0);
+    bytes / 3 * 4
+}
+
 /// Decode the texture an export carried in its own header.
 ///
 /// A header that names a file but carries nothing decodable yields `None`: the
@@ -159,6 +169,15 @@ fn embedded_texture(comments: &header::TextureComments) -> Option<MeshTexture> {
         }
     }
     let encoded = comments.encoded.as_deref()?;
+    // The payload is decoded before the raster decoder can bound it, so the
+    // base64 itself needs a ceiling: a header may carry as much text as the
+    // file holds, and decoding all of it while the file buffer is still alive
+    // is the one place in this reader that allocates straight from input
+    // length. Four thirds of the companion-image cap is the same picture
+    // budget applied before the pixels exist.
+    if encoded.len() > max_encoded_chars() {
+        return None;
+    }
     let png = embed::decode(encoded)?;
     crate::texture_decode::decode_embedded_raster(&png, "PLY").ok()
 }
