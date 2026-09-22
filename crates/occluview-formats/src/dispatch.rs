@@ -373,7 +373,12 @@ pub fn read_file_loaded_with_key_provider(
     )?;
     // A PLY from another tool, and any OBJ, names its image beside the file;
     // the reader sees bytes only, so finding it is this layer's job.
-    crate::companions::attach(&mut loaded.mesh, path, bytes.extension(), bytes.as_slice());
+    crate::companions::attach(
+        &mut loaded.mesh,
+        path,
+        crate::companions::LocateKind::for_kind(loaded.kind),
+        bytes.as_slice(),
+    );
     Ok(loaded)
 }
 
@@ -388,9 +393,18 @@ pub fn read_file_shaded(
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
     let bytes = read_file_bytes(path)?;
+    // The probed format decides the companion lookup, exactly as it decides
+    // which reader runs.
+    let kind =
+        crate::probe::probe(Some(bytes.extension()), bytes.as_slice()).unwrap_or(FormatKind::Ply);
     let mut mesh =
         dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)?;
-    crate::companions::attach(&mut mesh, path, bytes.extension(), bytes.as_slice());
+    crate::companions::attach(
+        &mut mesh,
+        path,
+        crate::companions::LocateKind::for_kind(kind),
+        bytes.as_slice(),
+    );
     Ok(mesh)
 }
 

@@ -152,6 +152,7 @@ load-open-failed-start = Échec d’ouverture : chargeur non démarré
 load-add-failed-start = Échec d’ajout : chargeur non démarré
 load-open-failed-stopped = Échec d’ouverture : chargeur arrêté
 load-loader-failed-summary = Le chargeur de scène n’a pas pu démarrer.
+load-file-too-large = Le fichier fait { $size } Go, au-delà des { $limit } Go lus d'un seul tenant
 load-action-failed-open = Échec d’ouverture : { $detail }
 load-action-failed-add = Échec d’ajout : { $detail }
 
@@ -752,7 +753,7 @@ settings-save-format-source = Son propre format
 settings-save-format-source-hint = Un scan ouvert en STL est enregistré en STL, un scan ouvert en PLY en PLY ; un format sans écrivain donne un PLY.
 settings-save-format-always = Format choisi
 settings-save-format-always-hint = Chaque scan est enregistré dans le format choisi ci-dessous, sauf si la géométrie ne peut pas y être écrite.
-settings-save-format-source-note = Chaque scan garde le format dans lequel il a été ouvert. Un format non inscriptible est enregistré en PLY.
+settings-save-format-source-note = Chaque scan garde son propre format. Un format non inscriptible est enregistré en { $format } — le format choisi dans l'autre mode.
 settings-export-format = Format d’export de repli
 settings-export-format-hint = Utilisé pour un scan dont le format propre ne peut pas être écrit, ou si l'option ci-dessus est désactivée
 settings-remember-export = Mémoriser le dossier d’export

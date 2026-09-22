@@ -38,10 +38,12 @@ remain in the Git history.
   already round-tripped PLY/STL/OBJ that way, but a scan opened from a format
   with no writer (HPS, GLB, OFF) silently became a PLY, and the preference that
   produced the substitution was not stated anywhere. Settings now carries
-  "Keep each scan's own format": on, each layer keeps its own format and the
-  fallback format applies only where there is no source format to keep; off,
-  every export uses the chosen fallback format, except where the geometry
-  cannot be written in it — a point cloud is saved as PLY rather than STL.
+  Settings now asks one question with two answers — save each scan in its own
+  format, or save every scan in a chosen format — instead of a switch beside a
+  format that looked like it applied either way. The format chips appear only in
+  the mode that uses them, and the mode in force is always named. Whichever
+  mode is chosen, a scan whose geometry cannot be written in the resulting
+  format is saved as PLY rather than STL.
 - A merged scene is saved in the fallback format instead of always PLY, so
   "Save scene as" follows the same preference as the layers.
 - A PLY export of a textured scan carries the texture instead of dropping it,
@@ -61,8 +63,9 @@ remain in the Git history.
   64 MB, is refused rather than read.
 - Opening several scans at once parses two of them at a time and holds at most
   half a gigabyte of file data in memory, instead of parsing every dropped file
-  at once. A single file above 1 GB is refused with a sentence that says so
-  rather than being read into memory.
+  at once — a scan larger than that budget is parsed on its own, up to the 1 GB
+  a single file may be. A bigger file is refused with a sentence in the
+  operator's language that gives both sizes in gigabytes.
 - The contact reading says which scan it is measured against when the scene has
   more than one candidate, and offers the others: an upper, a lower and a wax-up
   used to resolve by proximity alone, which cannot tell two similar arches

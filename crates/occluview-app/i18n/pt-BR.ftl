@@ -153,6 +153,7 @@ load-open-failed-start = Falha ao abrir: carregador não iniciou
 load-add-failed-start = Falha ao adicionar: carregador não iniciou
 load-open-failed-stopped = Falha ao abrir: carregador parou
 load-loader-failed-summary = Não deu para iniciar o carregador de cena.
+load-file-too-large = O arquivo tem { $size } GB, acima dos { $limit } GB lidos de uma vez
 load-action-failed-open = Falha ao abrir: { $detail }
 load-action-failed-add = Falha ao adicionar: { $detail }
 
@@ -754,7 +755,7 @@ settings-save-format-source = Formato próprio
 settings-save-format-source-hint = Uma digitalização aberta como STL é salva como STL, uma aberta como PLY como PLY; um formato sem escritor é salvo como PLY.
 settings-save-format-always = Formato escolhido
 settings-save-format-always-hint = Toda digitalização é salva no formato escolhido abaixo, salvo se a geometria não puder ser gravada nele.
-settings-save-format-source-note = Cada digitalização mantém o formato em que foi aberta. Um formato não gravável é salvo como PLY.
+settings-save-format-source-note = Cada digitalização mantém o formato próprio. Um formato não gravável é salvo como { $format } — o formato escolhido no outro modo.
 settings-export-format = Formato de exportação alternativo
 settings-export-format-hint = Usado para um scan cujo formato próprio não pode ser gravado, ou quando a opção acima está desligada
 settings-remember-export = Lembrar pasta de exportação

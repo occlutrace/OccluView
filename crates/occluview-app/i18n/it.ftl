@@ -152,6 +152,7 @@ load-open-failed-start = Apertura fallita: loader non partito
 load-add-failed-start = Aggiunta fallita: loader non partito
 load-open-failed-stopped = Apertura fallita: loader fermo
 load-loader-failed-summary = Il loader di scena non si è avviato.
+load-file-too-large = Il file è di { $size } GB, oltre i { $limit } GB letti in un colpo solo
 load-action-failed-open = Apertura fallita: { $detail }
 load-action-failed-add = Aggiunta fallita: { $detail }
 
@@ -752,7 +753,7 @@ settings-save-format-source = Formato proprio
 settings-save-format-source-hint = Una scansione aperta come STL viene salvata come STL, una aperta come PLY come PLY; un formato senza scrittore diventa PLY.
 settings-save-format-always = Formato scelto
 settings-save-format-always-hint = Ogni scansione viene salvata nel formato scelto sotto, se la geometria può esservi scritta.
-settings-save-format-source-note = Ogni scansione mantiene il formato con cui è stata aperta. Un formato non scrivibile viene salvato come PLY.
+settings-save-format-source-note = Ogni scansione mantiene il formato proprio. Un formato non scrivibile viene salvato come { $format }: il formato scelto nell'altro modo.
 settings-export-format = Formato di export di riserva
 settings-export-format-hint = Usato per uno scan il cui formato proprio non è scrivibile, o se l'opzione sopra è disattivata
 settings-remember-export = Ricorda la cartella di export

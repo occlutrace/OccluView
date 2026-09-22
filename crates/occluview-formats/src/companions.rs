@@ -31,29 +31,31 @@ const MAX_MATERIAL_LIBRARY_BYTES: u64 = 1 << 20;
 const MAX_COMPANION_IMAGE_BYTES: u64 = 64 << 20;
 
 /// Image extensions tried when a mesh names no image but sits beside one.
-const SAME_STEM_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "PNG"];
+///
+/// Matched case-insensitively, because a scanner writes `scan.JPG` as readily
+/// as `scan.jpg` and both name the same picture.
+const SAME_STEM_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 
 /// Attach the texture this mesh file points at beside itself.
 ///
 /// A mesh that already carries a texture keeps it: a GLB or HPS holds its own
 /// image, and nothing beside the file overrides it.
-pub(crate) fn attach(mesh: &mut Mesh, path: &Path, extension: &str, bytes: &[u8]) {
+pub(crate) fn attach(mesh: &mut Mesh, path: &Path, kind: LocateKind, bytes: &[u8]) {
     // A mesh with no texture coordinates samples one texel for every fragment,
     // so an image attached to one paints the whole layer a single flat colour
     // and takes the tint with it. Better no texture than that.
     if mesh.texture().is_some() || !mesh.has_uvs() {
         return;
     }
-    let Some(image) = locate(path, extension, bytes) else {
+    let Some(image) = locate(path, kind, bytes) else {
         return;
     };
-    let Ok(metadata) = std::fs::metadata(&image) else {
-        return;
-    };
-    if metadata.len() > MAX_COMPANION_IMAGE_BYTES {
-        return;
-    }
-    let Ok(image_bytes) = std::fs::read(&image) else {
+    // Bounded like every other import read: an image that grows between the
+    // metadata check and the read is refused rather than pulled into memory.
+    let Ok(image_bytes) =
+        crate::dispatch::read_file_bytes_with_limit(&image, MAX_COMPANION_IMAGE_BYTES)
+            .map(|bytes| bytes.as_slice().to_vec())
+    else {
         return;
     };
     let Ok(texture) = decode_embedded_raster(&image_bytes, "texture beside the mesh") else {
@@ -63,16 +65,18 @@ pub(crate) fn attach(mesh: &mut Mesh, path: &Path, extension: &str, bytes: &[u8]
 }
 
 /// The image a mesh file names, or the one that shares its name.
-fn locate(path: &Path, extension: &str, bytes: &[u8]) -> Option<PathBuf> {
+fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
     // A relative path from a command line has an empty parent, and the files
     // it names are in the working directory.
     let directory = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    match extension {
-        "obj" => material_image(directory, bytes).or_else(|| same_stem_image(path, directory)),
-        "ply" => {
+    match kind {
+        LocateKind::Obj => {
+            material_image(directory, bytes).or_else(|| same_stem_image(path, directory))
+        }
+        LocateKind::Ply => {
             let header = crate::ply::header::parse(bytes).ok()?;
             header
                 .texture
@@ -80,7 +84,34 @@ fn locate(path: &Path, extension: &str, bytes: &[u8]) -> Option<PathBuf> {
                 .as_deref()
                 .and_then(|name| inside(directory, name))
         }
-        _ => None,
+        LocateKind::None => None,
+    }
+}
+
+/// Which companion lookup a mesh file is entitled to.
+///
+/// The choice follows the format the reader actually used, not the extension
+/// on the name: a `.stl` that is really a PLY must find the image its own
+/// `TextureFile` comment names, which is the case the magic-first probe exists
+/// for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocateKind {
+    /// An OBJ, which names its image through `mtllib`/`map_Kd`.
+    Obj,
+    /// A PLY, which may name it in a `comment TextureFile` line.
+    Ply,
+    /// Neither: the format keeps its image inside the file.
+    None,
+}
+
+impl LocateKind {
+    /// The lookup a probed format is entitled to.
+    pub(crate) fn for_kind(kind: crate::probe::FormatKind) -> Self {
+        match kind {
+            crate::probe::FormatKind::Obj => Self::Obj,
+            crate::probe::FormatKind::Ply => Self::Ply,
+            _ => Self::None,
+        }
     }
 }
 
@@ -94,13 +125,12 @@ fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
         let Some(library) = inside(directory, &library) else {
             continue;
         };
-        let Ok(metadata) = std::fs::metadata(&library) else {
-            continue;
-        };
-        if metadata.len() > MAX_MATERIAL_LIBRARY_BYTES {
-            continue;
-        }
-        let Ok(text) = std::fs::read(&library) else {
+        // The library is read through the same bounded helper as everything
+        // else this import touches.
+        let Ok(text) =
+            crate::dispatch::read_file_bytes_with_limit(&library, MAX_MATERIAL_LIBRARY_BYTES)
+                .map(|bytes| bytes.as_slice().to_vec())
+        else {
             continue;
         };
         for image in directives(&text, "map_Kd") {
@@ -194,11 +224,30 @@ fn inside(directory: &Path, name: &str) -> Option<PathBuf> {
 /// An image that shares the mesh's name, which is how many dental exports ship
 /// an OBJ with no usable material library.
 fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
-    let stem = path.file_stem()?;
-    SAME_STEM_EXTENSIONS.iter().find_map(|extension| {
-        let candidate = directory.join(format!("{}.{extension}", stem.to_string_lossy()));
-        candidate.is_file().then_some(candidate)
-    })
+    let stem = path.file_stem()?.to_string_lossy().to_lowercase();
+    let entries = std::fs::read_dir(directory).ok()?;
+    // Case-insensitive over the directory rather than over a fixed list:
+    // `scan.PNG`, `scan.JPG` and `scan.JPEG` name the same picture as their
+    // lower-case spellings, and a fixed list always misses one of them.
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+            let lower = name.to_lowercase();
+            let Some((candidate_stem, candidate_extension)) = lower.rsplit_once('.') else {
+                return false;
+            };
+            candidate_stem == stem
+                && SAME_STEM_EXTENSIONS.contains(&candidate_extension)
+                && candidate.is_file()
+        })
+        .collect();
+    // Deterministic when several spellings exist side by side.
+    found.sort();
+    found.into_iter().next()
 }
 
 /// Errors from a companion are not errors of the import: the mesh is what the
@@ -257,7 +306,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
 
         let texture = mesh.texture().expect("the texture was found");
         assert_eq!((texture.width, texture.height), (2, 1));
@@ -274,7 +323,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
 
         assert!(
             mesh.texture().is_none(),
@@ -282,7 +331,7 @@ mod tests {
         );
 
         std::fs::write(directory.join("scan.jpg"), textured_png()).expect("the image");
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
         assert!(
             mesh.texture().is_some(),
             "the image beside the mesh is used"
@@ -302,13 +351,13 @@ mod tests {
         std::fs::write(&path, &header).expect("the ply");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, "ply", header.as_bytes());
+        attach(&mut mesh, &path, LocateKind::Ply, header.as_bytes());
         assert!(mesh.texture().is_some(), "the named image is used");
 
         // A header with no name at all leaves the mesh alone.
         header = header.replace("comment TextureFile atlas.png\n", "");
         let mut untextured = triangle();
-        attach(&mut untextured, &path, "ply", header.as_bytes());
+        attach(&mut untextured, &path, LocateKind::Ply, header.as_bytes());
         assert!(untextured.texture().is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -335,7 +384,7 @@ mod tests {
         .expect("a triangle without coordinates");
         assert!(!mesh.has_uvs());
 
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
 
         assert!(
             mesh.texture().is_none(),
@@ -362,7 +411,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
 
         assert!(
             mesh.texture().is_some(),
@@ -387,7 +436,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
 
         assert!(
             mesh.texture().is_none(),
@@ -406,12 +455,12 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
         assert!(mesh.texture().is_none());
 
         // A file that is not an image at all is refused by the decoder.
         std::fs::write(directory.join("gone.png"), b"not an image").expect("the file");
-        attach(&mut mesh, &path, "obj", obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj);
         assert!(mesh.texture().is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }

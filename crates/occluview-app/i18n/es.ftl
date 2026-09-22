@@ -152,6 +152,7 @@ load-open-failed-start = Falló la apertura: no arranca el cargador
 load-add-failed-start = Falló la adición: no arranca el cargador
 load-open-failed-stopped = Falló la apertura: el cargador se detuvo
 load-loader-failed-summary = No se pudo iniciar el cargador de escena en segundo plano.
+load-file-too-large = El archivo ocupa { $size } GB, por encima de los { $limit } GB que se leen de una vez
 load-action-failed-open = Falló la apertura: { $detail }
 load-action-failed-add = Falló la adición: { $detail }
 
@@ -752,7 +753,7 @@ settings-save-format-source = Su propio formato
 settings-save-format-source-hint = Un escaneo abierto como STL se guarda como STL, uno abierto como PLY como PLY; un formato sin escritor se guarda como PLY.
 settings-save-format-always = Formato elegido
 settings-save-format-always-hint = Todos los escaneos se guardan en el formato elegido abajo, salvo si la geometría no cabe en él.
-settings-save-format-source-note = Cada escaneo conserva el formato con el que se abrió. Un formato no escribible se guarda como PLY.
+settings-save-format-source-note = Cada escaneo conserva su propio formato. Un formato no escribible se guarda como { $format }: el formato elegido en el otro modo.
 settings-export-format = Formato de exportación alternativo
 settings-export-format-hint = Se usa para un escaneo cuyo formato propio no se puede escribir, o si el interruptor de arriba está desactivado
 settings-remember-export = Recordar carpeta de exportación

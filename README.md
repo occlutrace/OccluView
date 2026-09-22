@@ -137,7 +137,10 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
 
 Right-click a scan and choose “Show contacts”. The scan is measured against
 the scan it bites against — the nearest visible surface — and both arches are
-painted where they meet. The panel carries two readings and one slider:
+painted where they meet. When the scene holds more than one candidate (an upper,
+a lower, a pre-op, a wax-up), the details popover names the one being used and
+lets you read against another layer instead; with one obvious candidate nothing
+is asked. The panel carries two readings and one slider:
 
 - “Contacts” marks only where the surfaces actually meet and colours each mark
   by how deep the bite is there, the way articulating paper leaves the rest of

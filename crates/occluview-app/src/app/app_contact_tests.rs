@@ -229,6 +229,51 @@ fn read_again_after_a_worker_death_reaches_a_new_worker() {
     );
 }
 
+/// The sentence that explains why nothing is being measured must go away when
+/// the reason does. Hiding a scan says "show it again and the reading
+/// resumes"; nothing cleared the override, so the bar kept saying it forever —
+/// and when the override replaced a failure, the retry it hid never came back.
+#[test]
+fn showing_a_scan_again_clears_the_unusable_sentence() {
+    let mut app = test_app("contact-unusable-clears");
+    let ctx = app.ui.repaint_ctx.clone();
+    let (scene, first, second, _third) = three_layer_scene();
+    app.document.scene = Some(Arc::new(scene));
+
+    assert!(open_contacts_on(&mut app, first));
+    let mut waited = Duration::ZERO;
+    while app.tools.contacts.is_busy() && waited < Duration::from_secs(10) {
+        app.drain_contacts_worker(&ctx);
+        std::thread::sleep(Duration::from_millis(5));
+        waited += Duration::from_millis(5);
+    }
+
+    // Hide the antagonist: the reading cannot be measured right now.
+    app.document.live_scene_mut().expect("scene").meshes_mut()[1].visible = false;
+    app.sync_contacts_with_scene(&ctx);
+    assert_eq!(
+        app.tools.contacts.status(),
+        Some(crate::contact::ContactStatus::AntagonistUnusable),
+        "hiding the other scan explains why nothing is measured"
+    );
+
+    // Show it again: the explanation is no longer true.
+    app.document.live_scene_mut().expect("scene").meshes_mut()[1].visible = true;
+    app.sync_contacts_with_scene(&ctx);
+    assert!(
+        !matches!(
+            app.tools.contacts.status(),
+            Some(crate::contact::ContactStatus::AntagonistUnusable)
+        ),
+        "the sentence must not outlive the reason for it"
+    );
+    assert!(
+        !app.tools.contacts.has_unusable_override(),
+        "and the override must be gone, not merely overwritten"
+    );
+    let _ = second;
+}
+
 #[test]
 fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     let mut app = test_app("contact-dropped-answer-resubmits");

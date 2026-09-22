@@ -127,6 +127,11 @@ impl OccluViewApp {
                 .status_override(ContactStatus::AntagonistUnusable);
             return;
         }
+        // Both sides are readable again, so any "unusable" sentence on screen is
+        // stale: clear it before deciding whether a new measurement is needed.
+        if self.tools.contacts.clear_unusable_override() {
+            ctx.request_repaint();
+        }
         let Some(keys) = contact_job_keys(&scene, pair, self.tools.contacts.flatten_patches())
         else {
             return;

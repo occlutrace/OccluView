@@ -395,11 +395,15 @@ fn save_format_rows(
     );
     if keep_source {
         // The mode that has nothing to choose: say what it does instead of
-        // showing chips that would not be read.
+        // showing chips that would not be read. It names the format the code
+        // will really use, which is the stored fallback — not a constant.
         ui.label(
-            egui::RichText::new(locale.tr("settings-save-format-source-note"))
-                .size(10.5)
-                .color(ui_theme::text_muted()),
+            egui::RichText::new(locale.tr_with(
+                "settings-save-format-source-note",
+                &[("format", settings.fallback_export_format.label())],
+            ))
+            .size(10.5)
+            .color(ui_theme::text_muted()),
         );
         return;
     }

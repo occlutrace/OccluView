@@ -155,6 +155,9 @@ load-open-failed-start = Open failed: could not start loader
 load-add-failed-start = Add failed: could not start loader
 load-open-failed-stopped = Open failed: loader stopped
 load-loader-failed-summary = The background scene loader could not be started.
+# A file larger than the viewer reads. The limit is in the message because
+# the operator's next step depends on how far over it they are.
+load-file-too-large = This file is { $size } GB, which is above the { $limit } GB the viewer reads in one piece
 load-action-failed-open = Open failed: { $detail }
 load-action-failed-add = Add failed: { $detail }
 
@@ -755,7 +758,7 @@ settings-save-format-source = Its own format
 settings-save-format-source-hint = A scan opened as STL is saved as STL, a scan opened as PLY as PLY, and a scan opened from a format with no writer is saved as PLY.
 settings-save-format-always = Chosen format
 settings-save-format-always-hint = Every scan is saved in the format you pick below, unless its geometry cannot be written in it.
-settings-save-format-source-note = Each scan keeps the format it was opened in. A scan opened from a format the viewer cannot write is saved as PLY.
+settings-save-format-source-note = Each scan keeps the format it was opened in. A scan opened from a format the viewer cannot write is saved as { $format } — the format chosen in the other mode.
 settings-export-format = Fallback export format
 settings-export-format-hint = Used for a scan whose own format cannot be written, or when the switch above is off
 settings-remember-export = Remember export folder

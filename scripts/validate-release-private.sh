@@ -82,9 +82,13 @@ if [[ $status -ne 0 ]]; then
   exit "$status"
 fi
 
-if grep -q "skipped:" "$log"; then
-  echo "validate-release-private: a test skipped even though the corpus is present:" >&2
-  grep -n "skipped:" "$log" >&2
+# Only the corpus tests are this gate's business: the same binary holds two
+# tests that skip on pair fixtures (OCCLUVIEW_ALIGN_PREP_PAIR, ..._OWNER_PAIR)
+# which this script does not own, and their "skipped:" lines must not turn a
+# passing acceptance run into a failure.
+if grep -q "set OCCLUVIEW_ALIGN_FIXTURES" "$log"; then
+  echo "validate-release-private: a corpus test skipped even though the corpus is present:" >&2
+  grep -n "set OCCLUVIEW_ALIGN_FIXTURES" "$log" >&2
   exit 1
 fi
 

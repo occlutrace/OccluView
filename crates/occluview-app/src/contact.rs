@@ -121,12 +121,16 @@ pub(crate) struct ContactLayerField {
 }
 
 /// The contact view: what it is showing, and how it is set.
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ContactState {
     pair: Option<ContactPair>,
     mode: ContactMode,
     load_mm: f64,
     /// Whether each connected penetration patch is collapsed to its peak.
     flatten_patches: bool,
+    /// Whether the status on screen explains an unusable side rather than a
+    /// measurement. Cleared as soon as both sides are readable again.
+    unusable_override: bool,
     status: Option<ContactStatus>,
     /// The fields on screen, at most one per layer and never more than the two
     /// participants.
@@ -155,6 +159,7 @@ impl Default for ContactState {
             mode: ContactMode::Marks,
             load_mm: TIGHTNESS.load_mm,
             flatten_patches: false,
+            unusable_override: false,
             status: None,
             fields: Vec::new(),
             measured: None,
@@ -247,6 +252,40 @@ impl ContactState {
     /// Replace the panel status without changing the reading.
     pub(crate) fn status_override(&mut self, status: ContactStatus) {
         self.status = Some(status);
+        self.unusable_override = true;
+    }
+
+    /// Drop an "unusable" override once both sides can be read again.
+    ///
+    /// The override exists to explain why nothing is being measured, and it is
+    /// set on a frame where a side was hidden. Nothing else clears it, so
+    /// without this the bar keeps saying a scan cannot be measured after the
+    /// operator shows it again — and when it replaced a failure, the retry chip
+    /// it hid never comes back.
+    ///
+    /// Returns whether the status changed, so the caller can repaint.
+    pub(crate) fn clear_unusable_override(&mut self) -> bool {
+        if !self.unusable_override {
+            return false;
+        }
+        self.unusable_override = false;
+        if matches!(
+            self.status,
+            Some(ContactStatus::SubjectUnusable | ContactStatus::AntagonistUnusable)
+        ) {
+            self.status = if self.fields.is_empty() {
+                None
+            } else {
+                Some(ContactStatus::Remeasuring)
+            };
+        }
+        true
+    }
+
+    /// Whether an "unusable" override is currently steering the status.
+    #[cfg(test)]
+    pub(crate) fn has_unusable_override(&self) -> bool {
+        self.unusable_override
     }
 
     /// Set the display threshold, returning whether it changed.
