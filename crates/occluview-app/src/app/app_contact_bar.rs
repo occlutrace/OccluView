@@ -128,7 +128,6 @@ impl OccluViewApp {
             self.show_contact_details(
                 ui,
                 rect,
-                ctx,
                 DetailsContent {
                     numbers,
                     sentence: status,
@@ -531,13 +530,7 @@ fn paint_legend(
 
 /// The numbers and the patch rule, behind one button on the bar.
 impl OccluViewApp {
-    fn show_contact_details(
-        &mut self,
-        ui: &mut egui::Ui,
-        bar: egui::Rect,
-        ctx: &egui::Context,
-        shown: DetailsContent,
-    ) {
+    fn show_contact_details(&mut self, ui: &mut egui::Ui, bar: egui::Rect, shown: DetailsContent) {
         let locale = &self.ui.locale;
         let width = 268.0;
         let rect = egui::Rect::from_min_size(
@@ -624,11 +617,6 @@ impl OccluViewApp {
             }
         }
         if close {
-            self.tools.contacts.toggle_details();
-        }
-        if ctx.input(|input| input.key_pressed(egui::Key::Escape))
-            && self.tools.contacts.details_open()
-        {
             self.tools.contacts.toggle_details();
         }
     }

@@ -157,6 +157,16 @@ impl OccluViewApp {
         {
             return;
         }
+        // Escape closes what is in front of the operator. The details popover
+        // is: closing the whole reading from under it took the panel away while
+        // the operator was aiming at one row in it.
+        if self.tools.contacts.details_open() {
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.tools.contacts.toggle_details();
+                ctx.request_repaint();
+            }
+            return;
+        }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.close_contacts(ctx);
         }
