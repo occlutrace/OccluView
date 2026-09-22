@@ -601,6 +601,48 @@ mod tests {
         );
     }
 
+    /// A texture whose buffer does not match its dimensions must not reach the
+    /// PNG encoder: it asserts, and the shipped profile aborts on panic, so an
+    /// export would close the viewer.
+    #[test]
+    fn a_texture_whose_pixels_disagree_with_its_size_is_not_written() {
+        let mesh = crate::ply::read(
+            b"ply\nformat ascii 1.0\n\
+              element vertex 3\n\
+              property float x\nproperty float y\nproperty float z\n\
+              property float s\nproperty float t\n\
+              element face 1\n\
+              property list uchar int vertex_indices\n\
+              property list uchar float texcoord\n\
+              end_header\n0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n3 0 1 2 6 0 1 1 1 0 0\n",
+        )
+        .expect("a triangle with coordinates");
+        let mut mesh = mesh;
+        mesh.set_texture(occluview_core::MeshTexture {
+            width: 4,
+            height: 4,
+            rgba: vec![0; 8],
+        });
+
+        let directory =
+            std::env::temp_dir().join(format!("occluview-broken-texture-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let path = directory.join("broken.ply");
+        write_mesh_to_new_file(
+            &path,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("the mesh still writes");
+        let written = std::fs::read(&path).expect("read back");
+        assert!(
+            !String::from_utf8_lossy(&written).contains("OccluViewTextureFormat"),
+            "an unusable image must not be promised in the header"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
     #[test]
     fn an_exported_ply_carries_its_texture_inside_itself() {
         use occluview_core::{MeshTexture, Vertex};
