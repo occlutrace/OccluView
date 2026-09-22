@@ -10,7 +10,7 @@
 
 use eframe::egui;
 
-use crate::align_brush::AlignBrush;
+use crate::align_brush::{AlignBrush, BrushTarget};
 use crate::align_markings::{AlignSide, MaskCommand};
 use crate::align_panel::chip;
 use crate::align_panel_roles::AlignRoles;
@@ -90,6 +90,12 @@ fn body(
 /// substitute: it can paint the other scan. Exocad exposes this as an
 /// explicit Mesh selection, and keeping it visible in the Brush window makes
 /// the target unambiguous while the operator works.
+///
+/// The window opens on **Both**, because the markings decide what matching
+/// ignores on either surface and an operator who presses Fit nowhere with two
+/// scans on screen means the pair. Naming one scan stays available for the
+/// overlapping case, where it is the only way to stop the wrong surface taking
+/// the stroke.
 fn mesh_selection(
     ui: &mut egui::Ui,
     brush: &mut AlignBrush,
@@ -102,23 +108,40 @@ fn mesh_selection(
             .size(11.0)
             .color(ui_theme::text_muted()),
     );
-    for side in AlignSide::BOTH {
-        let role_key = match side {
-            AlignSide::Moving => "align-brush-moving",
-            AlignSide::Fixed => "align-brush-fixed",
+    for target in BrushTarget::ALL {
+        let label = match target {
+            BrushTarget::Both => locale.tr("align-brush-both"),
+            BrushTarget::Moving => {
+                format!(
+                    "{} · {}",
+                    locale.tr("align-brush-moving"),
+                    roles.side_name(AlignSide::Moving)
+                )
+            }
+            BrushTarget::Fixed => {
+                format!(
+                    "{} · {}",
+                    locale.tr("align-brush-fixed"),
+                    roles.side_name(AlignSide::Fixed)
+                )
+            }
         };
-        let label = format!("{} · {}", locale.tr(role_key), roles.side_name(side));
         if chip(
             ui,
             ui.available_width(),
             None,
             &label,
             enabled,
-            brush.target_side() == side,
+            brush.target() == target,
         )
+        .on_hover_text(if target == BrushTarget::Both {
+            locale.tr("align-brush-both-hint")
+        } else {
+            String::new()
+        })
         .clicked()
         {
-            brush.set_target_side(side);
+            brush.set_target(target);
         }
     }
 }
@@ -334,9 +357,13 @@ mod tests {
             "brush must not show a marked percentage"
         );
         assert!(
-            source.contains("brush.target_side() == side")
-                && source.contains("brush.set_target_side(side)"),
+            source.contains("brush.target() == target")
+                && source.contains("brush.set_target(target)"),
             "the brush needs an explicit mesh selection"
+        );
+        assert!(
+            source.contains("BrushTarget::Both"),
+            "the mesh selection must offer both scans, not only one"
         );
     }
 

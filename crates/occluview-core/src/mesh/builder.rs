@@ -103,6 +103,33 @@ impl MeshBuilder {
         idx
     }
 
+    /// How many vertices the builder holds so far.
+    ///
+    /// A reader that learns per-face data for vertices it has already pushed
+    /// needs the count to size its own table against: the file's declared
+    /// count is not a safe bound, because a header can declare four billion
+    /// vertices in a two-hundred-byte file.
+    #[inline]
+    #[must_use]
+    pub fn vertex_count(&self) -> usize {
+        self.vertices.len()
+    }
+
+    /// Set the texture coordinate of one vertex.
+    ///
+    /// PLY stores texture coordinates per face corner, so a reader learns them
+    /// only after the vertex rows are already pushed. An index the builder
+    /// never produced is ignored: under memory pressure it drops vertices
+    /// rather than aborting, and a dropped vertex has no coordinate to set.
+    #[inline]
+    pub fn set_vertex_uv(&mut self, index: u32, uv: [f32; 2]) {
+        if let Ok(index) = usize::try_from(index) {
+            if let Some(vertex) = self.vertices.get_mut(index) {
+                vertex.uv = uv;
+            }
+        }
+    }
+
     /// Push a triangle by vertex indices.
     #[inline]
     pub fn push_triangle(&mut self, a: u32, b: u32, c: u32) {

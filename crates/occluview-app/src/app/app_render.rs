@@ -1025,18 +1025,26 @@ fn transformed_bbox(local: Aabb, transform: glam::Affine3A) -> Aabb {
 
 pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
     // Derived from the overlay rather than stored beside it, so the two can
-    // never disagree: a layer draws as a measured map exactly when it carries
-    // one, and that same condition forces its colors on and its texture off.
-    let deviation = entry.deviation_colors().is_some();
+    // never disagree about which kind is up. A measured map replaces the
+    // scan's colours and ignores its tint — the ramp is the reading. Paint
+    // does neither: it is mixed over the surface's own material, so the scan
+    // keeps its tint, its texture and its normal lighting and only the marked
+    // region turns blue.
+    let measured = entry.overlay_kind() == Some(occluview_core::OverlayKind::Measured);
+    let paint = entry.overlay_kind() == Some(occluview_core::OverlayKind::Paint);
+    let overlay = measured || paint;
     GpuMeshUniform {
         model: Mat4::from(entry.transform).to_cols_array(),
         tint: entry.tint,
         opacity: entry.opacity,
         has_texture: u32::from(entry.mesh.texture().is_some()),
         show_orientation: u32::from(entry.show_orientation),
-        show_vertex_colors: u32::from(entry.show_vertex_colors || deviation),
-        show_texture: u32::from(entry.show_texture && !deviation),
-        measured_map: u32::from(deviation),
+        show_vertex_colors: u32::from(entry.show_vertex_colors || overlay),
+        // A measured map is drawn instead of the texture; paint is drawn over
+        // it, so the texture (the scan's real colour) stays.
+        show_texture: u32::from(entry.show_texture && !measured),
+        measured_map: u32::from(measured),
+        overlay_paint: u32::from(paint),
         ..GpuMeshUniform::identity()
     }
 }

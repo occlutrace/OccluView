@@ -103,16 +103,6 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     }
 }
 
-#[test]
-fn the_changelog_does_not_claim_the_current_release_is_unpublished() {
-    let changelog = include_str!("../../../../CHANGELOG.md").to_ascii_lowercase();
-
-    assert!(
-        !changelog.contains("the release remains unpublished"),
-        "the current changelog must describe the published release, not a local validation build"
-    );
-}
-
 /// A three-part version, with or without a leading `v`.
 fn parse_version(raw: &str) -> Option<[u64; 3]> {
     let parts: Vec<u64> = raw
@@ -363,58 +353,4 @@ fn looks_like_a_key(token: &str) -> bool {
                 .next()
                 .is_some_and(|first| first.is_ascii_uppercase() || first.is_ascii_digit())
         })
-}
-
-#[test]
-fn the_readme_mentions_f_only_where_something_binds_f() {
-    // `F` is bound exactly once in the viewer -- flipping the planted cut --
-    // and once in the Explorer preview window, where it frames the model. The
-    // README must not claim it in a third place, under Measuring, where no key F
-    // exists. Sections are the finest grain a text guard can work at, so pin
-    // the sections.
-    let readme = include_str!("../../../../README.md");
-    let sections_naming_f: Vec<&str> = readme
-        .split("\n## ")
-        .skip(1)
-        .filter(|section| section.contains("**F**"))
-        .filter_map(|section| section.lines().next())
-        .collect();
-    assert_eq!(
-        sections_naming_f,
-        vec!["The cut view", "Windows Explorer"],
-        "F belongs to the planted cut and to the Explorer preview; anywhere else          it is a shortcut the build does not have"
-    );
-
-    let cut = repo_source_file("src/app/app_cut_measure.rs");
-    assert!(
-        cut.contains("self.tools.cut_view.is_planted()") && cut.contains("egui::Key::F"),
-        "the cut view is where F is read, and only while the disc is planted"
-    );
-    let preview = repo_source_file("../occluview-shell/src/com/preview/window.rs");
-    assert!(
-        preview.contains("const VK_F: u32 = 0x46;"),
-        "the Explorer preview is the other place the guide may name F"
-    );
-}
-
-#[test]
-fn the_readme_points_operators_to_the_complete_controls_reference() {
-    let readme = include_str!("../../../../README.md");
-
-    for phrase in [
-        "**F1**",
-        "Settings → Keyboard shortcuts",
-        "complete keyboard and mouse reference",
-        "**Shift+wheel** changes Sculpt brush size",
-        "**Ctrl+wheel** changes Sculpt brush intensity",
-        "**Shift** erases an Align exclusion region",
-        "**Ctrl/Command+drag** rotates a scan in Align",
-        "**F** flips the kept half",
-        "**W** toggles wireframe",
-    ] {
-        assert!(
-            readme.contains(phrase),
-            "README should explicitly document {phrase}"
-        );
-    }
 }

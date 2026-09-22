@@ -443,13 +443,114 @@ fn an_erase_reports_the_vertices_it_cleared() {
 
     assert!(cleared > 0, "the erase cleared nothing");
     assert_eq!(
-        markings.touched().len(),
+        markings.touched(AlignSide::Moving).len(),
         cleared,
         "the touched list disagrees with the reported count"
     );
     assert!(
         !marked(&markings, AlignSide::Moving, 16 * 16, 8 * 16 + 8),
         "the vertex under the eraser is still marked"
+    );
+}
+
+#[test]
+fn each_side_keeps_its_own_touched_list() {
+    // The Brush window's default Both target dabs both scans in one frame, and
+    // the preview re-colours per side from this list. One shared list was
+    // overwritten by the second dab, so the first arch never received its
+    // re-colour and half of every stroke stayed invisible.
+    let positions = grid(16);
+    let handle = mesh(&positions);
+    let mut markings = AlignMarkings::default();
+
+    markings.dab(
+        AlignSide::Moving,
+        &handle,
+        &dab_at(DVec3::new(-3.0, 0.0, 0.0), 2.0, false),
+    );
+    let moving_touched = markings.touched(AlignSide::Moving).to_vec();
+
+    markings.dab(
+        AlignSide::Fixed,
+        &handle,
+        &dab_at(DVec3::new(3.0, 0.0, 0.0), 2.0, false),
+    );
+
+    assert!(
+        !moving_touched.is_empty(),
+        "the first dab must report the vertices it changed"
+    );
+    assert_eq!(
+        markings.touched(AlignSide::Moving),
+        moving_touched.as_slice(),
+        "a dab on the other scan overwrote this side's touched list"
+    );
+    assert!(
+        !markings.touched(AlignSide::Fixed).is_empty()
+            && markings.touched(AlignSide::Fixed) != moving_touched.as_slice(),
+        "each side must report the vertices its own dab changed"
+    );
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn a_mask_stops_counting_as_marks_once_the_last_one_is_erased() {
+    // The preview decides from `has_marks` whether a scan still needs the
+    // brush's colours on it. If a mask that marks nothing kept answering yes,
+    // erasing the last mark would leave the scan wearing an overlay that paints
+    // nothing instead of returning to its own display settings.
+    let positions = grid(16);
+    let handle = mesh(&positions);
+    let on = handle.identity();
+    let mut markings = AlignMarkings::default();
+    assert!(
+        !markings.has_marks(AlignSide::Moving, on),
+        "nothing is marked before the first dab"
+    );
+
+    markings.dab(AlignSide::Moving, &handle, &dab_at(DVec3::ZERO, 3.0, false));
+    assert!(
+        markings.has_marks(AlignSide::Moving, on),
+        "a dabbed scan must count as marked"
+    );
+
+    markings.dab(AlignSide::Moving, &handle, &dab_at(DVec3::ZERO, 20.0, true));
+    assert!(
+        markings.mask_for(AlignSide::Moving, on).is_some(),
+        "the mask itself survives the erase; only the preview is dropped"
+    );
+    assert!(
+        !markings.has_marks(AlignSide::Moving, on),
+        "a mask that marks nothing must not keep the overlay up"
+    );
+}
+
+#[test]
+fn swapping_the_roles_takes_the_marking_and_its_touched_list_with_it() {
+    // The mask indexes one scan's vertices. Swapping the roles without moving
+    // the mask would apply the region painted on one arch to the other.
+    let positions = grid(16);
+    let handle = mesh(&positions);
+    let on = handle.identity();
+    let mut markings = AlignMarkings::default();
+    markings.dab(AlignSide::Moving, &handle, &dab_at(DVec3::ZERO, 3.0, false));
+    let painted = markings.touched(AlignSide::Moving).to_vec();
+    assert!(!painted.is_empty(), "the dab must have marked something");
+
+    assert!(markings.swap_sides(), "a marked pair has sides to swap");
+
+    assert!(
+        markings.mask_for(AlignSide::Fixed, on).is_some(),
+        "the mask follows the surface it was painted on"
+    );
+    assert!(
+        markings.mask_for(AlignSide::Moving, on).is_none(),
+        "the other side must not inherit the region"
+    );
+    assert_eq!(
+        markings.touched(AlignSide::Fixed),
+        painted.as_slice(),
+        "the touched list belongs to the same surface as the mask"
     );
 }
 

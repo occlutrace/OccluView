@@ -12,9 +12,12 @@
 //!    way, which is exactly the three frames a second the operator reported.
 //! 3. **The dab itself is parallel** — three milliseconds on a 942k-vertex arch.
 //!
-//! The Brush window has an explicit mesh selection. The two scans overlap by
-//! design, so choosing the nearest ray hit would make a stroke change the
-//! wrong mask whenever the other scan is slightly closer to the camera.
+//! The Brush window has an explicit mesh selection, and it opens on **both**
+//! scans: the markings decide what matching ignores on either surface, so a
+//! Fit nowhere with two scans on screen must reach the pair, and a stroke must
+//! be able to land on whichever one the operator aims at. Naming a single scan
+//! stays available for the overlapping case, where nearest-hit picking alone
+//! would put the stroke on the wrong surface.
 
 use eframe::egui;
 use glam::DVec3;
@@ -96,62 +99,81 @@ impl OccluViewApp {
         // handle it clones is gone before the dab is drawn into the scene
         // below. `Arc::make_mut` copies this path while a second handle
         // is alive, and this is a per-frame path.
-        let (layer_id, painting, changed) = {
+        //
+        // Every side the Mesh selection covers takes the dab where the cursor's
+        // ray meets that side's own surface. With Both checked (the default),
+        // painting is one continuous gesture over the pair: the stroke lands on
+        // whichever scan is under the pointer, and an overlapping second scan
+        // is marked too rather than silently skipped.
+        let target = self.tools.align.brush.target();
+        let erases = self
+            .tools
+            .align
+            .brush
+            .erases(ctx.input(|input| input.modifiers.shift));
+        let radius_mm = f64::from(self.tools.align.brush.radius_mm());
+        let mut painted = Vec::new();
+        {
             let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
-            let painting = self.tools.align.brush.target_side();
-            let Some(layer_id) = self.side_layer(painting) else {
+            let named: Vec<(AlignSide, SceneMeshId)> = target
+                .sides()
+                .iter()
+                .filter_map(|side| self.side_layer(*side).map(|layer| (*side, layer)))
+                .collect();
+            if named.is_empty() {
                 self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
                 return true;
-            };
-            let Some(hit) = pick_layer_hit(&camera, response.rect, pointer, &scene, layer_id)
-            else {
-                return true;
-            };
-            // The picker is deliberately scoped to the selected layer. A
-            // nearest-hit picker would paint the other overlapping scan.
-            let Some(entry) = layer_of(&scene, layer_id) else {
-                return true;
-            };
-            let Some(pose) = Rigid::from_affine(&entry.transform) else {
-                return true;
-            };
-
-            let erase = self
-                .tools
-                .align
-                .brush
-                .erases(ctx.input(|input| input.modifiers.shift));
-            let radius_mm = f64::from(self.tools.align.brush.radius_mm());
-            let center = DVec3::new(
-                f64::from(hit.point.x),
-                f64::from(hit.point.y),
-                f64::from(hit.point.z),
-            );
-            // Cached: rebuilding this per dab was seven milliseconds of pure copy.
-            let positions = self.tools.align.geometry.local_positions(entry);
-            let mesh = MarkedMesh {
-                positions: &positions,
-                pose,
-                vertex_count: entry.mesh.vertices().len(),
-                geometry: entry.mesh.geometry_id(),
-            };
-            let changed = self.tools.align.markings.dab(
-                painting,
-                &mesh,
-                &MaskEdit {
-                    center,
-                    radius_mm,
-                    erase,
-                },
-            );
-            (layer_id, painting, changed)
-        };
-        if changed > 0 {
-            self.patch_region_preview(layer_id, painting);
-            ctx.request_repaint();
+            }
+            for (side, layer_id) in named {
+                let Some(hit) = pick_layer_hit(&camera, response.rect, pointer, &scene, layer_id)
+                else {
+                    continue;
+                };
+                let Some(entry) = layer_of(&scene, layer_id) else {
+                    continue;
+                };
+                let Some(pose) = Rigid::from_affine(&entry.transform) else {
+                    continue;
+                };
+                let center = DVec3::new(
+                    f64::from(hit.point.x),
+                    f64::from(hit.point.y),
+                    f64::from(hit.point.z),
+                );
+                // Cached: rebuilding this per dab was seven milliseconds of
+                // pure copy.
+                let positions = self.tools.align.geometry.local_positions(entry);
+                let mesh = MarkedMesh {
+                    positions: &positions,
+                    pose,
+                    vertex_count: entry.mesh.vertices().len(),
+                    geometry: entry.mesh.geometry_id(),
+                };
+                let changed = self.tools.align.markings.dab(
+                    side,
+                    &mesh,
+                    &MaskEdit {
+                        center,
+                        radius_mm,
+                        erase: erases,
+                    },
+                );
+                if changed > 0 {
+                    painted.push((layer_id, side));
+                }
+            }
         }
+        if painted.is_empty() {
+            // A side that exists but is not under the pointer is not an error:
+            // with Both checked the other side usually was.
+            return true;
+        }
+        for (layer_id, side) in painted {
+            self.patch_region_preview(layer_id, side);
+        }
+        ctx.request_repaint();
         true
     }
 
@@ -235,38 +257,73 @@ impl OccluViewApp {
 
     /// Apply one whole-mesh command from the Brush tool window.
     ///
-    /// Apply to the mesh selected in the Brush window.
+    /// Every scan the Mesh selection covers, which is both of them by default.
     ///
-    /// Exocad's Brush tool has an explicit Mesh selection, and commands such
-    /// as Fit everywhere follow that selection. Applying them to both sides
-    /// would silently destroy a mask the operator meant to keep.
+    /// The buttons say "the mesh", and with two scans on screen the operator
+    /// means the pair: a Fit nowhere that marks one arch and leaves the other
+    /// in the match is not the button they pressed. Exocad's own Mesh selection
+    /// narrows this to one surface for the case that needs it.
     pub(super) fn apply_align_mask_command(&mut self, command: MaskCommand) {
-        let side = self.tools.align.brush.target_side();
-        let Some(layer) = self.side_layer(side) else {
-            self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
-            return;
-        };
-        let taken = {
-            let Some(scene) = self.document.scene.clone() else {
-                return;
+        // Copied out of the brush so the loop does not hold a borrow of it
+        // while the commands below edit the session.
+        let sides = self.tools.align.brush.target().sides();
+        let mut reached = Vec::new();
+        for side in sides {
+            // One side at a time: a `SceneMesh` clone is a whole vertex array,
+            // so taking both up front doubles peak transient memory to save
+            // nothing.
+            let taken = {
+                let Some(scene) = self.document.scene.clone() else {
+                    return;
+                };
+                self.side_layer(*side)
+                    .and_then(|layer| layer_of(&scene, layer).map(|entry| (layer, entry.clone())))
             };
-            layer_of(&scene, layer).cloned()
-        };
-        let Some(entry) = taken else {
-            self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
-            return;
-        };
-        if !self.apply_mask_command_to(command, side, &entry) {
+            let Some((layer, entry)) = taken else {
+                continue;
+            };
+            if self.apply_mask_command_to(command, *side, &entry) {
+                self.repaint_region_preview(layer, *side);
+                reached.push(*side);
+            }
+        }
+        if reached.is_empty() {
             // "Mark automatic" is the only command that can decline, and it
             // declines for one reason the operator can act on.
-            if command == MaskCommand::MarkAutomatic {
-                self.tools.align.status = Some(self.ui.locale.tr("align-status-place-arrow-first"));
-            }
+            self.tools.align.status = Some(if command == MaskCommand::MarkAutomatic {
+                self.ui.locale.tr("align-status-place-arrow-first")
+            } else {
+                self.ui.locale.tr("brush-no-mesh")
+            });
             return;
         }
-        self.repaint_region_preview(layer, side);
-        self.tools.align.status = Some(self.ui.locale.tr(command.report_key()));
+        self.tools.align.status = Some(self.command_report(command, &reached));
         self.invalidate_deviation_map(&self.ui.locale.tr(command.report_key()));
+    }
+
+    /// What one whole-mesh command did, in the operator's words.
+    ///
+    /// The report keys state the rule ("whole mesh marked"); naming which
+    /// scan it landed on is what says whether the other arch was left in the
+    /// match, which is the difference an operator could not see before.
+    fn command_report(&self, command: MaskCommand, reached: &[AlignSide]) -> String {
+        let report = self.ui.locale.tr(command.report_key());
+        if reached.len() == AlignSide::BOTH.len() {
+            return report;
+        }
+        let Some(side) = reached.first() else {
+            return report;
+        };
+        let name = self.align_roles().map_or_else(
+            || match side {
+                AlignSide::Moving => self.ui.locale.tr("align-brush-moving"),
+                AlignSide::Fixed => self.ui.locale.tr("align-brush-fixed"),
+            },
+            |roles| roles.side_name(*side),
+        );
+        self.ui
+            .locale
+            .tr_with(command.report_one_key(), &[("name", &name)])
     }
 
     /// Run one command against one side. Returns whether it reached a mask.
@@ -333,6 +390,14 @@ impl OccluViewApp {
     /// indexed by one layer's vertices.
     pub(super) fn clear_align_mask(&mut self) {
         self.tools.align.markings.clear();
+        // The region preview is the markings' own picture, so it goes with them.
+        // Left attached, a cleared pair kept showing blue that matched no mask,
+        // and the cached colour array stayed behind: the next dab took the
+        // sparse path and re-attached the stale array, so the screen showed the
+        // old cleared region plus the new dab while the mask held only the dab.
+        if self.tools.align.overlay == AlignOverlay::Region {
+            self.clear_deviation_overlay();
+        }
     }
 
     /// Put the markings on both meshes, take them off, or leave them alone.
@@ -373,8 +438,25 @@ impl OccluViewApp {
         }
     }
 
-    /// Rebuild one layer's markings in full.
+    /// Rebuild one layer's markings in full, or take them off when the last
+    /// mark is gone.
+    ///
+    /// A layer with nothing marked carries no overlay at all. Fit everywhere
+    /// leaves a mask that marks nothing, and attaching it would replace the
+    /// scan's colours on the GPU for a picture identical to the scan — which is
+    /// also why opening the brush on an unmarked pair no longer repaints both
+    /// arches.
     fn repaint_region_preview(&mut self, layer: SceneMeshId, side: AlignSide) -> bool {
+        let marked = self
+            .document
+            .scene
+            .as_ref()
+            .and_then(|scene| layer_of(scene, layer))
+            .is_some_and(|entry| self.tools.align.markings.has_marks(side, marked_on(entry)));
+        if !marked {
+            self.detach_region_preview(layer);
+            return true;
+        }
         let Some(colors) = self.region_colors(layer, side) else {
             return false;
         };
@@ -386,12 +468,30 @@ impl OccluViewApp {
     /// Falls back to a full repaint when there is nothing to patch into yet —
     /// the first dab of a session, or the frame after the markings were
     /// dropped. Every dab after that costs a few hundred vertex writes.
+    ///
+    /// An erasing dab that took the last mark off the scan detaches the
+    /// overlay instead of uploading an array that paints nothing: the layer's
+    /// display settings have to come back, or the scan stays in brush mode with
+    /// its vertex colours forced on after the marks it was showing are gone.
     fn patch_region_preview(&mut self, layer: SceneMeshId, side: AlignSide) {
-        // The list belongs to the markings, which produced it. Copied rather
-        // than stolen: a `mem::take` here left the markings holding an empty
-        // list for the rest of the frame, so anything else that asked what the
-        // last dab touched was told "nothing".
-        let touched = self.tools.align.markings.touched().to_vec();
+        let marked = self
+            .document
+            .scene
+            .as_ref()
+            .and_then(|scene| layer_of(scene, layer))
+            .is_some_and(|entry| self.tools.align.markings.has_marks(side, marked_on(entry)));
+        if !marked {
+            self.detach_region_preview(layer);
+            return;
+        }
+        // The list belongs to this side's markings, which produced it. Copied
+        // rather than stolen: a `mem::take` here left the markings holding an
+        // empty list for the rest of the frame, so anything else that asked
+        // what the last dab touched was told "nothing". Asking per side is what
+        // makes a Both-target stroke paint BOTH arches: one shared list was
+        // overwritten by the second dab, so the first arch was never
+        // re-coloured and half the stroke stayed invisible.
+        let touched = self.tools.align.markings.touched(side).to_vec();
         let Some(patched) = self.region_colors_for(layer, side, &touched) else {
             self.repaint_region_preview(layer, side);
             return;
@@ -411,18 +511,17 @@ impl OccluViewApp {
         let scene = self.document.scene.clone()?;
         let entry = layer_of(&scene, layer)?;
         let mask = self.tools.align.markings.mask_for(side, marked_on(entry))?;
-        let own_colors = entry.mesh.has_vertex_colors();
         let vertices = entry.mesh.vertices();
         Some(
             touched
                 .iter()
-                .map(|vertex| region_color(vertices, own_colors, Some(&mask), *vertex as usize))
+                .map(|vertex| region_color(vertices, Some(&mask), *vertex as usize))
                 .collect(),
         )
     }
 
-    /// One colour per vertex of one side: its own colour where nothing is
-    /// marked, blue where it is.
+    /// One colour per vertex of one side: opaque blue where the match is
+    /// excluded, the scan's own colour at paint weight 0 everywhere else.
     fn region_colors(&self, layer: SceneMeshId, side: AlignSide) -> Option<Vec<[u8; 4]>> {
         let scene = self.document.scene.as_ref()?;
         let entry = layer_of(scene, layer)?;
@@ -430,14 +529,13 @@ impl OccluViewApp {
         let count = vertices.len();
         let mask = self.tools.align.markings.mask_for(side, marked_on(entry));
         let mask = mask.as_ref().map(|mask| mask.as_slice());
-        // A coloured scan keeps its own colours where nothing is marked. The
-        // operator is usually aiming AT something they can see — a stain, a
-        // bubble, a bite block — and flattening the surface to one tint takes
-        // away the very thing they were aiming at.
-        let own_colors = entry.mesh.has_vertex_colors();
+        // Unmarked vertices keep the scan exactly as it renders — own colour,
+        // texture, tint and lighting. The overlay only paints what was marked
+        // out, so the operator keeps looking at the surface they were aiming
+        // at instead of a flattened tint of it.
         Some(
             (0..count)
-                .map(|vertex| region_color(vertices, own_colors, mask, vertex))
+                .map(|vertex| region_color(vertices, mask, vertex))
                 .collect(),
         )
     }
@@ -449,26 +547,75 @@ impl OccluViewApp {
 /// installs the markings and the per-dab patch that keeps them up to date. Two
 /// copies of this rule would drift, and the drift would look like the brush
 /// painting a colour the mask does not have.
+///
+/// The overlay is **paint**: the RGB is the paint colour and the alpha is the
+/// weight over the surface's own material. An unmarked vertex therefore carries
+/// the scan's own colour at weight 0, which leaves the surface, its texture and
+/// its lighting exactly as they render without the brush. (It must carry the
+/// real RGB, not black: a scan without a texture takes its base colour from
+/// this channel, and black at weight 0 would paint the whole arch black.) The
+/// marked-out blue is fully opaque, so the excluded region reaches the screen
+/// at the colour the Brush window describes.
 fn region_color(
     vertices: &[occluview_core::Vertex],
-    own_colors: bool,
     mask: Option<&[u8]>,
     vertex: usize,
 ) -> [u8; 4] {
     if mask.and_then(|mask| mask.get(vertex).copied()) == Some(occluview_align::EXCLUDED) {
         return crate::align_markings::MARKED_OUT_COLOR;
     }
-    match vertices.get(vertex) {
-        Some(vertex) if own_colors => vertex.color,
-        _ => crate::align_markings::MARKED_IN_COLOR,
-    }
+    let mut color = vertices
+        .get(vertex)
+        .map_or([255, 255, 255, 255], |vertex| vertex.color);
+    color[3] = 0;
+    color
 }
 
 #[cfg(test)]
 mod tests {
-    use super::resize_align_brush_from_wheel;
-    use crate::align_brush::AlignBrush;
+    use super::{region_color, resize_align_brush_from_wheel};
+    use crate::align_brush::{AlignBrush, BrushTarget};
+    use crate::align_markings::{MaskCommand, MARKED_OUT_COLOR};
     use eframe::egui;
+    use glam::Vec3;
+    use occluview_core::Vertex;
+
+    /// A vertex the brush has not marked keeps the scan's own colour at paint
+    /// weight 0 — never black. A scan without a texture takes its base colour
+    /// from this channel, and a black write would paint the whole arch black
+    /// while a region of it was marked.
+    #[test]
+    fn an_unmarked_vertex_keeps_its_colour_at_zero_paint_weight() {
+        let vertices = [Vertex::at(Vec3::ZERO).with_color([10, 20, 30, 255])];
+        assert_eq!(region_color(&vertices, None, 0), [10, 20, 30, 0]);
+    }
+
+    /// Marked-out surface is fully painted, so the excluded region reaches the
+    /// screen at the colour the Brush window describes.
+    #[test]
+    fn a_marked_out_vertex_is_fully_painted_blue() {
+        let vertices = [Vertex::at(Vec3::ZERO).with_color([10, 20, 30, 255])];
+        let mask = [occluview_align::EXCLUDED];
+        assert_eq!(region_color(&vertices, Some(&mask), 0), MARKED_OUT_COLOR);
+        assert_eq!(MARKED_OUT_COLOR[3], 255);
+    }
+
+    #[test]
+    fn a_vertex_with_no_scan_colour_still_stays_white_when_unmarked() {
+        // An untextured scan's vertices default to white; weight 0 means the
+        // renderer keeps its own path, so the value only has to be sane.
+        let vertices = [Vertex::at(Vec3::ZERO)];
+        let color = region_color(&vertices, Some(&[occluview_align::INCLUDED]), 0);
+        assert_eq!(color[3], 0, "an included vertex carries no paint");
+        assert!(color[0] > 0 && color[1] > 0 && color[2] > 0);
+    }
+
+    #[test]
+    fn a_fresh_brush_commands_both_scans() {
+        let brush = AlignBrush::default();
+        assert_eq!(brush.target(), BrushTarget::Both);
+        assert_eq!(brush.target().sides().len(), 2);
+    }
 
     fn shift_input(mut events: Vec<egui::Event>) -> egui::RawInput {
         let shift = egui::Modifiers {
@@ -586,16 +733,29 @@ mod tests {
 
     /// The brush must follow the explicit Mesh selection. The two surfaces
     /// overlap, so a nearest-hit picker would intermittently paint the wrong
-    /// side; `pick_layer_hit` is the causal guard.
+    /// side; `pick_layer_hit` is the causal guard. The default selection covers
+    /// both scans, so one stroke can mark either side of the comparison.
     #[test]
     fn a_dab_is_scoped_to_the_explicit_mesh_selection() {
         let stroke = stroke();
         assert!(
-            stroke.contains("let painting = self.tools.align.brush.target_side()")
+            stroke.contains("for (side, layer_id) in named")
+                && stroke.contains("self.tools.align.brush.target()")
                 && stroke.contains("pick_layer_hit")
                 && !stroke.contains("pick_scene_hit"),
-            "the stroke must pick only on the explicitly selected mesh"
+            "the stroke must pick only on the meshes the selection covers"
         );
+    }
+
+    /// Every whole-mesh command must reach every scan the selection covers.
+    /// The report keys are per-command, and a command with no one-scan report
+    /// would fall back to a sentence claiming the pair when one was touched.
+    #[test]
+    fn every_command_can_report_one_named_scan() {
+        for command in MaskCommand::ALL {
+            assert!(!command.report_one_key().is_empty());
+            assert_ne!(command.report_one_key(), command.report_key());
+        }
     }
 
     /// The operator's dental CAD software's rule: a plain drag marks, Shift

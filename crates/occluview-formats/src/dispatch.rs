@@ -9,7 +9,35 @@ use crate::probe::FormatKind;
 use crate::units::{policy_for, UnitInterpretation};
 use occluview_core::{Mesh, Scene, SceneMesh};
 use rayon::prelude::*;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+/// Largest single file the viewer will read into memory.
+///
+/// The number comes from the corpus, not from a round figure: the largest real
+/// scan on the maintainer's machine is a 41 MB intraoral OBJ, and dental
+/// packages with embedded textures reach a few hundred MB. A gigabyte is
+/// therefore ~25x the largest known scan — far enough that no real scan is
+/// refused, close enough that a mistaken pick (a video, a disk image, a
+/// multi-gigabyte CBCT export) fails in the reader instead of in the
+/// allocator. It is also above the shell thumbnail's own 512 MiB file cap, so
+/// the viewer never refuses a file the Explorer preview is willing to render.
+pub const MAX_IMPORT_BYTES: u64 = 1 << 30;
+
+/// Bytes of file data that may be in flight while a multi-file import parses.
+///
+/// `MAX_IMPORT_BYTES` bounds one file; a folder of them is the other half of
+/// the same problem. Two arch scans of 250 MB each parse together; a single
+/// gigabyte file parses alone, because a batch always accepts its first file.
+pub const IMPORT_BATCH_BUDGET_BYTES: u64 = 512 << 20;
+
+/// Files parsed at once during a multi-file import.
+///
+/// The box this is developed on has 12 cores shared with the renderer and with
+/// whatever else the operator is doing; parsing is memory-hungry rather than
+/// CPU-hungry, so two is the point where a second file is worth it and a
+/// twelfth is not.
+pub const IMPORT_PARALLELISM: usize = 2;
 
 /// Owned file bytes. Parsing must not depend on a file that another process
 /// may replace or truncate while the import is in progress.
@@ -231,16 +259,80 @@ fn normalized_extension(path: &Path) -> Result<String, FormatError> {
         })
 }
 
-/// Read a file into owned bytes. A concurrent truncation during the read may
-/// yield a parse error, but a later truncation cannot invalidate this buffer.
+/// Read a file into owned bytes, refusing anything above [`MAX_IMPORT_BYTES`].
+///
+/// A concurrent truncation during the read may yield a parse error, but a
+/// later truncation cannot invalidate this buffer.
 ///
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or read.
+/// - [`FormatError::TooLarge`] if the file exceeds the limit.
 /// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
 pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
+    read_file_bytes_with_limit(path, MAX_IMPORT_BYTES)
+}
+
+/// As [`read_file_bytes`], with a caller-chosen limit.
+///
+/// The thumbnail host passes its own, smaller budget: it runs inside Explorer,
+/// where an over-large read costs more than a missing preview.
+///
+/// The size is checked twice. The metadata check refuses the ordinary case
+/// before a byte is read; the length check after the read covers a file that
+/// grew between the two, which is exactly the window a hostile or merely busy
+/// writer would use.
+///
+/// # Errors
+/// See [`read_file_bytes`].
+pub fn read_file_bytes_with_limit(path: &Path, limit: u64) -> Result<FileBytes, FormatError> {
     let extension = normalized_extension(path)?;
-    let bytes = std::fs::read(path).map_err(FormatError::Io)?;
+    let file = std::fs::File::open(path).map_err(FormatError::Io)?;
+    let metadata = file.metadata().map_err(FormatError::Io)?;
+    if metadata.len() > limit {
+        return Err(FormatError::TooLarge {
+            bytes: metadata.len(),
+            limit,
+        });
+    }
+    let capacity = usize::try_from(metadata.len()).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    let mut reader = file.take(limit.saturating_add(1));
+    reader.read_to_end(&mut bytes).map_err(FormatError::Io)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Err(FormatError::TooLarge {
+            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            limit,
+        });
+    }
     Ok(FileBytes { extension, bytes })
+}
+
+/// Group files into the batches a multi-file import parses together.
+///
+/// A batch takes files while it has room for their bytes and has not reached
+/// the concurrency limit. The first file always joins, so a file larger than
+/// the budget is parsed on its own rather than refused: the per-file limit is
+/// what decides whether it may be read at all.
+fn import_batches(sizes: &[u64], budget: u64, parallelism: usize) -> Vec<std::ops::Range<usize>> {
+    let parallelism = parallelism.max(1);
+    let mut batches = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0_u64;
+    for (index, size) in sizes.iter().enumerate() {
+        let is_first = index == start;
+        let full = index - start >= parallelism;
+        let over_budget = !is_first && bytes.saturating_add(*size) > budget;
+        if full || over_budget {
+            batches.push(start..index);
+            start = index;
+            bytes = 0;
+        }
+        bytes = bytes.saturating_add(*size);
+    }
+    if start < sizes.len() {
+        batches.push(start..sizes.len());
+    }
+    batches
 }
 
 /// Read owned file bytes, then dispatch by extension.
@@ -273,12 +365,16 @@ pub fn read_file_loaded_with_key_provider(
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<LoadedMesh, FormatError> {
     let bytes = read_file_bytes(path)?;
-    dispatch_by_extension_loaded(
+    let mut loaded = dispatch_by_extension_loaded(
         bytes.extension(),
         bytes.as_slice(),
         key_provider,
         crate::MeshShading::Reconstructed,
-    )
+    )?;
+    // A PLY from another tool, and any OBJ, names its image beside the file;
+    // the reader sees bytes only, so finding it is this layer's job.
+    crate::companions::attach(&mut loaded.mesh, path, bytes.extension(), bytes.as_slice());
+    Ok(loaded)
 }
 
 /// As [`read_file_with_key_provider`], choosing how vertex normals are
@@ -292,7 +388,10 @@ pub fn read_file_shaded(
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
     let bytes = read_file_bytes(path)?;
-    dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)
+    let mut mesh =
+        dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)?;
+    crate::companions::attach(&mut mesh, path, bytes.extension(), bytes.as_slice());
+    Ok(mesh)
 }
 
 /// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a
@@ -334,16 +433,31 @@ pub fn read_files_with_key_provider(
         return Ok(scene);
     }
 
-    let meshes = paths
-        .par_iter()
+    // Sizes first, so the batch plan knows what it is about to hold. A file
+    // whose metadata cannot be read gets size zero and its own real error from
+    // the read below.
+    let sizes = paths
+        .iter()
         .map(|path| {
-            read_file_loaded_with_key_provider(path, key_provider).map_err(|e| (path.clone(), e))
+            std::fs::metadata(path)
+                .map_or(0, |metadata| metadata.len())
+                .min(MAX_IMPORT_BYTES)
         })
         .collect::<Vec<_>>();
 
-    for result in meshes {
-        let loaded = result?;
-        scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
+    for batch in import_batches(&sizes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM) {
+        let meshes = paths[batch]
+            .par_iter()
+            .map(|path| {
+                read_file_loaded_with_key_provider(path, key_provider)
+                    .map_err(|e| (path.clone(), e))
+            })
+            .collect::<Vec<_>>();
+
+        for result in meshes {
+            let loaded = result?;
+            scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
+        }
     }
     Ok(scene)
 }
@@ -380,6 +494,73 @@ mod tests {
         }
         out.extend_from_slice(&[0, 0]); // attribute byte count
         out
+    }
+
+    /// A sparse file of the requested length: instant, and it still reports
+    /// the size that a real oversized file would.
+    fn sparse_file(directory: &Path, name: &str, len: u64) -> PathBuf {
+        let path = directory.join(name);
+        let file = std::fs::File::create(&path).expect("create");
+        file.set_len(len).expect("set_len");
+        path
+    }
+
+    #[test]
+    fn a_file_above_the_limit_is_refused_before_it_is_read() {
+        let directory = tempdir();
+        let path = sparse_file(&directory, "huge.stl", 4096);
+
+        // `FileBytes` has no `Debug` on purpose: a byte buffer that can hold a
+        // whole scan must not be printable by accident.
+        let Err(error) = read_file_bytes_with_limit(&path, 2048) else {
+            panic!("a file above the limit must be refused");
+        };
+
+        match error {
+            FormatError::TooLarge { bytes, limit } => {
+                assert_eq!(bytes, 4096);
+                assert_eq!(limit, 2048);
+            }
+            other => panic!("expected TooLarge, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_file_exactly_at_the_limit_is_read() {
+        let directory = tempdir();
+        let path = sparse_file(&directory, "exact.stl", 4096);
+
+        let bytes = read_file_bytes_with_limit(&path, 4096).expect("read");
+
+        assert_eq!(bytes.as_slice().len(), 4096);
+        assert_eq!(bytes.extension(), "stl");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn files_are_batched_by_byte_budget_and_parallelism() {
+        // Two at a time, and never more bytes than the budget in flight.
+        assert_eq!(import_batches(&[1, 1, 1], 1024, 2), vec![0..2, 2..3]);
+        assert_eq!(import_batches(&[600, 600, 1], 1024, 4), vec![0..1, 1..3]);
+        // A file larger than the budget parses alone rather than being dropped:
+        // the per-file limit is what decides whether it may be read at all.
+        assert_eq!(import_batches(&[4096, 1], 1024, 4), vec![0..1, 1..2]);
+        // Exactly filling the budget keeps the batch together.
+        assert_eq!(import_batches(&[512, 512], 1024, 4), vec![0..2]);
+        assert_eq!(import_batches(&[512, 513], 1024, 4), vec![0..1, 1..2]);
+        assert!(import_batches(&[], 1024, 2).is_empty());
+        assert_eq!(import_batches(&[1], 1024, 2), vec![0..1]);
+    }
+
+    fn tempdir() -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "occluview-dispatch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&base).expect("temp dir");
+        base
     }
 
     fn zip_with_file(path: &str, bytes: &[u8]) -> Vec<u8> {

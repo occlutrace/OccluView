@@ -70,7 +70,7 @@ impl AlignRoles {
 /// The end is what tells two scans apart — `patient_2026_07_29_lower.stl` and
 /// `patient_2026_07_29_upper.stl` differ in their last six characters, so a
 /// front-anchored truncation would print the same string twice.
-fn shorten(name: &str) -> String {
+pub(crate) fn shorten(name: &str) -> String {
     let name = name.trim();
     let characters: Vec<char> = name.chars().collect();
     if characters.len() <= NAME_BUDGET {

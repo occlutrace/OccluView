@@ -201,7 +201,7 @@ impl OccluViewApp {
     }
 
     /// Which scan the fit will move, named the way the operator named the files.
-    fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
+    pub(super) fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
         Some(crate::align_panel_roles::AlignRoles {
             moving: self.layer_display_name(self.tools.align.tool.moving_layer()?)?,
             fixed: self.layer_display_name(self.tools.align.tool.fixed_layer()?)?,
@@ -241,7 +241,7 @@ impl OccluViewApp {
     /// it does not survive.
     pub(super) fn adopt_swapped_roles(&mut self, reason: String) {
         self.tools.align.markings.swap_sides();
-        self.tools.align.brush.swap_target_side();
+        self.tools.align.brush.swap_target();
         self.forget_align_fit(&reason);
     }
 
@@ -250,7 +250,7 @@ impl OccluViewApp {
     fn clear_align_pair(&mut self) {
         self.tools.align.tool.clear();
         self.clear_align_mask();
-        self.tools.align.brush.reset_target_side();
+        self.tools.align.brush.reset_target();
         self.forget_align_fit(&self.ui.locale.tr("align-status-cleared"));
         self.tools.align.status = Some(self.ui.locale.tr("align-status-click-moving"));
     }

@@ -37,6 +37,7 @@
     )
 )]
 
+mod companions;
 pub mod dispatch;
 pub mod error;
 pub mod glb_writer;

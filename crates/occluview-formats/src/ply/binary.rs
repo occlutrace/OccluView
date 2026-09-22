@@ -17,6 +17,7 @@
 
 use super::ascii::FieldPlan;
 use super::header::{Element, ParsedHeader, Property, ScalarType};
+use super::FaceUvs;
 use crate::error::FormatError;
 use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, Vertex};
@@ -225,10 +226,29 @@ fn read_with(
         builder_init.as_point_cloud()
     };
 
+    // Faces carry the texture coordinates, so they are gathered as the face
+    // element is read and applied once every element has been consumed.
+    let mut uvs = FaceUvs::default();
+    // Gathering coordinates costs a slot per vertex, so it is only done for a
+    // file that declares them on its faces.
+    let face_carries_uvs = parsed.elements.iter().any(|element| {
+        element.name == "face"
+            && element.properties.iter().any(
+                |property| matches!(property, Property::List { name, .. } if name == "texcoord"),
+            )
+    });
     for element in &parsed.elements {
         match element.name.as_str() {
-            "vertex" => read_vertices(&mut cursor, element, &mut builder)?,
-            "face" => read_faces(&mut cursor, element, &mut builder)?,
+            "vertex" => {
+                read_vertices(&mut cursor, element, &mut builder)?;
+                // The corner indices in the face element are arbitrary input,
+                // so the coordinate table is sized from the vertices actually
+                // read, never from an index in the file.
+                if face_carries_uvs {
+                    uvs.reserve(builder.vertex_count());
+                }
+            }
+            "face" => read_faces(&mut cursor, element, &mut builder, &mut uvs)?,
             other => {
                 return Err(FormatError::Malformed {
                     format: "PLY (binary)",
@@ -238,6 +258,8 @@ fn read_with(
             }
         }
     }
+
+    uvs.apply(&mut builder);
 
     shading.build(builder).map_err(FormatError::Core)
 }
@@ -296,6 +318,7 @@ fn read_faces(
     cursor: &mut Cursor<'_>,
     element: &Element,
     builder: &mut MeshBuilder,
+    uvs: &mut FaceUvs,
 ) -> Result<(), FormatError> {
     // Locate the vertex_indices list (by name). Faces may carry multiple list
     // properties (e.g. some intraoral scanners emit `vertex_indices` +
@@ -309,10 +332,22 @@ fn read_faces(
         return Ok(()); // No vertex_indices list — nothing to triangulate.
     };
 
+    // Scratch space reused per row: the corners of this face and, when the row
+    // carries a `texcoord` list, their coordinates.
+    let mut corners: Vec<u32> = Vec::with_capacity(4);
+    let mut coords: Vec<f32> = Vec::with_capacity(8);
+    let texcoord_prop_idx = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "texcoord"));
+
     for _ in 0..element.count {
-        // Walk every declared property in order, consuming bytes. For the
-        // vertex_indices list we fan-triangulate; for every other list we
-        // discard its `count` elements.
+        // Walk every declared property in order, consuming bytes. The
+        // vertex_indices list becomes the face; a `texcoord` list becomes the
+        // corners' texture coordinates; every other list is consumed and
+        // discarded.
+        corners.clear();
+        coords.clear();
         for (i, prop) in element.properties.iter().enumerate() {
             let Property::List {
                 count_ty, elem_ty, ..
@@ -329,26 +364,36 @@ fn read_faces(
                 ScalarValue::Float(f) => f.max(0.0) as u32,
             };
             if i == indices_prop_idx {
-                // The geometry list — fan-triangulate.
-                if poly_n < 3 {
-                    for _ in 0..poly_n {
-                        let _ = read_index(cursor, *elem_ty)?;
-                    }
-                    continue;
+                // The geometry list. Read every corner, then fan-triangulate:
+                // the corners themselves are needed for the texture
+                // coordinates below, whatever the polygon's size.
+                for _ in 0..poly_n {
+                    corners.push(read_index(cursor, *elem_ty)?);
                 }
-                let first = read_index(cursor, *elem_ty)?;
-                let mut prev = read_index(cursor, *elem_ty)?;
-                for _ in 2..poly_n {
-                    let cur = read_index(cursor, *elem_ty)?;
-                    builder.push_triangle(first, prev, cur);
-                    prev = cur;
+                if poly_n >= 3 {
+                    let first = corners[0];
+                    for pair in corners[1..].windows(2) {
+                        builder.push_triangle(first, pair[0], pair[1]);
+                    }
+                }
+            } else if Some(i) == texcoord_prop_idx {
+                for _ in 0..poly_n {
+                    coords.push(match cursor.read_scalar(*elem_ty)? {
+                        ScalarValue::Float(f) => f,
+                        ScalarValue::Int(n) => n as f32,
+                    });
                 }
             } else {
-                // Non-geometry list (texcoord, etc.) — discard n values.
+                // Non-geometry list (confidence, …) — discard n values.
                 for _ in 0..poly_n {
                     let _ = cursor.read_scalar(*elem_ty)?;
                 }
             }
+        }
+        // The coordinate list is `u v` per corner, in the same order as the
+        // corner indices, and may have been declared before or after them.
+        for (corner, uv) in corners.iter().zip(coords.as_chunks::<2>().0) {
+            uvs.set(*corner, [uv[0], uv[1]]);
         }
     }
     Ok(())

@@ -307,7 +307,7 @@ fn validate_mesh(mesh: &Mesh) -> Result<&MeshTexture, FormatError> {
     Ok(texture)
 }
 
-fn encode_png(texture: &MeshTexture) -> Result<Vec<u8>, FormatError> {
+pub(crate) fn encode_png(texture: &MeshTexture) -> Result<Vec<u8>, FormatError> {
     let mut png = Vec::new();
     PngEncoder::new_with_quality(&mut png, CompressionType::Best, FilterType::Paeth)
         .write_image(

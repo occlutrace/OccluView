@@ -26,8 +26,9 @@
 //!   metadata comments.
 //! - **Vertex colors** are detected by counting tokens after `v`: 3 floats =
 //!   position only, 6 = position + RGB (ints 0..=255).
-//! - **No external file reads**: `mtllib` is recorded but the `.mtl` is not
-//!   loaded at parse time (texture loading is a separate concern; v1 attaches
+//! - **No external file reads here**: `mtllib` is resolved by
+//!   [`crate::companions`], which the path-aware entry points call after this
+//!   parser has produced the mesh (texture loading is a separate concern; v1 attaches
 //!   vertex colors only).
 
 use crate::error::FormatError;

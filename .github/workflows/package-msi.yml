@@ -276,10 +276,18 @@ jobs:
           $diagnosticMsi = Get-ChildItem ./dist -Filter "*-diagnostic.msi" -File | Select-Object -First 1
           if ($null -eq $diagnosticMsi) { throw "Diagnostic MSI artifact missing." }
           ./install/test-msi-lifecycle.ps1 -MsiPath $diagnosticMsi.FullName -Diagnostic
+      - name: Record the shipped Explorer shell revision
+        shell: bash
+        run: |
+          # The release DLL comes from a pinned revision while the viewer comes
+          # from this tree. The pin is a deliberate exception, so the release
+          # records it and the delta behind it instead of leaving it to a
+          # comment in a build script.
+          bash scripts/report-shell-pin.sh dist/occluview-shell-revision.json
       - name: Write Windows checksums
         shell: pwsh
         run: |
-          Get-ChildItem ./dist -File | Where-Object { $_.Name -match '\.(msi|zip)$' } | ForEach-Object {
+          Get-ChildItem ./dist -File | Where-Object { $_.Name -match '\.(msi|zip|json)$' -and $_.Name -ne 'latest.json' } | ForEach-Object {
             $hash = Get-FileHash -Algorithm SHA256 $_.FullName
             "$($hash.Hash.ToLowerInvariant())  $($_.Name)" | Set-Content -Encoding ascii "$($_.FullName).sha256"
           }
@@ -496,6 +504,9 @@ jobs:
             printf '%s\n\n' '## Download for Windows'
             printf '%s\n' '- **OccluView-Windows-Setup.msi** — recommended. Installs the viewer, Explorer previews, thumbnails, and file associations.'
             printf '%s\n\n' '- **OccluView-Windows-Portable.zip** — runs without installation; no Explorer integration.'
+            if [[ -f dist/occluview-shell-revision.json ]]; then
+              printf '%s\n\n' "- Explorer shell: $(python3 -c 'import json; print(json.load(open("dist/occluview-shell-revision.json"))["summary"])')."
+            fi
             cat "$changelog_section"
             printf '\nThe verification archive is for technical checks; regular users do not need it.\n'
           } > dist/release-notes.md
@@ -621,6 +632,7 @@ jobs:
             dist/*.zip
             dist/*.deb
             dist/sbom-*.json
+            dist/occluview-shell-revision.json
       - name: Publish GitHub Release
         if: ${{ !inputs.release_dry_run }}
         run: |

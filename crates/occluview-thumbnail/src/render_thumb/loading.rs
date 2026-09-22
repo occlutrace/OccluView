@@ -3,7 +3,7 @@ use super::{
     ThumbnailError, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
 };
 use crate::fast_thumb::{
-    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
+    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file_with_limit,
 };
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
@@ -93,7 +93,7 @@ pub(super) fn load_thumbnail_mesh_from_file(
         thumbnail_kind_from_extension(path),
         prefers_full_fidelity_thumbnail_parse(path, &metadata),
         || read_file_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
-        || try_read_fast_thumbnail_mesh_from_file(path),
+        || try_read_fast_thumbnail_mesh_from_file_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64),
     )
 }
 

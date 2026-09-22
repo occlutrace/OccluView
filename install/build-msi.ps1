@@ -20,7 +20,18 @@ $wxsPath = Join-Path $PSScriptRoot "occluview.wxs"
 # Explorer loads the shell extension independently from occluview.exe. Keep
 # the release DLL on the last source revision verified in Explorer while the
 # application remains on the current workspace and dependency graph.
-$referenceShellRevision = "659725632dffcdf14d62724743f35f1689602bbc"
+#
+# The revision lives in install/shell-pin.json, not here: the release records
+# that file's revision and the delta behind it (scripts/report-shell-pin.sh), so
+# a build script is the wrong place for the only copy of the fact.
+$shellPinPath = Join-Path $PSScriptRoot "shell-pin.json"
+if (-not (Test-Path $shellPinPath)) {
+    throw "Missing shell pin contract: $shellPinPath"
+}
+$referenceShellRevision = (Get-Content -Raw $shellPinPath | ConvertFrom-Json).revision
+if ([string]::IsNullOrWhiteSpace($referenceShellRevision)) {
+    throw "The shell pin contract $shellPinPath names no revision."
+}
 
 if (-not (Test-Path $wxsPath)) {
     throw "Missing WiX source: $wxsPath"
@@ -483,6 +494,10 @@ if (-not $SkipBuild) {
             if ($LASTEXITCODE -ne 0) {
                 throw "The pinned working preview-shell revision $referenceShellRevision is unavailable locally. Fetch full history before building the MSI."
             }
+            # A rewritten clone makes a released commit look unreachable, so
+            # ancestry is reported by scripts/report-shell-pin.sh rather than
+            # enforced here: the pin is a tag target on the remote, and that is
+            # what the release records.
             $referenceParent = if (Test-HasText $env:RUNNER_TEMP) {
                 $env:RUNNER_TEMP
             } else {

@@ -52,6 +52,12 @@ impl OccluViewApp {
         kind: AlignOverlay,
     ) -> bool {
         let shared = Arc::new(colors);
+        let overlay_kind = match kind {
+            // A measured map states the reading, so the marker shape never
+            // touches it; a brush marking is paint over the scan.
+            AlignOverlay::Map => occluview_core::OverlayKind::Measured,
+            _ => occluview_core::OverlayKind::Paint,
+        };
         let Some(live) = self.document.live_scene_mut() else {
             return false;
         };
@@ -66,7 +72,7 @@ impl OccluViewApp {
         if entry.mesh.vertices().len() != shared.len() {
             return false;
         }
-        entry.set_deviation(Some(Arc::clone(&shared)));
+        entry.set_overlay(overlay_kind, Some(Arc::clone(&shared)));
         self.set_overlay_colors(layer, shared);
         self.tools.align.overlay = kind;
         // Change only the material data; preserve the prepared scene.
@@ -147,7 +153,10 @@ impl OccluViewApp {
                 .iter_mut()
                 .find(|entry| entry.id() == layer)
             {
-                entry.set_deviation(Some(Arc::clone(&shared)));
+                let kind = entry
+                    .overlay_kind()
+                    .unwrap_or(occluview_core::OverlayKind::Paint);
+                entry.set_overlay(kind, Some(Arc::clone(&shared)));
             }
         }
 
@@ -177,6 +186,34 @@ impl OccluViewApp {
             Some(slot) => slot.1 = colors,
             None => self.tools.align.overlay_colors.push((layer, colors)),
         }
+    }
+
+    /// Take one layer's overlay off and put its own vertex colours back.
+    ///
+    /// Used when the last mark on that side is cleared: an overlay that paints
+    /// nothing is a full-array upload for a picture identical to the scan.
+    pub(super) fn detach_region_preview(&mut self, layer: SceneMeshId) {
+        self.tools
+            .align
+            .overlay_colors
+            .retain(|(id, _)| *id != layer);
+        let Some(live) = self.document.live_scene_mut() else {
+            return;
+        };
+        let mut cleared = false;
+        for entry in live.meshes_mut() {
+            if entry.id() == layer && entry.overlay_colors().is_some() {
+                entry.clear_overlay();
+                cleared = true;
+            }
+        }
+        if !cleared {
+            return;
+        }
+        self.mark_scene_materials_changed();
+        self.tools.align.deviation_push_pending = true;
+        self.restore_layer_colors(&[layer]);
+        self.render.invalidation.overlay_tools_changed();
     }
 
     /// Replace every overlaid layer's uploaded vertex colours. The CPU meshes
@@ -238,9 +275,9 @@ impl OccluViewApp {
         let overlaid: Vec<SceneMeshId> = live
             .meshes_mut()
             .iter_mut()
-            .filter(|entry| entry.deviation_colors().is_some())
+            .filter(|entry| entry.overlay_colors().is_some())
             .map(|entry| {
-                entry.set_deviation(None);
+                entry.clear_overlay();
                 entry.id()
             })
             .collect();
@@ -480,7 +517,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .expect("one overlay teardown");
         assert!(clear.contains("let had_overlay = !self.tools.align.overlay_colors.is_empty()"));
-        assert!(clear.contains("entry.deviation_colors().is_some()"));
+        assert!(clear.contains("entry.overlay_colors().is_some()"));
         assert!(clear.contains("had_overlay || !overlaid.is_empty()"));
     }
 }

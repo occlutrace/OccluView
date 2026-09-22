@@ -216,7 +216,17 @@ mod tests {
 
         let (format, report) = convert_file(&input, &output).expect("convert");
         assert_eq!(format, ExportFormat::Ply);
-        assert!(report.warnings.contains(&MeshWriteWarning::UvsNotWritten));
+        assert!(
+            !report.warnings.contains(&MeshWriteWarning::UvsNotWritten),
+            "PLY carries the coordinates as per-vertex s/t, so a conversion must not              report them as dropped"
+        );
+        let written = fs::read(&output).expect("the exported ply");
+        let header_end = written
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&written[..header_end]);
+        assert!(header.contains("property float s\nproperty float t\n"));
         assert!(output.exists());
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);

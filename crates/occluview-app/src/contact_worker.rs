@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
+#[cfg(test)]
+use std::time::Instant;
 
 use occluview_align::CancelFlag;
 use occluview_contact::{compute_contact_field, ContactDiagnostics, ContactSettings, ContactStats};
@@ -99,11 +101,13 @@ pub(crate) struct ContactWorker {
 impl ContactWorker {
     /// Start the worker thread.
     pub(crate) fn spawn() -> Self {
-        Self::spawn_with(|queue, completions, running, busy| {
+        Self::spawn_with(|queue, completions, running, busy, unusable| {
             thread::Builder::new()
                 .name("occluview-contacts".into())
                 .spawn(move || {
-                    run_worker(&queue, &completions, &running, &busy);
+                    guard(&unusable, || {
+                        run_worker(&queue, &completions, &running, &busy, &unusable);
+                    });
                 })
         })
     }
@@ -115,6 +119,7 @@ impl ContactWorker {
             Arc<Mutex<Vec<ContactCompletion>>>,
             Arc<Mutex<Option<CancelFlag>>>,
             Arc<AtomicU64>,
+            Arc<AtomicBool>,
         ) -> std::io::Result<JoinHandle<()>>,
     {
         let queue = Arc::new(JobQueue {
@@ -135,6 +140,7 @@ impl ContactWorker {
             Arc::clone(&completions),
             Arc::clone(&running),
             Arc::clone(&busy),
+            Arc::clone(&unusable),
         )
         .map_err(|error| {
             tracing::warn!(%error, "contact worker thread could not be started");
@@ -156,7 +162,29 @@ impl ContactWorker {
 
     #[cfg(test)]
     pub(crate) fn spawn_failing() -> Self {
-        Self::spawn_with(|_, _, _, _| Err(std::io::Error::other("no thread for the test")))
+        Self::spawn_with(|_, _, _, _, _| Err(std::io::Error::other("no thread for the test")))
+    }
+
+    /// A worker whose thread body panics once a job is queued, for the
+    /// terminal-failure test: it reproduces "died with work in flight", which
+    /// is the case where nothing else in the app would notice.
+    #[cfg(test)]
+    #[allow(clippy::panic)]
+    pub(crate) fn spawn_panicking() -> Self {
+        Self::spawn_with(|queue, _, _, _, unusable| {
+            thread::Builder::new()
+                .name("occluview-contacts-panic-test".into())
+                .spawn(move || {
+                    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+                    while Instant::now() < deadline {
+                        if queue.state.lock().is_ok_and(|state| !state.jobs.is_empty()) {
+                            break;
+                        }
+                        thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    guard(&unusable, || panic!("a contact job body panicked"));
+                })
+        })
     }
 
     pub(crate) fn has_failed(&self) -> bool {
@@ -206,7 +234,14 @@ impl ContactWorker {
     }
 
     /// Whether a job is queued or running.
+    ///
+    /// A worker that has latched a failure is never busy: nothing it holds will
+    /// ever run, and reporting otherwise is what leaves a spinner on screen
+    /// with no way out.
     pub(crate) fn is_busy(&self) -> bool {
+        if self.has_failed() {
+            return false;
+        }
         self.busy.load(Ordering::SeqCst) > 0
             || self
                 .queue
@@ -268,20 +303,58 @@ impl Drop for ContactWorker {
     }
 }
 
+/// A panic-safe hold on the busy counter.
+///
+/// The counter is what the operator sees as the spinner. Decrementing it by
+/// hand means any early return or unwind between the two calls leaves the
+/// viewer measuring forever; the guard cannot be skipped.
+struct Busy(Arc<AtomicU64>);
+
+impl Busy {
+    fn new(counter: &Arc<AtomicU64>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Run the worker body, turning a panic into the terminal failure latch.
+///
+/// A dead thread publishes nothing and cannot be restarted, so the latch is
+/// what tells the application to stop waiting. Without it a panic inside a job
+/// leaves the contact bar spinning with no status text and no retry until the
+/// viewer restarts. The align and sculpt workers have the same boundary.
+fn guard<F>(unusable: &Arc<AtomicBool>, body: F)
+where
+    F: FnOnce(),
+{
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_err() {
+        mark_unusable(unusable, "contact worker panicked");
+    }
+}
+
 /// The worker loop: take a job, run it, publish what came out.
 fn run_worker(
     queue: &Arc<JobQueue>,
     completions: &Arc<Mutex<Vec<ContactCompletion>>>,
     running: &Arc<Mutex<Option<CancelFlag>>>,
     busy: &Arc<AtomicU64>,
+    unusable: &Arc<AtomicBool>,
 ) {
     loop {
         let job = {
             let Ok(mut state) = queue.state.lock() else {
+                mark_unusable(unusable, "contact queue lock poisoned");
                 return;
             };
             while state.jobs.is_empty() && !state.shutdown {
                 let Ok(next) = queue.wake.wait(state) else {
+                    mark_unusable(unusable, "contact queue wait failed");
                     return;
                 };
                 state = next;
@@ -299,10 +372,11 @@ fn run_worker(
         if let Ok(mut slot) = running.lock() {
             *slot = Some(cancel.clone());
         }
-        busy.fetch_add(1, Ordering::SeqCst);
-        let outcome = execute(&job, &cancel);
+        let outcome = {
+            let _busy = Busy::new(busy);
+            execute(&job, &cancel)
+        };
         let abandoned = cancel.is_cancelled();
-        busy.fetch_sub(1, Ordering::SeqCst);
         if let Ok(mut slot) = running.lock() {
             *slot = None;
         }

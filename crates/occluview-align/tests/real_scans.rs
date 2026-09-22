@@ -58,10 +58,6 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean_when_fixtures_are_pres
         );
         return;
     };
-    assert!(
-        !files.is_empty(),
-        "OCCLUVIEW_ALIGN_FIXTURES holds no .stl files"
-    );
 
     for path in files {
         let (positions, indices) = read_binary_stl(&path);
@@ -332,20 +328,48 @@ fn rms_displacement(positions: &[f32], pose: Rigid) -> f64 {
     (squares / count.max(1) as f64).sqrt()
 }
 
+/// Whether this run is a release gate rather than an ordinary test run.
+///
+/// Set by `scripts/validate-release-private.sh`, which is the only thing that
+/// should set it: a gate that skips when the corpus is missing is a gate that
+/// reports success for having checked nothing.
+fn fixtures_are_required() -> bool {
+    std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
+}
+
 /// Every `.stl` in the fixture directory, sorted so a failure names the same
 /// file on every machine.
+///
+/// Returns `None` when the corpus is absent, which is a skip in a normal run
+/// and a failure in a release gate.
 fn fixtures() -> Option<Vec<PathBuf>> {
-    let directory = std::env::var("OCCLUVIEW_ALIGN_FIXTURES").ok()?;
-    let mut files: Vec<PathBuf> = std::fs::read_dir(directory)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+    let Some(directory) = std::env::var("OCCLUVIEW_ALIGN_FIXTURES").ok() else {
+        assert!(
+            !fixtures_are_required(),
+            "OCCLUVIEW_ALIGN_FIXTURES_REQUIRED is set but OCCLUVIEW_ALIGN_FIXTURES is not: \
+             the private scan corpus is what makes this a release gate, and without it the \
+             acceptance thresholds below are unverified"
+        );
+        return None;
+    };
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&directory)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
     files.sort();
+    assert!(
+        !files.is_empty() || !fixtures_are_required(),
+        "OCCLUVIEW_ALIGN_FIXTURES is set to a directory with no .stl files, and this run is a \
+         release gate: point it at the corpus before cutting a release"
+    );
     Some(files)
 }
 

@@ -87,9 +87,12 @@ struct MeshUniform {
     contact_stops: array<vec4<f32>, 16>,
     // Stops in use; at least 1, so the `stop_count - 1` walk stays in range.
     contact_stop_count: u32,
+    // 1 = this layer's overlay colours are paint, not a measurement. The RGB is
+    // the paint colour and the alpha is the weight over the surface's own
+    // material, so alpha 0 leaves the scan exactly as it renders.
+    overlay_paint: u32,
     contact_padding_0: u32,
     contact_padding_1: u32,
-    contact_padding_2: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -123,7 +126,7 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
-    @location(0) color: vec3<f32>,
+    @location(0) color: vec4<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) world_pos: vec3<f32>,
@@ -188,11 +191,13 @@ fn vertex_out(
     var out: VertexOut;
     out.clip_pos = clip_pos;
     // Normalize u8 color channels to 0..1. wgsl has no direct u32->f32 on
-    // vectors, so unpack element by element.
-    out.color = vec3<f32>(
+    // vectors, so unpack element by element. The alpha rides along: a paint
+    // overlay uses it as the weight over the surface's own material.
+    out.color = vec4<f32>(
         f32(in.color.r) / 255.0,
         f32(in.color.g) / 255.0,
         f32(in.color.b) / 255.0,
+        f32(in.color.a) / 255.0,
     );
     // Transform the normal by the model matrix (ignoring translation). For
     // uniform-scale transforms this is correct; non-uniform scale would need
@@ -386,8 +391,20 @@ fn fs_main(
         base_rgb = tex.rgb;
         base_a = tex.a;
     } else {
-        base_rgb = in.color;
+        base_rgb = in.color.rgb;
         base_a = 1.0;
+    }
+
+    // Paint an exclusion marking OVER the surface's own material.
+    //
+    // The brush stores the paint colour in RGB and how strongly it applies in
+    // alpha, so the unmarked surface keeps its own colour, texture and tint —
+    // the scan still reads as the scan. This is the branch that made the
+    // difference: while paint was drawn as a measurement, every marked layer
+    // lost its tint and had its lighting cut, and the operator saw a pale
+    // glossy shell instead of their arch with a blue region on it.
+    if (mesh_uniform.overlay_paint != 0u) {
+        base_rgb = mix(base_rgb, in.color.rgb, clamp(in.color.a, 0.0, 1.0));
     }
 
     // Occlusal contact paint, per fragment and INTO THE BASE COLOUR.
@@ -553,7 +570,7 @@ fn fs_ghost(in: VertexOut) -> @location(0) vec4<f32> {
     } else if (mesh_uniform.has_texture != 0u && mesh_uniform.show_texture != 0u) {
         base_rgb = textureSample(mesh_texture, mesh_sampler, in.uv).rgb;
     } else {
-        base_rgb = in.color;
+        base_rgb = in.color.rgb;
     }
     let base = base_rgb * mesh_uniform.tint.rgb;
     let luma = dot(base, vec3<f32>(0.299, 0.587, 0.114));

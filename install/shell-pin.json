@@ -1,0 +1,18 @@
+{
+  "revision": "659725632dffcdf14d62724743f35f1689602bbc",
+  "tag": "v1.1.0",
+  "why": "Explorer loads the shell extension in its own process, so a defect there costs the operator their file browser rather than one viewer window. The release DLL therefore stays on the last revision verified in Explorer while the viewer moves on.",
+  "shell_crates": [
+    "occluview-shell",
+    "occluview-thumbnail",
+    "occluview-formats",
+    "occluview-hps",
+    "occluview-render",
+    "occluview-core",
+    "occlu-mesh-edit",
+    "occlu-geometry-math"
+  ],
+  "retire_when": "The shell built from the current tree has been used in Explorer on a real machine through the thumbnail, preview-pane, file-association and uninstall paths, and nothing in the pin-to-HEAD delta for the crates above is still wanted.",
+  "backport": "A fix that matters to Explorer (a parser, thumbnail, or COM defect) is cherry-picked onto the pinned revision and the pin moves forward to the new commit; the pin never moves to a revision that has not been exercised in Explorer.",
+  "check": "scripts/report-shell-pin.sh writes the delta between this revision and the tree being released; the release records it as dist/occluview-shell-revision.json."
+}

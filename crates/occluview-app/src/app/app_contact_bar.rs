@@ -15,6 +15,10 @@ const BAR_HEIGHT: f32 = 42.0;
 const BAR_TOP_INSET: f32 = 10.0;
 /// Height of the legend bar, in points.
 const LEGEND_HEIGHT: f32 = 10.0;
+/// Room under the ramp for the two numbers that name its ends.
+const LEGEND_LABEL_HEIGHT: f32 = 11.0;
+/// Narrowest ramp that can show both end labels without them meeting.
+const LEGEND_LABEL_MIN_WIDTH: f32 = 150.0;
 /// Narrowest the legend is allowed to get before the bar drops it.
 const LEGEND_MIN_WIDTH: f32 = 100.0;
 /// Widest the legend grows: past this the ramp reads as a ruler, not a scale.
@@ -246,7 +250,7 @@ fn paint_strip(
         let bar_width = rect.width() - FRAME_PADDING_X * 2.0;
         let legend_width = (bar_width - reserved).clamp(0.0, LEGEND_MAX_WIDTH);
         if legend_width >= LEGEND_MIN_WIDTH {
-            paint_legend(ui, view.scale, legend_width);
+            paint_legend(ui, view.scale, legend_width, locale);
             ui.add_space(2.0);
         }
 
@@ -447,13 +451,34 @@ fn paint_details_toggle(
     }
 }
 
-/// Draw the current color scale as a horizontal ramp.
-fn paint_legend(ui: &mut egui::Ui, scale: ContactScale, width: f32) {
+/// Draw the current color scale as a horizontal ramp, with its two ends named.
+///
+/// A ramp without numbers cannot be read: the operator sees that one contact is
+/// bluer than another but not by how much, and the bar's own readout only
+/// answers for the point under the cursor. The align view's legend carries its
+/// bounds for the same reason.
+fn paint_legend(
+    ui: &mut egui::Ui,
+    scale: ContactScale,
+    width: f32,
+    locale: &crate::i18n::LocaleManager,
+) {
     let law = scale.law();
     let far = law.paint_far_mm;
     let deepest = -(scale.load_mm() * (law.clamp_mm / law.load_mm));
     let width = width.clamp(LEGEND_MIN_WIDTH, LEGEND_MAX_WIDTH);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, LEGEND_HEIGHT), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, LEGEND_HEIGHT + LEGEND_LABEL_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let gap_label = locale.tr_with("contact-legend-gap", &[("mm", &format!("{far:.2}"))]);
+    let bite_label = locale.tr_with(
+        "contact-legend-deepest",
+        &[("mm", &format!("{:.2}", -deepest))],
+    );
+    response.on_hover_text(format!("{gap_label}\n{bite_label}"));
+    let ramp = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), LEGEND_HEIGHT));
+    let rect = ramp;
     let painter = ui.painter();
     #[allow(clippy::cast_precision_loss)]
     let steps = LEGEND_STEPS as f32;
@@ -479,6 +504,29 @@ fn paint_legend(ui: &mut egui::Ui, scale: ContactScale, width: f32) {
         egui::Stroke::new(1.0, ui_theme::hairline()),
         egui::StrokeKind::Inside,
     );
+
+    // The ends named under the ramp: the far end is the largest gap the ramp
+    // still paints, the near end the deepest bite it paints. A ramp too narrow
+    // for both numbers keeps the hover text and paints neither, rather than
+    // overlapping two labels into one unreadable smear.
+    if ramp.width() < LEGEND_LABEL_MIN_WIDTH {
+        return;
+    }
+    let label_y = ramp.bottom() + 1.0;
+    painter.text(
+        egui::pos2(ramp.left(), label_y),
+        egui::Align2::LEFT_TOP,
+        gap_label,
+        egui::FontId::proportional(9.0),
+        ui_theme::text_muted(),
+    );
+    painter.text(
+        egui::pos2(ramp.right(), label_y),
+        egui::Align2::RIGHT_TOP,
+        bite_label,
+        egui::FontId::proportional(9.0),
+        ui_theme::text_muted(),
+    );
 }
 
 /// The numbers and the patch rule, behind one button on the bar.
@@ -500,6 +548,18 @@ impl OccluViewApp {
         let busy = self.tools.contacts.is_busy();
         let mut toggle: Option<bool> = None;
         let mut close = false;
+        let mut pick: Option<occluview_core::SceneMeshId> = None;
+        let pair = self.tools.contacts.pair();
+        let candidates: Vec<(occluview_core::SceneMeshId, String)> =
+            pair.map_or_else(Vec::new, |pair| {
+                self.document.scene.as_ref().map_or_else(Vec::new, |scene| {
+                    crate::contact::antagonist_candidates(scene, pair.subject)
+                        .into_iter()
+                        .filter(|id| *id != pair.antagonist)
+                        .filter_map(|id| self.layer_display_name(id).map(|name| (id, name)))
+                        .collect()
+                })
+            });
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.set_width(width);
@@ -519,6 +579,7 @@ impl OccluViewApp {
                 {
                     toggle = Some(!flatten);
                 }
+                pick = paint_antagonist_picker(ui, &candidates, busy, locale);
                 if let Some(numbers) = shown.numbers {
                     paint_stats(ui, numbers, locale);
                 }
@@ -556,6 +617,12 @@ impl OccluViewApp {
                 self.submit_contacts_job();
             }
         }
+        if let Some(antagonist) = pick {
+            if self.tools.contacts.set_antagonist(antagonist) {
+                self.mark_scene_materials_changed();
+                self.submit_contacts_job();
+            }
+        }
         if close {
             self.tools.contacts.toggle_details();
         }
@@ -565,6 +632,45 @@ impl OccluViewApp {
             self.tools.contacts.toggle_details();
         }
     }
+}
+
+/// The row that names what a reading is measured against.
+///
+/// It appears only when there is something to choose: with one obvious
+/// antagonist the automatic pick stands, and a picker would be a question with
+/// one answer. Returns the layer the operator picked, if any.
+fn paint_antagonist_picker(
+    ui: &mut egui::Ui,
+    candidates: &[(occluview_core::SceneMeshId, String)],
+    busy: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<occluview_core::SceneMeshId> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let mut pick = None;
+    ui.label(
+        egui::RichText::new(locale.tr("contact-antagonist-pick"))
+            .size(11.0)
+            .color(ui_theme::text_muted()),
+    )
+    .on_hover_text(locale.tr("contact-antagonist-pick-hint"));
+    for (id, name) in candidates {
+        if crate::align_panel::chip(
+            ui,
+            ui.available_width(),
+            None,
+            &crate::align_panel_roles::shorten(name),
+            !busy,
+            false,
+        )
+        .on_hover_text(name)
+        .clicked()
+        {
+            pick = Some(*id);
+        }
+    }
+    pick
 }
 
 /// What the details popover reads from the reading.

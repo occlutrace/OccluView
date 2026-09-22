@@ -39,7 +39,18 @@ impl OccluViewApp {
         request: LayerContextRequest,
     ) -> bool {
         let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
-        let default_format = default_layer_export_format(paths, request.index, fallback);
+        let default_format = match scene.meshes().get(request.index) {
+            Some(entry) => representable_export_format(
+                layer_export_format(
+                    paths,
+                    request.index,
+                    fallback,
+                    self.persistence.settings.keep_source_export_format,
+                ),
+                &entry.mesh,
+            ),
+            None => fallback,
+        };
         let mut dialog = layer_export_file_dialog(default_format).set_file_name(
             default_layer_export_name(paths, scene, request.index, default_format),
         );
@@ -321,6 +332,25 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
     }
 }
 
+/// The format a layer is saved in.
+///
+/// `keep_source` is the operator's preference: with it on, a scan keeps the
+/// format of the file it came from, and the fallback only applies where there
+/// is no source format (a part cut out of another layer) or where the source
+/// format has no writer. With it off, every layer is written in the fallback
+/// format, which is what a shop that feeds one kind of mill wants.
+pub(super) fn layer_export_format(
+    paths: &[PathBuf],
+    index: usize,
+    fallback: MeshWriteFormat,
+    keep_source: bool,
+) -> MeshWriteFormat {
+    if !keep_source {
+        return fallback;
+    }
+    default_layer_export_format(paths, index, fallback)
+}
+
 pub(super) fn default_layer_export_format(
     paths: &[PathBuf],
     index: usize,
@@ -329,6 +359,23 @@ pub(super) fn default_layer_export_format(
     source_path_for_export_defaults(paths, index)
         .and_then(mesh_export_format_from_source_path)
         .unwrap_or(fallback)
+}
+
+/// The format actually offered for one layer.
+///
+/// A point cloud cannot be written as STL — the writer refuses a non-triangle
+/// mesh — so a forced STL falls back to PLY for that layer rather than
+/// proposing a file name whose write is guaranteed to fail into an error
+/// dialog.
+pub(super) fn representable_export_format(
+    format: MeshWriteFormat,
+    mesh: &occluview_core::Mesh,
+) -> MeshWriteFormat {
+    if format == MeshWriteFormat::StlBinary && mesh.kind() != occluview_core::MeshKind::TriangleMesh
+    {
+        return MeshWriteFormat::PlyBinaryLittleEndian;
+    }
+    format
 }
 
 pub(super) const fn fallback_mesh_write_format(
@@ -647,6 +694,51 @@ mod tests {
 
         assert_eq!(name, "very-long-scan-name-edited.stl");
         Ok(())
+    }
+
+    /// The operator's preference decides. "Keep each scan's own format" on is
+    /// the default: a scan opened as STL saves as STL. Off, the chosen format
+    /// wins for every layer, which is what a shop that feeds one kind of mill
+    /// asks for.
+    #[test]
+    fn keeping_the_source_format_is_the_operator_choice() {
+        let paths = vec![PathBuf::from("upper.stl")];
+
+        assert_eq!(
+            layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian, true),
+            MeshWriteFormat::StlBinary,
+            "the scan's own format wins while the switch is on"
+        );
+        assert_eq!(
+            layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian, false),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "the chosen format wins for every layer while the switch is off"
+        );
+    }
+
+    /// A point cloud cannot be written as STL, so the format actually offered
+    /// has to be one the geometry can be written as. The writer refuses a
+    /// non-triangle mesh, and a forced STL used to propose a name whose write
+    /// was guaranteed to fail into the error dialog.
+    #[test]
+    fn a_forced_stl_falls_back_to_ply_for_a_point_cloud() {
+        let cloud = Mesh::point_cloud(Some("points".to_owned()), vec![Vertex::at(Vec3::ZERO)]);
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &cloud),
+            MeshWriteFormat::PlyBinaryLittleEndian
+        );
+
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let Some(entry) = scene.meshes().first() else {
+            return;
+        };
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &entry.mesh),
+            MeshWriteFormat::StlBinary,
+            "a triangle mesh keeps the format the operator chose"
+        );
     }
 
     #[test]

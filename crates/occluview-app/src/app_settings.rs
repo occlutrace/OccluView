@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 const SETTINGS_FILE: &str = "settings.json";
 pub(crate) const SETTINGS_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-/// Format used only when the source format cannot be written.
+/// The format used when a layer's own format cannot be kept — because the
+/// source format has no writer, the layer has no source file, or the operator
+/// turned off `keep_source_export_format`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum FallbackExportFormat {
     #[default]
@@ -30,7 +32,6 @@ impl FallbackExportFormat {
         }
     }
 }
-
 /// Preset for the 3D viewport clear color.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ViewportBackground {
@@ -135,6 +136,10 @@ where
 /// operator sees on a scan. The field stays in the settings file so an existing
 /// document keeps loading, but nothing writes it any more.
 pub(crate) const RECENT_FILES_LIMIT: usize = 8;
+/// Fewest recent scenes the Open chevron keeps.
+pub(crate) const RECENT_FILES_LIMIT_MIN: usize = 4;
+/// Most recent scenes the Open chevron keeps.
+pub(crate) const RECENT_FILES_LIMIT_MAX: usize = 20;
 
 /// The durable choices exposed by the preferences panel. Many independent
 /// toggles is the shape of a preferences document; collapsing them into enums
@@ -148,6 +153,13 @@ pub(crate) struct Settings {
         deserialize_with = "deserialize_export_format"
     )]
     pub(crate) fallback_export_format: FallbackExportFormat,
+    /// Keep each layer's own file format when saving it back out.
+    ///
+    /// On by default: a scan opened as STL saves as STL and one opened as PLY
+    /// saves as PLY, which is what "save the file" means. It can be turned off
+    /// to force one format for every export — a shop that feeds a mill only
+    /// STL does not want a folder of mixed extensions.
+    pub(crate) keep_source_export_format: bool,
     pub(crate) remember_export_dir: bool,
     pub(crate) last_export_dir: Option<String>,
     pub(crate) update_check_on_start: bool,
@@ -183,6 +195,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             fallback_export_format: FallbackExportFormat::Ply,
+            keep_source_export_format: true,
             remember_export_dir: false,
             last_export_dir: None,
             update_check_on_start: true,
@@ -404,12 +417,11 @@ mod tests {
         assert!(rewritten.get("default_export_format").is_none());
         assert!(rewritten.get("schema_version").is_none());
         assert!(rewritten.get("reset_camera_on_open").is_none());
-        // `recent_files_limit` used to be obsolete and was stripped on rewrite;
-        // it is a live preference again, so a rewritten document keeps it.
+        // The limit is read when the recent list is loaded, so a rewritten
+        // document keeps the value it holds.
         assert_eq!(
             rewritten["recent_files_limit"],
-            Settings::default().recent_files_limit,
-            "an existing document keeps a field nothing writes any more"
+            Settings::default().recent_files_limit
         );
         Ok(())
     }
@@ -419,6 +431,33 @@ mod tests {
         let settings: Settings = serde_json::from_str(r#"{"default_export_format":"Auto"}"#)?;
 
         assert_eq!(settings.fallback_export_format, FallbackExportFormat::Ply);
+        Ok(())
+    }
+
+    /// Saving in the format a scan was opened in is the default, and a document
+    /// written before the switch existed must read the same way: the behaviour
+    /// it had is the behaviour the switch turns on.
+    #[test]
+    fn keeping_the_source_format_is_on_by_default_and_survives_a_round_trip() -> Result<()> {
+        assert!(
+            Settings::default().keep_source_export_format,
+            "saving in the scan's own format is the default"
+        );
+        let older: Settings = serde_json::from_str(r#"{"fallback_export_format":"Stl"}"#)?;
+        assert!(
+            older.keep_source_export_format,
+            "a document without the field keeps the behaviour it was written under"
+        );
+
+        let settings = Settings {
+            keep_source_export_format: false,
+            ..Settings::default()
+        };
+        let rewritten: Settings = serde_json::from_str(&serde_json::to_string(&settings)?)?;
+        assert!(
+            !rewritten.keep_source_export_format,
+            "turning the switch off must survive a save and reload"
+        );
         Ok(())
     }
 

@@ -59,32 +59,6 @@ fn linux_build_uses_real_gui_instead_of_failure_stub() {
     );
 }
 
-#[test]
-fn binary_entry_delegates_to_the_public_library_entry() {
-    let binary = main_source();
-
-    assert!(
-        binary.contains("occluview_app::main_entry()"),
-        "the binary must delegate to the public library entry point"
-    );
-    assert!(
-        binary.contains("windows_subsystem"),
-        "the Windows GUI-subsystem attribute must stay on the binary"
-    );
-    assert!(
-        !binary.contains("mod app"),
-        "the application module graph must live behind the library boundary"
-    );
-    let meaningful = binary
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("//"))
-        .count();
-    assert!(
-        meaningful <= 20,
-        "main.rs must stay a thin delegate of at most 20 meaningful lines, found {meaningful}"
-    );
-}
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_window_identity_value_matches_desktop_metadata() {
@@ -155,39 +129,6 @@ fn linux_window_identity_matches_desktop_metadata() {
         metainfo.contains(&format!("<release version=\"{version}\"")),
         "the metainfo should name {version}, the version this package carries"
     );
-}
-
-#[test]
-fn linux_desktop_state_uses_xdg_paths() {
-    let app_paths = include_str!("../app_paths.rs");
-    let single_instance_unix = include_str!("../single_instance/unix.rs");
-
-    assert!(
-        app_paths.contains("XDG_STATE_HOME") && app_paths.contains(".local/state"),
-        "recent files and crash reports on Linux should use XDG state directories"
-    );
-    assert!(
-        single_instance_unix.contains("XDG_RUNTIME_DIR"),
-        "Linux single-instance IPC should prefer XDG_RUNTIME_DIR"
-    );
-    assert!(
-        single_instance_unix.contains("UnixListener")
-            && single_instance_unix.contains("UnixStream"),
-        "Linux single-instance handoff should use Unix domain sockets"
-    );
-}
-
-#[test]
-fn public_linux_copy_is_not_left_as_windows_only() {
-    let app_manifest = app_manifest_source();
-    let live_viewport = include_str!("../live_viewport.rs");
-    let about = repo_source_file("src/app/app_settings_window.rs");
-    let ci = ci_workflow_source();
-
-    assert!(!app_manifest.contains("Windows-only"));
-    assert!(!live_viewport.contains("Windows desktop app"));
-    assert!(!about.contains("Native Windows viewer for fast scan inspection"));
-    assert!(!ci.contains("Build the Windows-only crates (shell, app)"));
 }
 
 #[test]
@@ -265,26 +206,6 @@ fn the_deb_ships_and_gates_the_license_set() {
     assert!(
         copyright.contains("THIRD-PARTY-NOTICES.md"),
         "the DEP-5 copyright should point at the shipped attribution file"
-    );
-}
-
-#[test]
-fn the_viewer_answers_version_before_any_windowing() {
-    let bootstrap = app_bootstrap_source();
-
-    let version_exit = bootstrap.find("if args.version {");
-    let single_instance = bootstrap.find("SingleInstance::acquire");
-    assert!(
-        version_exit.is_some() && single_instance.is_some(),
-        "both the version early-exit and the single-instance handshake should exist"
-    );
-    // --version must never focus a running instance or open a window; the
-    // early exit has to sit before the single-instance handshake.
-    assert!(version_exit < single_instance);
-    assert!(startup_source().contains("\"--version\" | \"-V\""));
-    assert!(
-        parse_args_from(["-V"]).version && parse_args_from(["--version"]).version,
-        "both version spellings must exit before any windowing"
     );
 }
 

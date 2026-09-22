@@ -527,9 +527,23 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     // known-good shell revision rather than a hand-copied old binary.
     let msi_build = include_str!("../../../install/build-msi.ps1");
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let pin = include_str!("../../../install/shell-pin.json");
+
+    assert!(
+        pin.contains("\"revision\": \"659725632dffcdf14d62724743f35f1689602bbc\""),
+        "the shell pin contract must name the revision the release ships"
+    );
+    assert!(
+        pin.contains("\"shell_crates\""),
+        "the pin must list the crates the shell links, so the delta report has a scope"
+    );
+    assert!(
+        workflow.contains("report-shell-pin.sh"),
+        "the release must record which shell revision it shipped"
+    );
 
     for required in [
-        "$referenceShellRevision = \"659725632dffcdf14d62724743f35f1689602bbc\"",
+        "(Get-Content -Raw $shellPinPath | ConvertFrom-Json).revision",
         "git -C $repoRoot cat-file -e",
         "git -C $repoRoot worktree add --detach",
         "Set-ReferenceShellPackageVersion",
@@ -553,6 +567,10 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     assert!(
         workflow.contains("fetch-depth: 0"),
         "Windows packaging must fetch the pinned working shell revision before building the MSI"
+    );
+    assert!(
+        workflow.contains("scripts/report-shell-pin.sh"),
+        "the release must record which shell revision it shipped and how far behind it is"
     );
 }
 

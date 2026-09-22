@@ -6,7 +6,7 @@
   <p><strong>Advanced Mesh Repair and Mesh Editing for digital dental CAD.</strong></p>
 
   <p>
-    <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/latest%20release-v1.2.0-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.0"></a>
+    <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/latest%20release-v1.2.1-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.1"></a>
     <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/occlutrace/OccluView/ci.yml?branch=main&style=for-the-badge&label=build" alt="Build status"></a>
   </p>
 </div>

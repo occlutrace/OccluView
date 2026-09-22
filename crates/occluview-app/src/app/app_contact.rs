@@ -239,11 +239,14 @@ impl OccluViewApp {
 
     /// Take finished measurements and put them on the scans.
     pub(super) fn drain_contacts_worker(&mut self, ctx: &egui::Context) {
-        let Some(worker) = self.tools.contacts.worker() else {
+        let Some((completions, worker_failed)) = self.tools.contacts.worker().map(|worker| {
+            let completions = worker.drain();
+            (completions, worker.has_failed())
+        }) else {
             return;
         };
-        let completions = worker.drain();
         if completions.is_empty() {
+            self.release_a_reading_whose_worker_died(worker_failed, ctx);
             return;
         }
         let mut accepted = false;
@@ -319,6 +322,25 @@ impl OccluViewApp {
             self.mark_scene_materials_changed();
             ctx.request_repaint();
         }
+        self.release_a_reading_whose_worker_died(worker_failed, ctx);
+    }
+
+    /// Stop waiting for a reading whose worker can no longer produce one.
+    ///
+    /// A thread that panicked publishes nothing, so the pending request would
+    /// stay in flight forever: the bar would show a spinner with no status text
+    /// and no retry, and re-opening the reading would only queue work nobody
+    /// drains. The failure latch is the only signal that the executor is gone.
+    fn release_a_reading_whose_worker_died(&mut self, worker_failed: bool, ctx: &egui::Context) {
+        if !worker_failed {
+            return;
+        }
+        let Some(keys) = self.tools.contacts.in_flight_keys() else {
+            return;
+        };
+        tracing::warn!("contact worker is unusable; releasing the pending reading");
+        self.tools.contacts.mark_unavailable(keys);
+        ctx.request_repaint();
     }
 
     /// Build GPU sources for the current scene, including contact paint.

@@ -270,6 +270,25 @@ impl ContactState {
         true
     }
 
+    /// Read against a different layer. Returns whether the pair moved.
+    ///
+    /// The measurement on screen describes the old antagonist, so it is
+    /// dropped: the frame loop re-submits for the new pair.
+    pub(crate) fn set_antagonist(&mut self, antagonist: SceneMeshId) -> bool {
+        let Some(pair) = self.pair.as_mut() else {
+            return false;
+        };
+        if pair.antagonist == antagonist {
+            return false;
+        }
+        pair.antagonist = antagonist;
+        self.drop_fields();
+        self.forget_failure();
+        self.in_flight = None;
+        self.status = Some(ContactStatus::Measuring);
+        true
+    }
+
     /// Toggle the patch collapse. Returns whether it changed.
     pub(crate) fn set_flatten_patches(&mut self, flatten: bool) -> bool {
         if self.flatten_patches == flatten {
@@ -382,6 +401,11 @@ impl ContactState {
         self.measured
     }
 
+    /// The keys of the request the viewer is waiting for, if any.
+    pub(crate) fn in_flight_keys(&self) -> Option<ContactJobKeys> {
+        self.in_flight.as_ref().map(|request| request.keys)
+    }
+
     /// Whether a measurement is queued or running.
     pub(crate) fn is_busy(&self) -> bool {
         self.in_flight.is_some() || self.worker.as_ref().is_some_and(ContactWorker::is_busy)
@@ -398,7 +422,14 @@ impl ContactState {
     }
 
     /// The worker, started on first use.
+    ///
+    /// A worker that has latched a failure is replaced here: its thread is gone
+    /// and it refuses every later job, so keeping it would make the "Read
+    /// again" the bar offers a button that can never work.
     pub(crate) fn worker_mut(&mut self) -> &mut ContactWorker {
+        if self.worker.as_ref().is_some_and(ContactWorker::has_failed) {
+            self.worker = None;
+        }
         self.worker.get_or_insert_with(ContactWorker::spawn)
     }
 
@@ -469,25 +500,53 @@ impl ContactState {
     }
 }
 
-/// Choose the nearest visible triangle mesh as the antagonist.
-pub(crate) fn antagonist_for(scene: &Scene, layer: SceneMeshId) -> Option<SceneMeshId> {
-    let subject = scene.meshes().iter().find(|entry| entry.id() == layer)?;
+/// Every layer a reading on `layer` could run against, nearest first.
+///
+/// A scene with an upper and a lower arch has one obvious answer, and the
+/// operator should not have to give it. A case with an upper, a lower, a
+/// pre-op and a wax-up does not: two of those sit at almost the same centre,
+/// and proximity alone cannot say which one is the antagonist. The list is
+/// therefore the honest answer to "what can this be measured against", and the
+/// automatic pick is its head — the operator is offered the same order the
+/// rule uses.
+///
+/// A layer needs triangles to be measured at all: the worker refuses a surface
+/// without them, so offering one would turn a choice into a failure.
+pub(crate) fn antagonist_candidates(scene: &Scene, layer: SceneMeshId) -> Vec<SceneMeshId> {
+    let Some(subject) = scene.meshes().iter().find(|entry| entry.id() == layer) else {
+        return Vec::new();
+    };
     if subject.mesh.is_point_cloud() {
-        return None;
+        return Vec::new();
     }
     let subject_centre = world_center(subject);
-    scene
+    let mut candidates: Vec<(f32, SceneMeshId)> = scene
         .meshes()
         .iter()
         .filter(|entry| entry.id() != layer)
         .filter(|entry| entry.visible && !entry.mesh.is_point_cloud())
         .filter(|entry| !entry.mesh.bbox_cached().is_empty())
-        .min_by(|left, right| {
-            let left_gap = world_center(left).distance_squared(subject_centre);
-            let right_gap = world_center(right).distance_squared(subject_centre);
-            left_gap.total_cmp(&right_gap)
+        .filter(|entry| entry.mesh.indices().len() >= 3)
+        .map(|entry| {
+            (
+                world_center(entry).distance_squared(subject_centre),
+                entry.id(),
+            )
         })
-        .map(SceneMesh::id)
+        .collect();
+    // Ties go to the lower id rather than to scene order, so the same scene
+    // always produces the same list.
+    candidates.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    candidates.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Choose the nearest visible triangle mesh as the antagonist.
+pub(crate) fn antagonist_for(scene: &Scene, layer: SceneMeshId) -> Option<SceneMeshId> {
+    antagonist_candidates(scene, layer).into_iter().next()
 }
 
 /// Compute the centre of a layer's transformed bounding box.

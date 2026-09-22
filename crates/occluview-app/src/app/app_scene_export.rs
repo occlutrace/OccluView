@@ -1,10 +1,10 @@
 //! Whole-scene export with each visible layer's pose baked into its geometry.
 
 use super::app_mesh_export::{
-    append_mesh_export_warnings, default_layer_export_directory, default_layer_export_format,
-    default_layer_export_stem, fallback_mesh_write_format, layer_export_file_dialog,
+    append_mesh_export_warnings, default_layer_export_directory, default_layer_export_stem,
+    fallback_mesh_write_format, layer_export_file_dialog, layer_export_format,
     mesh_export_format_from_path, mesh_export_warning_summary, mesh_write_extension,
-    normalize_layer_export_path,
+    normalize_layer_export_path, representable_export_format,
 };
 use super::{AppErrorAction, AppErrorDialog, OccluViewApp, Scene};
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
@@ -16,6 +16,20 @@ use occluview_formats::write::{
 use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// The format a merged scene is written as.
+///
+/// A merged scene has no single source format to keep, so the operator's
+/// fallback decides — except where the merged geometry cannot be written in it.
+/// A scene of point clouds is saved as PLY rather than STL, because the writer
+/// refuses a non-triangle mesh and the failure would land in the error dialog
+/// after the operator had already chosen a file name.
+fn scene_export_format(
+    fallback: crate::app_settings::FallbackExportFormat,
+    mesh: &Mesh,
+) -> MeshWriteFormat {
+    representable_export_format(fallback_mesh_write_format(fallback), mesh)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SceneMergeError {
@@ -74,13 +88,26 @@ impl OccluViewApp {
                 return;
             }
         };
-        let dropped_texture = scene
-            .meshes()
-            .iter()
-            .any(|entry| entry.visible && entry.mesh.texture().is_some());
+        // A merge of two textured scans cannot carry both images. One visible
+        // layer is not a merge: it is exported as itself, texture included.
+        let visible_layers = scene.meshes().iter().filter(|entry| entry.visible).count();
+        let dropped_texture = visible_layers > 1
+            && scene
+                .meshes()
+                .iter()
+                .any(|entry| entry.visible && entry.mesh.texture().is_some());
 
-        let mut dialog = layer_export_file_dialog(MeshWriteFormat::PlyBinaryLittleEndian)
-            .set_file_name("scene.ply");
+        // A merged scene has no single source format to keep, so the operator's
+        // chosen format decides. It used to be hard-coded PLY, which ignored
+        // both the fallback preference and the "keep source" switch — an
+        // operator who set STL for a mill still got a PLY-first dialog. The
+        // format is also clamped to one the merged geometry can be written as:
+        // a scene of point clouds cannot become an STL.
+        let default_format =
+            scene_export_format(self.persistence.settings.fallback_export_format, &mesh);
+        let extension = mesh_write_extension(default_format);
+        let mut dialog =
+            layer_export_file_dialog(default_format).set_file_name(format!("scene.{extension}"));
         // Index zero with the neighbour fallback resolves to the first layer
         // that has a file, so a merged scene lands next to its scans.
         if let Some(directory) = default_layer_export_directory(
@@ -93,7 +120,7 @@ impl OccluViewApp {
         let Some(selected) = dialog.save_file() else {
             return;
         };
-        let path = normalize_layer_export_path(selected, MeshWriteFormat::PlyBinaryLittleEndian);
+        let path = normalize_layer_export_path(selected, default_format);
         let Ok(format) = mesh_export_format_from_path(&path) else {
             self.ui.status_message = Some(self.ui.locale.tr("export-unsupported-format"));
             return;
@@ -183,10 +210,17 @@ impl OccluViewApp {
             .filter(|(_, entry)| entry.visible)
             .collect();
         let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
+        let keep_source = self.persistence.settings.keep_source_export_format;
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
-            .map(|(index, _entry)| {
-                let format = default_layer_export_format(&paths, *index, fallback);
+            .map(|(index, entry)| {
+                // A point cloud cannot be written as STL; clamping here keeps
+                // the batch's proposed names writable instead of failing one
+                // layer into the error dialog.
+                let format = representable_export_format(
+                    layer_export_format(&paths, *index, fallback, keep_source),
+                    &entry.mesh,
+                );
                 (
                     default_layer_export_stem(&paths, scene.as_ref(), *index, format),
                     format,
@@ -451,13 +485,26 @@ pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
 /// Every visible layer merged into one mesh, each in its own pose.
 ///
 /// Returns `None` when nothing visible remains. Textures cannot be merged —
-/// one mesh carries one texture — so the caller says so before writing.
+/// one mesh carries one texture — so the caller says so before writing, except
+/// when a single layer is visible: that layer is exported as itself, with the
+/// texture it has.
 fn merged_scene_mesh(scene: &Scene) -> Result<Option<Mesh>, SceneMergeError> {
     let visible: Vec<&SceneMesh> = scene
         .meshes()
         .iter()
         .filter(|entry| entry.visible)
         .collect();
+    let [only] = visible.as_slice() else {
+        return merged_layers(&visible);
+    };
+    if only.mesh.vertices().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(posed_mesh(only)))
+}
+
+/// The visible layers merged into one mesh.
+fn merged_layers(visible: &[&SceneMesh]) -> Result<Option<Mesh>, SceneMergeError> {
     if visible.is_empty() {
         return Ok(None);
     }
@@ -524,8 +571,43 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
+    /// A merged scene follows the operator's fallback format, and never a
+    /// format its geometry cannot be written in.
+    #[test]
+    fn a_merged_scene_takes_the_fallback_format_unless_it_cannot_be_written() {
+        use crate::app_settings::FallbackExportFormat;
+        use occluview_formats::write::MeshWriteFormat;
+
+        let triangle = Mesh::new(
+            Some("arch".to_owned()),
+            vec![
+                Vertex::at(Vec3::ZERO),
+                Vertex::at(Vec3::X),
+                Vertex::at(Vec3::Y),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("a triangle mesh");
+        let cloud = Mesh::point_cloud(Some("points".to_owned()), vec![Vertex::at(Vec3::ZERO)]);
+
+        assert_eq!(
+            scene_export_format(FallbackExportFormat::Stl, &triangle),
+            MeshWriteFormat::StlBinary,
+            "a merged triangle scene takes the chosen format"
+        );
+        assert_eq!(
+            scene_export_format(FallbackExportFormat::Stl, &cloud),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a merged point cloud cannot be written as STL, so it clamps to PLY"
+        );
+        assert_eq!(
+            scene_export_format(FallbackExportFormat::Obj, &cloud),
+            MeshWriteFormat::Obj
+        );
+    }
+
     use super::{
-        merged_scene_mesh, posed_mesh, unique_layer_export_paths,
+        merged_scene_mesh, posed_mesh, scene_export_format, unique_layer_export_paths,
         write_layer_export_new_with_retry, SceneMergeError,
     };
     use anyhow::Result;

@@ -54,8 +54,13 @@ impl PersistenceState {
             None
         };
         let update_check_on_start = settings.update_check_on_start;
+        // The stored limit is the preference; the constant is only its default.
+        let recent_files_limit = settings.recent_files_limit.clamp(
+            crate::app_settings::RECENT_FILES_LIMIT_MIN,
+            crate::app_settings::RECENT_FILES_LIMIT_MAX,
+        );
         Self {
-            recent_files: load_recent_files(crate::app_settings::RECENT_FILES_LIMIT),
+            recent_files: load_recent_files(recent_files_limit),
             settings,
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),

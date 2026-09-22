@@ -75,6 +75,102 @@ fn the_antagonist_is_the_nearest_surface_not_merely_another_one() {
     assert_eq!(antagonist_for(&scene, ids[0]), Some(ids[1]));
 }
 
+/// The list the picker shows is the list the rule walks: nearest first, ties by
+/// id, and the automatic choice is its head. A scene with two uppers is the
+/// case the rule cannot decide, so the operator gets the order, not a guess.
+#[test]
+fn the_candidates_are_ordered_nearest_first_and_the_pick_leads_them() {
+    let scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0), slab(9.0, 0.0)]);
+    let ids: Vec<SceneMeshId> = scene.meshes().iter().map(SceneMesh::id).collect();
+
+    assert_eq!(
+        antagonist_candidates(&scene, ids[0]),
+        vec![ids[1], ids[2]],
+        "nearest first, then the far one"
+    );
+    assert_eq!(
+        antagonist_for(&scene, ids[0]),
+        antagonist_candidates(&scene, ids[0]).first().copied(),
+        "the automatic pick is the head of the list the operator is shown"
+    );
+
+    // Two layers at the same distance resolve by id, not by scene order, so the
+    // same scene always produces the same list.
+    let tied = scene_of(vec![slab(0.0, 0.0), slab(1.0, 0.0), slab(-1.0, 0.0)]);
+    let tied_ids: Vec<SceneMeshId> = tied.meshes().iter().map(SceneMesh::id).collect();
+    let mut expected = vec![tied_ids[1], tied_ids[2]];
+    expected.sort();
+    assert_eq!(antagonist_candidates(&tied, tied_ids[0]), expected);
+}
+
+/// A layer with vertices but no triangles cannot be measured at all: the worker
+/// refuses a surface without them. Offering it would turn a choice into a
+/// failure, so it is not a candidate even when it is the nearest thing.
+#[test]
+fn a_surface_without_triangles_is_not_a_candidate() {
+    let mut scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0), slab(9.0, 0.0)]);
+    let ids: Vec<SceneMeshId> = scene.meshes().iter().map(SceneMesh::id).collect();
+    let bare = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::new(0.0, 0.0, 0.05)),
+            Vertex::at(Vec3::new(1.0, 0.0, 0.05)),
+            Vertex::at(Vec3::new(0.0, 1.0, 0.05)),
+        ],
+        Vec::new(),
+    )
+    .expect("vertices without faces");
+    scene.add(SceneMesh::new(bare));
+    let bare_id = scene.meshes()[3].id();
+
+    let candidates = antagonist_candidates(&scene, ids[0]);
+    assert!(
+        !candidates.contains(&bare_id),
+        "a layer with no triangles cannot be measured against"
+    );
+    assert_eq!(candidates, vec![ids[1], ids[2]]);
+}
+
+/// Choosing another layer drops the measurement on screen: it describes the
+/// old antagonist, and leaving it there would put the wrong colours on the
+/// scans until the new answer arrives.
+#[test]
+fn choosing_another_antagonist_drops_the_measurement_it_replaces() {
+    let scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0), slab(9.0, 0.0)]);
+    let ids: Vec<SceneMeshId> = scene.meshes().iter().map(SceneMesh::id).collect();
+    let pair = ContactPair {
+        subject: ids[0],
+        antagonist: ids[1],
+    };
+    let keys = contact_job_keys(&scene, pair, false).expect("a pair in the scene");
+    let mut state = ContactState::default();
+    state.open(pair);
+    state.mark_submitted(request(1, keys, pair), ContactStatus::Measuring);
+    assert!(state.store_measured(
+        request(1, keys, pair),
+        field(pair.subject, 0.0),
+        field(pair.antagonist, 0.0),
+        ContactStats::default(),
+    ));
+
+    assert!(state.set_antagonist(ids[2]), "the pair moved");
+    assert!(
+        !state.set_antagonist(ids[2]),
+        "choosing the same layer twice changes nothing"
+    );
+    assert!(state.fields().is_empty(), "the old colours are gone");
+    assert!(state.measured_keys().is_none());
+    assert!(
+        state.pending_request().is_none(),
+        "and the viewer is not waiting for an answer about the old pair"
+    );
+    assert_eq!(
+        state.status(),
+        Some(ContactStatus::Measuring),
+        "the new pair is being measured, not left as the old result"
+    );
+}
+
 /// A hidden scan is not a candidate. Its geometry would measure perfectly well
 /// and the colours would land on a surface nobody can see.
 #[test]

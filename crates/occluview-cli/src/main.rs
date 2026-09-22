@@ -186,11 +186,10 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         }
     }
 
-    let out_path = normalize_thumbnail_output_path(output.unwrap_or_else(|| {
-        let mut p = file.clone();
-        p.set_extension("png");
-        p
-    }))?;
+    let out_path = normalize_thumbnail_output_path(match output {
+        Some(path) => path,
+        None => implicit_thumbnail_path(&file),
+    })?;
 
     eprintln!("Rendering {size}x{size} thumbnail...");
     let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
@@ -295,6 +294,30 @@ fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Resu
         )
     }
     .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+/// Where a thumbnail goes when the operator named no output.
+///
+/// `<scan>.png` is the name a PLY or OBJ names as its own texture, so writing a
+/// thumbnail there would replace the scan's image with a picture of the scan.
+/// An occupied name is therefore stepped aside, and only an explicit `-o`
+/// replaces a file the operator chose by name.
+fn implicit_thumbnail_path(file: &Path) -> PathBuf {
+    let mut path = file.to_path_buf();
+    path.set_extension("png");
+    // The writer collapses a repeated terminal extension (`scan.png.stl` ->
+    // `scan.png`), so the name to check is the one that will be written, not
+    // the one before that collapse.
+    path = export::normalize_output_path(path);
+    if !path.exists() {
+        return path;
+    }
+    let stem = path.file_stem().map_or_else(
+        || "thumbnail".to_string(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    path.set_file_name(format!("{stem}-thumb.png"));
+    path
 }
 
 /// `convert <file> -o output.{stl|ply|obj}`
