@@ -7,9 +7,21 @@ pub(crate) fn load_recent_files(limit: usize) -> RecentFiles {
     let Some(path) = recent_files_path() else {
         return RecentFiles::new(limit);
     };
-    match std::fs::read_to_string(path) {
+    match std::fs::read_to_string(&path) {
         Ok(stored) => RecentFiles::deserialize(limit, &stored),
-        Err(_) => RecentFiles::new(limit),
+        // A first run has no file, which is not a failure. Anything else is:
+        // the operator's list disappears from the menu, and a log line is the
+        // only trace of why.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => RecentFiles::new(limit),
+        Err(error) => {
+            // The kind, never the path: a scan's name must not reach the crash
+            // report, and the recent list is nothing but scan paths.
+            tracing::warn!(
+                kind = ?error.kind(),
+                "could not read the recent files list"
+            );
+            RecentFiles::new(limit)
+        }
     }
 }
 

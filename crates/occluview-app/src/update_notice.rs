@@ -36,9 +36,17 @@ fn store_skipped_version(version: &str) {
         return;
     };
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        if let Err(error) = std::fs::create_dir_all(dir) {
+            tracing::warn!(error = ?error, "could not create the skipped-version folder");
+            return;
+        }
     }
-    let _ = std::fs::write(path, version);
+    // A write that fails means the release is offered again next launch. The
+    // operator asked not to be told about it, so this is a log line rather
+    // than a dialog, but it must not vanish.
+    if let Err(error) = std::fs::write(path, version) {
+        tracing::warn!(error = ?error, "could not remember the skipped version");
+    }
 }
 
 enum DownloadEvent {

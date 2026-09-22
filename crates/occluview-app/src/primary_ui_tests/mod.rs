@@ -92,61 +92,8 @@ pub(super) fn lib_source() -> &'static str {
     include_str!("../lib.rs")
 }
 
-/// Canonical home of argument parsing and the single-instance append
-/// decision since the library seam (see `src/startup.rs`).
-pub(super) fn startup_source() -> &'static str {
-    include_str!("../startup.rs")
-}
-
-pub(super) fn app_module_source() -> &'static str {
-    concat!(
-        include_str!("../app/mod.rs"),
-        "\n",
-        include_str!("../app/state.rs")
-    )
-}
-
 pub(super) fn app_bootstrap_source() -> &'static str {
     include_str!("../app_bootstrap.rs")
-}
-
-pub(super) fn app_loading_source() -> &'static str {
-    include_str!("../app/app_loading.rs")
-}
-
-pub(super) fn app_dialogs_source() -> &'static str {
-    include_str!("../app/app_dialogs.rs")
-}
-
-pub(super) fn app_render_source() -> &'static str {
-    include_str!("../app/app_render.rs")
-}
-
-pub(super) fn app_chrome_source() -> &'static str {
-    include_str!("../app_chrome.rs")
-}
-
-pub(super) fn app_layer_edits_source() -> String {
-    [
-        include_str!("../app/app_layer_edits/mod.rs"),
-        include_str!("../app/app_layer_edits/whole_mesh.rs"),
-        include_str!("../app/app_layer_edits/selection_ops.rs"),
-        include_str!("../app/app_layer_edits/structural.rs"),
-        include_str!("../app/app_layer_edits/undo_redo.rs"),
-    ]
-    .concat()
-}
-
-pub(super) fn app_viewport_source() -> &'static str {
-    concat!(
-        include_str!("../app/app_viewport.rs"),
-        "\n",
-        include_str!("../app/app_mesh_editor.rs"),
-        "\n",
-        include_str!("../app/app_cut_measure.rs"),
-        "\n",
-        include_str!("../app/app_layer_interaction.rs")
-    )
 }
 
 /// Read a source file this crate makes assertions about.
@@ -166,10 +113,6 @@ pub(super) fn repo_source_file(relative_path: &str) -> String {
             path.display()
         )
     })
-}
-
-pub(super) fn viewer_interaction_source() -> &'static str {
-    include_str!("../viewer/interaction.rs")
 }
 
 pub(super) fn app_manifest_source() -> &'static str {
@@ -202,10 +145,6 @@ pub(super) fn linux_metainfo_source() -> &'static str {
 
 pub(super) fn linux_desktop_source() -> &'static str {
     include_str!("../../../../install/linux/ai.occlutrace.OccluView.desktop")
-}
-
-pub(super) fn count_occurrences(source: &str, needle: &str) -> usize {
-    source.match_indices(needle).count()
 }
 
 pub(super) fn function_source<'a>(source: &'a str, signature: &str) -> &'a str {

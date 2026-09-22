@@ -20,7 +20,8 @@
 //! - `contact_gap`           `[f32;4]`       16 bytes
 //! - `contact_stops`         `[[f32;4];16]` 256 bytes
 //! - `contact_stop_count`     `u32`           4 bytes
-//! - `contact_padding`       `[u32;3]`       12 bytes
+//! - `overlay_paint`          `u32`           4 bytes
+//! - `contact_padding`       `[u32;2]`        8 bytes
 //!
 //! # Why the ramp lives in the uniform
 //!
@@ -103,9 +104,19 @@ pub struct GpuMeshUniform {
     /// Stops actually in use. At least 1 whenever `contact_map != 0`, because
     /// the shader walks `stop_count - 1` spans.
     pub contact_stop_count: u32,
+    /// 1 = this layer's overlay colours are paint, not a measurement.
+    ///
+    /// The RGB is a paint colour and the alpha is the weight mixed over the
+    /// surface's own material, so alpha 0 leaves the scan bit-for-bit as it
+    /// renders — its tint, its texture and its lighting included. Without the
+    /// distinction the brush preview was shaded as a measured map (tint
+    /// dropped, lighting cut to 42%, gloss added), which is what made a marked
+    /// scan read as a pale shiny shell. Taken from the tail padding, so the
+    /// buffer layout is unchanged.
+    pub overlay_paint: u32,
     /// Explicit tail padding: a uniform struct is 16-byte aligned in WGSL even
     /// though each scalar field here is four-byte aligned.
-    pub contact_padding: [u32; 3],
+    pub contact_padding: [u32; 2],
 }
 
 impl GpuMeshUniform {
@@ -140,7 +151,8 @@ impl GpuMeshUniform {
             contact_gap: [0.0; 4],
             contact_stops: [[0.0; 4]; CONTACT_STOP_CAPACITY],
             contact_stop_count: 1,
-            contact_padding: [0; 3],
+            overlay_paint: 0,
+            contact_padding: [0; 2],
         }
     }
 
@@ -266,9 +278,9 @@ mod tests {
                 "contact_gap",
                 "contact_stops",
                 "contact_stop_count",
+                "overlay_paint",
                 "contact_padding_0",
                 "contact_padding_1",
-                "contact_padding_2",
             ],
             "mesh.wgsl's MeshUniform drifted from GpuMeshUniform"
         );

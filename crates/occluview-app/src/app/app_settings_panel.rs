@@ -39,6 +39,7 @@ pub(super) fn show_settings_toolbar_toggle(
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SettingsAction {
     SetExportFormat(FallbackExportFormat),
+    SetKeepSourceExportFormat(bool),
     SetRememberExportDir(bool),
     SetUpdateCheckOnStart(bool),
     SetFrameSceneOnOpen(bool),
@@ -139,6 +140,27 @@ pub(super) fn show_settings_popup(
 
                     section_break(ui);
                     section_label(ui, &locale.tr("settings-section-files"));
+                    // The decision first, then the format it falls back to:
+                    // each hint refers to the other row by position, so the
+                    // order here is part of what they say.
+                    let mut keep_source = settings.keep_source_export_format;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), ROW_HEIGHT),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .checkbox(
+                                    &mut keep_source,
+                                    locale.tr("settings-keep-source-format"),
+                                )
+                                .on_hover_text(locale.tr("settings-keep-source-format-hint"))
+                                .changed()
+                            {
+                                action =
+                                    Some(SettingsAction::SetKeepSourceExportFormat(keep_source));
+                            }
+                        },
+                    );
                     export_format_row(ui, settings, locale, &mut action);
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(

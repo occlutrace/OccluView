@@ -115,6 +115,27 @@ pub struct Element {
     pub properties: Vec<Property>,
 }
 
+/// What the header's comments say about a texture.
+///
+/// PLY has no texture element, so two conventions meet here. Other tools name
+/// an image beside the file in a `comment TextureFile <name>` line, which this
+/// reader resolves against the file's own folder. OccluView's exports carry the
+/// encoded image inside the file instead, in `OccluViewTexture*` comments, so a
+/// single `.ply` moved on its own still has its texture.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextureComments {
+    /// The image file the header names, if it names one.
+    pub file: Option<String>,
+    /// What the encoded payload is, as the writer declared it.
+    ///
+    /// A build that does not know the value leaves the payload alone rather
+    /// than guessing at it: an image the decoder mistakes for another format is
+    /// worse than no image at all.
+    pub format: Option<String>,
+    /// The encoded image carried by the header itself.
+    pub encoded: Option<String>,
+}
+
 /// A fully parsed PLY header plus a view onto the data that follows.
 #[derive(Clone, Debug)]
 pub struct ParsedHeader<'a> {
@@ -122,6 +143,8 @@ pub struct ParsedHeader<'a> {
     pub format: Format,
     /// Elements in declaration order (typically `vertex` then `face`).
     pub elements: Vec<Element>,
+    /// Texture the comments describe, if any.
+    pub texture: TextureComments,
     /// The raw bytes after `end_header\n` — the data section.
     pub data: &'a [u8],
 }
@@ -205,13 +228,16 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
 
     let mut format: Option<Format> = None;
     let mut elements: Vec<Element> = Vec::new();
+    let mut texture = TextureComments::default();
 
     for line in header_text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with("ply") {
             continue;
         }
-        if line.starts_with("comment") || line.starts_with("obj_info") {
+        let keyword = line.split_whitespace().next().unwrap_or_default();
+        if keyword.eq_ignore_ascii_case("comment") || keyword.eq_ignore_ascii_case("obj_info") {
+            read_comment(line, &mut texture);
             continue;
         }
         if let Some(rest) = line.strip_prefix("format ") {
@@ -245,8 +271,49 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
     Ok(ParsedHeader {
         format,
         elements,
+        texture,
         data,
     })
+}
+
+/// Collect what a `comment` (or `obj_info`) line says about a texture.
+///
+/// Comments are free text and every other line here is ignored, so this only
+/// records the two keys it knows. The keyword match is case-insensitive because
+/// the convention itself is: `CloudCompare`'s source notes that `MeshLab` only
+/// accepts the CamelCase spelling, which is what this writer emits, while other
+/// tools write `texturefile`.
+fn read_comment(line: &str, texture: &mut TextureComments) {
+    // `comment TextureFile name.png` — the keyword is the second token.
+    let mut tokens = line.split_whitespace();
+    let _ = tokens.next();
+    let Some(keyword) = tokens.next() else {
+        return;
+    };
+    let rest = line
+        .split_once(char::is_whitespace)
+        .map(|(_, rest)| rest.trim_start())
+        .and_then(|rest| rest.split_once(char::is_whitespace).map(|(_, tail)| tail))
+        .unwrap_or_default();
+    if keyword.eq_ignore_ascii_case("texturefile") {
+        // A quoted name is the name: `comment TextureFile "atlas file.png"`.
+        let name = rest.trim().trim_matches('"').trim();
+        if !name.is_empty() {
+            texture.file = Some(name.to_owned());
+        }
+    } else if keyword == "OccluViewTextureFormat" {
+        let name = rest.trim();
+        if !name.is_empty() {
+            texture.format = Some(name.to_ascii_lowercase());
+        }
+    } else if keyword == "OccluViewTextureBase64" {
+        // One image spans many lines; the chunks are concatenated in the order
+        // the header lists them.
+        texture
+            .encoded
+            .get_or_insert_with(String::new)
+            .push_str(rest.trim());
+    }
 }
 
 /// Parse the `format <kind> <version>` line's kind token.

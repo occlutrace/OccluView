@@ -5,6 +5,33 @@ use crate::units::UnitInterpretation;
 use glam::Affine3A;
 use std::sync::Arc;
 
+/// What a layer's per-vertex display overlay means.
+///
+/// The overlay is one RGBA array either way, and the renderer has to branch on
+/// what it is: a measured map states a value the operator reads against a
+/// legend, while paint states a colour drawn over the surface's own material.
+/// Treating paint as a measurement (which the renderer did while the brush
+/// preview and the deviation map shared one meaning) dropped the tint and the
+/// texture, so the marked scan read as a pale glossy shell.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OverlayKind {
+    /// A measured colour map: the RGB is the reading, drawn opaque, with the
+    /// tint skipped so the ramp reaches the screen at its own hue.
+    #[default]
+    Measured,
+    /// Paint over the surface's own material: the RGB is the paint colour and
+    /// the alpha is the weight, so alpha 0 leaves the scan exactly as it
+    /// renders — own colour, texture and lighting included.
+    Paint,
+}
+
+/// One layer's per-vertex display overlay, with what its colours mean.
+#[derive(Clone, Debug)]
+struct MeshOverlay {
+    kind: OverlayKind,
+    colors: Arc<Vec<[u8; 4]>>,
+}
+
 /// Per-instance mesh entry in a scene.
 // Five INDEPENDENT display toggles (visibility, wireframe, orientation
 // diagnostic, vertex-color override, texture visibility) — orthogonal settings, not a
@@ -44,13 +71,14 @@ pub struct SceneMesh {
     /// colors so Tint can show a neutral material without destroying texture
     /// data or changing export behavior.
     pub show_texture: bool,
-    /// Optional per-vertex deviation colors, one entry per mesh vertex.
+    /// Optional per-vertex overlay colours, one entry per mesh vertex, with
+    /// what they mean ([`OverlayKind`]).
     ///
-    /// A **display overlay**, not mesh data: the renderer paints these instead
-    /// of the scan's own colors, unlit, while `mesh` keeps every original
-    /// color and texture. Hiding the map is therefore free, and an export is
-    /// unaffected by whether a map happens to be on screen.
-    deviation: Option<Arc<Vec<[u8; 4]>>>,
+    /// A **display overlay**, not mesh data: the renderer draws it over the
+    /// scan while `mesh` keeps every original colour and texture. Hiding it is
+    /// therefore free, and an export is unaffected by whether one happens to
+    /// be on screen.
+    overlay: Option<MeshOverlay>,
     /// Stable identity of the imported layer this entry was derived from.
     /// `None` means that this entry is itself a source layer. Structural
     /// operations use this identity to preserve export provenance when a
@@ -82,7 +110,7 @@ impl SceneMesh {
             show_orientation: false,
             show_vertex_colors: true,
             show_texture,
-            deviation: None,
+            overlay: None,
             source_layer_id: None,
             import_units: UnitInterpretation::assumed_millimeters(),
         }
@@ -105,28 +133,41 @@ impl SceneMesh {
         self.import_units
     }
 
-    /// Attach or clear the deviation color overlay.
+    /// Attach or clear an overlay in place, naming what its colours mean.
+    ///
+    /// Use this setter for repeated colour changes to avoid cloning the layer
+    /// metadata through [`Self::with_overlay`].
+    #[inline]
+    pub fn set_overlay(&mut self, kind: OverlayKind, colors: Option<Arc<Vec<[u8; 4]>>>) {
+        self.overlay = colors.map(|colors| MeshOverlay { kind, colors });
+    }
+
+    /// Attach or clear an overlay, naming what its colours mean.
     #[inline]
     #[must_use]
-    pub fn with_deviation(mut self, deviation: Option<Arc<Vec<[u8; 4]>>>) -> Self {
-        self.deviation = deviation;
+    pub fn with_overlay(mut self, kind: OverlayKind, colors: Option<Arc<Vec<[u8; 4]>>>) -> Self {
+        self.set_overlay(kind, colors);
         self
     }
 
-    /// Attach or clear the deviation color overlay in place.
-    ///
-    /// Use this setter for repeated color-scale changes to avoid cloning the
-    /// layer metadata through [`Self::with_deviation`].
+    /// Drop the display overlay, whatever kind it is.
     #[inline]
-    pub fn set_deviation(&mut self, deviation: Option<Arc<Vec<[u8; 4]>>>) {
-        self.deviation = deviation;
+    pub fn clear_overlay(&mut self) {
+        self.overlay = None;
     }
 
-    /// The deviation color overlay, if this layer carries one.
+    /// The per-vertex overlay colours, if this layer carries an overlay.
     #[inline]
     #[must_use]
-    pub fn deviation_colors(&self) -> Option<&Arc<Vec<[u8; 4]>>> {
-        self.deviation.as_ref()
+    pub fn overlay_colors(&self) -> Option<&Arc<Vec<[u8; 4]>>> {
+        self.overlay.as_ref().map(|overlay| &overlay.colors)
+    }
+
+    /// What the overlay colours mean, or nothing when there is no overlay.
+    #[inline]
+    #[must_use]
+    pub fn overlay_kind(&self) -> Option<OverlayKind> {
+        self.overlay.as_ref().map(|overlay| overlay.kind)
     }
 
     /// Stable identity for this scene layer.
@@ -229,7 +270,7 @@ impl SceneMesh {
             // Dropped deliberately: the overlay is indexed by the old
             // vertices, so carrying it onto new geometry would paint whichever
             // vertices happened to inherit those indices.
-            deviation: None,
+            overlay: None,
             source_layer_id: self.source_layer_id,
             // Kept deliberately: same layer, same file provenance.
             import_units: self.import_units,

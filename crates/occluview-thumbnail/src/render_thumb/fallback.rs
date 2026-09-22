@@ -37,6 +37,8 @@ pub(super) fn placeholder_kind_for_error(error: &ThumbnailError) -> PlaceholderK
             FormatError::Unsupported { .. }
             | FormatError::Deferred { .. }
             | FormatError::UnsafePath { .. }
+            // Too large is a policy refusal: the file itself is intact.
+            | FormatError::TooLarge { .. }
             | FormatError::Io(_) => PlaceholderKind::Plain,
         },
         ThumbnailError::Render(_) => PlaceholderKind::Plain,

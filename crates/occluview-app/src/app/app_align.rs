@@ -9,6 +9,7 @@ use glam::{Affine3A, DVec3, Vec3, Vec3A};
 use occluview_align::Rigid;
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
+use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
 use crate::align_geometry::transform_key;
 use crate::align_markings::AlignSide;
@@ -105,6 +106,10 @@ impl OccluViewApp {
                 // be handed to the next pair and exclude an arbitrary region of
                 // a different scan, with nothing on screen to say so.
                 self.clear_align_mask();
+                // A target that named this layer would keep the next pair
+                // narrowed to one scan with the Mesh selection row hidden,
+                // because that row is only drawn while both roles are named.
+                self.tools.align.brush.reset_target();
                 // The rejection list indexes pairs by position. The pairs are
                 // gone, so a freshly placed first pair would inherit the red of
                 // whatever the last fit rejected, with no fit having run.
@@ -190,7 +195,7 @@ impl OccluViewApp {
         self.tools.align.rejected.clear();
         self.tools.align.session_poses.clear();
         self.tools.align.brush.set_armed(false);
-        self.tools.align.brush.reset_target_side();
+        self.tools.align.brush.reset_target();
         // A session that ended on Manually used to re-open there, with the tab
         // the operator last left rather than the one the tool starts in. The
         // drag constraint is the same class of leak and worse to diagnose: an
@@ -498,7 +503,13 @@ impl OccluViewApp {
             self.tools.align.refined_match_ready = false;
             self.tools.align.settings.show_deviation = false;
             self.tools.align.stats = None;
-            self.clear_deviation_overlay();
+            // Only a heatmap is the previous fit's picture. With the brush
+            // armed, the attached overlay is the markings' preview, and they
+            // are still in force: dropping it there hid the exclusion regions
+            // the job was about to be built from.
+            if self.tools.align.overlay == AlignOverlay::Map {
+                self.clear_deviation_overlay();
+            }
         }
         if stale {
             self.tools.align.status = Some(self.ui.locale.tr("align-markings-dropped"));

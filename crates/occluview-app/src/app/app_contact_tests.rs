@@ -125,8 +125,11 @@ fn an_answer_measured_before_the_scan_moved_is_not_applied() {
     assert!(app.tools.contacts.fields().is_empty());
 }
 
+/// A worker that could not start is not kept: the next reading gets a new
+/// thread. Keeping it would turn one failed `spawn` into a session where
+/// contacts never work again and the only cure is a restart.
 #[test]
-fn a_reading_with_no_executor_reports_a_failure_instead_of_measuring_forever() {
+fn a_reading_replaces_a_worker_that_could_not_start() {
     let mut app = test_app("contact-no-executor");
     let (scene, first, _second, _third) = three_layer_scene();
     app.document.scene = Some(Arc::new(scene));
@@ -137,31 +140,92 @@ fn a_reading_with_no_executor_reports_a_failure_instead_of_measuring_forever() {
     assert!(open_contacts_on(&mut app, first));
 
     assert!(
+        app.tools
+            .contacts
+            .worker()
+            .is_some_and(|worker| !worker.has_failed()),
+        "the reading must reach a worker that can run"
+    );
+    assert!(
+        app.tools.contacts.pending_request().is_some(),
+        "and the measurement it submitted must be waiting, not abandoned"
+    );
+}
+
+#[test]
+fn a_worker_that_dies_with_a_job_in_flight_releases_the_reading() {
+    let mut app = test_app("contact-worker-died");
+    let ctx = app.ui.repaint_ctx.clone();
+    let (scene, first, _second, _third) = three_layer_scene();
+    app.document.scene = Some(Arc::new(scene));
+    app.tools
+        .contacts
+        .install_worker_for_tests(ContactWorker::spawn_panicking());
+
+    assert!(open_contacts_on(&mut app, first));
+    let keys = pending(&app).keys;
+
+    let mut waited = Duration::ZERO;
+    while app.tools.contacts.is_busy() && waited < Duration::from_secs(10) {
+        app.drain_contacts_worker(&ctx);
+        std::thread::sleep(Duration::from_millis(5));
+        waited += Duration::from_millis(5);
+    }
+
+    assert!(
         !app.tools.contacts.is_busy(),
-        "nothing is running, so the panel must not say a reading is"
+        "the bar must stop spinning when its worker is gone"
     );
     assert_eq!(
         app.tools.contacts.status(),
         Some(crate::contact::ContactStatus::Failed(
             ContactFailure::Worker
         )),
-        "a reading with no executor has failed, not started"
-    );
-    assert!(
-        app.tools.contacts.pending_request().is_none(),
-        "and there is no request to wait for"
+        "and it must say the reading failed"
     );
     assert!(
         app.tools.contacts.refused(),
-        "the operator is offered the retry a refusal earns"
+        "with the retry a refusal earns, instead of an endless spinner"
     );
-
-    let scene = app.document.scene.clone().expect("scene");
-    let pair = app.tools.contacts.pair().expect("an open reading");
-    let keys = crate::contact::contact_job_keys(&scene, pair, false).expect("a pair");
     assert!(
         !app.tools.contacts.needs_measurement(keys),
-        "a worker that cannot run must not be retried every frame"
+        "a dead worker must not be retried every frame"
+    );
+}
+
+/// "Read again" has to actually read again. The worker that died cannot run a
+/// new job, so the retry must reach a fresh one; offering a button that only
+/// re-reports the same failure is worse than offering nothing.
+#[test]
+fn read_again_after_a_worker_death_reaches_a_new_worker() {
+    let mut app = test_app("contact-retry-after-death");
+    let ctx = app.ui.repaint_ctx.clone();
+    let (scene, first, _second, _third) = three_layer_scene();
+    app.document.scene = Some(Arc::new(scene));
+    app.tools
+        .contacts
+        .install_worker_for_tests(ContactWorker::spawn_panicking());
+
+    assert!(open_contacts_on(&mut app, first));
+    let mut waited = Duration::ZERO;
+    while app.tools.contacts.is_busy() && waited < Duration::from_secs(10) {
+        app.drain_contacts_worker(&ctx);
+        std::thread::sleep(Duration::from_millis(5));
+        waited += Duration::from_millis(5);
+    }
+    assert!(app.tools.contacts.refused(), "the death is reported");
+
+    // The retry chip's action, as the bar wires it.
+    app.tools.contacts.forget_failure();
+    app.submit_contacts_job();
+
+    assert!(
+        app.tools.contacts.pending_request().is_some(),
+        "the retry must reach a worker that can run it"
+    );
+    assert!(
+        !app.tools.contacts.refused(),
+        "and it must not report the old worker's failure again"
     );
 }
 

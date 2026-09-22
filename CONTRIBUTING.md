@@ -73,3 +73,32 @@ section matching the tag, and an untagged section publishes nothing.
 Bump the workspace version, update `CHANGELOG.md`, and tag `vX.Y.Z`. The release
 workflow builds and verifies the distributable packages. Signing-key rotation is
 described in `SECURITY.md`.
+
+Two checks are local and cannot run in CI, because CI has no patient scans and
+no Explorer session. Both fail rather than skip: a gate that passes without
+checking anything is worse than no gate.
+
+```sh
+OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus scripts/release-check.sh
+```
+
+1. **The private scan corpus.** Alignment acceptance is defined on real scans
+   (0.05 mm residual, 85% measured, 90% inside the clinical band), and real
+   scans are patient data that stay off GitHub. The gate writes
+   `dist/private-acceptance.json`: which corpus was used (by fingerprint, never
+   by name), which revision, and what it proved. Without
+   `OCCLUVIEW_ALIGN_FIXTURES` it exits 2 and the release stops.
+
+2. **The shipped Explorer shell revision.** The MSI builds
+   `occluview_shell.dll` from the revision in `install/shell-pin.json` while the
+   viewer builds from the tagged tree. The pin is deliberate (Explorer loads the
+   DLL in its own process), so the release states it in
+   `dist/occluview-shell-revision.json`: the revision, its tag, and every commit
+   since that touched a crate the shell links.
+
+   Read that list before tagging. A fix that matters to Explorer — a parser, a
+   thumbnail, or a COM defect — has to be cherry-picked onto the pinned
+   revision, and the pin moves to that new commit. The pin never moves to a
+   revision that has not been exercised in Explorer, and it retires when the
+   shell built from the current tree has been through the thumbnail,
+   preview-pane, file-association and uninstall paths on a real machine.

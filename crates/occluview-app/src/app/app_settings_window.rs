@@ -27,6 +27,10 @@ impl OccluViewApp {
                 self.persistence.settings.fallback_export_format = format;
                 self.persistence.settings_persistence.mark_dirty();
             }
+            SettingsAction::SetKeepSourceExportFormat(keep) => {
+                self.persistence.settings.keep_source_export_format = keep;
+                self.persistence.settings_persistence.mark_dirty();
+            }
             SettingsAction::SetRememberExportDir(remember) => {
                 self.persistence
                     .settings
