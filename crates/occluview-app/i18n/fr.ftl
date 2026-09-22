@@ -754,6 +754,7 @@ settings-save-format-source-hint = Un scan ouvert en STL est enregistré en STL,
 settings-save-format-always = Format choisi
 settings-save-format-always-hint = Chaque scan est enregistré dans le format choisi ci-dessous, sauf si la géométrie ne peut pas y être écrite.
 settings-save-format-source-note = Chaque scan garde son propre format. Un format non inscriptible est enregistré en { $format } — le format choisi dans l'autre mode.
+settings-save-format-scene-note = Une scène entière enregistrée en un seul fichier utilise toujours { $format }.
 settings-export-format = Format d’export de repli
 settings-export-format-hint = Utilisé pour un scan dont le format propre ne peut pas être écrit, ou si l'option ci-dessus est désactivée
 settings-remember-export = Mémoriser le dossier d’export

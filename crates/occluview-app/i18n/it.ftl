@@ -754,6 +754,7 @@ settings-save-format-source-hint = Una scansione aperta come STL viene salvata c
 settings-save-format-always = Formato scelto
 settings-save-format-always-hint = Ogni scansione viene salvata nel formato scelto sotto, se la geometria può esservi scritta.
 settings-save-format-source-note = Ogni scansione mantiene il formato proprio. Un formato non scrivibile viene salvato come { $format }: il formato scelto nell'altro modo.
+settings-save-format-scene-note = Una scena intera salvata come un unico file usa sempre { $format }.
 settings-export-format = Formato di export di riserva
 settings-export-format-hint = Usato per uno scan il cui formato proprio non è scrivibile, o se l'opzione sopra è disattivata
 settings-remember-export = Ricorda la cartella di export

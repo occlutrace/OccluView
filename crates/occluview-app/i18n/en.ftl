@@ -759,6 +759,7 @@ settings-save-format-source-hint = A scan opened as STL is saved as STL, a scan 
 settings-save-format-always = Chosen format
 settings-save-format-always-hint = Every scan is saved in the format you pick below, unless its geometry cannot be written in it.
 settings-save-format-source-note = Each scan keeps the format it was opened in. A scan opened from a format the viewer cannot write is saved as { $format } — the format chosen in the other mode.
+settings-save-format-scene-note = A whole scene saved as one file always uses { $format }.
 settings-export-format = Fallback export format
 settings-export-format-hint = Used for a scan whose own format cannot be written, or when the switch above is off
 settings-remember-export = Remember export folder

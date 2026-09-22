@@ -405,6 +405,14 @@ fn save_format_rows(
             .size(10.5)
             .color(ui_theme::text_muted()),
         );
+        ui.label(
+            egui::RichText::new(locale.tr_with(
+                "settings-save-format-scene-note",
+                &[("format", settings.fallback_export_format.label())],
+            ))
+            .size(10.5)
+            .color(ui_theme::text_muted()),
+        );
         return;
     }
     export_format_row(ui, settings, locale, action);

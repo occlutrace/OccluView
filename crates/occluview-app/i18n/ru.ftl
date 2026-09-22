@@ -863,6 +863,7 @@ settings-save-format-source-hint = Скан, открытый как STL, сох
 settings-save-format-always = Выбранный формат
 settings-save-format-always-hint = Все сканы сохраняются в формате, выбранном ниже, если геометрию можно в него записать.
 settings-save-format-source-note = Каждый скан сохраняется в том формате, в котором был открыт. Скан из формата, который программа не умеет записывать, сохраняется как { $format } — формат, выбранный в другом режиме.
+settings-save-format-scene-note = Сцена, сохраняемая одним файлом, всегда использует { $format }.
 settings-export-format = Запасной формат экспорта
 settings-export-format-hint = Применяется к скану, чей собственный формат нельзя записать, или когда переключатель выше выключен
 settings-remember-export = Запоминать папку экспорта

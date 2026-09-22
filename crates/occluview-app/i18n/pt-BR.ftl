@@ -756,6 +756,7 @@ settings-save-format-source-hint = Uma digitalização aberta como STL é salva 
 settings-save-format-always = Formato escolhido
 settings-save-format-always-hint = Toda digitalização é salva no formato escolhido abaixo, salvo se a geometria não puder ser gravada nele.
 settings-save-format-source-note = Cada digitalização mantém o formato próprio. Um formato não gravável é salvo como { $format } — o formato escolhido no outro modo.
+settings-save-format-scene-note = Uma cena inteira salva como um único arquivo usa sempre { $format }.
 settings-export-format = Formato de exportação alternativo
 settings-export-format-hint = Usado para um scan cujo formato próprio não pode ser gravado, ou quando a opção acima está desligada
 settings-remember-export = Lembrar pasta de exportação
