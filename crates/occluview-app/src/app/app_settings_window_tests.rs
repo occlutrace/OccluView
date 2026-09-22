@@ -46,11 +46,31 @@ fn run_toolbar_frame_in(
     run_toolbar_frame_at(ctx, events, locale, test_screen())
 }
 
+/// The same frame with the settings the test wants to read.
+fn run_toolbar_frame_with_settings(
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    settings: &Settings,
+) -> anyhow::Result<ToolbarFrame> {
+    let locale = crate::i18n::LocaleManager::for_tests();
+    run_toolbar_frame_at_with_settings(ctx, events, &locale, test_screen(), settings)
+}
+
 fn run_toolbar_frame_at(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
     locale: &crate::i18n::LocaleManager,
     screen: egui::Rect,
+) -> anyhow::Result<ToolbarFrame> {
+    run_toolbar_frame_at_with_settings(ctx, events, locale, screen, &Settings::default())
+}
+
+fn run_toolbar_frame_at_with_settings(
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    locale: &crate::i18n::LocaleManager,
+    screen: egui::Rect,
+    settings: &Settings,
 ) -> anyhow::Result<ToolbarFrame> {
     let input = egui::RawInput {
         screen_rect: Some(screen),
@@ -61,6 +81,7 @@ fn run_toolbar_frame_at(
     let mut action = None;
     let mut settings_trigger = None;
     let mut recent_trigger = None;
+    let settings_for_frame = settings.clone();
     let mut recent = RecentFiles::new(1);
     recent.push("case.stl");
     let mut output = ctx.run_ui(input, |ui| {
@@ -72,7 +93,7 @@ fn run_toolbar_frame_at(
                     settings_trigger = Some(settings.rect);
                     action = show_settings_popup(
                         &settings,
-                        &Settings::default(),
+                        &settings_for_frame,
                         locale,
                         &UpdateCheckStatus::Idle,
                         None,
@@ -270,23 +291,45 @@ fn responsive_information_modal_frame(
     popup_rect(ctx, id)
 }
 
+/// The format chips are part of one answer, not a second setting. In the mode
+/// where each scan keeps its own format there is nothing to choose, so no chip
+/// is offered; in the other mode the chips are the setting. Rendering both
+/// modes and reading the painted text is what pins that, without depending on
+/// egui's hit-testing to click a chip.
 #[test]
-fn settings_segment_selects_direct_stl_without_closing() -> anyhow::Result<()> {
+fn settings_format_chips_appear_only_in_the_chosen_format_mode() -> anyhow::Result<()> {
     let ctx = egui::Context::default();
     let initial = run_toolbar_frame(&ctx, Vec::new())?;
     let _ = click(&ctx, initial.settings_trigger.center())?;
-    let visible = run_toolbar_frame(&ctx, Vec::new())?;
-    let stl = direct_control_center(&visible.output, "STL")?;
 
-    let response = click(&ctx, stl)?;
-
-    assert_eq!(
-        response.action,
-        Some(SettingsAction::SetExportFormat(
-            crate::app_settings::FallbackExportFormat::Stl
-        ))
+    // Default: "its own format" is in force, and the format question is not
+    // on screen at all.
+    let own_mode = run_toolbar_frame(&ctx, Vec::new())?;
+    assert!(
+        direct_control_center(&own_mode.output, "Its own format").is_ok(),
+        "the mode in force must be visible"
     );
-    assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
+    assert!(
+        direct_control_center(&own_mode.output, "STL").is_err(),
+        "no format chip may be offered while each scan keeps its own format"
+    );
+
+    // The other mode: the chips are on screen.
+    let chosen_mode = Settings {
+        keep_source_export_format: false,
+        ..Settings::default()
+    };
+    let chosen = run_toolbar_frame_with_settings(&ctx, Vec::new(), &chosen_mode)?;
+    assert!(
+        direct_control_center(&chosen.output, "Chosen format").is_ok(),
+        "the mode in force must be visible in this mode too"
+    );
+    for label in ["PLY", "STL", "OBJ"] {
+        assert!(
+            direct_control_center(&chosen.output, label).is_ok(),
+            "the chosen mode must offer {label}"
+        );
+    }
     Ok(())
 }
 

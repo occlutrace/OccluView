@@ -746,10 +746,15 @@ align-session-kept = Alignement gardé — exporter le scan pour l’écrire
 
 settings-header = Réglages
 settings-section-files = Fichiers et export
+settings-save-format = Lors de l'enregistrement
+settings-save-format-hint = Ce qu'écrit « Enregistrer la couche ». Un seul mode s'applique : celui choisi ici, pas le format ci-dessous.
+settings-save-format-source = Son propre format
+settings-save-format-source-hint = Un scan ouvert en STL est enregistré en STL, un scan ouvert en PLY en PLY ; un format sans écrivain donne un PLY.
+settings-save-format-always = Format choisi
+settings-save-format-always-hint = Chaque scan est enregistré dans le format choisi ci-dessous, sauf si la géométrie ne peut pas y être écrite.
+settings-save-format-source-note = Chaque scan garde le format dans lequel il a été ouvert. Un format non inscriptible est enregistré en PLY.
 settings-export-format = Format d’export de repli
 settings-export-format-hint = Utilisé pour un scan dont le format propre ne peut pas être écrit, ou si l'option ci-dessus est désactivée
-settings-keep-source-format = Conserver le format propre de chaque scan
-settings-keep-source-format-hint = Un scan ouvert en STL est enregistré en STL, même si un autre format est choisi ci-dessous
 settings-remember-export = Mémoriser le dossier d’export
 settings-remember-export-hint = Même dossier après redémarrage
 settings-section-scene = Vue et navigation

@@ -749,10 +749,15 @@ scene-positions-reset = Layer positions reset (Ctrl+Z undoes)
 
 settings-header = Settings
 settings-section-files = Files & export
+settings-save-format = When saving a scan
+settings-save-format-hint = What Save layer writes. One of these applies: the mode you pick decides, not the format chips below.
+settings-save-format-source = Its own format
+settings-save-format-source-hint = A scan opened as STL is saved as STL, a scan opened as PLY as PLY, and a scan opened from a format with no writer is saved as PLY.
+settings-save-format-always = Chosen format
+settings-save-format-always-hint = Every scan is saved in the format you pick below, unless its geometry cannot be written in it.
+settings-save-format-source-note = Each scan keeps the format it was opened in. A scan opened from a format the viewer cannot write is saved as PLY.
 settings-export-format = Fallback export format
 settings-export-format-hint = Used for a scan whose own format cannot be written, or when the switch above is off
-settings-keep-source-format = Keep each scan's own format
-settings-keep-source-format-hint = A scan opened as STL is saved as STL, even when the fallback below is set differently
 settings-remember-export = Remember export folder
 settings-remember-export-hint = Use the same folder after restarting OccluView
 settings-section-scene = View & navigation

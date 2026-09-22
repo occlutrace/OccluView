@@ -140,28 +140,13 @@ pub(super) fn show_settings_popup(
 
                     section_break(ui);
                     section_label(ui, &locale.tr("settings-section-files"));
-                    // The decision first, then the format it falls back to:
-                    // each hint refers to the other row by position, so the
-                    // order here is part of what they say.
-                    let mut keep_source = settings.keep_source_export_format;
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ROW_HEIGHT),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .checkbox(
-                                    &mut keep_source,
-                                    locale.tr("settings-keep-source-format"),
-                                )
-                                .on_hover_text(locale.tr("settings-keep-source-format-hint"))
-                                .changed()
-                            {
-                                action =
-                                    Some(SettingsAction::SetKeepSourceExportFormat(keep_source));
-                            }
-                        },
-                    );
-                    export_format_row(ui, settings, locale, &mut action);
+                    // One question with two answers, not a switch plus a
+                    // format that looks unconditional: "keep each scan's own
+                    // format" beside an always-visible PLY chip read as though
+                    // both applied, and the operator could not tell which one
+                    // won. The chosen mode says what happens; the format only
+                    // appears in the mode that uses it.
+                    save_format_rows(ui, settings, locale, &mut action);
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -372,6 +357,53 @@ fn section_break(ui: &mut egui::Ui) {
     ui.add_space(3.0);
     ui.separator();
     ui.add_space(4.0);
+}
+
+/// The export-format question: one mode, and the format only where it applies.
+fn save_format_rows(
+    ui: &mut egui::Ui,
+    settings: &Settings,
+    locale: &LocaleManager,
+    action: &mut Option<SettingsAction>,
+) {
+    let keep_source = settings.keep_source_export_format;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(locale.tr("settings-save-format"))
+                .on_hover_text(locale.tr("settings-save-format-hint"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                for (keeps, key) in [
+                    (false, "settings-save-format-always"),
+                    (true, "settings-save-format-source"),
+                ] {
+                    if ui
+                        .selectable_label(keep_source == keeps, locale.tr(key))
+                        .on_hover_text(locale.tr(if keeps {
+                            "settings-save-format-source-hint"
+                        } else {
+                            "settings-save-format-always-hint"
+                        }))
+                        .clicked()
+                    {
+                        *action = Some(SettingsAction::SetKeepSourceExportFormat(keeps));
+                    }
+                }
+            });
+        },
+    );
+    if keep_source {
+        // The mode that has nothing to choose: say what it does instead of
+        // showing chips that would not be read.
+        ui.label(
+            egui::RichText::new(locale.tr("settings-save-format-source-note"))
+                .size(10.5)
+                .color(ui_theme::text_muted()),
+        );
+        return;
+    }
+    export_format_row(ui, settings, locale, action);
 }
 
 fn export_format_row(

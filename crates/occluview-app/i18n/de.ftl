@@ -763,10 +763,15 @@ scene-positions-reset = Ebenenpositionen zurückgesetzt (Strg+Z macht rückgäng
 
 settings-header = Einstellungen
 settings-section-files = Dateien & Export
+settings-save-format = Beim Speichern eines Scans
+settings-save-format-hint = Was „Ebene speichern“ schreibt. Es gilt genau ein Modus: der hier gewählte, nicht das Format darunter.
+settings-save-format-source = Eigenes Format
+settings-save-format-source-hint = Ein als STL geöffneter Scan wird als STL gespeichert, ein als PLY geöffneter als PLY; ein Format ohne Writer wird als PLY gespeichert.
+settings-save-format-always = Gewähltes Format
+settings-save-format-always-hint = Jeder Scan wird im unten gewählten Format gespeichert, sofern die Geometrie hineinpasst.
+settings-save-format-source-note = Jeder Scan behält sein eigenes Format. Ein Scan aus einem nicht schreibbaren Format wird als PLY gespeichert.
 settings-export-format = Fallback-Exportformat
 settings-export-format-hint = Gilt für Scans, deren eigenes Format nicht geschrieben werden kann, oder wenn der Schalter oben aus ist
-settings-keep-source-format = Eigenes Format jedes Scans behalten
-settings-keep-source-format-hint = Ein als STL geöffneter Scan wird als STL gespeichert, auch wenn unten ein anderes Format gewählt ist
 settings-remember-export = Exportordner merken
 settings-remember-export-hint = Gleichen Ordner nach Neustart verwenden
 settings-section-scene = Ansicht & Navigation

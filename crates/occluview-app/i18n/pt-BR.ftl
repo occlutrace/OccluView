@@ -748,10 +748,15 @@ align-session-kept = Alinhamento mantido — exporte para gravar
 
 settings-header = Ajustes
 settings-section-files = Arquivos e exportação
+settings-save-format = Ao salvar uma digitalização
+settings-save-format-hint = O que «Salvar camada» grava. Vale um modo só: o escolhido aqui, não o formato abaixo.
+settings-save-format-source = Formato próprio
+settings-save-format-source-hint = Uma digitalização aberta como STL é salva como STL, uma aberta como PLY como PLY; um formato sem escritor é salvo como PLY.
+settings-save-format-always = Formato escolhido
+settings-save-format-always-hint = Toda digitalização é salva no formato escolhido abaixo, salvo se a geometria não puder ser gravada nele.
+settings-save-format-source-note = Cada digitalização mantém o formato em que foi aberta. Um formato não gravável é salvo como PLY.
 settings-export-format = Formato de exportação alternativo
 settings-export-format-hint = Usado para um scan cujo formato próprio não pode ser gravado, ou quando a opção acima está desligada
-settings-keep-source-format = Manter o formato próprio de cada scan
-settings-keep-source-format-hint = Um scan aberto como STL é salvo como STL, mesmo que outro formato esteja escolhido abaixo
 settings-remember-export = Lembrar pasta de exportação
 settings-remember-export-hint = Mesma pasta após reiniciar
 settings-section-scene = Visualização e navegação

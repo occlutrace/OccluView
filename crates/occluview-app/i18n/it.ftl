@@ -746,10 +746,15 @@ align-session-kept = Allineamento tenuto — esporta la scansione per scriverlo
 
 settings-header = Impostazioni
 settings-section-files = File ed esportazione
+settings-save-format = Salvando una scansione
+settings-save-format-hint = Cosa scrive «Salva livello». Vale un solo modo: quello scelto qui, non il formato sotto.
+settings-save-format-source = Formato proprio
+settings-save-format-source-hint = Una scansione aperta come STL viene salvata come STL, una aperta come PLY come PLY; un formato senza scrittore diventa PLY.
+settings-save-format-always = Formato scelto
+settings-save-format-always-hint = Ogni scansione viene salvata nel formato scelto sotto, se la geometria può esservi scritta.
+settings-save-format-source-note = Ogni scansione mantiene il formato con cui è stata aperta. Un formato non scrivibile viene salvato come PLY.
 settings-export-format = Formato di export di riserva
 settings-export-format-hint = Usato per uno scan il cui formato proprio non è scrivibile, o se l'opzione sopra è disattivata
-settings-keep-source-format = Mantieni il formato proprio di ogni scan
-settings-keep-source-format-hint = Uno scan aperto come STL viene salvato come STL, anche se sotto è scelto un altro formato
 settings-remember-export = Ricorda la cartella di export
 settings-remember-export-hint = Stessa cartella dopo il riavvio
 settings-section-scene = Vista e navigazione
