@@ -46,7 +46,9 @@ delta_file="$(mktemp -t occluview-shell-delta-XXXXXX)"
 trap 'rm -f "$delta_file"' EXIT
 git log --no-merges --pretty=format:'%H %ad %s' --date=short \
   "${revision}..HEAD" -- "${paths[@]}" > "$delta_file" || true
-commits="$(wc -l < "$delta_file" | tr -d ' ')"
+# `git log --pretty=format:` separates rather than terminates, so the last
+# line carries no newline and `wc -l` would report one commit too few.
+commits="$(git rev-list --no-merges --count "${revision}..HEAD" -- "${paths[@]}" 2>/dev/null || echo 0)"
 
 head_revision="$(git rev-parse HEAD)"
 output="${1:-}"

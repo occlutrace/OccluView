@@ -32,7 +32,14 @@ impl<'a> TexturePlan<'a> {
         let candidate = mesh
             .texture()
             .filter(|_| options.include_texture && options.include_uvs)
-            .filter(|_| mesh.kind() == MeshKind::TriangleMesh && mesh.has_uvs());
+            // An image needs face rows to carry its coordinates: without them
+            // the file would hold an atlas nothing can sample and lose the UVs
+            // with no warning. The per-vertex path survives an empty face list.
+            .filter(|_| {
+                mesh.kind() == MeshKind::TriangleMesh
+                    && mesh.has_uvs()
+                    && !mesh.indices().is_empty()
+            });
         let png = candidate.and_then(|texture| super::super::glb_writer::encode_png(texture).ok());
         let encoded = png.as_deref().map(embed::encode);
         // An image that cannot be encoded is not written, and the caller warns

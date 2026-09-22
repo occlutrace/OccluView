@@ -257,11 +257,12 @@ impl OccluViewApp {
             show_texture: entry.show_texture && entry.show_vertex_colors,
             has_color_data: entry.mesh.carries_color_data(),
             has_texture: entry.mesh.texture().is_some(),
-            contacts: self
-                .tools
-                .contacts
-                .pair()
-                .is_some_and(|pair| pair.subject == hit.layer_id),
+            // Both participants wear the marks, so both are where the reading
+            // is: the layer row already offers to close it on either, and the
+            // viewport menu must not disagree with the row beside it.
+            contacts: self.tools.contacts.pair().is_some_and(|pair| {
+                pair.subject == hit.layer_id || pair.antagonist == hit.layer_id
+            }),
             can_read_contacts: crate::contact::can_read_contacts(scene, hit.layer_id),
         })
     }
