@@ -1,9 +1,6 @@
 use super::{owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, SUPPORTED_EXTENSIONS};
 use std::path::Path;
 
-#[path = "shell_contract_tests/thumbnail_request.rs"]
-mod thumbnail_request;
-
 fn canonical_extension(extension: &str) -> &str {
     if extension == "dcm" {
         "hps"

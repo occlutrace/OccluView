@@ -54,3 +54,39 @@ fn a_deviation_overlay_forces_unlit_vertex_colors() {
         "paint must not drop the scan's tint"
     );
 }
+
+/// The offscreen fault latch must be clearable by the retry the UI offers.
+///
+/// This replaces a source-text guard that only checked the words in the
+/// function. The behaviour it protected is the one that matters and had no
+/// other check: on a machine where the offscreen path IS the viewport (a live
+/// viewport that failed to come up), the fault dialog is the only surface the
+/// operator sees, so a retry that cannot clear the latch leaves a blank
+/// viewport for the rest of the session.
+#[test]
+fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
+    let mut app = crate::app::app_test_support::test_app("offscreen-retry-clears-latch");
+    // The state the latch is in on a machine whose offscreen path died.
+    app.render.offscreen_failed = true;
+    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    assert!(
+        !app.offscreen_available(),
+        "a latched path must be unavailable before the retry"
+    );
+
+    let ctx = app.ui.repaint_ctx.clone();
+    app.retry_gpu_after_fault(&ctx);
+
+    assert!(
+        !app.render.offscreen_failed,
+        "the retry must clear the terminal offscreen latch, not leave it set"
+    );
+    assert!(
+        app.render.offscreen_retry_after.is_none(),
+        "and the retry backoff with it, or the next attempt is deferred"
+    );
+    assert!(
+        app.offscreen_available(),
+        "so the offscreen path is usable again"
+    );
+}

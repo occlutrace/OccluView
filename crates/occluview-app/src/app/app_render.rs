@@ -512,7 +512,7 @@ impl OccluViewApp {
     ///
     /// A terminal failure keeps it off; a deferred retry waits out its delay so
     /// a loaded machine cannot be asked to fail on every repaint.
-    fn offscreen_available(&self) -> bool {
+    pub(super) fn offscreen_available(&self) -> bool {
         if self.render.offscreen_failed {
             return false;
         }
