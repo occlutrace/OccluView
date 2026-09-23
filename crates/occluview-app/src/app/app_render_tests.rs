@@ -179,3 +179,102 @@ fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
         "so the offscreen path is usable again"
     );
 }
+
+/// A frame that arrives inside the retry wait must not turn the wait into a
+/// session-long latch.
+///
+/// The wait is exactly the state a frame lands in after a missed deadline, and
+/// the decision the frame makes about its own failure has to be the retryable
+/// one. A frame that classified "the path is not available yet" as an
+/// unclassifiable error latched the path off permanently on the first repaint
+/// after the deadline: the section panel showed a previous plane and, with no
+/// live viewport, the viewport stopped repainting at all. The operator also
+/// must not get a modal per attempt for a failure that is transient by
+/// definition, but must still be told the frame failed.
+#[test]
+fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
+    let mut app = crate::app::app_test_support::test_app("offscreen-retry-wait-no-latch");
+    app.document.scene =
+        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
+        timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
+    });
+    assert!(!app.offscreen_available(), "the retry wait is armed");
+
+    let ctx = egui::Context::default();
+    for frame in 0..3 {
+        app.render.invalidation.request_redraw();
+        assert!(app.render.invalidation.redraw_pending());
+        app.render_now(&ctx);
+
+        assert!(
+            !app.render.offscreen_failed,
+            "frame {frame}: a frame inside the wait must not latch the path off"
+        );
+        assert!(
+            app.render.offscreen_retry_after.is_some(),
+            "frame {frame}: and the retry must stay armed"
+        );
+        assert!(
+            app.ui.app_error.is_none(),
+            "frame {frame}: a transient failure must not bury the viewport in a modal per attempt"
+        );
+        assert!(
+            app.ui.status_message.is_some(),
+            "frame {frame}: the operator is still told the frame failed"
+        );
+        assert!(
+            !app.render.invalidation.redraw_pending(),
+            "frame {frame}: the failed frame consumed its redraw"
+        );
+    }
+
+    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    assert!(
+        app.offscreen_available(),
+        "and the wait still ends on its own, so nothing is latched off"
+    );
+}
+
+/// A terminal offscreen fault must raise a dialog that offers the retry.
+///
+/// On a machine whose offscreen path IS the viewport (a live viewport that
+/// failed to come up) this dialog is the only surface the operator sees. A
+/// dialog that only reports leaves the latch unreachable from the UI, so the
+/// documented recovery is to close the viewer and lose the scene — the same
+/// dead end the latch exists to avoid. The action must be the one the dialog
+/// handler dispatches, too: the button and the recovery are the same thing.
+#[test]
+fn the_graphics_fault_dialog_offers_the_retry_action() {
+    let mut app = crate::app::app_test_support::test_app("graphics-fault-dialog-offers-retry");
+    app.document.scene =
+        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    // The state a terminal graphics fault leaves behind with no live viewport.
+    app.render.offscreen_failed = true;
+    assert!(!app.offscreen_available());
+
+    let ctx = egui::Context::default();
+    app.render_now(&ctx);
+
+    let dialog = app
+        .ui
+        .app_error
+        .as_ref()
+        .expect("a terminal fault with no live viewport must raise the fault dialog");
+    assert_eq!(
+        dialog.action,
+        super::AppErrorAction::RetryGraphics,
+        "the dialogue must offer the retry, or the latch has no way out that keeps the scene"
+    );
+    assert!(
+        !dialog.title.is_empty() && !dialog.summary.is_empty() && !dialog.details.is_empty(),
+        "the dialogue must say what failed, not only offer the button"
+    );
+
+    // What the dialog handler calls when that button is clicked.
+    app.retry_gpu_after_fault(&ctx);
+    assert!(
+        app.offscreen_available(),
+        "so pressing it gives the offscreen path back"
+    );
+}
