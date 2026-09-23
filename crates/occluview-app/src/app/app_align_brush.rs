@@ -591,6 +591,8 @@ fn region_color(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
     use super::region_color;
     use crate::align_brush::{AlignBrush, BrushTarget};
     use crate::align_markings::{MaskCommand, MARKED_OUT_COLOR};
@@ -657,5 +659,117 @@ mod tests {
             assert!(!command.report_one_key().is_empty());
             assert_ne!(command.report_one_key(), command.report_key());
         }
+    }
+
+    /// A stroke takes the map down instead of recomputing it.
+    ///
+    /// Painting changes what would be matched, so a map drawn before the stroke
+    /// describes a comparison that no longer exists. Dropping it is honest;
+    /// silently recomputing behind the operator's hand is not, and measuring per
+    /// dab is most of a second behind a moving hand. The markings themselves are
+    /// the operator's own work and have to survive the map's removal.
+    #[test]
+    fn a_stroke_drops_the_map_instead_of_recomputing_it() {
+        use crate::align_markings::{AlignSide, MarkedMesh};
+        use crate::app::app_align_display::AlignOverlay;
+        use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+        use glam::DVec3;
+        use occluview_align::{MaskEdit, Rigid};
+
+        let mut app = test_app("align-stroke-drops-the-map");
+        let mut scene = named_scene("lower", 0.0);
+        let fixed = scene.meshes()[0].id();
+        let layer = push_named_layer(&mut scene, "upper", 5.0);
+        app.document.scene = Some(scene.into());
+        app.tools.align.brush.set_armed(true);
+        app.tools.align.tool.arm();
+        app.tools.align.tool.imply_pair(&[layer, fixed]);
+        assert!(
+            app.tools.align.tool.can_measure(),
+            "the pair has to be measurable, or a measurement could not be started anyway"
+        );
+        app.tools.align.settings.show_deviation = true;
+        app.tools.align.refined_match_ready = true;
+        assert!(
+            app.attach_overlay_colors(layer, vec![[3, 4, 5, 255]; 3], AlignOverlay::Map),
+            "a map is up before the stroke, or this proves nothing"
+        );
+
+        // One dab is what opens a stroke; the map then describes a comparison
+        // that no longer exists.
+        let entry = app
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()
+            .iter()
+            .find(|entry| entry.id() == layer)
+            .expect("the moving layer")
+            .clone();
+        let positions: Vec<f32> = entry
+            .mesh
+            .vertices()
+            .iter()
+            .flat_map(|vertex| vertex.position)
+            .collect();
+        let marked = MarkedMesh {
+            positions: &positions,
+            pose: Rigid::from_affine(&entry.transform).expect("an identity pose is rigid"),
+            vertex_count: entry.mesh.vertices().len(),
+            geometry: entry.mesh.geometry_id(),
+        };
+        let changed = app.tools.align.markings.dab(
+            AlignSide::Moving,
+            &marked,
+            &MaskEdit {
+                center: DVec3::ZERO,
+                radius_mm: 10.0,
+                erase: false,
+            },
+        );
+        assert!(changed > 0, "the dab has to mark something");
+
+        // The release frame: the pointer is no longer down, so the stroke ends.
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        let mut owned = false;
+        ctx.run_ui(raw, |ui| {
+            let ctx = ui.ctx().clone();
+            let response = ui.allocate_response(ui.available_size(), egui::Sense::click());
+            owned = app.handle_align_brush(&response, &ctx);
+        })
+        .drop_without_applying_deltas();
+
+        assert!(owned, "the armed brush owns the release frame");
+        assert_eq!(
+            app.tools.align.overlay,
+            AlignOverlay::Nothing,
+            "the map drawn before the stroke is gone"
+        );
+        assert!(!app.align_overlay_is_up());
+        assert!(
+            !app.tools.align.settings.show_deviation,
+            "the toggle must not keep claiming a map is visible"
+        );
+        assert!(
+            !app.tools.align.refined_match_ready,
+            "the fit the map described is revoked with it"
+        );
+        assert!(
+            app.tools.align.markings.any(),
+            "the operator's markings survive the map's removal"
+        );
+        assert!(
+            app.tools.align.worker.is_none(),
+            "a stroke must never start a measurement: a worker here would mean \
+             one was submitted"
+        );
     }
 }
