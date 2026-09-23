@@ -14,7 +14,7 @@ use super::OccluViewApp;
 use crate::align_geometry::transform_key;
 use crate::align_markings::AlignSide;
 use crate::align_tool::{AlignPoint, ClickOutcome};
-use crate::align_worker::{AlignJob, AlignJobKind, AlignWorker, MeasureKey, SurfaceKey, WorldPair};
+use crate::align_worker::{AlignJob, AlignJobKind, MeasureKey, SurfaceKey, WorldPair};
 use crate::viewer::pick_scene_hit;
 
 impl OccluViewApp {
@@ -148,9 +148,7 @@ impl OccluViewApp {
                     .map(|entry| (entry.id(), entry.transform))
                     .collect()
             });
-        if self.tools.align.worker.is_none() {
-            self.tools.align.worker = Some(AlignWorker::spawn());
-        }
+        self.align_worker_mut();
         self.imply_align_pair();
         self.tools.align.status = Some(match self.tools.align.tool.moving_layer() {
             Some(_) => self.ui.locale.tr("align-status-two-scans"),
@@ -383,7 +381,10 @@ impl OccluViewApp {
         if !self.align_measure_allowed(kind) {
             return;
         }
-        if self.tools.align.worker.is_none() {
+        // A worker that died is replaced here rather than left to refuse every
+        // job for the rest of the session.
+        let worker_alive = !self.align_worker_mut().has_failed();
+        if !worker_alive {
             return;
         }
         let (Some(moving_id), Some(fixed_id)) = (

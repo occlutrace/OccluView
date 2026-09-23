@@ -7,6 +7,7 @@ use crate::contact_worker::{ContactCompletion, ContactFailure, ContactOutcome, C
 use glam::Vec3;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn slab(x: f32, z: f32) -> Mesh {
     Mesh::new(
@@ -314,5 +315,44 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     assert_ne!(
         resubmitted.id, request.id,
         "and it is a NEW measurement, not the request whose answer was dropped"
+    );
+}
+
+/// The same rule for the Align worker: a dead one is replaced, not latched.
+///
+/// `AlignWorker::submit` refuses every job once its thread has failed, and
+/// nothing used to replace it, so one panic inside the refinement left Align
+/// dead for the rest of the session — the tool armed, the button responded, and
+/// no job ever ran again.
+#[test]
+fn the_align_worker_is_replaced_after_it_dies() {
+    let mut app = test_app("align-worker-respawn");
+    assert!(!app.align_worker_mut().has_failed());
+
+    app.align_worker_mut().poison_queue_for_tests();
+    for _ in 0..200 {
+        if app
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(crate::align_worker::AlignWorker::has_failed)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        app.tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(crate::align_worker::AlignWorker::has_failed),
+        "the worker must actually be marked failed, or this test proves nothing"
+    );
+
+    assert!(
+        !app.align_worker_mut().has_failed(),
+        "asking for the worker again must hand back a live one"
     );
 }

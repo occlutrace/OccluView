@@ -415,6 +415,32 @@ fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String
     (key, String::new(), String::new())
 }
 
+impl OccluViewApp {
+    /// The Align worker, replacing one that has died.
+    ///
+    /// `AlignWorker::submit` refuses every job once the thread has failed, and
+    /// an align worker can fail on a panic inside the refinement. Nothing
+    /// replaced it, so Align stayed dead for the rest of the session: the tool
+    /// armed, the operator pressed Best fit, and no job ever ran again. The
+    /// contact worker already respawns this way; this is the same rule.
+    pub(super) fn align_worker_mut(&mut self) -> &mut AlignWorker {
+        if self
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed)
+        {
+            // Dropping it stops the thread and clears its queue.
+            self.tools.align.worker = None;
+        }
+        self.tools
+            .align
+            .worker
+            .get_or_insert_with(AlignWorker::spawn)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
