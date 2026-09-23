@@ -230,6 +230,12 @@ pub fn dispatch_by_extension_loaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
+    // Several Windows tools put a UTF-8 BOM in front of an otherwise valid
+    // file. Left in place it hides the signature from both the probe and the
+    // reader, so a perfectly good PLY or ASCII STL becomes "not a PLY file"
+    // and an ASCII STL is even misrouted into the binary reader. Stripped
+    // here, once, at the point the bytes enter the format layer.
+    let bytes = strip_utf8_bom(bytes);
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
@@ -474,6 +480,17 @@ pub fn read_files_with_key_provider(
         }
     }
     Ok(scene)
+}
+
+/// The bytes of `bytes` without a leading UTF-8 byte-order mark.
+///
+/// A BOM is metadata, not content: no format here declares it as part of its
+/// signature, and a tool that writes one means the file that follows.
+fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
+    match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        Some(rest) => rest,
+        None => bytes,
+    }
 }
 
 #[cfg(test)]

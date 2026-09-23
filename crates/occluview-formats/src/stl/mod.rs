@@ -37,6 +37,10 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    // A UTF-8 BOM in front of `solid` is metadata a Windows tool added.
+    // Without this `looks_like_ascii` fails, the bytes are treated as a binary
+    // STL, and the length formula reports a malformed file.
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     if ascii::looks_like_ascii(bytes) {
         ascii::read_shaded(bytes, shading)
     } else {

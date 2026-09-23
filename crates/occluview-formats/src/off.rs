@@ -150,17 +150,29 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         reason: "file is not valid UTF-8".to_string(),
     })?;
     let mut lines = text.lines();
-    // First line: OFF (optionally with normals/colors flags). Skip it.
-    let _ = lines.next();
-    // Comment lines start with '#'.
-    let counts_line = lines
-        .by_ref()
-        .find(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
-        .ok_or(FormatError::Truncated {
-            format: "OFF (ascii)",
-            expected: 0,
-            got: 0,
-        })?;
+    // First line: OFF (optionally with normals/colors flags). A writer may put
+    // the three counts on this same keyword line -- `OFF 3 1 0` is as valid as
+    // `OFF` followed by `3 1 0` -- so the rest of the keyword line is the
+    // counts when it carries anything, and only a bare keyword falls through
+    // to the next non-comment line.
+    let first = lines.next().unwrap_or_default();
+    let keyword_tail = first
+        .trim_start()
+        .strip_prefix("OFF")
+        .map(str::trim)
+        .filter(|rest| !rest.is_empty());
+    let counts_line = match keyword_tail {
+        Some(tail) => tail.to_string(),
+        None => lines
+            .by_ref()
+            .find(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+            .ok_or(FormatError::Truncated {
+                format: "OFF (ascii)",
+                expected: 0,
+                got: 0,
+            })?
+            .to_string(),
+    };
     let mut counts = counts_line.split_whitespace();
     let v_count: usize = counts
         .next()
@@ -362,6 +374,32 @@ mod tests {
         // Lie: a tiny file claiming billions is capped to the byte budget so
         // the reservation cannot abort the process.
         assert_eq!(bounded_capacity(4_000_000_000, 24), 24);
+    }
+
+    #[test]
+    fn counts_on_the_keyword_line_are_read_instead_of_an_empty_mesh() {
+        // Several writers put the three counts on the keyword line. Discarding
+        // that line made the reader take the first vertex row as the counts and
+        // return an empty mesh with no error.
+        let text = "OFF 3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        let mesh = read(text.as_bytes()).expect("keyword-line counts must parse");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn a_bare_keyword_line_still_takes_the_counts_from_the_next_line() {
+        let text = "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        let mesh = read(text.as_bytes()).expect("bare keyword must still parse");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn a_comment_between_the_keyword_and_the_counts_is_skipped() {
+        let text = "OFF\n# written by a tool\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        let mesh = read(text.as_bytes()).expect("comment must be skipped");
+        assert_eq!(mesh.triangle_count(), 1);
     }
 
     #[test]

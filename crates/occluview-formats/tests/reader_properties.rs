@@ -130,3 +130,62 @@ proptest! {
         let _ = dispatch_by_extension(extension, &bytes);
     }
 }
+
+/// A UTF-8 BOM is metadata a Windows tool writes in front of an otherwise
+/// valid file. Before this it hid the signature from the probe and from the
+/// reader, so a good PLY became "not a PLY file" and an ASCII STL was
+/// misrouted into the binary reader and reported as malformed.
+mod byte_order_mark {
+    const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+    const PLY: &str = "ply\nformat ascii 1.0\nelement vertex 3\n\
+        property float x\nproperty float y\nproperty float z\n\
+        element face 1\nproperty list uchar int vertex_indices\n\
+        end_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+    const STL: &str = "solid bom\nfacet normal 0 0 1\nouter loop\n\
+        vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid bom\n";
+
+    fn with_bom(text: &str) -> Vec<u8> {
+        let mut bytes = BOM.to_vec();
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    #[test]
+    fn a_bom_prefixed_ply_is_probed_and_read() {
+        let bytes = with_bom(PLY);
+        let kind = occluview_formats::probe::probe(Some("ply"), &bytes)
+            .expect("the probe must see through the BOM");
+        assert_eq!(kind, occluview_formats::probe::FormatKind::Ply);
+        let mesh = occluview_formats::ply::read(&bytes).expect("the reader must too");
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn a_bom_prefixed_ascii_stl_is_read_as_ascii_not_binary() {
+        let bytes = with_bom(STL);
+        let mesh = occluview_formats::stl::read(&bytes).expect("an ASCII STL with a BOM");
+        assert_eq!(
+            mesh.triangle_count(),
+            1,
+            "it must not fall into the binary reader"
+        );
+    }
+
+    #[test]
+    fn a_bom_prefixed_file_still_dispatches_by_extension_when_the_magic_is_silent() {
+        // The one path where the extension decides: a binary STL with a
+        // free-form 80-byte header. A BOM in front must not defeat it.
+        let mut bytes = BOM.to_vec();
+        bytes.extend_from_slice(&[0u8; 80]);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for value in [
+            0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        let mesh = occluview_formats::dispatch_by_extension("stl", &bytes)
+            .expect("a BOM-prefixed binary STL by extension");
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+}
