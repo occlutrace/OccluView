@@ -124,7 +124,7 @@ impl BridgeSplitController {
     pub(crate) fn cancel(&mut self) {
         self.source = None;
         self.session.cancel();
-        self.worker = BridgeSplitWorker::spawn();
+        self.worker.abandon();
     }
 }
 

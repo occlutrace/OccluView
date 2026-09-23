@@ -754,22 +754,27 @@ impl OccluViewApp {
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
-        // DISCARD, not `abandon`: by the time a scene is installed the drag's
-        // pose either belongs to the incoming scene (a load or a mesh-edit
-        // commit that cloned it) or to a scene that is being thrown away. Both
-        // read as a history step against the WRONG scene: `finish_align_drag`
-        // snapshots from whatever scene is installed, so recording here pushed
-        // an entry describing the outgoing scene, and the guard (layer ids only)
-        // never refused it — the first Ctrl+Z showed the edit undone and the
-        // second put it back and rewound the pose.
+        // The drag is ended here, and WHICH form is decided by what happens to
+        // the layer, not by where the code sits. `set_scene` is reached by two
+        // different transitions:
         //
-        // Every path that could still be holding a live drag closes it while the
-        // scene it describes is still installed: `apply_history_navigation_now`
-        // does it before cloning the draft, and the tool teardown paths call
-        // `disarm_align_tool`, which finishes the gesture. What reaches here is a
-        // drag whose geometry is already on its way out, so dropping it is the
-        // only honest thing to do with it.
-        self.discard_align_drag();
+        // - Replace (and the scene-destroying paths): the layer and the pose
+        //   both go. Recording would push a history step describing the
+        //   OUTGOING scene, and the guard never refused it (it matches layer
+        //   ids), so the first Ctrl+Z showed the edit undone and the second put
+        //   it back and rewound the pose. `forget_replaced_scene_state` already
+        //   drops the gesture for this path before the scene is installed.
+        // - Append: the layer SURVIVES into the combined scene, so the pose
+        //   sitting on it is just as real there. Dropping it would leave a scan
+        //   in a pose that no history step describes and no save prompt names.
+        //   It must be committed.
+        //
+        // `abandon_align_drag` is the commit form and is the right default here:
+        // on the Replace path the drag is already `None` (dropped by
+        // `forget_replaced_scene_state`), so it is a no-op, and on the Append
+        // path it records the move. Calling `discard` here instead is what let
+        // an append carry a moved pose forward with nothing recording it.
+        self.abandon_align_drag();
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
