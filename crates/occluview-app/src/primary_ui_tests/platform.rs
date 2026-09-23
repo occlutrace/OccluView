@@ -68,6 +68,34 @@ fn linux_window_identity_value_matches_desktop_metadata() {
     );
 }
 
+/// The identity the window is created with is the one the installed entry
+/// declares, under the name it declares it.
+///
+/// A Wayland compositor matches a window to its launcher entry by app id: when
+/// the two drift, the running viewer appears as a second unnamed icon and loses
+/// its name, icon and file associations. The value is pinned elsewhere; this
+/// checks it against the desktop entry that actually ships, so renaming the
+/// entry or its `StartupWMClass` cannot pass unnoticed.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_window_identity_matches_desktop_metadata() {
+    let path = format!("../../install/linux/{LINUX_DESKTOP_APP_ID}.desktop");
+    let entry = repo_source_file(&path);
+    assert!(
+        !entry.is_empty(),
+        "the installed desktop entry is named after the app id: {path}"
+    );
+    let declared = entry
+        .lines()
+        .find_map(|line| line.strip_prefix("StartupWMClass="));
+    assert_eq!(
+        declared,
+        Some(LINUX_DESKTOP_APP_ID),
+        "the compositor matches the window by app id, so the entry has to \
+         declare the same one the window is created with"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_app_identity_value_matches_shell_registration() {
