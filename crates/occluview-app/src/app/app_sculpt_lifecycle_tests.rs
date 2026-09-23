@@ -141,7 +141,13 @@ fn sculpt_shadow_len(app: &OccluViewApp) -> usize {
         .sculpt
         .worker
         .as_ref()
-        .and_then(|worker| worker.shadow().try_read().ok().map(|vertices| vertices.len()))
+        .and_then(|worker| {
+            worker
+                .shadow()
+                .try_read()
+                .ok()
+                .map(|vertices| vertices.len())
+        })
         .unwrap_or(0)
 }
 
@@ -678,7 +684,10 @@ fn a_same_topology_completion_installs_its_rebuild_before_commit() {
         {
             break;
         }
-        assert!(Instant::now() < deadline, "both completions never committed");
+        assert!(
+            Instant::now() < deadline,
+            "both completions never committed"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
 
