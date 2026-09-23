@@ -71,6 +71,15 @@ remain in the Git history.
   second copy of a payload it was always going to reject. A header whose
   `OccluViewTexture` keys were re-cased by a text editor reads as before,
   matching the case-insensitive treatment `TextureFile` already had.
+- A colour scan opened from a format with no writer — `.dcm`, HPS, GLB, OFF —
+  is no longer offered as STL under a name that would throw the colour away.
+  Those formats cannot keep their own format on save, so the save dialog came up
+  on the chosen fallback format; with that fallback set to STL, a scan captured
+  in colour proposed a `.stl` file, and the export then stripped the atlas, the
+  vertex colours and the mapping, leaving only a warning on the status line
+  after the name was already picked. A layer that carries any of those now opens
+  its save dialog on PLY, which holds all three in one file. A geometry-only
+  scan still keeps STL, because nothing is lost there.
 - A malformed binary PLY can no longer hang the viewer or the Explorer preview.
   A face element declared with rows but no property used to consume no bytes per
   row, so the reader looped forever on the same empty state; it is now refused
