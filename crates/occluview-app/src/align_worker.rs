@@ -360,6 +360,22 @@ impl AlignWorker {
     }
 
     /// Whether this worker can still accept or publish work.
+    /// Poison this worker's queue, the way a panicking job does.
+    ///
+    /// Test-only: the real failure path is a panic inside the worker thread,
+    /// which cannot be provoked from outside without a job that panics.
+    #[cfg(test)]
+    #[allow(clippy::expect_used, clippy::panic)]
+    pub(crate) fn poison_queue_for_tests(&self) {
+        let queue = Arc::clone(&self.queue);
+        let _ = thread::spawn(move || {
+            let _guard = queue.state.lock().expect("queue lock before poisoning");
+            panic!("poison the align worker queue");
+        })
+        .join();
+        self.queue.wake.notify_one();
+    }
+
     pub(crate) fn has_failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
     }
