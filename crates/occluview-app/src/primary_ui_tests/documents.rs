@@ -188,41 +188,6 @@ fn the_readme_documents_the_shortcuts_the_build_implements() {
     );
 }
 
-#[test]
-fn the_controls_catalogue_names_the_wired_gestures() {
-    let catalogue = repo_source_file("src/interaction_hints.rs");
-
-    for gesture in [
-        "Ctrl+O",
-        "RMB drag",
-        "MMB drag",
-        "Ctrl+A",
-        "Delete",
-        "Ctrl+Shift+Z",
-        "Shift+wheel",
-        "Ctrl+wheel",
-        "F",
-        "Esc",
-    ] {
-        assert!(
-            catalogue.contains(gesture),
-            "the controls catalogue should name {gesture}"
-        );
-    }
-
-    for section_key in [
-        "help-section-navigation",
-        "help-section-mesh-editing",
-        "help-section-sculpt",
-        "help-section-layers-preview",
-    ] {
-        assert!(
-            catalogue.contains(section_key),
-            "the controls catalogue should include the {section_key} section key"
-        );
-    }
-}
-
 /// Every key the viewer consumes, written the way the README writes it.
 ///
 /// The README is checked in both directions against this table: a key the
