@@ -382,5 +382,241 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
+    #![allow(clippy::expect_used, clippy::panic, clippy::float_cmp)]
+
+    use super::*;
+    use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+    use occluview_core::OverlayKind;
+
+    /// An app holding a named pair of scans, so the display helpers that speak
+    /// about "the other layer" have one.
+    fn app_with_a_pair(name: &str) -> (OccluViewApp, SceneMeshId, SceneMeshId) {
+        let mut app = test_app(name);
+        let mut scene = named_scene("lower", 0.0);
+        let fixed = scene.meshes()[0].id();
+        let moving = push_named_layer(&mut scene, "upper", 5.0);
+        app.document.scene = Some(Arc::new(scene));
+        app.tools.align.tool.arm();
+        app.tools.align.tool.imply_pair(&[moving, fixed]);
+        (app, moving, fixed)
+    }
+
+    /// One layer's entry in the document's scene.
+    fn layer_entry(app: &OccluViewApp, layer: SceneMeshId) -> &occluview_core::SceneMesh {
+        app.document
+            .scene
+            .as_ref()
+            .expect("a scene")
+            .meshes()
+            .iter()
+            .find(|entry| entry.id() == layer)
+            .expect("the layer")
+    }
+
+    /// A measurement is a picture of a scan, not a change to it.
+    ///
+    /// The colours live on the entry's overlay channel; the mesh's own vertex
+    /// colours are what an export writes and what the scan looks like with the
+    /// map off. An overlay written into the mesh would be saved into the
+    /// operator's file, and a measurement is not a mesh edit.
+    #[test]
+    fn an_overlay_never_touches_the_cpu_mesh() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-overlay-cpu-mesh");
+        let measured = [200u8, 40, 40, 255];
+
+        assert!(
+            app.attach_overlay_colors(moving, vec![measured; 3], AlignOverlay::Map),
+            "the map attaches to a layer whose vertex count it matches"
+        );
+
+        assert_eq!(
+            layer_entry(&app, moving)
+                .overlay_colors()
+                .map(|colors| colors.as_slice()),
+            Some(&[measured; 3][..]),
+            "the measurement belongs to the overlay channel"
+        );
+        assert_eq!(
+            layer_entry(&app, moving).overlay_kind(),
+            Some(OverlayKind::Measured),
+            "and the channel says the colours are a reading, not paint"
+        );
+        assert!(
+            layer_entry(&app, moving)
+                .mesh
+                .vertices()
+                .iter()
+                .all(|vertex| vertex.color == [255, 255, 255, 255]),
+            "the scan's own vertex colours must be untouched: they are what an \
+             export writes and what the scan shows with the map off"
+        );
+
+        // The upload and the teardown must leave the mesh alone as well.
+        let _ = app.push_deviation_colors();
+        app.clear_deviation_overlay();
+        assert!(layer_entry(&app, moving).overlay_colors().is_none());
+        assert!(
+            layer_entry(&app, moving)
+                .mesh
+                .vertices()
+                .iter()
+                .all(|vertex| vertex.color == [255, 255, 255, 255]),
+            "showing and hiding a map must not leave the measurement in the mesh"
+        );
+    }
+
+    /// Showing and hiding a map re-colours the live scene in place.
+    ///
+    /// A re-colour that installed a new scene would leave every other holder of
+    /// the old handle reading a scan that never took the measurement — and would
+    /// copy the whole scene container, per layer, to change four bytes per
+    /// vertex. The scene handle and the layers in it have to survive.
+    #[test]
+    fn showing_and_hiding_an_overlay_never_replaces_the_scene() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-overlay-scene-identity");
+        let scene_before = Arc::as_ptr(app.document.scene.as_ref().expect("a scene"));
+        let ids_before: Vec<SceneMeshId> = app
+            .document
+            .scene
+            .as_ref()
+            .expect("a scene")
+            .meshes()
+            .iter()
+            .map(occluview_core::SceneMesh::id)
+            .collect();
+
+        assert!(app.attach_overlay_colors(moving, vec![[9, 9, 9, 255]; 3], AlignOverlay::Map));
+        assert_eq!(
+            Arc::as_ptr(app.document.scene.as_ref().expect("a scene")),
+            scene_before,
+            "re-colouring must edit the live scene, not install a new one"
+        );
+        let ids_after: Vec<SceneMeshId> = app
+            .document
+            .scene
+            .as_ref()
+            .expect("a scene")
+            .meshes()
+            .iter()
+            .map(occluview_core::SceneMesh::id)
+            .collect();
+        assert_eq!(ids_after, ids_before, "and it must not rebuild the layers");
+
+        app.clear_deviation_overlay();
+        assert_eq!(
+            Arc::as_ptr(app.document.scene.as_ref().expect("a scene")),
+            scene_before,
+            "taking the map down is an in-place edit too"
+        );
+        assert!(
+            app.document
+                .scene
+                .as_ref()
+                .expect("a scene")
+                .meshes()
+                .iter()
+                .all(|entry| entry.overlay_colors().is_none()),
+            "every layer's colours are back"
+        );
+    }
+
+    /// An attached overlay records what its colours mean, and the teardown
+    /// paths act on that record.
+    ///
+    /// A measured map and the brush's own marking preview are both per-vertex
+    /// colours on the same layers. Without the record, a stale-map drop takes
+    /// the brush's preview down from under the operator's hand, and the screen
+    /// stops showing the marks the mask still holds.
+    #[test]
+    fn every_attached_overlay_says_what_it_is() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-overlay-kind");
+
+        assert!(app.attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region));
+        assert_eq!(app.tools.align.overlay, AlignOverlay::Region);
+        assert_eq!(
+            layer_entry(&app, moving).overlay_kind(),
+            Some(OverlayKind::Paint),
+            "markings are paint over the scan, not a reading"
+        );
+
+        // A map drawn for an older pose is stale; the markings are not.
+        app.invalidate_deviation_map("the scan moved");
+        assert_eq!(
+            app.tools.align.overlay,
+            AlignOverlay::Region,
+            "a stale-map drop must not take the brush's preview down"
+        );
+        assert!(
+            app.align_overlay_is_up(),
+            "the marking colours are still on screen"
+        );
+
+        assert!(app.attach_overlay_colors(moving, vec![[4, 5, 6, 255]; 3], AlignOverlay::Map));
+        app.invalidate_deviation_map("the scan moved");
+        assert_eq!(
+            app.tools.align.overlay,
+            AlignOverlay::Nothing,
+            "a map is exactly what the drop is for"
+        );
+        assert!(!app.align_overlay_is_up());
+        assert!(layer_entry(&app, moving).overlay_colors().is_none());
+    }
+
+    /// Dropping an overlay repairs everything that described it.
+    ///
+    /// The faded companion scan, the last measurement's numbers, and the queued
+    /// GPU write all belong to the map being dropped. Left behind, the companion
+    /// stays half transparent with no map to justify it, the panel shows numbers
+    /// for a picture that is gone, and the offscreen path never re-uploads the
+    /// layers' own colours.
+    #[test]
+    fn clearing_an_overlay_also_repairs_stale_display_bookkeeping() {
+        let (mut app, moving, fixed) = app_with_a_pair("align-overlay-clear-bookkeeping");
+        let own_opacity = layer_entry(&app, fixed).opacity;
+
+        // Nothing was up, so nothing has to reach the GPU.
+        app.clear_deviation_overlay();
+        assert!(
+            !app.tools.align.deviation_push_pending,
+            "a clear with no overlay must not queue an upload"
+        );
+
+        assert!(app.attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
+        app.ghost_other_layer();
+        assert!(
+            !app.tools.align.ghosted.is_empty(),
+            "the companion scan is faded while the map is up"
+        );
+
+        app.clear_deviation_overlay();
+
+        assert!(app.tools.align.overlay_colors.is_empty());
+        assert!(
+            app.tools.align.ghosted.is_empty(),
+            "the faded companion must come back with the map"
+        );
+        assert_eq!(
+            layer_entry(&app, fixed).opacity,
+            own_opacity,
+            "and at its own opacity, not the ghost's"
+        );
+        assert!(
+            app.tools.align.stats.is_none(),
+            "the panel must not keep showing the dropped measurement's numbers"
+        );
+        assert!(
+            app.tools.align.deviation_push_pending,
+            "the layers' own colours still have to reach the GPU"
+        );
+        assert!(
+            app.document
+                .scene
+                .as_ref()
+                .expect("a scene")
+                .meshes()
+                .iter()
+                .all(|entry| entry.overlay_colors().is_none()),
+            "no layer is left carrying the dropped colours"
+        );
+    }
 }
