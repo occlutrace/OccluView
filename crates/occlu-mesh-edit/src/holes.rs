@@ -195,13 +195,12 @@ pub(crate) fn fill_holes_with_outcome(
     // pass then deleted every triangle as an isolated nick while reporting the
     // result as a successful cap.
     let welded = apply_soup_weld(mesh, options.heal_boundary_rims)?;
-    // Whether the weld MERGED anything, not whether the buffers look welded:
-    // `weld_soup_topology` keeps the vertex array and remaps only the indices,
-    // so the shape test cannot tell a welded soup from an unweldable one, and
-    // asking it after the weld refused every large soup — including the
-    // perfectly weldable binary-STL arch this button exists to heal.
-    refuse_unweldable_soup(mesh, welded.is_some(), counts.triangles)?;
     let mesh: &MeshEditBuffers = welded.as_ref().unwrap_or(mesh);
+    // Asked of the POST-WELD mesh, and about whether its corners are shared —
+    // not about the heal flag and not about the buffer lengths. Both of those
+    // earlier attempts are described on the gate itself; this one sees a welded
+    // surface and a soup differently at any size.
+    refuse_unweldable_soup(mesh, counts.triangles)?;
 
     // Pre-clean the cut line (opt-in via `heal_boundary_rims`): drop dangling
     // needle/lone triangles and weld near-coincident boundary vertices so a

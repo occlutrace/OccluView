@@ -4,6 +4,7 @@ use eframe::egui;
 use occluview_contact::{ContactScale, ContactStats, LOAD_MAX_MM, LOAD_MIN_MM};
 
 use super::OccluViewApp;
+use crate::app_settings::UnitDisplay;
 use crate::contact::{ContactMode, ContactStatus};
 use crate::icons::AppIcon;
 use crate::ui_theme;
@@ -578,7 +579,7 @@ impl OccluViewApp {
                 }
                 pick = paint_antagonist_picker(ui, &candidates, busy, locale);
                 if let Some(numbers) = shown.numbers {
-                    paint_stats(ui, numbers, locale);
+                    paint_stats(ui, numbers, locale, self.persistence.settings.unit_display);
                 }
                 if let Some(sentence) = shown.sentence {
                     ui.label(
@@ -690,7 +691,19 @@ fn status_hint_key(status: ContactStatus) -> &'static str {
 
 /// The numbers the measurement found: contact area, patch count, deepest
 /// penetration, and the left/right balance.
-fn paint_stats(ui: &mut egui::Ui, stats: ContactStats, locale: &crate::i18n::LocaleManager) {
+fn paint_stats(
+    ui: &mut egui::Ui,
+    stats: ContactStats,
+    locale: &crate::i18n::LocaleManager,
+    unit: UnitDisplay,
+) {
+    // Area stays in mm² — it is the unit this measurement is specified in — but
+    // the DEPTH is a length like the ruler's, and it follows the operator's
+    // preference. The panel was the one measurement family that ignored it.
+    let depth_unit = match unit {
+        UnitDisplay::Millimeters => occluview_contact::ContactLengthUnit::Millimeters,
+        UnitDisplay::Inches => occluview_contact::ContactLengthUnit::Inches,
+    };
     let rows = [
         (
             "contact-stats-area",
@@ -699,7 +712,7 @@ fn paint_stats(ui: &mut egui::Ui, stats: ContactStats, locale: &crate::i18n::Loc
         ("contact-stats-contacts", stats.contacts.to_string()),
         (
             "contact-stats-deepest",
-            occluview_contact::format_contact_value(stats.deepest_mm),
+            occluview_contact::format_contact_value_in(stats.deepest_mm, depth_unit),
         ),
         (
             "contact-stats-balance",
