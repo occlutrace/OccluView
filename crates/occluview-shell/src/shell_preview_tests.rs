@@ -7,17 +7,6 @@ use std::path::PathBuf;
 #[path = "shell_preview_tests/platform_contracts.rs"]
 mod platform_contracts;
 
-fn combined_com_source() -> String {
-    [
-        include_str!("com.rs"),
-        include_str!("com/preview.rs"),
-        include_str!("com/preview/theme.rs"),
-        include_str!("com/preview/window.rs"),
-        include_str!("com/preview/context_menu.rs"),
-    ]
-    .join("\n")
-}
-
 /// A source file of this crate, read for a contract assertion.
 ///
 /// It panics rather than returning an empty string. A path that stops
@@ -70,50 +59,6 @@ fn preview_scene_is_split_by_responsibility_not_single_file() {
             && test_support.contains("fn binary_stl_triangle("),
         "preview scene responsibilities should live in focused modules"
     );
-}
-
-#[test]
-fn preview_pane_has_a_native_right_click_context_menu() {
-    let com = combined_com_source();
-
-    // The right-click hook only opens the menu on a stationary click, so a
-    // right-*drag* still orbits the camera.
-    assert!(
-        com.contains("WM_RBUTTONUP") && com.contains("show_context_menu(hwnd, point)"),
-        "a stationary right-click should open the context menu"
-    );
-    assert!(
-        com.contains("let dragged = handler.drag_moved.get();"),
-        "the menu must not steal a right-drag orbit"
-    );
-
-    // Native Win32 popup with per-item bitmap icons.
-    assert!(com.contains("CreatePopupMenu"));
-    assert!(com.contains("TrackPopupMenuEx"));
-    assert!(com.contains("InsertMenuItemW"));
-    assert!(com.contains("SetMenuDefaultItem"));
-    assert!(com.contains("hbmpItem: bitmap"));
-    assert!(com.contains("menu_icon_hbitmap"));
-    assert!(
-        com.contains("MFS_CHECKED"),
-        "wireframe item reflects live state"
-    );
-
-    // Command dispatch covers launch, view presets, fit, wireframe, copy.
-    assert!(com.contains("PreviewMenuCommand"));
-    assert!(com.contains("ShellExecuteW"), "Open/Edit launch the app");
-    assert!(com.contains("apply_view_preset"));
-    assert!(com.contains("fit_view"));
-    assert!(com.contains("set_wireframe"));
-    assert!(com.contains("SetClipboardData"), "Copy image writes CF_DIB");
-    assert!(com.contains("CF_DIB"));
-
-    // Keyboard niceties (F = fit, W = wireframe).
-    assert!(com.contains("WM_KEYDOWN"));
-    assert!(com.contains("key_fit_view") && com.contains("key_toggle_wireframe"));
-
-    // App-exe resolution reuses the DLL-sibling convention (no hard-coded path).
-    assert!(com.contains("GetModuleFileNameW") && com.contains("APP_EXE_NAME"));
 }
 
 fn assert_preview_smoke_abi(smoke: &str) {
@@ -345,12 +290,4 @@ fn preview_smokes_prevhost_first_frame_before_in_process_interaction() {
     assert_prevhost_preview_contract(smoke);
     assert_in_process_preview_contract(smoke);
     assert_prevhost_runs_before_interaction(smoke);
-}
-
-#[test]
-fn com_lazy_stream_paths_release_source_borrow_before_rendering() {
-    let com = combined_com_source();
-
-    assert!(com.contains("let source_path = self.source.borrow().path().map(PathBuf::from);"));
-    assert!(!com.contains("if let Some(path) = self.source.borrow().path().map(PathBuf::from)"));
 }

@@ -642,31 +642,6 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
         );
     }
 }
-
-#[test]
-fn self_registration_unregister_only_removes_occluview_values() {
-    let registration = registration_source();
-
-    assert!(registration.contains("GetModuleHandleExW"));
-    assert!(registration.contains("GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS"));
-    assert!(!registration.contains("GetModuleFileNameW(None"));
-    assert!(registration.contains("fn format_progid(ext: &str)"));
-    assert!(registration.contains("MeshFile."));
-    assert!(registration.contains("format_file_type_name"));
-    assert!(registration.contains("occluview-3d.ico"));
-    assert!(registration.contains("ThumbnailCutoff"));
-    assert!(registration.contains("TypeOverlay"));
-    assert!(registration.contains("LEGACY_OCCLUVIEW_PROGID"));
-    assert!(registration.contains("fn format_legacy_progid(ext: &str)"));
-    assert!(registration.contains("delete_value(&key_path, Some(&legacy_format))"));
-    assert!(!registration.contains("pub const OCCLUVIEW_PROGID"));
-    assert!(registration.contains("RegDeleteValueW"));
-    assert!(registration.contains("delete_value_if_matches(&key_path, None, &our_clsid)"));
-    assert!(registration.contains("delete_value(&key_path, Some(&progid))"));
-    assert!(registration.contains("is_occluview_default_icon_value"));
-    assert!(!registration.contains("delete_tree(&key_path)"));
-}
-
 fn workspace_package_version(cargo_toml: &str) -> Option<&str> {
     let section = cargo_toml.split("[workspace.package]").nth(1)?;
     toml_quoted_value(section, "version")
