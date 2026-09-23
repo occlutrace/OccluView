@@ -595,6 +595,27 @@ mod tests {
         );
         assert!(second.iter().all(|vertex| vertex.color == [4, 5, 6, 255]));
 
+        // The brush's sparse path rewrites what it touched and leaves the rest
+        // of the array as the last re-colour left it. A patch that rebuilt the
+        // array would blank the rest of the scan's painted region.
+        let patched = app
+            .tools
+            .align
+            .painted
+            .patch(&mesh, &[[9, 9, 9, 255]; 3], &[1])
+            .expect("a sorted touched list inside the mesh");
+        assert_eq!(
+            patched.as_ptr(),
+            first_at,
+            "the sparse path reuses the array"
+        );
+        assert_eq!(patched[1].color, [9, 9, 9, 255]);
+        assert_eq!(
+            patched[0].color,
+            [4, 5, 6, 255],
+            "a vertex the dab did not touch keeps the colour the last repaint left"
+        );
+
         app.clear_deviation_overlay();
         assert!(
             !app.tools.align.painted.holds(&mesh, 3),
