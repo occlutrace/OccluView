@@ -359,3 +359,45 @@ fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
         }
     );
 }
+
+/// Disarming abandons a preparation that is still in flight, and the abandoned
+/// worker never installs its session. A preparation that landed after the tool
+/// was disarmed would attach a worker the operator no longer has a brush for —
+/// and, worse, warm a picking tree for a scan nobody is sculpting.
+#[test]
+fn an_abandoned_preparation_never_installs_its_session() {
+    let mut tool = SculptTool::default();
+    let mut scene = Scene::new();
+    let index = scene.add(SceneMesh::new(quad_mesh("abandoned-preparation")));
+    let scene = Arc::new(scene);
+    let layer_id = scene.meshes()[index].id();
+    let topology_id = scene.meshes()[index].mesh.topology_id();
+
+    assert!(
+        !tool.queue_preparation(Arc::clone(&scene), index),
+        "a fresh preparation reports that it has not landed yet"
+    );
+    assert!(
+        tool.pending_matches(layer_id, topology_id),
+        "the preparation has to be in flight, or this proves nothing"
+    );
+
+    tool.disarm();
+
+    assert!(
+        !tool.pending_matches(layer_id, topology_id),
+        "disarming must abandon the in-flight preparation"
+    );
+    assert!(
+        !tool.is_busy(),
+        "an abandoned preparation must not keep the tool reading as busy"
+    );
+    assert!(
+        tool.poll_preparation().is_none(),
+        "an abandoned preparation must never be collected as a session"
+    );
+    assert!(
+        tool.worker.is_none(),
+        "so no worker is installed for a brush the operator has put down"
+    );
+}

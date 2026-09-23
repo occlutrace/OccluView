@@ -181,6 +181,101 @@ fn pump_sculpt_worker_until_idle(app: &mut OccluViewApp) {
     }
 }
 
+/// Wait until the worker owes the frame both a densifying rebuild AND a sparse
+/// vertex update, without draining either. The stroke stays open, so the
+/// rebuild has no completion behind it.
+fn wait_for_rebuild_and_sparse_update(app: &OccluViewApp) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        if worker.has_pending_rebuild() && worker.has_pending_sparse_update() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the fixture never queued a rebuild and a sparse update together"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// A densifying rebuild and a sparse update that are both pending when a frame
+/// polls must have the rebuild installed into the document, not be left on the
+/// pre-rebuild topology. The rebuild replaces the layer's whole vertex array and
+/// triangle list, so a frame that flushed the sparse write and dropped the
+/// rebuild leaves the document's `topology_id` (and thus every later sparse GPU
+/// write's target) on the coarse mesh while the worker has moved past it.
+#[test]
+fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
+    let (mut app, layer_id) = app_with_a_live_stroke("sculpt-rebuild-before-sparse");
+    let initial_topology = layer_mesh(&app, layer_id).topology_id();
+
+    // A real densifying dab parks a whole-layer rebuild on the worker.
+    {
+        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        assert!(
+            worker.try_apply(densifying_stroke(), BrushMode::Smooth),
+            "the densifying dab must be queued"
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !app
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .has_pending_rebuild()
+    {
+        assert!(Instant::now() < deadline, "the dab never rebuilt the layer");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Queue a sparse update the same way a dab does, so the frame genuinely has
+    // both an authoritative rebuild and stale sparse ids to reconcile.
+    app.tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .queue_sparse_for_tests(vec![0, 1, 2]);
+    wait_for_rebuild_and_sparse_update(&app);
+
+    // Poll until the frame has drained the pending rebuild. The poll that drains
+    // it installs it into the document; a frame that flushed the sparse update
+    // and dropped the rebuild would leave the scene on the coarse topology.
+    let ctx = app.ui.repaint_ctx.clone();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while app
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .has_pending_rebuild()
+    {
+        app.poll_sculpt_worker(&ctx);
+        assert!(Instant::now() < deadline, "the rebuild was never drained");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+    let scene_topology = layer_mesh(&app, layer_id).topology_id();
+    assert_ne!(
+        scene_topology, initial_topology,
+        "the frame must install the densifying rebuild into the document, not \
+         leave the layer on the pre-rebuild topology"
+    );
+    assert_eq!(
+        scene_topology, worker.topology_id,
+        "the document and the worker must agree on the layer's topology after \
+         the rebuild installs"
+    );
+    assert!(
+        !worker.has_pending_sparse_update(),
+        "the frame must also have drained the sparse update"
+    );
+}
+
 #[test]
 fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-vs-replace");

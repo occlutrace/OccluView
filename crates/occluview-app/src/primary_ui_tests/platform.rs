@@ -1,64 +1,5 @@
 use super::*;
 
-#[test]
-fn windows_app_reports_startup_and_panic_failures() {
-    let source = app_bootstrap_source();
-    let manifest = app_manifest_source();
-
-    assert!(
-        source.contains("install_panic_hook();")
-            && source.contains("if let Err(error) = real_main()"),
-        "Windows-subsystem startup must install a panic hook before fallible startup"
-    );
-    assert!(
-        source.contains("std::process::exit(1);"),
-        "a failed GUI startup must return a failure status instead of silently succeeding"
-    );
-    assert!(
-        source.contains("fn real_main() -> Result<()>"),
-        "fallible startup should live behind a non-Result Windows main wrapper"
-    );
-    assert!(
-        source.contains("show_startup_fatal_message_box"),
-        "startup failures and panics should show a visible Windows dialog"
-    );
-    assert!(
-        source.contains("MessageBoxW"),
-        "Windows-subsystem fatal errors need MessageBoxW because there is no console"
-    );
-    assert!(
-        source.contains("fn crash_report_dir() -> Option<PathBuf>")
-            && source.contains(".map(|base| base.join(\"crashes\"))"),
-        "crash reports should be written under the platform app state directory"
-    );
-    assert!(source.contains("env!(\"CARGO_PKG_VERSION\")"));
-    assert!(manifest.contains("\"Win32_UI_WindowsAndMessaging\""));
-}
-
-#[test]
-fn linux_build_uses_real_gui_instead_of_failure_stub() {
-    let binary = main_source();
-    let library = lib_source();
-    let manifest = app_manifest_source();
-
-    assert!(
-        !binary.contains("#[cfg(not(windows))]\nfn main() -> std::process::ExitCode"),
-        "Linux builds must launch the same egui/wgpu desktop viewer, not a failure stub"
-    );
-    assert!(
-        library.contains("mod app;"),
-        "the GUI implementation should live behind the library boundary"
-    );
-    assert!(
-        !library.contains("#[cfg(windows)]\nmod app"),
-        "app module must not be hidden behind cfg(windows)"
-    );
-    assert!(
-        manifest.contains("features = [\"wgpu\", \"default_fonts\", \"x11\", \"wayland\"]"),
-        "Linux GUI builds need eframe's x11 and wayland backends enabled"
-    );
-}
-
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_window_identity_value_matches_desktop_metadata() {
@@ -77,19 +18,28 @@ fn windows_app_identity_value_matches_shell_registration() {
     );
 }
 
+/// The AppUserModelID the process sets must be the one the installed shortcut
+/// is tagged with, or the taskbar groups the running viewer under a second,
+/// unnamed entry and the jump list disappears.
+///
+/// This is the value-agreement half of the guard the source-text removal left
+/// behind: the constant is compared against the MSI that actually ships, not
+/// against a second copy of the string. Runs on the Windows CI job, where
+/// `APP_USER_MODEL_ID` exists.
+#[cfg(windows)]
 #[test]
-fn platform_identity_values_are_pinned_unconditionally() {
-    // The cfg-gated asserts above only run on their platform; pin both
-    // values everywhere so cross-platform drift cannot hide.
-    assert!(
-        lib_source().contains("LINUX_DESKTOP_APP_ID: &str = \"ai.occlutrace.OccluView\""),
-        "Wayland app_id value must match the installed desktop file id"
+fn windows_app_identity_value_matches_the_shipped_shortcut() {
+    let wxs = msi_wxs_source();
+    let expected = format!(
+        "<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"{APP_USER_MODEL_ID}\" />"
     );
     assert!(
-        lib_source().contains("APP_USER_MODEL_ID: &str = \"OccluTrace.OccluView\""),
-        "AppUserModelID value must match the shell registration"
+        wxs.contains(&expected),
+        "install/occluview.wxs must tag its Start Menu shortcut with the \
+         process AppUserModelID {APP_USER_MODEL_ID}"
     );
 }
+
 #[test]
 fn third_party_notices_stay_generated_and_gated() {
     let ci = ci_workflow_source();

@@ -2,64 +2,8 @@
 
 #![allow(clippy::panic, clippy::expect_used)]
 
-use std::path::PathBuf;
-
 #[path = "shell_preview_tests/platform_contracts.rs"]
 mod platform_contracts;
-
-/// A source file of this crate, read for a contract assertion.
-///
-/// It panics rather than returning an empty string. A path that stops
-/// resolving -- a rename, a move, a typo -- would otherwise turn every
-/// assertion about that file into an assertion about "", and the negative
-/// ones, which are the assertions worth having, all pass in a vacuum.
-fn source_file(relative_path: &str) -> String {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push(relative_path);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "contract test source {} is missing: {error}",
-            path.display()
-        )
-    })
-}
-
-#[test]
-fn preview_scene_is_split_by_responsibility_not_single_file() {
-    let facade_source = source_file("src/preview_scene/mod.rs");
-    let facade = facade_source
-        .split_once("\n#[cfg(test)]\nmod tests")
-        .map_or(facade_source.as_str(), |(source, _)| source);
-    let loading = source_file("src/preview_scene/load.rs");
-    let rendering = source_file("src/preview_scene/render.rs");
-    let interaction = source_file("src/preview_scene/interaction.rs");
-    let test_support = source_file("src/preview_scene/test_support.rs");
-
-    assert!(
-        facade.contains("mod interaction;")
-            && facade.contains("mod load;")
-            && facade.contains("mod render;"),
-        "preview scene should be a private module directory split by loading, rendering, and interaction"
-    );
-    assert!(
-        facade.contains("pub(crate) struct PreviewSceneState")
-            && facade.contains("pub(crate) use interaction::win32_preview_orbit_delta;"),
-        "preview scene facade should keep the COM-facing API stable"
-    );
-    assert!(
-        !facade.contains("fn load_preview_mesh_from_file(")
-            && !facade.contains("fn render_rgba_with_background(")
-            && !facade.contains("fn viewport_ray("),
-        "preview scene facade should not absorb loading, rendering, or interaction implementation"
-    );
-    assert!(
-        loading.contains("fn load_preview_mesh_from_file(")
-            && rendering.contains("fn render_rgba_with_background(")
-            && interaction.contains("fn viewport_ray(")
-            && test_support.contains("fn binary_stl_triangle("),
-        "preview scene responsibilities should live in focused modules"
-    );
-}
 
 fn assert_preview_smoke_abi(smoke: &str) {
     assert!(smoke.contains("ApartmentState.STA"));

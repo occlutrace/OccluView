@@ -622,11 +622,6 @@ fn usage_text() -> &'static str {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    /// The part of this file above the test module.
-    ///
-    /// Searching the whole of it matches the needle written in the assertion
-    /// itself, so the guard would pass on its own text and the production line
-    /// it names could be deleted with nothing going red.
     use super::{
         normalize_thumbnail_output_path, parse_limit_mm, take_file_argument,
         validate_thumbnail_size, write_thumbnail_atomically, FileArgument,

@@ -603,18 +603,12 @@ mod tests {
     /// weight 0 — never black. A scan without a texture takes its base colour
     /// from this channel, and a black write would paint the whole arch black
     /// while a region of it was marked.
-    /// A vertex the brush has not marked keeps the scan's own colour at paint
-    /// weight 0 — never black. A scan without a texture takes its base colour
-    /// from this channel, and a black write would paint the whole arch black
-    /// while a region of it was marked.
     #[test]
     fn an_unmarked_vertex_keeps_its_colour_at_zero_paint_weight() {
         let vertices = [Vertex::at(Vec3::ZERO).with_color([10, 20, 30, 255])];
         assert_eq!(region_color(&vertices, None, 0), [10, 20, 30, 0]);
     }
 
-    /// Marked-out surface is fully painted, so the excluded region reaches the
-    /// screen at the colour the Brush window describes.
     /// Marked-out surface is fully painted, so the excluded region reaches the
     /// screen at the colour the Brush window describes.
     #[test]

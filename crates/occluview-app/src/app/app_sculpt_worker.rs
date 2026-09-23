@@ -443,7 +443,6 @@ fn sculpt_failure_dialog(
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    /// Rebuild output must be installed before sparse updates are flushed.
     /// A terminal worker failure has to outlive the status line, because the
     /// stroke's geometry is gone and no later result can arrive to explain it.
     #[test]

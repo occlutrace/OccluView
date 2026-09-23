@@ -468,16 +468,6 @@ mod tests {
 
     use super::Rigid;
 
-    /// Source before the test module.
-    /// Typed failures map to their catalog keys at the presentation boundary.
-    ///
-    /// The keys are resolved at render time from a variable, so the scanner
-    /// that checks literal `.tr("key")` call sites cannot see them, and the
-    /// pair is what has to be checked: the helper's answer against the key this
-    /// table names, and that key against the catalog the renderer resolves
-    /// through. Without the second half, renaming a key in the catalogs and in
-    /// both of those places reaches the operator as a `⟦key⟧` marker.
-    /// Source before the test module.
     /// Typed failures map to their catalog keys at the presentation boundary.
     ///
     /// The keys are resolved at render time from a variable, so the scanner
@@ -574,9 +564,6 @@ mod tests {
         }
     }
 
-    /// The worker stays presentation-free: no catalog key literals.
-    /// A committed pose must be visible, undoable, and marked unsaved.
-    /// The worker stays presentation-free: no catalog key literals.
     /// A committed pose must be visible, undoable, and marked unsaved.
     #[test]
     fn a_committed_pose_is_applied_undoable_and_unsaved_work() {

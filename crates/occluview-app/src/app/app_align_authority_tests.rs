@@ -347,3 +347,115 @@ fn measurement_requires_a_landed_refined_match() {
         "the same call does submit once the refined match has landed"
     );
 }
+
+/// A click that contradicts the arm-time role guess turns the pair around, and
+/// a map measured in the other direction is no longer a map of this pair. The
+/// app-level swap path has to revoke the fit, not merely relabel the roles.
+#[test]
+fn a_click_that_turns_the_pair_around_invalidates_the_fit() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-swap-invalidates");
+    let colors = map_colors(&app, moving_id);
+    assert!(app.apply_deviation_colors(colors), "the map is up");
+    app.tools.align.rejected = vec![0];
+    assert_eq!(app.tools.align.overlay, AlignOverlay::Map);
+
+    app.adopt_swapped_roles(app.ui.locale.tr("align-status-turned"));
+
+    assert!(
+        !app.tools.align.refined_match_ready,
+        "a fit measured one way round is not a fit for the pair the other way round"
+    );
+    assert!(!app.tools.align.settings.show_deviation);
+    assert_eq!(
+        app.tools.align.overlay,
+        AlignOverlay::Nothing,
+        "the directional colours belong to the old order"
+    );
+    assert!(
+        app.tools.align.rejected.is_empty(),
+        "outlier marks name pairs of the fit that just stopped describing this pair"
+    );
+}
+
+/// An optimizer setting changes the surface the fit is solved against, so the
+/// landed refined match stops being authoritative and its map must come down.
+/// The predicate is covered elsewhere; this is the app-side drop it drives.
+#[test]
+fn optimizer_setting_changes_drop_the_refined_authority() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-optimizer-authority");
+    let colors = map_colors(&app, moving_id);
+    assert!(app.apply_deviation_colors(colors), "the map is up");
+
+    app.forget_align_fit(&app.ui.locale.tr("align-status-scan-changed"));
+
+    assert!(
+        !app.tools.align.refined_match_ready,
+        "an optimizer change revokes the refined match"
+    );
+    assert!(!app.tools.align.settings.show_deviation);
+    assert_eq!(app.tools.align.overlay, AlignOverlay::Nothing);
+    assert!(
+        app.tools.align.status.is_some(),
+        "the operator is told why the reading went away"
+    );
+}
+
+/// A setting change abandons the running fit immediately. The job may still be
+/// mid-flight in the worker; waiting for its claim would let a result measured
+/// against the old setting land on the new one.
+#[test]
+fn a_settings_change_abandons_a_running_fit_without_waiting_for_a_claim() {
+    let (app, _moving_id, _fixed_id) = app_with_a_landed_fit("align-abandon-running");
+    let before = app
+        .tools
+        .align
+        .worker
+        .as_ref()
+        .expect("worker")
+        .generation();
+
+    app.abandon_align_jobs();
+
+    let after = app
+        .tools
+        .align
+        .worker
+        .as_ref()
+        .expect("worker")
+        .generation();
+    assert!(
+        after > before,
+        "abandoning must move the generation at once, with no wait on the worker"
+    );
+}
+
+/// Returning to the automatic tab restores controls only. A measurement must
+/// not be submitted merely because the operator came back to the tab that can
+/// show one: the pose that was measured is gone and a new fit has to run first.
+#[test]
+fn returning_to_automatic_does_not_measure_implicitly() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-return-automatic");
+    let colors = map_colors(&app, moving_id);
+    assert!(
+        app.apply_deviation_colors(colors),
+        "a map is up to be dropped"
+    );
+    app.tools.align.tab = crate::align_panel::AlignTab::Automatically;
+
+    app.settle_align_tab_change();
+
+    assert!(
+        !app.tools.align.refined_match_ready,
+        "the old refined match does not survive the tab change"
+    );
+    assert!(!app.tools.align.settings.show_deviation);
+    assert_ne!(
+        app.tools.align.status.as_deref(),
+        Some(app.ui.locale.text("align-job-measure").as_str()),
+        "returning to the tab must not submit a measurement"
+    );
+    assert!(
+        !app.tools.align.worker.as_ref().expect("worker").is_busy(),
+        "and nothing is left running as if a measurement had been asked for"
+    );
+}

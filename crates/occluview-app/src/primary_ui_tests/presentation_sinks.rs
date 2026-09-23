@@ -1,37 +1,15 @@
-//! Regression inventory: user-visible presentation sinks must route
-//! through the catalogs, never inline English.
+//! Catalog-key coupling: every id the UI resolves through the catalogue must
+//! exist in the embedded English catalogue, so a rename cannot reach the
+//! operator as a `⟦key⟧` marker.
 //!
-//! Targeted source-contract scanner, not an AST and not a repo-wide
-//! English regex: exact sink shapes over discovered sources. New
-//! modules are picked up automatically — a localized presentation
-//! surface cannot silently escape the inventory (the discovery count
-//! assertion fails loudly if the walk itself breaks).
+//! The former "no inline English prose at a sink" scanner was a source-text
+//! test over the crate's own `.rs` and was removed with the rest of that
+//! class. The remaining check is cross-artifact: code call sites against the
+//! shipped `en` catalogue.
 //!
-//! Test code never scans as production: every `#[cfg(test)]`-gated
-//! item (modules in both declaration forms, functions, uses) is cut by
-//! [`strip_test_regions`], which covers the non-standard module names
-//! a plain `mod tests` search would miss.
-//!
-//! Deliberate non-sinks, documented so the next reader does not
-//! "fix" them:
-//! - Help section/row literals render via `key`; the catalog validator owns
-//!   the localized key contract, while gestures remain invariant vocabulary.
-//! - `Window::new` stable IDs under `title_bar(false)` never paint.
-//! - Shortcut/gesture tokens without spaces (`Ctrl+O`, `LMB`), product
-//!   names, file formats and units are invariant vocabulary, not prose.
-//!   (Limitation: a spaced invariant that ever appears inline, like a
-//!   version string, would trip `is_prose` — none does today; all live
-//!   in catalogs or fixtures.)
-//! - Support surfaces stay locale-neutral English by design and are
-//!   pinned by comments, not keys: `AppErrorDialog.details` (see
-//!   `state.rs`), `repair_report::copy_details`, update failure messages
-//!   and upstream release notes (`update_notice.rs`), redaction tokens
-//!   (`app_loading.rs`), ASCII default filename stems
-//!   (`app_mesh_export.rs`). Titles/summaries around them are cataloged.
-//! - Paint-level text (`painter.text`, chips, custom buttons) and
-//!   `RichText::new(variable)` carry already-localized or raw-payload
-//!   values the scanner cannot judge statically; they were covered by
-//!   the manual audit and stay out of the rules on purpose.
+//! Test code never scans as production: every `#[cfg(test)]`-gated item is cut
+//! by [`strip_test_regions`], which covers the non-standard module names a
+//! plain `mod tests` search would miss.
 
 // Filesystem discovery and fixture paths cannot fail in a checkout;
 // `expect` marks those invariants (test-only convention, as elsewhere).
@@ -355,46 +333,6 @@ fn skip_balanced(source: &str, i: usize) -> usize {
     bytes.len()
 }
 
-/// Single-word UI prose that must never appear as a whole literal at a
-/// presentation sink (multi-word prose is caught by the space rule).
-const BARE_PROSE: &[&str] = &[
-    "Recent",
-    "Close",
-    "Open",
-    "Save",
-    "Cancel",
-    "Delete",
-    "Remove",
-    "Clear",
-    "Apply",
-    "Retry",
-    "Undo",
-    "Redo",
-    "Back",
-    "Next",
-    "Done",
-    "Loading",
-    "Empty",
-    "Hidden",
-    "Visible",
-    "Selected",
-    "Failed",
-    "Missing",
-    "Restored",
-    "Translucent",
-];
-
-/// True when `text` reads as prose: ASCII letters around a space, or a
-/// bare single-word UI term. Tokens without spaces (shortcuts, product
-/// names, formats, units, IDs) are invariant, not prose.
-fn is_prose(literal: &str) -> bool {
-    let has_spaced_letters = literal
-        .split(' ')
-        .any(|word| word.bytes().filter(u8::is_ascii_alphabetic).count() >= 2)
-        && literal.contains(' ');
-    has_spaced_letters || BARE_PROSE.contains(&literal)
-}
-
 /// Read the string literal starting at `bytes[i]` (which points at the
 /// opening `"`). Returns the literal body and the index past the closing quote.
 ///
@@ -431,155 +369,6 @@ fn find_code(haystack: &str, needle: &str, mut from: usize) -> Option<usize> {
         return Some(index);
     }
     None
-}
-
-/// Strip `{...}` placeholders; what remains of a pure-data format is
-/// punctuation and numbers, never prose words.
-fn deplaceholdered(format: &str) -> String {
-    let mut out = String::new();
-    let mut depth = 0_usize;
-    for cell in format.chars() {
-        match cell {
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            _ if depth == 0 => out.push(cell),
-            _ => {}
-        }
-    }
-    out
-}
-
-fn snippet(source: &str, index: usize) -> String {
-    let start = source[..index].rfind('\n').map_or(0, |pos| pos + 1);
-    let end = source[index..]
-        .find('\n')
-        .map_or(source.len(), |pos| index + pos);
-    source[start..end].trim().to_owned()
-}
-
-#[test]
-#[allow(clippy::too_many_lines)]
-fn presentation_sinks_route_through_catalogs() {
-    let mut failures = Vec::new();
-    for (name, production) in &discover_sources() {
-        // 1-2. Status sinks: direct literals and prose-bearing format!.
-        for sink in ["status = Some(", "status_message = Some("] {
-            let mut from = 0_usize;
-            while let Some(hit) = find_code(production, sink, from) {
-                let mut i = hit + sink.len();
-                let bytes = production.as_bytes();
-                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-                if bytes.get(i) == Some(&b'"') {
-                    let (literal, _) = read_literal(bytes, i);
-                    if is_prose(&literal) {
-                        failures.push(format!(
-                            "{name}: literal status: {}",
-                            snippet(production, hit)
-                        ));
-                    }
-                } else if production[i..].starts_with("format!(") {
-                    let mut j = i + "format!(".len();
-                    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
-                        j += 1;
-                    }
-                    if bytes.get(j) == Some(&b'"') {
-                        let (format, _) = read_literal(bytes, j);
-                        if is_prose(&deplaceholdered(&format)) {
-                            failures.push(format!(
-                                "{name}: prose format! status: {}",
-                                snippet(production, hit)
-                            ));
-                        }
-                    }
-                }
-                from = hit + sink.len();
-            }
-        }
-        // 3. Localizer-wrapper reasons must arrive pre-localized.
-        for sink in ["forget_align_fit(\"", "invalidate_deviation_map(\""] {
-            let mut from = 0_usize;
-            while let Some(hit) = find_code(production, sink, from) {
-                failures.push(format!("{name}: raw reason: {}", snippet(production, hit)));
-                from = hit + sink.len();
-            }
-        }
-        // 4-5. Widget constructors with prose literals.
-        for sink in ["Button::new(\"", "button(\""] {
-            let mut from = 0_usize;
-            while let Some(hit) = find_code(production, sink, from) {
-                let (literal, _) = read_literal(production.as_bytes(), hit + sink.len() - 1);
-                if !literal.is_empty() && is_prose(&literal) {
-                    failures.push(format!(
-                        "{name}: prose button: {}",
-                        snippet(production, hit)
-                    ));
-                }
-                from = hit + sink.len();
-            }
-        }
-        // 6. Labels and headings with prose literals.
-        for sink in ["ui.label(\"", "ui.heading(\"", "RichText::new(\""] {
-            let mut from = 0_usize;
-            while let Some(hit) = find_code(production, sink, from) {
-                let (literal, _) = read_literal(production.as_bytes(), hit + sink.len() - 1);
-                if !literal.is_empty() && is_prose(&literal) {
-                    failures.push(format!("{name}: prose label: {}", snippet(production, hit)));
-                }
-                from = hit + sink.len();
-            }
-        }
-        // 7. Window titles: prose is fine only for stable IDs and
-        // unpainted title bars.
-        let mut from = 0_usize;
-        while let Some(hit) = find_code(production, "Window::new(\"", from) {
-            let (literal, _) =
-                read_literal(production.as_bytes(), hit + "Window::new(\"".len() - 1);
-            let tail = &production[hit..production.len().min(hit + 800)];
-            let unpainted = tail.contains("title_bar(false)");
-            if is_prose(&literal) && !literal.starts_with("occluview") && !unpainted {
-                failures.push(format!(
-                    "{name}: prose window title: {}",
-                    snippet(production, hit)
-                ));
-            }
-            from = hit + "Window::new(\"".len();
-        }
-        // 8. Display-name fallbacks: a literal default for an operator-
-        // facing name is presentation English (route via a key).
-        for sink in ["map_or_else(|| \"", "unwrap_or_else(|| \"", "unwrap_or(\""] {
-            let mut from = 0_usize;
-            while let Some(hit) = find_code(production, sink, from) {
-                let (literal, _) = read_literal(production.as_bytes(), hit + sink.len() - 1);
-                if !literal.is_empty() && is_prose(&literal) {
-                    failures.push(format!(
-                        "{name}: prose fallback name: {}",
-                        snippet(production, hit)
-                    ));
-                }
-                from = hit + sink.len();
-            }
-        }
-        // 9. Capital-L `Layer` display fallbacks (`format!("Layer {}")`):
-        // the ASCII filename stem helper uses lowercase `layer-`; a
-        // capital `Layer` display literal is an unkeyed operator-visible
-        // name (route via `layer-unnamed`). Support `details:` blocks
-        // stay out by design (documented above).
-        let mut from = 0_usize;
-        while let Some(hit) = find_code(production, "format!(\"Layer {", from) {
-            failures.push(format!(
-                "{name}: unkeyed Layer fallback: {}",
-                snippet(production, hit)
-            ));
-            from = hit + "format!(\"Layer {".len();
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "presentation English outside the catalogs:\n{}",
-        failures.join("\n")
-    );
 }
 
 /// Every id the UI resolves must exist in `en`: a missing one renders

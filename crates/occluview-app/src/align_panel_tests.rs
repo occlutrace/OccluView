@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used)]
+#![allow(clippy::expect_used, clippy::panic)]
 
 /// The window has to be draggable like the mesh editor: a panel pinned to a
 /// corner covers the very geometry the operator is clicking on.
@@ -43,6 +43,23 @@ fn panel_control_labels(
     tab: super::AlignTab,
     locale: &crate::i18n::LocaleManager,
 ) -> Vec<String> {
+    panel_controls(ctx, tab, false, locale)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect()
+}
+
+/// Every label AccessKit was handed, with whether the control was disabled.
+///
+/// `busy` is the input that matters for the orientation rule: the job holds the
+/// settings snapshot it was submitted with, so the rule has to be disabled
+/// while a fit runs rather than let an edit describe a different match.
+fn panel_controls(
+    ctx: &egui::Context,
+    tab: super::AlignTab,
+    busy: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Vec<(String, bool)> {
     use crate::align_drag::DragConstraint;
     use crate::align_tool::AlignTool;
     use crate::align_worker::AlignSettings;
@@ -73,7 +90,7 @@ fn panel_control_labels(
                 status: None,
                 refined_match_ready: false,
                 roles: None,
-                busy: false,
+                busy,
                 worker_failed: false,
                 moved: false,
                 can_undo: false,
@@ -93,7 +110,10 @@ fn panel_control_labels(
             update
                 .nodes
                 .iter()
-                .filter_map(|(_, node)| node.label().map(str::to_string))
+                .filter_map(|(_, node)| {
+                    node.label()
+                        .map(|label| (label.to_string(), node.is_disabled()))
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -127,4 +147,55 @@ fn the_exclusion_brush_is_offered_on_the_automatic_tab_only() {
             "{tab:?}: exclusion brush present={expected}, controls={labels:?}"
         );
     }
+}
+
+/// The surface-orientation rule is disabled while a fit is running: the job
+/// holds the settings snapshot it was submitted with, so an edit made
+/// mid-flight would describe a different match than the one that lands.
+///
+/// Drives the real `facing` control through egui and reads the disabled state
+/// back from the produced widget tree, which is stronger than the source-text
+/// check this replaced. The panel-level AccessKit node for a window does not
+/// surface per-control disabled state on this egui version, so the check runs
+/// at the control the panel delegates to.
+#[test]
+fn the_orientation_rule_is_disabled_while_a_fit_runs() {
+    use occluview_align::Orientation;
+
+    let locale = crate::i18n::LocaleManager::for_tests();
+    let target = locale.tr("align-orientation-match");
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+
+    let disabled_for = |enabled: bool| -> bool {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let mut orientation = Orientation::Match;
+            super::super::align_panel_settings::facing(ui, &mut orientation, enabled, &locale);
+        });
+        out.textures_delta.clear();
+        out.platform_output
+            .accesskit_update
+            .and_then(|update| {
+                update.nodes.iter().find_map(|(_, node)| {
+                    (node.label() == Some(target.as_str())).then(|| node.is_disabled())
+                })
+            })
+            .unwrap_or_else(|| panic!("the orientation radio {target:?} must be rendered"))
+    };
+
+    assert!(
+        !disabled_for(true),
+        "with no fit running the orientation rule is editable"
+    );
+    assert!(
+        disabled_for(false),
+        "a running fit must disable the orientation rule"
+    );
 }

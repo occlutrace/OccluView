@@ -246,11 +246,6 @@ impl GpuTexture {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
-    /// The part of this file above the test module.
-    ///
-    /// Searching the whole of it matches the needle written in the assertion
-    /// itself, so the guard would pass on its own text and the production line
-    /// it names could be deleted with nothing going red.
     /// A texture the device cannot hold is boxed down, not dropped.
     ///
     /// The readers accept up to 8192 px and some devices stop at 2048, so a

@@ -1,12 +1,14 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::float_cmp, clippy::unwrap_used)]
 
 use super::app_align_display::AlignOverlay;
 use super::*;
 use crate::app::app_test_support::test_app;
-use crate::contact::ContactRequest;
+use crate::contact::{ContactLayerField, ContactRequest};
 use crate::contact_worker::{ContactCompletion, ContactFailure, ContactOutcome, ContactWorker};
 use glam::Vec3;
+use occluview_contact::ContactStats;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
+use occluview_render::ContactFieldTexels;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -488,5 +490,57 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
         std::sync::Arc::as_ptr(app.document.scene.as_ref().expect("scene")),
         scene_ptr,
         "the document must still hold the very scene the caller passed, not a copy"
+    );
+}
+
+/// The shader reads a vertex's field texel as `(index % width, index / width)`,
+/// with `width` taken from the uniform's `contact_field_width`. The uniform is
+/// built from the PACKED field's own row length, so a field narrower than the
+/// 1024-texel ceiling must reach the GPU with its real width. A hardcoded
+/// ceiling here makes every vertex past the first row decode the wrong texel and
+/// paint a plausible but wrong map — which is worse than painting none.
+#[test]
+fn the_shader_is_told_the_width_the_field_was_packed_with() {
+    let mut app = test_app("contact-field-width-wiring");
+    let (scene, first, _second, _third) = three_layer_scene();
+    app.document.scene = Some(Arc::new(scene));
+
+    assert!(open_contacts_on(&mut app, first));
+    let request = pending(&app);
+
+    // A 7-texel-wide packed field, deliberately not the 1024 ceiling.
+    let texels =
+        Arc::new(ContactFieldTexels::new(vec![0u8; 7 * 4], 7, 1).expect("a 7x1 packed field"));
+    let subject_field = ContactLayerField {
+        layer: request.pair.subject,
+        signed_mm: Arc::new(vec![0.0; 3]),
+        texels: Arc::clone(&texels),
+        revision: 1,
+    };
+    let antagonist_field = ContactLayerField {
+        layer: request.pair.antagonist,
+        signed_mm: Arc::new(vec![0.0; 3]),
+        texels: Arc::new(ContactFieldTexels::new(vec![0u8; 4], 1, 1).expect("a 1x1 field")),
+        revision: 2,
+    };
+    assert!(
+        app.tools.contacts.store_measured(
+            request,
+            subject_field,
+            antagonist_field,
+            ContactStats::default(),
+        ),
+        "the reading must be accepted before it can be painted"
+    );
+
+    let scene = app.document.scene.clone().expect("scene");
+    let updates = app.prepared_scene_updates(&scene);
+    // `prepared_scene_updates` walks the scene in layer order, and the subject
+    // is the first layer of `three_layer_scene`.
+    let subject_update = updates.first().expect("the scene has layers");
+    assert_eq!(
+        subject_update.uniform.contact_field_width, 7.0,
+        "the shader must be told the row length the field was packed with, \
+         not the 1024 ceiling"
     );
 }
