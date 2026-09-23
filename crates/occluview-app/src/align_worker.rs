@@ -359,6 +359,25 @@ impl AlignWorker {
         }
     }
 
+    /// Publish a completion as if the worker thread had produced it.
+    ///
+    /// Test-only. `drain` keeps only the newest request, and `submit` mints a
+    /// fresh request id every time, so a submission can never put two
+    /// completions in front of the UI at once. The app's drain loop still has to
+    /// re-read the generation between them, because applying one result can
+    /// invalidate the rest of the batch; this is how that boundary is reached.
+    #[cfg(test)]
+    pub(crate) fn publish_for_tests(&self, generation: u64, outcome: AlignOutcome) {
+        let request_id = self.request_sequence.load(Ordering::SeqCst);
+        if let Ok(mut published) = self.completions.lock() {
+            published.push(AlignCompletion {
+                generation,
+                request_id,
+                outcome,
+            });
+        }
+    }
+
     /// Whether this worker can still accept or publish work.
     /// Poison this worker's queue, the way a panicking job does.
     ///

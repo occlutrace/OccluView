@@ -795,6 +795,22 @@ impl SculptWorker {
         self.state.take_ordered_outputs()
     }
 
+    /// Poison this worker's publication boundary, the way a panicking frame
+    /// path does.
+    ///
+    /// Test-only: the real failure path is a panic inside a worker-side lock,
+    /// which cannot be provoked from outside without poisoning one here.
+    #[cfg(test)]
+    #[allow(clippy::expect_used, clippy::panic)]
+    pub(crate) fn poison_publication_for_tests(&self) {
+        let state = Arc::clone(&self.state);
+        let _ = thread::spawn(move || {
+            let _guard = state.publish_boundary.lock().expect("publication lock");
+            panic!("poison the sculpt publication boundary");
+        })
+        .join();
+    }
+
     pub(crate) fn is_quiescent(&self) -> bool {
         // Every undrained slot counts: a dab the worker already processed but
         // the UI has not flushed yet (pending touches, full-sync flag, layer

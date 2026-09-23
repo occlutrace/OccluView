@@ -930,5 +930,9 @@ fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
 }
 
 #[cfg(test)]
+#[path = "app_sculpt_commit_tests.rs"]
+mod commit_tests;
+
+#[cfg(test)]
 #[path = "app_sculpt_tests.rs"]
 mod tests;
