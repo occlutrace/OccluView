@@ -92,6 +92,54 @@ const MIN_REFINEMENT_MEDIAN_MM: f64 = 0.08;
 /// exactly when the operator widens the search.
 const MAX_REFINEMENT_MEDIAN_MM: f64 = 0.30;
 
+/// The proximity band that decides how much of the surface counts as seated.
+///
+/// This was a literal `0.2` at its one call site, and it decides two things the
+/// operator cannot see: whether the global feature seed runs at all (at 0.9),
+/// and how much of the trim ratio is actually used (the fraction is multiplied
+/// by 0.8 and clamped to 0.1..0.8, silently replacing the ratio slider). The
+/// band is derived from the operator's correspondence radius and clamped, so it
+/// tracks a setting rather than a mesh-size guess, and it has a name so the
+/// derivation is visible.
+fn seated_band_mm(influence_radius_mm: f64) -> f64 {
+    (influence_radius_mm.abs() * SEATED_BAND_RADIUS_FRACTION)
+        .clamp(MIN_SEATED_BAND_MM, MAX_SEATED_BAND_MM)
+}
+
+/// Fraction of the correspondence radius the seated band spans.
+const SEATED_BAND_RADIUS_FRACTION: f64 = 0.1;
+
+/// Floor and ceiling for that band, in millimetres.
+///
+/// The floor keeps the band above a scanner's own discretisation error at the
+/// tightest slider setting; the ceiling keeps it from growing into "anything on
+/// the other arch counts as seated" at the widest.
+const MIN_SEATED_BAND_MM: f64 = 0.2;
+const MAX_SEATED_BAND_MM: f64 = 1.0;
+
+/// How far the WORST fifth of the matched surface may sit, as a multiple of
+/// the operator's correspondence radius.
+///
+/// `median_abs` bounds the typical vertex. Alone, it certifies a pose where the
+/// surface is mostly seated and a fifth of it is far away — which is exactly the
+/// shape of a fit that slid onto a neighbouring surface while most of the
+/// sampled patch stayed put. `p95_abs` is the field that measures that tail, it
+/// was computed on every report, and the gate only ever asked whether it was
+/// finite, so the one number that describes the discarded fifth was never
+/// bounded.
+///
+/// The rule is the one the doc states: a fifth of the MATCHED surface sitting a
+/// full correspondence radius away is not an alignment. It is deliberately not
+/// tighter, because the median limit already carries the fine discrimination
+/// and the corpus numbers are the calibration: a correct seating reports a
+/// median near the discretisation error but a `p95_abs` that follows the
+/// surface's own noise, and a bound tighter than the radius would risk refusing
+/// a correct seating on a coarse scan — the failure mode this whole gate was
+/// written to avoid. What it removes is the unbounded case: a pose whose
+/// discarded fifth is arbitrarily far away could be authorized on the strength
+/// of its median alone.
+const MAX_REFINEMENT_P95_FRACTION: f64 = 1.0;
+
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
 const HUBER_FACTOR: f64 = 1.345;
@@ -217,6 +265,12 @@ pub struct IcpReport {
     pub weak_rot_axes: [bool; 3],
     /// Per world axis, whether translation along it is undetermined.
     pub weak_trans_axes: [bool; 3],
+    /// The trim ratio the fit actually ran at.
+    ///
+    /// Not the operator's slider value: the global-seed branch replaces it with
+    /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8, so the panel was
+    /// unable to say which algorithm had run. Carried here so it can.
+    pub effective_matching_ratio: f64,
 }
 
 impl IcpReport {
@@ -246,9 +300,14 @@ impl IcpReport {
         let limit = radius * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
         let median_limit = (radius * MAX_REFINEMENT_MEDIAN_FRACTION)
             .clamp(MIN_REFINEMENT_MEDIAN_MM, MAX_REFINEMENT_MEDIAN_MM);
+        // The tail, not just the typical vertex: see MAX_REFINEMENT_P95_FRACTION.
+        let p95_limit = (radius * MAX_REFINEMENT_P95_FRACTION).max(MIN_REFINEMENT_MEDIAN_MM);
         self.is_trustworthy_refinement_with_limit(limit)
             && self.median_abs.is_finite()
             && self.median_abs <= median_limit
+            && self.p95_abs.is_finite()
+            && self.p95_abs >= 0.0
+            && self.p95_abs <= p95_limit
     }
 
     fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {
@@ -411,6 +470,7 @@ pub fn refine(
         p95_abs: summary.p95_abs,
         weak_rot_axes: summary.weak_rot_axes,
         weak_trans_axes: summary.weak_trans_axes,
+        effective_matching_ratio: settings.matching_ratio,
     })
 }
 
@@ -436,6 +496,7 @@ fn select_initial_pose(
         level.fixed,
         level.start,
         level.cancel,
+        seated_band_mm(level.settings.influence_radius_mm),
     ) >= 0.9
     {
         None
@@ -463,6 +524,7 @@ fn select_initial_pose(
                     level.fixed,
                     initial_pose.rigid,
                     level.cancel,
+                    seated_band_mm(level.settings.influence_radius_mm),
                 ) * 0.8)
                     .clamp(0.1, 0.8),
             )
@@ -472,13 +534,14 @@ fn select_initial_pose(
     Ok((initial_pose, settings, feature_seed))
 }
 
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, clippy::too_many_arguments)]
 fn near_surface_fraction(
     moving: Soup<'_>,
     samples: &[u32],
     fixed: &SurfaceIndex,
     pose: Rigid,
     cancel: &CancelFlag,
+    band_mm: f64,
 ) -> f64 {
     if samples.is_empty() {
         return 0.0;
@@ -491,7 +554,7 @@ fn near_surface_fraction(
         let Some(point) = vertex_at(moving.positions, vertex as usize) else {
             continue;
         };
-        if fixed.nearest(pose.apply(point), 0.2).is_some() {
+        if fixed.nearest(pose.apply(point), band_mm).is_some() {
             near += 1;
         }
     }
@@ -543,6 +606,7 @@ fn idle_report(start: Rigid) -> IcpReport {
         p95_abs: 0.0,
         weak_rot_axes: [true; 3],
         weak_trans_axes: [true; 3],
+        effective_matching_ratio: 0.0,
     }
 }
 

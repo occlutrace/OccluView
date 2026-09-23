@@ -74,6 +74,8 @@ pub enum MeshWriteWarning {
     UvsNotWritten,
     /// A texture image was attached but not written.
     TextureImageNotWritten,
+    /// Per-vertex alpha was present but the format carries only RGB.
+    VertexAlphaNotWritten,
 }
 
 /// Summary of a successful mesh write.
@@ -311,7 +313,7 @@ fn write_mesh_file(
 ///
 /// Returns [`std::io::ErrorKind::InvalidInput`] when the chain cannot be
 /// resolved to a regular path.
-fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
+pub fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
     /// Enough for the "case folder is a link into the archive" layouts this
     /// exists for, without letting a long chain walk somewhere unexpected.
     const MAX_DESTINATION_LINKS: usize = 8;

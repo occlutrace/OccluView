@@ -51,6 +51,20 @@ const OUTPUT_DIR: &str = "contact-verify";
 /// subdirectories each holding one, named after the case.
 const FIXTURE_DIR_ENV: &str = "OCCLUVIEW_CONTACT_FIXTURES";
 
+/// Whether this run is a release gate rather than an ordinary test run.
+///
+/// The align acceptance harness has had this mode all along; the contact one
+/// did not, and it is the ONLY end-to-end check of a real reading — the numbers
+/// the panel shows as a clinical measurement. Without it a wrong value could
+/// ship with a fully green suite, because the tests that assert
+/// `subject_measured > 0`, `contact_area_mm2 > 0` and "only measured vertices
+/// may be painted" all returned early on a machine with no corpus, including
+/// CI, and `validate-release-private.sh` exported only the align variable, so
+/// even the private gate could not force them.
+fn fixtures_are_required() -> bool {
+    std::env::var_os("OCCLUVIEW_CONTACT_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
+}
+
 /// Every available `(case, upper, lower)` triple, found in the fixture
 /// directory at run time.
 fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
@@ -393,6 +407,15 @@ fn output_dir() -> PathBuf {
 #[test]
 fn a_pair_that_cannot_meet_paints_nothing() {
     let Some((id, upper, lower)) = available_fixtures().into_iter().next() else {
+        // A skip is honest in a developer run and a lie in a release gate: the
+        // gate exists to prove the reading is right, and "no corpus" would make
+        // it report success for having checked nothing.
+        assert!(
+            !fixtures_are_required(),
+            "{} is set, so the corpus is required, but no pair was found in {}",
+            "OCCLUVIEW_CONTACT_FIXTURES_REQUIRED",
+            FIXTURE_DIR_ENV
+        );
         tracing::warn!(
             env = FIXTURE_DIR_ENV,
             "no corpus; the empty-state render is skipped"
@@ -471,6 +494,11 @@ fn a_pair_that_cannot_meet_paints_nothing() {
 fn real_scan_pairs_measure_and_render_a_readable_contact_map() {
     let fixtures = available_fixtures();
     if fixtures.is_empty() {
+        assert!(
+            !fixtures_are_required(),
+            "OCCLUVIEW_CONTACT_FIXTURES_REQUIRED is set, so this test is a release gate, but \
+             no corpus was found in {FIXTURE_DIR_ENV}"
+        );
         tracing::warn!(
             env = FIXTURE_DIR_ENV,
             "no articulated scan corpus; set the variable to a directory of upper/lower \

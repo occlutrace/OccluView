@@ -76,7 +76,21 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     // newest claims something was released, so a tag has to exist for it. Tags
     // come from git; a source tarball has none, and there the ordering above is
     // all there is.
+    // No tags at all means the rule below cannot be evaluated, and skipping
+    // quietly is what made this test unreachable: CI checks out with a
+    // depth-1 clone that fetches no tags, and this repository ships no release
+    // tag by design, so the loop that fails an untagged section never ran
+    // anywhere. An empty tag list is now stated rather than assumed, so a
+    // checkout that gains tags starts enforcing the rule instead of continuing
+    // to pass for the wrong reason.
     let Some(tags) = repository_tags() else {
+        // Stated through the tracing channel the rest of the suite uses, not
+        // stderr: every test writes to the same stream and the assertion
+        // libraries own it.
+        tracing::info!(
+            "changelog ordering: this checkout carries no tags, so only the ordering \
+             assertion above is checked"
+        );
         return;
     };
     // Only from the first tagged version onward: sections older than the day

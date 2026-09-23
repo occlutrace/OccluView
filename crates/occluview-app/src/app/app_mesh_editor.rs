@@ -443,6 +443,18 @@ impl OccluViewApp {
     }
 
     pub(super) fn apply_history_navigation_now(&mut self, redo: bool, ctx: &egui::Context) {
+        // Close any open hand-drag BEFORE the draft is cloned from the live
+        // scene. `set_scene` used to do this on the way in, which was too late:
+        // `finish_align_drag` builds its `before` snapshot from whatever scene is
+        // installed, so it recorded the drag against the OUTGOING scene (the one
+        // this undo is about to replace) and pushed that as the newest history
+        // entry. The live scene then became the draft with the edit undone while
+        // the newest entry described the edit as applied — and because the guard
+        // compares layer ids only, nothing refused it: the first Ctrl+Z showed
+        // the edit undone and the second put it back and rewound the pose. The
+        // drag is also truncated here either way (it takes `self.tools.align.drag`),
+        // so closing it at this point loses the operator nothing.
+        self.finish_align_drag();
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
@@ -629,8 +641,12 @@ impl OccluViewApp {
             };
 
         // Enter/Esc are consumed only while an outline is in progress, so they
-        // keep their normal meaning everywhere else.
-        let (enter, escape) = if outline_active {
+        // keep their normal meaning everywhere else — and never while a modal
+        // is in front, where the key belongs to the dialog. Without this the
+        // outline ate the Escape and the modal (which consumes it later in the
+        // same frame) stayed open, so one Escape appeared to do nothing while
+        // silently dropping the outline.
+        let (enter, escape) = if outline_active && !self.ui.modal_dialog_open() {
             ctx.input_mut(|input| {
                 (
                     input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),

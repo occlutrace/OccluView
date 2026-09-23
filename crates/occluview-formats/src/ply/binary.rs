@@ -324,13 +324,18 @@ fn read_faces(
     // properties (e.g. some intraoral scanners emit `vertex_indices` +
     // `texcoord`); we must consume every declared list per row so the next
     // row's bytes line up.
-    let Some(indices_prop_idx) = element
+    // No geometry list means nothing to triangulate — but the element's BYTES
+    // still have to be consumed. Returning early left the cursor at the start of
+    // the row, so any element declared after this one was read from the wrong
+    // offset and decoded as garbage; the ASCII reader already skips the whole
+    // element in this case. An out-of-range index makes the shared loop below
+    // take its "discard this list" branch for every property, which consumes
+    // exactly the element's bytes and emits nothing.
+    let indices_prop_idx = element
         .properties
         .iter()
         .position(|p| matches!(p, Property::List { name, .. } if name == "vertex_indices"))
-    else {
-        return Ok(()); // No vertex_indices list — nothing to triangulate.
-    };
+        .unwrap_or(usize::MAX);
 
     // Scratch space reused per row: the corners of this face and, when the row
     // carries a `texcoord` list, their coordinates.

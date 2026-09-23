@@ -11,7 +11,6 @@ pub mod render_thumb;
 /// Bounded helpers for copying shell-provided streams into memory.
 pub mod stream_read;
 pub mod thumbnail_format;
-pub mod thumbnail_timeout;
 
 pub use error::ThumbnailError;
 pub use occluview_formats::V1_OPEN_EXTENSIONS as SUPPORTED_EXTENSIONS;

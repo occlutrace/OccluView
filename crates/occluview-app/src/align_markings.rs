@@ -42,6 +42,20 @@ impl AlignSide {
     pub(crate) const BOTH: [Self; 2] = [Self::Moving, Self::Fixed];
 }
 
+/// What a whole-mesh command left behind, for the status line.
+///
+/// `marked` is the vertex count the mask reports as fitting, so `marked == 0` on
+/// a non-empty mesh means the command excluded EVERYTHING — the state
+/// `MaskCommand::MarkAutomatic` reaches when the brush covered the whole layer,
+/// and the one the report has to name honestly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MaskCommandOutcome {
+    /// Vertices the command left as fitting.
+    pub(crate) marked: usize,
+    /// Vertices the mesh has, i.e. the most the command could mark.
+    pub(crate) vertex_count: usize,
+}
+
 /// One whole-mesh command from the Brush tool window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MaskCommand {
@@ -303,20 +317,26 @@ impl AlignMarkings {
         changed
     }
 
-    /// Run one whole-mesh command against one side. Returns whether it reached
-    /// a mask at all.
+    /// Run one whole-mesh command against one side.
+    ///
+    /// Returns `None` when the command reached no mask at all, else what it
+    /// left. The count is the part the caller could not see before: `MarkAutomatic`
+    /// on a layer smaller than the brush radius clears EVERY vertex, so it
+    /// excludes nothing while the status line still said "Fit only at the arrow
+    /// ends" — the next Best fit then used the whole surface under a sentence
+    /// claiming the opposite.
     pub(crate) fn command(
         &mut self,
         side: AlignSide,
         command: MaskCommand,
         mesh: &MarkedMesh<'_>,
         keep: &AutoKeep<'_>,
-    ) -> bool {
+    ) -> Option<MaskCommandOutcome> {
         if mesh.vertex_count == 0 {
-            return false;
+            return None;
         }
         if command == MaskCommand::MarkAutomatic && keep.centres.is_empty() {
-            return false;
+            return None;
         }
         let mut owned = self.side_mut(side).take_for_edit(mesh.identity());
         let previously_marked = self.side(side).marked;
@@ -363,7 +383,10 @@ impl AlignMarkings {
         state.marked = marked;
         state.mask = Some(owned);
         self.revision = self.revision.wrapping_add(1);
-        true
+        Some(MaskCommandOutcome {
+            marked,
+            vertex_count: mesh.vertex_count,
+        })
     }
 
     /// Trade the two sides, because the scans traded roles.

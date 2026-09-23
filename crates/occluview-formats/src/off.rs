@@ -23,12 +23,18 @@ use occluview_core::{Mesh, MeshBuilder, Vertex};
 /// A corrupt or hostile header can claim billions of vertices/indices; a raw
 /// `Vec::with_capacity(that)` reserves gigabytes and aborts the process on
 /// Windows (where allocations are committed eagerly) — a hard crash on a bad
-/// file. Every element needs at least one input byte, so no honest file can
-/// contain more elements than it has remaining bytes: `declared.min(remaining)`
-/// keeps a truthful file exact (it reserves `declared`) while a lie reserves
-/// only what the bytes could hold, then fails honestly in the read loop.
-fn bounded_capacity(declared: usize, remaining_bytes: usize) -> usize {
-    declared.min(remaining_bytes)
+/// file.
+///
+/// The unit matters: an element of THIS vector is a `Vec3`, so bounding the
+/// count by the remaining bytes reserved `12 x` the file. At the 1 GiB import
+/// cap that is ~12.9 GB, twice over with two files in flight, which is exactly
+/// the reservation the bound exists to prevent. A truthful file still gets its
+/// exact count, because a truthful header cannot declare more elements than
+/// the bytes could encode.
+use std::mem::size_of;
+
+fn bounded_capacity<T>(declared: usize, remaining_bytes: usize) -> usize {
+    declared.min(remaining_bytes / size_of::<T>().max(1))
 }
 
 /// Read an OFF file from raw bytes.
@@ -87,8 +93,10 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
     let f_count = read_i32(bytes, &mut cur)?.max(0) as usize;
     let _e_count = read_i32(bytes, &mut cur)? as usize; // edges: unused
 
-    let mut positions: Vec<Vec3> =
-        Vec::with_capacity(bounded_capacity(v_count, bytes.len().saturating_sub(cur)));
+    let mut positions: Vec<Vec3> = Vec::with_capacity(bounded_capacity::<Vec3>(
+        v_count,
+        bytes.len().saturating_sub(cur),
+    ));
     for _ in 0..v_count {
         let x = read_f64_le(bytes, &mut cur)?;
         let y = read_f64_le(bytes, &mut cur)?;
@@ -114,7 +122,7 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
             continue;
         }
         let mut idxs: Vec<u32> =
-            Vec::with_capacity(bounded_capacity(n, bytes.len().saturating_sub(cur)));
+            Vec::with_capacity(bounded_capacity::<u32>(n, bytes.len().saturating_sub(cur)));
         for k in 0..n {
             let raw = read_i32(bytes, &mut cur)?;
             let idx = u32::try_from(raw.max(0)).map_err(|_| FormatError::Malformed {
@@ -188,7 +196,8 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
     // Bound the reservation by the remaining text: an ASCII vertex needs at
     // least a few bytes, so a header claiming billions of vertices in a tiny
     // file cannot force a gigabyte reservation (which aborts on Windows).
-    let mut positions: Vec<Vec3> = Vec::with_capacity(bounded_capacity(v_count, bytes.len()));
+    let mut positions: Vec<Vec3> =
+        Vec::with_capacity(bounded_capacity::<Vec3>(v_count, bytes.len()));
     let mut lexer = Lexer::new(lines);
 
     for _ in 0..v_count {
@@ -214,7 +223,7 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
             }
             continue;
         }
-        let mut idxs: Vec<u32> = Vec::with_capacity(bounded_capacity(n, bytes.len()));
+        let mut idxs: Vec<u32> = Vec::with_capacity(bounded_capacity::<u32>(n, bytes.len()));
         for k in 0..n {
             let raw = lexer.next_f32()?;
             let idx = raw as u32;
@@ -370,10 +379,29 @@ mod tests {
     #[test]
     fn bounded_capacity_caps_liar_but_keeps_honest_count() {
         // Truthful file: reserve exactly what the header declares.
-        assert_eq!(bounded_capacity(3, 4096), 3);
-        // Lie: a tiny file claiming billions is capped to the byte budget so
-        // the reservation cannot abort the process.
-        assert_eq!(bounded_capacity(4_000_000_000, 24), 24);
+        assert_eq!(bounded_capacity::<Vec3>(3, 4096), 3);
+        // Lie: a tiny file claiming billions is capped to what its bytes could
+        // encode, so the reservation cannot abort the process.
+        assert_eq!(bounded_capacity::<Vec3>(4_000_000_000, 24), 2);
+    }
+
+    /// The bound must be counted in BYTES, not elements.
+    ///
+    /// Bounding the element count by the remaining bytes reserved `size_of::<T>`
+    /// times the file: a 1 GiB OFF whose header lies reserved ~12.9 GB of
+    /// `Vec3` (and twice that with two files in flight), which is the eager
+    /// commit that aborts on Windows. A smaller element must still get its own
+    /// honest count, so an `u32` face row is not cut to a twelfth of what its
+    /// bytes hold.
+    #[test]
+    fn the_reservation_is_bounded_by_bytes_not_elements() {
+        assert_eq!(bounded_capacity::<Vec3>(1_000_000, 24_000), 2_000);
+        assert_eq!(bounded_capacity::<u32>(1_000_000, 24_000), 6_000);
+        // No element may reserve more than the file could hold.
+        for bytes in [0usize, 1, 11, 12, 4096] {
+            let reserved = bounded_capacity::<Vec3>(usize::MAX, bytes);
+            assert!(reserved * size_of::<Vec3>() <= bytes);
+        }
     }
 
     #[test]

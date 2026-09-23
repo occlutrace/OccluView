@@ -273,11 +273,20 @@ impl ContactState {
             self.status,
             Some(ContactStatus::SubjectUnusable | ContactStatus::AntagonistUnusable)
         ) {
-            self.status = if self.fields.is_empty() {
-                None
+            // Say what is actually true. Showing "Re-measuring…" here promised a
+            // measurement that nothing had started: hiding and showing a layer
+            // changes neither the geometry id nor the pose, so the job keys are
+            // unchanged and `needs_measurement` stays false — the sentence then
+            // sat in the details popover forever with no worker running. The
+            // fields are dropped with the override, so the next frame really does
+            // resubmit and the spinner has something behind it.
+            if self.fields.is_empty() {
+                self.status = None;
             } else {
-                Some(ContactStatus::Remeasuring)
-            };
+                self.fields.clear();
+                self.measured = None;
+                self.status = Some(ContactStatus::Remeasuring);
+            }
         }
         true
     }

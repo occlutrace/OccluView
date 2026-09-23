@@ -194,6 +194,18 @@ pub(super) fn read_indices(
         .accessors
         .get(acc_idx)
         .ok_or_else(|| malformed("accessor out of range"))?;
+    // An index accessor must be SCALAR. Without this check a VEC3-declared
+    // accessor was read at a 4-byte stride out of 12-byte elements: the reader
+    // produced in-range garbage indices from the first component of every
+    // vector and built triangles from them, with no error. The component-type
+    // check right below was already here, so this is the missing half of the
+    // same validation.
+    if acc.type_ != "SCALAR" {
+        return Err(malformed(&format!(
+            "index accessor must be SCALAR, not {}",
+            acc.type_
+        )));
+    }
     let bytes_per = match acc.component_type {
         5125 => 4,
         5123 => 2,

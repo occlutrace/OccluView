@@ -181,10 +181,14 @@ impl OccluViewApp {
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui.sync_native_title(ctx);
+        // Sync the brush sliders into settings BEFORE persisting, so a close
+        // request that flushes the debounce is written by the save on this same
+        // frame. In the old order the save ran first and the flushed value
+        // waited for the next frame, which a closing window does not get.
+        self.persistence.sync_sculpt_preferences(ctx);
         self.persistence.persist_settings_if_due(ctx);
         let preference = self.ui.locale.snapshot().preference.clone();
         self.persistence.persist_language_if_due(ctx, &preference);
-        self.persistence.sync_sculpt_preferences(ctx);
         self.ui.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
