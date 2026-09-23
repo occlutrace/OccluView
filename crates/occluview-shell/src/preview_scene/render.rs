@@ -209,20 +209,6 @@ mod tests {
         );
     }
 
-    /// The Windows blit consumes the presented buffer top-down without another
-    /// row reversal.
-    /// Everything from a function's signature to the next top-level item.
-    fn function_body<'a>(source: &'a str, signature: &str) -> &'a str {
-        let start = source.find(signature);
-        assert!(start.is_some(), "missing {signature}");
-        let Some(start) = start else {
-            return "";
-        };
-        let body = &source[start..];
-        let end = body.find("\n}\n").map_or(body.len(), |offset| offset + 3);
-        &body[..end]
-    }
-
     #[test]
     fn preview_scene_renders_rectangular_pixels() {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());

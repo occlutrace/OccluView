@@ -375,13 +375,10 @@ fn copy_rgba_to_clipboard(
         return Err(e_fail());
     }
     // SAFETY: allocates a moveable global block of the exact DIB size.
-    let hglobal = match unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) } {
-        Ok(block) => block,
-        Err(_) => {
-            // SAFETY: always release the clipboard we opened.
-            let _ = unsafe { CloseClipboard() };
-            return Err(e_fail());
-        }
+    let Ok(hglobal) = (unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) }) else {
+        // SAFETY: always release the clipboard we opened.
+        let _ = unsafe { CloseClipboard() };
+        return Err(e_fail());
     };
     // SAFETY: `hglobal` was just allocated.
     let ptr = unsafe { GlobalLock(hglobal) };
