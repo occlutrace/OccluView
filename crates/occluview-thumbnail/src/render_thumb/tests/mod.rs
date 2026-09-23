@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod api;
-mod architecture;
 mod attempts;
 mod burst_stress;
 mod cache_and_jobs;
@@ -14,30 +13,6 @@ mod fixtures;
 mod framing;
 mod placeholder_ladder;
 mod robustness;
-
-fn mod_source() -> &'static str {
-    include_str!("../mod.rs")
-}
-
-fn cache_source() -> &'static str {
-    include_str!("../cache.rs")
-}
-
-fn concurrency_source() -> &'static str {
-    include_str!("../concurrency.rs")
-}
-
-fn loading_source() -> &'static str {
-    include_str!("../loading.rs")
-}
-
-fn rendering_source() -> &'static str {
-    include_str!("../rendering.rs")
-}
-
-fn offscreen_factory_source() -> &'static str {
-    include_str!("../../offscreen_factory.rs")
-}
 
 fn assert_tint_eq(actual: [f32; 4], expected: [f32; 4]) {
     assert!(
