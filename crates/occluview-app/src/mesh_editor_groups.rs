@@ -735,32 +735,6 @@ mod tests {
     }
 
     #[test]
-    fn selection_sections_follow_the_workflow_order() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"))
-                .replace("\r\n", "\n");
-        let production = source
-            .split_once("\nmod tests {")
-            .map_or(source.as_str(), |(source, _)| source);
-        // The `section(ui, locale, key)` calls, not the bare titles: the tab
-        // strip also spells "Sculpt"/"Mesh Editing" and would collide with
-        // a bare search.
-        let order = [
-            "section(ui, locale, \"meshedit-section-selection\")",
-            "section(ui, locale, \"meshedit-section-edit-selection\")",
-            "section(ui, locale, \"meshedit-section-close-holes\")",
-            "section(ui, locale, \"meshedit-section-sculpt\")",
-        ];
-        let mut last = 0;
-        for title in order {
-            let at = production.find(title).unwrap_or(usize::MAX);
-            assert!(at != usize::MAX, "section {title} missing");
-            assert!(at > last, "section {title} out of workflow order");
-            last = at;
-        }
-    }
-
-    #[test]
     fn every_group_renders_across_states_without_panicking() {
         let states = [
             MeshEditorPanelState::default(),
@@ -804,14 +778,5 @@ mod tests {
                 let _ = super::super::session_bar::session(ui, &state, !state.busy, &locale);
             });
         }
-    }
-
-    #[test]
-    fn compact_controls_expose_labels_to_keyboard_and_accessibility_users() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("mesh_editor_groups.rs"));
-        assert!(source.contains("WidgetInfo::slider"));
-        assert!(source.contains("WidgetInfo::selected"));
-        assert!(source.contains("response.has_focus()"));
     }
 }

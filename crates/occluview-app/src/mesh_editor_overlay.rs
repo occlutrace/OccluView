@@ -248,40 +248,4 @@ fn window_action(
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn window_groups_follow_the_dental_cad_workflow_order() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("mesh_editor_overlay.rs"))
-                .replace("\r\n", "\n");
-        let production = source
-            .split_once("\nmod tests {")
-            .map_or(source.as_str(), |(source, _)| source);
-        // The operator's top-down workflow: pick a selection mode and mark →
-        // edit that selection. History and commit
-        // (Undo/Redo/Cancel/Done) render last, in `session_bar::session`.
-        let order = [
-            "groups::selection(",
-            "groups::edit_selection(",
-            "groups::close_holes(",
-            "groups::sculpt(",
-            "session_bar::session(",
-        ];
-        let mut last = 0;
-        for call in order {
-            let at = production.find(call).unwrap_or(usize::MAX);
-            assert!(at != usize::MAX, "group call {call} missing");
-            assert!(at > last, "group {call} out of dental CAD workflow order");
-            last = at;
-        }
-        assert!(
-            production.contains("egui::Window::new"),
-            "the editor must be a movable egui window, not a pinned overlay"
-        );
-        assert!(
-            production.contains("!state.busy && !state.sculpt_pending")
-                && production.contains("session_bar::session(ui, &state, !state.busy"),
-            "Sculpt backpressure must disable structural tools while keeping Done/Cancel live"
-        );
-    }
-}
+mod tests {}

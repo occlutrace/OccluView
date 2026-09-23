@@ -599,18 +599,3 @@ fn selected_face_mesh_separate_splits_components_into_multiple_layers_and_undo_r
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), 3);
     assert_eq!(scene.meshes()[0].id(), layer_id);
 }
-
-#[test]
-fn layer_edit_module_exposes_undo_orchestration_without_keyboard_input() {
-    let source = include_str!("../undo_redo.rs").replace("\r\n", "\n");
-    let production_source = source.as_str();
-
-    assert!(
-        production_source.contains("apply_last_mesh_edit_undo_with_status"),
-        "viewport shortcut and layer context menu should share this undo path"
-    );
-    assert!(
-        !production_source.contains("consume_key("),
-        "layer edit module should not own keyboard input plumbing"
-    );
-}

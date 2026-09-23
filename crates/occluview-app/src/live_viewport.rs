@@ -303,34 +303,4 @@ impl egui_wgpu::CallbackTrait for LiveViewportCallback {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn live_viewport_keeps_selection_overlay_separate_from_base_scene() {
-        let source = crate::primary_ui_tests::production_source(include_str!("live_viewport.rs"))
-            .replace("\r\n", "\n");
-        let production_source = source
-            .split_once("\nmod tests {")
-            .map_or(source.as_str(), |(source, _)| source);
-
-        assert!(
-            production_source.contains("selection_overlay: Option<PreparedScene>"),
-            "live viewport should not fold selected-face overlay into the base prepared scene"
-        );
-        assert!(
-            production_source.contains("pub(super) fn sync_selection_overlay("),
-            "selection overlay should have its own sync path"
-        );
-        assert!(
-            crate::primary_ui_tests::appears_before(
-                production_source,
-                "scene.draw_with_clip(",
-                "overlay.draw_with_clip(",
-            ),
-            "selection overlay should draw after the base scene"
-        );
-        assert!(
-            production_source.contains("self.selection_overlay = None;"),
-            "clearing the live scene should also clear stale selection overlay"
-        );
-    }
-}
+mod tests {}

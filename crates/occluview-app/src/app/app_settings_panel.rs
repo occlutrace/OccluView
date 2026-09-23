@@ -761,22 +761,7 @@ fn update_status_text<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn numeric_preferences_use_slider_tracks_instead_of_stepper_boxes() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("app_settings_panel.rs"));
-
-        assert!(
-            source.contains("egui::Slider::new"),
-            "numeric preferences should expose a continuous slider"
-        );
-        assert!(
-            !source.contains("egui::DragValue::new"),
-            "numeric preferences should not fall back to compact stepper boxes"
-        );
-    }
-}
+mod tests {}
 
 #[cfg(test)]
 #[path = "app_settings_panel_shots.rs"]

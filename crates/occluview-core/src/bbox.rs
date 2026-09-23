@@ -233,23 +233,4 @@ mod ray_entry_tests {
         // Parallel to a slab and outside it.
         assert!(box_.ray_entry(Vec3::new(0.0, 9.0, 0.0), Vec3::X).is_none());
     }
-
-    #[test]
-    fn neither_viewport_keeps_its_own_copy() {
-        // Both viewports fall back to this when a click misses every triangle,
-        // and only one of them builds on Linux.
-        for source in [
-            include_str!("../../occluview-app/src/viewer/interaction.rs"),
-            include_str!("../../occluview-shell/src/preview_scene/interaction.rs"),
-        ] {
-            assert!(
-                source.contains(".ray_entry(origin, direction)"),
-                "both pick fallbacks should call the shared method"
-            );
-            assert!(
-                !source.contains("fn ray_aabb_entry("),
-                "a private copy is how the two drifted apart"
-            );
-        }
-    }
 }

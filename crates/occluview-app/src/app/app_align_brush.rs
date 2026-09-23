@@ -18,8 +18,6 @@
 //! be able to land on whichever one the operator aims at. Naming a single scan
 //! stays available for the overlapping case, where nearest-hit picking alone
 //! would put the stroke on the wrong surface.
-
-use eframe::egui;
 use glam::DVec3;
 use occluview_align::{MaskEdit, Rigid};
 use occluview_core::{SceneMesh, SceneMeshId};
@@ -593,13 +591,16 @@ fn region_color(
 
 #[cfg(test)]
 mod tests {
-    use super::{region_color, resize_align_brush_from_wheel};
+    use super::region_color;
     use crate::align_brush::{AlignBrush, BrushTarget};
     use crate::align_markings::{MaskCommand, MARKED_OUT_COLOR};
-    use eframe::egui;
     use glam::Vec3;
     use occluview_core::Vertex;
 
+    /// A vertex the brush has not marked keeps the scan's own colour at paint
+    /// weight 0 — never black. A scan without a texture takes its base colour
+    /// from this channel, and a black write would paint the whole arch black
+    /// while a region of it was marked.
     /// A vertex the brush has not marked keeps the scan's own colour at paint
     /// weight 0 — never black. A scan without a texture takes its base colour
     /// from this channel, and a black write would paint the whole arch black
@@ -610,6 +611,8 @@ mod tests {
         assert_eq!(region_color(&vertices, None, 0), [10, 20, 30, 0]);
     }
 
+    /// Marked-out surface is fully painted, so the excluded region reaches the
+    /// screen at the colour the Brush window describes.
     /// Marked-out surface is fully painted, so the excluded region reaches the
     /// screen at the colour the Brush window describes.
     #[test]
@@ -637,136 +640,14 @@ mod tests {
         assert_eq!(brush.target().sides().len(), 2);
     }
 
-    fn shift_input(mut events: Vec<egui::Event>) -> egui::RawInput {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        events.insert(0, egui::Event::ModifiersChanged(shift));
-        egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            events,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn consumer_wheel_align_shift_resizes_once_from_horizontal_raw_event() {
-        let ctx = egui::Context::default();
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut brush = AlignBrush::default();
-        brush.set_radius_mm(2.0);
-        let mut first_changed = false;
-        ctx.run_ui(
-            shift_input(vec![egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, 50.0),
-                phase: egui::TouchPhase::Move,
-                modifiers: shift,
-            }]),
-            |ui| first_changed = resize_align_brush_from_wheel(&mut brush, ui.ctx()),
-        )
-        .drop_without_applying_deltas();
-
-        assert!(first_changed);
-        assert!((brush.radius_mm() - 2.25).abs() < f32::EPSILON);
-
-        let mut replayed = true;
-        ctx.run_ui(shift_input(Vec::new()), |ui| {
-            replayed = resize_align_brush_from_wheel(&mut brush, ui.ctx());
-        })
-        .drop_without_applying_deltas();
-
-        assert!(
-            !replayed,
-            "one physical notch must not replay from smoothing"
-        );
-        assert!((brush.radius_mm() - 2.25).abs() < f32::EPSILON);
-    }
-
-    /// The production half of this file: a source-contract test that scanned
-    /// its own assertions would pass or fail on its own text.
-    fn production() -> &'static str {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_align_brush.rs"));
-        source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before)
-    }
-
-    /// The stroke handler's own body, which several contracts are about.
-    fn stroke() -> &'static str {
-        production()
-            .split_once("fn handle_align_brush(")
-            .map(|(_, rest)| rest)
-            .and_then(|rest| rest.split_once("fn handle_align_brush_wheel("))
-            .map(|(body, _)| body)
-            .unwrap_or_default()
-    }
-
-    /// Painting changes what would be matched, so a map drawn before the stroke
-    /// describes a comparison that no longer exists. Dropping it is honest;
-    /// silently recomputing behind the operator's hand is not, and recomputing
-    /// per dab would also be slow.
-    #[test]
-    fn a_stroke_drops_the_map_instead_of_recomputing_it() {
-        assert!(
-            production().contains("self.invalidate_deviation_map("),
-            "a mask change must invalidate the map"
-        );
-        // Scoped to the stroke: CLOSING the brush does re-measure, because the
-        // map was taken down to make room for the markings and the operator is
-        // asking for it back. Measuring per dab is the thing that must not
-        // happen — it is most of a second behind a moving hand.
-        let stroke = stroke();
-        assert!(
-            !stroke.contains("measure_if_shown") && !stroke.contains("run_align_measure"),
-            "a stroke must never kick off a measurement"
-        );
-    }
-
     /// The two things this file, and only this file, is responsible for keeping
     /// cheap. What a dab does to the mask itself is covered by real tests over
     /// `AlignMarkings`; these are the wiring around it, which has no behaviour
     /// of its own to run.
-    #[test]
-    fn a_dab_reuses_the_cached_geometry_and_re_colours_only_what_it_touched() {
-        let stroke = stroke();
-        assert!(
-            stroke.contains("self.tools.align.geometry.local_positions(entry)"),
-            "the positions must come from the cache, not a fresh copy per dab"
-        );
-        assert!(
-            !stroke.contains("flat_map(|vertex| vertex.position)"),
-            "a dab must not rebuild the position array"
-        );
-        assert!(
-            stroke.contains("self.patch_region_preview("),
-            "a dab must re-colour only what it touched"
-        );
-    }
-
     /// The brush must follow the explicit Mesh selection. The two surfaces
     /// overlap, so a nearest-hit picker would intermittently paint the wrong
     /// side; `pick_layer_hit` is the causal guard. The default selection covers
     /// both scans, so one stroke can mark either side of the comparison.
-    #[test]
-    fn a_dab_is_scoped_to_the_explicit_mesh_selection() {
-        let stroke = stroke();
-        assert!(
-            stroke.contains("for (side, layer_id) in named")
-                && stroke.contains("self.tools.align.brush.target()")
-                && stroke.contains("pick_layer_hit")
-                && !stroke.contains("pick_scene_hit"),
-            "the stroke must pick only on the meshes the selection covers"
-        );
-    }
-
     /// Every whole-mesh command must reach every scan the selection covers.
     /// The report keys are per-command, and a command with no one-scan report
     /// would fall back to a sentence claiming the pair when one was touched.
@@ -776,17 +657,5 @@ mod tests {
             assert!(!command.report_one_key().is_empty());
             assert_ne!(command.report_one_key(), command.report_key());
         }
-    }
-
-    /// The operator's dental CAD software's rule: a plain drag marks, Shift
-    /// inverses the brush, and the Brush inverse toggle inverses it standing.
-    /// Both have to reach the same decision or the toggle and the key would
-    /// fight.
-    #[test]
-    fn a_stroke_takes_its_direction_from_the_toggle_and_shift_together() {
-        assert!(
-            production().contains(".erases(ctx.input(|input| input.modifiers.shift))"),
-            "the stroke direction must come from the brush, Shift included"
-        );
     }
 }

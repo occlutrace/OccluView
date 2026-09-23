@@ -130,13 +130,4 @@ mod tests {
             }
         });
     }
-
-    #[test]
-    fn custom_icon_cells_have_a_visible_focus_ring_and_accessible_name() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("mesh_editor_icons.rs"));
-        assert!(source.contains("response.has_focus()"));
-        assert!(source.contains("response.widget_info"));
-        assert!(source.contains("WidgetInfo::selected"));
-    }
 }

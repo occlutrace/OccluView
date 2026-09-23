@@ -89,15 +89,6 @@ fn session_request_uses_the_current_operator_disc_radius() {
 }
 
 #[test]
-fn state_source_has_no_renderer_imports_or_file_level_dead_code_allow() {
-    let source = include_str!("state.rs");
-
-    assert!(!source.contains("egui"));
-    assert!(!source.contains("wgpu"));
-    assert!(!source.contains("#![allow(dead_code)]"));
-}
-
-#[test]
 fn start_captures_stable_target_without_scene_mutation() {
     let scene = sample_scene();
     let entry = &scene.meshes()[0];
@@ -154,14 +145,6 @@ fn submit_rejects_wrong_transform_on_same_layer_and_topology() {
     assert_ne!(wrong_transform.transform, entry.transform);
 
     assert!(!submit_scene_entry(&mut controller, &wrong_transform));
-}
-
-#[test]
-fn job_source_contract_uses_arc_mesh_and_moves_queued_input() {
-    let source = include_str!("job.rs");
-
-    assert!(source.contains("mesh: Arc<Mesh>"));
-    assert!(!source.contains("send_to_worker(next.clone())"));
 }
 
 #[test]

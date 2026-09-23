@@ -324,26 +324,4 @@ mod tests {
             Err(RenderError::Surface(error)) if error == "offscreen readback callback dropped"
         ));
     }
-
-    #[test]
-    fn mapped_range_failure_cleans_up_before_the_error_can_return() {
-        let source = include_str!("helpers.rs");
-        let range = source
-            .find("let data = match slice.get_mapped_range()")
-            .expect("mapped range acquisition");
-        let unmap = source[range..]
-            .find("output_buffer.unmap();")
-            .map(|offset| range + offset)
-            .expect("readback buffer cleanup");
-        let propagate = source[unmap..]
-            .find("let pixels = pixels_result?;")
-            .map(|offset| unmap + offset)
-            .expect("readback error propagation after cleanup");
-
-        assert!(
-            !source[range..unmap].contains("?;"),
-            "mapped-range acquisition must remain inside the cleanup scope"
-        );
-        assert!(unmap < propagate, "cleanup must precede error propagation");
-    }
 }

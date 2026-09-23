@@ -47,6 +47,134 @@ fn sculpted_mesh_refits_a_warm_bvh_for_the_next_pick() {
 }
 
 #[test]
+fn a_live_vertex_pick_checks_triangles_that_left_the_original_bvh_bounds() {
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    mesh.warm_bvh();
+    let live: Vec<Vertex> = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| Vertex::at(Vec3::from_array(vertex.position) + Vec3::new(0.0, 0.0, 5.0)))
+        .collect();
+
+    let hit = mesh
+        .pick_ray_local_with_vertices(
+            LiveRayPick::new(&live, &[0], Vec3::new(0.25, 0.25, 10.0), -Vec3::Z),
+            |_| true,
+        )
+        .expect("dirty triangle should be picked at its live position");
+    assert_eq!(hit.0, 0);
+    assert!((hit.1.z - 5.0).abs() < 1e-5);
+    assert_eq!(
+        mesh.triangle_normal_local_with_vertices(&live, 0),
+        Some(Vec3::Z)
+    );
+}
+
+#[test]
+fn an_uncached_sculpt_snapshot_holds_the_same_geometry_without_the_caches() {
+    // Same content, none of the derived work: this is the form used for an undo
+    // baseline, which is stored and usually dropped. On a million-vertex layer
+    // the cached form costs 46 ms and this one 24 ms, and the difference lands
+    // on the first dab of every stroke.
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    mesh.warm_bvh();
+
+    let moved: Vec<Vertex> = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| Vertex::at(Vec3::from_array(vertex.position) + Vec3::new(0.0, 0.0, 5.0)))
+        .collect();
+    let snapshot = mesh
+        .with_sculpted_vertices_uncached(moved.clone())
+        .expect("same vertex count");
+
+    assert_eq!(snapshot.vertices(), moved.as_slice());
+    assert_eq!(snapshot.indices(), mesh.indices());
+    assert_eq!(snapshot.topology_id(), mesh.topology_id());
+    assert!(
+        !snapshot.bvh_is_ready(),
+        "the undo baseline must not pay for a BVH refit"
+    );
+    // Uncached does not mean wrong: every derived value is still available.
+    let box_of_snapshot = snapshot.bbox_cached();
+    assert!((box_of_snapshot.min.z - 5.0).abs() < 1e-5);
+    assert!((box_of_snapshot.max.z - 5.0).abs() < 1e-5);
+
+    // A length mismatch is still refused, same as the cached form.
+    assert!(mesh.with_sculpted_vertices_uncached(Vec::new()).is_none());
+}
+
+/// A pile of coincident vertices used to cost k^2 dot products on the loading
+/// thread, with no cancellation and no ceiling: measured 19 ms at k=2000,
+/// 214 ms at k=8000 and 1.30 s at k=20000, which extrapolates to minutes at
+/// k=200000 -- inside `dllhost`, holding a thumbnail lane long after Explorer
+/// has given up on the request. Judging agreement against the group mean above
+/// a threshold makes it linear: the same three sizes now cost 2.3 ms, 4.9 ms
+/// and 11.4 ms.
+#[test]
+fn a_huge_coincident_vertex_group_stays_linear() {
+    let group = 20_000usize;
+    let mut vertices = Vec::with_capacity(group * 3);
+    let mut indices = Vec::with_capacity(group * 3);
+    for i in 0..group {
+        let angle = i as f32 * 0.0001;
+        for corner in 0..3 {
+            let mut vertex = Vertex::at(Vec3::ZERO);
+            vertex.position = if corner == 0 {
+                [0.0, 0.0, 0.0]
+            } else {
+                [corner as f32, i as f32 * 0.001, 0.0]
+            };
+            vertex.normal = [angle.cos(), angle.sin(), 0.0];
+            indices.push(u32::try_from(vertices.len()).expect("index fits"));
+            vertices.push(vertex);
+        }
+    }
+
+    let started = std::time::Instant::now();
+    let mesh = Mesh::new(Some("fan".into()), vertices, indices).expect("valid mesh");
+    let elapsed = started.elapsed();
+
+    assert_eq!(mesh.vertices().len(), group * 3);
+    // The ceiling has to sit between the two forms, so both were measured here
+    // in the test profile at this k: linear 8.6 ms, quadratic 1.14 s -- 130x
+    // apart. 300 ms leaves the linear form 35x of headroom, which survives a
+    // runner far slower than this one, and still catches the quadratic form on
+    // a machine three times faster -- 1.14 s over three is still past it.
+    //
+    // The ceiling was 10 s against a fixture of k=4000, where the quadratic
+    // form costs 53 ms. It could not have failed.
+    assert!(
+        elapsed < std::time::Duration::from_millis(300),
+        "coincident-group normal smoothing took {elapsed:?}; it has gone quadratic again"
+    );
+    // The coherent group agrees, so every member keeps a usable normal.
+    let shared = mesh
+        .vertices()
+        .iter()
+        .filter(|vertex| vertex.position == [0.0, 0.0, 0.0])
+        .count();
+    assert_eq!(shared, group, "the fixture should share one position");
+    for vertex in mesh.vertices() {
+        let normal = Vec3::from_array(vertex.normal);
+        assert!(
+            normal.is_finite() && normal.length_squared() > 0.5,
+            "a coherent group must still produce unit normals, got {normal:?}"
+        );
+    }
+}
+
+#[test]
 fn triangle_mesh_computes_normals_when_source_has_none() {
     let mesh = Mesh::new(
         Some("tri".into()),
@@ -155,7 +283,7 @@ fn out_of_range_index_is_rejected() {
 
 #[test]
 fn bbox_is_computed_and_cached() {
-    let mut mesh = Mesh::new(
+    let mesh = Mesh::new(
         None,
         vec![v(-1.0, -2.0, 0.0), v(3.0, 4.0, 0.0), v(0.0, 0.0, 0.0)],
         vec![0, 1, 2],
@@ -263,7 +391,7 @@ fn set_texture_attaches() {
 
 #[test]
 fn bbox_uncached_matches_cached() {
-    let mut mesh = Mesh::new(
+    let mesh = Mesh::new(
         None,
         vec![v(-1.0, -2.0, 0.0), v(3.0, 4.0, 0.0), v(0.0, 0.0, 0.0)],
         vec![0, 1, 2],
@@ -548,4 +676,66 @@ fn core_repair_cleans_defective_mesh_and_preserves_name() {
     assert_eq!(output.report.removed_duplicate_triangles, 1);
     assert_eq!(output.mesh.name(), Some("dirty scan"));
     assert_eq!(output.mesh.triangle_count(), 4);
+}
+
+/// A mesh with enough spread for a principal frame to exist: a flat strip
+/// longer than it is wide, which is the shape a dental arch reduces to.
+fn arch_like_mesh() -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for step in 0..16u32 {
+        let x = f32::from(u16::try_from(step).expect("small")) * 2.0;
+        vertices.push(v(x, 0.0, 0.0));
+        vertices.push(v(x, 1.0, 0.0));
+        if step > 0 {
+            let base = (step - 1) * 2;
+            indices.extend_from_slice(&[base, base + 1, base + 2]);
+            indices.extend_from_slice(&[base + 1, base + 3, base + 2]);
+        }
+    }
+    Mesh::new(Some("arch".into()), vertices, indices).expect("valid mesh")
+}
+
+#[test]
+fn the_cold_snapshot_keeps_the_principal_frame_and_loses_only_the_box() {
+    // The undo baseline is built cold to keep 24 ms off the first dab of a
+    // stroke. Two of the three caches it drops can be recovered on demand; the
+    // principal frame cannot, because `principal_frame_cached` is a plain
+    // getter and nothing recomputes it. A layer restored without one places
+    // cuts and bridge splits by the view-coupled fallback instead of its own
+    // arch axis, silently and for as long as the layer lives.
+    let mesh = arch_like_mesh();
+    let frame = mesh
+        .principal_frame_cached()
+        .expect("the fixture should have a frame");
+
+    let vertices = mesh.vertices().to_vec();
+    let cold = mesh
+        .with_sculpted_vertices_uncached(vertices)
+        .expect("same vertex count");
+
+    let restored = cold
+        .principal_frame_cached()
+        .expect("the cold snapshot must keep the frame it cannot recompute");
+    assert!(
+        (restored.centroid - frame.centroid).length() < 1e-6,
+        "the frame should be the one the layer already had"
+    );
+    assert!(
+        !cold.bbox_is_cached(),
+        "the bounding box is the cache this form exists to skip"
+    );
+}
+
+#[test]
+fn reading_the_box_caches_it() {
+    // The counterweight to the test above: the box is recoverable, and the
+    // undo path warms it once so a restored layer does not walk a million
+    // vertices twice a frame forever.
+    let cold = arch_like_mesh()
+        .with_sculpted_vertices_uncached(arch_like_mesh().vertices().to_vec())
+        .expect("same vertex count");
+    assert!(!cold.bbox_is_cached());
+    let _ = cold.bbox();
+    assert!(cold.bbox_is_cached(), "bbox() should fill the cache");
 }

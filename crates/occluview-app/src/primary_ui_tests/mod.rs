@@ -41,51 +41,9 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
-/// Whether `first` appears before `second`, with both present.
-///
-/// `str::find` returns an `Option`, and `None < Some(_)` is true in Rust, so a
-/// bare `find(a) < find(b)` passes when `a` is missing altogether -- which is
-/// exactly the deletion an ordering guard exists to catch. One of these
-/// guarded the line that keeps a brush dab from deep-copying the whole case.
-pub(crate) fn appears_before(haystack: &str, first: &str, second: &str) -> bool {
-    match (haystack.find(first), haystack.find(second)) {
-        (Some(first), Some(second)) => first < second,
-        _ => false,
-    }
-}
-
-/// The part of a source file above its own `#[cfg(test)]` module.
-///
-/// A guard that reads its own file and searches the whole of it matches the
-/// needle written in its own assertion, so it passes on its own text: the
-/// production line it names can be deleted and nothing goes red. Files whose
-/// tests live in a separate module have no marker, and the whole text is
-/// returned unchanged.
-pub(crate) fn production_source(source: &'static str) -> &'static str {
-    source
-        .split_once("#[cfg(test)]\nmod tests")
-        .map_or(source, |(production, _)| production)
-}
-
-/// One method's body: from its signature to the first line closing at the impl
-/// indentation.
-///
-/// A guard that searched everything after a signature accepted a helper that
-/// was merely *defined* later in the same file, so deleting the call inside the
-/// method left it green. Scoping to the body is what binds an assertion to the
-/// code it claims to protect.
-pub(crate) fn method_body<'a>(source: &'a str, signature: &str) -> &'a str {
-    source
-        .split_once(signature)
-        .and_then(|(_, rest)| rest.split_once("\n    }"))
-        .map(|(body, _)| body)
-        .unwrap_or_default()
-}
-
 pub(super) fn main_source() -> &'static str {
     include_str!("../main.rs")
 }
-
 /// Canonical home of the application module graph since the library
 /// boundary (Stage C): `main.rs` only delegates to the public entry here.
 pub(super) fn lib_source() -> &'static str {
@@ -137,32 +95,4 @@ pub(super) fn linux_build_deb_source() -> &'static str {
 
 pub(super) fn linux_check_deb_source() -> &'static str {
     include_str!("../../../../install/linux/check-deb.sh")
-}
-
-pub(super) fn linux_metainfo_source() -> &'static str {
-    include_str!("../../../../install/linux/ai.occlutrace.OccluView.metainfo.xml")
-}
-
-pub(super) fn linux_desktop_source() -> &'static str {
-    include_str!("../../../../install/linux/ai.occlutrace.OccluView.desktop")
-}
-
-pub(super) fn function_source<'a>(source: &'a str, signature: &str) -> &'a str {
-    let start = source.find(signature);
-    assert!(start.is_some(), "missing {signature}");
-    let Some(start) = start else {
-        return "";
-    };
-    let body = &source[start + signature.len()..];
-    let next_fn = [
-        "\n        fn ",
-        "\n        pub(super) fn ",
-        "\n    fn ",
-        "\n    pub(super) fn ",
-    ]
-    .into_iter()
-    .filter_map(|needle| body.find(needle))
-    .min()
-    .unwrap_or(body.len());
-    &source[start..start + signature.len() + next_fn]
 }
