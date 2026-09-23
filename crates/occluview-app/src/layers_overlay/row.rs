@@ -352,6 +352,3 @@ fn tint_swatch(
 // SAME bit-for-bit comparison (`layer_actions::tint_matches`); a second local
 // copy here once existed and the two drifting apart would make the popup
 // highlight a colour the apply refused to treat as current.
-
-#[cfg(test)]
-mod tests {}

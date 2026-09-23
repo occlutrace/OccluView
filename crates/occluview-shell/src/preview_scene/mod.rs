@@ -39,6 +39,3 @@ impl PreviewSceneState {
         self.offscreen.adapter_result()
     }
 }
-
-#[cfg(test)]
-mod tests {}
