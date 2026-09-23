@@ -2,7 +2,7 @@
     clippy::cast_precision_loss,
     clippy::expect_used,
     clippy::float_cmp,
-    reason = "sculpt source contracts use exact synthetic inputs"
+    reason = "exact dab-planning inputs make float equality meaningful"
 )]
 
 use super::{plan_dab_centers, sculpt_target};

@@ -680,4 +680,68 @@ mod tests {
             "no layer is left carrying the dropped colours"
         );
     }
+
+    /// A sparse overlay write that the renderer refuses is not reported as
+    /// success. The brush reads `true` as "the dab reached the screen", so a
+    /// rejected upload that returned success leaves the operator painting into
+    /// a buffer that never changed.
+    ///
+    /// The rejection is exercised at the seam that decides it: with no live
+    /// viewport there is nothing to write into, and the call must say so.
+    #[test]
+    fn a_rejected_sparse_overlay_upload_is_not_reported_as_success() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-sparse-reject");
+        assert!(
+            app.attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region),
+            "the preview has to be up before a sparse write can be attempted"
+        );
+        assert!(
+            app.render.live_viewport.is_none(),
+            "the fixture has no GPU viewport, so the write must be refused"
+        );
+
+        let applied = app.patch_overlay_colors(moving, &[0, 1, 2], &[[9, 9, 9, 255]; 3]);
+
+        assert!(
+            !applied,
+            "a sparse overlay write with nowhere to land must report failure"
+        );
+        assert!(
+            app.tools.align.deviation_push_pending,
+            "and the full repaint stays owed, so the colours are not silently lost"
+        );
+    }
+
+    /// A malformed sparse write is refused before it mutates the scratch
+    /// buffer. A partial preview accepted as a successful dab would leave the
+    /// painted array disagreeing with the mask on a later rebuild.
+    #[test]
+    fn a_malformed_sparse_overlay_write_does_not_mutate_the_scratch() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-sparse-malformed");
+
+        // Establish the scratch through the full repaint path.
+        let mesh = layer_entry(&app, moving).mesh.clone();
+        app.tools
+            .align
+            .painted
+            .repaint(&mesh, &[[1, 2, 3, 255]; 3])
+            .expect("the array matches the mesh");
+        assert!(app.attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region));
+
+        // An unsorted touched list is malformed: the renderer's sparse writer
+        // coalesces ordered runs, so it must be refused, not reordered.
+        let applied = app.patch_overlay_colors(moving, &[2, 0], &[[9, 9, 9, 255]; 2]);
+
+        assert!(!applied, "an unsorted touched list must be refused");
+        let scratch = app
+            .tools
+            .align
+            .painted
+            .repaint(&mesh, &[[1, 2, 3, 255]; 3])
+            .expect("the scratch is still addressable");
+        assert!(
+            scratch.iter().all(|vertex| vertex.color == [1, 2, 3, 255]),
+            "the rejected write must leave the scratch exactly as it was"
+        );
+    }
 }

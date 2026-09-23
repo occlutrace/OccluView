@@ -62,7 +62,8 @@ fn toggle(
             },
         );
         let mut shown = settings.show_deviation;
-        // Toggle label "Heatmap" (spelling pinned by the test below).
+        // The checkbox controls the deviation map; its label comes from the
+        // `align-map-heatmap` catalog key.
         if ui
             .add_enabled(
                 enabled,

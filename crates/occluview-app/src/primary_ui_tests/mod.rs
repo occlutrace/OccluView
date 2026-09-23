@@ -39,19 +39,6 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
-pub(super) fn main_source() -> &'static str {
-    include_str!("../main.rs")
-}
-/// Canonical home of the application module graph since the library
-/// boundary (Stage C): `main.rs` only delegates to the public entry here.
-pub(super) fn lib_source() -> &'static str {
-    include_str!("../lib.rs")
-}
-
-pub(super) fn app_bootstrap_source() -> &'static str {
-    include_str!("../app_bootstrap.rs")
-}
-
 /// Read a source file this crate makes assertions about.
 ///
 /// The sibling mechanism, `include_str!`, is checked by the compiler: rename
@@ -69,10 +56,6 @@ pub(super) fn repo_source_file(relative_path: &str) -> String {
             path.display()
         )
     })
-}
-
-pub(super) fn app_manifest_source() -> &'static str {
-    include_str!("../../Cargo.toml")
 }
 
 pub(super) fn ci_workflow_source() -> &'static str {

@@ -651,5 +651,70 @@ fn assert_no_further_output(worker: &SculptWorker) {
     }
 }
 
+/// A densifying dab whose authoritative scene mesh cannot be built is terminal:
+/// the kernel topology has already grown, so the worker must report the failure
+/// and stop rather than keep streaming sparse ids that index a mesh the renderer
+/// never received. The rebuild failure cannot be provoked through a well-formed
+/// mesh, so the session's rebuild is forced to fail for this one layer.
+#[test]
+fn densification_failure_is_not_silently_dropped() {
+    let mesh = coarse_ridge_mesh();
+    let mut session = session_for(&mesh);
+    // Arm the forced rebuild failure for exactly this worker's layer.
+    crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(session.layer_id.get(), Ordering::SeqCst);
+    session.dirty_stroke = false;
+    session.stroke_start_mesh = None;
+    let worker = SculptWorker::spawn(session);
+
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 4.0],
+        radius_mm: 3.5,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    assert!(worker.try_apply(stroke, BrushMode::Smooth));
+
+    let failure = wait_for_error(&worker);
+    assert!(
+        matches!(
+            failure,
+            Some(SculptFailure::TopologyRebuild { ref detail }) if detail.contains("for the test")
+        ),
+        "a failed densification rebuild must surface as TopologyRebuild, not be \
+         dropped as an empty dab: {failure:?}"
+    );
+
+    // And it stops: no rebuild, no completion, no later command consumed.
+    assert_no_further_output(&worker);
+    // Reset so a later test in this binary is not affected.
+    crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(0, Ordering::SeqCst);
+}
+
+/// A panic in the worker body must not take the viewer down or leave the stroke
+/// looking busy forever: the `catch_unwind` boundary in `spawn` has to latch a
+/// typed failure the UI can show. The kernel cannot unwind through a normal dab,
+/// so the test-only trigger panics the worker at its command boundary.
+#[test]
+fn worker_entry_converts_panics_to_a_visible_failure() {
+    let worker = SculptWorker::spawn_panicking(session_for(&test_mesh()));
+
+    // Any command drives the worker into its body; the panic happens there.
+    assert!(worker.try_apply(a_dab(), BrushMode::Add));
+
+    let failure = wait_for_error(&worker);
+    assert!(
+        matches!(failure, Some(SculptFailure::WorkerPanicked { ref message }) if !message.is_empty()),
+        "a panicking worker body must latch a visible WorkerPanicked failure: {failure:?}"
+    );
+    assert!(
+        worker.take_completion().is_none(),
+        "a panicked worker publishes no completion"
+    );
+    assert!(
+        worker.take_error().is_none(),
+        "the failure is reported exactly once, not relatched forever"
+    );
+}
+
 #[path = "sculpt_worker_output_tests.rs"]
 mod output_tests;

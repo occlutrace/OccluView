@@ -203,3 +203,53 @@ fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
         expected_local
     );
 }
+
+/// Removing a scan the tool has paired must revoke the fit measured against it.
+/// The pair names a layer that no longer exists, and a refined-match claim or a
+/// heatmap about a departed scan would keep describing geometry the operator
+/// cannot see.
+#[test]
+fn removing_a_named_layer_revokes_refined_authority() {
+    use crate::app::app_test_support::named_scene;
+
+    let mut app = test_app("align-remove-named-layer");
+    let mut scene = named_scene("lower", 0.0);
+    let fixed_id = scene.meshes()[0].id();
+    let moving_id = push_named_layer(&mut scene, "upper", 5.0);
+    app.document.scene = Some(Arc::new(scene));
+    app.tools.align.tool.arm();
+    app.tools.align.tool.imply_pair(&[moving_id, fixed_id]);
+    app.tools.align.refined_match_ready = true;
+    app.tools.align.settings.show_deviation = true;
+    app.tools.align.rejected = vec![0];
+    app.align_worker_mut();
+
+    // Drop the moving layer from the scene the way a layer-remove does.
+    let mut scene = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    let remove_index = scene
+        .meshes()
+        .iter()
+        .position(|entry| entry.id() == moving_id)
+        .expect("the moving layer");
+    scene.remove(remove_index);
+    app.document.scene = Some(Arc::new(scene));
+
+    // The overlay frame is what notices the removal and revokes the session.
+    let ctx = egui::Context::default();
+    ctx.run_ui(egui::RawInput::default(), |ui| {
+        let response = ui.allocate_response(egui::vec2(400.0, 400.0), egui::Sense::click());
+        let ctx = ui.ctx().clone();
+        let _ = app.show_align_tool_overlay(ui, &response, false, &ctx);
+    })
+    .drop_without_applying_deltas();
+
+    assert!(
+        !app.tools.align.refined_match_ready,
+        "a named layer that left the scene cannot still hold a refined match"
+    );
+    assert!(
+        app.tools.align.rejected.is_empty(),
+        "outlier marks indexing the departed pair must go"
+    );
+    assert!(!app.tools.align.settings.show_deviation);
+}

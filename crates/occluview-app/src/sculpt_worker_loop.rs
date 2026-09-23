@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::panic))]
+
 use super::{
     Arc, DabFailure, Ordering, SculptCommand, SculptCommandQueue, SculptCompletion, SculptFailure,
     SculptSession, WorkerState,
@@ -10,6 +12,7 @@ pub(super) fn run_worker(
     pool: rayon::ThreadPool,
 ) {
     while let Some(command) = queue.pop() {
+        maybe_panic_for_tests(&state);
         if state.stopping.load(Ordering::Acquire) {
             queue.mark_idle();
             break;
@@ -116,6 +119,21 @@ pub(super) fn run_worker(
         queue.mark_idle();
     }
 }
+
+/// Test-only: unwind at the worker's command boundary when a test armed the
+/// panic trigger, so the `catch_unwind` in `SculptWorker::spawn` — the real
+/// production guard — is what converts the dead thread into a typed failure.
+#[cfg(test)]
+#[allow(clippy::panic)]
+fn maybe_panic_for_tests(state: &WorkerState) {
+    assert!(
+        !state.panic_on_next_command.swap(false, Ordering::AcqRel),
+        "sculpt worker body panicked for the test"
+    );
+}
+
+#[cfg(not(test))]
+fn maybe_panic_for_tests(_state: &WorkerState) {}
 
 pub(super) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
