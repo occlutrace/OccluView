@@ -84,9 +84,10 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     // checkout that gains tags starts enforcing the rule instead of continuing
     // to pass for the wrong reason.
     let Some(tags) = repository_tags() else {
-        // Stated through the tracing channel the rest of the suite uses, not
-        // stderr: every test writes to the same stream and the assertion
-        // libraries own it.
+        // The CI checkout that runs this test now fetches tags, so "no tags" is
+        // no longer the ordinary case — it means either a source tarball or a
+        // checkout that lost them, and silently skipping is what let the rule
+        // below go unchecked everywhere. Stated, not silent.
         tracing::info!(
             "changelog ordering: this checkout carries no tags, so only the ordering \
              assertion above is checked"

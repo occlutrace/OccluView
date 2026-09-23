@@ -57,6 +57,16 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
         return Ok(FormatKind::Hps);
     }
 
+    // A UTF-8 BOM is metadata some Windows tools prepend. It has to be skipped
+    // HERE for the text signatures below to see through it — an unnamed stream
+    // that relies on magic was otherwise reported Unsupported for a valid PLY or
+    // ASCII STL. It is skipped in the probe only, never in front of the whole
+    // format layer: a binary STL's 80-byte header is free-form by contract, so
+    // removing three bytes from a file whose header literally begins with those
+    // bytes would shift the triangle count and corrupt a valid file. The text
+    // readers strip it themselves for the same reason.
+    let magic = magic.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(magic);
+
     if looks_like_hps_xml(magic) {
         return Ok(FormatKind::Hps);
     }

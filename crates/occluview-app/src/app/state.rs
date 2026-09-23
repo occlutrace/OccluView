@@ -211,6 +211,11 @@ impl eframe::App for OccluViewApp {
         if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(target_ui_scale);
         }
+        // Before anything can draw — and therefore before egui's own Escape
+        // handling can close a popup — record whether one was up. Every consumer
+        // of `modal_dialog_open()` this frame then sees the frame the operator
+        // saw, not one already disarmed by this frame's draw.
+        self.ui.popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
         self.handle_dropped_files(&ctx);
         self.release_viewport_orbit_cursor_if_inactive(&ctx);
         self.render_pending_frame(&ctx);

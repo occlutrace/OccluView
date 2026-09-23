@@ -67,6 +67,19 @@ pub(super) struct UiState {
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
+    /// Whether a popup was open at the START of this frame.
+    ///
+    /// Read instead of asking egui live, because egui closes a popup on a
+    /// NON-consuming read of Escape *inside* `Popup::show`, and every popup in
+    /// this app is drawn before the tool hotkeys and the tool Escape handlers
+    /// ask. By that point the popup has already removed itself from egui's open
+    /// set, so a live `Popup::is_any_open` returns false and the same Escape
+    /// still reached the tool behind the popup — one press dismissed the
+    /// recent-files dropdown AND ran `cancel_align_session`. Snapshotted at the
+    /// top of the frame, before anything can close it, the answer describes the
+    /// frame the operator actually saw.
+    pub(super) popup_open_at_frame_start: bool,
+
     pub(super) app_logo: Option<egui::TextureHandle>,
     pub(super) foreground_pulse_until: Option<Instant>,
     pub(super) viewport_orbit_cursor_grabbed: bool,
@@ -93,6 +106,16 @@ pub(super) struct UiState {
 pub(super) struct PendingReplaceOpen {
     pub(super) paths: Vec<std::path::PathBuf>,
     pub(super) source: &'static str,
+    /// When this request was made.
+    ///
+    /// A parked open and a load already in flight can finish in either order, and
+    /// the doc on `pending_replace_open` promises "newest replace supersedes an
+    /// older parked one; the open is held, never dropped". Without a recency
+    /// value that rule could not be applied: a finishing OLDER load overwrote the
+    /// parked NEWER request and cleared the status, so the file the operator
+    /// asked for second was silently discarded and answering the dialog opened
+    /// the first one.
+    pub(super) requested_at: Instant,
 }
 
 impl UiState {
@@ -107,6 +130,7 @@ impl UiState {
             app_error: None,
             information_dialog: InformationDialog::default(),
             repair_report: crate::repair_report::RepairReportDialog::default(),
+            popup_open_at_frame_start: false,
             app_logo: None,
             foreground_pulse_until: None,
             viewport_orbit_cursor_grabbed: false,
@@ -133,12 +157,10 @@ impl UiState {
             close_guard: self.close_guard_open,
             pending_replace: self.pending_replace_open.is_some(),
             error: self.app_error.is_some(),
-            // Any popup, not only the settings one. egui closes a popup on a
-            // NON-consuming read of Escape, so the key survives for the tool
-            // handler that runs later in the same frame: one Escape dismissed
-            // the recent-files dropdown or a layer context menu AND disarmed
-            // the armed tool behind it (for Align, cancel_align_session).
-            settings_popup: egui::Popup::is_any_open(&self.repaint_ctx),
+            // Any popup, read from the frame-start snapshot. The settings
+            // popup is included by that term; the comment on the field explains
+            // why a live query is too late.
+            settings_popup: self.popup_open_at_frame_start,
             information_dialog: self.information_dialog.is_open(),
             repair_report: self.repair_report.is_open(),
         }

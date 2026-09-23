@@ -86,6 +86,7 @@ impl OccluViewApp {
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
+                requested_at: Instant::now(),
             });
             return;
         }
@@ -104,6 +105,7 @@ impl OccluViewApp {
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
+                requested_at: Instant::now(),
             });
             self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
             return;
@@ -213,6 +215,7 @@ impl OccluViewApp {
             superseded: false,
             content_revision_at_request,
             dirty_at_request,
+            requested_at: started_at,
         });
     }
 
@@ -297,9 +300,27 @@ impl OccluViewApp {
 
     fn park_loaded_replace_for_reconfirmation(&mut self, pending: PendingSceneLoad) {
         // New edits outrank an older permission to replace the scene.
+        //
+        // But an older LOAD finishing here must not outrank a NEWER parked
+        // request. The operator opened F1, edited while it decoded, then opened
+        // F2 (parked); when F1 landed this used to overwrite the parked F2 and
+        // clear the status, so the file they asked for last was silently
+        // discarded and answering the dialog opened F1. The parked request is
+        // kept when it is newer — the status line then says so instead of
+        // leaving the operator with a dialog whose headline changed under them.
+        let newer_request_parked = self
+            .ui
+            .pending_replace_open
+            .as_ref()
+            .is_some_and(|parked| parked.requested_at > pending.requested_at);
+        if newer_request_parked {
+            self.ui.status_message = Some(self.ui.locale.tr("load-superseded-parked-open"));
+            return;
+        }
         self.ui.pending_replace_open = Some(PendingReplaceOpen {
             paths: pending.paths,
             source: pending.source,
+            requested_at: Instant::now(),
         });
         self.ui.status_message = None;
     }

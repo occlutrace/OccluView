@@ -2,7 +2,6 @@
 ## Status: DRAFT. Requires native dental/CAD terminology review + visual UI review before APPROVED.
 ## Contract: exact key/attribute/variable parity with en.ftl.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Scans ausrichten
 meshedit-window-title = Netzbearbeitung
@@ -927,3 +926,4 @@ load-units-suggest-millimeters = die Größe deutet auf Millimetrzahlen hin, so 
 load-units-unclear = die Größe entscheidet es nicht; prüfen Sie mit einem bekannten Maß
 contact-stats-balance-hover = Kontaktfläche geteilt an der Mittellinie: vor / hinter der Linie
 mesh-warning-vertex-alpha = Vertex-Alpha wurde nicht geschrieben
+load-superseded-parked-open = Eine neuere Datei wartet: beantworten Sie zuerst deren Abfrage

@@ -297,14 +297,22 @@ impl OccluViewApp {
             });
             return;
         }
-        // A command that left the mask EMPTY on a non-empty mesh excluded the
-        // whole layer: the honest sentence is that there is nothing left to
-        // exclude, not the name of the region the operator asked for. This is
-        // reachable from "Mark automatic" with a radius wider than the layer,
-        // where every vertex is cleared.
-        let emptied = reached
-            .iter()
-            .any(|(_, outcome)| outcome.marked == 0 && outcome.vertex_count > 0);
+        // "Mark automatic" that left the mask EMPTY on a non-empty mesh excluded
+        // the whole layer: the honest sentence is that there is nothing left to
+        // exclude, not the name of the region the operator asked for. This
+        // happens when the radius is wider than the layer, so every vertex is
+        // cleared.
+        //
+        // Gated on the COMMAND, not on the count alone. Every command that
+        // clears the mask — "Fit everywhere" above all — legitimately reports
+        // zero marked, and keying this branch on `marked == 0` alone told an
+        // operator who asked for whole-surface matching that "the region covered
+        // the whole scan", while the sentences written for those commands became
+        // unreachable.
+        let emptied = command == MaskCommand::MarkAutomatic
+            && reached
+                .iter()
+                .any(|(_, outcome)| outcome.marked == 0 && outcome.vertex_count > 0);
         if emptied {
             self.tools.align.status = Some(self.ui.locale.tr("align-mask-automatic-empty"));
             self.invalidate_deviation_map(&self.ui.locale.tr("align-mask-automatic-empty"));

@@ -20,6 +20,7 @@ use occluview_formats::dispatch::{
     read_file_loaded_with_key_provider, read_files_with_key_provider,
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
+use occluview_thumbnail::PlaceholderKind;
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -206,8 +207,17 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         spec,
         std::time::Duration::from_secs(15),
     );
+    // A real render is told apart from a stand-in by PIXEL CONTENT, not by the
+    // attempt arm alone. `TransientFailure` covers a missing or unreadable file,
+    // but a directory, an unregistered extension and a corrupt container all
+    // come back as a legitimate cacheable `Bitmap` holding the placeholder —
+    // pixels a script cannot tell from a rendered thumbnail. Comparing against
+    // the placeholder for the same spec makes the exit code mean what the
+    // comment above says.
     let rendered = match attempt {
-        occluview_thumbnail::ThumbnailAttempt::Bitmap(pixels) => Some(pixels),
+        occluview_thumbnail::ThumbnailAttempt::Bitmap(pixels) => {
+            (!is_placeholder(&pixels, spec)).then_some(pixels)
+        }
         occluview_thumbnail::ThumbnailAttempt::TransientFailure => None,
     };
 
@@ -230,6 +240,17 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     }
     eprintln!("Done: {}", out_path.display());
     std::process::exit(0);
+}
+
+/// Whether `pixels` are the crate's deterministic placeholder for `spec`.
+///
+/// Both placeholder kinds (clean and corrupt-badged) mean "no picture of this
+/// file", which is what the exit code reports; a real render never matches byte
+/// for byte.
+fn is_placeholder(pixels: &[u8], spec: occluview_render::ThumbnailSpec) -> bool {
+    [PlaceholderKind::Plain, PlaceholderKind::Corrupt]
+        .into_iter()
+        .any(|kind| occluview_thumbnail::placeholder_thumbnail_kind(spec, kind) == pixels)
 }
 
 static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);

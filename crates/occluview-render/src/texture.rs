@@ -5,7 +5,6 @@ use crate::contact_texture::{inert_field_texture, white_base};
 use crate::pipeline::Renderer;
 use occluview_core::MeshTexture;
 
-/// A texture resident on the GPU: the `wgpu::Texture`, its view, a sampler,
 /// Box-filter `tex` down until both sides fit `limit`, or `None` if it already
 /// does.
 ///
@@ -56,7 +55,12 @@ fn fit_to_device(tex: &MeshTexture, limit: u32) -> Option<MeshTexture> {
     Some(MeshTexture::new(width, height, rgba))
 }
 
-/// and the bind group (group 2) that binds them at bindings 0 and 1.
+/// A texture resident on the GPU: the `wgpu::Texture`, its view, a sampler and
+/// the bind group (group 2) that binds them at bindings 0 and 1.
+///
+/// An earlier edit inserted `fit_to_device` between this doc's first line and
+/// its tail, so the opening sentence described the wrong item and the tail
+/// dangled on the struct.
 pub struct GpuTexture {
     /// Owns the GPU memory; kept alive so the view and sampler stay valid.
     #[allow(dead_code)]

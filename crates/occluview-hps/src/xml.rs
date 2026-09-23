@@ -47,24 +47,6 @@ pub(super) fn find_optional_element<'a>(xml: &'a str, name: &str) -> Option<XmlE
     find_element(xml, name).ok()
 }
 
-pub(super) fn find_elements<'a>(xml: &'a str, name: &str) -> Vec<XmlElement<'a>> {
-    let mut elements = Vec::new();
-    let mut from = 0;
-    while let Ok(element) = find_element_from(xml, name, from) {
-        let next = element.open_tag.as_ptr() as usize - xml.as_ptr() as usize
-            + element.open_tag.len()
-            + element.body.len()
-            + name.len()
-            + 3;
-        elements.push(element);
-        if next <= from || next >= xml.len() {
-            break;
-        }
-        from = next;
-    }
-    elements
-}
-
 fn find_element_from<'a>(
     xml: &'a str,
     name: &str,

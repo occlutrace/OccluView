@@ -83,6 +83,7 @@ pub(super) fn delivered_load(
         mode,
         started_at: Instant::now(),
         receiver,
+        requested_at: Instant::now(),
         superseded: false,
         content_revision_at_request: app.document.content_revision,
         dirty_at_request: false,

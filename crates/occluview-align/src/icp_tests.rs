@@ -161,6 +161,9 @@ fn trustworthy_report() -> IcpReport {
         weak_rot_axes: [false; 3],
         weak_trans_axes: [false; 3],
         effective_matching_ratio: 0.8,
+        // Above the floor the gate added, so this literal stays the "a real
+        // seating" case it was written as.
+        seated_fraction: 0.25,
     }
 }
 

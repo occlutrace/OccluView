@@ -241,8 +241,21 @@ fn system_file_association_shell_ex_key(ext: &str, category: &str) -> HSTRING {
     ))
 }
 
+/// The friendly name of the type behind an extension.
+///
+/// Taken from the CANONICAL extension, not the one that arrived. `.dcm` shares
+/// the HPS ProgID (`format_progid`), and `register_progid` is called once per
+/// supported extension in `SUPPORTED_EXTENSIONS` order — `hps` before `dcm` —
+/// so naming this from the raw extension let the `dcm` pass overwrite
+/// `HKCR\MeshFile.HPS @` from "HPS File" to "DCM File" after the `hps` pass had
+/// written it. The MSI, the `.reg` and the lifecycle smoke all pin "HPS File".
 fn format_file_type_name(ext: &str) -> String {
-    format!("{} File", ext.to_ascii_uppercase())
+    let canonical = if ext.eq_ignore_ascii_case("dcm") {
+        "hps"
+    } else {
+        ext
+    };
+    format!("{} File", canonical.to_ascii_uppercase())
 }
 
 fn format_icon_value(app_path: &HSTRING) -> HSTRING {

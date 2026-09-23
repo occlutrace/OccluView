@@ -226,14 +226,18 @@ impl ContactScale {
     /// same time as what counts as heavy, and then no single reading on screen
     /// could be attributed to either.
     /// The deepest stop is capped at the probe's reach. `depth` scales with the
-    /// operator's "heavy at" slider, and at the top of its range it puts the
-    /// last stop at 1.36 mm (TIGHTNESS) or 1.75 mm (Approach) — depths the
-    /// field cannot report, because a vertex deeper than [`SEARCH_RADIUS_MM`]
-    /// inside the antagonist finds no surface at all and is painted as bare
-    /// tooth in the middle of its own mark. The legend then names depths no
-    /// reading can reach, and any interference past the reach disappears.
-    /// Collapsing the unreachable tail onto the reach keeps every colour the
-    /// ramp draws wear-able.
+    /// operator's "heavy at" slider, and at the top of its range it put the last
+    /// stop at 1.36 mm (TIGHTNESS) or 1.75 mm (Approach) — depths the field
+    /// cannot report, because a vertex deeper than [`SEARCH_RADIUS_MM`] inside
+    /// the antagonist finds no surface at all. The legend then named depths no
+    /// reading could reach.
+    ///
+    /// Collapsing the unreachable tail onto the reach makes the last stops
+    /// coincide at high slider values, so the topmost colour is what a
+    /// maximum-depth reading gets rather than a span nothing can occupy. The
+    /// sentinel case itself is unchanged and cannot be fixed here: a
+    /// penetration past the reach is still [`NO_CONTACT_MM`], which is why the
+    /// reach is set above every law's saturation depth in the first place.
     pub fn stop_mm(&self, index: usize) -> f64 {
         self.law.stops.get(index).map_or(0.0, |(mm, _)| {
             if *mm < 0.0 {
@@ -256,11 +260,17 @@ impl ContactScale {
 
     /// Whether this value is inside the painted range at all.
     ///
-    /// The ONE predicate the paint path, the hover readout and the panel share,
-    /// so "what the operator sees" and "what the numbers count" cannot
-    /// disagree. It is the *reach* of the map: at exactly the far edge the
-    /// feather has already reached zero, so a value there is inside the map and
-    /// invisible on the surface. That single point is the only difference from
+    /// Whether the hover SWATCH counts this value as painted.
+    ///
+    /// Not a shared predicate: the screen uses the shader's own weight and the
+    /// panel's counters use `stats::TOUCH_MM`, which is deliberately wider so a
+    /// measured area does not fall short by a feather's width. An earlier
+    /// version of this comment called it "the ONE predicate the paint path, the
+    /// hover readout and the panel share", which was never true of all three.
+    ///
+    /// It is the *reach* of the map: at exactly the far edge the feather has
+    /// already reached zero, so a value there is inside the map and invisible on
+    /// the surface. That single point is the only difference from
     /// [`Self::color_at`]'s alpha, and it is deliberate — a readout that
     /// excludes the value it is standing on is worse than one that shows it.
     pub fn is_painted(&self, signed_mm: f64) -> bool {

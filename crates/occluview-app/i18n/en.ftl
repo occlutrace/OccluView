@@ -4,7 +4,6 @@
 ## ("Cut View", "Mesh Editing"); … ellipsis (never ...); straight
 ## apostrophes; em dashes with spaces; no "please" in UI strings.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Align Scans
 meshedit-window-title = Mesh Editing
@@ -936,3 +935,4 @@ load-units-suggest-millimeters = the size suggests millimetre numbers, which is 
 load-units-unclear = the size does not settle it; check a known measurement
 contact-stats-balance-hover = Contact area split by the mid-line: before-line / after-line
 mesh-warning-vertex-alpha = vertex alpha was not written
+load-superseded-parked-open = A newer open is waiting: answer its prompt first

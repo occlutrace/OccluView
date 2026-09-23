@@ -44,10 +44,12 @@ impl AlignSide {
 
 /// What a whole-mesh command left behind, for the status line.
 ///
-/// `marked` is the vertex count the mask reports as fitting, so `marked == 0` on
-/// a non-empty mesh means the command excluded EVERYTHING — the state
-/// `MaskCommand::MarkAutomatic` reaches when the brush covered the whole layer,
-/// and the one the report has to name honestly.
+/// `marked` is the count the mask reports as EXCLUDED, so `marked == 0` on a
+/// non-empty mesh means the command excluded nothing. That is the normal result
+/// of `MaskCommand::FitEverywhere`, and it is the state
+/// `MaskCommand::MarkAutomatic` reaches when the brush covered the whole layer —
+/// see the command-specific branch at the call site, which must not read this
+/// count on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MaskCommandOutcome {
     /// Vertices the command left as fitting.

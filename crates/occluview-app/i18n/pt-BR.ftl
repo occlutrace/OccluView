@@ -3,7 +3,6 @@
 ## Contract: exact key/attribute/variable parity with en.ftl.
 ## Never use this catalog for pt-PT or other Portuguese variants.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Alinhar escaneamentos
 meshedit-window-title = Edição de malhas
@@ -931,3 +930,4 @@ load-units-suggest-millimeters = o tamanho sugere números em milímetros, foi a
 load-units-unclear = o tamanho não decide; confira com uma medida conhecida
 contact-stats-balance-hover = Área de contato dividida pela linha média: antes / depois da linha
 mesh-warning-vertex-alpha = o alfa dos vértices não foi gravado
+load-superseded-parked-open = Há uma abertura mais recente aguardando: responda primeiro ao aviso dela
