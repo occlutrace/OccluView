@@ -18,7 +18,7 @@ fn windows_app_identity_value_matches_shell_registration() {
     );
 }
 
-/// The AppUserModelID the process sets must be the one the installed shortcut
+/// The `AppUserModelID` the process sets must be the one the installed shortcut
 /// is tagged with, or the taskbar groups the running viewer under a second,
 /// unnamed entry and the jump list disappears.
 ///
