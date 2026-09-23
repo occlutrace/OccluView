@@ -118,6 +118,36 @@ impl OccluViewApp {
         }
 
         // Structural edits remain synchronous and may be expensive on large meshes.
+        //
+        // A contact action takes its own path first and NEVER builds a draft: it
+        // measures the scene and may clear an align overlay, and clearing that
+        // overlay edits the document's LIVE scene in place. `live_scene_mut`
+        // asserts in debug that it holds the only `Arc<Scene>`, and `scene` is a
+        // second handle held by the caller (the layer menu and the viewport
+        // right-click menu both pass one), so a normal gesture — Layers or
+        // right-click -> Contacts while a Best-fit heatmap is up — tripped the
+        // assertion in a debug build; in release the document copied the scene
+        // and the caller's handle went stale for the rest of the action.
+        // The draft below must therefore not be built for this case, and the
+        // borrowed scene has to be gone before the action runs.
+        if let Some(request) = changes.context_request {
+            if matches!(
+                request.action,
+                crate::layer_actions::LayerContextAction::Contacts
+                    | crate::layer_actions::LayerContextAction::HideContacts
+            ) {
+                // The draft is a COPY of the scene, so it carries the layers the
+                // action needs while being no handle on the live one. Dropping
+                // `scene` first is what leaves `live_scene_mut` holding the only
+                // `Arc` when the clear runs.
+                let mut draft = scene.as_ref().clone();
+                drop(scene);
+                super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
+                // A reading is app state, not a change to a scene, so nothing
+                // below applies to it.
+                return;
+            }
+        }
         let mut draft = scene.as_ref().clone();
         let mut scene_changed = false;
         let mut structural_scene_change = false;

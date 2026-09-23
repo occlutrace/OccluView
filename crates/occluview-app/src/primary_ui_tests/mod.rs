@@ -10,7 +10,6 @@ mod documents;
 mod platform;
 mod presentation_sinks;
 mod source_tree;
-mod tools;
 mod viewport;
 
 /// Every `.rs` file under `directory`, skipping symlinks and any `target`
