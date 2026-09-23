@@ -7,7 +7,6 @@ use std::path::Path;
 
 mod chrome;
 mod documents;
-mod loading;
 mod platform;
 mod presentation_sinks;
 mod source_tree;
