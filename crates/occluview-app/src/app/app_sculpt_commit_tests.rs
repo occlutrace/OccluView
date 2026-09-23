@@ -7,6 +7,7 @@
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::expect_used,
+    clippy::panic,
     clippy::unwrap_used
 )]
 
@@ -190,6 +191,9 @@ fn every_terminal_failure_exit_raises_the_dialog_and_disarms() {
     let shadow = app.tools.sculpt.worker.as_ref().expect("worker").shadow();
     let poison = std::thread::spawn(move || {
         let _guard = shadow.write().expect("shadow lock");
+        // The panic IS the mechanism under test: it poisons the worker's
+        // publication boundary, which is what the real code sees when a panic
+        // unwinds through a worker-side lock.
         panic!("test poison");
     });
     assert!(poison.join().is_err());
