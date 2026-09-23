@@ -337,6 +337,29 @@ fn read_faces(
         .position(|p| matches!(p, Property::List { name, .. } if name == "vertex_indices"))
         .unwrap_or(usize::MAX);
 
+    // Every row must consume at least one byte, or the loop below spins forever.
+    // A `face` element with no property at all consumes nothing, and the header
+    // is free to declare one with a count of `u64::MAX`: the cursor never
+    // advances, the same empty state is re-read on every iteration, and the
+    // parser never returns. The ASCII reader closes the same hole from the
+    // other side -- it finds no `vertex_indices` and skips the element, whose
+    // token count is `count * properties.len()`, which is zero here and so
+    // terminates. Rejecting the shape outright is honest: a face row with no
+    // readable property carries no geometry.
+    if element.properties.is_empty() {
+        if element.count == 0 {
+            return Ok(());
+        }
+        return Err(FormatError::Malformed {
+            format: "PLY (binary)",
+            offset: cursor.pos,
+            reason: format!(
+                "face element declares {} rows and no property to read them from",
+                element.count
+            ),
+        });
+    }
+
     // Scratch space reused per row: the corners of this face and, when the row
     // carries a `texcoord` list, their coordinates.
     let mut corners: Vec<u32> = Vec::with_capacity(4);
@@ -552,5 +575,35 @@ mod tests {
         let mesh = read_le(&parsed).expect("valid");
 
         assert_eq!(mesh.triangle_count(), 2);
+    }
+
+    /// A `face` element with no property consumes no bytes per row, so the row
+    /// loop used to re-read the same empty state forever. The fuzz seed budget
+    /// found exactly this: a header may declare a huge count, and the parser
+    /// must answer rather than spin. The assertion is on termination itself, so
+    /// the test fails by timing out if the hole reopens.
+    #[test]
+    fn a_face_element_with_no_property_is_refused_instead_of_spinning() {
+        let bytes = b"ply\nformat binary_little_endian 1.0\n\
+                      element face 18446744073709551615\n\
+                      end_header\n";
+        let parsed = header::parse(bytes).expect("header");
+        let error = read_le(&parsed).expect_err("a property-less face element is refused");
+        assert!(
+            error.to_string().contains("no property"),
+            "the reason must name the shape: {error}"
+        );
+    }
+
+    /// A property-less `face` element that declares no rows is harmless: there
+    /// is nothing to read and nothing to reject.
+    #[test]
+    fn a_face_element_with_no_property_and_no_rows_reads_as_empty() {
+        let bytes = b"ply\nformat binary_little_endian 1.0\n\
+                      element face 0\n\
+                      end_header\n";
+        let parsed = header::parse(bytes).expect("header");
+        let mesh = read_le(&parsed).expect("an empty face element is not an error");
+        assert_eq!(mesh.triangle_count(), 0);
     }
 }
