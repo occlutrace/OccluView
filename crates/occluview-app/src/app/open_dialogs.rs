@@ -15,6 +15,9 @@ pub(super) struct OpenDialogs {
     pub(super) close_guard: bool,
     pub(super) pending_replace: bool,
     pub(super) error: bool,
+    /// Any egui popup — the settings popup, the recent-files dropdown, either
+    /// context menu. The name predates the widening; the assignment in
+    /// `modal_dialog_open` is `Popup::is_any_open`.
     pub(super) settings_popup: bool,
     pub(super) information_dialog: bool,
     pub(super) repair_report: bool,

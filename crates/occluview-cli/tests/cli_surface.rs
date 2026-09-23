@@ -69,6 +69,36 @@ fn help_is_answered_on_stdout_and_writes_nothing() {
     std::fs::remove_dir_all(&directory).ok();
 }
 
+/// Running with no arguments is a usage question, answered once.
+///
+/// It used to print the usage TWICE — `print_usage_with_error` on stderr and
+/// then the synthesised "help" subcommand on stdout, exiting 0 — so a successful
+/// invocation produced duplicated output across two streams. The explicit help
+/// forms were pinned; this one was not, which is how the duplication survived.
+#[test]
+fn no_arguments_prints_the_usage_once_on_stdout() {
+    let directory = scratch("no-args");
+    let output = run(&directory, &[]);
+
+    assert!(
+        output.status.success(),
+        "asking for the usage is not a failure, got {:?}",
+        output.status
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("USAGE:").count(),
+        1,
+        "the usage must be printed exactly once, got {stdout:?}"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "nothing went wrong, so stderr stays empty: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(&directory).ok();
+}
+
 #[test]
 fn an_unknown_subcommand_fails_and_explains_itself_on_stderr() {
     let directory = scratch("unknown");

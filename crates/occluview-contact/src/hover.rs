@@ -74,6 +74,38 @@ pub fn format_contact_value(magnitude_mm: f64) -> String {
     }
 }
 
+/// The same reading in the operator's chosen length unit.
+///
+/// The contact panel was the one measurement family that ignored
+/// `UnitDisplay::Inches`: the ruler, the thickness probe and the scale bar all
+/// follow it, so an operator working in inches read one readout in millimetres.
+/// The numbers were never mis-scaled — only the unit they were shown in.
+#[must_use]
+pub fn format_contact_value_in(magnitude_mm: f64, unit: ContactLengthUnit) -> String {
+    match unit {
+        ContactLengthUnit::Millimeters => format_contact_value(magnitude_mm),
+        ContactLengthUnit::Inches => {
+            if !magnitude_mm.is_finite() {
+                return "-- in".to_owned();
+            }
+            format!("{:.4} in", magnitude_mm / 25.4)
+        }
+    }
+}
+
+/// Which length unit a contact reading is shown in.
+///
+/// Mirrors the app's `UnitDisplay` without depending on the app crate: this
+/// crate is the measurement layer, and the app maps its preference onto this.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContactLengthUnit {
+    /// Millimetres (or micrometres for a sub-millimetre gap).
+    #[default]
+    Millimeters,
+    /// Inches.
+    Inches,
+}
+
 /// The signed field value at a point inside a triangle, or `None` when nothing
 /// there was measured.
 ///

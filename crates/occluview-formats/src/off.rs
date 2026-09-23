@@ -187,6 +187,17 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
             })?
             .to_string(),
     };
+    // The counts line must be numbers. Without this an unrecognised flag on the
+    // keyword line (`OFF C 3 1 0`) fell through to the first DATA row as its
+    // counts, and `0 0 0` there parsed as zero vertices and zero faces — an empty
+    // mesh returned as success for a file that has geometry. Refusing is the
+    // honest answer, and it is the same answer a truncated header gets.
+    if !counts_line
+        .trim_start()
+        .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+')
+    {
+        return Err(malformed("counts line must start with a number"));
+    }
     let mut counts = counts_line.split_whitespace();
     let v_count: usize = counts
         .next()

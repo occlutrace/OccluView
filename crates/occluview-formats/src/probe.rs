@@ -57,19 +57,25 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
         return Ok(FormatKind::Hps);
     }
 
-    // A UTF-8 BOM is metadata some Windows tools prepend. It has to be skipped
-    // HERE for the text signatures below to see through it — an unnamed stream
-    // that relies on magic was otherwise reported Unsupported for a valid PLY or
-    // ASCII STL. It is skipped in the probe only, never in front of the whole
-    // format layer: a binary STL's 80-byte header is free-form by contract, so
-    // removing three bytes from a file whose header literally begins with those
-    // bytes would shift the triangle count and corrupt a valid file. The text
-    // readers strip it themselves for the same reason.
-    let magic = magic.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(magic);
+    // The BOM is judged per signature, never by stripping the buffer up front.
+    //
+    // A binary STL's 80-byte header is free-form by contract and may itself
+    // begin with those three bytes; on that file the size formula reads the
+    // count at offset 80, and testing it against a three-byte-short slice broke
+    // the match, so an unnamed stream was reported Unsupported where it used to
+    // route. Text signatures (`ply`, `solid`, `{`, `OFF`) are where a leading
+    // BOM actually hides the prefix, so only they are tested with it removed.
+    let text_magic = magic.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(magic);
 
-    if looks_like_hps_xml(magic) {
+    if looks_like_hps_xml(text_magic) {
         return Ok(FormatKind::Hps);
     }
+
+    // Binary STL: RAW bytes, before any text consideration.
+    if looks_like_binary_stl(magic) {
+        return Ok(FormatKind::Stl);
+    }
+    let magic = text_magic;
 
     // Magic-byte first, since scanners sometimes mislabel files.
     if magic.len() >= 4 {
@@ -98,14 +104,8 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
         // Disambiguation happens in the STL reader; here we hint STL.
         return Ok(FormatKind::Stl);
     }
-    // Binary STL with an arbitrary (non-"solid") 80-byte header: many scanners
-    // and CAD tools (including OccluTrace exports) write a free-form ASCII label
-    // in the header. Detect via the size formula: file_len == 84 + 50 * count.
-    // This is the standard three.js STLLoader heuristic and is very reliable in
-    // practice (a PLY/OBJ/glTF accidentally matching is astronomically unlikely).
-    if looks_like_binary_stl(magic) {
-        return Ok(FormatKind::Stl);
-    }
+    // (The binary size formula was already evaluated above, on the RAW bytes —
+    // see why the BOM is decided per signature.)
     // glTF .gltf (JSON) — probe for leading `{` or whitespace then `"asset"`.
     if magic.iter().take_while(|b| b.is_ascii_whitespace()).count() < magic.len()
         && magic.first() == Some(&b'{')

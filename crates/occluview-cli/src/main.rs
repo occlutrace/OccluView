@@ -20,7 +20,6 @@ use occluview_formats::dispatch::{
     read_file_loaded_with_key_provider, read_files_with_key_provider,
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
-use occluview_thumbnail::PlaceholderKind;
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -58,10 +57,14 @@ fn install_tracing() {
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let subcommand = args.next().unwrap_or_else(|| {
-        print_usage_with_error();
-        OsString::from("help")
-    });
+    // No arguments at all is a usage question, answered once on stdout. It used
+    // to print the usage TWICE — `print_usage_with_error` wrote it to stderr and
+    // then the synthesised "help" subcommand wrote it again to stdout, exiting 0
+    // — so a successful invocation produced duplicated output on two streams.
+    let Some(subcommand) = args.next() else {
+        print_usage();
+        return Ok(());
+    };
 
     match subcommand.to_str() {
         Some("thumbnail") => cmd_thumbnail(&mut args),
@@ -207,17 +210,22 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         spec,
         std::time::Duration::from_secs(15),
     );
-    // A real render is told apart from a stand-in by PIXEL CONTENT, not by the
-    // attempt arm alone. `TransientFailure` covers a missing or unreadable file,
-    // but a directory, an unregistered extension and a corrupt container all
-    // come back as a legitimate cacheable `Bitmap` holding the placeholder —
-    // pixels a script cannot tell from a rendered thumbnail. Comparing against
-    // the placeholder for the same spec makes the exit code mean what the
-    // comment above says.
+    // `TransientFailure` is the CLI FAILING to open the file: a bad path, an
+    // unreadable file, a directory. That is the case a script must be able to
+    // detect, and it exits non-zero.
+    //
+    // A corrupt or unsupported CONTAINER is different, and deliberately still
+    // exits 0: the crate reached a verdict about the file's content, the PNG is
+    // that verdict (the corrupt-badged placeholder), and a file manager showing
+    // a badge is the correct outcome for a file that is simply broken. That is
+    // the freedesktop contract, and it is what the black-box test
+    // `thumbnail_of_corrupt_file_exits_zero_and_writes_placeholder_png` pins.
+    //
+    // Comparing the pixels against a freshly generated placeholder would erase
+    // that distinction — and would throw away the badge, since the corrupt
+    // placeholder is not the plain one.
     let rendered = match attempt {
-        occluview_thumbnail::ThumbnailAttempt::Bitmap(pixels) => {
-            (!is_placeholder(&pixels, spec)).then_some(pixels)
-        }
+        occluview_thumbnail::ThumbnailAttempt::Bitmap(pixels) => Some(pixels),
         occluview_thumbnail::ThumbnailAttempt::TransientFailure => None,
     };
 
@@ -240,17 +248,6 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     }
     eprintln!("Done: {}", out_path.display());
     std::process::exit(0);
-}
-
-/// Whether `pixels` are the crate's deterministic placeholder for `spec`.
-///
-/// Both placeholder kinds (clean and corrupt-badged) mean "no picture of this
-/// file", which is what the exit code reports; a real render never matches byte
-/// for byte.
-fn is_placeholder(pixels: &[u8], spec: occluview_render::ThumbnailSpec) -> bool {
-    [PlaceholderKind::Plain, PlaceholderKind::Corrupt]
-        .into_iter()
-        .any(|kind| occluview_thumbnail::placeholder_thumbnail_kind(spec, kind) == pixels)
 }
 
 static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);

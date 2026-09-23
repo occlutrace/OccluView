@@ -116,8 +116,12 @@ impl OccluViewApp {
                 // the status line and keep the reason where the operator can
                 // find it, but do not raise the modal. On a machine that misses
                 // the deadline repeatedly, one dialog per attempt would bury the
-                // viewport and offer no way out; the terminal case keeps the
-                // dialog because the path really is off until restart.
+                // viewport and offer no way out. The TERMINAL case DOES raise the
+                // modal, because the offscreen path is the only viewport there
+                // and the operator would otherwise get a blank area with no
+                // explanation — and it carries the retry action, which clears
+                // this latch, so the dialog is a way out rather than a full
+                // stop.
                 if terminal {
                     self.ui.app_error = Some(AppErrorDialog {
                         title: self.ui.locale.tr("render-failed-title"),

@@ -73,8 +73,8 @@ mod stats;
 
 pub use field::{compute_contact_field, ContactDiagnostics, ContactField, ContactSettings};
 pub use hover::{
-    format_contact_value, interpolate_field_at_triangle, is_no_contact, ContactReading,
-    ContactReadingKind,
+    format_contact_value, format_contact_value_in, interpolate_field_at_triangle, is_no_contact,
+    ContactLengthUnit, ContactReading, ContactReadingKind,
 };
 pub use law::{
     ContactLaw, ContactScale, StopTable, CLINICAL, LOAD_MAX_MM, LOAD_MIN_MM, MAX_CONTACT_STOPS,

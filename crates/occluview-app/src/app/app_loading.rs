@@ -83,12 +83,26 @@ impl OccluViewApp {
         if self.replace_open_needs_guard() {
             // Newest replace supersedes an older parked one; the open is held,
             // never dropped, until the operator answers the dialog.
+            //
+            // It supersedes QUEUED replaces too. A Replace that arrives while
+            // dirty never reaches `queue_request_while_active` (whose contract is
+            // exactly "a newer Replace supersedes every pending request"), so a
+            // decode still running with an older Replace behind it would later
+            // start that older one and clobber the scene this request opened.
+            self.supersede_queued_replaces();
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
                 requested_at: Instant::now(),
             });
             return;
+        }
+        // The guard cleared while a request was parked (removing the last layer
+        // can empty `unsaved_edit_layer_ids` while the guard window is up, and
+        // that window is not a modal backdrop). Starting this load must not leave
+        // the stale parking alive to open an older file over the new scene.
+        if self.ui.pending_replace_open.take().is_some() {
+            self.supersede_queued_replaces();
         }
         self.load_paths_with_mode(paths, source, SceneLoadMode::Replace);
     }
@@ -102,6 +116,7 @@ impl OccluViewApp {
             return;
         }
         if self.document.edit_mode.is_busy() {
+            self.supersede_queued_replaces();
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
@@ -110,6 +125,9 @@ impl OccluViewApp {
             self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
             return;
         }
+        // This request is the newest, so a Replace still queued behind a decode
+        // is obsolete and must not start later over the scene this opens.
+        self.supersede_queued_replaces();
         self.load_paths_with_mode(paths, source, SceneLoadMode::Replace);
     }
 
@@ -272,10 +290,31 @@ impl OccluViewApp {
 
     fn start_next_queued_load(&mut self) {
         if self.document.active_load.is_none() && self.ui.pending_replace_open.is_none() {
-            if let Some(request) = self.document.queued_loads.pop_front() {
+            // Only APPENDS may start here. A queued REPLACE is by definition older
+            // than whatever the operator has done since: it was queued behind a
+            // decode, and a later Replace either parked itself (handled above) or
+            // already started. Starting one now would replace the scene the
+            // operator most recently asked for with the one they asked for
+            // earlier.
+            let Some(position) = self
+                .document
+                .queued_loads
+                .iter()
+                .position(|request| request.mode != SceneLoadMode::Replace)
+            else {
+                return;
+            };
+            if let Some(request) = self.document.queued_loads.remove(position) {
                 self.start_scene_load(request);
             }
         }
+    }
+
+    /// Drop queued Replace requests that a newer one has made obsolete.
+    fn supersede_queued_replaces(&mut self) {
+        self.document
+            .queued_loads
+            .retain(|request| request.mode != SceneLoadMode::Replace);
     }
 
     /// Clear state belonging to the scene replaced by a completed load.
