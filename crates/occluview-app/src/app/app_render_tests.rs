@@ -55,6 +55,95 @@ fn a_deviation_overlay_forces_unlit_vertex_colors() {
     );
 }
 
+/// A failed frame must consume the redraw that asked for it.
+///
+/// The pending redraw is what makes egui call back; leaving it set after a
+/// failure re-enters the same failed submit on every repaint, so a dead GPU
+/// spins the UI at 100% and buries the original cause behind the loop. The
+/// frame loop must consume the request and short-circuit a latched path rather
+/// than asking a device it already knows is broken for another frame.
+#[test]
+fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
+    let mut app = crate::app::app_test_support::test_app("offscreen-failure-does-not-spin");
+    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    // The state a terminal graphics fault leaves behind.
+    app.render.offscreen_failed = true;
+    assert!(!app.offscreen_available());
+
+    let ctx = egui::Context::default();
+    for frame in 0..3 {
+        app.render.invalidation.request_redraw();
+        assert!(
+            app.render.invalidation.redraw_pending(),
+            "frame {frame}: the loop was asked to paint"
+        );
+        app.render_pending_frame(&ctx);
+
+        assert!(
+            !app.render.invalidation.redraw_pending(),
+            "frame {frame}: the failed frame must consume its redraw, or the next frame repeats it"
+        );
+        assert!(
+            app.render.offscreen_failed,
+            "frame {frame}: the fault stays latched until the operator retries"
+        );
+        assert!(
+            app.ui.status_message.is_none() && app.ui.app_error.is_none(),
+            "frame {frame}: the loop short-circuited instead of asking the dead device for another frame"
+        );
+    }
+    assert!(
+        app.render.rendered.is_none(),
+        "no frame reached the renderer, so nothing was produced from a broken device"
+    );
+}
+
+/// A readback deadline defers the offscreen path; it does not kill it.
+///
+/// The deadline measures how long this process was willing to wait, not the
+/// health of the device, so it must never latch the path off for the session
+/// (that left the section panel showing a previous plane and, with no live
+/// viewport, stopped the viewport repainting at all). It is still a failure:
+/// the next attempt waits out a backoff so a loaded machine is not asked to
+/// fail on every repaint, and then the path must be usable again on its own.
+#[test]
+fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
+    let mut app = crate::app::app_test_support::test_app("offscreen-deadline-defers");
+
+    app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
+        timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
+    });
+
+    assert!(
+        !app.render.offscreen_failed,
+        "a missed deadline is not a device verdict and must not latch the path off"
+    );
+    let deadline = app.render.offscreen_retry_after.expect(
+        "the next attempt must be deferred, not silently dropped",
+    );
+    let now = std::time::Instant::now();
+    assert!(
+        deadline > now,
+        "a deferral in the past is no deferral: the failed submit is retried at once"
+    );
+    assert!(
+        deadline <= now + super::OFFSCREEN_RETRY_DELAY,
+        "the backoff is bounded by the retry delay"
+    );
+    assert!(
+        !app.offscreen_available(),
+        "no frame may use the path while the backoff is running"
+    );
+
+    // The wait ends on its own: recovery must not need the operator to restart
+    // the viewer or find a dialog.
+    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    assert!(
+        app.offscreen_available(),
+        "once the backoff has elapsed the offscreen path must be usable again"
+    );
+}
+
 /// The offscreen fault latch must be clearable by the retry the UI offers.
 ///
 /// This replaces a source-text guard that only checked the words in the
