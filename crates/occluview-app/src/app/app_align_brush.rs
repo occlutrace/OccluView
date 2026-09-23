@@ -661,6 +661,71 @@ mod tests {
         }
     }
 
+    /// A shifted wheel resizes the brush once, on whichever axis moved.
+    ///
+    /// Some platforms turn a shifted wheel into HORIZONTAL scroll, so the raw
+    /// event has to be read on whichever axis moved or the size gesture silently
+    /// does nothing. egui also smooths wheel deltas across frames: a resize read
+    /// from the smoothed value replays the same notch on the next frame and
+    /// walks the brush away from the size the operator chose.
+    #[test]
+    fn a_shifted_horizontal_wheel_notch_resizes_the_brush_once() {
+        fn shift_input(events: Vec<egui::Event>) -> egui::RawInput {
+            let shift = egui::Modifiers {
+                shift: true,
+                ..Default::default()
+            };
+            let mut events = events;
+            events.insert(0, egui::Event::ModifiersChanged(shift));
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            }
+        }
+
+        let ctx = egui::Context::default();
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut brush = AlignBrush::default();
+        brush.set_radius_mm(2.0);
+
+        let mut resized = false;
+        ctx.run_ui(
+            shift_input(vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(50.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: shift,
+            }]),
+            |ui| resized = super::resize_align_brush_from_wheel(&mut brush, ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+
+        assert!(
+            resized,
+            "a horizontal raw wheel with Shift held is the size gesture"
+        );
+        assert!((brush.radius_mm() - 2.25).abs() < f32::EPSILON);
+
+        let mut replayed = true;
+        ctx.run_ui(shift_input(Vec::new()), |ui| {
+            replayed = super::resize_align_brush_from_wheel(&mut brush, ui.ctx());
+        })
+        .drop_without_applying_deltas();
+
+        assert!(
+            !replayed,
+            "one physical notch must not replay from smoothing"
+        );
+        assert!((brush.radius_mm() - 2.25).abs() < f32::EPSILON);
+    }
+
     /// A stroke takes the map down instead of recomputing it.
     ///
     /// Painting changes what would be matched, so a map drawn before the stroke

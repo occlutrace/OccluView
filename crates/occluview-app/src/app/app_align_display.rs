@@ -562,6 +562,46 @@ mod tests {
         assert!(layer_entry(&app, moving).overlay_colors().is_none());
     }
 
+    /// The vertex upload buffer is repainted, not rebuilt.
+    ///
+    /// A re-colour changes four bytes per vertex; rebuilding the array allocates
+    /// and copies a whole arch each time, which is most of what the map cost.
+    /// The scratch has to go when the overlay does: left behind, the next dab
+    /// takes the sparse path and re-attaches the stale array.
+    #[test]
+    fn the_upload_buffer_is_repainted_not_rebuilt() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-upload-buffer");
+        let mesh = layer_entry(&app, moving).mesh.clone();
+
+        let first = app
+            .tools
+            .align
+            .painted
+            .repaint(&mesh, &[[1, 2, 3, 255]; 3])
+            .expect("the array matches the mesh");
+        let first_at = first.as_ptr();
+        assert!(app.tools.align.painted.holds(&mesh, 3));
+
+        let second = app
+            .tools
+            .align
+            .painted
+            .repaint(&mesh, &[[4, 5, 6, 255]; 3])
+            .expect("the array matches the mesh");
+        assert_eq!(
+            second.as_ptr(),
+            first_at,
+            "a re-colour must overwrite the array, not allocate another"
+        );
+        assert!(second.iter().all(|vertex| vertex.color == [4, 5, 6, 255]));
+
+        app.clear_deviation_overlay();
+        assert!(
+            !app.tools.align.painted.holds(&mesh, 3),
+            "dropping the overlay must drop the scratch buffer with it"
+        );
+    }
+
     /// Dropping an overlay repairs everything that described it.
     ///
     /// The faded companion scan, the last measurement's numbers, and the queued
