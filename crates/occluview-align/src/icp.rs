@@ -164,7 +164,7 @@ const HUBER_FACTOR: f64 = 1.345;
 /// not the search, is what picks the wrong basin.
 const SEATED_BAND_MM: f64 = 0.05;
 
-/// Fraction of the sampled surface a pose must seat inside [`SEATED_BAND_MM`]
+/// Fraction of the sampled surface a pose must seat inside `SEATED_BAND_MM`
 /// before the gate will authorize it.
 ///
 /// Between the measured wrong pose (0.072) and the measured true seating
@@ -278,7 +278,8 @@ pub struct IcpReport {
     /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8, so the panel was
     /// unable to say which algorithm had run. Carried here so it can.
     pub effective_matching_ratio: f64,
-    /// Fraction of the level's samples inside [`SEATED_BAND_MM`] of the surface.
+    /// Fraction of the level's samples inside the seated band of the surface
+    /// (see `SEATED_BAND_MM`).
     ///
     /// The statistic the solver itself ranks poses by, published so the gate can
     /// read it. Before this field existed the gate certified a pose on trimmed
@@ -335,7 +336,7 @@ impl IcpReport {
     /// the solver itself now ranks poses by.
     ///
     /// Calibrated on the real prepared-arch pair the crate measures against: the
-    /// true seating puts 0.203 of the sampled surface inside [`SEATED_BAND_MM`],
+    /// true seating puts 0.203 of the sampled surface inside `SEATED_BAND_MM`,
     /// and the published wrong pose — the one whose median of 0.190 sat just
     /// under the 0.2 mm limit and which the gate used to authorize — manages
     /// 0.072. The floor sits between them.
@@ -720,7 +721,7 @@ struct Summary {
     rms: f64,
     /// RMS Euclidean point-to-surface distance used to accept a trial pose.
     geometric_rms: f64,
-    /// Fraction of the level's samples sitting inside [`SEATED_BAND_MM`] of the
+    /// Fraction of the level's samples sitting inside `SEATED_BAND_MM` of the
     /// fixed surface. This is the term that distinguishes a seating from a
     /// slide; every other statistic here is a trimmed residual and improves
     /// when a deformation is spread out.

@@ -228,16 +228,17 @@ impl ContactScale {
     /// The deepest stop is capped at the probe's reach. `depth` scales with the
     /// operator's "heavy at" slider, and at the top of its range it put the last
     /// stop at 1.36 mm (TIGHTNESS) or 1.75 mm (Approach) — depths the field
-    /// cannot report, because a vertex deeper than [`SEARCH_RADIUS_MM`] inside
-    /// the antagonist finds no surface at all. The legend then named depths no
-    /// reading could reach.
+    /// cannot report, because a vertex deeper than [`crate::SEARCH_RADIUS_MM`]
+    /// inside the antagonist finds no surface at all. The legend then named
+    /// depths no reading could reach.
     ///
     /// Collapsing the unreachable tail onto the reach makes the last stops
     /// coincide at high slider values, so the topmost colour is what a
     /// maximum-depth reading gets rather than a span nothing can occupy. The
     /// sentinel case itself is unchanged and cannot be fixed here: a
-    /// penetration past the reach is still [`NO_CONTACT_MM`], which is why the
-    /// reach is set above every law's saturation depth in the first place.
+    /// penetration past the reach is still [`crate::NO_CONTACT_MM`], which is
+    /// why the reach is set above every law's saturation depth in the first
+    /// place.
     pub fn stop_mm(&self, index: usize) -> f64 {
         self.law.stops.get(index).map_or(0.0, |(mm, _)| {
             if *mm < 0.0 {

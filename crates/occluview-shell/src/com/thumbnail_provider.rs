@@ -25,6 +25,7 @@ use crate::shell_diagnostics::{
     ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticErrorClass,
     ShellDiagnosticOutcome, ShellDiagnosticStage,
 };
+use std::os::windows::ffi::OsStringExt;
 use std::panic::catch_unwind;
 use std::time::Instant;
 
@@ -476,7 +477,7 @@ impl IInitializeWithFile_Impl for ThumbnailProvider_Impl {
                 // E_FAIL, so such a file would get no thumbnail at all even
                 // though Explorer handed it over. An OS string carries the path
                 // unchanged.
-                let path = unsafe { pszfilepath.to_os_string() };
+                let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
                 self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
