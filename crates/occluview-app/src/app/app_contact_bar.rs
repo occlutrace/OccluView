@@ -464,7 +464,11 @@ fn paint_legend(
 ) {
     let law = scale.law();
     let far = law.paint_far_mm;
-    let deepest = -(scale.load_mm() * (law.clamp_mm / law.load_mm));
+    // Read the ramp's own deepest stop instead of recomputing it. The two
+    // disagreed: the ramp clamps its tail at the probe's reach, while this
+    // label printed `load x clamp / load_mm` — 1.36 mm at the top of the
+    // slider, against a field that cannot report past 0.6 mm.
+    let deepest = scale.stop_mm(law.stops.len().saturating_sub(1)).min(0.0);
     let width = width.clamp(LEGEND_MIN_WIDTH, LEGEND_MAX_WIDTH);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, LEGEND_HEIGHT + LEGEND_LABEL_HEIGHT),

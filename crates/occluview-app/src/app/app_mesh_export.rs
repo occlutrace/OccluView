@@ -38,6 +38,14 @@ impl OccluViewApp {
         paths: &[PathBuf],
         request: LayerContextRequest,
     ) -> bool {
+        // A layer export reads the same scene the other two paths do, so it
+        // obeys the same rule. `pending_layer_exports` already commits the
+        // stroke for the Save flow and keeps its guard open; this covers the
+        // direct "Export layer" menu item, which has none.
+        let ctx = self.ui.repaint_ctx.clone();
+        if self.refuse_export_during_stroke(&ctx) {
+            return false;
+        }
         let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
         let default_format = match scene.meshes().get(request.index) {
             Some(entry) => representable_export_format(
@@ -144,6 +152,28 @@ impl OccluViewApp {
             self.persistence.settings.last_export_dir = parent.to_str().map(str::to_owned);
             self.persistence.settings_persistence.mark_dirty();
         }
+    }
+
+    /// Refuse an export while a Sculpt stroke is still being rebuilt.
+    ///
+    /// The scene only advances to a stroke's result when its worker lands, so
+    /// an export started mid-stroke writes the geometry from BEFORE the stroke
+    /// — or an intermediate rebuild — reports success, and the operator finds
+    /// out by re-opening the file. `save_scene_dialog`, `save_each_layer_dialog`
+    /// and `save_layer_export_dialog` are three separate entry points to the
+    /// same scene, and the close/replace guard was the only one that knew this
+    /// rule; every path asks here instead.
+    ///
+    /// Returns true when the caller must stop.
+    pub(super) fn refuse_export_during_stroke(&mut self, ctx: &egui::Context) -> bool {
+        if !self.document.unsaved_sculpt_stroke {
+            return false;
+        }
+        // Ask the worker to finish, exactly as Save does, so the next attempt
+        // writes the stroke instead of nothing.
+        let _ = self.commit_sculpt_stroke(ctx);
+        self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+        true
     }
 
     /// Collect edited layers for Save, committing a held Align drag first.

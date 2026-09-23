@@ -225,11 +225,23 @@ impl ContactScale {
     /// side with it would make one slider change what counts as touching at the
     /// same time as what counts as heavy, and then no single reading on screen
     /// could be attributed to either.
+    /// The deepest stop is capped at the probe's reach. `depth` scales with the
+    /// operator's "heavy at" slider, and at the top of its range it puts the
+    /// last stop at 1.36 mm (TIGHTNESS) or 1.75 mm (Approach) — depths the
+    /// field cannot report, because a vertex deeper than [`SEARCH_RADIUS_MM`]
+    /// inside the antagonist finds no surface at all and is painted as bare
+    /// tooth in the middle of its own mark. The legend then names depths no
+    /// reading can reach, and any interference past the reach disappears.
+    /// Collapsing the unreachable tail onto the reach keeps every colour the
+    /// ramp draws wear-able.
     pub fn stop_mm(&self, index: usize) -> f64 {
-        self.law
-            .stops
-            .get(index)
-            .map_or(0.0, |(mm, _)| if *mm < 0.0 { mm * self.depth } else { *mm })
+        self.law.stops.get(index).map_or(0.0, |(mm, _)| {
+            if *mm < 0.0 {
+                (mm * self.depth).max(-crate::SEARCH_RADIUS_MM)
+            } else {
+                *mm
+            }
+        })
     }
 
     /// How opaque the paint is at `signed_mm`: fully on across the scale, and

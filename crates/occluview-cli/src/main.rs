@@ -192,13 +192,28 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     })?;
 
     eprintln!("Rendering {size}x{size} thumbnail...");
-    let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
+    let spec = occluview_render::ThumbnailSpec {
+        size_px: size,
+        ..Default::default()
+    };
+    // The caller here is a person or a script, not Explorer's thumbnail cache,
+    // so a file the renderer could not open must be visible. The freedesktop
+    // thumbnailer contract still requires a PNG, so the placeholder is written
+    // either way — but the exit code says whether it is a picture of the file
+    // or a picture of the failure.
+    let attempt = occluview_thumbnail::try_render_thumbnail_file(
         &file,
-        occluview_render::ThumbnailSpec {
-            size_px: size,
-            ..Default::default()
-        },
+        spec,
+        std::time::Duration::from_secs(15),
     );
+    let rendered = match attempt {
+        occluview_thumbnail::ThumbnailAttempt::Bitmap(pixels) => Some(pixels),
+        occluview_thumbnail::ThumbnailAttempt::TransientFailure => None,
+    };
+
+    let pixels = rendered
+        .clone()
+        .unwrap_or_else(|| occluview_thumbnail::placeholder_thumbnail(spec));
 
     eprintln!("Writing {}...", out_path.display());
     let img = image::RgbaImage::from_raw(u32::from(size), u32::from(size), pixels)
@@ -206,6 +221,13 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     write_thumbnail_atomically(&out_path, &img)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
+    if rendered.is_none() {
+        eprintln!(
+            "Done: {} (placeholder: this file could not be rendered)",
+            out_path.display()
+        );
+        std::process::exit(1);
+    }
     eprintln!("Done: {}", out_path.display());
     std::process::exit(0);
 }
@@ -649,10 +671,19 @@ mod tests {
         let thumbnail = &source[start..start + end];
 
         assert!(
-            thumbnail
-                .contains("occluview_thumbnail::render_thumbnail_file_or_placeholder("),
-            "CLI thumbnails should use the file-backed, placeholder-backed path shared with Explorer \
-             so corrupt/unsupported files still produce a PNG (freedesktop thumbnailer contract)"
+            thumbnail.contains("occluview_thumbnail::try_render_thumbnail_file("),
+            "CLI thumbnails should use the file-backed path shared with Explorer, and ask it \
+             whether the render succeeded"
+        );
+        assert!(
+            thumbnail.contains("occluview_thumbnail::placeholder_thumbnail(spec)"),
+            "a file that could not be rendered must still produce a PNG, which is the \
+             freedesktop thumbnailer contract"
+        );
+        assert!(
+            thumbnail.contains("std::process::exit(1)"),
+            "and the exit code must say the picture is a placeholder, or a script cannot tell a \
+             rendered thumbnail from a picture of a failure"
         );
         assert!(
             !thumbnail.contains("std::fs::read(&file)"),

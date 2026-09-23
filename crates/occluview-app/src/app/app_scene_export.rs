@@ -63,6 +63,10 @@ impl OccluViewApp {
     /// one mesh and cannot survive the merge, so the status line says so
     /// instead of letting the operator discover it later.
     pub(super) fn save_scene_dialog(&mut self) {
+        let ctx = self.ui.repaint_ctx.clone();
+        if self.refuse_export_during_stroke(&ctx) {
+            return;
+        }
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
@@ -183,6 +187,10 @@ impl OccluViewApp {
     // warnings, dirty-state reconciliation, and the final error dialog agree.
     #[expect(clippy::too_many_lines)]
     pub(super) fn save_each_layer_dialog(&mut self) {
+        let ctx = self.ui.repaint_ctx.clone();
+        if self.refuse_export_during_stroke(&ctx) {
+            return;
+        }
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
