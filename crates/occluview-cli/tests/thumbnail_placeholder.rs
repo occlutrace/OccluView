@@ -101,3 +101,72 @@ fn an_unopenable_input_exits_non_zero_and_still_writes_a_png() {
 
     std::fs::remove_dir_all(&directory).ok();
 }
+
+/// A real mesh on disk renders a REAL thumbnail, which is only possible if the
+/// CLI goes through the file-backed path.
+///
+/// This is the behaviour the removed source-text check described (it looked for
+/// the words `try_render_thumbnail_file` in main.rs). The property worth
+/// holding is the outcome: the bytes path cannot read metadata, work out the
+/// extension, or cache by file identity, so if the CLI ever switched to the
+/// in-memory stream entry point, a file on disk would come back as a plain
+/// placeholder. This asserts the opposite — that the picture of a real scan is
+/// not the placeholder — which is what an operator sees in the file manager.
+#[test]
+fn a_real_mesh_on_disk_renders_a_real_thumbnail() {
+    let directory = std::env::temp_dir().join(format!(
+        "occluview-cli-thumb-real-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+
+    // One triangle, written as a binary STL.
+    let mut bytes = vec![0u8; 80];
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    for value in [
+        0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+    ] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    let mesh_path = directory.join("triangle.stl");
+    std::fs::write(&mesh_path, &bytes).expect("write fixture");
+
+    let output_path = directory.join("out.png");
+    let status = Command::new(env!("CARGO_BIN_EXE_occluview-cli"))
+        .args(["thumbnail"])
+        .arg(&mesh_path)
+        .arg("-o")
+        .arg(&output_path)
+        .args(["--size", "128"])
+        .status()
+        .expect("run occluview-cli thumbnail");
+    assert!(
+        status.success(),
+        "a readable mesh must thumbnail: {status:?}"
+    );
+
+    let written = std::fs::read(&output_path).expect("a PNG is written");
+    assert!(written.starts_with(b"\x89PNG"));
+    // The placeholder is a flat single-colour tile. A rendered mesh is not: it
+    // has shading across it, so more than one distinct colour appears.
+    let image = image::load_from_memory(&written)
+        .expect("output parses as an image")
+        .to_rgba8();
+    let mut colours = std::collections::BTreeSet::new();
+    for pixel in image.pixels() {
+        colours.insert((pixel[0], pixel[1], pixel[2], pixel[3]));
+        if colours.len() > 8 {
+            break;
+        }
+    }
+    assert!(
+        colours.len() > 1,
+        "a real scan must render shaded geometry, not a flat placeholder tile \
+         (the bytes path cannot produce this)"
+    );
+
+    std::fs::remove_dir_all(&directory).ok();
+}
