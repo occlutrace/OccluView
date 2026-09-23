@@ -710,3 +710,40 @@ fn accepts_a_chain_within_the_bound() {
         "the fixture carries no primitives; what matters is that it was read"
     );
 }
+
+#[test]
+fn an_index_sentinel_cannot_wrap_onto_a_valid_vertex() {
+    // `base + a` is unchecked and this profile wraps: with a second primitive
+    // the sentinel 0xFFFF_FFFF used to alias the vertex just before `base`,
+    // so `Mesh::new` saw a plausible index and the triangle was built from the
+    // wrong vertex with no error. The first primitive was caught only because
+    // its base is zero.
+    let glb = two_primitive_glb_with_index(0xFFFF_FFFF);
+    let error = read(&glb).expect_err("an out-of-range corner is malformed");
+    assert!(
+        format!("{error}").contains("index out of range"),
+        "the refusal should name the cause: {error}"
+    );
+}
+
+/// Two one-triangle primitives sharing a position accessor, where the second
+/// primitive's index accessor carries `corner` as its first corner.
+fn two_primitive_glb_with_index(corner: u32) -> Vec<u8> {
+    let json = br#"{"asset":{"version":"2.0"},
+"scenes":[{"nodes":[0]}],
+"nodes":[{"mesh":0}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1},
+                          {"attributes":{"POSITION":0},"indices":1}]}],
+"accessors":[{"bufferView":0,"count":3,"type":"VEC3","componentType":5126},
+             {"bufferView":1,"count":3,"type":"SCALAR","componentType":5125}],
+"bufferViews":[{"buffer":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12}],
+"buffers":[{"byteLength":48}]}"#;
+    let mut bin = Vec::new();
+    for f in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+        bin.extend_from_slice(&f.to_le_bytes());
+    }
+    bin.extend_from_slice(&corner.to_le_bytes());
+    bin.extend_from_slice(&1u32.to_le_bytes());
+    bin.extend_from_slice(&2u32.to_le_bytes());
+    glb::build_glb(json, &bin)
+}

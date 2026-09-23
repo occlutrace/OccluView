@@ -349,13 +349,31 @@ fn copy_rgba_to_clipboard(
     let Some(dib) = pack_clipboard_dib(rgba, width, height) else {
         return Err(e_fail());
     };
+    // Open the clipboard before the block exists. Opening it last and
+    // returning with `?` leaked the block whenever another process held the
+    // clipboard open: the error path ran before either `GlobalFree` below, and
+    // the leak lands in prevhost.exe, which serves every later preview in the
+    // session.
+    // SAFETY: take ownership of the clipboard tied to our window.
+    let opened = unsafe { OpenClipboard(Some(hwnd)) };
+    if opened.is_err() {
+        return Err(e_fail());
+    }
     // SAFETY: allocates a moveable global block of the exact DIB size.
-    let hglobal = unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) }?;
+    let hglobal = match unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) } {
+        Ok(block) => block,
+        Err(_) => {
+            // SAFETY: always release the clipboard we opened.
+            let _ = unsafe { CloseClipboard() };
+            return Err(e_fail());
+        }
+    };
     // SAFETY: `hglobal` was just allocated.
     let ptr = unsafe { GlobalLock(hglobal) };
     if ptr.is_null() {
-        // SAFETY: releasing the block we failed to lock.
+        // SAFETY: releasing the block we failed to lock, then the clipboard.
         let _ = unsafe { GlobalFree(Some(hglobal)) };
+        let _ = unsafe { CloseClipboard() };
         return Err(e_fail());
     }
     // SAFETY: `ptr` addresses at least `dib.len()` writable bytes.
@@ -363,9 +381,8 @@ fn copy_rgba_to_clipboard(
     // SAFETY: matching unlock; a 0 return (fully unlocked) is expected, not an error.
     let _ = unsafe { GlobalUnlock(hglobal) };
 
-    // SAFETY: take ownership of the clipboard tied to our window.
-    unsafe { OpenClipboard(Some(hwnd)) }?;
-    // SAFETY: clipboard is open; empty it before publishing our format.
+    // SAFETY: the clipboard is already open and ours; empty it before
+    // publishing our format.
     let outcome = unsafe { EmptyClipboard() }.and_then(|()| {
         // SAFETY: on success the system takes ownership of `hglobal`.
         unsafe { SetClipboardData(u32::from(CF_DIB.0), Some(HANDLE(hglobal.0))) }.map(|_| ())

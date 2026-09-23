@@ -79,6 +79,7 @@ pub(super) fn try_backtracked_step(
         }
         let (trial_matrix, _, _) = accumulate(&trial_kept);
         let trial_summary = summarize(
+            &trial_found,
             &trial_kept,
             trial_matched,
             level.samples.len(),
@@ -96,7 +97,15 @@ pub(super) fn try_backtracked_step(
         if !reciprocal_coverage_ok(state.measured_reciprocal, trial_reciprocal) {
             continue;
         }
-        if trial_summary.geometric_rms.is_finite()
+        // A step may not trade seating away for a smaller residual. A trimmed
+        // least-squares residual always falls when the step spreads a
+        // deformation over everything, which is how a prepared model ends up
+        // seated on its operated region instead of its unchanged one. Seating
+        // is allowed to be zero throughout (two real acquisitions of one jaw
+        // need not agree within 50 um), but it must never go DOWN.
+        let seated_kept = trial_summary.seated_fraction + 1e-9 >= state.measured.seated_fraction;
+        if seated_kept
+            && trial_summary.geometric_rms.is_finite()
             && trial_summary.geometric_rms < state.measured.geometric_rms * STALL_IMPROVEMENT
         {
             return Some((trial_pose, trial_summary));
