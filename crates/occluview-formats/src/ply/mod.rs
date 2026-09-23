@@ -171,13 +171,19 @@ fn embedded_texture(comments: &header::TextureComments) -> Option<MeshTexture> {
             return None;
         }
     }
+    // The header parser already refused to accumulate past the ceiling; a
+    // payload that tripped it has no bytes to decode.
+    if comments.encoded_too_long {
+        return None;
+    }
     let encoded = comments.encoded.as_deref()?;
-    // The payload is decoded before the raster decoder can bound it, so the
-    // base64 itself needs a ceiling: a header may carry as much text as the
-    // file holds, and decoding all of it while the file buffer is still alive
-    // is the one place in this reader that allocates straight from input
-    // length. Four thirds of the companion-image cap is the same picture
-    // budget applied before the pixels exist.
+    // Belt and braces for a caller that built `TextureComments` itself: the
+    // payload is decoded before the raster decoder can bound it, so the base64
+    // itself needs a ceiling. A header may carry as much text as the file
+    // holds, and decoding all of it while the file buffer is still alive is the
+    // one place in this reader that allocates straight from input length. Four
+    // thirds of the companion-image cap is the same picture budget applied
+    // before the pixels exist.
     if encoded.len() > max_encoded_chars() {
         return None;
     }

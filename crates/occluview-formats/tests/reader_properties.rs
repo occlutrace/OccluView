@@ -189,3 +189,35 @@ mod byte_order_mark {
         assert_eq!(mesh.triangle_count(), 1);
     }
 }
+
+/// A header that declares an enormous element count must still return.
+///
+/// A reader that consumes no input per row turns a 68-byte file into an
+/// unbounded loop. That is worse than a crash for the Explorer thumbnail host:
+/// the process is not killed, it simply never finishes, and the preview sits
+/// there forever. The fuzz smoke lane stalled on exactly this shape, which is
+/// why the property is pinned as its own test rather than left to a timeout.
+#[test]
+fn a_pathological_element_count_terminates_for_every_ply_variant() {
+    let huge = "18446744073709551615";
+    for bytes in [
+        format!("ply\nformat ascii 1.0\nelement face {huge}\nend_header\n"),
+        format!("ply\nformat binary_little_endian 1.0\nelement face {huge}\nend_header\n"),
+        format!("ply\nformat binary_big_endian 1.0\nelement face {huge}\nend_header\n"),
+        format!("ply\nformat ascii 1.0\nelement vertex {huge}\nend_header\n"),
+        format!("ply\nformat binary_little_endian 1.0\nelement vertex {huge}\nend_header\n"),
+        format!("ply\nformat binary_big_endian 1.0\nelement vertex {huge}\nend_header\n"),
+        format!(
+            "ply\nformat binary_little_endian 1.0\nelement edge {huge}\n\
+             property float x\nend_header\n"
+        ),
+        format!(
+            "ply\nformat ascii 1.0\nelement edge {huge}\n\
+             property float x\nend_header\n"
+        ),
+    ] {
+        // The assertion is the return itself: a regression means this test
+        // never completes, which the harness reports as a hang, not a pass.
+        let _ = occluview_formats::ply::read(bytes.as_bytes());
+    }
+}

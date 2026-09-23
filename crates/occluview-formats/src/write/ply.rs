@@ -51,6 +51,24 @@ impl<'a> TexturePlan<'a> {
                 mesh.kind() == MeshKind::TriangleMesh
                     && mesh.has_uvs()
                     && !mesh.indices().is_empty()
+            })
+            // A texture the reader's own decode limits would refuse must not be
+            // written at all. Re-encoding is not enough to know: a lopsided
+            // atlas compresses to a small PNG while decoding to a surface past
+            // `MAX_TEXTURE_RGBA_BYTES`, and an edge past
+            // `MAX_TEXTURE_DIMENSION_PX` decodes to nothing. Either way the
+            // export would report success, the bytes would sit in the header,
+            // and re-opening the file would show no texture with nothing said;
+            // dropping it here routes the case through `TextureImageNotWritten`,
+            // which the operator actually sees. Asked of the shared validator
+            // rather than duplicated, so the two cannot drift.
+            .filter(|texture| {
+                crate::texture_decode::validate_texture_dimensions(
+                    texture.width,
+                    texture.height,
+                    "PLY",
+                )
+                .is_ok()
             });
         let png = candidate.and_then(|texture| super::super::glb_writer::encode_png(texture).ok());
         let encoded = png.as_deref().map(embed::encode);
@@ -401,5 +419,54 @@ mod tests {
             + b"end_header\n".len();
         let color_offset = header_end + 24;
         assert_eq!(&bytes[color_offset..color_offset + 4], [11, 22, 33, 44]);
+    }
+
+    /// An export must not promise an image its own reader will throw away.
+    ///
+    /// A texture whose decoded surface is past the reader's limit compresses to
+    /// a small PNG, so re-encoding it proves nothing about whether it can be
+    /// read back. Writing it would report success and leave the operator with a
+    /// file that opens untextured and says nothing.
+    #[test]
+    fn an_image_past_the_decoders_limits_is_not_written() {
+        let mut mesh = textured_triangle();
+        let too_wide = crate::texture_decode::MAX_TEXTURE_DIMENSION_PX + 1;
+        mesh.set_texture(MeshTexture::new(
+            too_wide,
+            1,
+            vec![0; too_wide as usize * 4],
+        ));
+
+        let mut bytes = Vec::new();
+        let written = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write ply");
+
+        assert!(
+            written
+                .warnings
+                .contains(&MeshWriteWarning::TextureImageNotWritten),
+            "the operator has to be told the image was dropped"
+        );
+        let header_end = bytes
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&bytes[..header_end]);
+        assert!(
+            !header.contains("OccluViewTextureFormat"),
+            "an image the reader would refuse must not be promised:\n{header}"
+        );
+        // The coordinates are still preserved for the next tool even though the
+        // image could not travel, so the mesh keeps its mapping.
+        assert!(!written.warnings.contains(&MeshWriteWarning::UvsNotWritten));
+        assert!(
+            header.contains("property list uchar float texcoord")
+                || header.contains("property float s")
+        );
     }
 }

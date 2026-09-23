@@ -61,6 +61,20 @@ remain in the Git history.
   attached, instead of being imported untextured and losing the colour the scan
   was captured with. A file larger than 1 GB, or a companion image larger than
   64 MB, is refused rather than read.
+- A PLY export no longer writes a texture its own reader would refuse. An atlas
+  with an edge past 8192 px, or one whose decoded surface is past 256 MiB, used
+  to compress into a small PNG, land in the header and be reported as a success,
+  while re-opening the file showed no colour at all. The export now drops the
+  image and says so, and keeps the coordinates for the next tool. The image
+  bytes carried in a PLY header are no longer accumulated past the size the
+  reader accepts either, so a crafted header cannot make the importer hold a
+  second copy of a payload it was always going to reject. A header whose
+  `OccluViewTexture` keys were re-cased by a text editor reads as before,
+  matching the case-insensitive treatment `TextureFile` already had.
+- A malformed binary PLY can no longer hang the viewer or the Explorer preview.
+  A face element declared with rows but no property used to consume no bytes per
+  row, so the reader looped forever on the same empty state; it is now refused
+  with a typed error, as the ASCII reader already refused it.
 - Opening several scans at once parses two of them at a time and holds at most
   half a gigabyte of file data in memory, instead of parsing every dropped file
   at once — a scan larger than that budget is parsed on its own, up to the 1 GB
