@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use super::app_align_display::AlignOverlay;
 use super::*;
 use crate::app::app_test_support::test_app;
 use crate::contact::ContactRequest;
@@ -414,5 +415,78 @@ fn opening_a_reading_clears_the_align_heatmap() {
             .iter()
             .all(|entry| entry.overlay_colors().is_none()),
         "no layer may still carry the align map's colours under the reading"
+    );
+}
+
+/// Opening a contact reading from the layer menu while a Best-fit heatmap is up
+/// must not edit the live scene while another handle to it is alive.
+///
+/// This is the path the operator actually takes, and it is the one a removed
+/// source-text guard claimed to protect: that guard parsed the source for a
+/// `scene.clone()` held across an in-place edit, and it did not see this one,
+/// because the clone lives in `apply_layer_overlay_changes` and the edit happens
+/// two calls below it. In a debug build the assertion in `live_scene_mut` fired
+/// on a normal gesture; in release the document silently copied the scene and
+/// the caller's handle went stale for the rest of the action.
+///
+/// The test drives the real entry point with the menu's own `Arc` — the same
+/// shape `show_layers_overlay` and the viewport right-click menu pass — so a
+/// reintroduced clone under this path fails here.
+#[test]
+fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle() {
+    let (scene, first, _second, _third) = three_layer_scene();
+    let mut app = test_app("contacts-menu-heatmap-up");
+    // Install the scene as the SOLE handle so the setup's own in-place edits
+    // (attaching the map colours) are legal, then take the menu's clone.
+    let vertex_count = scene.meshes()[0].mesh.vertices().len();
+    app.document.scene = Some(std::sync::Arc::new(scene));
+    app.tools.align.settings.show_deviation = true;
+    app.tools.align.overlay = AlignOverlay::Map;
+    assert!(
+        app.attach_overlay_colors(first, vec![[1, 2, 3, 4]; vertex_count], AlignOverlay::Map),
+        "fixture: the heatmap has colours to clear"
+    );
+    // The menu takes the document's handle the way `show_layers_overlay` and the
+    // viewport right-click menu do: one clone, which is then MOVED into the
+    // dispatcher. Modeling an extra clone here would be stricter than the real
+    // path and would fail for a reason the product does not have.
+    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let scene_ptr = std::sync::Arc::as_ptr(&scene);
+
+    // The menu's request, through the real dispatcher, with the menu's own
+    // scene handle still alive exactly as `show_layers_overlay` holds it.
+    let index = 0usize;
+    let layer_id = first;
+    let request = LayerContextRequest {
+        index,
+        layer_id,
+        action: LayerContextAction::Contacts,
+    };
+    let ctx = egui::Context::default();
+    app.apply_layer_overlay_changes(
+        scene,
+        &[],
+        LayerOverlayChanges {
+            context_request: Some(request),
+            layer_edits: Vec::new(),
+        },
+        &ctx,
+    );
+
+    assert!(
+        app.tools.contacts.is_open(),
+        "the reading the operator asked for opens"
+    );
+    assert_eq!(
+        app.tools.align.overlay,
+        AlignOverlay::Nothing,
+        "and the heatmap gives way to it, which is the edit that used to trip"
+    );
+    // The second handle must still be looking at the same scene, i.e. nothing
+    // copied it out from under the caller.
+    assert_eq!(
+        std::sync::Arc::as_ptr(app.document.scene.as_ref().expect("scene")),
+        scene_ptr,
+        "the document must still hold the very scene the caller passed, not a copy"
     );
 }
