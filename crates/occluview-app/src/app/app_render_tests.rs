@@ -118,9 +118,10 @@ fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
         !app.render.offscreen_failed,
         "a missed deadline is not a device verdict and must not latch the path off"
     );
-    let deadline = app.render.offscreen_retry_after.expect(
-        "the next attempt must be deferred, not silently dropped",
-    );
+    let deadline = app
+        .render
+        .offscreen_retry_after
+        .expect("the next attempt must be deferred, not silently dropped");
     let now = std::time::Instant::now();
     assert!(
         deadline > now,
@@ -194,8 +195,7 @@ fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
 #[test]
 fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
     let mut app = crate::app::app_test_support::test_app("offscreen-retry-wait-no-latch");
-    app.document.scene =
-        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
     app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
         timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
     });
@@ -247,8 +247,7 @@ fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
 #[test]
 fn the_graphics_fault_dialog_offers_the_retry_action() {
     let mut app = crate::app::app_test_support::test_app("graphics-fault-dialog-offers-retry");
-    app.document.scene =
-        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
     // The state a terminal graphics fault leaves behind with no live viewport.
     app.render.offscreen_failed = true;
     assert!(!app.offscreen_available());

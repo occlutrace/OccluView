@@ -204,9 +204,10 @@ fn a_real_mesh_on_disk_renders_a_real_thumbnail() {
         .status()
         .expect("run occluview-cli thumbnail");
     assert!(status.success(), "the failure picture still exits 0");
-    let refused = image::load_from_memory(&std::fs::read(&refused_output).expect("a PNG is written"))
-        .expect("output parses as an image")
-        .to_rgba8();
+    let refused =
+        image::load_from_memory(&std::fs::read(&refused_output).expect("a PNG is written"))
+            .expect("output parses as an image")
+            .to_rgba8();
     assert_ne!(
         image.as_raw(),
         refused.as_raw(),

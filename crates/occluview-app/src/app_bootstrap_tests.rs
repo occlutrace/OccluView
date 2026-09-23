@@ -344,7 +344,8 @@ fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
     };
     let requested = device_limits_for_backend(wgpu::Backend::Gl, &modest);
     assert_eq!(
-        requested.max_buffer_size, 64 * 1024 * 1024,
+        requested.max_buffer_size,
+        64 * 1024 * 1024,
         "and a device request may never exceed what a weak adapter reports"
     );
 }
