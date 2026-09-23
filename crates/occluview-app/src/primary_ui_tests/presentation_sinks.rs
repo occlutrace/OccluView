@@ -10,7 +10,7 @@
 //! Test code never scans as production: every `#[cfg(test)]`-gated
 //! item (modules in both declaration forms, functions, uses) is cut by
 //! [`strip_test_regions`], which covers the non-standard module names
-//! that [`production_source`] misses.
+//! a plain `mod tests` search would miss.
 //!
 //! Deliberate non-sinks, documented so the next reader does not
 //! "fix" them:
