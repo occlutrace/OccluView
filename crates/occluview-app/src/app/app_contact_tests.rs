@@ -356,3 +356,63 @@ fn the_align_worker_is_replaced_after_it_dies() {
         "asking for the worker again must hand back a live one"
     );
 }
+
+/// Opening a reading takes the align heatmap down with it.
+///
+/// The deviation map and the contact map measure the same two scans and are
+/// painted through the same measured-map treatment, so a layer can only wear
+/// one of them: with both up, the panel's legend describes a ramp the surface
+/// is not wearing. The reading opens anyway — but the align map's colours, its
+/// flag, and the toggle that claims a map is visible all have to go.
+#[test]
+fn opening_a_reading_clears_the_align_heatmap() {
+    use crate::app::app_align_display::AlignOverlay;
+
+    let mut app = test_app("contact-clears-align-heatmap");
+    let (scene, first, _second, _third) = three_layer_scene();
+    app.document.scene = Some(Arc::new(scene));
+
+    // The state a landed Best fit leaves behind: a map up on the moving scan.
+    app.tools.align.settings.show_deviation = true;
+    assert!(
+        app.attach_overlay_colors(first, vec![[12, 34, 56, 255]; 3], AlignOverlay::Map),
+        "the map attaches to a layer whose vertex count it matches"
+    );
+    assert!(
+        app.align_overlay_is_up(),
+        "the map is up before the reading opens, or this proves nothing"
+    );
+
+    // The scene value the layer menu hands the action (production passes the
+    // same `draft` copy). A second `Arc<Scene>` handle would trip
+    // `live_scene_mut`'s sole-owner assertion instead of testing this contract.
+    let draft = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    assert!(
+        app.begin_contacts_from_layer(&draft, first),
+        "the reading opens on the nearest eligible antagonist"
+    );
+
+    assert!(
+        !app.tools.align.settings.show_deviation,
+        "the heatmap toggle must not keep claiming a map is visible"
+    );
+    assert_eq!(
+        app.tools.align.overlay,
+        AlignOverlay::Nothing,
+        "the overlay must say it is gone, not still be a map"
+    );
+    assert!(
+        !app.align_overlay_is_up(),
+        "the map's colour arrays must be dropped, not only the flag"
+    );
+    assert!(
+        app.document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()
+            .iter()
+            .all(|entry| entry.overlay_colors().is_none()),
+        "no layer may still carry the align map's colours under the reading"
+    );
+}
