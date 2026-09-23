@@ -525,3 +525,72 @@ fn a_crash_report_never_carries_a_scan_path() {
         "while still saying how many files of which kind were opened"
     );
 }
+
+/// Where the installer keeps the shell entries this build ships.
+#[cfg(target_os = "linux")]
+fn installed_shell_entry(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../install/linux")
+        .join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "the package installs an entry named after the app id: {} ({error})",
+            path.display()
+        )
+    })
+}
+
+/// The identity the window is created with is the one the installed desktop
+/// entry is named after and declares back.
+///
+/// A Wayland compositor matches a window to its launcher entry by app id, and
+/// an X11 one by `StartupWMClass`. When the two drift -- a rename on either
+/// side -- the running viewer becomes a second unnamed icon and loses its name,
+/// its icon and its file associations. This asks the real viewport builder, the
+/// one `native_options` hands to eframe, which app id it produced, and needs no
+/// display to do it: a compositor is what matches the strings later.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_window_identity_matches_desktop_metadata() {
+    let app_id = root_viewport_builder()
+        .app_id
+        .expect("a Linux window must declare an app id, or nothing can match it to an entry");
+
+    let entry = installed_shell_entry(&format!("{app_id}.desktop"));
+    let window_class = entry
+        .lines()
+        .find_map(|line| line.strip_prefix("StartupWMClass="));
+
+    assert_eq!(
+        window_class,
+        Some(app_id.as_str()),
+        "the entry the compositor matches this window against must declare the same id"
+    );
+}
+
+/// The `AppStream` entry describes the same application the window creates.
+///
+/// The package installs `metainfo.xml` under the app id for software centres
+/// and for `appstreamcli validate`; its `<id>` is the name the catalogue files
+/// the product under and its `<launchable>` is the desktop entry a click has to
+/// open. An entry whose id or launchable drifts from the window's own identity
+/// names something that is not this binary.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_window_identity_matches_the_installed_appstream_entry() {
+    let app_id = root_viewport_builder()
+        .app_id
+        .expect("a Linux window must declare an app id, or nothing can match it to an entry");
+
+    let metainfo = installed_shell_entry(&format!("{app_id}.metainfo.xml"));
+    let launchable = format!("<launchable type=\"desktop-id\">{app_id}.desktop</launchable>");
+
+    assert!(
+        metainfo.contains(&format!("<id>{app_id}</id>")),
+        "the catalogue id has to be the window's own app id"
+    );
+    assert!(
+        metainfo.contains(&launchable),
+        "the entry has to launch the desktop file that carries that id"
+    );
+}
