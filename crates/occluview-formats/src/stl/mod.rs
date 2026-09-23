@@ -51,6 +51,16 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     // this the ASCII reader sees no `solid` and the bytes fall through to the
     // binary reader, which reports a malformed file for a perfectly good one.
     let stripped = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    // The BOM may also sit in front of a BINARY file. The raw check above cannot
+    // see that one — it read the count from offset 80 of the BOM-shifted buffer —
+    // so the formula is asked again of the stripped bytes. Without this second
+    // question a BOM-prefixed binary STL fell through to the RAW binary reader
+    // and was reported Truncated, because the count was still being read three
+    // bytes late. Raw first, then stripped: a header that merely BEGINS with
+    // those bytes still wins on its own layout and is never shifted.
+    if stripped.len() != bytes.len() && binary_layout_matches(stripped) {
+        return binary::read_shaded(stripped, shading);
+    }
     if ascii::looks_like_ascii(stripped) {
         ascii::read_shaded(stripped, shading)
     } else {
