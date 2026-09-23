@@ -301,6 +301,3 @@ impl egui_wgpu::CallbackTrait for LiveViewportCallback {
         viewport.paint(render_pass);
     }
 }
-
-#[cfg(test)]
-mod tests {}

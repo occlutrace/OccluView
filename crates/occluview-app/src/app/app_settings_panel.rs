@@ -759,10 +759,6 @@ fn update_status_text<'a>(
         ),
     }
 }
-
-#[cfg(test)]
-mod tests {}
-
 #[cfg(test)]
 #[path = "app_settings_panel_shots.rs"]
 mod app_settings_panel_shots;

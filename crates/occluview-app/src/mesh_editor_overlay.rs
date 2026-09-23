@@ -246,6 +246,3 @@ fn window_action(
     action = action.or(session_bar::session(ui, &state, !state.busy, locale));
     action
 }
-
-#[cfg(test)]
-mod tests {}

@@ -161,6 +161,3 @@ fn show_header(
     );
     ui.add_space(4.0);
 }
-
-#[cfg(test)]
-mod tests {}

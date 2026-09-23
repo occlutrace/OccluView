@@ -403,8 +403,3 @@ mod tests {
         );
     }
 }
-
-/// Language-neutrality of the handoff on every platform (the socket tests
-/// above are Unix-gated; this one is not).
-#[cfg(test)]
-mod handoff_neutrality_tests {}
