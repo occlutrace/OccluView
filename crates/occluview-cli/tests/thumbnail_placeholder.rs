@@ -12,6 +12,30 @@ fn unique_tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("occluview-cli-thumb-{nanos}-{name}"))
 }
 
+/// One triangle per entry, as a binary STL: face normal, then the three corners.
+///
+/// The corners of a fixture must be DISTINCT. Coincident corners make the
+/// decoder refuse the file and the CLI writes the picture of that failure
+/// instead, which is how an earlier version of the real-mesh fixture passed
+/// while proving nothing about the render path.
+fn binary_stl(triangles: &[[[f32; 3]; 3]]) -> Vec<u8> {
+    let mut bytes = vec![0u8; 80];
+    let count = u32::try_from(triangles.len()).expect("fixture triangle count");
+    bytes.extend_from_slice(&count.to_le_bytes());
+    for corners in triangles {
+        for value in [0.0f32, 0.0, 1.0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for corner in corners {
+            for value in corner {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+    }
+    bytes
+}
+
 /// A truncated binary STL fixture.
 fn corrupt_stl_bytes() -> Vec<u8> {
     let mut bytes = vec![0u8; 84];
@@ -122,15 +146,7 @@ fn a_real_mesh_on_disk_renders_a_real_thumbnail() {
     ));
     std::fs::create_dir_all(&directory).expect("scratch directory");
 
-    // One triangle, written as a binary STL.
-    let mut bytes = vec![0u8; 80];
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    for value in [
-        0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
-    ] {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes.extend_from_slice(&0u16.to_le_bytes());
+    let bytes = binary_stl(&[[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]]);
     let mesh_path = directory.join("triangle.stl");
     std::fs::write(&mesh_path, &bytes).expect("write fixture");
 
@@ -166,6 +182,35 @@ fn a_real_mesh_on_disk_renders_a_real_thumbnail() {
         colours.len() > 1,
         "a real scan must render shaded geometry, not a flat placeholder tile \
          (the bytes path cannot produce this)"
+    );
+
+    // The same CLI, given a file it cannot read as geometry, writes the picture
+    // of that failure. The two must not be the same picture: a placeholder is
+    // what the file manager shows when nothing was rendered, so accepting it as
+    // success would hide the CLI abandoning the render path entirely.
+    let refused_path = directory.join("coincident.stl");
+    std::fs::write(
+        &refused_path,
+        binary_stl(&[[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+    )
+    .expect("write the unreadable fixture");
+    let refused_output = directory.join("refused.png");
+    let status = Command::new(env!("CARGO_BIN_EXE_occluview-cli"))
+        .args(["thumbnail"])
+        .arg(&refused_path)
+        .arg("-o")
+        .arg(&refused_output)
+        .args(["--size", "128"])
+        .status()
+        .expect("run occluview-cli thumbnail");
+    assert!(status.success(), "the failure picture still exits 0");
+    let refused = image::load_from_memory(&std::fs::read(&refused_output).expect("a PNG is written"))
+        .expect("output parses as an image")
+        .to_rgba8();
+    assert_ne!(
+        image.as_raw(),
+        refused.as_raw(),
+        "a real scan must not come back as the picture of a failure"
     );
 
     std::fs::remove_dir_all(&directory).ok();
