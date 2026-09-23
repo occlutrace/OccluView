@@ -123,7 +123,14 @@ impl OccluViewApp {
                         title: self.ui.locale.tr("render-failed-title"),
                         summary: self.ui.locale.tr("render-failed-summary"),
                         details: format!("Render failed\n\n{e:#}"),
-                        action: AppErrorAction::None,
+                        // Retryable here, and that is the whole point: on a
+                        // machine where the offscreen path IS the viewport, this
+                        // dialog is the only surface the operator sees, and
+                        // `AppErrorAction::None` left the latch unreachable from
+                        // the UI. `retry_gpu_after_fault` clears the offscreen
+                        // latch (and the live one when there is a live viewport),
+                        // so the button now has something to do on both paths.
+                        action: AppErrorAction::RetryGraphics,
                     });
                 }
                 self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));

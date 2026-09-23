@@ -164,11 +164,17 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
     // counts when it carries anything, and only a bare keyword falls through
     // to the next non-comment line.
     let first = lines.next().unwrap_or_default();
+    // `OFFST`/`OFF ST` is the with-normals variant, so the flag letters have to
+    // come off before the remainder can be read as counts. Keeping the whole
+    // tail turned `OFFST\n3 1 0` into a vertex count of "ST" and a Malformed
+    // error, on a form the reader advertises support for; and only a tail that
+    // actually starts with a digit is counts, so an unrecognised flag word
+    // falls through to the next line instead of being misparsed.
     let keyword_tail = first
         .trim_start()
         .strip_prefix("OFF")
-        .map(str::trim)
-        .filter(|rest| !rest.is_empty());
+        .map(|rest| rest.trim().trim_start_matches("ST").trim())
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
     let counts_line = match keyword_tail {
         Some(tail) => tail.to_string(),
         None => lines

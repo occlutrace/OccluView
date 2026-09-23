@@ -164,6 +164,13 @@ const HUBER_FACTOR: f64 = 1.345;
 /// not the search, is what picks the wrong basin.
 const SEATED_BAND_MM: f64 = 0.05;
 
+/// Fraction of the sampled surface a pose must seat inside [`SEATED_BAND_MM`]
+/// before the gate will authorize it.
+///
+/// Between the measured wrong pose (0.072) and the measured true seating
+/// (0.203), with room for a scan whose sampling is coarser than the band.
+const MIN_SEATED_FRACTION: f64 = 0.12;
+
 /// Rotation step below this (radians) counts as converged.
 const CONVERGED_ROTATION: f64 = 1e-7;
 /// Translation step below this (millimetres) counts as converged.
@@ -271,6 +278,14 @@ pub struct IcpReport {
     /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8, so the panel was
     /// unable to say which algorithm had run. Carried here so it can.
     pub effective_matching_ratio: f64,
+    /// Fraction of the level's samples inside [`SEATED_BAND_MM`] of the surface.
+    ///
+    /// The statistic the solver itself ranks poses by, published so the gate can
+    /// read it. Before this field existed the gate certified a pose on trimmed
+    /// residual statistics alone: a fit that seats nothing can still report a
+    /// small median, because the trimmed set never contains the region that is
+    /// far away.
+    pub seated_fraction: f64,
 }
 
 impl IcpReport {
@@ -308,6 +323,30 @@ impl IcpReport {
             && self.p95_abs.is_finite()
             && self.p95_abs >= 0.0
             && self.p95_abs <= p95_limit
+            && self.seats_enough()
+    }
+
+    /// Whether the pose actually seats a meaningful part of the surface.
+    ///
+    /// Every other term here is a trimmed statistic, and a trimmed set improves
+    /// when a deformation is spread out: the region carrying the truth is the
+    /// first thing the trim discards. This is the one term measured OUTSIDE that
+    /// set, over the untrimmed correspondence sample, and it is the statistic
+    /// the solver itself now ranks poses by.
+    ///
+    /// Calibrated on the real prepared-arch pair the crate measures against: the
+    /// true seating puts 0.203 of the sampled surface inside [`SEATED_BAND_MM`],
+    /// and the published wrong pose — the one whose median of 0.190 sat just
+    /// under the 0.2 mm limit and which the gate used to authorize — manages
+    /// 0.072. The floor sits between them.
+    ///
+    /// A pose reported by a caller that does not compute seating leaves the field
+    /// zero, and zero is refused deliberately: "this report never measured
+    /// seating" must not read as "this pose seats nothing but is otherwise
+    /// fine" — the gate is fail-closed.
+    #[must_use]
+    fn seats_enough(&self) -> bool {
+        self.seated_fraction.is_finite() && self.seated_fraction >= MIN_SEATED_FRACTION
     }
 
     fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {
@@ -470,7 +509,12 @@ pub fn refine(
         p95_abs: summary.p95_abs,
         weak_rot_axes: summary.weak_rot_axes,
         weak_trans_axes: summary.weak_trans_axes,
-        effective_matching_ratio: settings.matching_ratio,
+        // The value that RAN, not the operator's slider: the global-seed branch
+        // lowers it to `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8
+        // (`adaptive_settings`), so publishing the slider made the doc on this
+        // field false.
+        effective_matching_ratio: adaptive_settings.matching_ratio,
+        seated_fraction: summary.seated_fraction,
     })
 }
 
@@ -607,6 +651,7 @@ fn idle_report(start: Rigid) -> IcpReport {
         weak_rot_axes: [true; 3],
         weak_trans_axes: [true; 3],
         effective_matching_ratio: 0.0,
+        seated_fraction: 0.0,
     }
 }
 

@@ -94,13 +94,19 @@ pub const NO_CONTACT_MM: f32 = f32::INFINITY;
 
 /// Farthest a vertex looks for the opposing surface, in millimetres.
 ///
-/// Must comfortably exceed the display saturation depth of every law
-/// ([`ContactLaw::clamp_mm`], 0.5 mm at the widest): a vertex deeper inside the
-/// antagonist than this reach finds no surface and falls back to
-/// [`NO_CONTACT_MM`], which paints as clean, bare tooth in the middle of a
-/// strong interference mark — a "donut hole". Twice the saturation depth is the
-/// compromise: deep overclosure is a garbage-pose reading, and every vertex in
-/// the occlusal band pays for the radius in probe time.
+/// A vertex deeper inside the antagonist than this reach finds no surface and
+/// falls back to [`NO_CONTACT_MM`], which paints as clean, bare tooth in the
+/// middle of a strong interference mark — a "donut hole". The reach is therefore
+/// also the deepest depth the field can REPORT, and `ContactScale::stop_mm`
+/// clamps the scaled ramp at it so no colour is drawn at a depth the probe
+/// cannot deliver.
+///
+/// The number is a compromise, and the doc used to state it wrongly ("twice the
+/// saturation depth", when 0.6 is 1.2 x the widest `clamp_mm` of 0.5). It is set
+/// above every law's saturation depth so an interference inside the ramp's usable
+/// range is never sentinelled, and low enough that a vertex in the occlusal band
+/// does not pay a long probe time. Deep overclosure past this reach is
+/// deliberately a garbage-pose reading.
 pub const SEARCH_RADIUS_MM: f64 = 0.6;
 
 /// Sign dead-band, in millimetres.

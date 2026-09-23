@@ -289,6 +289,47 @@ mod tests {
         );
     }
 
+    /// Every shader that declares its own `MeshUniform` must match the same
+    /// layout, or the drift is silent corruption rather than a compile error.
+    ///
+    /// `sculpt_feedback.wgsl` hand-declares a third copy (it names the contact
+    /// slots `_padding_0/_padding_1`, which is correct for a pass that does not
+    /// read them, and reads only `model`, which sits at offset 0). Nothing
+    /// pinned it: the test above parses `mesh.wgsl` alone, so reordering
+    /// `GpuMeshUniform::model` would have shifted every field this shader reads
+    /// with no failure anywhere.
+    #[test]
+    fn every_shader_that_declares_mesh_uniform_matches_this_one() {
+        for shader in [
+            include_str!("../shaders/mesh.wgsl"),
+            include_str!("../shaders/sculpt_feedback.wgsl"),
+        ] {
+            let start = shader
+                .find("struct MeshUniform {")
+                .expect("every render shader must declare MeshUniform");
+            let body = &shader[start..];
+            let end = body.find('}').expect("MeshUniform must be closed");
+            let fields: Vec<&str> = body[..end]
+                .lines()
+                .skip(1)
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with("//"))
+                .filter_map(|line| line.split(':').next())
+                .collect();
+            // `model` must be first in every copy: it is the only field the
+            // feedback pass reads, and a reorder is exactly the silent case.
+            assert_eq!(
+                fields.first().copied(),
+                Some("model"),
+                "a shader's MeshUniform no longer starts with `model`"
+            );
+            assert!(
+                fields.contains(&"tint") && fields.contains(&"opacity"),
+                "a shader's MeshUniform no longer matches GpuMeshUniform's prefix"
+            );
+        }
+    }
+
     /// The WGSL array length and this constant are one fact in two languages.
     #[test]
     fn the_shader_stop_array_holds_every_stop_the_ramp_can_carry() {

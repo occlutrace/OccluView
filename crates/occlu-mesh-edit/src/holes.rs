@@ -195,8 +195,13 @@ pub(crate) fn fill_holes_with_outcome(
     // pass then deleted every triangle as an isolated nick while reporting the
     // result as a successful cap.
     let welded = apply_soup_weld(mesh, options.heal_boundary_rims)?;
+    // Whether the weld MERGED anything, not whether the buffers look welded:
+    // `weld_soup_topology` keeps the vertex array and remaps only the indices,
+    // so the shape test cannot tell a welded soup from an unweldable one, and
+    // asking it after the weld refused every large soup — including the
+    // perfectly weldable binary-STL arch this button exists to heal.
+    refuse_unweldable_soup(mesh, welded.is_some(), counts.triangles)?;
     let mesh: &MeshEditBuffers = welded.as_ref().unwrap_or(mesh);
-    refuse_unweldable_soup(mesh, counts.triangles)?;
 
     // Pre-clean the cut line (opt-in via `heal_boundary_rims`): drop dangling
     // needle/lone triangles and weld near-coincident boundary vertices so a
@@ -391,6 +396,21 @@ fn apply_rim_healing(
             healed_rims: 0,
         };
     };
+    // A "heal" that removes EVERY triangle is not a heal. That is exactly what
+    // the pre-clean does to a soup whose coincident corners carry different
+    // payloads: nothing welds, so all three edges of every triangle read as an
+    // isolated nick and the pass deletes the whole mesh, and the kernel then
+    // published a zero-face result as a successful cap. Refusing to apply the
+    // destructive result leaves the caller's mesh intact; the filler then walks
+    // the original buffers, which for a small soup is the slow-but-allowed case
+    // and for a large one was already refused before this point.
+    if outcome.mesh.indices.is_empty() && !mesh.indices.is_empty() {
+        return RimHealing {
+            mesh: None,
+            selection: None,
+            healed_rims: 0,
+        };
+    }
     let selection = selection.map(|sel| outcome.remap_selection(sel));
     RimHealing {
         mesh: Some(outcome.mesh),

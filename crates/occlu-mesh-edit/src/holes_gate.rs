@@ -194,39 +194,49 @@ fn rim_perimeter_mm(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> Result<f
     Ok(perimeter)
 }
 
-/// Refuse a triangle soup that is still a soup.
+/// Refuse a triangle soup that no weld could merge.
 ///
 /// In index space every edge of every triangle reads as a boundary: each
 /// triangle becomes its own three-edge rim, and the duplicate check each rim
 /// runs scans all triangles. That is quadratic, and it does not finish -- a
 /// 500k-triangle soup was still running after ten minutes.
 ///
-/// "Is still a soup" is the whole point, and it is why this is asked AFTER the
-/// weld rather than before it. The old signature took `heal_boundary_rims` and
-/// returned `Ok` whenever it was set, on the premise that healing welds first.
-/// Healing welds by full payload (position AND colour/UV bits), so a soup whose
-/// coincident corners carry different payloads merges NOTHING -- and then the
-/// healing pass classified all three edges of every triangle as an isolated nick
-/// and deleted the entire mesh, publishing a zero-face result as success. Every
-/// OBJ is such a soup: the reader pushes one vertex per face corner and never
-/// dedups.
+/// The question is NOT "are the buffers still soup-shaped".
+/// `weld_soup_topology` keeps the original vertex array and only remaps the
+/// indices, so a soup has `vertices.len() == indices.len()` before AND after a
+/// successful weld; testing the shape after the weld refused every large soup,
+/// including the perfectly weldable binary-STL arch this button exists to heal.
+/// The question is whether the weld MERGED anything, which is what `weld_merged`
+/// reports.
 ///
-/// A soup is recognisable for free -- every corner is its own vertex, so the
-/// vertex and index counts match.
+/// Why it matters: healing welds by full payload (position AND colour/UV bits),
+/// so a soup whose coincident corners carry different payloads merges NOTHING --
+/// and the healing pass then classified all three edges of every triangle as an
+/// isolated nick and deleted the entire mesh, publishing a zero-face result as
+/// success. Every OBJ is such a soup: the reader pushes one vertex per face
+/// corner and never dedups.
+///
+/// The size threshold keeps the small case as it was: a small soup is merely
+/// slow, and some fixtures fill one directly.
 pub(super) fn refuse_unweldable_soup(
     mesh: &MeshEditBuffers,
+    weld_merged: bool,
     triangles: usize,
 ) -> Result<(), MeshEditError> {
     /// Below this a quadratic pass is merely slow, and some fixtures rely on
     /// filling small soups directly.
     const SOUP_REFUSAL_TRIANGLES: usize = 20_000;
 
-    if triangles < SOUP_REFUSAL_TRIANGLES || mesh.vertices.len() != mesh.indices.len() {
+    if weld_merged
+        || triangles < SOUP_REFUSAL_TRIANGLES
+        || mesh.vertices.len() != mesh.indices.len()
+    {
         return Ok(());
     }
     Err(MeshEditError::InvalidOptions {
         reason: format!(
-            "hole filling on {triangles} unwelded triangles is quadratic; weld the soup first              (coincident corners that differ in colour or UV cannot be welded by position)"
+            "hole filling on {triangles} unwelded triangles is quadratic; weld the soup first \
+             (coincident corners that differ in colour or UV cannot be welded by position)"
         ),
     })
 }

@@ -29,9 +29,10 @@ use glam::DVec3;
 ///
 /// Big enough to bridge the speckle holes inside one spot, small enough not to
 /// fuse neighbouring cusps. Deliberately not the same number as the contact
-/// cluster radius (3.0 mm) or the hover region radius (1.6 mm): the three
+/// cluster radius (3.0 mm, `stats`) or the touch gate (0.02 mm): the three
 /// answer different questions, and unifying them would change one reading to
-/// fix another.
+/// fix another. The "hover region radius" an earlier version of this comment
+/// cited does not exist — the hover readout takes no radius.
 pub(crate) const FLATTEN_RADIUS_MM: f64 = 0.75;
 
 /// Collapse every connected penetration patch to its peak depth.
