@@ -553,6 +553,47 @@ mod tests {
     /// A reading paints both participants, so a row that wears marks must say
     /// so or its menu offers to open a *second* reading on the same two scans
     /// while the first is still up. The rows are built from the pair, not from
+    /// its subject: one "marked index" could only ever name one of the two.
+    #[test]
+    fn a_reading_marks_both_of_its_arches() {
+        use crate::app::app_test_support::{push_named_layer, test_app};
+        use crate::contact::ContactPair;
+
+        let mut app = test_app("reading-marks-both-arches");
+        let mut scene = super::Scene::new();
+        let subject = push_named_layer(&mut scene, "lower", 0.0);
+        let antagonist = push_named_layer(&mut scene, "upper", 0.1);
+        let _bystander = push_named_layer(&mut scene, "wax", 5.0);
+        let scene = super::Arc::new(scene);
+        app.document.scene = Some(super::Arc::clone(&scene));
+        app.tools.contacts.open(ContactPair {
+            subject,
+            antagonist,
+        });
+
+        let (marked, readable) = app.contact_rows(scene.as_ref());
+
+        assert_eq!(marked.len(), 3, "one row per layer");
+        assert!(
+            marked[0] && marked[1],
+            "both scans of the reading wear the marks: {marked:?}"
+        );
+        assert!(
+            !marked[2],
+            "a layer outside the pair is not a participant: {marked:?}"
+        );
+        assert_eq!(
+            readable,
+            vec![true, true, true],
+            "every layer here has a visible antagonist to read against"
+        );
+    }
+
+    /// Both arches of a reading must offer to close it.
+    ///
+    /// A reading paints both participants, so a row that wears marks must say
+    /// so or its menu offers to open a *second* reading on the same two scans
+    /// while the first is still up. The rows are built from the pair, not from
     /// its subject: this pins the shape that makes that possible — a flag per
     /// layer, since one "marked index" can only ever name one of the two.
     #[test]
