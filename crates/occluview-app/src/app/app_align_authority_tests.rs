@@ -58,6 +58,9 @@ fn a_summary() -> DeviationStats {
     }
 }
 
+// The Option is production's: `apply_measured_outcome` takes
+// `Option<Observability>`, and a `None` case is covered separately below.
+#[allow(clippy::unnecessary_wraps)]
 fn a_measurement_that_can_be_seen() -> Option<Observability> {
     Some(Observability {
         sensitivity: [1.0; 6],

@@ -594,7 +594,7 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
         if worker
             .worker_thread
             .as_ref()
-            .is_some_and(|handle| handle.is_finished())
+            .is_some_and(JoinHandle::is_finished)
         {
             break;
         }
@@ -604,7 +604,7 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
         worker
             .worker_thread
             .as_ref()
-            .is_some_and(|handle| handle.is_finished()),
+            .is_some_and(JoinHandle::is_finished),
         "a cancelled dab must let the worker stop"
     );
 
