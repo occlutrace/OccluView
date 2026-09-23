@@ -317,6 +317,38 @@ fn the_live_window_options_match_the_render_contract() {
     );
 }
 
+/// The device request must take its buffer ceiling from the adapter.
+///
+/// `wgpu::Limits::default()` is the WebGPU default tier, whose `max_buffer_size`
+/// is 256 MiB, and `or_worse_values_from` takes the per-field MINIMUM - so a
+/// request built on the default tier capped the live device at 256 MiB even on
+/// an adapter offering gigabytes. A large scan needs a bigger vertex buffer than
+/// that, the allocation is refused, and the refusal arrives at the fault handler
+/// which LATCHES: a scan that rendered fine as a thumbnail was unopenable in the
+/// app, with a Retry that re-ran the same failing allocation.
+#[test]
+fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
+    let generous = wgpu::Limits {
+        max_buffer_size: 3 * 1024 * 1024 * 1024,
+        ..wgpu::Limits::default()
+    };
+    let requested = device_limits_for_backend(wgpu::Backend::Vulkan, &generous);
+    assert_eq!(
+        requested.max_buffer_size, generous.max_buffer_size,
+        "the request must not lower an adapter that offers more than the default tier"
+    );
+
+    let modest = wgpu::Limits {
+        max_buffer_size: 64 * 1024 * 1024,
+        ..wgpu::Limits::default()
+    };
+    let requested = device_limits_for_backend(wgpu::Backend::Gl, &modest);
+    assert_eq!(
+        requested.max_buffer_size, 64 * 1024 * 1024,
+        "and a device request may never exceed what a weak adapter reports"
+    );
+}
+
 #[test]
 fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
     let first = report_file_name("startup-failure", 42, 7, 0);
@@ -360,6 +392,29 @@ fn every_desktop_notification_channel_builds_a_usable_command() {
 /// runs on the path that still owes the operator a non-zero exit status: an
 /// unattended launch (CI, kiosk, a `.desktop` start nobody watches) would leave
 /// a dead startup alive forever with no window.
+#[cfg(not(windows))]
+#[test]
+fn a_fatal_notice_cannot_block_the_failure_exit() {
+    // Stands in for a dialog nobody will dismiss: it never exits on its own.
+    let started = Instant::now();
+    let delivered = run_notification("sleep", &["30".to_string()])
+        .expect("the notice program must be spawnable");
+    let waited = started.elapsed();
+
+    assert!(
+        delivered,
+        "a notice that is on screen has been delivered: the operator can still read it"
+    );
+    assert!(
+        waited >= NOTIFICATION_DISMISS_WAIT,
+        "the notice gets its full chance to be read, so a notification daemon round trip is not cut short"
+    );
+    assert!(
+        waited < NOTIFICATION_DISMISS_WAIT + std::time::Duration::from_secs(5),
+        "but the wait is bounded, because this path still owes the operator an exit status"
+    );
+}
+
 #[cfg(not(windows))]
 #[test]
 fn startup_stage_lines_contain_only_diagnostic_metadata() {
