@@ -278,3 +278,68 @@ fn the_graphics_fault_dialog_offers_the_retry_action() {
         "so pressing it gives the offscreen path back"
     );
 }
+
+/// A rebuilt offscreen scene uploads the scan's own colours, so a live
+/// deviation map must be replayed into those vertices afterwards.
+///
+/// The measured colours ARE the reading the operator came for. A rebuild that
+/// drops them leaves the fallback viewport and the section panel showing an
+/// unmeasured scan while the layer still claims to be mapped, and nothing
+/// repaints them until the next scene change. The offscreen path keeps its own
+/// prepared scene, so it needs the same replay the live viewport has. This
+/// drives the real renderer, so it needs a wgpu adapter (a software one does).
+#[test]
+fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
+    use crate::app::app_align_display::AlignOverlay;
+    /// A colour no scan has, so a frame that shows it is showing the reading.
+    const MEASURED: [u8; 4] = [220, 30, 30, 255];
+
+    fn render_frame(app: &mut super::OccluViewApp, ctx: &egui::Context) -> Option<Vec<u8>> {
+        app.render.invalidation.request_redraw();
+        app.render_now(ctx);
+        app.render
+            .rendered
+            .as_ref()
+            .map(|frame| frame.pixels.clone())
+    }
+
+    let mut app = crate::app::app_test_support::test_app("offscreen-replays-measured-colours");
+    let scene = crate::app::app_test_support::named_scene("scan", 0.0);
+    let layer = scene.meshes()[0].id();
+    app.document.scene = Some(scene.into());
+    let ctx = egui::Context::default();
+
+    // The scan's own colours: what the operator sees before a measurement.
+    app.render.invalidation.scene_geometry_changed();
+    let Some(scan_frame) = render_frame(&mut app, &ctx) else {
+        assert!(
+            app.render.offscreen.is_none(),
+            "an initialized offscreen path must produce a frame"
+        );
+        // No wgpu adapter in this environment, so there is no offscreen frame
+        // to inspect. The renderer-dependent suites skip the same way.
+        return;
+    };
+
+    // A measurement marks every vertex of the layer.
+    assert!(
+        app.attach_overlay_colors(layer, vec![MEASURED; 3], AlignOverlay::Map),
+        "the map must attach to a layer whose vertex count it matches"
+    );
+    let measured_frame = render_frame(&mut app, &ctx).expect("the mapped scan must render");
+    assert_ne!(
+        measured_frame, scan_frame,
+        "the frame must actually show the measurement, or this test proves nothing"
+    );
+
+    // A structural scene change drops the prepared scene, and the next frame
+    // rebuilds it: `prepare_scene` uploads the scan's own vertex colours.
+    app.render.prepared_scene = None;
+    app.render.invalidation.scene_geometry_changed();
+    let rebuilt_frame = render_frame(&mut app, &ctx).expect("the rebuilt scan must render");
+
+    assert_eq!(
+        rebuilt_frame, measured_frame,
+        "the rebuild must replay the measured colours; falling back to the scan's own colours shows the operator an unmeasured scan"
+    );
+}
