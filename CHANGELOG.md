@@ -37,8 +37,8 @@ remain in the Git history.
 - Saving a layer back out keeps the format it was opened in by default. Scans
   already round-tripped PLY/STL/OBJ that way, but a scan opened from a format
   with no writer (HPS, GLB, OFF) silently became a PLY, and the preference that
-  produced the substitution was not stated anywhere. Settings now carries
-  Settings now asks one question with two answers — save each scan in its own
+  produced the substitution was not stated anywhere. Settings now asks one
+  question with two answers — save each scan in its own
   format, or save every scan in a chosen format — instead of a switch beside a
   format that looked like it applied either way. The format chips appear only in
   the mode that uses them, and the mode in force is always named. Whichever

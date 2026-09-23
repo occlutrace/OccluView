@@ -17,7 +17,6 @@
 //! outputs: the modal predicate and the status line consumed by input
 //! routing and the panels.
 
-use super::app_settings_panel::settings_popup_id;
 use super::egui;
 use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
@@ -134,7 +133,12 @@ impl UiState {
             close_guard: self.close_guard_open,
             pending_replace: self.pending_replace_open.is_some(),
             error: self.app_error.is_some(),
-            settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id()),
+            // Any popup, not only the settings one. egui closes a popup on a
+            // NON-consuming read of Escape, so the key survives for the tool
+            // handler that runs later in the same frame: one Escape dismissed
+            // the recent-files dropdown or a layer context menu AND disarmed
+            // the armed tool behind it (for Align, cancel_align_session).
+            settings_popup: egui::Popup::is_any_open(&self.repaint_ctx),
             information_dialog: self.information_dialog.is_open(),
             repair_report: self.repair_report.is_open(),
         }

@@ -605,7 +605,13 @@ impl OccluViewApp {
         let (repush_deviation, scene_rebuilt) = match live_viewport.lock() {
             Ok(mut viewport) => {
                 viewport.set_show_ghost(self.persistence.settings.show_cut_ghost);
-                viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
+                let splat_viewport = self.render.live_viewport_px.unwrap_or_else(|| {
+                    [
+                        u32::from(self.render.render_extent_px[0]),
+                        u32::from(self.render.render_extent_px[1]),
+                    ]
+                });
+                viewport.update_view(&gpu_cam, splat_viewport, clip_plane);
                 let mut rebuilt = false;
                 if self.render.invalidation.live_scene_stale() {
                     let sources = self.prepared_scene_sources(scene);
@@ -681,18 +687,25 @@ impl OccluViewApp {
     /// Nothing is repaired here: the next frame either paints or raises the
     /// fault again, and a new message re-arms the dialog.
     pub(super) fn retry_gpu_after_fault(&mut self, ctx: &egui::Context) {
-        let Some(live_viewport) = self.render.live_viewport.as_ref() else {
-            return;
-        };
-        match live_viewport.lock() {
-            Ok(mut viewport) => viewport.clear_gpu_fault(),
-            Err(error) => {
-                tracing::warn!(?error, "live viewport lock failed while retrying graphics");
-                return;
+        // The offscreen latch is cleared here too. It used to return early
+        // without a live viewport — which is precisely the machine where the
+        // offscreen path IS the viewport, so the only recovery the UI offers did
+        // nothing on the machine that needed it, and the fault stayed latched
+        // for the session.
+        self.render.offscreen_failed = false;
+        self.render.offscreen_retry_after = None;
+        if let Some(live_viewport) = self.render.live_viewport.as_ref() {
+            match live_viewport.lock() {
+                Ok(mut viewport) => viewport.clear_gpu_fault(),
+                Err(error) => {
+                    tracing::warn!(?error, "live viewport lock failed while retrying graphics");
+                    return;
+                }
             }
         }
         tracing::info!("operator asked to resume drawing after a graphics fault");
         self.ui.status_message = Some(self.ui.locale.tr("gpu-retry-status"));
+        self.render.invalidation.request_redraw();
         ctx.request_repaint();
     }
 
@@ -730,8 +743,22 @@ impl OccluViewApp {
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
-        // Record a drag before replacing the scene when its layer survives.
-        self.abandon_align_drag();
+        // DISCARD, not `abandon`: by the time a scene is installed the drag's
+        // pose either belongs to the incoming scene (a load or a mesh-edit
+        // commit that cloned it) or to a scene that is being thrown away. Both
+        // read as a history step against the WRONG scene: `finish_align_drag`
+        // snapshots from whatever scene is installed, so recording here pushed
+        // an entry describing the outgoing scene, and the guard (layer ids only)
+        // never refused it — the first Ctrl+Z showed the edit undone and the
+        // second put it back and rewound the pose.
+        //
+        // Every path that could still be holding a live drag closes it while the
+        // scene it describes is still installed: `apply_history_navigation_now`
+        // does it before cloning the draft, and the tool teardown paths call
+        // `disarm_align_tool`, which finishes the gesture. What reaches here is a
+        // drag whose geometry is already on its way out, so dropping it is the
+        // only honest thing to do with it.
+        self.discard_align_drag();
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
@@ -859,6 +886,27 @@ impl OccluViewApp {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
+                // The callback paints into egui's render pass at THIS rect, so
+                // it is the real viewport; `render_extent_px` is clamped for the
+                // offscreen target and the invalidation threshold. The splat
+                // radius is measured in pixels of the former.
+                let ppp = ctx.pixels_per_point();
+                let live_px = response.rect.size() * ppp;
+                self.render.live_viewport_px = Some([
+                    // Deliberately NOT clamped to the render-extent bounds: this
+                    // is the viewport the callback actually paints, and clamping
+                    // it is the bug being fixed. A non-finite or negative size
+                    // cannot reach here (egui rects are finite and non-negative),
+                    // so the cast is a plain round with a floor of one pixel.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    {
+                        live_px.x.round().max(1.0) as u32
+                    },
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    {
+                        live_px.y.round().max(1.0) as u32
+                    },
+                ]);
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
                 self.show_viewport_overlays(ui, &response, &ctx);

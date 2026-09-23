@@ -135,6 +135,23 @@ impl OccluViewApp {
                 // rebuilding the scene. Mark readiness only after that commit,
                 // so the map can describe the pose that actually landed.
                 self.tools.align.refined_match_ready = true;
+                // An open contact reading owns the per-surface colouring, and
+                // the two overlays describe different measurements. The reading
+                // clears the deviation map when it opens ("Contact and deviation
+                // overlays are mutually exclusive"), but nothing reciprocated:
+                // arming Align never closed the reading and this arm re-armed
+                // the map unconditionally after `commit_align_pose` had turned it
+                // off. One layer then wore `contact_map = 1` AND `measured_map =
+                // 1` at once, both panels claimed their own map was live, and the
+                // shader mixed the contact ramp into a colour taken from the
+                // deviation ramp, so the colours belonged to neither reading.
+                if self.tools.contacts.is_open() {
+                    let ctx = self.ui.repaint_ctx.clone();
+                    self.close_contacts(&ctx);
+                    self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
+                    self.measure_if_shown();
+                    return;
+                }
                 self.tools.align.settings.show_deviation = true;
                 self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
                 self.measure_if_shown();

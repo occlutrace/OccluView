@@ -25,6 +25,12 @@ pub(super) fn write_mesh<W: Write>(
         writeln!(writer, "o OccluViewExport")?;
     }
 
+    // OBJ carries RGB per vertex and nothing for alpha. PLY and the app's mesh
+    // keep RGBA, and the writer module's header promises every writer reports a
+    // lossy conversion, so a PLY with alpha < 255 exported to OBJ used to lose
+    // it without a word.
+    let alpha_present =
+        options.include_vertex_colors && mesh.vertices().iter().any(|v| v.color[3] != 255);
     for vertex in mesh.vertices() {
         if options.include_vertex_colors && mesh.has_vertex_colors() {
             writeln!(
@@ -94,6 +100,10 @@ pub(super) fn write_mesh<W: Write>(
             write!(writer, " {index}")?;
         }
         writeln!(writer)?;
+    }
+
+    if alpha_present {
+        report.warn(MeshWriteWarning::VertexAlphaNotWritten);
     }
 
     Ok(())

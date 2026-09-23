@@ -35,7 +35,6 @@ update-dismiss = Descartar
 
 error-open-title = No se puede abrir el archivo
 error-add-title = No se puede añadir el archivo
-error-open-body = No se pudo abrir { $path }.
 
 ## Help surface — DRAFT. Gesture names stay invariant by contract.
 
@@ -501,6 +500,7 @@ align-mask-automatic = Marca automática
 align-mask-automatic-hint = Ajustar solo un área pequeña en cada extremo
 align-mask-automatic-report = Ajuste solo en extremos de flecha
 align-mask-automatic-report-one = { $name }: ajuste solo alrededor de las puntas de flecha
+align-mask-automatic-empty = Coincidencia en todas partes: la región cubrió todo el escaneo, así que no se excluyó nada
 
 align-status-half-dropped = Flecha a medias descartada
 align-status-turned = Par girado
@@ -530,7 +530,6 @@ align-status-measured = Mapa de calor actualizado
 align-status-remeasure = { $reason } — ejecuta el ajuste fino para medir de nuevo
 align-status-settings-changed = Ajustes de matching cambiados
 align-status-visibility-changed = Cambió la visibilidad de un escaneo seleccionado
-align-brush-not-in-alignment = Ese escaneo no es de esta alineación
 align-drag-moving = Moviendo { $name } a mano
 align-drag-unrecorded = Movido a mano, pero este paso no quedó en el historial — Ctrl+Z no lo deshará
 align-drag-moved = { $name }: movimiento de { $moved } mm a mano (Ctrl+Z deshace)
@@ -615,7 +614,6 @@ holes-seg-damaged = { $n ->
    *[other] Omitidos { $n } bordes dañados
 }
 batchedit-invert = Normales invertidas
-batchedit-close-holes = Agujeros interiores seguros cerrados
 batchedit-delete = Selección eliminada
 batchedit-crop = Recorte a la selección
 batchedit-cut = Selección cortada a nueva capa
@@ -626,7 +624,6 @@ batchedit-status = { $label } en { $n ->
     [one] { $n } capa visible
    *[other] { $n } capas visibles
 }
-batchedit-no-changes = Sin cambios: afina la selección; lo oculto queda intacto
 batch-close-holes = Agujeros interiores cerrados
 batch-delete = Selección eliminada
 batch-crop = Recorte a la selección
@@ -919,10 +916,16 @@ contact-status-failed-hint = Lea de nuevo; si sigue fallando, puede que el par n
 contact-status-needs-second-hint = Abra el escaneo antagonista o muéstrelo de nuevo y empiece la lectura
 contact-legend-gap = holgura hasta { $mm } mm
 contact-stats-balance = Área por lado
-contact-stats-balance-hint = Área de contacto a cada lado de la línea media del propio escaneo. El reparto sigue las coordenadas del escaneo, así que un caso girado o reflejado puede intercambiar los números.
 layer-menu-contacts-unavailable = Una lectura de contactos necesita dos mallas de triángulos visibles: muestre o abra antes el escaneo antagonista
 
 contact-details = Detalles
 contact-details-hint = Los números y la regla de un color por contacto
 contact-details-close = Ocultar detalles
 settings-shortcuts-hint = Referencia de teclado y ratón (F1)
+
+load-units-ambiguous = Unidades sin verificar: el formato declara metros, pero los escáneres suelen exportar milímetros — { $suggestion }
+load-units-suggest-meters = el tamaño sugiere metros, así que es unas 1000 veces más pequeño de lo que debería
+load-units-suggest-millimeters = el tamaño sugiere números en milímetros, así se leyó
+load-units-unclear = el tamaño no lo decide; compruébelo con una medida conocida
+contact-stats-balance-hover = Área de contacto dividida por la línea media: antes / después de la línea
+mesh-warning-vertex-alpha = el alfa de vértice no se escribió

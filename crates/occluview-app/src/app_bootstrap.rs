@@ -645,6 +645,19 @@ fn device_limits_for_backend(backend: wgpu::Backend, supported: &wgpu::Limits) -
     };
     wgpu::Limits {
         max_texture_dimension_2d: MAX_RENDER_TEXTURE_DIMENSION,
+        // `wgpu::Limits::default()` is the WebGPU default tier, whose
+        // `max_buffer_size` is 256 MiB. `or_worse_values_from` takes the
+        // per-field MINIMUM, so the request capped the live device at 256 MiB
+        // even on an adapter offering gigabytes — while the offscreen path had
+        // already been raised to the adapter's real ceiling for exactly this
+        // reason ("a scan of three million triangles needs a 309 MiB vertex
+        // buffer, the allocation was refused, and the frame came back empty").
+        // The refused allocation arrives at the fault handler, which LATCHES:
+        // the viewport stops drawing and offers a Retry that re-runs the same
+        // failing allocation, so a scan that renders fine as a thumbnail was
+        // unopenable in the app. Asking for the adapter's own number leaves the
+        // intersection unable to lower it.
+        max_buffer_size: supported.max_buffer_size,
         ..base_limits
     }
     .or_worse_values_from(supported)

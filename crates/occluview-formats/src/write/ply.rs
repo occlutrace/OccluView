@@ -54,9 +54,17 @@ impl<'a> TexturePlan<'a> {
             });
         let png = candidate.and_then(|texture| super::super::glb_writer::encode_png(texture).ok());
         let encoded = png.as_deref().map(embed::encode);
+        // The reader refuses an embedded image whose base64 exceeds its own
+        // ceiling, so a bigger one must not be written at all: the export would
+        // report success, the bytes would sit in the header, and re-opening the
+        // file would show no texture with nothing said. Dropping it here routes
+        // the case through `TextureImageNotWritten`, which is a warning the
+        // operator actually sees. Asked of the reader rather than duplicated, so
+        // the two cannot drift.
+        let encoded = encoded.filter(|text| text.len() <= crate::ply::max_encoded_chars());
         // An image that cannot be encoded is not written, and the caller warns
         // about it rather than shipping a header that promises it.
-        let texture = candidate.filter(|_| png.is_some());
+        let texture = candidate.filter(|_| encoded.is_some());
         Self { texture, encoded }
     }
 

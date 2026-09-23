@@ -37,7 +37,6 @@ update-dismiss = Dismiss
 
 error-open-title = Cannot open file
 error-add-title = Cannot add file
-error-open-body = Could not open { $path }.
 
 ## Help surface: section titles, control actions, contextual lines, dialog chrome.
 ## Gesture names (key/mouse vocabulary) stay invariant by contract.
@@ -507,6 +506,7 @@ align-mask-automatic = Mark automatic
 align-mask-automatic-hint = Match only on a small area around each arrow end
 align-mask-automatic-report = Matching only around the arrow ends
 align-mask-automatic-report-one = { $name }: matching only around the arrow ends
+align-mask-automatic-empty = Matching everywhere: the region covered the whole scan, so nothing was excluded
 
 align-status-half-dropped = Half-placed arrow dropped
 align-status-turned = Pair turned around
@@ -536,7 +536,6 @@ align-status-measured = Heatmap updated
 align-status-remeasure = { $reason } — run Best fit matching to measure again
 align-status-settings-changed = Matching settings changed
 align-status-visibility-changed = Selected scan visibility changed
-align-brush-not-in-alignment = That mesh is not in this alignment
 align-drag-moving = Moving { $name } by hand
 align-drag-unrecorded = Moved by hand, but this step could not be added to the history — Ctrl+Z will not undo it
 align-drag-moved = { $name } moved { $moved } mm by hand (Ctrl+Z undoes)
@@ -620,7 +619,6 @@ holes-seg-damaged = { $n ->
     [one] { $n } damaged rim skipped
    *[other] { $n } damaged rims skipped
 }
-batchedit-close-holes = Closed safe interior holes
 batchedit-delete = Deleted selection
 batchedit-crop = Cropped selection
 batchedit-cut = Cut selection to new layer
@@ -638,7 +636,6 @@ batchedit-status = { $label } on { $n ->
     [one] { $n } visible layer
    *[other] { $n } visible layers
 }
-batchedit-no-changes = No changes: refine the selection; hidden layers stay untouched
 
 select-covers-all = Selection already covers the whole mesh: { $layer }
 select-covers-remove = Selection covers the whole mesh — remove the layer instead: { $layer }
@@ -926,10 +923,16 @@ help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Switch bet
 help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Close the reading and take the marks off both scans
 contact-legend-gap = gap up to { $mm } mm
 contact-stats-balance = Area each side
-contact-stats-balance-hint = Contact area either side of this scan's own mid-line. The split follows the scan's coordinates, so a rotated or mirrored case can swap the two numbers.
 layer-menu-contacts-unavailable = A contact reading needs two visible triangle meshes — show or open the opposing scan first
 
 contact-details = Details
 contact-details-hint = The numbers and the one colour per contact rule
 contact-details-close = Hide details
 settings-shortcuts-hint = Keyboard and mouse reference (F1)
+
+load-units-ambiguous = Units are not verified: this format declares meters while scanner exports usually carry millimetres — { $suggestion }
+load-units-suggest-meters = the size suggests meters, so it is about 1000x smaller than it should be
+load-units-suggest-millimeters = the size suggests millimetre numbers, which is how it was read
+load-units-unclear = the size does not settle it; check a known measurement
+contact-stats-balance-hover = Contact area split by the mid-line: before-line / after-line
+mesh-warning-vertex-alpha = vertex alpha was not written

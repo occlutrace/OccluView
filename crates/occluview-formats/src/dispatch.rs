@@ -151,6 +151,15 @@ pub fn dispatch_by_kind_loaded(
         FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
         FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
         FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
+        // `.gltf` is JSON, and `probe` maps both extensions to this kind, so a
+        // JSON file reaches a reader that only accepts the GLB container and
+        // was told "not a glTF file: bad signature" for a file that *is* a
+        // glTF. Defer only what actually looks like JSON, so a truncated or
+        // corrupted `.glb` still fails as one.
+        FormatKind::Gltf if looks_like_json(bytes) => Err(FormatError::Deferred {
+            format: "glTF",
+            reason: ".gltf (JSON) is not read; export .glb".to_string(),
+        }),
         FormatKind::Gltf => crate::gltf::read(bytes),
         FormatKind::Off => crate::off::read(bytes),
         // Implement natively when demand appears.
@@ -486,6 +495,20 @@ pub fn read_files_with_key_provider(
 ///
 /// A BOM is metadata, not content: no format here declares it as part of its
 /// signature, and a tool that writes one means the file that follows.
+/// True when `bytes` starts an object, which is how a `.gltf` (JSON) file
+/// begins and how a GLB never does.
+///
+/// A leading byte-order mark is skipped first because `probe` already strips it
+/// before routing, so the two must agree about the same file.
+pub(crate) fn looks_like_json(bytes: &[u8]) -> bool {
+    matches!(
+        strip_utf8_bom(bytes)
+            .iter()
+            .find(|b| !b.is_ascii_whitespace()),
+        Some(b'{')
+    )
+}
+
 fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
     match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         Some(rest) => rest,

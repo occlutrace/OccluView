@@ -235,6 +235,14 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
 static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<()> {
+    // A symlink destination is followed, not replaced. Publishing with a bare
+    // rename swapped the LINK's inode for a regular file, so the file the link
+    // pointed at kept its previous image while the CLI printed "Done" — the
+    // operator checked the target and saw stale content. The mesh writer has
+    // resolved this exact case for the same reason; the thumbnailer now does
+    // the same instead of a second, weaker copy of the rule.
+    let path = occluview_formats::resolve_overwrite_destination(path)?;
+    let path = path.as_path();
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -338,8 +346,24 @@ fn implicit_thumbnail_path(file: &Path) -> PathBuf {
         || "thumbnail".to_string(),
         |stem| stem.to_string_lossy().into_owned(),
     );
-    path.set_file_name(format!("{stem}-thumb.png"));
-    path
+    // Keep stepping. The doc above promises an occupied name is stepped aside,
+    // but the `-thumb` name was returned without a second `exists()` check, and
+    // `write_thumbnail_atomically` then renamed over it: `scan.png` plus a
+    // pre-existing `scan-thumb.png` (an unrelated file, or another tool's)
+    // silently destroyed the latter, a file the operator never named. A
+    // numbered suffix keeps escalating instead of overwriting anything.
+    let mut candidate = path.clone();
+    candidate.set_file_name(format!("{stem}-thumb.png"));
+    if !candidate.exists() {
+        return candidate;
+    }
+    for index in 2..1000u32 {
+        candidate.set_file_name(format!("{stem}-thumb-{index}.png"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    candidate
 }
 
 /// `convert <file> -o output.{stl|ply|obj}`

@@ -35,7 +35,6 @@ update-dismiss = Скрыть
 
 error-open-title = Не удаётся открыть файл
 error-add-title = Не удаётся добавить файл
-error-open-body = Не удалось открыть { $path }.
 
 ## Help surface — DRAFT. Gesture names stay invariant by contract.
 
@@ -575,6 +574,7 @@ align-mask-automatic = Автопометка
 align-mask-automatic-hint = Совмещать только по малой области у концов стрелок
 align-mask-automatic-report = Совмещение только у концов стрелок
 align-mask-automatic-report-one = { $name }: совмещение только вокруг концов стрелок
+align-mask-automatic-empty = Совпадение по всей поверхности: область накрыла весь скан, поэтому ничего не исключено
 
 align-status-half-dropped = Незавершённая стрелка убрана
 align-status-turned = Пара развёрнута
@@ -604,7 +604,6 @@ align-status-measured = Теплокарта обновлена
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
 align-status-settings-changed = Настройки сопоставления изменены
 align-status-visibility-changed = Видимость выбранного скана изменена
-align-brush-not-in-alignment = Этот скан не входит в текущее совмещение
 align-drag-moving = Перемещение { $name } вручную
 align-drag-unrecorded = Перемещено вручную, но шаг не попал в историю — Ctrl+Z не отменит его
 align-drag-moved = Перемещение вручную: { $name }, сдвиг { $moved } мм (Ctrl+Z отменяет)
@@ -704,7 +703,6 @@ holes-seg-damaged = { $n ->
     [many] Пропущено { $n } повреждённых кромок
    *[other] Пропущено { $n } повреждённых кромок
 }
-batchedit-close-holes = Закрыты безопасные внутренние отверстия
 batchedit-delete = Выбор удалён
 batchedit-crop = Обрезано по выбору
 batchedit-cut = Выбор вырезан в новый слой
@@ -724,7 +722,6 @@ batchedit-status = { $label } на { $n ->
     [many] { $n } видимых слоях
    *[other] { $n } видимых слоях
 }
-batchedit-no-changes = Без изменений: уточните выбор; скрытые слои не тронуты
 
 select-covers-all = Выбор уже покрывает всю сетку: { $layer }
 select-covers-remove = Выбор покрывает всю сетку — вместо этого удалите слой: { $layer }
@@ -1009,10 +1006,16 @@ contact-status-failed-hint = Прочитать заново; если снов�
 contact-status-needs-second-hint = Откройте встречный скан или покажите его снова и начните чтение
 contact-legend-gap = зазор до { $mm } мм
 contact-stats-balance = Площадь по сторонам
-contact-stats-balance-hint = Площадь контакта по обе стороны от собственной средней линии скана. Деление идёт по координатам скана, поэтому при повороте или зеркале числа могут поменяться местами.
 layer-menu-contacts-unavailable = Для чтения контактов нужны два видимых полигональных скана — сначала покажите или откройте встречный
 
 contact-details = Подробности
 contact-details-hint = Числа и правило «один цвет на контакт»
 contact-details-close = Скрыть подробности
 settings-shortcuts-hint = Справка по клавиатуре и мыши (F1)
+
+load-units-ambiguous = Единицы не подтверждены: формат объявляет метры, а сканеры обычно пишут миллиметры — { $suggestion }
+load-units-suggest-meters = размер говорит о метрах, то есть модель примерно в 1000 раз меньше нужного
+load-units-suggest-millimeters = размер говорит о миллиметрах — так и прочитано
+load-units-unclear = по размеру не определить; проверьте известным измерением
+contact-stats-balance-hover = Площадь контакта по средней линии: до линии / после линии
+mesh-warning-vertex-alpha = альфа вершин не записана

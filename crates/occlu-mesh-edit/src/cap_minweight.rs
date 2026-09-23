@@ -26,8 +26,23 @@ pub(super) const MIN_WEIGHT_HIER_MAX_RIM: usize = 20_000;
 /// local pair avoids rejecting short seam edges near long segments.
 const RIM_PROXIMITY_FRACTION: f64 = 1e-3;
 
+/// Segment PAIRS the simplicity test may compare on one rim.
+///
+/// The test is O(n²) and the ceiling this crate admits is `MIN_WEIGHT_HIER_MAX_RIM`
+/// = 20 000 edges, i.e. ~2·10^8 pairs, each running a full f64 closest-point
+/// form. Every other expensive pass here is budgeted (the large ear clipper
+/// spends at most `LARGE_EARCLIP_WORK_BUDGET` reflex checks, the min-area DP
+/// spends `MIN_WEIGHT_HIER_MAX_RIM`); this one was bounded only by a comment
+/// claiming `n <= 256`, which stopped being true when the hierarchy raised the
+/// rim ceiling. A rim that exhausts the budget is refused: an unverifiable rim
+/// is exactly the case the test exists to reject, and refusing keeps the
+/// outcome deterministic instead of stretching to minutes on a pathological
+/// socket or lasso boundary.
+const RIM_SIMPLICITY_PAIR_BUDGET: u64 = 20_000_000;
+
 /// Whether the 3D rim polyline is simple. Curved but simple rims use the
-/// minimum-area fallback; self-crossing rims remain rejected. O(n²), `n <= 256`.
+/// minimum-area fallback; self-crossing rims remain rejected. O(n²) in pair
+/// count, bounded by [`RIM_SIMPLICITY_PAIR_BUDGET`].
 pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
     let n = points.len();
     if n < 4 {
@@ -41,6 +56,7 @@ pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
         return false;
     }
 
+    let mut pairs_left = RIM_SIMPLICITY_PAIR_BUDGET;
     for i in 0..n {
         let (a0, a1) = (points[i], points[(i + 1) % n]);
         for j in (i + 2)..n {
@@ -49,6 +65,12 @@ pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
             if i == 0 && j == n - 1 {
                 continue;
             }
+            // Refuse rather than stretch: an unbudgeted quadratic scan on a
+            // 20 000-edge rim is ~2·10^8 closest-point evaluations.
+            if pairs_left == 0 {
+                return false;
+            }
+            pairs_left -= 1;
             let (b0, b1) = (points[j], points[(j + 1) % n]);
             // Local tube: proportional to the SMALLER of the two edges, so the
             // radius never dwarfs a tiny seam edge sitting near a long one.

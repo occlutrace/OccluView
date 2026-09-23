@@ -515,14 +515,19 @@ fn run_worker(
         };
         *slot = Some(cancel.clone());
         drop(slot);
-        busy.fetch_add(1, Ordering::SeqCst);
+        // RAII, not a hand-written pair. The panic boundary is OUTSIDE this
+        // loop, so an unwind inside `execute` skipped the `fetch_sub` and left
+        // the counter above zero forever: `is_busy` then reports busy for the
+        // rest of the session, the panel keeps its spinner, and
+        // `finish_align_session` claims the session closed "while a fit was
+        // still running". The contact worker already uses this guard.
+        let _busy = Busy::new(busy);
 
         let outcome = execute(&job, &cancel, &mut cached);
         // Cancelled stages may return structurally valid but unusable values;
         // do not publish them.
         let abandoned = cancel.is_cancelled();
 
-        busy.fetch_sub(1, Ordering::SeqCst);
         let Ok(mut slot) = running.lock() else {
             mark_failed(failed, "running-job lock poisoned", None);
             return;
@@ -554,6 +559,27 @@ fn mark_failed(failed: &AtomicBool, reason: &'static str, detail: Option<String>
         } else {
             tracing::error!(reason, "align worker stopped");
         }
+    }
+}
+
+/// A panic-safe hold on the busy counter.
+///
+/// The counter is what the panel shows as a spinner and what
+/// `finish_align_session` reads before claiming a session ended while work was
+/// running. Decrementing it by hand means any early return or unwind between
+/// the two calls leaves Align busy forever.
+struct Busy(Arc<AtomicU64>);
+
+impl Busy {
+    fn new(counter: &Arc<AtomicU64>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

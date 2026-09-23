@@ -151,7 +151,7 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
 /// Four thirds of the companion-image cap: the same picture budget, applied
 /// before the pixels exist, so a header cannot make the reader allocate from
 /// input length alone while the file buffer is still held.
-fn max_encoded_chars() -> usize {
+pub(crate) fn max_encoded_chars() -> usize {
     let bytes = usize::try_from(crate::companions::MAX_COMPANION_IMAGE_BYTES).unwrap_or(0);
     bytes / 3 * 4
 }

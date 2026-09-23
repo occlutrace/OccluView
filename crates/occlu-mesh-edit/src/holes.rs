@@ -188,13 +188,15 @@ pub(crate) fn fill_holes_with_outcome(
         return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));
     }
 
-    refuse_unweldable_soup(mesh, options.heal_boundary_rims, counts.triangles)?;
-
-    // Weld STL-style soup to shared topology first (Close Holes path only), so
-    // the boundary walk sees real rims instead of one phantom needle per
-    // triangle. See [`apply_soup_weld`].
+    // The weld comes FIRST, and the refusal is asked of its result. Deciding
+    // from the `heal_boundary_rims` flag alone treated "healing is on" as "the
+    // mesh is welded", but healing welds by full payload: a soup whose
+    // coincident corners differ in colour or UV merges nothing, and the healing
+    // pass then deleted every triangle as an isolated nick while reporting the
+    // result as a successful cap.
     let welded = apply_soup_weld(mesh, options.heal_boundary_rims)?;
     let mesh: &MeshEditBuffers = welded.as_ref().unwrap_or(mesh);
+    refuse_unweldable_soup(mesh, counts.triangles)?;
 
     // Pre-clean the cut line (opt-in via `heal_boundary_rims`): drop dangling
     // needle/lone triangles and weld near-coincident boundary vertices so a

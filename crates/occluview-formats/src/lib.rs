@@ -123,8 +123,8 @@ pub use error::FormatError;
 pub use glb_writer::write_textured_glb;
 pub use probe::{probe, FormatKind};
 pub use write::{
-    write_mesh, write_mesh_overwrite, write_mesh_to_new_file, MeshWriteFormat, MeshWriteOptions,
-    MeshWriteReport, MeshWriteWarning,
+    resolve_overwrite_destination, write_mesh, write_mesh_overwrite, write_mesh_to_new_file,
+    MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
 
 #[cfg(test)]

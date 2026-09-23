@@ -123,7 +123,7 @@ const OCCLUVIEW_THUMBNAIL_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b
 const OCCLUVIEW_PREVIEW_GUID: GUID = GUID::from_u128(0x9f3a1b2c_4d5e_4f60_8a7b_9c0d1e2f3046);
 use crate::preview_canvas::center_square_on_canvas;
 
-const MAX_OFFSCREEN_EDGE: u32 = 2048;
+pub(super) const MAX_OFFSCREEN_EDGE: u32 = 2048;
 const PREVIEW_WINDOW_CLASS_NAME: PCWSTR = w!("OccluViewPreviewPane");
 const PREVIEW_LIGHT_BACKGROUND_LINEAR: [f64; 4] = [0.80, 0.82, 0.84, 1.0];
 const PREVIEW_DARK_BACKGROUND_LINEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];

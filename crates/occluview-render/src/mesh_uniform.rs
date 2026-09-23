@@ -79,13 +79,16 @@ pub struct GpuMeshUniform {
     pub measured_map: u32,
     /// 1 = this layer paints an occlusal contact field from `contact_stops`.
     ///
-    /// A contact reading is a measurement, so the caller pairs this with
-    /// `measured_map = 1`: the ramp then reaches the screen at its own hue
-    /// under a single reduced shade factor, and the specular highlight (which
-    /// would move the hue at every bright pixel) is skipped. The flag is
-    /// independent because a layer may show a deviation heatmap, a contact
-    /// reading, both (contacts win — they are painted into the base colour
-    /// before the measured-map branch) or neither.
+    /// A contact reading is a measurement, so the ramp reaches the screen at
+    /// its own hue under a single reduced shade factor, and the specular
+    /// highlight (which would move the hue at every bright pixel) is skipped.
+    ///
+    /// This does NOT pair with `measured_map = 1`. An earlier version of this
+    /// comment said it did, which is the opposite of the app's rule: the two
+    /// overlays are mutually exclusive because they are different measurements,
+    /// and setting both painted the contact ramp into a colour taken from the
+    /// deviation ramp. A caller that followed the old sentence re-created
+    /// exactly the all-white layer that rule exists to prevent.
     pub contact_map: u32,
     /// Texels per row of the packed field texture, so the shader can turn a
     /// vertex index into a texture coordinate without `textureDimensions`.

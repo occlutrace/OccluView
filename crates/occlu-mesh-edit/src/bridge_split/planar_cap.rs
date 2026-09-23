@@ -343,31 +343,63 @@ fn point_on_segment(point: Point2, a: Point2, b: Point2) -> bool {
         && ap[0] * (point[0] - b[0]) + ap[1] * (point[1] - b[1]) <= 1.0e-10 * scale * scale
 }
 
+/// Whether two projected boundaries cross each other.
+///
+/// Same quadratic shape as [`loop_self_intersects`] and the same budget: a
+/// boundary that cannot be verified inside the budget is reported as crossing,
+/// which refuses the cap rather than stalling on it.
 fn boundaries_intersect(left: &[Point2], right: &[Point2]) -> bool {
-    left.iter().enumerate().any(|(left_index, &left_start)| {
-        let left_end = left[(left_index + 1) % left.len()];
-        right.iter().enumerate().any(|(right_index, &right_start)| {
-            let right_end = right[(right_index + 1) % right.len()];
-            segments_intersect(left_start, left_end, right_start, right_end)
-        })
-    })
+    let (left_len, right_len) = (left.len(), right.len());
+    let mut pairs_left = LOOP_SELF_INTERSECTION_PAIR_BUDGET;
+    for left_index in 0..left_len {
+        let left_start = left[left_index];
+        let left_end = left[(left_index + 1) % left_len];
+        for right_index in 0..right_len {
+            if pairs_left == 0 {
+                return true;
+            }
+            pairs_left -= 1;
+            let right_start = right[right_index];
+            let right_end = right[(right_index + 1) % right_len];
+            if segments_intersect(left_start, left_end, right_start, right_end) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
+/// Segment PAIRS the self-crossing test may compare on one cut loop.
+///
+/// The test is quadratic and the cut rim scales with scan triangle density
+/// inside the disc, with no ceiling on its length, so a dense enough scan could
+/// stall the preview for minutes. Every other pass in this kernel is budgeted;
+/// a loop that exhausts the budget is reported as self-crossing, which refuses
+/// the cap deterministically instead of stalling on it.
+const LOOP_SELF_INTERSECTION_PAIR_BUDGET: u64 = 5_000_000;
+
 fn loop_self_intersects(points: &[Point2]) -> bool {
-    points.iter().enumerate().any(|(left_index, &left_start)| {
-        let left_end = points[(left_index + 1) % points.len()];
-        points
-            .iter()
-            .enumerate()
-            .skip(left_index + 1)
-            .any(|(right_index, &right_start)| {
-                let right_end = points[(right_index + 1) % points.len()];
-                let shares_endpoint = left_index == right_index
-                    || (left_index + 1) % points.len() == right_index
-                    || (right_index + 1) % points.len() == left_index;
-                !shares_endpoint && segments_intersect(left_start, left_end, right_start, right_end)
-            })
-    })
+    let len = points.len();
+    let mut pairs_left = LOOP_SELF_INTERSECTION_PAIR_BUDGET;
+    for left_index in 0..len {
+        let left_start = points[left_index];
+        let left_end = points[(left_index + 1) % len];
+        for right_index in (left_index + 1)..len {
+            if pairs_left == 0 {
+                return true;
+            }
+            pairs_left -= 1;
+            let right_start = points[right_index];
+            let right_end = points[(right_index + 1) % len];
+            let shares_endpoint =
+                (left_index + 1) % len == right_index || (right_index + 1) % len == left_index;
+            if !shares_endpoint && segments_intersect(left_start, left_end, right_start, right_end)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn segments_intersect(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {

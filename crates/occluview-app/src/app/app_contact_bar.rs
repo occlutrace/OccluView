@@ -714,11 +714,18 @@ fn paint_stats(ui: &mut egui::Ui, stats: ContactStats, locale: &crate::i18n::Loc
         .spacing(egui::vec2(10.0, 3.0))
         .show(ui, |ui| {
             for (key, value) in rows {
-                ui.label(
+                let label = ui.label(
                     egui::RichText::new(locale.tr(key))
                         .size(11.0)
                         .color(ui_theme::text_weak()),
                 );
+                // "Area each side" is a mid-line split, not a contact count, and
+                // the caveat that said so was a catalogue key nothing resolved —
+                // it was deleted as dead, and this hover is where an operator can
+                // still find the meaning.
+                if key == "contact-stats-balance" {
+                    label.on_hover_text(locale.tr("contact-stats-balance-hover"));
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(value).size(11.5));
                 });

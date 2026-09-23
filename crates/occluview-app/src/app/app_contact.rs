@@ -296,11 +296,18 @@ impl OccluViewApp {
                         contacts = stats.contacts,
                         "contact field applied"
                     );
+                    // The device's real texture edge, asked before sizing the
+                    // buffer: the constant is a request ceiling and the granted
+                    // limit can be lower, in which case a field sized on the
+                    // request is refused by wgpu, latches the GPU fault, and
+                    // freezes the viewport instead of measuring.
+                    let texture_limit = self.render.granted_texture_dimension();
                     let Some((subject_field, antagonist_field)) = pack_fields(
                         &mut self.tools.contacts,
                         request.pair,
                         subject_signed_mm,
                         antagonist_signed_mm,
+                        texture_limit,
                     ) else {
                         self.tools.contacts.mark_failed(
                             request.id,
@@ -417,9 +424,10 @@ fn pack_fields(
     pair: ContactPair,
     subject_signed_mm: Vec<f32>,
     antagonist_signed_mm: Vec<f32>,
+    texture_limit: u32,
 ) -> Option<(ContactLayerField, ContactLayerField)> {
-    let subject_texels = pack(&subject_signed_mm)?;
-    let antagonist_texels = pack(&antagonist_signed_mm)?;
+    let subject_texels = pack(&subject_signed_mm, texture_limit)?;
+    let antagonist_texels = pack(&antagonist_signed_mm, texture_limit)?;
     let subject_revision = state.take_revision();
     let antagonist_revision = state.take_revision();
     Some((
@@ -448,12 +456,12 @@ fn field_width(field: Option<&ContactLayerField>) -> u32 {
     field.map_or(CONTACT_FIELD_TEXTURE_WIDTH, |field| field.texels.width)
 }
 
-/// Pack one field using the contact crate's sentinel and device texture limit.
-fn pack(values: &[f32]) -> Option<Arc<ContactFieldTexels>> {
-    let width = crate::contact::contact_field_width(
-        values.len(),
-        crate::app_bootstrap::MAX_RENDER_TEXTURE_DIMENSION,
-    )?;
+/// Pack one field using the contact crate's sentinel and the DEVICE's limit.
+///
+/// `texture_limit` is the granted `max_texture_dimension_2d`, not the request
+/// ceiling; see `RenderState::granted_texture_dimension`.
+fn pack(values: &[f32], texture_limit: u32) -> Option<Arc<ContactFieldTexels>> {
+    let width = crate::contact::contact_field_width(values.len(), texture_limit)?;
     let packed = occluview_contact::pack_field_texels(values, width);
     ContactFieldTexels::new(packed.rgba, packed.width, packed.height).map(Arc::new)
 }

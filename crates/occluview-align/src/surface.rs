@@ -177,6 +177,10 @@ impl SurfaceIndex {
         let mut max = DVec3::splat(f64::NEG_INFINITY);
         let mut edge_total = 0.0f64;
         let mut parent: Vec<usize> = (0..vertex_count).collect();
+        // One entry per vertex, so `union` can hang the smaller tree under the
+        // larger instead of building a chain whose depth `find` would then have
+        // to walk.
+        let mut component_size: Vec<usize> = vec![1; vertex_count];
         let mut welded_positions: BTreeMap<[u64; 3], usize> = BTreeMap::new();
         // One vertex anchor per retained triangle is enough to recover its
         // component after all unions have been completed. Keeping all three
@@ -219,13 +223,13 @@ impl SurfaceIndex {
                     canonical_bits(point.z),
                 ];
                 if let Some(&other) = welded_positions.get(&key) {
-                    union(&mut parent, other, vertex);
+                    union(&mut parent, &mut component_size, other, vertex);
                 } else {
                     welded_positions.insert(key, vertex);
                 }
             }
-            union(&mut parent, a, b);
-            union(&mut parent, b, c);
+            union(&mut parent, &mut component_size, a, b);
+            union(&mut parent, &mut component_size, b, c);
             triangle_anchors.push(a);
             edge_total += longest_edge(&vertices);
             corners.push(vertices);
@@ -916,22 +920,51 @@ fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
 }
 
 /// Find a connected-component root with path compression.
+///
+/// Iterative, not recursive. `union` has no rank rule, so it always hangs the
+/// right root on the left, and a facet order that keeps leaving a fresh vertex
+/// as a component root builds a chain as long as the facet count — one stack
+/// frame per facet in the recursive form. The surface index is built on the
+/// align worker, whose thread has the 2 MiB default stack and no `stack_size`,
+/// and a stack overflow aborts the process: `catch_unwind` around the worker
+/// body never sees it, so the crate's "never panics on hostile input" would be
+/// false for an imported mesh.
+///
+/// Two passes instead of one: walk to the root, then point every node on the
+/// path at it. Same compression, no stack.
 fn find(parent: &mut [usize], node: usize) -> usize {
-    if parent[node] == node {
-        return node;
+    let mut root = node;
+    while parent[root] != root {
+        root = parent[root];
     }
-    let root = find(parent, parent[node]);
-    parent[node] = root;
+    let mut current = node;
+    while parent[current] != current {
+        let next = parent[current];
+        parent[current] = root;
+        current = next;
+    }
     root
 }
 
 /// Join two indexed vertices into one surface component.
-fn union(parent: &mut [usize], left: usize, right: usize) {
+///
+/// Attaches the smaller tree under the larger, which is what keeps the depth
+/// logarithmic even before `find` compresses anything — the counterpart to the
+/// iterative `find`: together they bound the walk instead of relying on path
+/// compression to rescue a linear chain on the first call.
+fn union(parent: &mut [usize], size: &mut [usize], left: usize, right: usize) {
     let left_root = find(parent, left);
     let right_root = find(parent, right);
-    if left_root != right_root {
-        parent[right_root] = left_root;
+    if left_root == right_root {
+        return;
     }
+    let (large, small) = if size[left_root] >= size[right_root] {
+        (left_root, right_root)
+    } else {
+        (right_root, left_root)
+    };
+    parent[small] = large;
+    size[large] += size[small];
 }
 
 #[cfg(test)]

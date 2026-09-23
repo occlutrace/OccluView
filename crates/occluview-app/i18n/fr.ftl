@@ -35,7 +35,6 @@ update-dismiss = Rejeter
 
 error-open-title = Impossible d’ouvrir le fichier
 error-add-title = Impossible d’ajouter le fichier
-error-open-body = Ouverture impossible de { $path }.
 
 ## Help surface — DRAFT. Gesture names stay invariant by contract.
 
@@ -501,6 +500,7 @@ align-mask-automatic = Marquage auto
 align-mask-automatic-hint = Ajuster sur une petite zone à chaque bout
 align-mask-automatic-report = Ajustement aux bouts de flèche
 align-mask-automatic-report-one = { $name } : ajustement uniquement autour des pointes de flèche
+align-mask-automatic-empty = Correspondance partout : la région couvrait tout le scan, rien n'a donc été exclu
 
 align-status-half-dropped = Flèche à moitié posée jetée
 align-status-turned = Paire retournée
@@ -530,7 +530,6 @@ align-status-measured = Carte de chaleur mise à jour
 align-status-remeasure = { $reason } — relancer l’ajustement fin pour mesurer
 align-status-settings-changed = Réglages du matching modifiés
 align-status-visibility-changed = Visibilité d’un scan sélectionné modifiée
-align-brush-not-in-alignment = Ce scan ne fait pas partie de cet alignement
 align-drag-moving = Déplacement de { $name } à la main
 align-drag-unrecorded = Déplacé à la main, mais cette étape n’a pas rejoint l’historique — Ctrl+Z ne l’annulera pas
 align-drag-moved = { $name } : déplacement de { $moved } mm à la main (Ctrl+Z annule)
@@ -615,7 +614,6 @@ holes-seg-damaged = { $n ->
    *[other] { $n } bords abîmés ignorés
 }
 batchedit-invert = Normales inversées
-batchedit-close-holes = Trous intérieurs sûrs rebouchés
 batchedit-delete = Sélection supprimée
 batchedit-crop = Rogné à la sélection
 batchedit-cut = Sélection coupée vers nouveau calque
@@ -626,7 +624,6 @@ batchedit-status = { $label } sur { $n ->
     [one] { $n } calque visible
    *[other] { $n } calques visibles
 }
-batchedit-no-changes = Rien changé : affinez ; le caché reste intact
 batch-close-holes = Trous intérieurs rebouchés
 batch-delete = Sélection supprimée
 batch-crop = Rogné à la sélection
@@ -919,10 +916,16 @@ contact-status-failed-hint = Relisez ; si cela échoue encore, la paire devra pe
 contact-status-needs-second-hint = Ouvrez le scan antagoniste ou réaffichez-le, puis lancez la lecture
 contact-legend-gap = jeu jusqu'à { $mm } mm
 contact-stats-balance = Surface par côté
-contact-stats-balance-hint = Surface de contact de part et d'autre de la ligne médiane du scan. La répartition suit les coordonnées du scan : un cas tourné ou en miroir peut échanger les deux nombres.
 layer-menu-contacts-unavailable = Une lecture de contacts exige deux maillages triangulaires visibles : affichez ou ouvrez d'abord le scan antagoniste
 
 contact-details = Détails
 contact-details-hint = Les chiffres et la règle une couleur par contact
 contact-details-close = Masquer les détails
 settings-shortcuts-hint = Référence clavier et souris (F1)
+
+load-units-ambiguous = Unités non vérifiées : le format déclare des mètres alors que les scanners exportent généralement des millimètres — { $suggestion }
+load-units-suggest-meters = la taille suggère des mètres, il est donc environ 1000x plus petit qu'il ne devrait
+load-units-suggest-millimeters = la taille suggère des nombres en millimètres, c'est ainsi qu'il a été lu
+load-units-unclear = la taille ne tranche pas ; vérifiez avec une mesure connue
+contact-stats-balance-hover = Aire de contact divisé par la ligne médiane : avant / après la ligne
+mesh-warning-vertex-alpha = l'alpha des sommets n'a pas été écrit

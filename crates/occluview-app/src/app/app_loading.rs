@@ -362,7 +362,18 @@ impl OccluViewApp {
                 self.persistence.current_paths = current_paths;
                 self.persistence.push_recent_scene(&recent_paths);
                 self.persistence.save_recent_files();
-                self.ui.status_message = None;
+                // A glTF declares METERS while scanner exports carry
+                // millimeter numbers, so the format crate flags the layer
+                // ambiguous and applies no scale. Nothing in the app read that
+                // flag, so a spec-compliant file loaded 1000x small with every
+                // derived number wrong by that factor — ruler, scale bar,
+                // thickness, brush steps, deviation ranges — and no surface
+                // saying the units were unverified. The recommendation helper
+                // and the conversion it feeds existed with no caller at all.
+                // Say it in the status line, where every other load outcome
+                // lands, and keep the suggestion advisory exactly as the
+                // module doc requires.
+                self.ui.status_message = self.ambiguous_units_notice();
                 tracing::info!(
                     source = pending.source,
                     append,
@@ -432,6 +443,14 @@ impl OccluViewApp {
     }
 
     pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        // A drop is a load request like any other, and a modal in front of the
+        // viewport owns the frame. Letting it through parked an open behind a
+        // guard window the modal layer kept dimmed and unclickable, with nothing
+        // on screen connecting the drop to the dialog the operator could not
+        // reach.
+        if self.ui.modal_dialog_open() {
+            return;
+        }
         ctx.input(|i| {
             let paths = native_drop_paths(&i.raw.dropped_files);
             if !paths.is_empty() {
@@ -526,6 +545,42 @@ impl OccluViewApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
             egui::UserAttentionType::Reset,
         ));
+    }
+}
+
+impl OccluViewApp {
+    /// A one-line warning when a loaded layer's units are unverified.
+    ///
+    /// Returns `None` for the ordinary case. The sentence names the scale the
+    /// bounding box suggests rather than applying it: a wrong silent scale
+    /// corrupts every measurement, which is what the import-unit doc says must
+    /// never happen.
+    fn ambiguous_units_notice(&self) -> Option<String> {
+        let scene = self.document.scene.as_ref()?;
+        let ambiguous = scene.meshes().iter().any(|entry| {
+            entry.import_units().confidence == occluview_core::UnitConfidence::Ambiguous
+        });
+        if !ambiguous {
+            return None;
+        }
+        let size = scene.bbox().size();
+        let extent = size.max_element();
+        let suggestion = match occluview_formats::units::recommend_glb_scale(extent) {
+            occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters => {
+                self.ui.locale.tr("load-units-suggest-meters")
+            }
+            occluview_formats::units::GlbScaleRecommendation::KeepAsMillimeters => {
+                self.ui.locale.tr("load-units-suggest-millimeters")
+            }
+            occluview_formats::units::GlbScaleRecommendation::Unclear => {
+                self.ui.locale.tr("load-units-unclear")
+            }
+        };
+        Some(
+            self.ui
+                .locale
+                .tr_with("load-units-ambiguous", &[("suggestion", &suggestion)]),
+        )
     }
 }
 

@@ -144,7 +144,7 @@ fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
     );
     agrees(&markings, "after an erase");
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::InvertMarkings,
         &handle,
@@ -155,7 +155,7 @@ fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
     );
     agrees(&markings, "after invert");
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::FitNowhere,
         &handle,
@@ -166,7 +166,7 @@ fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
     );
     agrees(&markings, "after fit nowhere");
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::MarkAutomatic,
         &handle,
@@ -177,7 +177,7 @@ fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
     );
     agrees(&markings, "after mark automatic");
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::FitEverywhere,
         &handle,
@@ -195,7 +195,7 @@ fn fit_everywhere_leaves_nothing_marked_and_fit_nowhere_leaves_everything() {
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::FitNowhere,
         &handle,
@@ -209,7 +209,7 @@ fn fit_everywhere_leaves_nothing_marked_and_fit_nowhere_leaves_everything() {
         .expect("fit nowhere makes a mask");
     assert!(all.iter().all(|slot| *slot == EXCLUDED));
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::FitEverywhere,
         &handle,
@@ -242,7 +242,10 @@ fn mark_automatic_refuses_without_a_single_arrow() {
         },
     );
 
-    assert!(!reached, "mark automatic ran with no arrows to keep");
+    assert!(
+        reached.is_none(),
+        "mark automatic ran with no arrows to keep"
+    );
     assert!(markings
         .mask_for(AlignSide::Moving, handle.identity())
         .is_none());
@@ -254,7 +257,7 @@ fn mark_automatic_keeps_the_discs_and_marks_out_the_rest() {
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
 
-    markings.command(
+    let _ = markings.command(
         AlignSide::Moving,
         MaskCommand::MarkAutomatic,
         &handle,
@@ -308,7 +311,7 @@ fn every_change_that_does_something_moves_the_revision() {
 
     markings.dab(AlignSide::Moving, &handle, &dab_at(DVec3::ZERO, 2.0, false));
     seen.push(markings.revision());
-    markings.command(
+    let _ = markings.command(
         AlignSide::Fixed,
         MaskCommand::FitNowhere,
         &handle,

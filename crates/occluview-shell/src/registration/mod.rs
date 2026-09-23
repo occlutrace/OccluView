@@ -186,6 +186,14 @@ fn own_dll_path() -> windows::core::Result<HSTRING> {
     if n == 0 {
         return Err(windows::core::Error::from_thread());
     }
+    // `GetModuleFileNameW` TRUNCATES and returns `buf.len()` when the path does
+    // not fit, rather than failing. Treating that as success would write a
+    // truncated path into `InprocServer32`, and the class would then fail to
+    // load with no clue why. The context-menu helper already checks this; this
+    // is the same check at the registration entry point.
+    if n as usize >= buf.len() {
+        return Err(windows::core::Error::from_thread());
+    }
     Ok(HSTRING::from_wide(&buf[..n as usize]))
 }
 

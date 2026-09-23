@@ -396,14 +396,22 @@ fn is_prose(literal: &str) -> bool {
 }
 
 /// Read the string literal starting at `bytes[i]` (which points at the
-/// opening `"`). Returns the literal body and the index past the
-/// closing quote. No escape sequences occur in the scanned sinks.
+/// opening `"`). Returns the literal body and the index past the closing quote.
+///
+/// Backslash escapes are walked, not scanned: the old loop stopped at the first
+/// `"` it saw, so a future `ui.label("a \"quoted\" word")` truncated the literal
+/// and everything after the escape became invisible to BOTH catalog scanners —
+/// a sink that silently stops being checked.
 fn read_literal(bytes: &[u8], mut i: usize) -> (String, usize) {
     debug_assert_eq!(bytes[i], b'"');
     i += 1;
     let start = i;
-    while i < bytes.len() && bytes[i] != b'"' {
-        i += 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => break,
+            _ => i += 1,
+        }
     }
     (
         String::from_utf8_lossy(&bytes[start..i]).into_owned(),

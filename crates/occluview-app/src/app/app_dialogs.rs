@@ -70,7 +70,13 @@ impl OccluViewApp {
                 ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1));
         }
         let mut do_add = false;
-        let mut do_open = ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
+        // Ctrl+O obeys the same gate as every other shortcut above. Outside it,
+        // the native dialog opened ON TOP of an information modal and, with
+        // unsaved edits, parked an open behind a guard window that the modal
+        // layer left dimmed and unclickable until the modal was closed.
+        let mut do_open = !self.ui.modal_dialog_open()
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
         let mut recent_to_open: Option<Vec<PathBuf>> = None;
         let mut clear_recent = false;
 

@@ -603,6 +603,7 @@ pub(super) fn mesh_export_warning_summary(
             MeshWriteWarning::VertexColorsNotWritten => locale.tr("mesh-warning-vertex-colors"),
             MeshWriteWarning::UvsNotWritten => locale.tr("mesh-warning-uvs"),
             MeshWriteWarning::TextureImageNotWritten => locale.tr("mesh-warning-texture-image"),
+            MeshWriteWarning::VertexAlphaNotWritten => locale.tr("mesh-warning-vertex-alpha"),
         })
         .collect();
     (!labels.is_empty()).then(|| labels.join(", "))

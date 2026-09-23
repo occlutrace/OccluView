@@ -282,9 +282,9 @@ impl OccluViewApp {
             let Some((layer, entry)) = taken else {
                 continue;
             };
-            if self.apply_mask_command_to(command, *side, &entry) {
+            if let Some(outcome) = self.apply_mask_command_to(command, *side, &entry) {
                 self.repaint_region_preview(layer, *side);
-                reached.push(*side);
+                reached.push((*side, outcome));
             }
         }
         if reached.is_empty() {
@@ -297,7 +297,21 @@ impl OccluViewApp {
             });
             return;
         }
-        self.tools.align.status = Some(self.command_report(command, &reached));
+        // A command that left the mask EMPTY on a non-empty mesh excluded the
+        // whole layer: the honest sentence is that there is nothing left to
+        // exclude, not the name of the region the operator asked for. This is
+        // reachable from "Mark automatic" with a radius wider than the layer,
+        // where every vertex is cleared.
+        let emptied = reached
+            .iter()
+            .any(|(_, outcome)| outcome.marked == 0 && outcome.vertex_count > 0);
+        if emptied {
+            self.tools.align.status = Some(self.ui.locale.tr("align-mask-automatic-empty"));
+            self.invalidate_deviation_map(&self.ui.locale.tr("align-mask-automatic-empty"));
+            return;
+        }
+        let sides: Vec<AlignSide> = reached.iter().map(|(side, _)| *side).collect();
+        self.tools.align.status = Some(self.command_report(command, &sides));
         self.invalidate_deviation_map(&self.ui.locale.tr(command.report_key()));
     }
 
@@ -332,10 +346,8 @@ impl OccluViewApp {
         command: MaskCommand,
         side: AlignSide,
         entry: &SceneMesh,
-    ) -> bool {
-        let Some(pose) = Rigid::from_affine(&entry.transform) else {
-            return false;
-        };
+    ) -> Option<crate::align_markings::MaskCommandOutcome> {
+        let pose = Rigid::from_affine(&entry.transform)?;
         // "Mark automatic" keeps a disc at each arrow end, and the arrows only
         // touch the surface they were clicked on.
         let keep: Vec<DVec3> = if command == MaskCommand::MarkAutomatic {

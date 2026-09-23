@@ -98,6 +98,22 @@ if ! grep -q "test result: ok" "$log"; then
   exit 1
 fi
 
+# The contact reading is the other set of numbers the panel publishes as a
+# clinical measurement, and its acceptance harness skipped on every machine
+# without a corpus — including CI and this gate, which exported only the align
+# variable. Forced here, in gate mode, so "contact renders" is something the
+# release actually checked rather than something it hoped.
+OCCLUVIEW_CONTACT_FIXTURES="$corpus" \
+OCCLUVIEW_CONTACT_FIXTURES_REQUIRED=1 \
+  cargo test --locked -p occluview-app contact_render_tests -- --nocapture --test-threads=1 \
+  >>"$log" 2>&1 || status=$?
+
+if [[ $status -ne 0 ]]; then
+  echo "validate-release-private: the contact acceptance tests failed" >&2
+  tail -n 40 "$log" >&2
+  exit "$status"
+fi
+
 revision="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
   tree_state="dirty"
