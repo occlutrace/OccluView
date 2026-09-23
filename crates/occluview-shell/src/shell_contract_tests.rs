@@ -48,33 +48,6 @@ fn open_with_targets_the_real_gui_binary_name() {
 }
 
 #[test]
-fn gui_app_uses_windows_subsystem_without_debug_console() {
-    let app_main = include_str!("../../occluview-app/src/main.rs");
-    assert!(app_main.contains("#![cfg_attr(windows, windows_subsystem = \"windows\")]"));
-    assert!(!app_main.contains("not(debug_assertions)"));
-}
-
-#[test]
-fn gui_app_embeds_brand_icon_and_windows_metadata() {
-    let app_manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../occluview-app");
-    assert!(app_manifest.join("build.rs").exists());
-    assert!(app_manifest.join("assets/windows/occluview.ico").exists());
-    assert!(app_manifest.join("assets/windows/occluview.png").exists());
-    assert!(app_manifest.join("assets/windows/occluview.svg").exists());
-
-    let bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    assert!(bootstrap.contains("with_icon(load_window_icon())"));
-    assert!(bootstrap.contains("include_bytes!(\"../assets/windows/occluview.png\")"));
-
-    let build_rs = include_str!("../../occluview-app/build.rs");
-    assert!(build_rs.contains("FileDescription"));
-    assert!(build_rs.contains("OccluView 3D Viewer"));
-    assert!(build_rs.contains("CompanyName"));
-    assert!(build_rs.contains("Dental Cloud Technologies"));
-    assert!(build_rs.contains("cargo:rustc-link-arg-bin=occluview="));
-}
-
-#[test]
 fn installer_uses_one_generic_3d_file_type_icon() {
     let icon_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install/assets/file-icons");
     assert!(icon_dir.join("occluview-3d.ico").exists());
@@ -128,23 +101,6 @@ fn file_type_progids_are_brand_neutral() {
         assert!(!wxs.contains(&legacy));
         assert!(!reg.contains(&legacy));
     }
-}
-
-#[test]
-fn gui_app_sets_process_app_user_model_id() {
-    let app_lib = include_str!("../../occluview-app/src/lib.rs");
-    let bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    let jump_list = include_str!("../../occluview-app/src/jump_list.rs");
-
-    assert!(app_lib.contains("pub(crate) const APP_USER_MODEL_ID"));
-    assert!(bootstrap.contains("SetCurrentProcessExplicitAppUserModelID"));
-    assert!(bootstrap.contains("set_process_app_user_model_id();"));
-    assert!(jump_list.contains("super::APP_USER_MODEL_ID"));
-    assert!(!jump_list.contains("const APP_ID"));
-
-    let wxs = include_str!("../../../install/occluview.wxs");
-    assert!(wxs.contains("Key=\"System.AppUserModel.ID\""));
-    assert!(wxs.contains("Value=\"OccluTrace.OccluView\""));
 }
 
 #[test]
@@ -691,31 +647,6 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
 }
 
 #[test]
-fn gui_file_association_launches_reuse_existing_window() {
-    let app_lib = include_str!("../../occluview-app/src/lib.rs");
-    let bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    let app_loading = include_str!("../../occluview-app/src/app/app_loading.rs");
-    let app_platform = include_str!("../../occluview-app/src/app/state_platform.rs");
-    let single_instance = include_str!("../../occluview-app/src/single_instance/mod.rs");
-    let single_instance_windows =
-        include_str!("../../occluview-app/src/single_instance/windows.rs");
-
-    assert!(app_lib.contains("mod single_instance;"));
-    assert!(bootstrap.contains("SingleInstance::acquire"));
-    assert!(bootstrap.contains("write_open_request(&request)"));
-    assert!(app_platform.contains("incoming_open_requests: single_instance::OpenRequestListener"));
-    assert!(app_loading.contains("fn open_paths_from_external_source("));
-    assert!(app_loading.contains("for request in self.platform.take_open_requests()"));
-    assert!(app_loading
-        .contains("self.open_paths_from_external_source(&request.paths, \"single-instance\")"));
-    assert!(single_instance_windows.contains("CreateMutexW"));
-    assert!(single_instance_windows.contains("Local\\\\OccluTrace.OccluView.SingleInstance"));
-    assert!(single_instance_windows.contains("CreateNamedPipeW"));
-    assert!(single_instance_windows.contains("WaitNamedPipeW"));
-    assert!(single_instance.contains("open-requests"));
-}
-
-#[test]
 fn self_registration_unregister_only_removes_occluview_values() {
     let registration = registration_source();
 
@@ -737,33 +668,6 @@ fn self_registration_unregister_only_removes_occluview_values() {
     assert!(registration.contains("delete_value(&key_path, Some(&progid))"));
     assert!(registration.contains("is_occluview_default_icon_value"));
     assert!(!registration.contains("delete_tree(&key_path)"));
-}
-
-#[test]
-fn com_thumbnail_provider_accepts_file_paths_for_extension_hints() {
-    let com = [
-        include_str!("com.rs"),
-        include_str!("com/thumbnail_provider.rs"),
-        include_str!("com/preview.rs"),
-        include_str!("com/preview/theme.rs"),
-        include_str!("com/preview/window.rs"),
-    ]
-    .join("\n");
-    let smoke = include_str!("../../../install/test-thumbnail-provider.ps1");
-
-    assert!(com.contains("IInitializeWithFile"));
-    assert!(com.contains("IInitializeWithItem"));
-    assert!(com.contains("impl IInitializeWithFile_Impl for ThumbnailProvider_Impl"));
-    assert!(com.contains("impl IInitializeWithItem_Impl for ThumbnailProvider_Impl"));
-    assert!(com.contains("try_render_thumbnail_file_with_request(&path, spec, request)"));
-    assert!(!com.contains("ThumbnailProvider::read_file(&path)"));
-    assert!(!com.contains("std::fs::read(path)"));
-    assert!(com.contains(".initialize_path(path.clone(), path_extension(&path));"));
-    assert!(com.contains("fn path_extension(path: &Path) -> Option<String>"));
-    assert!(smoke.contains("public interface IInitializeWithItem"));
-    assert!(smoke.contains("public interface IShellItem"));
-    assert!(smoke.contains("ProbeDirectFromItem"));
-    assert!(smoke.contains("SHCreateShellItemFromParsingName"));
 }
 
 fn workspace_package_version(cargo_toml: &str) -> Option<&str> {

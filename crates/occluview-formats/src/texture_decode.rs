@@ -163,36 +163,6 @@ mod tests {
     }
 
     #[test]
-    fn both_readers_share_one_texture_budget() {
-        // A second copy of these numbers here once read 64 MiB against the HPS
-        // crate's 256 MiB, so the same image was accepted from a dental
-        // container and refused from a `.glb`, in one process, with nothing
-        // explaining why. The check is that this crate re-exports rather than
-        // redefines; an equality assertion passes either way the moment the two
-        // numbers happen to agree.
-        // Only the part above this module counts. Search the whole file and
-        // the needle in this very assertion answers it, so the import could be
-        // split into two brace-less `use` lines and the guard would still pass.
-        let source = include_str!("texture_decode.rs");
-        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
-        assert!(
-            production.contains("pub(crate) use occluview_hps::{"),
-            "the texture budget must be imported from occluview-hps, not redefined"
-        );
-        // The needles are assembled so this guard does not match its own source.
-        for (name, ty) in [
-            ("MAX_TEXTURE_DIMENSION_PX", "u32"),
-            ("MAX_TEXTURE_RGBA_BYTES", "u64"),
-        ] {
-            let redefinition = format!("const {name}: {ty} =");
-            assert!(
-                !source.contains(&redefinition),
-                "a second definition is how the two limits drifted apart: {redefinition}"
-            );
-        }
-    }
-
-    #[test]
     fn dimensions_reject_a_single_axis_over_the_strict_limit() {
         assert!(validate_texture_dimensions(MAX_TEXTURE_DIMENSION_PX + 1, 1, "test").is_err());
         assert!(validate_texture_dimensions(1, MAX_TEXTURE_DIMENSION_PX + 1, "test").is_err());

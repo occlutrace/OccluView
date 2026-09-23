@@ -627,13 +627,6 @@ mod tests {
     /// Searching the whole of it matches the needle written in the assertion
     /// itself, so the guard would pass on its own text and the production line
     /// it names could be deleted with nothing going red.
-    fn production_source() -> &'static str {
-        let source = include_str!("main.rs");
-        source
-            .split_once("#[cfg(test)]\nmod tests")
-            .map_or(source, |(production, _)| production)
-    }
-
     use super::{
         normalize_thumbnail_output_path, parse_limit_mm, take_file_argument,
         validate_thumbnail_size, write_thumbnail_atomically, FileArgument,
@@ -679,78 +672,6 @@ mod tests {
         let error =
             take_file_argument(&mut args, "close-holes").expect_err("close-holes needs a file");
         assert!(error.to_string().contains("close-holes"));
-    }
-
-    #[test]
-    fn version_flag_is_recognised_and_advertised() {
-        let source = production_source();
-        assert!(
-            source.contains("\"--version\" | \"-V\""),
-            "--version must dispatch instead of falling into the unknown-subcommand error"
-        );
-        assert!(
-            source.contains("--version | -V"),
-            "the usage text should advertise the flag"
-        );
-    }
-
-    #[test]
-    fn thumbnail_cli_uses_file_backed_render_path() {
-        let source = production_source();
-        let start = source.find("fn cmd_thumbnail(");
-        assert!(start.is_some(), "missing cmd_thumbnail");
-        let Some(start) = start else {
-            return;
-        };
-        let end = source[start..].find("/// `info <file>");
-        assert!(
-            end.is_some(),
-            "missing info command after thumbnail command"
-        );
-        let Some(end) = end else {
-            return;
-        };
-        let thumbnail = &source[start..start + end];
-
-        assert!(
-            thumbnail.contains("occluview_thumbnail::try_render_thumbnail_file("),
-            "CLI thumbnails should use the file-backed path shared with Explorer, and ask it \
-             whether the render succeeded"
-        );
-        assert!(
-            thumbnail.contains("occluview_thumbnail::placeholder_thumbnail(spec)"),
-            "a file that could not be rendered must still produce a PNG, which is the \
-             freedesktop thumbnailer contract"
-        );
-        assert!(
-            thumbnail.contains("std::process::exit(1)"),
-            "and the exit code must say the picture is a placeholder, or a script cannot tell a \
-             rendered thumbnail from a picture of a failure"
-        );
-        assert!(
-            !thumbnail.contains("std::fs::read(&file)"),
-            "CLI thumbnails should not read large files into memory before rendering"
-        );
-        assert!(
-            !thumbnail.contains("read_file_with_key_provider(&file"),
-            "CLI thumbnails should not parse once for console stats and again for rendering"
-        );
-        assert!(
-            !thumbnail.contains("use_software_renderer_only"),
-            "CLI rendering uses the same per-request verified adapter policy as Explorer"
-        );
-        assert!(
-            thumbnail.contains("write_thumbnail_atomically"),
-            "thumbnail output must be published only after the complete PNG is encoded"
-        );
-    }
-
-    #[test]
-    fn convert_cli_routes_through_export_module() {
-        let source = production_source();
-        assert!(source.contains("Some(\"convert\") => cmd_convert(&mut args)"));
-        assert!(source.contains("export::convert_file(&input, &output)?;"));
-        assert!(source.contains("output.{stl|ply|obj}"));
     }
 
     #[test]

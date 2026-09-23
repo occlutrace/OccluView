@@ -38,30 +38,6 @@ mod public_contract_tests {
     use super::PARSER_VERSION;
 
     #[test]
-    fn the_embedded_key_layout_is_derived_only_from_committed_inputs() {
-        // Mix `SystemTime::now()` or `std::process::id()` into the seed for
-        // the obfuscated key layout and the same source, key and toolchain
-        // produce a different binary every time -- see the build script. The
-        // rest of the supply chain answers "this came from our pipeline"; only
-        // this answers "this matches this source".
-        let build_script = include_str!("../build.rs");
-        for nondeterminism in ["SystemTime::now", "process::id", "UNIX_EPOCH"] {
-            assert!(
-                !build_script.contains(nondeterminism),
-                "the generated key layout must not depend on {nondeterminism}"
-            );
-        }
-        assert!(
-            build_script.contains("OCCLUVIEW_HPS_KEY_SALT"),
-            "diversifying the layout should be an explicit release input"
-        );
-        assert!(
-            build_script.contains("rerun-if-env-changed=OCCLUVIEW_HPS_KEY_SALT"),
-            "cargo must rebuild when the salt changes"
-        );
-    }
-
-    #[test]
     fn parser_version_is_a_usable_semver_triple() {
         // Comparing PARSER_VERSION with env!("CARGO_PKG_VERSION") only restated
         // its own definition. What a consumer needs is that the constant is

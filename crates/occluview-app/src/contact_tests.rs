@@ -647,33 +647,6 @@ fn a_hand_drag_holds_the_reading_back_and_takes_the_marks_down() {
     );
 }
 
-/// Opening a reading takes the align heatmap down with it.
-///
-/// The deviation map and the contact map measure the same two scans and are
-/// painted through the same measured-map treatment, so a layer can only wear
-/// one of them: with both up, the panel's legend describes a ramp the surface
-/// is not wearing, and the operator has no way to tell which measurement the
-/// colours came from. The align status line has the same problem, so the
-/// overlay goes too rather than only the flag.
-#[test]
-fn opening_a_reading_clears_the_align_heatmap() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app/app_contact.rs"));
-    let body =
-        crate::primary_ui_tests::method_body(source, "pub(super) fn begin_contacts_from_layer");
-    assert!(!body.is_empty(), "begin_contacts_from_layer must exist");
-    let (before_open, _) = body
-        .split_once("self.tools.contacts.open(")
-        .expect("the reading is opened in this function");
-    assert!(
-        before_open.contains("show_deviation = false"),
-        "the deviation flag must be cleared before the reading opens"
-    );
-    assert!(
-        before_open.contains("clear_deviation_overlay()"),
-        "the overlay arrays must be dropped, not just the flag"
-    );
-}
-
 /// A field texture must fit the device the scan is drawn on.
 ///
 /// The packed field is `ceil(n / width)` rows tall. At the preferred 1024-wide

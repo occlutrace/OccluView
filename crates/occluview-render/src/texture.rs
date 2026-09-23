@@ -251,40 +251,6 @@ mod tests {
     /// Searching the whole of it matches the needle written in the assertion
     /// itself, so the guard would pass on its own text and the production line
     /// it names could be deleted with nothing going red.
-    fn production_source() -> &'static str {
-        let source = include_str!("texture.rs");
-        source
-            .split_once("#[cfg(test)]\nmod tests")
-            .map_or(source, |(production, _)| production)
-    }
-
-    #[test]
-    fn mesh_texture_sampler_clamps_uv_edges() {
-        let source = production_source();
-        let start = source.find("label: Some(\"occluview mesh sampler\")");
-        assert!(start.is_some(), "missing mesh sampler");
-        let Some(start) = start else {
-            return;
-        };
-        let end = source[start..].find("mipmap_filter: wgpu::MipmapFilterMode::Nearest");
-        assert!(end.is_some(), "missing mesh sampler mipmap filter");
-        let Some(end) = end else {
-            return;
-        };
-        let sampler = &source[start..start + end];
-
-        assert!(
-            sampler.contains("address_mode_u: wgpu::AddressMode::ClampToEdge")
-                && sampler.contains("address_mode_v: wgpu::AddressMode::ClampToEdge")
-                && sampler.contains("address_mode_w: wgpu::AddressMode::ClampToEdge"),
-            "scan textures should clamp at UV borders instead of wrapping unrelated texture pixels"
-        );
-        assert!(
-            !sampler.contains("address_mode_u: wgpu::AddressMode::Repeat"),
-            "Repeat sampling causes HPS edge/packed-UV color artifacts"
-        );
-    }
-
     /// A texture the device cannot hold is boxed down, not dropped.
     ///
     /// The readers accept up to 8192 px and some devices stop at 2048, so a

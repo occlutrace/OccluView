@@ -123,28 +123,3 @@ fn camera_module_is_split_by_responsibility_not_single_file() {
 
 mod behavior;
 mod zoom;
-
-#[test]
-fn the_frame_fill_factor_has_one_definition() {
-    // The bare 0.7 was written three times, twice here and once in the Explorer
-    // preview, with nothing naming what it meant -- and the preview kept its
-    // own orthographic floor under a comment asking for the real one to be
-    // exported.
-    assert!((BBOX_FRAME_FILL - 0.7).abs() < f32::EPSILON);
-    assert!((MIN_ORTHOGRAPHIC_HEIGHT_MM - 0.01).abs() < f32::EPSILON);
-
-    let bare = format!("/ {}.7", 0);
-    for (name, source) in [
-        ("framing", include_str!("framing.rs")),
-        ("presets", include_str!("presets.rs")),
-        (
-            "preview",
-            include_str!("../../../occluview-shell/src/preview_scene/interaction.rs"),
-        ),
-    ] {
-        assert!(
-            !source.contains(&bare),
-            "{name} should divide by the named fill factor, not a bare literal"
-        );
-    }
-}

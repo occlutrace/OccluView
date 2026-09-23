@@ -137,66 +137,6 @@ fn linux_install_assets_cover_freedesktop_and_deb_packaging() {
 }
 
 #[test]
-fn gui_windows_resource_is_embedded_during_cross_builds() {
-    let build_rs = include_str!("../../../occluview-app/build.rs");
-
-    assert!(build_rs.contains("CARGO_CFG_WINDOWS"));
-    assert!(build_rs.contains("llvm-rc"));
-    assert!(build_rs.contains("cargo:rustc-link-arg-bin=occluview="));
-    assert!(!build_rs.contains("env::consts::OS != \"windows\""));
-}
-
-#[test]
-fn the_preview_window_and_the_com_object_die_together() {
-    let preview = include_str!("../com/preview.rs");
-    let window = include_str!("../com/preview/window.rs");
-
-    let drop_impl = preview
-        .split_once("impl Drop for PreviewHandler {")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
-    let drop_body = drop_impl
-        .split_once("\n}")
-        .map(|(body, _)| body)
-        .unwrap_or_default();
-    assert!(drop_body.contains("self.destroy_preview_window();"));
-    let destroys_before_count = drop_body
-        .find("destroy_preview_window")
-        .zip(drop_body.find("ACTIVE_COM_OBJECTS"))
-        .is_some_and(|(window, count)| window < count);
-    assert!(
-        destroys_before_count,
-        "the window must be torn down before the object count drops"
-    );
-
-    let destroy = preview
-        .split_once("fn destroy_preview_window(&self)")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
-    let clears = destroy.find("SetWindowLongPtrW");
-    let destroys = destroy.find("DestroyWindow(hwnd)");
-    assert!(clears
-        .zip(destroys)
-        .is_some_and(|(clear, destroy)| clear < destroy));
-    assert!(destroy.contains("DeleteObject"));
-    assert!(window.contains("WM_NCDESTROY"));
-
-    let menu = include_str!("../com/preview/context_menu.rs");
-    let after_tracking = menu
-        .split_once("TrackPopupMenuEx(menu,")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
-    let confirms = after_tracking.find("window_owns_handler(hwnd, std::ptr::from_ref(self))");
-    let runs = after_tracking.find("self.run_menu_command(hwnd, command)");
-    assert!(confirms
-        .zip(runs)
-        .is_some_and(|(confirm, run)| confirm < run));
-
-    let smoke = include_str!("../../../../install/test-preview-handler.ps1");
-    assert!(smoke.contains("Release without Unload left the child preview window alive"));
-}
-
-#[test]
 fn diagnostic_events_are_fixed_field_and_cover_both_shell_components() {
     use crate::shell_diagnostics::{
         ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticEvent,

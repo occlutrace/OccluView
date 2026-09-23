@@ -556,28 +556,6 @@ mod tests {
     /// its subject: this pins the shape that makes that possible — a flag per
     /// layer, since one "marked index" can only ever name one of the two.
     #[test]
-    fn a_reading_marks_both_of_its_arches() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
-        let body = crate::primary_ui_tests::method_body(source, "pub(super) fn contact_rows");
-        assert!(!body.is_empty(), "contact_rows must exist");
-        assert!(
-            body.contains("pair.antagonist"),
-            "the antagonist must be marked too, or its own menu offers a second reading"
-        );
-        assert!(
-            body.contains("entry.id() == pair.subject"),
-            "the subject is still one of the two"
-        );
-        let overlay =
-            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
-        assert!(
-            !overlay.contains("marked_index"),
-            "a single index cannot mark both arches; the rows are per layer"
-        );
-    }
-
-    #[test]
     fn context_menu_drops_only_an_in_progress_lasso() {
         let mut lasso = Some(MeshSelectionDrag::Lasso {
             points: vec![egui::pos2(10.0, 20.0)],

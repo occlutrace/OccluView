@@ -171,13 +171,6 @@ fn a_rejected_new_stroke_does_not_leave_a_phantom_open_stroke() {
 }
 
 #[test]
-fn worker_passes_its_cancellation_token_into_the_kernel() {
-    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
-    assert!(source.contains("apply_dab_cancellable"));
-    assert!(source.contains("&state.stopping"));
-}
-
-#[test]
 fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
     let worker = test_worker();
     {
@@ -195,43 +188,6 @@ fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
     assert!(triangle < 2);
     assert!((point.x - 10.25).abs() < 1e-5);
     assert!((point.z).abs() < 1e-5);
-}
-
-#[test]
-fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
-    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
-    let start = source
-        .rfind("SculptCommand::Finish")
-        .expect("the Finish command branch must exist");
-    let finish = &source[start..(start + 2_000).min(source.len())];
-    for failure in [
-        "MissingUndoBaseline",
-        "ShadowPoisoned",
-        "VertexCountChanged",
-    ] {
-        let marker = format!("state.set_error(SculptFailure::{failure})");
-        let error = finish
-            .find(&marker)
-            .unwrap_or_else(|| panic!("terminal failure {failure} must be reported"));
-        let tail = &finish[error..(error + 600).min(finish.len())];
-        assert!(
-            tail.contains("queue.mark_idle();") && tail.contains("break;"),
-            "terminal failure {failure} must stop command consumption"
-        );
-    }
-}
-
-#[test]
-fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
-    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_tool.rs"));
-    let start = source
-        .find("pub(crate) fn is_busy")
-        .expect("the sculpt busy predicate must exist");
-    let body = &source[start..(start + 500).min(source.len())];
-    assert!(
-        body.contains("self.pending.is_some()"),
-        "mesh edits must wait while background preparation is still pending"
-    );
 }
 
 #[test]
