@@ -28,6 +28,7 @@ use crate::shell_diagnostics::{
 };
 #[cfg(feature = "diagnostic-logs")]
 use occluview_render::AdapterResult;
+use std::os::windows::ffi::OsStringExt;
 #[cfg(feature = "diagnostic-logs")]
 use std::time::Instant;
 
@@ -716,7 +717,7 @@ impl IInitializeWithFile_Impl for PreviewHandler_Impl {
                 // preview and no thumbnail. `initialize_path` takes a `PathBuf`,
                 // so the wide string converts straight into an OS string with no
                 // lossy step to fail on.
-                let path = unsafe { pszfilepath.to_os_string() };
+                let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
                 self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },

@@ -51,8 +51,9 @@
 //! There are three gates over the same signed field and they are deliberately
 //! different widths: [`ContactScale::is_painted`] (the hover readout and its
 //! swatch), the shader's own painted weight (what reaches the screen), and
-//! [`stats::TOUCH_MM`] (the area/contact counters). This module used to call
-//! `is_painted` "the single predicate" they all share, which was never true
+//! the area/contact counters' touch dead-band (see `stats`). This module used
+//! to call `is_painted` "the single predicate" they all share, which was never
+//! true
 //! after the measurement gate was widened to stop the counters falling short by
 //! a feather's width.
 //!
