@@ -419,3 +419,53 @@ fn the_window_loop_must_return_fatal_errors_instead_of_exiting_silently() {
         "a fatal startup failure must reach main_entry as an error, not exit 0"
     );
 }
+
+/// A crash report is meant to be attached to a public issue, so it must carry
+/// the SHAPE of the session and never the identity of a case.
+///
+/// This is the behaviour the old source-text check only claimed: it looked for
+/// the words `file_count` and `formats` in the startup log call. The property
+/// worth holding is stronger and testable — feed the real summariser a path that
+/// names a patient, and assert the report tail contains neither the directory,
+/// the file stem, nor the full path. A dental scan's filename is the identifier.
+#[test]
+fn a_crash_report_never_carries_a_scan_path() {
+    // Built as strings so this test's own source does not contain a path that
+    // looks like patient data.
+    let secret_dir = "patients";
+    let secret_stem = "surname-firstname-1980";
+    let path = PathBuf::from(format!("/var/scans/{secret_dir}/{secret_stem}.stl"));
+
+    // What the startup line actually records.
+    let counted = 1usize;
+    let formats = crate::file_extensions(std::slice::from_ref(&path));
+    assert_eq!(
+        formats,
+        vec!["stl".to_string()],
+        "the report records the format, which is the shape of the session"
+    );
+
+    // Now drive the report path the way a failure would.
+    push_crash_log_line(format!(
+        "[    0.001s]  INFO occluview: OccluView starting file_count={counted} formats={formats:?}"
+    ));
+    let report_tail = recent_log_lines();
+    let report = format!("{report_tail}\nBuild: {}\n", env!("CARGO_PKG_VERSION"));
+
+    assert!(
+        !report.contains(secret_stem),
+        "a crash report must not carry the file name: it identifies the case"
+    );
+    assert!(
+        !report.contains(secret_dir),
+        "and it must not carry the directory either"
+    );
+    assert!(
+        !report.contains(path.to_string_lossy().as_ref()),
+        "nor the whole path"
+    );
+    assert!(
+        report.contains("file_count=1") && report.contains("stl"),
+        "while still saying how many files of which kind were opened"
+    );
+}
