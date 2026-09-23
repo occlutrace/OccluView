@@ -459,6 +459,10 @@ impl OccluViewApp {
 }
 
 #[cfg(test)]
+#[path = "app_align_authority_tests.rs"]
+mod authority_tests;
+
+#[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
