@@ -136,6 +136,7 @@ impl UiState {
             error: self.app_error.is_some(),
             settings_popup: egui::Popup::is_id_open(&self.repaint_ctx, settings_popup_id()),
             information_dialog: self.information_dialog.is_open(),
+            repair_report: self.repair_report.is_open(),
         }
         .any()
     }

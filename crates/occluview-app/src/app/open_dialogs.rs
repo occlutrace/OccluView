@@ -17,6 +17,7 @@ pub(super) struct OpenDialogs {
     pub(super) error: bool,
     pub(super) settings_popup: bool,
     pub(super) information_dialog: bool,
+    pub(super) repair_report: bool,
 }
 
 impl OpenDialogs {
@@ -27,17 +28,19 @@ impl OpenDialogs {
             || self.error
             || self.settings_popup
             || self.information_dialog
+            || self.repair_report
     }
 
     /// Every flag, paired with the name a failing test should print.
     #[cfg(test)]
-    fn terms(self) -> [(&'static str, bool); 5] {
+    fn terms(self) -> [(&'static str, bool); 6] {
         [
             ("close_guard", self.close_guard),
             ("pending_replace", self.pending_replace),
             ("error", self.error),
             ("settings_popup", self.settings_popup),
             ("information_dialog", self.information_dialog),
+            ("repair_report", self.repair_report),
         ]
     }
 
@@ -49,6 +52,7 @@ impl OpenDialogs {
             error: false,
             settings_popup: false,
             information_dialog: false,
+            repair_report: false,
         }
     }
 
@@ -60,7 +64,8 @@ impl OpenDialogs {
             1 => dialogs.pending_replace = true,
             2 => dialogs.error = true,
             3 => dialogs.settings_popup = true,
-            _ => dialogs.information_dialog = true,
+            4 => dialogs.information_dialog = true,
+            _ => dialogs.repair_report = true,
         }
         dialogs
     }

@@ -73,29 +73,11 @@ impl PreviewSceneState {
             // renderer instead of failing on the same dead device forever.
             crate::offscreen_factory::discard_shared_shell_offscreen(&self.offscreen);
         })?;
-        Ok(present_app_convention_rows(rgba, [width, height]))
+        // `render_rgba` already hands back app-convention (top-down) rows.
+        let _ = width;
+        let _ = height;
+        Ok(rgba)
     }
-}
-
-/// Convert bottom-up GPU readback rows to the app's top-down image convention.
-/// Input deltas use the same orientation as the main viewport; this is the only
-/// preview-specific vertical flip.
-fn present_app_convention_rows(mut rgba: Vec<u8>, size_px: [u16; 2]) -> Vec<u8> {
-    let width = usize::from(size_px[0].max(1));
-    let height = usize::from(size_px[1].max(1));
-    let row_bytes = width * 4;
-    if rgba.len() != row_bytes * height || height < 2 {
-        return rgba;
-    }
-    // Reverse row order in place: readback is bottom-up, the app is top-down.
-    let (mut top, mut bottom) = (0usize, height - 1);
-    while top < bottom {
-        let (head, tail) = rgba.split_at_mut(bottom * row_bytes);
-        head[top * row_bytes..top * row_bytes + row_bytes].swap_with_slice(&mut tail[..row_bytes]);
-        top += 1;
-        bottom -= 1;
-    }
-    rgba
 }
 
 fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {

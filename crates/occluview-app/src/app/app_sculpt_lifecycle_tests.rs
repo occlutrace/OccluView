@@ -258,3 +258,51 @@ fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
     );
     assert!(!app.sculpt_has_live_work());
 }
+
+/// An export started while a Sculpt stroke is still being rebuilt must not
+/// write anything. The scene only advances to a stroke's result when its
+/// worker lands, so the old code wrote the pre-stroke geometry, reported
+/// success, and the operator found out by re-opening the file. All three
+/// export entry points read the same scene and must tell the operator to
+/// finish the stroke instead.
+#[test]
+fn every_export_path_refuses_while_a_stroke_is_in_flight() {
+    // The layer export path takes the scene directly.
+    let (mut app, layer_id) = app_with_a_live_stroke("export-during-stroke-layer");
+    let scene = app.document.scene.clone().expect("scene");
+    let paths = app.persistence.current_paths.clone();
+    let request = LayerContextRequest {
+        index: 0,
+        layer_id,
+        action: LayerContextAction::ExportLayer,
+    };
+    assert!(
+        !app.save_layer_export_dialog(scene.as_ref(), &paths, request),
+        "a layer export during a live stroke must be refused"
+    );
+    assert_eq!(
+        app.ui.status_message.as_deref(),
+        Some(app.ui.locale.text("edit-session-busy").as_str()),
+        "and the operator must be told why"
+    );
+
+    // The two scene paths share the same guard.
+    let (mut app, _) = app_with_a_live_stroke("export-during-stroke-scene");
+    let ctx = app.ui.repaint_ctx.clone();
+    assert!(
+        app.refuse_export_during_stroke(&ctx),
+        "the scene paths must refuse the same way"
+    );
+    assert_eq!(
+        app.ui.status_message.as_deref(),
+        Some(app.ui.locale.text("edit-session-busy").as_str())
+    );
+
+    // With no stroke in flight the guard is silent, so it cannot block the
+    // ordinary export path it is there to protect.
+    let (mut app, _) = app_with_a_live_stroke("export-during-stroke-idle");
+    app.tools.sculpt.stroke = None;
+    app.document.unsaved_sculpt_stroke = false;
+    let ctx = app.ui.repaint_ctx.clone();
+    assert!(!app.refuse_export_during_stroke(&ctx));
+}
