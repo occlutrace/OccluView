@@ -1,8 +1,6 @@
 //! Settings controls and their UI actions.
 
-use crate::app_settings::{
-    FallbackExportFormat, Settings, ThemePreference, UnitDisplay, ViewportBackground,
-};
+use crate::app_settings::{Settings, ThemePreference, UnitDisplay, ViewportBackground};
 use crate::i18n::catalog::EMBEDDED_TAGS;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::i18n::{endonym, LocaleManager};
@@ -13,6 +11,8 @@ use eframe::egui;
 
 pub(super) const PANEL_MARGIN: i8 = 12;
 pub(super) const ROW_HEIGHT: f32 = 30.0;
+/// Height of the two footer buttons, which are the panel's largest controls.
+const FOOTER_BUTTON_HEIGHT: f32 = 28.0;
 pub(super) const SETTINGS_PANEL_ID: &str = "settings-popover-v2";
 
 pub(super) fn settings_popup_id() -> egui::Id {
@@ -38,8 +38,6 @@ pub(super) fn show_settings_toolbar_toggle(
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SettingsAction {
-    SetExportFormat(FallbackExportFormat),
-    SetKeepSourceExportFormat(bool),
     SetRememberExportDir(bool),
     SetUpdateCheckOnStart(bool),
     SetFrameSceneOnOpen(bool),
@@ -140,13 +138,11 @@ pub(super) fn show_settings_popup(
 
                     section_break(ui);
                     section_label(ui, &locale.tr("settings-section-files"));
-                    // One question with two answers, not a switch plus a
-                    // format that looks unconditional: "keep each scan's own
-                    // format" beside an always-visible PLY chip read as though
-                    // both applied, and the operator could not tell which one
-                    // won. The chosen mode says what happens; the format only
-                    // appears in the mode that uses it.
-                    save_format_rows(ui, settings, locale, &mut action);
+                    // There is no save-format choice any more: the format is
+                    // decided from what the scan holds, so the panel states the
+                    // rule instead of offering a switch that could contradict
+                    // it.
+                    save_format_rows(ui, locale);
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -299,27 +295,33 @@ pub(super) fn show_settings_popup(
             ui.add_space(4.0);
             ui.separator();
             ui.add_space(3.0);
-            // The keyboard and mouse reference lives here now that it is off
-            // the toolbar: Settings is where an operator looks for a list, and
-            // the width it frees belongs to the tools. The shortcut is shown on
-            // the row so the operator learns the faster way in from the slower
-            // one.
-            // The key is named in the hover hint rather than on a second line:
-            // the panel has a fixed height it must fit, and naming the key is
-            // what a hover is for.
-            if ui
-                .add(egui::Button::new(locale.tr("settings-shortcuts")).frame(false))
-                .on_hover_text(locale.tr("settings-shortcuts-hint"))
-                .clicked()
-            {
-                action = Some(SettingsAction::OpenShortcuts);
-            }
-            if ui
-                .add(egui::Button::new(locale.tr("settings-about")).frame(false))
-                .clicked()
-            {
-                action = Some(SettingsAction::OpenAbout);
-            }
+            // Both references sit on one row of two equal, full-height buttons
+            // rather than as two bare text lines. They are the only ways into
+            // the shortcut list and the about box, and a real button is both
+            // easier to hit and shorter to read than a link-shaped label.
+            let button_width = (ui.available_width() - 6.0) * 0.5;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if ui
+                    .add_sized(
+                        [button_width, FOOTER_BUTTON_HEIGHT],
+                        egui::Button::new(locale.tr("settings-shortcuts")),
+                    )
+                    .on_hover_text(locale.tr("settings-shortcuts-hint"))
+                    .clicked()
+                {
+                    action = Some(SettingsAction::OpenShortcuts);
+                }
+                if ui
+                    .add_sized(
+                        [button_width, FOOTER_BUTTON_HEIGHT],
+                        egui::Button::new(locale.tr("settings-about")),
+                    )
+                    .clicked()
+                {
+                    action = Some(SettingsAction::OpenAbout);
+                }
+            });
             action
         })
         .and_then(|response| response.inner)
@@ -359,88 +361,21 @@ fn section_break(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
-/// The export-format question: one mode, and the format only where it applies.
-fn save_format_rows(
-    ui: &mut egui::Ui,
-    settings: &Settings,
-    locale: &LocaleManager,
-    action: &mut Option<SettingsAction>,
-) {
-    let keep_source = settings.keep_source_export_format;
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.label(locale.tr("settings-save-format"))
-                .on_hover_text(locale.tr("settings-save-format-hint"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                for (keeps, key) in [
-                    (false, "settings-save-format-always"),
-                    (true, "settings-save-format-source"),
-                ] {
-                    if ui
-                        .selectable_label(keep_source == keeps, locale.tr(key))
-                        .on_hover_text(locale.tr(if keeps {
-                            "settings-save-format-source-hint"
-                        } else {
-                            "settings-save-format-always-hint"
-                        }))
-                        .clicked()
-                    {
-                        *action = Some(SettingsAction::SetKeepSourceExportFormat(keeps));
-                    }
-                }
-            });
-        },
-    );
-    if keep_source {
-        // The mode that has nothing to choose: say what it does instead of
-        // showing chips that would not be read. It names the format the code
-        // will really use, which is the stored fallback — not a constant.
-        ui.label(
-            egui::RichText::new(locale.tr_with(
-                "settings-save-format-source-note",
-                &[("format", settings.fallback_export_format.label())],
-            ))
+/// The save-format question, and the whole of it: there is nothing to choose.
+///
+/// A scan's own format is kept when the viewer can write it, and a scan from a
+/// format with no writer falls to the one format that can carry what the scan
+/// actually holds — PLY when it has an atlas, vertex colours or a mapping, STL
+/// when it is geometry alone. That rule is applied at the point of writing, so
+/// the panel states it rather than offering a switch that could contradict it.
+/// A mode chosen here used to be able to propose a colourless `.stl` for a
+/// colour scan; removing the choice removes that whole class of surprise.
+fn save_format_rows(ui: &mut egui::Ui, locale: &LocaleManager) {
+    ui.label(locale.tr("settings-save-format"));
+    ui.label(
+        egui::RichText::new(locale.tr("settings-save-format-note"))
             .size(10.5)
             .color(ui_theme::text_muted()),
-        );
-        ui.label(
-            egui::RichText::new(locale.tr_with(
-                "settings-save-format-scene-note",
-                &[("format", settings.fallback_export_format.label())],
-            ))
-            .size(10.5)
-            .color(ui_theme::text_muted()),
-        );
-        return;
-    }
-    export_format_row(ui, settings, locale, action);
-}
-
-fn export_format_row(
-    ui: &mut egui::Ui,
-    settings: &Settings,
-    locale: &LocaleManager,
-    action: &mut Option<SettingsAction>,
-) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.label(locale.tr("settings-export-format"))
-                .on_hover_text(locale.tr("settings-export-format-hint"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                for format in FallbackExportFormat::OPTIONS.into_iter().rev() {
-                    if ui
-                        .selectable_label(settings.fallback_export_format == format, format.label())
-                        .clicked()
-                    {
-                        *action = Some(SettingsAction::SetExportFormat(format));
-                    }
-                }
-            });
-        },
     );
 }
 

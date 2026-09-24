@@ -71,15 +71,19 @@ remain in the Git history.
   second copy of a payload it was always going to reject. A header whose
   `OccluViewTexture` keys were re-cased by a text editor reads as before,
   matching the case-insensitive treatment `TextureFile` already had.
-- A colour scan opened from a format with no writer — `.dcm`, HPS, GLB, OFF —
-  is no longer offered as STL under a name that would throw the colour away.
-  Those formats cannot keep their own format on save, so the save dialog came up
-  on the chosen fallback format; with that fallback set to STL, a scan captured
-  in colour proposed a `.stl` file, and the export then stripped the atlas, the
-  vertex colours and the mapping, leaving only a warning on the status line
-  after the name was already picked. A layer that carries any of those now opens
-  its save dialog on PLY, which holds all three in one file. A geometry-only
-  scan still keeps STL, because nothing is lost there.
+- The save format is no longer a setting. Settings used to ask "each scan keeps
+  its own format" or "chosen format", with a format to pick in the second mode
+  and two lines explaining the consequence — and the mode that was in force
+  could still propose a colourless `.stl` for a scan captured in colour, leaving
+  only a status-line warning after the name had been picked. That whole question
+  is gone, together with the two notes under it. A scan keeps the format it was
+  opened in when the viewer can write it; a scan from a format it cannot write
+  is saved as PLY when it holds a texture, vertex colours or a mapping, and as
+  STL when it is geometry alone. There is nothing left to choose and nothing
+  left to contradict.
+- Settings is shorter and the two references sit side by side. "Keyboard and
+  mouse" and "About OccluView" were two full-width text lines; they are now one
+  row of two equal buttons.
 - A malformed binary PLY can no longer hang the viewer or the Explorer preview.
   A face element declared with rows but no property used to consume no bytes per
   row, so the reader looped forever on the same empty state; it is now refused

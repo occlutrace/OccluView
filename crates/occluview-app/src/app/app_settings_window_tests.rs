@@ -47,15 +47,6 @@ fn run_toolbar_frame_in(
 }
 
 /// The same frame with the settings the test wants to read.
-fn run_toolbar_frame_with_settings(
-    ctx: &egui::Context,
-    events: Vec<egui::Event>,
-    settings: &Settings,
-) -> anyhow::Result<ToolbarFrame> {
-    let locale = crate::i18n::LocaleManager::for_tests();
-    run_toolbar_frame_at_with_settings(ctx, events, &locale, test_screen(), settings)
-}
-
 fn run_toolbar_frame_at(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
@@ -291,45 +282,33 @@ fn responsive_information_modal_frame(
     popup_rect(ctx, id)
 }
 
-/// The format chips are part of one answer, not a second setting. In the mode
-/// where each scan keeps its own format there is nothing to choose, so no chip
-/// is offered; in the other mode the chips are the setting. Rendering both
-/// modes and reading the painted text is what pins that, without depending on
-/// egui's hit-testing to click a chip.
+/// There is no save-format question any more. The format follows the scan, so
+/// the panel states the rule and offers neither a mode switch nor format chips;
+/// a chip labelled "STL" was what let an operator pick a colourless format for a
+/// colour scan.
 #[test]
-fn settings_format_chips_appear_only_in_the_chosen_format_mode() -> anyhow::Result<()> {
+fn settings_offer_no_save_format_choice() -> anyhow::Result<()> {
     let ctx = egui::Context::default();
     let initial = run_toolbar_frame(&ctx, Vec::new())?;
     let _ = click(&ctx, initial.settings_trigger.center())?;
 
-    // Default: "its own format" is in force, and the format question is not
-    // on screen at all.
-    let own_mode = run_toolbar_frame(&ctx, Vec::new())?;
-    assert!(
-        direct_control_center(&own_mode.output, "Its own format").is_ok(),
-        "the mode in force must be visible"
-    );
-    assert!(
-        direct_control_center(&own_mode.output, "STL").is_err(),
-        "no format chip may be offered while each scan keeps its own format"
-    );
-
-    // The other mode: the chips are on screen.
-    let chosen_mode = Settings {
-        keep_source_export_format: false,
-        ..Settings::default()
-    };
-    let chosen = run_toolbar_frame_with_settings(&ctx, Vec::new(), &chosen_mode)?;
-    assert!(
-        direct_control_center(&chosen.output, "Chosen format").is_ok(),
-        "the mode in force must be visible in this mode too"
-    );
-    for label in ["PLY", "STL", "OBJ"] {
+    let panel = run_toolbar_frame(&ctx, Vec::new())?;
+    for removed in [
+        "Its own format",
+        "Chosen format",
+        "Fallback export format",
+        "When saving a scan",
+    ] {
         assert!(
-            direct_control_center(&chosen.output, label).is_ok(),
-            "the chosen mode must offer {label}"
+            direct_control_center(&panel.output, removed).is_err(),
+            "{removed:?} must not be offered: the format is decided from the scan"
         );
     }
+    // The rule itself is still stated, so the operator knows what will happen.
+    assert!(
+        direct_control_center(&panel.output, "Save format").is_ok(),
+        "the panel must still say what Save layer writes"
+    );
     Ok(())
 }
 
