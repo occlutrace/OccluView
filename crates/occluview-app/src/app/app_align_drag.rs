@@ -13,15 +13,6 @@ use super::OccluViewApp;
 use crate::edit_mode::EditModeCommand;
 use crate::viewer::pick_scene_hit;
 
-/// Largest grabbed point, in the layer's own millimetres, that a pivot may use.
-///
-/// A real dental scan is tens of millimetres across, so a local point beyond a
-/// metre can only come from inverting a nearly singular pose. The captured
-/// value is rejected for the mesh centre instead of turning the scan about a
-/// point effectively at infinity, which would make the far side of the arch
-/// sweep across the screen.
-const PIVOT_LOCAL_LIMIT: f32 = 1_000.0;
-
 /// One pointer frame's inputs, carried together into the step builder.
 #[derive(Clone, Copy)]
 struct DragFrame {
@@ -127,32 +118,24 @@ impl OccluViewApp {
             // frame. A Ctrl-drag turns about it so the point the operator
             // pulled stays under the cursor; keeping it local means the pivot
             // is still correct after the gesture has already moved the scan.
-            // When the ray missed the mesh and only the bounding box caught it,
-            // the hit is still a world point on this layer and converts the same
-            // way.
             //
             // The inverse is guarded, and the guard has to be a magnitude check,
             // not `is_finite` alone. A nearly singular pose (a scale a few orders
             // below a millimetre) inverts to a FINITE matrix with entries around
             // 1e30, so `is_finite` passes and the pivot lands light-years away;
-            // the step built from it then carries the scan off screen. The mesh
-            // centre is the safe answer for a pose the operator cannot invert by
-            // hand anyway.
+            // the step built from it then carries the scan off screen. The
+            // relative bound is applied later, against the layer's own size, so
+            // the decision does not depend on where the scene sits in the world.
             let inverse = entry.transform.inverse();
             let mapped = if inverse.is_finite() {
                 inverse.transform_point3(hit.point)
-            } else {
-                Vec3::splat(f32::INFINITY)
-            };
-            let pivot_local = if mapped.is_finite() && mapped.length() <= PIVOT_LOCAL_LIMIT {
-                mapped
             } else {
                 entry.mesh.bbox_cached().center()
             };
             self.tools.align.drag = Some(AlignDrag {
                 layer: hit.layer_id,
                 start: entry.transform,
-                pivot_local,
+                pivot_local: mapped,
             });
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
@@ -194,8 +177,8 @@ impl OccluViewApp {
             rotating,
         };
         let Some(step) = self.align_drag_step(drag, &camera, frame) else {
-            // A Ctrl-turn with no usable pivot: keep the pose rather than pick
-            // an unseen fallback, but keep owning the gesture.
+            // The scene or the layer went away mid-gesture. Keep owning the
+            // drag so releasing it still commits cleanly.
             return true;
         };
 
@@ -250,23 +233,20 @@ impl OccluViewApp {
             crate::align_drag::DEGREES_PER_PIXEL,
             self.tools.align.constraint,
         );
-        // Which point the turn fixes depends on the constraint; see
-        // `align_drag::drag_pivot_world` for why Free and the constrained modes
-        // answer differently. The grabbed point is carried in the layer's own
-        // frame and mapped through its CURRENT pose, so a gesture that has
-        // already moved the scan keeps turning about the same physical point
-        // under the cursor. An unusable pivot (no scene, a non-invertible pose, a
-        // point a metre out) refuses the frame rather than turning about an
-        // unseen fallback.
+        // Which point the turn fixes is always the point the operator grabbed:
+        // the constraint chooses the rotation axis, never the pivot. The grabbed
+        // point is carried in the layer's own frame and mapped through its
+        // CURRENT pose, so a gesture that has already moved the scan keeps
+        // turning about the same physical point under the cursor. A grab that
+        // cannot be trusted (a singular pose, a point outside the scan) falls
+        // back to the layer centre rather than freezing the gesture.
         let scene = self.document.scene.as_ref()?;
         let entry = layer_of(scene, drag.layer)?;
-        let pivot_world = crate::align_drag::drag_pivot_world(
-            self.tools.align.constraint,
-            entry.transform.transform_point3(drag.pivot_local),
-            entry
-                .transform
-                .transform_point3(entry.mesh.bbox_cached().center()),
-        )?;
+        let centre_local = entry.mesh.bbox_cached().center();
+        let radius_local = entry.mesh.bbox_cached().size().length() * 0.5;
+        let pivot_local =
+            crate::align_drag::drag_pivot_local(drag.pivot_local, centre_local, radius_local);
+        let pivot_world = entry.transform.transform_point3(pivot_local);
         Some(crate::align_drag::rotation_about_pivot(turn, pivot_world))
     }
 
@@ -378,5 +358,140 @@ impl OccluViewApp {
             &[("name", &name), ("moved", &format!("{moved_mm:.2}"))],
         ));
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use crate::app::app_test_support::{named_scene, test_app};
+    use glam::Quat;
+    use occluview_core::Camera;
+
+    /// A layer and a camera looking down at it, active enough to drag.
+    fn rig(name: &str) -> (OccluViewApp, SceneMeshId, Camera) {
+        let mut app = test_app(name);
+        app.document.scene = Some(std::sync::Arc::new(named_scene("jaw", 0.0)));
+        let id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+        let camera = Camera::default().frame_occlusal(
+            app.document.scene.as_ref().expect("scene").bbox(),
+            45.0_f32.to_radians(),
+        );
+        app.render.camera = Some(camera);
+        (app, id, camera)
+    }
+
+    fn frame(rotating: bool) -> DragFrame {
+        DragFrame {
+            viewport: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0)),
+            motion: egui::vec2(40.0, 0.0),
+            rotating,
+        }
+    }
+
+    /// The wiring the operator actually touches: a Ctrl-drag of a layer whose
+    /// grab sits well off the mesh centre must turn about that grab, under every
+    /// drag constraint.
+    ///
+    /// This is the end-to-end path the unit tests below cannot reach — the
+    /// constraint choice, the local-to-world mapping and the pre-multiplication
+    /// all live in `align_drag_step`, so a regression there (for example falling
+    /// back to the layer centre) would otherwise ship green.
+    #[test]
+    fn a_ctrl_drag_step_turns_about_the_grabbed_point_for_every_constraint() {
+        for constraint in [
+            crate::align_drag::DragConstraint::Free,
+            crate::align_drag::DragConstraint::ZOnly,
+            crate::align_drag::DragConstraint::XyPlane,
+        ] {
+            let (mut app, id, camera) = rig("ctrl-step-pivot");
+            app.tools.align.constraint = constraint;
+            // A grab far from the mesh centre, so a centre pivot is detectable.
+            let grabbed_local = Vec3::new(9.0, -4.0, 2.0);
+            let drag = AlignDrag {
+                layer: id,
+                start: Affine3A::IDENTITY,
+                pivot_local: grabbed_local,
+            };
+            let step = app
+                .align_drag_step(drag, &camera, frame(true))
+                .expect("a Ctrl-drag over a live layer must produce a step");
+
+            let pivot_world = step.transform_point3(grabbed_local);
+            assert!(
+                (pivot_world - grabbed_local).length() < 1e-3,
+                "{constraint:?}: the grabbed point moved to {pivot_world:?}; the turn \
+                 did not happen about what the operator pulled"
+            );
+            // And it is genuinely a rotation about that point, not the identity.
+            assert!(
+                step.transform_point3(Vec3::ZERO).length() > 1e-3,
+                "{constraint:?}: the step collapsed to nothing"
+            );
+        }
+    }
+
+    /// A grab far outside the scan falls back to the centre rather than
+    /// freezing the gesture or turning about a point at infinity.
+    #[test]
+    fn an_absurd_grab_still_produces_a_usable_step() {
+        let (app, id, camera) = rig("absurd-grab");
+        let drag = AlignDrag {
+            layer: id,
+            start: Affine3A::IDENTITY,
+            pivot_local: Vec3::splat(1.0e9),
+        };
+        let step = app
+            .align_drag_step(drag, &camera, frame(true))
+            .expect("an absurd grab must still leave the gesture alive");
+        assert!(step.is_finite(), "{step:?}");
+        // The discarded grab is replaced by the layer's own centre, so the
+        // centre is what the turn fixes.
+        let scene = app.document.scene.as_ref().expect("scene");
+        let centre = scene.meshes()[0].mesh.bbox_cached().center();
+        let pinned = step.transform_point3(centre);
+        assert!(
+            (pinned - centre).length() < 1e-3,
+            "the fallback pivot should be the layer centre, which moved {pinned:?} \
+             away from {centre:?}"
+        );
+    }
+
+    /// A layer that vanished mid-gesture refuses the step instead of panicking.
+    #[test]
+    fn a_step_for_a_missing_layer_produces_nothing() {
+        let (mut app, id, camera) = rig("missing-layer");
+        // Drop the scene out from under the open gesture.
+        app.document.scene = None;
+        let drag = AlignDrag {
+            layer: id,
+            start: Affine3A::IDENTITY,
+            pivot_local: Vec3::ZERO,
+        };
+        assert!(
+            app.align_drag_step(drag, &camera, frame(true)).is_none(),
+            "a step with no scene must refuse rather than guess"
+        );
+    }
+
+    /// A non-rotation frame is a translation and must not touch the rotation.
+    #[test]
+    fn a_plain_drag_step_translates_instead_of_turning() {
+        let (app, id, camera) = rig("plain-drag");
+        let drag = AlignDrag {
+            layer: id,
+            start: Affine3A::IDENTITY,
+            pivot_local: Vec3::new(5.0, 5.0, 5.0),
+        };
+        let step = app
+            .align_drag_step(drag, &camera, frame(false))
+            .expect("a plain drag must produce a step");
+        let rotation = Quat::from_mat3a(&step.matrix3);
+        assert!(
+            rotation.angle_between(Quat::IDENTITY) < 1e-4,
+            "a plain drag must not rotate: {rotation:?}"
+        );
     }
 }
