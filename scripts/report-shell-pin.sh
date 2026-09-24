@@ -37,7 +37,13 @@ fi
 
 paths=()
 while IFS= read -r crate; do
-  paths+=("crates/$crate")
+  # A Windows Python writes CRLF, and command substitution strips the newline
+  # but not the carriage return. A crate left as `occluview-shell\r` is a git
+  # pathspec that matches nothing, so the delta silently collapses to whichever
+  # crates happened to survive — the reported count is then too small and the
+  # reviewer sees less work than there is. Strip it explicitly.
+  crate="${crate%$'\r'}"
+  [[ -n "$crate" ]] && paths+=("crates/$crate")
 done <<< "$crates"
 
 # Commits that touched a crate the shell links. This is the list a backport has
