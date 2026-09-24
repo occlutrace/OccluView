@@ -25,9 +25,30 @@ if [[ ! -f "$pin_file" ]]; then
   exit 1
 fi
 
-revision="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$pin_file")"
-tag="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tag",""))' "$pin_file")"
-crates="$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["shell_crates"]))' "$pin_file")"
+# Read every field the script needs through ONE Python call, NUL-delimited.
+#
+# Line-based reads are fragile here: on a Windows runner Python's text mode
+# writes CRLF, and command substitution drops the newline but keeps the
+# carriage return. A revision left as `<sha>\r` makes `git cat-file -e` fail and
+# aborts the script; a crate left as `occluview-shell\r` is a pathspec matching
+# nothing, so the delta silently collapses to whichever names happened to
+# survive and the reviewer is shown less work than there is. A NUL delimiter
+# cannot appear in any of these values, so the field boundaries survive any
+# line-ending convention. Read into an array so the values keep their own
+# characters, and strip a stray CR defensively.
+mapfile -d '' -t pin_fields < <(
+  python3 -c '
+import json, sys
+pin = json.load(open(sys.argv[1]))
+print(pin["revision"], end="\0")
+print(pin.get("tag", ""), end="\0")
+for crate in pin["shell_crates"]:
+    print(crate, end="\0")
+' "$pin_file"
+)
+
+revision="${pin_fields[0]%$'\r'}"
+tag="${pin_fields[1]%$'\r'}"
 
 if ! git cat-file -e "${revision}^{commit}" 2>/dev/null; then
   echo "report-shell-pin: the pinned revision $revision is not in this clone." >&2
@@ -36,15 +57,12 @@ if ! git cat-file -e "${revision}^{commit}" 2>/dev/null; then
 fi
 
 paths=()
-while IFS= read -r crate; do
-  # A Windows Python writes CRLF, and command substitution strips the newline
-  # but not the carriage return. A crate left as `occluview-shell\r` is a git
-  # pathspec that matches nothing, so the delta silently collapses to whichever
-  # crates happened to survive — the reported count is then too small and the
-  # reviewer sees less work than there is. Strip it explicitly.
+for crate in "${pin_fields[@]:2}"; do
+  # Belt and braces: the NUL framing already keeps the names clean, but a stray
+  # carriage return here would silently drop the crate from the delta.
   crate="${crate%$'\r'}"
   [[ -n "$crate" ]] && paths+=("crates/$crate")
-done <<< "$crates"
+done
 
 # Commits that touched a crate the shell links. This is the list a backport has
 # to consider, and the number a reviewer should see before approving a release.
