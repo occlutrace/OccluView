@@ -5,7 +5,7 @@
 //! approximation that drifts as the operator zooms.
 
 use eframe::egui;
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 
 /// Degrees of rotation per pixel of drag. Slow enough that a small correction
 /// stays small, fast enough that a half-turn does not need three gestures.
@@ -139,8 +139,29 @@ pub(crate) fn constrained_rotation_from_drag(
     }
 }
 
+/// Turn a scan about the point the operator grabbed, not about its centre.
+///
+/// A hand drag that rotates about the mesh centre spins the whole arch around a
+/// pivot the operator cannot see and did not choose: they pull a cusp and the
+/// far side swings, which reads as the tool ignoring where the pointer went.
+/// Pivoting about the grabbed surface point keeps that point under the cursor
+/// for the whole gesture, so the scan turns about what was actually pulled.
+///
+/// The returned step is a world-space transform, meant to be pre-multiplied onto
+/// the layer's pose exactly like the translation step.
+pub(crate) fn rotation_about_pivot(turn: Quat, pivot: Vec3) -> Affine3A {
+    if !pivot.is_finite() {
+        return Affine3A::from_quat(turn);
+    }
+    Affine3A::from_translation(pivot)
+        * Affine3A::from_quat(turn)
+        * Affine3A::from_translation(-pivot)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// One conversion, one guard. The brush ring and the hand drag each had
     /// their own, guarding a different operand, so a zero-height viewport was
     /// safe on one path and produced an infinity on the other.
@@ -258,5 +279,50 @@ mod tests {
     fn a_degenerate_camera_basis_rotates_nothing() {
         let rotation = rotation_from_drag(egui::vec2(30.0, 30.0), Vec3::ZERO, Vec3::Y, 1.0);
         assert_eq!(rotation, Quat::IDENTITY);
+    }
+
+    /// A Ctrl-drag must turn about the grabbed point, not the mesh centre.
+    ///
+    /// The operator pulls a cusp to tilt an arch. Pivoting about the centre
+    /// swings the far side and leaves the grabbed surface sliding sideways,
+    /// which reads as the tool ignoring where the pointer went; pivoting about
+    /// the grab keeps the grabbed point exactly where the pointer is.
+    #[test]
+    fn a_ctrl_drag_turns_about_the_grabbed_point() {
+        let pivot = Vec3::new(4.0, -2.0, 1.5);
+        let turn = Quat::from_axis_angle(Vec3::Y, 0.5);
+        let step = rotation_about_pivot(turn, pivot);
+
+        // The pivot itself is a fixed point of the turn.
+        let pinned = step.transform_point3(pivot);
+        assert!(
+            (pinned - pivot).length() < 1e-5,
+            "the grabbed point moved: {pinned:?}"
+        );
+
+        // A point away from the pivot does move, and by the rotation about it.
+        let far = Vec3::new(-9.0, 3.0, 0.0);
+        let expected = pivot + turn * (far - pivot);
+        let actual = step.transform_point3(far);
+        assert!(
+            (actual - expected).length() < 1e-5,
+            "expected {expected:?}, got {actual:?}"
+        );
+
+        // And it is not the centre pivot: the world origin is NOT pinned.
+        let origin_moved = step.transform_point3(Vec3::ZERO).length();
+        assert!(
+            origin_moved > 1e-3,
+            "the step collapsed onto a centre pivot (origin unmoved)"
+        );
+    }
+
+    /// The pivot helpers never produce a non-finite transform.
+    #[test]
+    fn a_non_finite_pivot_still_returns_a_rotation() {
+        let turn = Quat::from_axis_angle(Vec3::Y, 0.25);
+        let step = rotation_about_pivot(turn, Vec3::new(f32::NAN, 0.0, 0.0));
+        assert!(step.is_finite(), "{step:?}");
+        assert!((step.transform_point3(Vec3::X) - turn * Vec3::X).length() < 1e-5);
     }
 }
