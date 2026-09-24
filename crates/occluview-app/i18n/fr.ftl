@@ -743,8 +743,6 @@ align-session-kept = Alignement gardé — exporter le scan pour l’écrire
 
 settings-header = Réglages
 settings-section-files = Fichiers et export
-settings-save-format = Format d'enregistrement
-settings-save-format-note = Chaque scan garde son propre format. Un scan issu d'un format que le visualiseur ne peut pas écrire est enregistré en PLY s'il a une texture, des couleurs par sommet ou un mappage, et en STL s'il n'est que géométrie.
 settings-remember-export = Mémoriser le dossier d’export
 settings-remember-export-hint = Même dossier après redémarrage
 settings-section-scene = Vue et navigation

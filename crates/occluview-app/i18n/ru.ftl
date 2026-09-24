@@ -852,8 +852,6 @@ scene-positions-reset = Позиции слоёв сброшены (Ctrl+Z от�
 
 settings-header = Настройки
 settings-section-files = Файлы и экспорт
-settings-save-format = Формат сохранения
-settings-save-format-note = Каждый скан сохраняется в своём формате. Скан из формата, который программа не умеет записывать, сохраняется как PLY, если в нём есть текстура, вершинный цвет или развёртка, и как STL, если это только геометрия.
 settings-remember-export = Запоминать папку экспорта
 settings-remember-export-hint = Использовать ту же папку после перезапуска OccluView
 settings-section-scene = Вид и навигация

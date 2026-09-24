@@ -745,8 +745,6 @@ align-session-kept = Alinhamento mantido — exporte para gravar
 
 settings-header = Ajustes
 settings-section-files = Arquivos e exportação
-settings-save-format = Formato ao salvar
-settings-save-format-note = Cada digitalização mantém o formato próprio. Uma digitalização de um formato que o visualizador não consegue gravar é salva como PLY se tiver textura, cores por vértice ou mapeamento, e como STL se for só geometria.
 settings-remember-export = Lembrar pasta de exportação
 settings-remember-export-hint = Mesma pasta após reiniciar
 settings-section-scene = Visualização e navegação

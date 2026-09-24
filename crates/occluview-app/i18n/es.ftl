@@ -743,8 +743,6 @@ align-session-kept = Alineación guardada — exporta el escaneo para escribirla
 
 settings-header = Ajustes
 settings-section-files = Archivos y exportación
-settings-save-format = Formato al guardar
-settings-save-format-note = Cada escaneo conserva su propio formato. Un escaneo de un formato que el visor no puede escribir se guarda como PLY si tiene textura, colores por vértice o mapeado, y como STL si es solo geometría.
 settings-remember-export = Recordar carpeta de exportación
 settings-remember-export-hint = Misma carpeta tras reiniciar OccluView
 settings-section-scene = Vista y navegación

@@ -743,8 +743,6 @@ align-session-kept = Allineamento tenuto — esporta la scansione per scriverlo
 
 settings-header = Impostazioni
 settings-section-files = File ed esportazione
-settings-save-format = Formato di salvataggio
-settings-save-format-note = Ogni scansione mantiene il formato proprio. Una scansione da un formato che il visualizzatore non può scrivere viene salvata come PLY se ha texture, colori per vertice o mappatura, e come STL se è solo geometria.
 settings-remember-export = Ricorda la cartella di export
 settings-remember-export-hint = Stessa cartella dopo il riavvio
 settings-section-scene = Vista e navigazione

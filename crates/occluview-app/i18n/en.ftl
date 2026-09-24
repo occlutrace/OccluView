@@ -748,8 +748,6 @@ scene-positions-reset = Layer positions reset (Ctrl+Z undoes)
 
 settings-header = Settings
 settings-section-files = Files & export
-settings-save-format = Save format
-settings-save-format-note = Each scan keeps its own format. A scan from a format the viewer cannot write is saved as PLY when it has a texture, vertex colours or a mapping, and as STL when it is geometry alone.
 settings-remember-export = Remember export folder
 settings-remember-export-hint = Use the same folder after restarting OccluView
 settings-section-scene = View & navigation
