@@ -64,15 +64,39 @@ for crate in "${pin_fields[@]:2}"; do
   [[ -n "$crate" ]] && paths+=("crates/$crate")
 done
 
+# Resolve the pin to a commit reachable from HEAD before measuring the delta.
+#
+# The pin is a SHA from a rewritten lineage: an identical tree exists on HEAD's
+# history under a different commit id (the released v1.1.0 is such a twin). The
+# recorded SHA is the right thing to name — it is what the GitHub release points
+# at — but `pin..HEAD` against an unreachable commit counts commits that landed
+# BEFORE the tag as if they came after it, which inflates the delta by dozens of
+# entries and tells the reviewer to backport work that already shipped.
+#
+# So: find the HEAD-reachable commit with the same tree and measure from that.
+# When no twin exists the pin itself is used, and `ancestor_of_viewer` in the
+# report says it is not on this history.
+pin_tree="$(git rev-parse "${revision}^{tree}" 2>/dev/null || true)"
+delta_base="$revision"
+if [[ -n "$pin_tree" ]] && ! git merge-base --is-ancestor "$revision" HEAD 2>/dev/null; then
+  # Print the first match without exiting early: an `exit` in awk closes the
+  # pipe, git log dies of SIGPIPE, and `pipefail` then aborts the whole script.
+  twin="$(git log --format='%H %T' HEAD 2>/dev/null \
+    | awk -v tree="$pin_tree" '!found && $2 == tree { print $1; found = 1 }')"
+  if [[ -n "$twin" ]]; then
+    delta_base="$twin"
+  fi
+fi
+
 # Commits that touched a crate the shell links. This is the list a backport has
 # to consider, and the number a reviewer should see before approving a release.
 delta_file="$(mktemp -t occluview-shell-delta-XXXXXX)"
 trap 'rm -f "$delta_file"' EXIT
 git log --no-merges --pretty=format:'%H %ad %s' --date=short \
-  "${revision}..HEAD" -- "${paths[@]}" > "$delta_file" || true
+  "${delta_base}..HEAD" -- "${paths[@]}" > "$delta_file" || true
 # `git log --pretty=format:` separates rather than terminates, so the last
 # line carries no newline and `wc -l` would report one commit too few.
-commits="$(git rev-list --no-merges --count "${revision}..HEAD" -- "${paths[@]}" 2>/dev/null || echo 0)"
+commits="$(git rev-list --no-merges --count "${delta_base}..HEAD" -- "${paths[@]}" 2>/dev/null || echo 0)"
 
 head_revision="$(git rev-parse HEAD)"
 output="${1:-}"
@@ -83,6 +107,7 @@ REPORT_HEAD="$head_revision" \
 REPORT_COMMITS="$commits" \
 REPORT_DELTA="$delta_file" \
 REPORT_PIN_FILE="$pin_file" \
+REPORT_DELTA_BASE="$delta_base" \
 python3 - "$output" <<'PYTHON'
 """Emit the shell-pin report as JSON."""
 
@@ -96,6 +121,7 @@ delta = pathlib.Path(os.environ["REPORT_DELTA"]).read_text(encoding="utf-8").spl
 pin = json.loads(pathlib.Path(os.environ["REPORT_PIN_FILE"]).read_text(encoding="utf-8"))
 revision = os.environ["REPORT_REVISION"]
 tag = os.environ["REPORT_TAG"]
+delta_base = os.environ.get("REPORT_DELTA_BASE", revision)
 
 reachable = (
     subprocess.run(
@@ -108,7 +134,9 @@ reachable = (
 
 # The local clone may have been rewritten (a filter-branch run does that), which
 # makes a released commit look unreachable while it is still the tag the world
-# downloads. The remote's tags are the authoritative answer, so ask them.
+# downloads. The remote's tags are the authoritative answer, so ask them. Match
+# the resolved base too: a pin from a rewritten lineage shares its tree with the
+# reachable commit the tag actually points at, and that commit is what names it.
 remote_tag = None
 remote = subprocess.run(
     ["git", "ls-remote", "--tags", "origin"],
@@ -118,9 +146,10 @@ remote = subprocess.run(
     timeout=60,
 )
 if remote.returncode == 0:
+    wanted = {revision, delta_base}
     for line in remote.stdout.splitlines():
         fields = line.split()
-        if len(fields) == 2 and fields[0] == revision and fields[1].endswith("^{}"):
+        if len(fields) == 2 and fields[0] in wanted and fields[1].endswith("^{}"):
             remote_tag = fields[1][len("refs/tags/") : -len("^{}")]
             break
 
@@ -135,6 +164,11 @@ report = {
     "shell_crates": pin["shell_crates"],
     "commits_behind": int(os.environ["REPORT_COMMITS"]),
     "commits": delta,
+    # Which commit the delta was measured from, when it is not the pin itself.
+    # A rewritten lineage means the pin can be unreachable while its tree is on
+    # this history; the delta is then taken from that twin, and recording it lets
+    # a reader reproduce the count.
+    "delta_base": delta_base,
     "why": pin["why"],
     "retire_when": pin["retire_when"],
     "backport": pin["backport"],
@@ -142,6 +176,7 @@ report = {
         f"Explorer shell built from {revision[:12]}"
         + (f" ({tag})" if tag else "")
         + f"; {os.environ['REPORT_COMMITS']} commit(s) touching its crates since then"
+        + (f" (measured from {delta_base[:12]})" if delta_base != revision else "")
     ),
 }
 
