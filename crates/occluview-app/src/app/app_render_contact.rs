@@ -49,7 +49,7 @@ pub(super) fn scene_mesh_uniform_with_contacts(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(clippy::expect_used, clippy::float_cmp)]
 
     use glam::Vec3;
     use occluview_core::scene::SceneMesh;
@@ -110,6 +110,23 @@ mod tests {
         assert!(
             (painted.contact_field_width - 1024.0).abs() < f32::EPSILON,
             "the shader divides by this, so it must be the exact texel count"
+        );
+    }
+
+    /// The width argument is the shader's row stride: it turns a vertex index
+    /// into `(index % width, index / width)`. Dropping or hardcoding it here
+    /// would decode every vertex past the first row against the wrong texel.
+    #[test]
+    fn the_uniform_carries_the_field_width_it_was_given() {
+        use occluview_contact::ContactScale;
+
+        let entry = triangle_entry();
+        let scale = ContactScale::new(&occluview_contact::TIGHTNESS, 0.22);
+
+        let uniform = super::scene_mesh_uniform_with_contacts(&entry, Some(&scale), 37);
+        assert_eq!(
+            uniform.contact_field_width, 37.0,
+            "the row stride the field was packed with must reach the uniform"
         );
     }
 }

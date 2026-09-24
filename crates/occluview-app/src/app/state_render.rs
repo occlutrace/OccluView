@@ -33,6 +33,17 @@ pub(super) struct RenderedFrame {
 pub(super) struct RenderState {
     pub(super) camera: Option<Camera>,
     pub(super) live_viewport: Option<SharedLiveViewport>,
+    /// The live viewport's REAL size in physical pixels.
+    ///
+    /// Not `render_extent_px`: that one is clamped into 256..=2560 so the
+    /// offscreen target and the render-size invalidation stay bounded, while the
+    /// live callback paints into egui's render pass at the full viewport. The
+    /// point-splat radius is a PIXEL quantity, so dividing it by the clamped
+    /// extent drew every splat at `3.5 * actual / clamped` pixels — 5.25 px
+    /// instead of 3.5 px on a 4K fullscreen, and too small in a tiny window.
+    /// Kept here because only the frame that allocates the viewport rect knows
+    /// it.
+    pub(super) live_viewport_px: Option<[u32; 2]>,
     pub(super) offscreen: Option<Offscreen>,
     /// A terminal offscreen GPU failure must not be retried on every egui
     /// repaint. The live path has its own fault latch; this one covers the
@@ -58,10 +69,36 @@ pub(super) struct RenderState {
 }
 
 impl RenderState {
+    /// The texture edge the DEVICE will accept, not the one we wish for.
+    ///
+    /// `MAX_RENDER_TEXTURE_DIMENSION` is the request ceiling handed to
+    /// `or_worse_values_from`, which is a per-field MINIMUM — so an adapter
+    /// reporting 2048 gets 2048 and the constant becomes a lie. Sizing a packed
+    /// buffer against the request made `contact_field_width` take its
+    /// "one texel per vertex" branch for any count up to `1024 x 8192` and
+    /// produce a height the device then refused: a wgpu validation error, a
+    /// latched GPU fault, and a frozen viewport instead of a contact map — on
+    /// exactly the largest layers the widening branch exists for. The live
+    /// device is preferred because it is the one that will upload the field;
+    /// the offscreen renderer is the fallback for a machine where the live
+    /// viewport could not be created.
+    pub(super) fn granted_texture_dimension(&self) -> u32 {
+        if let Some(viewport) = self.live_viewport.as_ref() {
+            if let Ok(viewport) = viewport.lock() {
+                return viewport.granted_texture_dimension();
+            }
+        }
+        self.offscreen.as_ref().map_or(
+            crate::app_bootstrap::MAX_RENDER_TEXTURE_DIMENSION,
+            |offscreen| offscreen.renderer().granted_texture_dimension(),
+        )
+    }
+
     pub(super) fn new(live_viewport: Option<SharedLiveViewport>) -> Self {
         Self {
             camera: None,
             live_viewport,
+            live_viewport_px: None,
             offscreen: None,
             offscreen_failed: false,
             offscreen_retry_after: None,

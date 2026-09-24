@@ -10,7 +10,7 @@
 
 use eframe::egui;
 
-use crate::align_brush::AlignBrush;
+use crate::align_brush::{AlignBrush, BrushTarget};
 use crate::align_markings::{AlignSide, MaskCommand};
 use crate::align_panel::chip;
 use crate::align_panel_roles::AlignRoles;
@@ -90,6 +90,12 @@ fn body(
 /// substitute: it can paint the other scan. Exocad exposes this as an
 /// explicit Mesh selection, and keeping it visible in the Brush window makes
 /// the target unambiguous while the operator works.
+///
+/// The window opens on **Both**, because the markings decide what matching
+/// ignores on either surface and an operator who presses Fit nowhere with two
+/// scans on screen means the pair. Naming one scan stays available for the
+/// overlapping case, where it is the only way to stop the wrong surface taking
+/// the stroke.
 fn mesh_selection(
     ui: &mut egui::Ui,
     brush: &mut AlignBrush,
@@ -102,23 +108,40 @@ fn mesh_selection(
             .size(11.0)
             .color(ui_theme::text_muted()),
     );
-    for side in AlignSide::BOTH {
-        let role_key = match side {
-            AlignSide::Moving => "align-brush-moving",
-            AlignSide::Fixed => "align-brush-fixed",
+    for target in BrushTarget::ALL {
+        let label = match target {
+            BrushTarget::Both => locale.tr("align-brush-both"),
+            BrushTarget::Moving => {
+                format!(
+                    "{} · {}",
+                    locale.tr("align-brush-moving"),
+                    roles.side_name(AlignSide::Moving)
+                )
+            }
+            BrushTarget::Fixed => {
+                format!(
+                    "{} · {}",
+                    locale.tr("align-brush-fixed"),
+                    roles.side_name(AlignSide::Fixed)
+                )
+            }
         };
-        let label = format!("{} · {}", locale.tr(role_key), roles.side_name(side));
         if chip(
             ui,
             ui.available_width(),
             None,
             &label,
             enabled,
-            brush.target_side() == side,
+            brush.target() == target,
         )
+        .on_hover_text(if target == BrushTarget::Both {
+            locale.tr("align-brush-both-hint")
+        } else {
+            String::new()
+        })
         .clicked()
         {
-            brush.set_target_side(side);
+            brush.set_target(target);
         }
     }
 }
@@ -270,86 +293,4 @@ fn automatic(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
-
-    use crate::align_markings::MaskCommand;
-
-    fn production() -> &'static str {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("align_panel_brush.rs"));
-        source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before)
-    }
-
-    /// The operator's dental CAD software opens this as its own window, and
-    /// the reason is practical: the operator paints on the mesh with one hand
-    /// and reads the alignment controls with the other, so the two have to
-    /// move independently.
-    #[test]
-    fn the_brush_is_its_own_movable_window() {
-        let source = production();
-        assert!(source.contains("egui::Window::new(view.locale.tr(\"align-brush-title\"))"));
-        assert!(source.contains(".constrain_to(view.viewport_rect)"));
-        assert!(
-            !source.contains(".anchor("),
-            "an anchored window cannot be moved off the mesh being painted"
-        );
-    }
-
-    /// Every command the operator's dental CAD brush window offers has to be
-    /// here, or an operator who reaches for one finds a gap.
-    #[test]
-    fn every_whole_mesh_command_is_offered() {
-        let source = production();
-        for command in [
-            MaskCommand::FitEverywhere,
-            MaskCommand::FitNowhere,
-            MaskCommand::InvertMarkings,
-            MaskCommand::MarkAutomatic,
-        ] {
-            let name = format!("MaskCommand::{command:?}");
-            assert!(source.contains(&name), "{name} is never offered");
-        }
-        // Control captions resolve through the catalog; the keys are
-        // what the window must reference.
-        for control in [
-            "align-brush-mesh-selection",
-            "align-brush-size",
-            "align-brush-inverse",
-            "align-brush-auto-radius",
-        ] {
-            assert!(source.contains(control), "the brush needs {control}");
-        }
-    }
-
-    #[test]
-    fn the_working_brush_window_has_no_dynamic_coverage_line() {
-        let source = production();
-        assert!(
-            !source.contains("coverage("),
-            "brush coverage is diagnostic clutter in the working window"
-        );
-        assert!(
-            !source.contains("align-brush-percent-marked"),
-            "brush must not show a marked percentage"
-        );
-        assert!(
-            source.contains("brush.target_side() == side")
-                && source.contains("brush.set_target_side(side)"),
-            "the brush needs an explicit mesh selection"
-        );
-    }
-
-    #[test]
-    fn the_brush_close_control_shows_keyboard_focus() {
-        let source = production();
-        let header = source
-            .split_once("fn header(")
-            .map(|(_, rest)| rest)
-            .unwrap_or_default();
-        assert!(
-            header.contains("close_response.has_focus()"),
-            "the brush close control needs a visible keyboard focus state"
-        );
-    }
 }

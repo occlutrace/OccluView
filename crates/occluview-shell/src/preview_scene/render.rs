@@ -73,29 +73,11 @@ impl PreviewSceneState {
             // renderer instead of failing on the same dead device forever.
             crate::offscreen_factory::discard_shared_shell_offscreen(&self.offscreen);
         })?;
-        Ok(present_app_convention_rows(rgba, [width, height]))
+        // `render_rgba` already hands back app-convention (top-down) rows.
+        let _ = width;
+        let _ = height;
+        Ok(rgba)
     }
-}
-
-/// Convert bottom-up GPU readback rows to the app's top-down image convention.
-/// Input deltas use the same orientation as the main viewport; this is the only
-/// preview-specific vertical flip.
-fn present_app_convention_rows(mut rgba: Vec<u8>, size_px: [u16; 2]) -> Vec<u8> {
-    let width = usize::from(size_px[0].max(1));
-    let height = usize::from(size_px[1].max(1));
-    let row_bytes = width * 4;
-    if rgba.len() != row_bytes * height || height < 2 {
-        return rgba;
-    }
-    // Reverse row order in place: readback is bottom-up, the app is top-down.
-    let (mut top, mut bottom) = (0usize, height - 1);
-    while top < bottom {
-        let (head, tail) = rgba.split_at_mut(bottom * row_bytes);
-        head[top * row_bytes..top * row_bytes + row_bytes].swap_with_slice(&mut tail[..row_bytes]);
-        top += 1;
-        bottom -= 1;
-    }
-    rgba
 }
 
 fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
@@ -225,48 +207,6 @@ mod tests {
             "dragging DOWN must move the top marker DOWN the screen \
              (row {before} -> {after}); an inverted preview moves it up"
         );
-    }
-
-    /// The Windows blit consumes the presented buffer top-down without another
-    /// row reversal.
-    #[test]
-    fn blit_is_top_down_non_flipping_contract() {
-        let com_src = include_str!("../com.rs");
-        // The DIB header lives in the one function that allocates one; the
-        // swizzle that feeds it lives in `pixels_to_hbitmap`. Both halves of
-        // the contract are checked where they actually are.
-        let allocator = function_body(com_src, "fn create_top_down_bgra_dib");
-        assert!(
-            allocator.contains("biHeight: -(height as i32)"),
-            "the preview/thumbnail blit must use a NEGATIVE biHeight (top-down DIB) \
-             so presented-buffer row 0 maps to the top of the window"
-        );
-        // A top-down DIB must NOT also reorder rows, or the two flips would cancel
-        // and reintroduce the mirror. The swizzle must stay a straight row-preserving
-        // zip (no `height - 1 - y` style row math).
-        let swizzle = function_body(com_src, "fn pixels_to_hbitmap");
-        assert!(
-            !swizzle.contains("height as usize - 1 -") && !swizzle.contains("- 1 - y"),
-            "pixels_to_hbitmap must not vertically flip rows; keep it a straight \
-             top-down, row-preserving swizzle"
-        );
-        assert!(
-            swizzle.contains("create_top_down_bgra_dib(width, height, &bgra)"),
-            "the swizzle must hand its bytes to the one allocator, not carry its \
-             own copy of the header and the GDI leak guard"
-        );
-    }
-
-    /// Everything from a function's signature to the next top-level item.
-    fn function_body<'a>(source: &'a str, signature: &str) -> &'a str {
-        let start = source.find(signature);
-        assert!(start.is_some(), "missing {signature}");
-        let Some(start) = start else {
-            return "";
-        };
-        let body = &source[start..];
-        let end = body.find("\n}\n").map_or(body.len(), |offset| offset + 3);
-        &body[..end]
     }
 
     #[test]

@@ -115,6 +115,37 @@ pub struct Element {
     pub properties: Vec<Property>,
 }
 
+/// What the header's comments say about a texture.
+///
+/// PLY has no texture element, so two conventions meet here. Other tools name
+/// an image beside the file in a `comment TextureFile <name>` line, which this
+/// reader resolves against the file's own folder. OccluView's exports carry the
+/// encoded image inside the file instead, in `OccluViewTexture*` comments, so a
+/// single `.ply` moved on its own still has its texture.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextureComments {
+    /// The image file the header names, if it names one.
+    pub file: Option<String>,
+    /// What the encoded payload is, as the writer declared it.
+    ///
+    /// A build that does not know the value leaves the payload alone rather
+    /// than guessing at it: an image the decoder mistakes for another format is
+    /// worse than no image at all.
+    pub format: Option<String>,
+    /// The encoded image carried by the header itself.
+    pub encoded: Option<String>,
+    /// Set when the encoded payload ran past the reader's ceiling while the
+    /// header was still being read.
+    ///
+    /// The chunks are concatenated as they are parsed, so without this the
+    /// reader would hold the whole payload before it could apply its own bound:
+    /// a header is allowed to be as large as the file, and copying all of it
+    /// into a second buffer is the one allocation the reader makes straight
+    /// from input length. A payload flagged here is refused without ever being
+    /// decoded.
+    pub encoded_too_long: bool,
+}
+
 /// A fully parsed PLY header plus a view onto the data that follows.
 #[derive(Clone, Debug)]
 pub struct ParsedHeader<'a> {
@@ -122,6 +153,8 @@ pub struct ParsedHeader<'a> {
     pub format: Format,
     /// Elements in declaration order (typically `vertex` then `face`).
     pub elements: Vec<Element>,
+    /// Texture the comments describe, if any.
+    pub texture: TextureComments,
     /// The raw bytes after `end_header\n` — the data section.
     pub data: &'a [u8],
 }
@@ -205,13 +238,19 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
 
     let mut format: Option<Format> = None;
     let mut elements: Vec<Element> = Vec::new();
+    let mut texture = TextureComments::default();
+    // The same ceiling the decoder applies, passed in so the accumulator can
+    // stop at it instead of building the whole payload first.
+    let encoded_ceiling = super::max_encoded_chars();
 
     for line in header_text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with("ply") {
             continue;
         }
-        if line.starts_with("comment") || line.starts_with("obj_info") {
+        let keyword = line.split_whitespace().next().unwrap_or_default();
+        if keyword.eq_ignore_ascii_case("comment") || keyword.eq_ignore_ascii_case("obj_info") {
+            read_comment(line, &mut texture, encoded_ceiling);
             continue;
         }
         if let Some(rest) = line.strip_prefix("format ") {
@@ -245,8 +284,61 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
     Ok(ParsedHeader {
         format,
         elements,
+        texture,
         data,
     })
+}
+
+/// Collect what a `comment` (or `obj_info`) line says about a texture.
+///
+/// Comments are free text and every other line here is ignored, so this only
+/// records the two keys it knows. The keyword match is case-insensitive because
+/// the convention itself is: `CloudCompare`'s source notes that `MeshLab` only
+/// accepts the CamelCase spelling, which is what this writer emits, while other
+/// tools write `texturefile`.
+fn read_comment(line: &str, texture: &mut TextureComments, encoded_ceiling: usize) {
+    // `comment TextureFile name.png` — the keyword is the second token.
+    let mut tokens = line.split_whitespace();
+    let _ = tokens.next();
+    let Some(keyword) = tokens.next() else {
+        return;
+    };
+    let rest = line
+        .split_once(char::is_whitespace)
+        .map(|(_, rest)| rest.trim_start())
+        .and_then(|rest| rest.split_once(char::is_whitespace).map(|(_, tail)| tail))
+        .unwrap_or_default();
+    if keyword.eq_ignore_ascii_case("texturefile") {
+        // A quoted name is the name: `comment TextureFile "atlas file.png"`.
+        let name = rest.trim().trim_matches('"').trim();
+        if !name.is_empty() {
+            texture.file = Some(name.to_owned());
+        }
+    } else if keyword.eq_ignore_ascii_case("occluviewtextureformat") {
+        let name = rest.trim();
+        if !name.is_empty() {
+            texture.format = Some(name.to_ascii_lowercase());
+        }
+    } else if keyword.eq_ignore_ascii_case("occluviewtexturebase64") {
+        // One image spans many lines; the chunks are concatenated in the order
+        // the header lists them. A payload already past the ceiling is not
+        // accumulated any further: the flag alone is enough to refuse it, and
+        // the reader must not hold a second copy of a header it will reject.
+        if texture.encoded_too_long {
+            return;
+        }
+        let chunk = rest.trim();
+        let accumulated = texture.encoded.as_ref().map_or(0, String::len);
+        if accumulated.saturating_add(chunk.len()) > encoded_ceiling {
+            texture.encoded_too_long = true;
+            texture.encoded = None;
+            return;
+        }
+        texture
+            .encoded
+            .get_or_insert_with(String::new)
+            .push_str(chunk);
+    }
 }
 
 /// Parse the `format <kind> <version>` line's kind token.
@@ -494,5 +586,62 @@ end_header\n";
         assert_eq!(ScalarType::Short.byte_size(), 2);
         assert_eq!(ScalarType::Int.byte_size(), 4);
         assert_eq!(ScalarType::Double.byte_size(), 8);
+    }
+
+    /// The base64 chunks of one image are concatenated across lines, whichever
+    /// chunk size the writer chose.
+    #[test]
+    fn texture_chunks_are_concatenated_in_order() {
+        let mut texture = TextureComments::default();
+        let ceiling = 1024;
+        read_comment("comment OccluViewTextureFormat png", &mut texture, ceiling);
+        read_comment("comment OccluViewTextureBase64 QUJD", &mut texture, ceiling);
+        read_comment("comment OccluViewTextureBase64 REVG", &mut texture, ceiling);
+
+        assert_eq!(texture.format.as_deref(), Some("png"));
+        assert_eq!(texture.encoded.as_deref(), Some("QUJDREVG"));
+        assert!(!texture.encoded_too_long);
+    }
+
+    /// A payload past the reader's ceiling is refused while it is still being
+    /// parsed, so the reader never holds a second copy of a header it will
+    /// reject. The ceiling is a parameter precisely so this can be checked
+    /// without building an 85 MB header.
+    #[test]
+    fn a_payload_past_the_ceiling_stops_accumulating() {
+        let mut texture = TextureComments::default();
+        read_comment("comment OccluViewTextureBase64 QUJD", &mut texture, 8);
+        assert_eq!(texture.encoded.as_deref(), Some("QUJD"));
+        assert!(!texture.encoded_too_long);
+
+        // The next chunk would take the payload to 8, which is exactly the
+        // ceiling and still acceptable.
+        read_comment("comment OccluViewTextureBase64 REVG", &mut texture, 8);
+        assert_eq!(texture.encoded.as_deref(), Some("QUJDREVG"));
+        assert!(!texture.encoded_too_long);
+
+        // One character more is refused, and the bytes already held are
+        // released rather than kept alongside the flag.
+        read_comment("comment OccluViewTextureBase64 R0hJ", &mut texture, 8);
+        assert!(texture.encoded_too_long);
+        assert_eq!(texture.encoded, None);
+
+        // Later chunks are not accumulated either.
+        read_comment("comment OccluViewTextureBase64 SktM", &mut texture, 8);
+        assert!(texture.encoded_too_long);
+        assert_eq!(texture.encoded, None);
+    }
+
+    /// The keys a foreign tool is likely to spell differently are matched
+    /// case-insensitively, exactly as `TextureFile` is: an export whose casing
+    /// was changed by a text editor still opens with its texture.
+    #[test]
+    fn the_embedded_keys_are_matched_case_insensitively() {
+        let mut texture = TextureComments::default();
+        read_comment("comment occluviewtextureformat png", &mut texture, 1024);
+        read_comment("comment OCCLUVIEWTEXTUREBASE64 QUJD", &mut texture, 1024);
+
+        assert_eq!(texture.format.as_deref(), Some("png"));
+        assert_eq!(texture.encoded.as_deref(), Some("QUJD"));
     }
 }

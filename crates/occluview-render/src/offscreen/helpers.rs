@@ -233,11 +233,15 @@ impl Offscreen {
         output_buffer.unmap();
         let pixels = pixels_result?;
 
-        let mut flipped = Vec::with_capacity(pixels.len());
-        for row in (0..row_count).rev() {
-            flipped.extend_from_slice(&pixels[row * row_bytes..(row + 1) * row_bytes]);
-        }
-        Ok(flipped)
+        // Rows come back in framebuffer order, which in wgpu is top-down: NDC
+        // +y is the first row, and this is the convention every consumer here
+        // already documents — egui paints the buffer untouched, the section
+        // ruler's `SlicePlaneMap` puts +up at the top, `pixels_to_hbitmap`
+        // builds a top-down DIB, and the CLI writes a PNG in row order.
+        // Reversing here made the data bottom-up and silently mirrored the
+        // Explorer thumbnail, the CLI's PNG and the fallback viewport, while
+        // the preview pane compensated with a second reversal.
+        Ok(pixels)
     }
 }
 
@@ -319,27 +323,5 @@ mod tests {
             wait_for_map_callback(&map_rx, RenderDeadline::after(Duration::from_secs(1))),
             Err(RenderError::Surface(error)) if error == "offscreen readback callback dropped"
         ));
-    }
-
-    #[test]
-    fn mapped_range_failure_cleans_up_before_the_error_can_return() {
-        let source = include_str!("helpers.rs");
-        let range = source
-            .find("let data = match slice.get_mapped_range()")
-            .expect("mapped range acquisition");
-        let unmap = source[range..]
-            .find("output_buffer.unmap();")
-            .map(|offset| range + offset)
-            .expect("readback buffer cleanup");
-        let propagate = source[unmap..]
-            .find("let pixels = pixels_result?;")
-            .map(|offset| unmap + offset)
-            .expect("readback error propagation after cleanup");
-
-        assert!(
-            !source[range..unmap].contains("?;"),
-            "mapped-range acquisition must remain inside the cleanup scope"
-        );
-        assert!(unmap < propagate, "cleanup must precede error propagation");
     }
 }

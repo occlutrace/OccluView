@@ -38,7 +38,11 @@ impl MeshWriteFormat {
 }
 
 /// Options that control which optional mesh payloads are written.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+// Four independent yes/no choices rather than a state: each one is a property
+// of the export the operator asked for, so a struct of flags is the honest
+// shape.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MeshWriteOptions {
     /// Write per-vertex normals when the format supports them.
     pub include_normals: bool,
@@ -46,6 +50,8 @@ pub struct MeshWriteOptions {
     pub include_vertex_colors: bool,
     /// Write UV coordinates when the format supports them.
     pub include_uvs: bool,
+    /// Write a texture image when the format carries one.
+    pub include_texture: bool,
 }
 
 impl Default for MeshWriteOptions {
@@ -54,6 +60,7 @@ impl Default for MeshWriteOptions {
             include_normals: true,
             include_vertex_colors: true,
             include_uvs: true,
+            include_texture: true,
         }
     }
 }
@@ -67,6 +74,8 @@ pub enum MeshWriteWarning {
     UvsNotWritten,
     /// A texture image was attached but not written.
     TextureImageNotWritten,
+    /// Per-vertex alpha was present but the format carries only RGB.
+    VertexAlphaNotWritten,
 }
 
 /// Summary of a successful mesh write.
@@ -114,7 +123,7 @@ pub fn write_mesh<W: Write>(
     format: MeshWriteFormat,
     options: MeshWriteOptions,
 ) -> Result<MeshWriteReport, FormatError> {
-    ensure_format_can_represent(mesh, format, options)?;
+    ensure_format_can_represent(mesh, format, &options)?;
     write_mesh_unchecked(writer, mesh, format, options)
 }
 
@@ -180,7 +189,7 @@ pub fn write_mesh_overwrite(
 fn ensure_format_can_represent(
     mesh: &Mesh,
     format: MeshWriteFormat,
-    options: MeshWriteOptions,
+    options: &MeshWriteOptions,
 ) -> Result<(), FormatError> {
     let malformed = |reason: &str| FormatError::Malformed {
         format: format.label(),
@@ -240,7 +249,7 @@ fn write_mesh_file(
     options: MeshWriteOptions,
     create_new: bool,
 ) -> Result<MeshWriteReport, FormatError> {
-    ensure_format_can_represent(mesh, format, options)?;
+    ensure_format_can_represent(mesh, format, &options)?;
     if create_new {
         // Write beside the destination and publish with a no-replace hard
         // link. Opening the destination with `create_new` first still exposed
@@ -304,7 +313,7 @@ fn write_mesh_file(
 ///
 /// Returns [`std::io::ErrorKind::InvalidInput`] when the chain cannot be
 /// resolved to a regular path.
-fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
+pub fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
     /// Enough for the "case folder is a link into the archive" layouts this
     /// exists for, without letting a long chain walk somewhere unexpected.
     const MAX_DESTINATION_LINKS: usize = 8;
@@ -574,6 +583,138 @@ impl std::fmt::Display for FmtF32 {
 
 #[cfg(test)]
 mod tests {
+    /// An export is one file. The image travels inside it, so nothing is
+    /// written beside it and nothing has to be kept together with it.
+    /// A payload this build does not understand is left alone rather than
+    /// decoded on a guess.
+    #[test]
+    fn a_payload_with_an_unknown_format_is_not_decoded() {
+        let header = "ply\nformat ascii 1.0\n\
+             comment OccluViewTextureFormat webp\n\
+             comment OccluViewTextureBase64 aGVsbG8=\n\
+             element vertex 3\n\
+             property float x\nproperty float y\nproperty float z\n\
+             property float s\nproperty float t\n\
+             end_header\n0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n";
+        let mesh = crate::ply::read(header.as_bytes()).expect("the mesh still reads");
+        assert!(
+            mesh.texture().is_none(),
+            "an unknown payload is not decoded"
+        );
+    }
+
+    /// A texture whose buffer does not match its dimensions must not reach the
+    /// PNG encoder: it asserts, and the shipped profile aborts on panic, so an
+    /// export would close the viewer.
+    #[test]
+    fn a_texture_whose_pixels_disagree_with_its_size_is_not_written() {
+        let mesh = crate::ply::read(
+            b"ply\nformat ascii 1.0\n\
+              element vertex 3\n\
+              property float x\nproperty float y\nproperty float z\n\
+              property float s\nproperty float t\n\
+              element face 1\n\
+              property list uchar int vertex_indices\n\
+              property list uchar float texcoord\n\
+              end_header\n0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n3 0 1 2 6 0 1 1 1 0 0\n",
+        )
+        .expect("a triangle with coordinates");
+        let mut mesh = mesh;
+        mesh.set_texture(occluview_core::MeshTexture {
+            width: 4,
+            height: 4,
+            rgba: vec![0; 8],
+        });
+
+        let directory =
+            std::env::temp_dir().join(format!("occluview-broken-texture-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let path = directory.join("broken.ply");
+        write_mesh_to_new_file(
+            &path,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("the mesh still writes");
+        let written = std::fs::read(&path).expect("read back");
+        assert!(
+            !String::from_utf8_lossy(&written).contains("OccluViewTextureFormat"),
+            "an unusable image must not be promised in the header"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn an_exported_ply_carries_its_texture_inside_itself() {
+        use occluview_core::{MeshTexture, Vertex};
+
+        let mut mesh = Mesh::new(
+            Some("arch".to_string()),
+            vec![
+                Vertex::at(glam::Vec3::ZERO).with_uv([0.0, 1.0]),
+                Vertex::at(glam::Vec3::X).with_uv([1.0, 1.0]),
+                Vertex::at(glam::Vec3::Y).with_uv([0.0, 0.0]),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("a triangle mesh");
+        mesh.set_texture(MeshTexture::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]));
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("upper-edited.ply");
+        let report = write_mesh_to_new_file(
+            &path,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write the export");
+
+        assert!(
+            !report
+                .warnings
+                .contains(&MeshWriteWarning::TextureImageNotWritten),
+            "the image was written"
+        );
+        let entries: Vec<String> = std::fs::read_dir(directory.path())
+            .expect("read the folder")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            entries,
+            vec!["upper-edited.ply".to_string()],
+            "an export must leave exactly one file behind, found {entries:?}"
+        );
+
+        let bytes = std::fs::read(&path).expect("the exported ply");
+        let header_end = bytes
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&bytes[..header_end]);
+        assert!(
+            !header.contains("TextureFile"),
+            "no image sits beside this file, so nothing may name one:\n{header}"
+        );
+        assert!(
+            header.contains("comment OccluViewTextureFormat png")
+                && header.contains("comment OccluViewTextureBase64 "),
+            "the image must travel in the header:\n{header}"
+        );
+        assert!(
+            header.contains("property list uchar float texcoord"),
+            "the faces must carry the coordinates that apply the image"
+        );
+
+        let read = crate::ply::read(&bytes).expect("read the export back");
+        let texture = read.texture().expect("the texture came back");
+        assert_eq!((texture.width, texture.height), (2, 1));
+        assert_eq!(texture.rgba, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        assert!(read.has_uvs());
+    }
+
     use super::*;
     use occluview_core::{Mesh, Vertex};
     use tempfile::NamedTempFile;

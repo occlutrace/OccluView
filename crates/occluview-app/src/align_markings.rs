@@ -24,12 +24,8 @@ use occluview_align::{apply_brush, invert, set_all, MaskEdit, Rigid, INCLUDED};
 /// a second convention here. Defined next to the markings themselves because
 /// both the surface and the sentence in the Brush window use it — they were
 /// two separate literals in two files, each with a comment claiming they
-/// matched.
+/// matched. Opaque: a marked-out vertex is fully painted.
 pub(crate) const MARKED_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
-
-/// The colour surface that still takes part in the match is tinted — a neutral
-/// stone, so the marked surface is the only thing that draws the eye.
-pub(crate) const MARKED_IN_COLOR: [u8; 4] = [228, 216, 196, 255];
 
 /// Which scan of the pair a marking belongs to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,14 +40,22 @@ pub(crate) enum AlignSide {
 impl AlignSide {
     /// Both sides, for the commands that mean "the mesh" rather than "this one".
     pub(crate) const BOTH: [Self; 2] = [Self::Moving, Self::Fixed];
+}
 
-    /// The other member of the pair.
-    pub(crate) const fn opposite(self) -> Self {
-        match self {
-            Self::Moving => Self::Fixed,
-            Self::Fixed => Self::Moving,
-        }
-    }
+/// What a whole-mesh command left behind, for the status line.
+///
+/// `marked` is the count the mask reports as EXCLUDED, so `marked == 0` on a
+/// non-empty mesh means the command excluded nothing. That is the normal result
+/// of `MaskCommand::FitEverywhere`, and it is the state
+/// `MaskCommand::MarkAutomatic` reaches when the brush covered the whole layer —
+/// see the command-specific branch at the call site, which must not read this
+/// count on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MaskCommandOutcome {
+    /// Vertices the command left as fitting.
+    pub(crate) marked: usize,
+    /// Vertices the mesh has, i.e. the most the command could mark.
+    pub(crate) vertex_count: usize,
 }
 
 /// One whole-mesh command from the Brush tool window.
@@ -105,6 +109,20 @@ impl MaskCommand {
             Self::MarkAutomatic => "align-mask-automatic-report",
         }
     }
+
+    /// Catalog key for the report when the command reached one named scan.
+    ///
+    /// The Mesh selection can narrow a command to one surface, and a report
+    /// that said "whole mesh marked" would then be read as both arches when
+    /// only one was touched.
+    pub(crate) fn report_one_key(self) -> &'static str {
+        match self {
+            Self::FitEverywhere => "align-mask-fit-everywhere-report-one",
+            Self::FitNowhere => "align-mask-fit-nowhere-report-one",
+            Self::InvertMarkings => "align-mask-invert-report-one",
+            Self::MarkAutomatic => "align-mask-automatic-report-one",
+        }
+    }
 }
 
 /// Which mesh a mask was painted on.
@@ -132,6 +150,13 @@ struct SideMarkings {
     /// How many of those bytes are `EXCLUDED`. Kept in step with `mask` by
     /// every method below, so the panel never has to count.
     marked: usize,
+    /// The vertices the last edit actually changed on this side.
+    ///
+    /// Per side, not per pair: with the Brush window's default Both target one
+    /// stroke dabs both scans, and a single shared list would be overwritten by
+    /// the second dab — the first scan's changed vertices would then never be
+    /// re-coloured, so half the stroke would be invisible.
+    touched: Vec<u32>,
 }
 
 impl SideMarkings {
@@ -175,9 +200,6 @@ pub(crate) struct AlignMarkings {
     /// Bumped on every change. Caches downstream key on this rather than on the
     /// mask contents, which would mean hashing an arch every frame.
     revision: u64,
-    /// The vertices the last dab actually changed. Held across dabs so a stroke
-    /// does not allocate per frame.
-    touched: Vec<u32>,
     /// Whether the pointer is mid-stroke. A stroke defers the measurement until
     /// the operator lifts the button.
     stroke_open: bool,
@@ -217,9 +239,9 @@ impl AlignMarkings {
         self.revision
     }
 
-    /// The vertices the last dab changed.
-    pub(crate) fn touched(&self) -> &[u32] {
-        &self.touched
+    /// The vertices the last dab changed on this side.
+    pub(crate) fn touched(&self, side: AlignSide) -> &[u32] {
+        &self.side(side).touched
     }
 
     /// The pointer came up. Returns whether a stroke was actually open, which
@@ -253,11 +275,25 @@ impl AlignMarkings {
         self.moving.mask.is_some() || self.fixed.mask.is_some()
     }
 
+    /// Whether this side carries marks that still describe the mesh in front of
+    /// the operator.
+    ///
+    /// The panel and the preview ask this before they attach anything. A mask
+    /// that exists but marks nothing (Fit everywhere leaves exactly that) is
+    /// not a reason to replace a scan's colours on the GPU, and the brush
+    /// opening on an unmarked pair must not repaint both arches for nothing.
+    pub(crate) fn has_marks(&self, side: AlignSide, mesh: MarkedOn) -> bool {
+        let state = self.side(side);
+        state.marked > 0 && state.fitting(mesh).is_some()
+    }
+
     /// Paint one dab. Returns how many vertices changed; the list of which ones
-    /// is in [`Self::touched`].
+    /// is in [`Self::touched`] for this side.
     pub(crate) fn dab(&mut self, side: AlignSide, mesh: &MarkedMesh<'_>, edit: &MaskEdit) -> usize {
+        // The list is taken out of this side so the edit below can borrow the
+        // mask and the list mutably at once, and so each side keeps its own.
+        let mut touched = std::mem::take(&mut self.side_mut(side).touched);
         let mut owned = self.side_mut(side).take_for_edit(mesh.identity());
-        let mut touched = std::mem::take(&mut self.touched);
         touched.clear();
         // In place through `Arc::make_mut`: this type holds the only reference
         // while the dab runs, so nothing is copied.
@@ -268,7 +304,6 @@ impl AlignMarkings {
             edit,
             &mut touched,
         );
-        self.touched = touched;
         let state = self.side_mut(side);
         state.marked = if edit.erase {
             state.marked.saturating_sub(changed)
@@ -276,6 +311,7 @@ impl AlignMarkings {
             state.marked.saturating_add(changed)
         };
         state.mask = Some(owned);
+        state.touched = touched;
         self.stroke_open = true;
         if changed > 0 {
             self.revision = self.revision.wrapping_add(1);
@@ -283,20 +319,26 @@ impl AlignMarkings {
         changed
     }
 
-    /// Run one whole-mesh command against one side. Returns whether it reached
-    /// a mask at all.
+    /// Run one whole-mesh command against one side.
+    ///
+    /// Returns `None` when the command reached no mask at all, else what it
+    /// left. The count is the part the caller could not see before: `MarkAutomatic`
+    /// on a layer smaller than the brush radius clears EVERY vertex, so it
+    /// excludes nothing while the status line still said "Fit only at the arrow
+    /// ends" — the next Best fit then used the whole surface under a sentence
+    /// claiming the opposite.
     pub(crate) fn command(
         &mut self,
         side: AlignSide,
         command: MaskCommand,
         mesh: &MarkedMesh<'_>,
         keep: &AutoKeep<'_>,
-    ) -> bool {
+    ) -> Option<MaskCommandOutcome> {
         if mesh.vertex_count == 0 {
-            return false;
+            return None;
         }
         if command == MaskCommand::MarkAutomatic && keep.centres.is_empty() {
-            return false;
+            return None;
         }
         let mut owned = self.side_mut(side).take_for_edit(mesh.identity());
         let previously_marked = self.side(side).marked;
@@ -320,7 +362,8 @@ impl AlignMarkings {
                 // what is ignored.
                 set_all(mask, true);
                 let mut cleared = 0usize;
-                let mut touched = std::mem::take(&mut self.touched);
+                let mut touched = std::mem::take(&mut self.side_mut(side).touched);
+                touched.clear();
                 for center in keep.centres {
                     cleared += apply_brush(
                         mask,
@@ -334,7 +377,7 @@ impl AlignMarkings {
                         &mut touched,
                     );
                 }
-                self.touched = touched;
+                self.side_mut(side).touched = touched;
                 mesh.vertex_count - cleared
             }
         };
@@ -342,7 +385,10 @@ impl AlignMarkings {
         state.marked = marked;
         state.mask = Some(owned);
         self.revision = self.revision.wrapping_add(1);
-        true
+        Some(MaskCommandOutcome {
+            marked,
+            vertex_count: mesh.vertex_count,
+        })
     }
 
     /// Trade the two sides, because the scans traded roles.
@@ -356,7 +402,6 @@ impl AlignMarkings {
             return false;
         }
         std::mem::swap(&mut self.moving, &mut self.fixed);
-        self.touched.clear();
         self.revision = self.revision.wrapping_add(1);
         true
     }
@@ -370,7 +415,6 @@ impl AlignMarkings {
         }
         self.moving = SideMarkings::default();
         self.fixed = SideMarkings::default();
-        self.touched.clear();
         self.stroke_open = false;
         self.revision = self.revision.wrapping_add(1);
         true

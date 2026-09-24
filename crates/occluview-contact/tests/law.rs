@@ -15,7 +15,9 @@
 
 mod support;
 
-use occluview_contact::{ContactScale, CLINICAL, LOAD_MAX_MM, LOAD_MIN_MM, TIGHTNESS};
+use occluview_contact::{
+    ContactScale, CLINICAL, LOAD_MAX_MM, LOAD_MIN_MM, SEARCH_RADIUS_MM, TIGHTNESS,
+};
 
 /// Every named stop reproduces the colour the law was written with.
 ///
@@ -236,9 +238,21 @@ fn the_slider_scales_penetration_stops_only() {
                     law.id
                 );
             } else {
+                // The penetration side scales with the slider until the ramp
+                // would ask for a depth the probe cannot reach; past that it
+                // clamps. A stop deeper than the reach paints nothing, so the
+                // clamp is what keeps every colour the ramp draws wear-able.
+                let scaled = mm * (LOAD_MAX_MM / law.load_mm);
+                let expected = scaled.max(-SEARCH_RADIUS_MM);
                 assert!(
-                    (wide.stop_mm(index) - mm * (LOAD_MAX_MM / law.load_mm)).abs() < 1e-9,
-                    "{}: penetration stop {index} did not scale",
+                    (wide.stop_mm(index) - expected).abs() < 1e-9,
+                    "{}: penetration stop {index} is {}, expected {expected}",
+                    law.id,
+                    wide.stop_mm(index)
+                );
+                assert!(
+                    wide.stop_mm(index) <= base.stop_mm(index) + 1e-9,
+                    "{}: the slider must not make a stop shallower",
                     law.id
                 );
             }
@@ -295,4 +309,32 @@ fn a_deeper_reading_never_reads_cooler() {
 /// whole blue-cyan-green-yellow-orange-red path the way an eye does.
 fn warmth(colour: [u8; 4]) -> i32 {
     i32::from(colour[0]) - i32::from(colour[1]).max(i32::from(colour[2]))
+}
+
+/// The ramp must never demand a depth the probe cannot reach.
+///
+/// The "heavy at" slider scales every penetration stop by `load / law.load_mm`,
+/// so at the top of its range the deepest stop sat at 1.36 mm (TIGHTNESS) or
+/// 1.75 mm (Approach), while a vertex deeper than `SEARCH_RADIUS_MM` inside the
+/// antagonist finds no surface at all. Those stops painted nothing — the field
+/// reports `NO_CONTACT_MM` and the mark has a bare-tooth hole in it — and the
+/// legend named depths no reading could ever show.
+#[test]
+fn no_ramp_stop_is_deeper_than_the_probe_can_reach() {
+    for law in [&TIGHTNESS, &CLINICAL] {
+        for load in [
+            law.load_mm,
+            f64::midpoint(law.load_mm, LOAD_MAX_MM),
+            LOAD_MAX_MM,
+        ] {
+            let scale = ContactScale::new(law, load);
+            for index in 0..law.stops.len() {
+                let stop = scale.stop_mm(index);
+                assert!(
+                    stop >= -SEARCH_RADIUS_MM,
+                    "stop {index} at load {load} is {stop} mm, past the {SEARCH_RADIUS_MM} mm reach"
+                );
+            }
+        }
+    }
 }

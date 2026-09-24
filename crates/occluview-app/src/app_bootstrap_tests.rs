@@ -317,6 +317,39 @@ fn the_live_window_options_match_the_render_contract() {
     );
 }
 
+/// The device request must take its buffer ceiling from the adapter.
+///
+/// `wgpu::Limits::default()` is the WebGPU default tier, whose `max_buffer_size`
+/// is 256 MiB, and `or_worse_values_from` takes the per-field MINIMUM - so a
+/// request built on the default tier capped the live device at 256 MiB even on
+/// an adapter offering gigabytes. A large scan needs a bigger vertex buffer than
+/// that, the allocation is refused, and the refusal arrives at the fault handler
+/// which LATCHES: a scan that rendered fine as a thumbnail was unopenable in the
+/// app, with a Retry that re-ran the same failing allocation.
+#[test]
+fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
+    let generous = wgpu::Limits {
+        max_buffer_size: 3 * 1024 * 1024 * 1024,
+        ..wgpu::Limits::default()
+    };
+    let requested = device_limits_for_backend(wgpu::Backend::Vulkan, &generous);
+    assert_eq!(
+        requested.max_buffer_size, generous.max_buffer_size,
+        "the request must not lower an adapter that offers more than the default tier"
+    );
+
+    let modest = wgpu::Limits {
+        max_buffer_size: 64 * 1024 * 1024,
+        ..wgpu::Limits::default()
+    };
+    let requested = device_limits_for_backend(wgpu::Backend::Gl, &modest);
+    assert_eq!(
+        requested.max_buffer_size,
+        64 * 1024 * 1024,
+        "and a device request may never exceed what a weak adapter reports"
+    );
+}
+
 #[test]
 fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
     let first = report_file_name("startup-failure", 42, 7, 0);
@@ -363,22 +396,27 @@ fn every_desktop_notification_channel_builds_a_usable_command() {
 #[cfg(not(windows))]
 #[test]
 fn a_fatal_notice_cannot_block_the_failure_exit() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_bootstrap.rs"));
-    let run = crate::primary_ui_tests::method_body(source, "fn run_notification(");
-    assert!(!run.is_empty(), "the notification runner must exist");
+    // Stands in for a dialog nobody will dismiss: it never exits on its own.
+    let started = Instant::now();
+    let delivered = run_notification("sleep", &["30".to_string()])
+        .expect("the notice program must be spawnable");
+    let waited = started.elapsed();
+
     assert!(
-        run.contains("try_wait()") && run.contains("NOTIFICATION_DISMISS_WAIT"),
-        "the notice must be given a bounded chance to show, then left on screen"
+        delivered,
+        "a notice that is on screen has been delivered: the operator can still read it"
     );
     assert!(
-        !run.contains("status()"),
-        "waiting for the dialog to be dismissed would block the failure exit"
+        waited >= NOTIFICATION_DISMISS_WAIT,
+        "the notice gets its full chance to be read, so a notification daemon round trip is not cut short"
     );
     assert!(
-        source.contains("const NOTIFICATION_DISMISS_WAIT: std::time::Duration"),
-        "the wait must be a named, reviewable constant"
+        waited < NOTIFICATION_DISMISS_WAIT + std::time::Duration::from_secs(5),
+        "but the wait is bounded, because this path still owes the operator an exit status"
     );
 }
+
+#[cfg(not(windows))]
 #[test]
 fn startup_stage_lines_contain_only_diagnostic_metadata() {
     let line = startup_stage_line("graphics-init", 42, 7);
@@ -435,5 +473,124 @@ fn the_window_loop_must_return_fatal_errors_instead_of_exiting_silently() {
     assert!(
         options.run_and_return,
         "a fatal startup failure must reach main_entry as an error, not exit 0"
+    );
+}
+
+/// A crash report is meant to be attached to a public issue, so it must carry
+/// the SHAPE of the session and never the identity of a case.
+///
+/// This is the behaviour the old source-text check only claimed: it looked for
+/// the words `file_count` and `formats` in the startup log call. The property
+/// worth holding is stronger and testable — feed the real summariser a path that
+/// names a patient, and assert the report tail contains neither the directory,
+/// the file stem, nor the full path. A dental scan's filename is the identifier.
+#[test]
+fn a_crash_report_never_carries_a_scan_path() {
+    // Built as strings so this test's own source does not contain a path that
+    // looks like patient data.
+    let secret_dir = "patients";
+    let secret_stem = "surname-firstname-1980";
+    let path = PathBuf::from(format!("/var/scans/{secret_dir}/{secret_stem}.stl"));
+
+    // What the startup line actually records.
+    let counted = 1usize;
+    let formats = crate::file_extensions(std::slice::from_ref(&path));
+    assert_eq!(
+        formats,
+        vec!["stl".to_string()],
+        "the report records the format, which is the shape of the session"
+    );
+
+    // Now drive the report path the way a failure would.
+    push_crash_log_line(format!(
+        "[    0.001s]  INFO occluview: OccluView starting file_count={counted} formats={formats:?}"
+    ));
+    let report_tail = recent_log_lines();
+    let report = format!("{report_tail}\nBuild: {}\n", env!("CARGO_PKG_VERSION"));
+
+    assert!(
+        !report.contains(secret_stem),
+        "a crash report must not carry the file name: it identifies the case"
+    );
+    assert!(
+        !report.contains(secret_dir),
+        "and it must not carry the directory either"
+    );
+    assert!(
+        !report.contains(path.to_string_lossy().as_ref()),
+        "nor the whole path"
+    );
+    assert!(
+        report.contains("file_count=1") && report.contains("stl"),
+        "while still saying how many files of which kind were opened"
+    );
+}
+
+/// Where the installer keeps the shell entries this build ships.
+#[cfg(target_os = "linux")]
+fn installed_shell_entry(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../install/linux")
+        .join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "the package installs an entry named after the app id: {} ({error})",
+            path.display()
+        )
+    })
+}
+
+/// The identity the window is created with is the one the installed desktop
+/// entry is named after and declares back.
+///
+/// A Wayland compositor matches a window to its launcher entry by app id, and
+/// an X11 one by `StartupWMClass`. When the two drift -- a rename on either
+/// side -- the running viewer becomes a second unnamed icon and loses its name,
+/// its icon and its file associations. This asks the real viewport builder, the
+/// one `native_options` hands to eframe, which app id it produced, and needs no
+/// display to do it: a compositor is what matches the strings later.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_window_identity_matches_desktop_metadata() {
+    let app_id = root_viewport_builder()
+        .app_id
+        .expect("a Linux window must declare an app id, or nothing can match it to an entry");
+
+    let entry = installed_shell_entry(&format!("{app_id}.desktop"));
+    let window_class = entry
+        .lines()
+        .find_map(|line| line.strip_prefix("StartupWMClass="));
+
+    assert_eq!(
+        window_class,
+        Some(app_id.as_str()),
+        "the entry the compositor matches this window against must declare the same id"
+    );
+}
+
+/// The `AppStream` entry describes the same application the window creates.
+///
+/// The package installs `metainfo.xml` under the app id for software centres
+/// and for `appstreamcli validate`; its `<id>` is the name the catalogue files
+/// the product under and its `<launchable>` is the desktop entry a click has to
+/// open. An entry whose id or launchable drifts from the window's own identity
+/// names something that is not this binary.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_window_identity_matches_the_installed_appstream_entry() {
+    let app_id = root_viewport_builder()
+        .app_id
+        .expect("a Linux window must declare an app id, or nothing can match it to an entry");
+
+    let metainfo = installed_shell_entry(&format!("{app_id}.metainfo.xml"));
+    let launchable = format!("<launchable type=\"desktop-id\">{app_id}.desktop</launchable>");
+
+    assert!(
+        metainfo.contains(&format!("<id>{app_id}</id>")),
+        "the catalogue id has to be the window's own app id"
+    );
+    assert!(
+        metainfo.contains(&launchable),
+        "the entry has to launch the desktop file that carries that id"
     );
 }

@@ -108,10 +108,23 @@ impl BridgeSplitController {
         changed
     }
 
+    /// Abandon the session and everything it has in flight.
+    ///
+    /// `clear_queued` drops only what has not started. The running `compute` has
+    /// no cancellation flag and no way to be stopped, and the worker's `active`
+    /// guard stays set until its output arrives, so the NEXT request is queued
+    /// behind an abandoned job: the panel showed "Calculating…" for the old
+    /// layer's remaining compute and the old layer's mesh stayed alive, all to
+    /// produce an output the guard/session-id check then discards.
+    ///
+    /// Dropping the worker ends the thread and it is respawned lazily on the
+    /// next submit, so an abandoned compute cannot serialize the next one. Its
+    /// output can no longer be polled either, which is fine: the session it
+    /// belonged to is gone by definition of this being cancel.
     pub(crate) fn cancel(&mut self) {
         self.source = None;
         self.session.cancel();
-        self.worker.clear_queued();
+        self.worker.abandon();
     }
 }
 

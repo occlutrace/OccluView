@@ -37,6 +37,14 @@ pub(crate) struct PendingSceneLoad {
     /// Authorization state carried through the queue and decoder.
     pub(crate) content_revision_at_request: u64,
     pub(crate) dirty_at_request: bool,
+    /// When this request was made.
+    ///
+    /// The load's OWN start time, which is already an `Instant`. A load that
+    /// finishes after a newer request was parked can compare it against the
+    /// parking's stamp and recognise that it is the older one; without that it
+    /// overwrote the newer parking and the operator's last request was dropped
+    /// without a word.
+    pub(crate) requested_at: Instant,
 }
 
 /// A Replace authorization cannot cover edits made while queued or decoding.
@@ -115,6 +123,7 @@ mod tests {
             superseded: false,
             content_revision_at_request: 0,
             dirty_at_request: false,
+            requested_at: Instant::now(),
         };
         let mut queued = std::collections::VecDeque::new();
         for path in ["second.stl", "third.stl"] {

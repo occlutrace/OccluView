@@ -23,12 +23,18 @@ use occluview_core::{Mesh, MeshBuilder, Vertex};
 /// A corrupt or hostile header can claim billions of vertices/indices; a raw
 /// `Vec::with_capacity(that)` reserves gigabytes and aborts the process on
 /// Windows (where allocations are committed eagerly) — a hard crash on a bad
-/// file. Every element needs at least one input byte, so no honest file can
-/// contain more elements than it has remaining bytes: `declared.min(remaining)`
-/// keeps a truthful file exact (it reserves `declared`) while a lie reserves
-/// only what the bytes could hold, then fails honestly in the read loop.
-fn bounded_capacity(declared: usize, remaining_bytes: usize) -> usize {
-    declared.min(remaining_bytes)
+/// file.
+///
+/// The unit matters: an element of THIS vector is a `Vec3`, so bounding the
+/// count by the remaining bytes reserved `12 x` the file. At the 1 GiB import
+/// cap that is ~12.9 GB, twice over with two files in flight, which is exactly
+/// the reservation the bound exists to prevent. A truthful file still gets its
+/// exact count, because a truthful header cannot declare more elements than
+/// the bytes could encode.
+use std::mem::size_of;
+
+fn bounded_capacity<T>(declared: usize, remaining_bytes: usize) -> usize {
+    declared.min(remaining_bytes / size_of::<T>().max(1))
 }
 
 /// Read an OFF file from raw bytes.
@@ -87,8 +93,10 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
     let f_count = read_i32(bytes, &mut cur)?.max(0) as usize;
     let _e_count = read_i32(bytes, &mut cur)? as usize; // edges: unused
 
-    let mut positions: Vec<Vec3> =
-        Vec::with_capacity(bounded_capacity(v_count, bytes.len().saturating_sub(cur)));
+    let mut positions: Vec<Vec3> = Vec::with_capacity(bounded_capacity::<Vec3>(
+        v_count,
+        bytes.len().saturating_sub(cur),
+    ));
     for _ in 0..v_count {
         let x = read_f64_le(bytes, &mut cur)?;
         let y = read_f64_le(bytes, &mut cur)?;
@@ -114,7 +122,7 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
             continue;
         }
         let mut idxs: Vec<u32> =
-            Vec::with_capacity(bounded_capacity(n, bytes.len().saturating_sub(cur)));
+            Vec::with_capacity(bounded_capacity::<u32>(n, bytes.len().saturating_sub(cur)));
         for k in 0..n {
             let raw = read_i32(bytes, &mut cur)?;
             let idx = u32::try_from(raw.max(0)).map_err(|_| FormatError::Malformed {
@@ -150,17 +158,46 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         reason: "file is not valid UTF-8".to_string(),
     })?;
     let mut lines = text.lines();
-    // First line: OFF (optionally with normals/colors flags). Skip it.
-    let _ = lines.next();
-    // Comment lines start with '#'.
-    let counts_line = lines
-        .by_ref()
-        .find(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
-        .ok_or(FormatError::Truncated {
-            format: "OFF (ascii)",
-            expected: 0,
-            got: 0,
-        })?;
+    // First line: OFF (optionally with normals/colors flags). A writer may put
+    // the three counts on this same keyword line -- `OFF 3 1 0` is as valid as
+    // `OFF` followed by `3 1 0` -- so the rest of the keyword line is the
+    // counts when it carries anything, and only a bare keyword falls through
+    // to the next non-comment line.
+    let first = lines.next().unwrap_or_default();
+    // `OFFST`/`OFF ST` is the with-normals variant, so the flag letters have to
+    // come off before the remainder can be read as counts. Keeping the whole
+    // tail turned `OFFST\n3 1 0` into a vertex count of "ST" and a Malformed
+    // error, on a form the reader advertises support for; and only a tail that
+    // actually starts with a digit is counts, so an unrecognised flag word
+    // falls through to the next line instead of being misparsed.
+    let keyword_tail = first
+        .trim_start()
+        .strip_prefix("OFF")
+        .map(|rest| rest.trim().trim_start_matches("ST").trim())
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    let counts_line = match keyword_tail {
+        Some(tail) => tail.to_string(),
+        None => lines
+            .by_ref()
+            .find(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+            .ok_or(FormatError::Truncated {
+                format: "OFF (ascii)",
+                expected: 0,
+                got: 0,
+            })?
+            .to_string(),
+    };
+    // The counts line must be numbers. Without this an unrecognised flag on the
+    // keyword line (`OFF C 3 1 0`) fell through to the first DATA row as its
+    // counts, and `0 0 0` there parsed as zero vertices and zero faces — an empty
+    // mesh returned as success for a file that has geometry. Refusing is the
+    // honest answer, and it is the same answer a truncated header gets.
+    if !counts_line
+        .trim_start()
+        .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+')
+    {
+        return Err(malformed("counts line must start with a number"));
+    }
     let mut counts = counts_line.split_whitespace();
     let v_count: usize = counts
         .next()
@@ -176,7 +213,8 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
     // Bound the reservation by the remaining text: an ASCII vertex needs at
     // least a few bytes, so a header claiming billions of vertices in a tiny
     // file cannot force a gigabyte reservation (which aborts on Windows).
-    let mut positions: Vec<Vec3> = Vec::with_capacity(bounded_capacity(v_count, bytes.len()));
+    let mut positions: Vec<Vec3> =
+        Vec::with_capacity(bounded_capacity::<Vec3>(v_count, bytes.len()));
     let mut lexer = Lexer::new(lines);
 
     for _ in 0..v_count {
@@ -202,7 +240,7 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
             }
             continue;
         }
-        let mut idxs: Vec<u32> = Vec::with_capacity(bounded_capacity(n, bytes.len()));
+        let mut idxs: Vec<u32> = Vec::with_capacity(bounded_capacity::<u32>(n, bytes.len()));
         for k in 0..n {
             let raw = lexer.next_f32()?;
             let idx = raw as u32;
@@ -358,10 +396,55 @@ mod tests {
     #[test]
     fn bounded_capacity_caps_liar_but_keeps_honest_count() {
         // Truthful file: reserve exactly what the header declares.
-        assert_eq!(bounded_capacity(3, 4096), 3);
-        // Lie: a tiny file claiming billions is capped to the byte budget so
-        // the reservation cannot abort the process.
-        assert_eq!(bounded_capacity(4_000_000_000, 24), 24);
+        assert_eq!(bounded_capacity::<Vec3>(3, 4096), 3);
+        // Lie: a tiny file claiming billions is capped to what its bytes could
+        // encode, so the reservation cannot abort the process.
+        assert_eq!(bounded_capacity::<Vec3>(4_000_000_000, 24), 2);
+    }
+
+    /// The bound must be counted in BYTES, not elements.
+    ///
+    /// Bounding the element count by the remaining bytes reserved `size_of::<T>`
+    /// times the file: a 1 GiB OFF whose header lies reserved ~12.9 GB of
+    /// `Vec3` (and twice that with two files in flight), which is the eager
+    /// commit that aborts on Windows. A smaller element must still get its own
+    /// honest count, so an `u32` face row is not cut to a twelfth of what its
+    /// bytes hold.
+    #[test]
+    fn the_reservation_is_bounded_by_bytes_not_elements() {
+        assert_eq!(bounded_capacity::<Vec3>(1_000_000, 24_000), 2_000);
+        assert_eq!(bounded_capacity::<u32>(1_000_000, 24_000), 6_000);
+        // No element may reserve more than the file could hold.
+        for bytes in [0usize, 1, 11, 12, 4096] {
+            let reserved = bounded_capacity::<Vec3>(usize::MAX, bytes);
+            assert!(reserved * size_of::<Vec3>() <= bytes);
+        }
+    }
+
+    #[test]
+    fn counts_on_the_keyword_line_are_read_instead_of_an_empty_mesh() {
+        // Several writers put the three counts on the keyword line. Discarding
+        // that line made the reader take the first vertex row as the counts and
+        // return an empty mesh with no error.
+        let text = "OFF 3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        let mesh = read(text.as_bytes()).expect("keyword-line counts must parse");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn a_bare_keyword_line_still_takes_the_counts_from_the_next_line() {
+        let text = "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        let mesh = read(text.as_bytes()).expect("bare keyword must still parse");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn a_comment_between_the_keyword_and_the_counts_is_skipped() {
+        let text = "OFF\n# written by a tool\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        let mesh = read(text.as_bytes()).expect("comment must be skipped");
+        assert_eq!(mesh.triangle_count(), 1);
     }
 
     #[test]

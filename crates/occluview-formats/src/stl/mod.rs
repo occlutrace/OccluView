@@ -37,9 +37,57 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
-    if ascii::looks_like_ascii(bytes) {
-        ascii::read_shaded(bytes, shading)
+    // BINARY FIRST, judged on the RAW bytes by the exact size formula
+    // (`len == 84 + 50 * count`). The 80-byte header of a binary STL is
+    // free-form by contract, so it may itself begin with the three BOM bytes —
+    // and stripping them unconditionally moved the triangle count from offset
+    // 80 to 83, which turned a valid file into an empty mesh or a Truncated
+    // error. The formula is what distinguishes the two, not the text prefix:
+    // an ASCII file essentially never satisfies it.
+    if binary_layout_matches(bytes) {
+        return binary::read_shaded(bytes, shading);
+    }
+    // A UTF-8 BOM in front of `solid` is metadata a Windows tool added. Without
+    // this the ASCII reader sees no `solid` and the bytes fall through to the
+    // binary reader, which reports a malformed file for a perfectly good one.
+    let stripped = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    // The BOM may also sit in front of a BINARY file. The raw check above cannot
+    // see that one — it read the count from offset 80 of the BOM-shifted buffer —
+    // so the formula is asked again of the stripped bytes. Without this second
+    // question a BOM-prefixed binary STL fell through to the RAW binary reader
+    // and was reported Truncated, because the count was still being read three
+    // bytes late. Raw first, then stripped: a header that merely BEGINS with
+    // those bytes still wins on its own layout and is never shifted.
+    if stripped.len() != bytes.len() && binary_layout_matches(stripped) {
+        return binary::read_shaded(stripped, shading);
+    }
+    if ascii::looks_like_ascii(stripped) {
+        ascii::read_shaded(stripped, shading)
     } else {
+        // Neither the formula nor the text prefix decided it. Hand it to the
+        // binary reader on the RAW bytes so its own truncation reporting is the
+        // one the operator sees, and so a binary file whose header merely fails
+        // the formula is still read from offset 80.
         binary::read_shaded(bytes, shading)
     }
+}
+
+/// Whether `bytes` has exactly the size a binary STL with its declared count
+/// must have.
+///
+/// This is the standard three.js `STLLoader` heuristic and it is what the probe
+/// already trusts. It is checked here on the raw bytes so the binary decision
+/// never depends on stripping anything.
+fn binary_layout_matches(bytes: &[u8]) -> bool {
+    const HEADER: usize = 80;
+    const COUNT: usize = 4;
+    const TRIANGLE: usize = 50;
+    if bytes.len() < HEADER + COUNT {
+        return false;
+    }
+    let Ok(raw) = bytes[HEADER..HEADER + COUNT].try_into() else {
+        return false;
+    };
+    let count = u32::from_le_bytes(raw) as usize;
+    bytes.len() == HEADER + COUNT + count * TRIANGLE
 }

@@ -72,7 +72,16 @@ pub(crate) struct BridgeSplitWorker {
     result_rx: mpsc::Receiver<BridgeSplitJobOutput>,
     active: Option<BridgeSplitGuard>,
     queued: Option<BridgeSplitJobInput>,
+    /// The compute this worker was built with, kept so `abandon` can restart the
+    /// thread and the channel state without discarding it. Constructing a fresh
+    /// default worker instead would throw away a compute that was injected
+    /// (which is how the cancellation contract is tested at all).
+    compute: Arc<BridgeSplitCompute>,
 }
+
+type BridgeSplitCompute = dyn Fn(BridgeSplitJobInput) -> Result<CoreBridgeSplitResult, BridgeSplitToolError>
+    + Send
+    + Sync;
 
 impl Default for BridgeSplitWorker {
     fn default() -> Self {
@@ -101,19 +110,40 @@ impl BridgeSplitWorker {
             + Sync
             + 'static,
     {
+        Self::with_compute(Arc::new(compute))
+    }
+
+    /// Start a worker thread over `compute` with fresh channels and no work.
+    fn with_compute(compute: Arc<BridgeSplitCompute>) -> Self {
         let (request_tx, request_rx) = mpsc::sync_channel(1);
         let (result_tx, result_rx) = mpsc::channel();
-        let compute = Arc::new(compute);
         // Dropping the handle detaches the thread; channel closure stops it after active compute.
         let _worker_thread = thread::Builder::new()
             .name("bridge-split".to_string())
-            .spawn(move || worker_loop(request_rx, result_tx, compute));
+            .spawn({
+                let compute = Arc::clone(&compute);
+                move || worker_loop(request_rx, result_tx, compute)
+            });
         Self {
             request_tx: Some(request_tx),
             result_rx,
             active: None,
             queued: None,
+            compute,
         }
+    }
+
+    /// Throw this worker's thread and channel state away and start a new one over
+    /// the SAME compute.
+    ///
+    /// A running `compute` has no cancellation flag, and its `active` guard stays
+    /// set until the output arrives, so the next request would otherwise queue
+    /// behind an abandoned job. Dropping the sender ends the old thread once it
+    /// finishes; the fresh channels leave the next job unblocked. Output still in
+    /// flight can no longer be polled, which is correct: the session it described
+    /// is gone by definition of this being a cancel.
+    pub(crate) fn abandon(&mut self) {
+        *self = Self::with_compute(Arc::clone(&self.compute));
     }
 
     pub(crate) fn submit(
@@ -206,7 +236,8 @@ fn worker_loop<F>(
     result_tx: mpsc::Sender<BridgeSplitJobOutput>,
     compute: Arc<F>,
 ) where
-    F: Fn(BridgeSplitJobInput) -> Result<CoreBridgeSplitResult, BridgeSplitToolError>
+    F: ?Sized
+        + Fn(BridgeSplitJobInput) -> Result<CoreBridgeSplitResult, BridgeSplitToolError>
         + Send
         + Sync
         + 'static,

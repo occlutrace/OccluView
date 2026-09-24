@@ -64,5 +64,7 @@ pub use occlu_mesh_edit::{
     BrushStrokeOutcome, FaceSelection, MeshEditOptions, MeshEditReport, MeshEditWarning,
     RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
 };
-pub use scene::{Scene, SceneMesh, SceneMeshId, ScenePickHit, DEFAULT_UNTEXTURED_MESH_TINT};
+pub use scene::{
+    OverlayKind, Scene, SceneMesh, SceneMeshId, ScenePickHit, DEFAULT_UNTEXTURED_MESH_TINT,
+};
 pub use units::{Millimeters, SourceUnit, UnitConfidence, UnitInterpretation};

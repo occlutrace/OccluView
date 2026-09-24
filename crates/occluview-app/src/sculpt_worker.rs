@@ -250,6 +250,11 @@ struct WorkerState {
     completion_wake: Condvar,
     stopping: AtomicBool,
     error: Arc<Mutex<Option<SculptFailure>>>,
+    /// Test-only trigger: when set, the worker body panics as soon as it takes a
+    /// command, exercising the real `catch_unwind` boundary in `spawn`. Never
+    /// set on a production worker.
+    #[cfg(test)]
+    panic_on_next_command: AtomicBool,
 }
 
 type SculptOutputSnapshot = (
@@ -610,6 +615,8 @@ impl SculptWorker {
             completion_wake: Condvar::new(),
             stopping: AtomicBool::new(false),
             error: Arc::clone(&error),
+            #[cfg(test)]
+            panic_on_next_command: AtomicBool::new(false),
         });
         let queue = Arc::new(SculptCommandQueue::with_error(error));
         let worker_queue = Arc::clone(&queue);
@@ -669,6 +676,26 @@ impl SculptWorker {
         }
     }
 
+    /// A worker whose body demonstrably panics as soon as it picks up a
+    /// command, so a test can prove the `catch_unwind` boundary in [`spawn`]
+    /// converts a dead worker thread into a typed failure.
+    ///
+    /// The panic is raised inside `run_worker` on the worker thread, so it is
+    /// the real entry guard — not a mock around it — that is being exercised.
+    /// A kernel failure mode cannot unwind today, which is why this test-only
+    /// trigger exists at all.
+    ///
+    /// [`spawn`]: SculptWorker::spawn
+    #[cfg(test)]
+    pub(crate) fn spawn_panicking(session: SculptSession) -> Self {
+        let worker = Self::spawn(session);
+        worker
+            .state
+            .panic_on_next_command
+            .store(true, Ordering::Release);
+        worker
+    }
+
     pub(crate) fn try_apply(&self, stroke: BrushStroke, mode: BrushMode) -> bool {
         self.queue.push_apply(stroke, mode)
     }
@@ -713,6 +740,36 @@ impl SculptWorker {
         } else {
             self.state.set_error(SculptFailure::WorkerStatePoisoned);
         }
+    }
+
+    /// Test-only: whether a sparse vertex update is queued and still undrained.
+    /// Used to build the frame where a rebuild and a sparse update land
+    /// together, without consuming either.
+    #[cfg(test)]
+    pub(crate) fn has_pending_sparse_update(&self) -> bool {
+        self.state.full_sync.load(Ordering::Acquire)
+            || self
+                .state
+                .pending_touched
+                .try_lock()
+                .is_ok_and(|touched| !touched.is_empty())
+    }
+
+    /// Test-only: queue sparse vertex ids the way a dab's outcome does, so a
+    /// frame can be set up with both a rebuild and a sparse update waiting.
+    #[cfg(test)]
+    pub(crate) fn queue_sparse_for_tests(&self, touched: Vec<usize>) {
+        self.state.record_touched(touched, Vec::new());
+    }
+
+    /// Test-only: whether a whole-layer rebuild is queued and still undrained,
+    /// without consuming it.
+    #[cfg(test)]
+    pub(crate) fn has_pending_rebuild(&self) -> bool {
+        self.state
+            .rebuild
+            .try_lock()
+            .is_ok_and(|rebuilds| !rebuilds.is_empty())
     }
 
     #[cfg(test)]
@@ -793,6 +850,22 @@ impl SculptWorker {
     /// establishes its topology contract.
     pub(crate) fn take_ordered_outputs(&self) -> Result<SculptOutputSnapshot, ()> {
         self.state.take_ordered_outputs()
+    }
+
+    /// Poison this worker's publication boundary, the way a panicking frame
+    /// path does.
+    ///
+    /// Test-only: the real failure path is a panic inside a worker-side lock,
+    /// which cannot be provoked from outside without poisoning one here.
+    #[cfg(test)]
+    #[allow(clippy::expect_used, clippy::panic)]
+    pub(crate) fn poison_publication_for_tests(&self) {
+        let state = Arc::clone(&self.state);
+        let _ = thread::spawn(move || {
+            let _guard = state.publish_boundary.lock().expect("publication lock");
+            panic!("poison the sculpt publication boundary");
+        })
+        .join();
     }
 
     pub(crate) fn is_quiescent(&self) -> bool {

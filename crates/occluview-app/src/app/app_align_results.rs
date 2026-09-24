@@ -135,6 +135,23 @@ impl OccluViewApp {
                 // rebuilding the scene. Mark readiness only after that commit,
                 // so the map can describe the pose that actually landed.
                 self.tools.align.refined_match_ready = true;
+                // An open contact reading owns the per-surface colouring, and
+                // the two overlays describe different measurements. The reading
+                // clears the deviation map when it opens ("Contact and deviation
+                // overlays are mutually exclusive"), but nothing reciprocated:
+                // arming Align never closed the reading and this arm re-armed
+                // the map unconditionally after `commit_align_pose` had turned it
+                // off. One layer then wore `contact_map = 1` AND `measured_map =
+                // 1` at once, both panels claimed their own map was live, and the
+                // shader mixed the contact ramp into a colour taken from the
+                // deviation ramp, so the colours belonged to neither reading.
+                if self.tools.contacts.is_open() {
+                    let ctx = self.ui.repaint_ctx.clone();
+                    self.close_contacts(&ctx);
+                    self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
+                    self.measure_if_shown();
+                    return;
+                }
                 self.tools.align.settings.show_deviation = true;
                 self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
                 self.measure_if_shown();
@@ -415,20 +432,41 @@ fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String
     (key, String::new(), String::new())
 }
 
+impl OccluViewApp {
+    /// The Align worker, replacing one that has died.
+    ///
+    /// `AlignWorker::submit` refuses every job once the thread has failed, and
+    /// an align worker can fail on a panic inside the refinement. Nothing
+    /// replaced it, so Align stayed dead for the rest of the session: the tool
+    /// armed, the operator pressed Best fit, and no job ever ran again. The
+    /// contact worker already respawns this way; this is the same rule.
+    pub(super) fn align_worker_mut(&mut self) -> &mut AlignWorker {
+        if self
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed)
+        {
+            // Dropping it stops the thread and clears its queue.
+            self.tools.align.worker = None;
+        }
+        self.tools
+            .align
+            .worker
+            .get_or_insert_with(AlignWorker::spawn)
+    }
+}
+
+#[cfg(test)]
+#[path = "app_align_authority_tests.rs"]
+mod authority_tests;
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::Rigid;
-
-    /// Source before the test module.
-    fn production() -> &'static str {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("app_align_results.rs"));
-        source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before)
-    }
 
     /// Typed failures map to their catalog keys at the presentation boundary.
     ///
@@ -526,18 +564,6 @@ mod tests {
         }
     }
 
-    /// The worker stays presentation-free: no catalog key literals.
-    #[test]
-    fn worker_source_has_no_catalog_key_literals() {
-        let source = crate::primary_ui_tests::production_source(include_str!("../align_worker.rs"));
-        for literal in ["align-fail-", "align-reject-"] {
-            assert!(
-                !source.contains(literal),
-                "align_worker.rs must not name catalog keys: found {literal}"
-            );
-        }
-    }
-
     /// A committed pose must be visible, undoable, and marked unsaved.
     #[test]
     fn a_committed_pose_is_applied_undoable_and_unsaved_work() {
@@ -569,141 +595,8 @@ mod tests {
         );
     }
 
-    /// Generation checks run for each completion in the batch.
-    #[test]
-    fn a_result_the_operator_has_overtaken_is_never_applied() {
-        let drain = production()
-            .split_once("fn drain_align_worker(")
-            .map(|(_, rest)| rest)
-            .and_then(|rest| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            drain.contains("for completion in completions"),
-            "the drain loop moved; this contract no longer reads it"
-        );
-        assert!(
-            drain.contains("AlignWorker::generation")
-                && drain.contains("if completion.generation != current"),
-            "the check has to sit inside the loop, per completion"
-        );
-    }
-
-    /// A measurement without a summary must not paint the scan.
-    #[test]
-    fn a_measurement_with_no_summary_is_not_painted_on_the_scan() {
-        let measured = production()
-            .split_once("fn apply_measured_outcome(")
-            .map(|(_, rest)| rest)
-            .unwrap_or_default();
-        let guard = measured
-            .split_once("let Some(_summary) = stats.summary else {")
-            .map(|(_, rest)| rest);
-        let (refusal, remainder) = guard
-            .and_then(|rest| rest.split_once("};"))
-            .unwrap_or_default();
-        assert!(
-            !refusal.is_empty(),
-            "the no-summary arm is gone; a scan can be painted flat grey again"
-        );
-        assert!(
-            refusal.contains("self.clear_deviation_overlay()") && refusal.contains("return"),
-            "a measurement that said nothing has to take the old map down and stop"
-        );
-        assert!(
-            !refusal.contains("apply_deviation_colors"),
-            "nothing is painted for a measurement that did not happen"
-        );
-        assert!(
-            refusal.contains("self.tools.align.settings.show_deviation = false"),
-            "an empty measurement must not leave the heatmap toggle claiming a map is visible"
-        );
-        assert!(
-            remainder.contains("self.apply_deviation_colors(colors)"),
-            "the summary path still paints"
-        );
-        assert!(
-            remainder.contains("if !self.apply_deviation_colors(colors)"),
-            "a dropped color attachment must not leave a refined map claim behind"
-        );
-    }
-
-    /// Every path that makes a pose stale abandons the work in flight about it.
-    #[test]
-    fn dropping_a_stale_map_also_drops_the_work_behind_it() {
-        let invalidate = production()
-            .split_once("fn invalidate_deviation_map(")
-            .map(|(_, rest)| rest)
-            .and_then(|rest| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        let before_early_return = invalidate
-            .split_once("if self.tools.align.overlay !=")
-            .map_or("", |(before, _)| before);
-        assert!(
-            !before_early_return.is_empty(),
-            "the overlay guard moved out of invalidate_deviation_map"
-        );
-        assert!(
-            before_early_return.contains("self.abandon_align_jobs()"),
-            "the jobs have to go whether or not a map was on screen: a refine \
-             landing late commits a pose"
-        );
-    }
-
-    /// Naming two roles is enough for the low-level compare-files path, but it
-    /// is not proof that Align Meshes has completed Best fit matching.
-    #[test]
-    fn measurement_requires_a_landed_refined_match() {
-        let source = production();
-        let measure = source
-            .split_once("pub(super) fn measure_if_shown(")
-            .and_then(|(_, rest)| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            measure.contains("refined_match_ready"),
-            "measurement must be gated by a successful Best fit result"
-        );
-        let refine = source
-            .split_once("AlignOutcome::Refined")
-            .and_then(|(_, rest)| rest.split_once("AlignOutcome::Measured"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            refine.contains("self.tools.align.refined_match_ready = true")
-                && refine.contains("self.tools.align.settings.show_deviation = true"),
-            "only a committed refined result may arm the heatmap"
-        );
-    }
-
     /// Switching back to the automatic tab restores controls only. It must not
     /// submit a measurement merely because the arm-time role guess survived.
-    #[test]
-    fn returning_to_automatic_does_not_measure_implicitly() {
-        let source = production();
-        let settle = source
-            .split_once("pub(super) fn settle_align_tab_change(")
-            .and_then(|(_, rest)| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            !settle.contains("self.measure_if_shown()"),
-            "tab restoration must not launch a heatmap job"
-        );
-        assert!(
-            settle.contains("self.tools.align.refined_match_ready = false")
-                && settle.contains("self.tools.align.settings.show_deviation = false"),
-            "manual mode must revoke the measurement authorization"
-        );
-        assert!(
-            !settle
-                .contains("if self.tools.align.tab == crate::align_panel::AlignTab::Automatically")
-                && settle.contains("let entering_automatic"),
-            "returning to Automatically must revoke readiness instead of taking an early return"
-        );
-    }
-
     #[test]
     fn change_invalidation_is_scoped_to_the_selected_pair() {
         use super::change_affects_pair;
@@ -721,42 +614,5 @@ mod tests {
             &[unrelated]
         ));
         assert!(!change_affects_pair(None, None, &[]));
-    }
-
-    /// Replacing a paired surface in place is a geometry change, not a
-    /// presentation one: the outlier marks index pairs by position and
-    /// describe one particular fit, so they go with the map.
-    #[test]
-    fn a_geometry_change_forgets_the_whole_fit() {
-        let source = production();
-        let boundary = source
-            .split_once("pub(super) fn invalidate_alignment_for_geometry_changes(")
-            .and_then(|(_, rest)| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            !boundary.is_empty(),
-            "the geometry boundary must exist for the sculpt commit to call"
-        );
-        assert!(
-            boundary.contains("self.forget_align_fit(&reason)"),
-            "a replaced surface must drop the refined fit and its outlier marks"
-        );
-    }
-
-    /// A completion that was already in flight must not resurrect a map the
-    /// operator hid, or a fit that the session invalidated in the meantime.
-    #[test]
-    fn late_measurement_cannot_reopen_hidden_or_unrefined_map() {
-        let source = production();
-        let measured = source
-            .split_once("fn apply_measured_outcome(")
-            .and_then(|(_, rest)| rest.split_once("pub(super) fn measure_if_shown("))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            measured.contains("refined_match_ready") && measured.contains("show_deviation"),
-            "a late measurement must be rejected after the map is hidden or its fit is stale"
-        );
     }
 }

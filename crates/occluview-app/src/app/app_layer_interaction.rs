@@ -118,6 +118,36 @@ impl OccluViewApp {
         }
 
         // Structural edits remain synchronous and may be expensive on large meshes.
+        //
+        // A contact action takes its own path first and NEVER builds a draft: it
+        // measures the scene and may clear an align overlay, and clearing that
+        // overlay edits the document's LIVE scene in place. `live_scene_mut`
+        // asserts in debug that it holds the only `Arc<Scene>`, and `scene` is a
+        // second handle held by the caller (the layer menu and the viewport
+        // right-click menu both pass one), so a normal gesture — Layers or
+        // right-click -> Contacts while a Best-fit heatmap is up — tripped the
+        // assertion in a debug build; in release the document copied the scene
+        // and the caller's handle went stale for the rest of the action.
+        // The draft below must therefore not be built for this case, and the
+        // borrowed scene has to be gone before the action runs.
+        if let Some(request) = changes.context_request {
+            if matches!(
+                request.action,
+                crate::layer_actions::LayerContextAction::Contacts
+                    | crate::layer_actions::LayerContextAction::HideContacts
+            ) {
+                // The draft is a COPY of the scene, so it carries the layers the
+                // action needs while being no handle on the live one. Dropping
+                // `scene` first is what leaves `live_scene_mut` holding the only
+                // `Arc` when the clear runs.
+                let mut draft = scene.as_ref().clone();
+                drop(scene);
+                super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
+                // A reading is app state, not a change to a scene, so nothing
+                // below applies to it.
+                return;
+            }
+        }
         let mut draft = scene.as_ref().clone();
         let mut scene_changed = false;
         let mut structural_scene_change = false;
@@ -257,11 +287,12 @@ impl OccluViewApp {
             show_texture: entry.show_texture && entry.show_vertex_colors,
             has_color_data: entry.mesh.carries_color_data(),
             has_texture: entry.mesh.texture().is_some(),
-            contacts: self
-                .tools
-                .contacts
-                .pair()
-                .is_some_and(|pair| pair.subject == hit.layer_id),
+            // Both participants wear the marks, so both are where the reading
+            // is: the layer row already offers to close it on either, and the
+            // viewport menu must not disagree with the row beside it.
+            contacts: self.tools.contacts.pair().is_some_and(|pair| {
+                pair.subject == hit.layer_id || pair.antagonist == hit.layer_id
+            }),
             can_read_contacts: crate::contact::can_read_contacts(scene, hit.layer_id),
         })
     }
@@ -552,30 +583,49 @@ mod tests {
     /// A reading paints both participants, so a row that wears marks must say
     /// so or its menu offers to open a *second* reading on the same two scans
     /// while the first is still up. The rows are built from the pair, not from
-    /// its subject: this pins the shape that makes that possible — a flag per
-    /// layer, since one "marked index" can only ever name one of the two.
+    /// its subject: one "marked index" could only ever name one of the two.
     #[test]
     fn a_reading_marks_both_of_its_arches() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
-        let body = crate::primary_ui_tests::method_body(source, "pub(super) fn contact_rows");
-        assert!(!body.is_empty(), "contact_rows must exist");
+        use crate::app::app_test_support::{push_named_layer, test_app};
+        use crate::contact::ContactPair;
+
+        let mut app = test_app("reading-marks-both-arches");
+        let mut scene = super::Scene::new();
+        let subject = push_named_layer(&mut scene, "lower", 0.0);
+        let antagonist = push_named_layer(&mut scene, "upper", 0.1);
+        let _bystander = push_named_layer(&mut scene, "wax", 5.0);
+        let scene = super::Arc::new(scene);
+        app.document.scene = Some(super::Arc::clone(&scene));
+        app.tools.contacts.open(ContactPair {
+            subject,
+            antagonist,
+        });
+
+        let (marked, readable) = app.contact_rows(scene.as_ref());
+
+        assert_eq!(marked.len(), 3, "one row per layer");
         assert!(
-            body.contains("pair.antagonist"),
-            "the antagonist must be marked too, or its own menu offers a second reading"
+            marked[0] && marked[1],
+            "both scans of the reading wear the marks: {marked:?}"
         );
         assert!(
-            body.contains("entry.id() == pair.subject"),
-            "the subject is still one of the two"
+            !marked[2],
+            "a layer outside the pair is not a participant: {marked:?}"
         );
-        let overlay =
-            crate::primary_ui_tests::production_source(include_str!("app_layer_interaction.rs"));
-        assert!(
-            !overlay.contains("marked_index"),
-            "a single index cannot mark both arches; the rows are per layer"
+        assert_eq!(
+            readable,
+            vec![true, true, true],
+            "every layer here has a visible antagonist to read against"
         );
     }
 
+    /// Both arches of a reading must offer to close it.
+    ///
+    /// A reading paints both participants, so a row that wears marks must say
+    /// so or its menu offers to open a *second* reading on the same two scans
+    /// while the first is still up. The rows are built from the pair, not from
+    /// its subject: this pins the shape that makes that possible — a flag per
+    /// layer, since one "marked index" can only ever name one of the two.
     #[test]
     fn context_menu_drops_only_an_in_progress_lasso() {
         let mut lasso = Some(MeshSelectionDrag::Lasso {

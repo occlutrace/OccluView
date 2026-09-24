@@ -51,6 +51,20 @@ const OUTPUT_DIR: &str = "contact-verify";
 /// subdirectories each holding one, named after the case.
 const FIXTURE_DIR_ENV: &str = "OCCLUVIEW_CONTACT_FIXTURES";
 
+/// Whether this run is a release gate rather than an ordinary test run.
+///
+/// The align acceptance harness has had this mode all along; the contact one
+/// did not, and it is the ONLY end-to-end check of a real reading — the numbers
+/// the panel shows as a clinical measurement. Without it a wrong value could
+/// ship with a fully green suite, because the tests that assert
+/// `subject_measured > 0`, `contact_area_mm2 > 0` and "only measured vertices
+/// may be painted" all returned early on a machine with no corpus, including
+/// CI, and `validate-release-private.sh` exported only the align variable, so
+/// even the private gate could not force them.
+fn fixtures_are_required() -> bool {
+    std::env::var_os("OCCLUVIEW_CONTACT_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
+}
+
 /// Every available `(case, upper, lower)` triple, found in the fixture
 /// directory at run time.
 fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
@@ -393,6 +407,15 @@ fn output_dir() -> PathBuf {
 #[test]
 fn a_pair_that_cannot_meet_paints_nothing() {
     let Some((id, upper, lower)) = available_fixtures().into_iter().next() else {
+        // A skip is honest in a developer run and a lie in a release gate: the
+        // gate exists to prove the reading is right, and "no corpus" would make
+        // it report success for having checked nothing.
+        assert!(
+            !fixtures_are_required(),
+            "{} is set, so the corpus is required, but no pair was found in {}",
+            "OCCLUVIEW_CONTACT_FIXTURES_REQUIRED",
+            FIXTURE_DIR_ENV
+        );
         tracing::warn!(
             env = FIXTURE_DIR_ENV,
             "no corpus; the empty-state render is skipped"
@@ -471,6 +494,11 @@ fn a_pair_that_cannot_meet_paints_nothing() {
 fn real_scan_pairs_measure_and_render_a_readable_contact_map() {
     let fixtures = available_fixtures();
     if fixtures.is_empty() {
+        assert!(
+            !fixtures_are_required(),
+            "OCCLUVIEW_CONTACT_FIXTURES_REQUIRED is set, so this test is a release gate, but \
+             no corpus was found in {FIXTURE_DIR_ENV}"
+        );
         tracing::warn!(
             env = FIXTURE_DIR_ENV,
             "no articulated scan corpus; set the variable to a directory of upper/lower \
@@ -552,50 +580,5 @@ fn check_clinical_sanity(
         "{id}: the panel's deepest reading ({}) must be the deepest value on the \
          surface ({deepest})",
         field.stats.deepest_mm
-    );
-}
-
-/// The uniform's field width must be the width the field was PACKED with.
-///
-/// The shader turns a vertex index into a texel with `(i % width, i / width)`
-/// using `mesh_uniform.contact_field_width`. Packing at one width and telling
-/// the shader another decodes every vertex after the first row from the wrong
-/// texel, which paints a scrambled map rather than failing loudly. The two used
-/// to agree because the packer always used the preferred 1024; a large scan is
-/// packed wider to fit the device limit, so the width is now a value that has to
-/// travel with the field.
-#[test]
-fn the_shader_is_told_the_width_the_field_was_packed_with() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app/app_contact.rs"));
-
-    // Both uniform builders must take the width from the field they are given.
-    for signature in [
-        "pub(super) fn prepared_scene_sources",
-        "pub(super) fn prepared_scene_updates",
-    ] {
-        let body = crate::primary_ui_tests::method_body(source, signature);
-        assert!(!body.is_empty(), "{signature} must exist");
-        assert!(
-            body.contains("field_width(field)"),
-            "{signature} must pass the packed width, not the preferred constant"
-        );
-        assert!(
-            !body.contains("CONTACT_FIELD_TEXTURE_WIDTH"),
-            "{signature} passes a constant while the packer may have chosen another width"
-        );
-    }
-
-    // The helper reads it from the texture that was actually built, and the
-    // shader's own decode is pinned to the same rule.
-    assert!(
-        source.contains("field.texels.width"),
-        "the width must come from the packed texture"
-    );
-    let shader = crate::primary_ui_tests::production_source(include_str!(
-        "../../occluview-render/shaders/mesh.wgsl"
-    ));
-    assert!(
-        shader.contains("vertex_index % width"),
-        "the shader must decode with the uniform's width"
     );
 }

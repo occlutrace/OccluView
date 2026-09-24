@@ -500,6 +500,22 @@ fn bridge_surface_sample(
     scene: &Scene,
     layer_id: SceneMeshId,
 ) -> Option<SurfaceSample> {
+    // The BVH is built on a background thread when the tool opens, precisely so
+    // the first hover does not freeze the UI on a large scan. That only holds if
+    // the pick waits for it: `pick_ray_local` reaches `OnceLock::get_or_init`,
+    // which BLOCKS the calling thread until the build finishes, so picking here
+    // either performs the whole scan-sized build on the UI thread or stalls
+    // behind the warm. `Mesh::bvh_is_ready` exists for exactly this and the
+    // sculpt path already uses it. The disc simply follows the cursor once the
+    // warm lands.
+    if !scene
+        .meshes()
+        .iter()
+        .find(|entry| entry.id() == layer_id)
+        .is_some_and(|entry| entry.mesh.bvh_is_ready())
+    {
+        return None;
+    }
     let (origin, direction) = viewport_ray(camera, viewport_rect, pointer)?;
     let hit = scene.pick_layer_ray_hit(origin, direction, layer_id)?;
     let entry = scene.meshes().get(hit.layer_index)?;

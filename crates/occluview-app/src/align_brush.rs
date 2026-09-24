@@ -31,6 +31,51 @@ const WHEEL_STEP_MM: f32 = 0.25;
 
 use crate::align_markings::AlignSide;
 
+/// Which scan(s) the Brush tool acts on.
+///
+/// The window opens on [`Self::Both`], because the marking decides what the
+/// match ignores on **either** surface and an operator who presses Fit nowhere
+/// with two scans on screen means the pair, not whichever one happened to be
+/// selected. Exocad's explicit Mesh selection is kept for the case it exists
+/// for: aiming one scan when both overlap and the wrong one keeps taking the
+/// stroke.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum BrushTarget {
+    /// Every scan of the pair: a stroke paints the surface under the cursor,
+    /// and a whole-mesh command reaches both.
+    #[default]
+    Both,
+    /// Only the scan being placed.
+    Moving,
+    /// Only the scan that stays put.
+    Fixed,
+}
+
+impl BrushTarget {
+    /// Every target, in the order the Brush window lists them.
+    pub(crate) const ALL: [Self; 3] = [Self::Both, Self::Moving, Self::Fixed];
+
+    /// The sides this target covers, in the order they are acted on.
+    pub(crate) fn sides(self) -> &'static [AlignSide] {
+        match self {
+            Self::Both => &AlignSide::BOTH,
+            Self::Moving => &[AlignSide::Moving],
+            Self::Fixed => &[AlignSide::Fixed],
+        }
+    }
+
+    /// The target that keeps aiming at the same physical mesh after the roles
+    /// are traded. A marking belongs to a surface, so `Moving` follows the
+    /// scan it named rather than the role it was called by.
+    pub(crate) fn swapped(self) -> Self {
+        match self {
+            Self::Both => Self::Both,
+            Self::Moving => Self::Fixed,
+            Self::Fixed => Self::Moving,
+        }
+    }
+}
+
 /// Brush state: whether its window is open, how big it is, and which member
 /// of the alignment pair is selected for painting.
 #[derive(Clone, Copy, Debug)]
@@ -39,7 +84,7 @@ pub(crate) struct AlignBrush {
     inverse: bool,
     radius_mm: f32,
     auto_radius_mm: f32,
-    target_side: AlignSide,
+    target: BrushTarget,
 }
 
 impl Default for AlignBrush {
@@ -49,7 +94,7 @@ impl Default for AlignBrush {
             inverse: false,
             radius_mm: DEFAULT_RADIUS_MM,
             auto_radius_mm: DEFAULT_AUTO_RADIUS_MM,
-            target_side: AlignSide::Moving,
+            target: BrushTarget::default(),
         }
     }
 }
@@ -65,24 +110,24 @@ impl AlignBrush {
         self.armed = armed;
     }
 
-    /// The mesh selected by the Brush tool's explicit Mesh selection control.
-    pub(crate) fn target_side(self) -> AlignSide {
-        self.target_side
+    /// The mesh selection the Brush tool is aiming.
+    pub(crate) fn target(self) -> BrushTarget {
+        self.target
     }
 
     /// Select which member of the aligned pair receives strokes and commands.
-    pub(crate) fn set_target_side(&mut self, side: AlignSide) {
-        self.target_side = side;
+    pub(crate) fn set_target(&mut self, target: BrushTarget) {
+        self.target = target;
     }
 
     /// Keep the physical mesh selected when the user swaps moving and fixed.
-    pub(crate) fn swap_target_side(&mut self) {
-        self.target_side = self.target_side.opposite();
+    pub(crate) fn swap_target(&mut self) {
+        self.target = self.target.swapped();
     }
 
     /// Forget a selection that referred to a scene that was cleared.
-    pub(crate) fn reset_target_side(&mut self) {
-        self.target_side = AlignSide::Moving;
+    pub(crate) fn reset_target(&mut self) {
+        self.target = BrushTarget::default();
     }
 
     /// Whether a plain stroke clears instead of marks.
@@ -147,18 +192,34 @@ fn clamp_radius(radius_mm: f32, fallback: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AlignBrush, DEFAULT_AUTO_RADIUS_MM, DEFAULT_RADIUS_MM, MAX_RADIUS_MM, MIN_RADIUS_MM,
+        AlignBrush, BrushTarget, DEFAULT_AUTO_RADIUS_MM, DEFAULT_RADIUS_MM, MAX_RADIUS_MM,
+        MIN_RADIUS_MM,
     };
     use crate::align_markings::AlignSide;
 
     #[test]
-    fn a_new_brush_is_closed_at_a_usable_size() {
+    fn a_new_brush_is_closed_at_a_usable_size_and_aims_both_scans() {
         let brush = AlignBrush::default();
         assert!(!brush.is_armed());
         assert!(!brush.is_inverse());
         assert!((brush.radius_mm() - DEFAULT_RADIUS_MM).abs() < f32::EPSILON);
         assert!((brush.auto_radius_mm() - DEFAULT_AUTO_RADIUS_MM).abs() < f32::EPSILON);
-        assert_eq!(brush.target_side(), AlignSide::Moving);
+        assert_eq!(
+            brush.target(),
+            BrushTarget::Both,
+            "a fresh brush marks the pair, not one arbitrary scan of it"
+        );
+    }
+
+    /// Both is the target that makes Fit nowhere mean the pair. The other two
+    /// exist for the overlapping case, where aiming one surface explicitly is
+    /// the only way to stop the wrong one taking the stroke.
+    #[test]
+    fn both_covers_the_pair_and_a_named_target_covers_one_side() {
+        assert_eq!(BrushTarget::Both.sides(), &AlignSide::BOTH);
+        assert_eq!(BrushTarget::Moving.sides(), &[AlignSide::Moving]);
+        assert_eq!(BrushTarget::Fixed.sides(), &[AlignSide::Fixed]);
+        assert_eq!(BrushTarget::ALL.len(), 3);
     }
 
     #[test]
@@ -215,11 +276,16 @@ mod tests {
     #[test]
     fn mesh_selection_is_explicit_and_survives_role_swaps_by_physical_mesh() {
         let mut brush = AlignBrush::default();
-        brush.set_target_side(AlignSide::Fixed);
-        assert_eq!(brush.target_side(), AlignSide::Fixed);
-        brush.swap_target_side();
-        assert_eq!(brush.target_side(), AlignSide::Moving);
-        brush.reset_target_side();
-        assert_eq!(brush.target_side(), AlignSide::Moving);
+        brush.set_target(BrushTarget::Fixed);
+        assert_eq!(brush.target(), BrushTarget::Fixed);
+        brush.swap_target();
+        assert_eq!(brush.target(), BrushTarget::Moving);
+        // Both names no physical mesh, so a role swap has nothing to follow.
+        brush.set_target(BrushTarget::Both);
+        brush.swap_target();
+        assert_eq!(brush.target(), BrushTarget::Both);
+        brush.set_target(BrushTarget::Moving);
+        brush.reset_target();
+        assert_eq!(brush.target(), BrushTarget::Both);
     }
 }

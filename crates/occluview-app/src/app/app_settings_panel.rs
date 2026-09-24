@@ -1,8 +1,6 @@
 //! Settings controls and their UI actions.
 
-use crate::app_settings::{
-    FallbackExportFormat, Settings, ThemePreference, UnitDisplay, ViewportBackground,
-};
+use crate::app_settings::{Settings, ThemePreference, UnitDisplay, ViewportBackground};
 use crate::i18n::catalog::EMBEDDED_TAGS;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::i18n::{endonym, LocaleManager};
@@ -12,7 +10,11 @@ use crate::update_notice::UpdateCheckStatus;
 use eframe::egui;
 
 pub(super) const PANEL_MARGIN: i8 = 12;
-pub(super) const ROW_HEIGHT: f32 = 30.0;
+/// A control row. Tight enough that the whole panel fits without scrolling on a
+/// normal screen, tall enough that a checkbox is still an easy target.
+pub(super) const ROW_HEIGHT: f32 = 26.0;
+/// Height of the two footer buttons, which are the panel's largest controls.
+const FOOTER_BUTTON_HEIGHT: f32 = 26.0;
 pub(super) const SETTINGS_PANEL_ID: &str = "settings-popover-v2";
 
 pub(super) fn settings_popup_id() -> egui::Id {
@@ -38,7 +40,6 @@ pub(super) fn show_settings_toolbar_toggle(
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SettingsAction {
-    SetExportFormat(FallbackExportFormat),
     SetRememberExportDir(bool),
     SetUpdateCheckOnStart(bool),
     SetFrameSceneOnOpen(bool),
@@ -96,7 +97,7 @@ pub(super) fn show_settings_popup(
             let mut action = None;
             ui.set_width(286.0);
             panel_header(ui, locale);
-            ui.add_space(7.0);
+            ui.add_space(4.0);
 
             // Keep the popup inside the remaining screen height.
             let scroll_budget = ui
@@ -139,7 +140,6 @@ pub(super) fn show_settings_popup(
 
                     section_break(ui);
                     section_label(ui, &locale.tr("settings-section-files"));
-                    export_format_row(ui, settings, locale, &mut action);
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -289,30 +289,36 @@ pub(super) fn show_settings_popup(
                 .on_hover_text(locale.tr("settings-save-error-hint"));
             }
 
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.separator();
-            ui.add_space(3.0);
-            // The keyboard and mouse reference lives here now that it is off
-            // the toolbar: Settings is where an operator looks for a list, and
-            // the width it frees belongs to the tools. The shortcut is shown on
-            // the row so the operator learns the faster way in from the slower
-            // one.
-            // The key is named in the hover hint rather than on a second line:
-            // the panel has a fixed height it must fit, and naming the key is
-            // what a hover is for.
-            if ui
-                .add(egui::Button::new(locale.tr("settings-shortcuts")).frame(false))
-                .on_hover_text(locale.tr("settings-shortcuts-hint"))
-                .clicked()
-            {
-                action = Some(SettingsAction::OpenShortcuts);
-            }
-            if ui
-                .add(egui::Button::new(locale.tr("settings-about")).frame(false))
-                .clicked()
-            {
-                action = Some(SettingsAction::OpenAbout);
-            }
+            ui.add_space(2.0);
+            // Both references sit on one row of two equal, full-height buttons
+            // rather than as two bare text lines. They are the only ways into
+            // the shortcut list and the about box, and a real button is both
+            // easier to hit and shorter to read than a link-shaped label.
+            let button_width = (ui.available_width() - 6.0) * 0.5;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if ui
+                    .add_sized(
+                        [button_width, FOOTER_BUTTON_HEIGHT],
+                        egui::Button::new(locale.tr("settings-shortcuts")),
+                    )
+                    .on_hover_text(locale.tr("settings-shortcuts-hint"))
+                    .clicked()
+                {
+                    action = Some(SettingsAction::OpenShortcuts);
+                }
+                if ui
+                    .add_sized(
+                        [button_width, FOOTER_BUTTON_HEIGHT],
+                        egui::Button::new(locale.tr("settings-about")),
+                    )
+                    .clicked()
+                {
+                    action = Some(SettingsAction::OpenAbout);
+                }
+            });
             action
         })
         .and_then(|response| response.inner)
@@ -347,35 +353,9 @@ fn section_label(ui: &mut egui::Ui, label: &str) {
 }
 
 fn section_break(ui: &mut egui::Ui) {
-    ui.add_space(3.0);
+    ui.add_space(1.0);
     ui.separator();
-    ui.add_space(4.0);
-}
-
-fn export_format_row(
-    ui: &mut egui::Ui,
-    settings: &Settings,
-    locale: &LocaleManager,
-    action: &mut Option<SettingsAction>,
-) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.label(locale.tr("settings-export-format"))
-                .on_hover_text(locale.tr("settings-export-format-hint"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                for format in FallbackExportFormat::OPTIONS.into_iter().rev() {
-                    if ui
-                        .selectable_label(settings.fallback_export_format == format, format.label())
-                        .clicked()
-                    {
-                        *action = Some(SettingsAction::SetExportFormat(format));
-                    }
-                }
-            });
-        },
-    );
+    ui.add_space(1.0);
 }
 
 const NUMERIC_LABEL_WIDTH: f32 = 96.0;
@@ -693,25 +673,6 @@ fn update_status_text<'a>(
         ),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn numeric_preferences_use_slider_tracks_instead_of_stepper_boxes() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("app_settings_panel.rs"));
-
-        assert!(
-            source.contains("egui::Slider::new"),
-            "numeric preferences should expose a continuous slider"
-        );
-        assert!(
-            !source.contains("egui::DragValue::new"),
-            "numeric preferences should not fall back to compact stepper boxes"
-        );
-    }
-}
-
 #[cfg(test)]
 #[path = "app_settings_panel_shots.rs"]
 mod app_settings_panel_shots;

@@ -473,6 +473,14 @@ pub(crate) struct DabOutcome {
     pub(crate) failure: Option<DabFailure>,
 }
 
+/// Test-only: layer id whose densifying rebuild must fail, so a test can drive
+/// the terminal `DabFailure::TopologyRebuild` arm that a well-formed mesh can
+/// never reach. Layer ids are globally unique and never reused, so a stale id
+/// in this slot is inert for every other test.
+#[cfg(test)]
+pub(crate) static FORCE_REBUILD_FAILURE_LAYER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 impl SculptSession {
     /// Apply one dab (already built in mesh-local space) and return either the
     /// touched vertex ids — patched into the display shadow — or a whole-layer
@@ -604,6 +612,12 @@ impl SculptSession {
     ) -> Result<Option<SculptRebuild>, DabFailure> {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Ok(None);
+        }
+        #[cfg(test)]
+        if FORCE_REBUILD_FAILURE_LAYER.load(Ordering::Relaxed) == self.layer_id.get() {
+            return Err(DabFailure::TopologyRebuild {
+                detail: "sculpt topology rebuild failed for the test".to_string(),
+            });
         }
         let mesh =
             mesh_from_sculpt_session_like(&self.base_mesh, &self.session).map_err(|error| {

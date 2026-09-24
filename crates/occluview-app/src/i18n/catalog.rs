@@ -664,7 +664,10 @@ mod tests {
     fn english_seed_formats_with_variables() {
         let catalog = Catalog::build("en").expect("en builds");
         assert_eq!(catalog.tag(), "en");
-        assert_eq!(catalog.text("app-title").as_deref(), Some("OccluView"));
+        assert_eq!(
+            catalog.text("app-window-title").as_deref(),
+            Some("OccluView 3D Viewer")
+        );
         let rendered = catalog
             .format("about-version", Some(&args(&[("version", "1.1.1")])))
             .expect("formats");
@@ -737,7 +740,7 @@ mod tests {
     fn pseudo_locale_covers_every_embedded_key() {
         // Pinned: adding a key without pseudo coverage must update this
         // number AND the loop below in the same change.
-        const EXPECTED_EN_KEYS: usize = 674;
+        const EXPECTED_EN_KEYS: usize = 683;
         let (_, source) = SOURCES
             .iter()
             .find(|(tag, _)| *tag == FALLBACK_TAG)

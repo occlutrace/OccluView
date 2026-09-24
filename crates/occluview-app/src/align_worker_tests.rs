@@ -394,6 +394,74 @@ fn worker_does_not_authorize_a_rank_deficient_refinement() {
     ));
 }
 
+/// A display-only edit re-colours the map already measured; it does not
+/// re-measure the surface. The "heavy at" slider is meant to be free, and a
+/// re-measure would copy and pack megabytes on every notch.
+#[test]
+fn numeric_range_edits_recolour_the_cached_map() {
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let mut job = observable_measure_job(0);
+    match super::execute(&job, &cancel, &mut cache) {
+        super::AlignOutcome::Measured { .. } => {}
+        _ => panic!("the fixture must land a real measurement first"),
+    }
+    let map_ptr_before = cache
+        .measured
+        .as_ref()
+        .expect("the measurement is cached")
+        .1
+        .signed_mm
+        .as_ptr();
+
+    // Change only the display range: the measurement key is untouched.
+    job.settings.scale_mm *= 0.5;
+    job.settings.min_display_mm = job.settings.scale_mm * 0.1;
+
+    match super::execute(&job, &cancel, &mut cache) {
+        super::AlignOutcome::Measured { .. } => {}
+        _ => panic!("a display change must re-colour, not fail"),
+    }
+    let map_ptr_after = cache
+        .measured
+        .as_ref()
+        .expect("still cached")
+        .1
+        .signed_mm
+        .as_ptr();
+    assert_eq!(
+        map_ptr_before, map_ptr_after,
+        "a numeric-range edit must reuse the measured map instead of recomputing it"
+    );
+}
+
+/// The cache is keyed by the measurement, not by the job kind alone: a
+/// different surface must not be coloured from the previous surface's map.
+#[test]
+fn a_recolour_is_refused_when_the_measurement_identity_changed() {
+    let cancel = occluview_align::CancelFlag::new();
+    let mut cache = super::WorkerCache::default();
+
+    let mut job = observable_measure_job(0);
+    let _ = super::execute(&job, &cancel, &mut cache);
+    let before = cache.measured.as_ref().expect("cached").0.moving.1;
+
+    // A different moving geometry identity invalidates the cached map.
+    job.measure_key.moving.1 = before + 1;
+    let outcome = super::execute(&job, &cancel, &mut cache);
+    match outcome {
+        super::AlignOutcome::Measured { .. } => {}
+        _ => panic!("a re-measure must still produce a map"),
+    }
+    let after = cache.measured.as_ref().expect("re-cached").0.moving.1;
+    assert_eq!(
+        after,
+        before + 1,
+        "the map must be re-measured against the new identity, not reused"
+    );
+}
+
 /// One real measurement job, on geometry small enough to finish immediately.
 fn measure_job(generation: u64) -> super::AlignJob {
     use std::sync::Arc;
@@ -609,18 +677,6 @@ fn a_worker_lock_failure_is_observable() {
     assert!(
         worker.has_failed(),
         "a dead Align worker must be visible to the UI"
-    );
-}
-
-/// In an unwind/diagnostic build, a panic inside alignment must stop at the
-/// worker boundary and remain visible to the UI instead of becoming a dead
-/// button.
-#[test]
-fn worker_entry_converts_panics_to_a_visible_failure() {
-    let source = crate::primary_ui_tests::production_source(include_str!("align_worker.rs"));
-    assert!(
-        source.contains("catch_unwind") && source.contains("align worker panicked"),
-        "the worker entry must convert a panic into the observable failure latch"
     );
 }
 

@@ -18,12 +18,12 @@ use glam::Vec3;
 use occluview_core::{mesh_edit_buffers_from_mesh, BrushSession, Mesh, Scene, SceneMesh};
 use std::time::Duration;
 
-fn worker_for(mesh: &Mesh) -> SculptWorker {
+fn session_for(mesh: &Mesh) -> SculptSession {
     let entry = SceneMesh::new(mesh.clone());
     let layer_id = entry.id();
     mesh.warm_bvh();
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
-    SculptWorker::spawn(SculptSession {
+    SculptSession {
         layer_id,
         topology_id: mesh.topology_id(),
         session: brush,
@@ -34,11 +34,16 @@ fn worker_for(mesh: &Mesh) -> SculptWorker {
         local_per_world: mean_uniform_scale(&Affine3A::IDENTITY),
         dirty_stroke: false,
         stroke_start_mesh: None,
-    })
+    }
 }
 
-fn test_worker() -> SculptWorker {
-    let mesh = Mesh::new(
+fn worker_for(mesh: &Mesh) -> SculptWorker {
+    SculptWorker::spawn(session_for(mesh))
+}
+
+/// The four-vertex quad every stroke test below sculpts on.
+fn test_mesh() -> Mesh {
+    Mesh::new(
         Some("worker-test".to_string()),
         vec![
             Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
@@ -48,8 +53,20 @@ fn test_worker() -> SculptWorker {
         ],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("test mesh");
-    worker_for(&mesh)
+    .expect("test mesh")
+}
+
+fn test_worker() -> SculptWorker {
+    worker_for(&test_mesh())
+}
+
+fn a_dab() -> BrushStroke {
+    BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    }
 }
 
 #[test]
@@ -171,13 +188,6 @@ fn a_rejected_new_stroke_does_not_leave_a_phantom_open_stroke() {
 }
 
 #[test]
-fn worker_passes_its_cancellation_token_into_the_kernel() {
-    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
-    assert!(source.contains("apply_dab_cancellable"));
-    assert!(source.contains("&state.stopping"));
-}
-
-#[test]
 fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
     let worker = test_worker();
     {
@@ -195,43 +205,6 @@ fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
     assert!(triangle < 2);
     assert!((point.x - 10.25).abs() < 1e-5);
     assert!((point.z).abs() < 1e-5);
-}
-
-#[test]
-fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
-    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_worker_loop.rs"));
-    let start = source
-        .rfind("SculptCommand::Finish")
-        .expect("the Finish command branch must exist");
-    let finish = &source[start..(start + 2_000).min(source.len())];
-    for failure in [
-        "MissingUndoBaseline",
-        "ShadowPoisoned",
-        "VertexCountChanged",
-    ] {
-        let marker = format!("state.set_error(SculptFailure::{failure})");
-        let error = finish
-            .find(&marker)
-            .unwrap_or_else(|| panic!("terminal failure {failure} must be reported"));
-        let tail = &finish[error..(error + 600).min(finish.len())];
-        assert!(
-            tail.contains("queue.mark_idle();") && tail.contains("break;"),
-            "terminal failure {failure} must stop command consumption"
-        );
-    }
-}
-
-#[test]
-fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
-    let source = crate::primary_ui_tests::production_source(include_str!("sculpt_tool.rs"));
-    let start = source
-        .find("pub(crate) fn is_busy")
-        .expect("the sculpt busy predicate must exist");
-    let body = &source[start..(start + 500).min(source.len())];
-    assert!(
-        body.contains("self.pending.is_some()"),
-        "mesh edits must wait while background preparation is still pending"
-    );
 }
 
 #[test]
@@ -548,6 +521,198 @@ fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
         completion.mesh.topology_id(),
         completion.before.topology_id(),
         "a positions-only sculpt keeps the GPU buffer token frozen"
+    );
+}
+
+/// A dirty stroke whose undo baseline was lost, and one whose display shadow no
+/// longer has the kernel's shape, are terminal. Each has to latch an error the
+/// UI can show and stop consuming commands: publishing either one would hand
+/// the scene a mesh that no undo step can describe.
+#[test]
+fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
+    // A stroke that changed geometry with nothing recorded to undo back to.
+    let mut session = session_for(&test_mesh());
+    session.dirty_stroke = true;
+    session.stroke_start_mesh = None;
+    let worker = SculptWorker::spawn(session);
+    assert!(worker.finish_stroke(), "the finish marker is accepted");
+    assert_eq!(
+        wait_for_error(&worker),
+        Some(SculptFailure::MissingUndoBaseline),
+        "a stroke with no undo boundary must be reported, not committed"
+    );
+    assert_no_further_output(&worker);
+
+    // A display shadow that no longer has the shape of the kernel mesh: the
+    // committed mesh would disagree with the vertices already on the GPU.
+    let mesh = test_mesh();
+    let mut session = session_for(&mesh);
+    session.dirty_stroke = true;
+    session.stroke_start_mesh = Some(Arc::new(mesh.clone()));
+    session.shadow = Arc::new(RwLock::new(vec![mesh.vertices()[0]]));
+    let worker = SculptWorker::spawn(session);
+    assert!(worker.finish_stroke());
+    assert_eq!(
+        wait_for_error(&worker),
+        Some(SculptFailure::VertexCountChanged),
+        "a shadow with the wrong shape must be reported, not committed"
+    );
+    assert_no_further_output(&worker);
+}
+
+/// The worker hands its shutdown token into the kernel, so a dab already
+/// running stops instead of finishing a traversal nobody will ever read. The
+/// session is dropped mid-dab on every undo, layer removal and scene replace.
+#[test]
+fn worker_passes_its_cancellation_token_into_the_kernel() {
+    let worker = test_worker();
+    let shadow = worker.shadow();
+    let before = shadow.read().expect("the display shadow").clone();
+
+    // Hold the display shadow so the dab parks inside the session's baseline
+    // snapshot: past the worker's own top-of-loop check, before the kernel.
+    let held = shadow
+        .write()
+        .expect("the test holds the shadow write lock");
+    assert!(worker.try_apply(a_dab(), BrushMode::Add));
+    for _ in 0..2_000 {
+        if worker.queue.active.load(Ordering::Acquire) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        worker.queue.active.load(Ordering::Acquire),
+        "the worker has to pick the dab up"
+    );
+    thread::sleep(Duration::from_millis(200));
+    // Exactly what `Drop` does when the session goes away.
+    worker.state.stopping.store(true, Ordering::Release);
+    drop(held);
+
+    for _ in 0..2_000 {
+        if worker
+            .worker_thread
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        worker
+            .worker_thread
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished),
+        "a cancelled dab must let the worker stop"
+    );
+
+    let after = shadow.read().expect("the display shadow").clone();
+    assert_eq!(after.len(), before.len());
+    assert!(
+        after
+            .iter()
+            .zip(&before)
+            .all(|(now, then)| now.position == then.position),
+        "a dab cancelled inside the kernel must not patch the display shadow"
+    );
+    assert!(
+        worker.take_update().is_none(),
+        "and must publish no sparse update"
+    );
+    assert!(worker.take_completion().is_none());
+}
+
+/// Wait for a terminal worker failure, or give up so a wedged worker fails the
+/// test instead of hanging the suite.
+fn wait_for_error(worker: &SculptWorker) -> Option<SculptFailure> {
+    for _ in 0..2_000 {
+        if let Some(failure) = worker.take_error() {
+            return Some(failure);
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    None
+}
+
+/// After a terminal failure the loop has stopped: a command queued behind it is
+/// never consumed and never published.
+fn assert_no_further_output(worker: &SculptWorker) {
+    assert!(worker.try_apply(a_dab(), BrushMode::Add));
+    assert!(worker.finish_stroke());
+    for _ in 0..60 {
+        assert!(
+            worker.take_completion().is_none(),
+            "a stopped worker must consume no later command"
+        );
+        assert!(worker.take_update().is_none());
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A densifying dab whose authoritative scene mesh cannot be built is terminal:
+/// the kernel topology has already grown, so the worker must report the failure
+/// and stop rather than keep streaming sparse ids that index a mesh the renderer
+/// never received. The rebuild failure cannot be provoked through a well-formed
+/// mesh, so the session's rebuild is forced to fail for this one layer.
+#[test]
+fn densification_failure_is_not_silently_dropped() {
+    let mesh = coarse_ridge_mesh();
+    let mut session = session_for(&mesh);
+    // Arm the forced rebuild failure for exactly this worker's layer.
+    crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(session.layer_id.get(), Ordering::SeqCst);
+    session.dirty_stroke = false;
+    session.stroke_start_mesh = None;
+    let worker = SculptWorker::spawn(session);
+
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 4.0],
+        radius_mm: 3.5,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    assert!(worker.try_apply(stroke, BrushMode::Smooth));
+
+    let failure = wait_for_error(&worker);
+    assert!(
+        matches!(
+            failure,
+            Some(SculptFailure::TopologyRebuild { ref detail }) if detail.contains("for the test")
+        ),
+        "a failed densification rebuild must surface as TopologyRebuild, not be \
+         dropped as an empty dab: {failure:?}"
+    );
+
+    // And it stops: no rebuild, no completion, no later command consumed.
+    assert_no_further_output(&worker);
+    // Reset so a later test in this binary is not affected.
+    crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(0, Ordering::SeqCst);
+}
+
+/// A panic in the worker body must not take the viewer down or leave the stroke
+/// looking busy forever: the `catch_unwind` boundary in `spawn` has to latch a
+/// typed failure the UI can show. The kernel cannot unwind through a normal dab,
+/// so the test-only trigger panics the worker at its command boundary.
+#[test]
+fn worker_entry_converts_panics_to_a_visible_failure() {
+    let worker = SculptWorker::spawn_panicking(session_for(&test_mesh()));
+
+    // Any command drives the worker into its body; the panic happens there.
+    assert!(worker.try_apply(a_dab(), BrushMode::Add));
+
+    let failure = wait_for_error(&worker);
+    assert!(
+        matches!(failure, Some(SculptFailure::WorkerPanicked { ref message }) if !message.is_empty()),
+        "a panicking worker body must latch a visible WorkerPanicked failure: {failure:?}"
+    );
+    assert!(
+        worker.take_completion().is_none(),
+        "a panicked worker publishes no completion"
+    );
+    assert!(
+        worker.take_error().is_none(),
+        "the failure is reported exactly once, not relatched forever"
     );
 }
 

@@ -362,6 +362,14 @@ impl Mesh {
         self.topology_id = next_mesh_topology_id();
     }
 
+    /// Drop the decoded texture image, keeping the geometry and coordinates.
+    #[inline]
+    pub fn clear_texture(&mut self) {
+        if self.texture.take().is_some() {
+            self.topology_id = next_mesh_topology_id();
+        }
+    }
+
     /// Stable identity for the GPU-uploaded mesh payload.
     ///
     /// Cloning a mesh preserves this value so material-only scene edits can

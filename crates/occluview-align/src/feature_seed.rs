@@ -26,7 +26,26 @@ const BINS: usize = 11;
 const DESCRIPTOR_SIZE: usize = BINS * 3;
 const MATCH_RATIO_SQUARED: f64 = 0.8 * 0.8;
 const CONSENSUS_MM: f64 = 0.5;
-const MIN_SUPPORT: usize = 24;
+/// The band that separates a seating from an illusion, in millimetres.
+///
+/// Two agreements can both reach hundreds of matches within the coarse
+/// consensus distance and still be different answers: a prepared model's
+/// operated region slides onto the original within half a millimetre almost
+/// everywhere, while only the unchanged region seats exactly. Counting the
+/// matches inside this tighter band is what tells those two apart, and it is
+/// the same band the ICP refinement treats as seated.
+const TIGHT_CONSENSUS_MM: f64 = 0.05;
+/// Independent matches one agreement must carry before it can seed a fit.
+///
+/// This is a floor on EVIDENCE, not on the fraction of the cloud: a prepared
+/// model keeps only its unchanged region rigid, and that region can be a small
+/// minority of the surface. On a real prepared arch pair the true seating
+/// carried 12 spatially extended agreements, so a floor of 24 refused the one
+/// correct hypothesis and left the search to a coarse orientation sweep that
+/// landed 2.5 mm away. The floor is only safe because the seed is not trusted
+/// on its own: `refine` refuses any pose more than a millimetre from it, so a
+/// coincidental twelve-point agreement produces a refusal, not a wrong pose.
+const MIN_SUPPORT: usize = 12;
 const MIN_SPAN_MM: f64 = 4.0;
 const TRIAL_BUDGET: usize = 15_000;
 
@@ -46,6 +65,9 @@ struct Match {
 struct Consensus {
     rigid: Rigid,
     inliers: usize,
+    /// Matches inside [`TIGHT_CONSENSUS_MM`]: the matches that are actually
+    /// seated rather than merely near.
+    tight: usize,
     residual: f64,
     span: f64,
 }
@@ -60,10 +82,10 @@ pub(super) fn find_feature_seed(
         return None;
     }
     let moving_cloud = moving.feature_cloud();
+    let fixed_cloud = fixed.feature_cloud();
     if moving_cloud.len() < MIN_CLOUD_POINTS {
         return None;
     }
-    let fixed_cloud = fixed.feature_cloud();
     if fixed_cloud.len() < MIN_CLOUD_POINTS {
         return None;
     }
@@ -120,9 +142,17 @@ pub(super) fn find_feature_seed(
         }
     }
     let mut best = best?;
-    if best.inliers * 8 < matches.len()
-        || rival.is_some_and(|other| other.inliers * 10 >= best.inliers * 9)
-    {
+    // Not a fixed fraction of the matched cloud: a changed arch supplies most
+    // of its features from the region that no longer matches, so requiring a
+    // share of them would refuse exactly the case this seed exists for. What
+    // matters is that no rival explains as much, and that the support is
+    // spatially extended rather than a coincidental cluster.
+    // A rival is only a rival if it seats as well. Two hypotheses that both
+    // explain the coarse distance are not equally supported when one of them
+    // seats hundreds of matches exactly and the other seats a handful.
+    if rival.is_some_and(|other| {
+        other.tight * 10 >= best.tight * 9 && other.inliers * 10 >= best.inliers * 9
+    }) {
         return None;
     }
     for _ in 0..4 {
@@ -181,12 +211,16 @@ fn consensus(
     fixed: &[FeaturePoint],
 ) -> Consensus {
     let mut inliers = 0;
+    let mut tight = 0;
     let mut residual = 0.0;
     let mut minimum = DVec3::splat(f64::INFINITY);
     let mut maximum = DVec3::splat(f64::NEG_INFINITY);
     for pair in matches {
         let point = moving[pair.moving].position;
         let distance = rigid.apply(point).distance(fixed[pair.fixed].position);
+        if distance < TIGHT_CONSENSUS_MM {
+            tight += 1;
+        }
         if distance < CONSENSUS_MM {
             inliers += 1;
             residual += distance;
@@ -197,6 +231,7 @@ fn consensus(
     Consensus {
         rigid,
         inliers,
+        tight,
         residual: residual / inliers.max(1) as f64,
         span: if inliers == 0 {
             0.0
@@ -207,6 +242,13 @@ fn consensus(
 }
 
 fn better(left: Consensus, right: Consensus) -> bool {
+    // Exact seating first. A prepared model's operated region can reach as many
+    // coarse matches as the unchanged one, so ranking on the coarse count picks
+    // between them by luck; the count inside the tight band is what says which
+    // agreement actually seats a surface.
+    if left.tight != right.tight {
+        return left.tight > right.tight;
+    }
     left.inliers > right.inliers
         || (left.inliers == right.inliers && left.residual < right.residual)
 }

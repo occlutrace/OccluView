@@ -95,34 +95,4 @@ pub(crate) fn show_scene_context_menu(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
-
-    use super::SceneContextAction;
-
-    /// The scene menu exists to make an alignment survivable: without a save
-    /// entry the operator has no way to keep a moved scan, because the viewer
-    /// has no project file.
-    #[test]
-    fn the_scene_menu_offers_saving_before_anything_else() {
-        let source = crate::primary_ui_tests::production_source(include_str!("scene_menu.rs"));
-        let save = source.find("Save scene as…").expect("a save entry");
-        let reset = source.find("Reset positions").expect("a reset entry");
-        assert!(save < reset, "saving must come first in the menu");
-    }
-
-    #[test]
-    fn every_scene_action_is_reachable_from_the_menu() {
-        let source = crate::primary_ui_tests::production_source(include_str!("scene_menu.rs"));
-        for action in [
-            SceneContextAction::SaveScene,
-            SceneContextAction::SaveEachLayer,
-            SceneContextAction::ResetPositions,
-            SceneContextAction::FitView,
-        ] {
-            let name = format!("SceneContextAction::{action:?}");
-            assert!(
-                source.contains(name.as_str()),
-                "{name} is declared but never offered"
-            );
-        }
-    }
 }

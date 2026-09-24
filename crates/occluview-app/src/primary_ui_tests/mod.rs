@@ -7,11 +7,9 @@ use std::path::Path;
 
 mod chrome;
 mod documents;
-mod loading;
 mod platform;
 mod presentation_sinks;
 mod source_tree;
-mod tools;
 mod viewport;
 
 /// Every `.rs` file under `directory`, skipping symlinks and any `target`
@@ -41,114 +39,6 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
-/// Whether `first` appears before `second`, with both present.
-///
-/// `str::find` returns an `Option`, and `None < Some(_)` is true in Rust, so a
-/// bare `find(a) < find(b)` passes when `a` is missing altogether -- which is
-/// exactly the deletion an ordering guard exists to catch. One of these
-/// guarded the line that keeps a brush dab from deep-copying the whole case.
-pub(crate) fn appears_before(haystack: &str, first: &str, second: &str) -> bool {
-    match (haystack.find(first), haystack.find(second)) {
-        (Some(first), Some(second)) => first < second,
-        _ => false,
-    }
-}
-
-/// The part of a source file above its own `#[cfg(test)]` module.
-///
-/// A guard that reads its own file and searches the whole of it matches the
-/// needle written in its own assertion, so it passes on its own text: the
-/// production line it names can be deleted and nothing goes red. Files whose
-/// tests live in a separate module have no marker, and the whole text is
-/// returned unchanged.
-pub(crate) fn production_source(source: &'static str) -> &'static str {
-    source
-        .split_once("#[cfg(test)]\nmod tests")
-        .map_or(source, |(production, _)| production)
-}
-
-/// One method's body: from its signature to the first line closing at the impl
-/// indentation.
-///
-/// A guard that searched everything after a signature accepted a helper that
-/// was merely *defined* later in the same file, so deleting the call inside the
-/// method left it green. Scoping to the body is what binds an assertion to the
-/// code it claims to protect.
-pub(crate) fn method_body<'a>(source: &'a str, signature: &str) -> &'a str {
-    source
-        .split_once(signature)
-        .and_then(|(_, rest)| rest.split_once("\n    }"))
-        .map(|(body, _)| body)
-        .unwrap_or_default()
-}
-
-pub(super) fn main_source() -> &'static str {
-    include_str!("../main.rs")
-}
-
-/// Canonical home of the application module graph since the library
-/// boundary (Stage C): `main.rs` only delegates to the public entry here.
-pub(super) fn lib_source() -> &'static str {
-    include_str!("../lib.rs")
-}
-
-/// Canonical home of argument parsing and the single-instance append
-/// decision since the library seam (see `src/startup.rs`).
-pub(super) fn startup_source() -> &'static str {
-    include_str!("../startup.rs")
-}
-
-pub(super) fn app_module_source() -> &'static str {
-    concat!(
-        include_str!("../app/mod.rs"),
-        "\n",
-        include_str!("../app/state.rs")
-    )
-}
-
-pub(super) fn app_bootstrap_source() -> &'static str {
-    include_str!("../app_bootstrap.rs")
-}
-
-pub(super) fn app_loading_source() -> &'static str {
-    include_str!("../app/app_loading.rs")
-}
-
-pub(super) fn app_dialogs_source() -> &'static str {
-    include_str!("../app/app_dialogs.rs")
-}
-
-pub(super) fn app_render_source() -> &'static str {
-    include_str!("../app/app_render.rs")
-}
-
-pub(super) fn app_chrome_source() -> &'static str {
-    include_str!("../app_chrome.rs")
-}
-
-pub(super) fn app_layer_edits_source() -> String {
-    [
-        include_str!("../app/app_layer_edits/mod.rs"),
-        include_str!("../app/app_layer_edits/whole_mesh.rs"),
-        include_str!("../app/app_layer_edits/selection_ops.rs"),
-        include_str!("../app/app_layer_edits/structural.rs"),
-        include_str!("../app/app_layer_edits/undo_redo.rs"),
-    ]
-    .concat()
-}
-
-pub(super) fn app_viewport_source() -> &'static str {
-    concat!(
-        include_str!("../app/app_viewport.rs"),
-        "\n",
-        include_str!("../app/app_mesh_editor.rs"),
-        "\n",
-        include_str!("../app/app_cut_measure.rs"),
-        "\n",
-        include_str!("../app/app_layer_interaction.rs")
-    )
-}
-
 /// Read a source file this crate makes assertions about.
 ///
 /// The sibling mechanism, `include_str!`, is checked by the compiler: rename
@@ -166,14 +56,6 @@ pub(super) fn repo_source_file(relative_path: &str) -> String {
             path.display()
         )
     })
-}
-
-pub(super) fn viewer_interaction_source() -> &'static str {
-    include_str!("../viewer/interaction.rs")
-}
-
-pub(super) fn app_manifest_source() -> &'static str {
-    include_str!("../../Cargo.toml")
 }
 
 pub(super) fn ci_workflow_source() -> &'static str {
@@ -194,36 +76,4 @@ pub(super) fn linux_build_deb_source() -> &'static str {
 
 pub(super) fn linux_check_deb_source() -> &'static str {
     include_str!("../../../../install/linux/check-deb.sh")
-}
-
-pub(super) fn linux_metainfo_source() -> &'static str {
-    include_str!("../../../../install/linux/ai.occlutrace.OccluView.metainfo.xml")
-}
-
-pub(super) fn linux_desktop_source() -> &'static str {
-    include_str!("../../../../install/linux/ai.occlutrace.OccluView.desktop")
-}
-
-pub(super) fn count_occurrences(source: &str, needle: &str) -> usize {
-    source.match_indices(needle).count()
-}
-
-pub(super) fn function_source<'a>(source: &'a str, signature: &str) -> &'a str {
-    let start = source.find(signature);
-    assert!(start.is_some(), "missing {signature}");
-    let Some(start) = start else {
-        return "";
-    };
-    let body = &source[start + signature.len()..];
-    let next_fn = [
-        "\n        fn ",
-        "\n        pub(super) fn ",
-        "\n    fn ",
-        "\n    pub(super) fn ",
-    ]
-    .into_iter()
-    .filter_map(|needle| body.find(needle))
-    .min()
-    .unwrap_or(body.len());
-    &source[start..start + signature.len() + next_fn]
 }

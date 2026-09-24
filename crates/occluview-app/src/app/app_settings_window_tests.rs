@@ -46,11 +46,22 @@ fn run_toolbar_frame_in(
     run_toolbar_frame_at(ctx, events, locale, test_screen())
 }
 
+/// The same frame with the settings the test wants to read.
 fn run_toolbar_frame_at(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
     locale: &crate::i18n::LocaleManager,
     screen: egui::Rect,
+) -> anyhow::Result<ToolbarFrame> {
+    run_toolbar_frame_at_with_settings(ctx, events, locale, screen, &Settings::default())
+}
+
+fn run_toolbar_frame_at_with_settings(
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    locale: &crate::i18n::LocaleManager,
+    screen: egui::Rect,
+    settings: &Settings,
 ) -> anyhow::Result<ToolbarFrame> {
     let input = egui::RawInput {
         screen_rect: Some(screen),
@@ -61,6 +72,7 @@ fn run_toolbar_frame_at(
     let mut action = None;
     let mut settings_trigger = None;
     let mut recent_trigger = None;
+    let settings_for_frame = settings.clone();
     let mut recent = RecentFiles::new(1);
     recent.push("case.stl");
     let mut output = ctx.run_ui(input, |ui| {
@@ -72,7 +84,7 @@ fn run_toolbar_frame_at(
                     settings_trigger = Some(settings.rect);
                     action = show_settings_popup(
                         &settings,
-                        &Settings::default(),
+                        &settings_for_frame,
                         locale,
                         &UpdateCheckStatus::Idle,
                         None,
@@ -270,23 +282,36 @@ fn responsive_information_modal_frame(
     popup_rect(ctx, id)
 }
 
+/// There is no save-format text in the panel at all: not the mode switch, not
+/// the chips, and not a sentence describing the rule. The format is decided
+/// from the scan, and a paragraph about a decision the operator does not make
+/// is exactly the clutter that was asked to be removed. Rendering the panel and
+/// reading the painted text is what pins the absence.
 #[test]
-fn settings_segment_selects_direct_stl_without_closing() -> anyhow::Result<()> {
+fn settings_show_no_text_about_the_save_format() -> anyhow::Result<()> {
     let ctx = egui::Context::default();
     let initial = run_toolbar_frame(&ctx, Vec::new())?;
     let _ = click(&ctx, initial.settings_trigger.center())?;
-    let visible = run_toolbar_frame(&ctx, Vec::new())?;
-    let stl = direct_control_center(&visible.output, "STL")?;
 
-    let response = click(&ctx, stl)?;
-
-    assert_eq!(
-        response.action,
-        Some(SettingsAction::SetExportFormat(
-            crate::app_settings::FallbackExportFormat::Stl
-        ))
+    let panel = run_toolbar_frame(&ctx, Vec::new())?;
+    for removed in [
+        "Save format",
+        "Its own format",
+        "Chosen format",
+        "Fallback export format",
+        "When saving a scan",
+    ] {
+        assert!(
+            direct_control_center(&panel.output, removed).is_err(),
+            "{removed:?} must not appear: the format is decided from the scan"
+        );
+    }
+    // The rest of the Files section is still there, so the removal took the
+    // format text and not the section with it.
+    assert!(
+        direct_control_center(&panel.output, "Remember export folder").is_ok(),
+        "the folder-memory row must survive the format text's removal"
     );
-    assert!(egui::Popup::is_id_open(&ctx, settings_popup_id()));
     Ok(())
 }
 

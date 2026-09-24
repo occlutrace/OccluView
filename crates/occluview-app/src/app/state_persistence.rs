@@ -54,8 +54,13 @@ impl PersistenceState {
             None
         };
         let update_check_on_start = settings.update_check_on_start;
+        // The stored limit is the preference; the constant is only its default.
+        let recent_files_limit = settings.recent_files_limit.clamp(
+            crate::app_settings::RECENT_FILES_LIMIT_MIN,
+            crate::app_settings::RECENT_FILES_LIMIT_MAX,
+        );
         Self {
-            recent_files: load_recent_files(crate::app_settings::RECENT_FILES_LIMIT),
+            recent_files: load_recent_files(recent_files_limit),
             settings,
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),
@@ -149,6 +154,20 @@ impl PersistenceState {
         if !self.settings.remember_sculpt_brush {
             self.sculpt_settings_dirty_since = None;
             return;
+        }
+        // A close request and the debounce race, and the debounce loses: the
+        // sliders were already written into `settings` but the dirty mark is
+        // only set once the value has been still for a second, and closing does
+        // not persist anything (`intercept_unsaved_close_request` only fires for
+        // unsaved MESH edits, and there is no `on_exit`). Closing within that
+        // second therefore discarded the new brush size and intensity. The
+        // operator asked for the settings to be remembered, so flush them now
+        // rather than on a timer the window no longer has.
+        if self.sculpt_settings_dirty_since.is_some()
+            && ctx.input(|i| i.viewport().close_requested())
+        {
+            self.sculpt_settings_dirty_since = None;
+            self.settings_persistence.mark_dirty();
         }
         let size = crate::mesh_editor_overlay::sculpt_size(ctx);
         let intensity = crate::mesh_editor_overlay::sculpt_intensity(ctx);

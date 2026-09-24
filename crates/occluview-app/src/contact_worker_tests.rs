@@ -208,6 +208,56 @@ fn a_worker_without_a_thread_refuses_to_accept_work() {
     assert!(!worker.is_busy());
 }
 
+/// The busy hold is what the operator sees as the spinner, so it must survive
+/// a panic in the job body: a hand-written decrement is skipped by the unwind.
+#[test]
+fn a_busy_hold_is_released_when_the_job_body_panics() {
+    let counter = Arc::new(AtomicU64::new(0));
+    let panicked = std::panic::catch_unwind({
+        let counter = Arc::clone(&counter);
+        move || {
+            let _busy = Busy::new(&counter);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+            panic!("the job body panicked");
+        }
+    });
+
+    assert!(panicked.is_err());
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "the counter must come back down even when the job unwinds"
+    );
+}
+
+/// A worker whose thread body panicked must look failed and idle, not busy
+/// forever: the bar's spinner is fed by exactly those two signals, and a job
+/// that died mid-run would otherwise leave the operator waiting for a
+/// measurement nobody is computing.
+#[test]
+fn a_panicking_worker_latches_a_failure_and_stops_looking_busy() {
+    let worker = ContactWorker::spawn_panicking();
+
+    let mut waited = Duration::ZERO;
+    while !worker.has_failed() && waited < Duration::from_secs(10) {
+        thread::sleep(Duration::from_millis(5));
+        waited += Duration::from_millis(5);
+    }
+
+    assert!(
+        worker.has_failed(),
+        "a panicked worker must latch a failure"
+    );
+    assert!(
+        !worker.is_busy(),
+        "a dead worker must not hold the busy counter"
+    );
+    assert!(
+        worker.submit(job(&worker, 0, -0.1)).is_none(),
+        "no new work may be queued for a dead worker"
+    );
+}
+
 /// A bump discards what is in flight and clears the queue, so the map on screen
 /// describes the pair the operator is looking at now.
 #[test]

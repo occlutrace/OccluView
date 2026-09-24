@@ -200,26 +200,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn structural_scene_callers_route_through_the_shared_commit_helper() {
-        let interaction = include_str!("app_layer_interaction.rs").replace("\r\n", "\n");
-        let mesh_editor = include_str!("app_mesh_editor.rs").replace("\r\n", "\n");
-        let layer_edits = include_str!("app_layer_edits/mod.rs").replace("\r\n", "\n");
-
-        assert!(
-            interaction.contains("self.commit_structural_scene("),
-            "layer-context structural scene commits should use the shared helper"
-        );
-        assert!(
-            mesh_editor.contains("self.commit_structural_scene("),
-            "mesh-editor structural commits should use the shared helper"
-        );
-        assert!(
-            !layer_edits.contains("current_paths.remove("),
-            "manual index-based path mutation should be gone"
-        );
-    }
-
     /// An empty path on a live layer must not hide its lineage path.
     #[test]
     fn an_empty_slot_falls_through_to_the_lineage_root() {

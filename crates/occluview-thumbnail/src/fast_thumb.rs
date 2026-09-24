@@ -25,7 +25,7 @@ mod stl;
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, Vertex};
-use occluview_formats::dispatch::read_file_bytes;
+use occluview_formats::dispatch::{read_file_bytes, read_file_bytes_with_limit};
 use occluview_formats::ply::header::{self, Format as PlyFormat, Property, ScalarType};
 use occluview_formats::stl::ascii as stl_ascii;
 use occluview_formats::FormatError;
@@ -91,6 +91,17 @@ pub fn try_read_fast_thumbnail_mesh_for_kind(kind: FormatKind, bytes: &[u8]) -> 
             .filter(|mesh| !mesh.vertices().is_empty()),
         _ => None,
     }
+}
+
+/// Try the fast path for a file-backed thumbnail input, with a caller budget.
+///
+/// The thumbnail host passes its own, smaller limit: this read happens inside
+/// Explorer, where an over-large allocation costs more than a preview. The
+/// no-argument form keeps the viewer's limit, because the preview pane calls it
+/// too and there the surrogate is what avoids holding a whole gigabyte scan.
+pub fn try_read_fast_thumbnail_mesh_from_file_with_limit(path: &Path, limit: u64) -> Option<Mesh> {
+    let file_bytes = read_file_bytes_with_limit(path, limit).ok()?;
+    try_read_fast_thumbnail_mesh(Some(file_bytes.extension()), file_bytes.as_slice())
 }
 
 /// Try the fast path for a file-backed thumbnail input.

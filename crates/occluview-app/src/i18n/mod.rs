@@ -367,7 +367,9 @@ mod tests {
         // Superseded in coverage by `pseudo_locale_covers_every_embedded_key`
         // in catalog.rs; kept as a readable spot check with exact rendering.
         let pseudo = Catalog::pseudo().expect("pseudo builds");
-        for key in ["app-title", "settings-shortcuts", "about-tagline"] {
+        // `app-title` was a key nothing resolved; the live title key is
+        // `app-window-title` (`NATIVE_TITLE_KEY`).
+        for key in ["app-window-title", "settings-shortcuts", "about-tagline"] {
             let rendered = pseudo.text(key).unwrap_or_else(|| key.to_owned());
             assert!(
                 rendered.starts_with('⟦'),

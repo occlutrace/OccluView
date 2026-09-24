@@ -7,7 +7,7 @@
 
 use super::app_layer_edits;
 use super::app_mesh_export::{
-    default_layer_export_directory, default_layer_export_format, default_layer_export_stem,
+    automatic_export_format, default_layer_export_directory, default_layer_export_stem,
 };
 use super::app_test_support::{named_scene, push_named_layer, scene_names, test_app};
 use super::layers_overlay::LayerOverlayChanges;
@@ -119,7 +119,7 @@ fn split_then_undo_redo_keeps_source_paths_and_export_defaults() {
             "layer {index} should default to the source file's name"
         );
         assert_eq!(
-            default_layer_export_format(&redone_paths, index, MeshWriteFormat::Obj),
+            automatic_export_format(&redone_paths, index, &scene.meshes()[index].mesh),
             MeshWriteFormat::StlBinary,
             "layer {index} should keep the source file's format"
         );
@@ -329,7 +329,7 @@ fn a_second_generation_part_keeps_its_ancestor_file() {
         "and its ancestor's file name, not the neighbouring scan's"
     );
     assert_eq!(
-        default_layer_export_format(&paths, 0, MeshWriteFormat::Obj),
+        automatic_export_format(&paths, 0, &scene.meshes()[0].mesh),
         MeshWriteFormat::StlBinary,
         "and its ancestor's format"
     );

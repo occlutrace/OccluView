@@ -20,7 +20,8 @@
 //! - `contact_gap`           `[f32;4]`       16 bytes
 //! - `contact_stops`         `[[f32;4];16]` 256 bytes
 //! - `contact_stop_count`     `u32`           4 bytes
-//! - `contact_padding`       `[u32;3]`       12 bytes
+//! - `overlay_paint`          `u32`           4 bytes
+//! - `contact_padding`       `[u32;2]`        8 bytes
 //!
 //! # Why the ramp lives in the uniform
 //!
@@ -78,13 +79,16 @@ pub struct GpuMeshUniform {
     pub measured_map: u32,
     /// 1 = this layer paints an occlusal contact field from `contact_stops`.
     ///
-    /// A contact reading is a measurement, so the caller pairs this with
-    /// `measured_map = 1`: the ramp then reaches the screen at its own hue
-    /// under a single reduced shade factor, and the specular highlight (which
-    /// would move the hue at every bright pixel) is skipped. The flag is
-    /// independent because a layer may show a deviation heatmap, a contact
-    /// reading, both (contacts win — they are painted into the base colour
-    /// before the measured-map branch) or neither.
+    /// A contact reading is a measurement, so the ramp reaches the screen at
+    /// its own hue under a single reduced shade factor, and the specular
+    /// highlight (which would move the hue at every bright pixel) is skipped.
+    ///
+    /// This does NOT pair with `measured_map = 1`. An earlier version of this
+    /// comment said it did, which is the opposite of the app's rule: the two
+    /// overlays are mutually exclusive because they are different measurements,
+    /// and setting both painted the contact ramp into a colour taken from the
+    /// deviation ramp. A caller that followed the old sentence re-created
+    /// exactly the all-white layer that rule exists to prevent.
     pub contact_map: u32,
     /// Texels per row of the packed field texture, so the shader can turn a
     /// vertex index into a texture coordinate without `textureDimensions`.
@@ -103,9 +107,19 @@ pub struct GpuMeshUniform {
     /// Stops actually in use. At least 1 whenever `contact_map != 0`, because
     /// the shader walks `stop_count - 1` spans.
     pub contact_stop_count: u32,
+    /// 1 = this layer's overlay colours are paint, not a measurement.
+    ///
+    /// The RGB is a paint colour and the alpha is the weight mixed over the
+    /// surface's own material, so alpha 0 leaves the scan bit-for-bit as it
+    /// renders — its tint, its texture and its lighting included. Without the
+    /// distinction the brush preview was shaded as a measured map (tint
+    /// dropped, lighting cut to 42%, gloss added), which is what made a marked
+    /// scan read as a pale shiny shell. Taken from the tail padding, so the
+    /// buffer layout is unchanged.
+    pub overlay_paint: u32,
     /// Explicit tail padding: a uniform struct is 16-byte aligned in WGSL even
     /// though each scalar field here is four-byte aligned.
-    pub contact_padding: [u32; 3],
+    pub contact_padding: [u32; 2],
 }
 
 impl GpuMeshUniform {
@@ -140,7 +154,8 @@ impl GpuMeshUniform {
             contact_gap: [0.0; 4],
             contact_stops: [[0.0; 4]; CONTACT_STOP_CAPACITY],
             contact_stop_count: 1,
-            contact_padding: [0; 3],
+            overlay_paint: 0,
+            contact_padding: [0; 2],
         }
     }
 
@@ -266,12 +281,53 @@ mod tests {
                 "contact_gap",
                 "contact_stops",
                 "contact_stop_count",
+                "overlay_paint",
                 "contact_padding_0",
                 "contact_padding_1",
-                "contact_padding_2",
             ],
             "mesh.wgsl's MeshUniform drifted from GpuMeshUniform"
         );
+    }
+
+    /// Every shader that declares its own `MeshUniform` must match the same
+    /// layout, or the drift is silent corruption rather than a compile error.
+    ///
+    /// `sculpt_feedback.wgsl` hand-declares a third copy (it names the contact
+    /// slots `_padding_0/_padding_1`, which is correct for a pass that does not
+    /// read them, and reads only `model`, which sits at offset 0). Nothing
+    /// pinned it: the test above parses `mesh.wgsl` alone, so reordering
+    /// `GpuMeshUniform::model` would have shifted every field this shader reads
+    /// with no failure anywhere.
+    #[test]
+    fn every_shader_that_declares_mesh_uniform_matches_this_one() {
+        for shader in [
+            include_str!("../shaders/mesh.wgsl"),
+            include_str!("../shaders/sculpt_feedback.wgsl"),
+        ] {
+            let start = shader
+                .find("struct MeshUniform {")
+                .expect("every render shader must declare MeshUniform");
+            let body = &shader[start..];
+            let end = body.find('}').expect("MeshUniform must be closed");
+            let fields: Vec<&str> = body[..end]
+                .lines()
+                .skip(1)
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with("//"))
+                .filter_map(|line| line.split(':').next())
+                .collect();
+            // `model` must be first in every copy: it is the only field the
+            // feedback pass reads, and a reorder is exactly the silent case.
+            assert_eq!(
+                fields.first().copied(),
+                Some("model"),
+                "a shader's MeshUniform no longer starts with `model`"
+            );
+            assert!(
+                fields.contains(&"tint") && fields.contains(&"opacity"),
+                "a shader's MeshUniform no longer matches GpuMeshUniform's prefix"
+            );
+        }
     }
 
     /// The WGSL array length and this constant are one fact in two languages.
