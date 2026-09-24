@@ -4,6 +4,10 @@
 //! Split out of `shell_contract_tests` to hold the workspace's 800-line file
 //! budget, which the module's own guard enforces.
 
+// A skipped contract check has to say so on stderr, or a green run would imply
+// it had verified something.
+#![allow(clippy::print_stderr)]
+
 use super::{owns_extension, OFFERED_ONLY_EXTENSIONS};
 
 const WINDOWS_DEFAULT_PREVHOST_APPID: &str = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
@@ -528,39 +532,121 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
 }
 
 #[test]
-fn the_shell_pin_report_survives_a_windows_crlf_crate_list() {
-    // `report-shell-pin.sh` reads the crate list from Python stdout, and the
-    // packaging job runs the script under Git-Bash on a Windows runner. There,
-    // Python's text mode emits CRLF, and command substitution keeps the CR. A
-    // crate left as `occluview-shell\r` is a git pathspec matching nothing, so
-    // the delta collapsed to whichever names happened to survive: the released
-    // MSI recorded "1 commit touching its crates" when the true figure was 130.
-    // The defect is invisible on a Linux checkout, so it has to be asserted
-    // against the script text itself.
-    let script = include_str!("../../../scripts/report-shell-pin.sh");
+fn the_shell_pin_report_survives_a_windows_crlf_python() {
+    // The packaging job runs `report-shell-pin.sh` under Git-Bash on a Windows
+    // runner, where Python's text mode writes CRLF and command substitution
+    // keeps the carriage return. Every value the script reads that way is then
+    // corrupt: a revision left as `<sha>\r` makes `git cat-file -e` fail and
+    // aborts the report, and a crate left as `occluview-shell\r` is a pathspec
+    // matching nothing, so the delta silently collapses and the reviewer is
+    // shown less work than there is. The released MSI recorded "1 commit
+    // touching its crates" this way when the true figure was over a hundred.
+    //
+    // The defect is invisible on a Linux checkout, so the test has to actually
+    // run the script with a CRLF-emitting `python3` on PATH rather than grep
+    // its text. Only the script's behaviour can catch a regression in how it
+    // frames the values.
+    //
+    // Skips when the repo cannot be read or the tools are absent: this asserts
+    // a release-metadata contract, not the arithmetic of the report.
+    use std::process::Command;
 
-    // The strip must be present and must target the carriage return, not
-    // merely trim whitespace that a reviewer might remove later.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    let script = root.join("scripts/report-shell-pin.sh");
+    if !script.is_file() {
+        eprintln!("skipped: {script:?} is not present in this checkout");
+        return;
+    }
+
+    // Skip if python3 is not on PATH; the script needs it.
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipped: python3 is not available");
+        return;
+    }
+
+    // A stand-in `python3` that CRLF-terminates every line, exactly as Python
+    // text mode does on the packaging runner. It must not touch the
+    // environment: the script's second Python stage reads REPORT_* from it.
+    let shim_dir = std::env::temp_dir().join(format!("occluview-crlf-shim-{}", std::process::id()));
+    std::fs::create_dir_all(&shim_dir).expect("temp dir");
+    let shim = shim_dir.join("python3");
+    std::fs::write(
+        &shim,
+        "#!/bin/bash\n/usr/bin/python3 \"$@\" | sed 's/$/\\r/'\n",
+    )
+    .expect("write shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod shim");
+    }
+
+    let out = shim_dir.join("report.json");
+    let existing = std::env::var("PATH").unwrap_or_default();
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg(&out)
+        .current_dir(&root)
+        .env("PATH", format!("{}:{existing}", shim_dir.display()))
+        .output()
+        .expect("the shell-pin script must run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
     assert!(
-        script.contains(r#"crate="${crate%$'\r'}""#),
-        "the shell-pin report must strip a Windows carriage return from each \
-         crate name; without it the git pathspecs match nothing and the \
-         recorded delta is far too small"
+        output.status.success(),
+        "the shell-pin report must not abort when Python writes CRLF; stderr was:\n{stderr}"
     );
 
-    // And the stripped name must be what enters the pathspec array, so an empty
-    // entry cannot be smuggled in as a bare `crates/`.
-    let strip_at = script
-        .find(r#"crate="${crate%$'\r'}""#)
-        .expect("the strip was just asserted present");
-    let push_at = script
-        .find(r#"paths+=("crates/$crate")"#)
-        .expect("the script must add each crate to the pathspec array");
+    let text = std::fs::read_to_string(&out).expect("the script must write its report");
+
+    // The revision must survive intact, not carry a CR into git. Read the
+    // field by hand: this crate has no JSON dependency, and the one field that
+    // matters is a plain `"revision": "..."` line.
+    let revision = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("\"revision\":"))
+        .map(|value| value.trim().trim_matches(|c| c == '"' || c == ','))
+        .expect("the report must carry a revision");
     assert!(
-        strip_at < push_at,
-        "the carriage return must be stripped before the name reaches the \
-         pathspec array"
+        !revision.contains('\r'),
+        "the revision kept a carriage return: {revision:?}"
     );
+    assert_eq!(
+        revision.len(),
+        40,
+        "a git sha must stay 40 chars: {revision:?}"
+    );
+
+    // And the delta must be the real one, not a collapsed subset. Comparing
+    // against a plain run is what makes this a behavioural assertion: a
+    // CR-tainted pathspec list reports a different (smaller) count.
+    let commits_behind = |file: &std::path::Path| -> Option<u64> {
+        std::fs::read_to_string(file)
+            .ok()?
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("\"commits_behind\":"))
+            .and_then(|value| value.trim().trim_end_matches(',').parse().ok())
+    };
+    let clean_file = shim_dir.join("clean.json");
+    let clean = Command::new("bash")
+        .arg(&script)
+        .arg(&clean_file)
+        .current_dir(&root)
+        .output()
+        .expect("the shell-pin script must run without the shim");
+    if clean.status.success() {
+        assert_eq!(
+            commits_behind(&out),
+            commits_behind(&clean_file),
+            "a CRLF-emitting Python changed the recorded delta"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&shim_dir);
 }
 
 #[test]
